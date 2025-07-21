@@ -47,6 +47,7 @@ ABILITY_USE - Entity, Target, Ability, action
 ABILITY_TAKE - Target, Entity, Ability, action
 ABILITY_STATE_EXIT - Entity, Ability
 
+WEAPONSKILL_PREPARE - Entity
 WEAPONSKILL_STATE_ENTER - Entity, Skillid
 WEAPONSKILL_BEFORE_USE - Entity, Skillid
 WEAPONSKILL_USE - Entity, Target, Skillid, TP, action

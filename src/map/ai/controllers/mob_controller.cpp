@@ -1,4 +1,4 @@
-/*
+﻿/*
 ===========================================================================
 
   Copyright (c) 2010-2015 Darkstar Dev Teams
@@ -335,6 +335,8 @@ bool CMobController::MobSkill(int wsList)
         }
 
         auto skillList{ battleutils::GetMobSkillList(wsList) };
+
+        PMob->PAI->EventHandler.triggerListener("WEAPONSKILL_PREPARE", PMob);
 
         if (auto overrideSkill = luautils::OnMobWeaponSkillPrepare(PMob, PTarget); overrideSkill > 0)
         {
