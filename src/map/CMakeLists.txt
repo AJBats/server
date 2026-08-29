@@ -42,6 +42,8 @@ set(MAP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/campaign_system.h
     ${CMAKE_CURRENT_SOURCE_DIR}/char_recast_container.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/char_recast_container.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/charswap.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/charswap.h
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/conquest_data.cpp

@@ -33,6 +33,7 @@
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 
+#include "charswap.h"
 #include "ipc_client.h"
 #include "latent_effect_container.h"
 #include "map_session.h"
@@ -275,6 +276,9 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
 
         if (PSession->PChar == nullptr)
         {
+            // Cardian charswap: a staged swap answers this re-login with another character
+            packetCharID = charswap::resolve(packetCharID);
+
             uint16 langID    = loginPacket.uCliLang;
             uint32 accountID = 0;
 

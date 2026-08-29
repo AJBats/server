@@ -24,6 +24,7 @@
 
 #include "ai/ai_container.h"
 #include "ai/helpers/action_queue.h"
+#include "charswap.h"
 #include "entities/char_entity.h"
 #include "lua/luautils.h"
 #include "packets/s2c/0x01c_item_max.h"
@@ -37,7 +38,8 @@
 auto GP_CLI_COMMAND_LOGIN::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     return PacketValidator(PChar)
-        .mustEqual(PChar->id, this->UniqueNo, "Player ID mismatch")
+        // Cardian charswap: a swapped client still claims its original charid
+        .mustEqual(this->UniqueNo == PChar->id || charswap::isClientClaimFor(PChar->id, this->UniqueNo), true, "Player ID mismatch")
         .mustNotEqual(PSession->blowfish.status == BLOWFISH_ACCEPTED && PChar->status == xi::Status::Normal && PSession->hasDecryptedPacket, true, "Player already logged in.");
 }
 
