@@ -12,6 +12,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
 )
 
 set(MAP_CORE_SOURCES

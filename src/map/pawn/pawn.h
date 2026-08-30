@@ -39,6 +39,10 @@ namespace pawn
 {
     bool isEnabled();
 
+    // Delete orphaned pawn session rows (client_addr = 0) left by a crash.
+    // Called once at map boot.
+    void cleanupStaleRows();
+
     // Load the named offline character (same account as the summoner) and
     // insert it into the summoner's zone at the summoner's position.
     // Returns false with no side effects if the target is unknown, online,

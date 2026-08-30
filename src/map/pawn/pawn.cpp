@@ -26,11 +26,8 @@
 #include "common/settings.h"
 
 #include "entities/char_entity.h"
-#include "lua/lua_base_entity.h"
-#include "lua/luautils.h"
 #include "party.h"
 #include "utils/charutils.h"
-#include "utils/moduleutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -39,9 +36,28 @@
 
 namespace
 {
+    // Synthetic per-pawn account ids satisfy the schema's one-session-per-
+    // account constraint while a pawn shares its real account with the player
+    constexpr uint32 kPawnAccidBase = 0xC0000000;
+
     // charid -> owned pawn entity. The module is the lifetime owner, the way
     // MapSession owns a player's char; zones and viewers hold raw pointers.
     std::unordered_map<uint32, std::unique_ptr<CCharEntity>> pawns;
+
+    void savePawnPosition(const CCharEntity* PPawn)
+    {
+        db::preparedStmt("UPDATE chars "
+                         "SET pos_zone = ?, pos_prevzone = ?, pos_rot = ?,"
+                         "pos_x = ?, pos_y = ?, pos_z = ? "
+                         "WHERE charid = ?",
+                         PPawn->getZone(),
+                         PPawn->loc.prevzone,
+                         PPawn->loc.p.rotation,
+                         PPawn->loc.p.x,
+                         PPawn->loc.p.y,
+                         PPawn->loc.p.z,
+                         PPawn->id);
+    }
 } // namespace
 
 namespace pawn
@@ -49,6 +65,12 @@ namespace pawn
     bool isEnabled()
     {
         return settings::get<bool>("pawn.ENABLE_PAWNS");
+    }
+
+    void cleanupStaleRows()
+    {
+        // Pawn session rows are marked by client_addr = 0; a crash can orphan them
+        db::preparedStmt("DELETE FROM accounts_sessions WHERE client_addr = 0");
     }
 
     bool spawn(CCharEntity* PSummoner, const std::string& targetName)
@@ -127,6 +149,14 @@ namespace pawn
         PPawn->clearPacketList();
         PPawn->updatemask |= UPDATE_ALL_CHAR;
 
+        // accounts_sessions drives /sea, party membership queries and the
+        // lobby's already-online check; client_addr stays 0 to mark the row
+        // as pawn-owned
+        db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ?", targetCharID);
+        db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid) VALUES (?, ?, ?)",
+                         kPawnAccidBase + targetCharID, targetCharID, PPawn->targid);
+        savePawnPosition(PPawn.get());
+
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
         pawns[targetCharID] = std::move(PPawn);
@@ -145,6 +175,8 @@ namespace pawn
 
         CCharEntity* PPawn = it->second.get();
 
+        savePawnPosition(PPawn);
+
         if (PPawn->PParty != nullptr)
         {
             PPawn->PParty->RemoveMember(PPawn);
@@ -157,9 +189,10 @@ namespace pawn
             PPawn->loc.zone->DecreaseZoneCounter(PPawn);
         }
 
+        db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ?", targetCharID);
+
         ShowInfoFmt("pawn: despawned {} ({})", targetName, targetCharID);
 
-        // Deliberately no persist::flush -- the pawn visit writes nothing back
         pawns.erase(it);
         return true;
     }
@@ -177,29 +210,3 @@ namespace pawn
         }
     }
 } // namespace pawn
-
-// Registers player:pawnSpawn('Charname') / player:pawnDespawn('Charname')
-// without touching the core CLuaBaseEntity registration lists, and hooks the
-// per-tick drain.
-class PawnModule : public CPPModule
-{
-    void OnInit() override
-    {
-        lua["CBaseEntity"]["pawnSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
-        {
-            return pawn::spawn(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
-        };
-
-        lua["CBaseEntity"]["pawnDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
-        {
-            std::ignore = PLuaBaseEntity;
-            return pawn::despawn(targetName);
-        };
-    }
-
-    void OnZoneTick(CZone* PZone) override
-    {
-        pawn::onZoneTick(PZone);
-    }
-};
-REGISTER_CPP_MODULE(PawnModule);
