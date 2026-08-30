@@ -20,12 +20,20 @@
 */
 
 #include "pawn.h"
+#include "pawn_controller.h"
 
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/utils.h"
+#include "common/xirand.h"
 
+#include <cmath>
+
+#include "ai/ai_container.h"
+#include "ai/helpers/pathfind.h"
 #include "entities/char_entity.h"
+#include "navmesh/navmesh.h"
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
 #include "party.h"
@@ -46,6 +54,8 @@ namespace
     // Synthetic per-pawn account ids satisfy the schema's one-session-per-
     // account constraint while a pawn shares its real account with the player
     constexpr uint32 kPawnAccidBase = 0xC0000000;
+
+    constexpr float kSpawnDistance = 3.0f;
 
     // charid -> owned pawn entity. The module is the lifetime owner, the way
     // MapSession owns a player's char; zones and viewers hold raw pointers.
@@ -205,9 +215,47 @@ namespace pawn
         // clear during its login handshake; nobody is listening here.
         PPawn->clearPacketList();
 
-        // Materialize beside the summoner, not at the char's saved position
-        PPawn->loc.p = PSummoner->loc.p;
-        PPawn->loc.p.x += 1.5f;
+        // Materialize behind the summoner, queued by spawn order the way
+        // trusts do; a bad spot self-heals once follow AI exists
+        uint32 pawnsHere = 0;
+        for (const auto& [id, P] : pawns)
+        {
+            if (P->loc.zone == PSummoner->loc.zone)
+            {
+                ++pawnsHere;
+            }
+        }
+        // Behind the summoner by preference (trust convention), else around
+        // the ring: the point must sit on the mesh near where we asked AND be
+        // visible from the summoner, so a snap never lands across a wall.
+        // Last resort is the summoner's own feet.
+        const float ringDistance = kSpawnDistance * (pawnsHere + 1);
+        PPawn->loc.p             = PSummoner->loc.p;
+
+        const auto tryPlace = [&](const position_t& candidate) -> bool
+        {
+            const auto* navMesh = PSummoner->loc.zone->navMesh();
+            if (navMesh == nullptr)
+            {
+                return false;
+            }
+
+            const auto snapped = navMesh->findClosestValidPoint(candidate);
+            if (snapped.has_value() && distance(*snapped, candidate) < 2.0f && PSummoner->CanSeeTarget(*snapped))
+            {
+                PPawn->loc.p          = *snapped;
+                PPawn->loc.p.rotation = PSummoner->loc.p.rotation;
+                return true;
+            }
+            return false;
+        };
+
+        bool placed = tryPlace(nearPosition(PSummoner->loc.p, ringDistance, (float)M_PI));
+        for (int attempt = 0; !placed && attempt < 6; ++attempt)
+        {
+            placed = tryPlace(nearPosition(PSummoner->loc.p, ringDistance, xirand::GetRandomNumber(2.0f * (float)M_PI)));
+        }
+
         PPawn->loc.destination = PSummoner->getZone();
         PPawn->loc.prevzone    = PSummoner->getZone();
         PPawn->m_moghouseID    = 0;
@@ -232,6 +280,14 @@ namespace pawn
         // CharZoneIn queued more packets (party reload etc.) -- discard
         PPawn->clearPacketList();
         PPawn->updatemask |= UPDATE_ALL_CHAR;
+
+        // Chars are built with no pathfinder (clients move them); a pawn
+        // moves itself
+        PPawn->PAI->PathFind = std::make_unique<CPathFind>(PPawn.get());
+        PPawn->PAI->SetController(std::make_unique<CPawnController>(PPawn.get()));
+
+        PPawn->baseSpeed = settings::get<uint8>("pawn.PAWN_SPEED");
+        PPawn->UpdateSpeed();
 
         // accounts_sessions drives /sea, party membership queries and the
         // lobby's already-online check; client_addr stays 0 to mark the row
@@ -270,6 +326,11 @@ namespace pawn
         CCharEntity* PPawn = it->second.get();
 
         savePawnPosition(PPawn);
+
+        if (PPawn->PAI->IsEngaged())
+        {
+            PPawn->PAI->Internal_Disengage();
+        }
 
         if (PPawn->PParty != nullptr)
         {
