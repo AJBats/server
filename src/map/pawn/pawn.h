@@ -64,7 +64,17 @@ namespace pawn
     // written back to the DB (the pawn visit leaves no trace).
     bool despawn(const std::string& targetName);
 
+    // True when the entity is a live pawn owned by this module.
+    bool isPawn(const CCharEntity* PChar);
+
+    // Record that a party invite reached this pawn (seen at OnPushPacket,
+    // when InvitePending is already stamped on the entity). The pawn accepts
+    // on the next zone tick through the same code path a real client's
+    // Accept answer runs.
+    void noteInvite(const CCharEntity* PPawn);
+
     // Per-tick maintenance for pawns in this zone (called from OnZoneTick,
-    // after all charTicks): discard queued outbound packets.
+    // after all charTicks): answer pending invites, then discard queued
+    // outbound packets.
     void onZoneTick(CZone* PZone);
 } // namespace pawn

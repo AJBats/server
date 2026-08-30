@@ -27,6 +27,7 @@
 
 #include "entities/char_entity.h"
 #include "login/login_helpers.h"
+#include "packets/c2s/0x074_group_solicit_res.h"
 #include "party.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
@@ -37,6 +38,8 @@
 #include <memory>
 #include <random>
 #include <unordered_map>
+#include <unordered_set>
+#include <utility>
 
 namespace
 {
@@ -47,6 +50,9 @@ namespace
     // charid -> owned pawn entity. The module is the lifetime owner, the way
     // MapSession owns a player's char; zones and viewers hold raw pointers.
     std::unordered_map<uint32, std::unique_ptr<CCharEntity>> pawns;
+
+    // Pawns with a party invite awaiting their next-tick answer
+    std::unordered_set<uint32> pendingInvites;
 
     void savePawnPosition(const CCharEntity* PPawn)
     {
@@ -285,16 +291,40 @@ namespace pawn
         return true;
     }
 
+    bool isPawn(const CCharEntity* PChar)
+    {
+        return PChar != nullptr && pawns.contains(PChar->id);
+    }
+
+    void noteInvite(const CCharEntity* PPawn)
+    {
+        pendingInvites.insert(PPawn->id);
+    }
+
     void onZoneTick(CZone* PZone)
     {
         for (const auto& [charid, PPawn] : pawns)
         {
-            if (PPawn->loc.zone == PZone)
+            if (PPawn->loc.zone != PZone)
             {
-                // Nobody drains a session-less char's outbound queue; without
-                // this it grows without bound
-                PPawn->clearPacketList();
+                continue;
             }
+
+            if (pendingInvites.erase(charid) != 0 && PPawn->InvitePending.UniqueNo != 0)
+            {
+                GP_CLI_COMMAND_GROUP_SOLICIT_RES answer{};
+                answer.Res = std::to_underlying(GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Accept);
+
+                if (answer.validate(nullptr, PPawn.get()).valid())
+                {
+                    ShowInfoFmt("pawn: {} accepts the party invite", PPawn->getName());
+                    answer.process(nullptr, PPawn.get());
+                }
+            }
+
+            // Nobody drains a session-less char's outbound queue; without
+            // this it grows without bound
+            PPawn->clearPacketList();
         }
     }
 } // namespace pawn

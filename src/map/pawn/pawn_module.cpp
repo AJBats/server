@@ -24,9 +24,14 @@
 #include "common/logging.h"
 
 #include "entities/char_entity.h"
+#include "enums/packet_s2c.h"
+#include "enums/party_kind.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
+#include "packets/basic.h"
 #include "utils/moduleutils.h"
+
+#include <utility>
 
 namespace pawn
 {
@@ -69,6 +74,19 @@ class PawnModule : public CPPModule
     void OnZoneTick(CZone* PZone) override
     {
         pawn::onZoneTick(PZone);
+    }
+
+    void OnPushPacket(CCharEntity* PChar, const std::unique_ptr<CBasicPacket>& packet) override
+    {
+        if (!pawn::isPawn(PChar) || packet->getType() != std::to_underlying(PacketS2C::GP_SERV_COMMAND_GROUP_SOLICIT_REQ))
+        {
+            return;
+        }
+
+        if (packet->ref<uint8>(0x0B) == std::to_underlying(PartyKind::Party))
+        {
+            pawn::noteInvite(PChar);
+        }
     }
 };
 REGISTER_CPP_MODULE(PawnModule);
