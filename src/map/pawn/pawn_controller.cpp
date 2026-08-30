@@ -21,6 +21,7 @@
 
 #include "pawn_controller.h"
 #include "pawn.h"
+#include "pawn_gambits.h"
 
 #include "common/utils.h"
 #include "common/xirand.h"
@@ -32,15 +33,25 @@
 #include "enmity_container.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
 #include "party.h"
+#include "spell.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
 CPawnController::CPawnController(CCharEntity* PPawn)
 : CPlayerController(PPawn)
+, m_Gambits(std::make_unique<pawn::CGambits>(PPawn, this))
 {
+}
+
+CPawnController::~CPawnController() = default;
+
+auto CPawnController::Gambits() -> pawn::CGambits&
+{
+    return *m_Gambits;
 }
 
 auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
@@ -49,6 +60,11 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     TracyZoneString(POwner->getName());
 
     m_Tick = tick;
+
+    if (!POwner->isDead())
+    {
+        CheckBrain();
+    }
 
     if (POwner->PAI->IsEngaged())
     {
@@ -62,11 +78,23 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     co_return;
 }
 
+void CPawnController::CheckBrain()
+{
+    auto*      PPawn = static_cast<CCharEntity*>(POwner);
+    const auto mjob  = static_cast<uint8>(PPawn->GetMJob());
+    const auto sjob  = static_cast<uint8>(PPawn->GetSJob());
+
+    if (mjob != m_BrainMainJob || sjob != m_BrainSubJob)
+    {
+        m_BrainMainJob = mjob;
+        m_BrainSubJob  = sjob;
+        pawn::loadBrain(PPawn);
+    }
+}
+
 auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 {
     TracyZoneScoped;
-
-    std::ignore = tick;
 
     CCharEntity* PPlayer = GetLivePlayer();
 
@@ -125,14 +153,14 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         POwner->PAI->PathFind->FollowPath(m_Tick);
     }
 
+    m_Gambits->Tick(tick, true);
+
     co_return;
 }
 
 auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 {
     TracyZoneScoped;
-
-    std::ignore = tick;
 
     if (!POwner->PAI->CanFollowPath())
     {
@@ -216,6 +244,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     if (POwner->PAI->PathFind->IsFollowingPath())
     {
         POwner->PAI->PathFind->FollowPath(m_Tick);
+    }
+    else if (!POwner->PAI->IsCurrentState<CMagicState>())
+    {
+        // Between fights, standing still: cures, raises, buffs
+        m_Gambits->Tick(tick, false);
     }
 
     if (POwner->CanRest() &&
@@ -371,6 +404,117 @@ void CPawnController::TravelTick()
     {
         POwner->PAI->PathFind->FollowPath(m_Tick);
     }
+}
+
+auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
+{
+    CSpell* PSpell = spell::GetSpell(spellid);
+    if (PSpell == nullptr)
+    {
+        return false;
+    }
+
+    const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
+
+    if (PartyAlreadyCasting(PSpell, castTarget.resolve<CBattleEntity>()))
+    {
+        return false;
+    }
+
+    FaceTarget(castTarget);
+    return CPlayerController::Cast(castTarget, spellid);
+}
+
+auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
+    FaceTarget(target);
+    return CPlayerController::WeaponSkill(target, wsid);
+}
+
+auto CPawnController::Ability(const EntityId target, const uint16 abilityid) -> bool
+{
+    FaceTarget(target);
+    return CPlayerController::Ability(target, abilityid);
+}
+
+auto CPawnController::RangedAttack(const EntityId target) -> bool
+{
+    timer::duration rangedDelay = 10s;
+    if (const auto* PRange = dynamic_cast<CItemWeapon*>(POwner->m_Weapons[SLOT_RANGED]))
+    {
+        rangedDelay = std::chrono::milliseconds(PRange->getDelay());
+    }
+
+    if (m_Tick - m_LastRangedAttackTime < rangedDelay)
+    {
+        return false;
+    }
+
+    FaceTarget(target);
+    if (!CPlayerController::RangedAttack(target))
+    {
+        return false;
+    }
+
+    m_LastRangedAttackTime = m_Tick;
+    return true;
+}
+
+void CPawnController::FaceTarget(const EntityId target) const
+{
+    if (const auto* PTarget = target.resolve(); PTarget != nullptr && PTarget != POwner)
+    {
+        POwner->PAI->PathFind->LookAt(PTarget->loc.p);
+    }
+}
+
+auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool
+{
+    auto* PPawn    = static_cast<CCharEntity*>(POwner);
+    bool  redundant = false;
+
+    PPawn->ForParty([&](const CBattleEntity* PMember)
+                    {
+                        if (redundant || PMember == POwner || !PMember->PAI->IsCurrentState<CMagicState>())
+                        {
+                            return;
+                        }
+
+                        auto*       MState  = static_cast<CMagicState*>(PMember->PAI->GetCurrentState());
+                        auto*       MSpell  = MState->GetSpell();
+                        const auto* MTarget = MState->target().resolve();
+                        if (MSpell == nullptr)
+                        {
+                            return;
+                        }
+
+                        const bool sameFamily = PSpell->getSpellFamily() == MSpell->getSpellFamily();
+                        const bool weakerOrSame = PSpell->getID() <= MSpell->getID();
+
+                        if ((PSpell->isBuff() || PSpell->isDebuff()) && sameFamily && weakerOrSame)
+                        {
+                            redundant = true;
+                        }
+                        else if (PSpell->isCure() && PTarget != nullptr && PTarget == MTarget && PTarget->GetHPP() > 50)
+                        {
+                            redundant = true;
+                        }
+                        else if (PSpell->isNa() && sameFamily && PSpell->getID() == MSpell->getID())
+                        {
+                            redundant = true;
+                        }
+                    });
+
+    return redundant;
+}
+
+auto CPawnController::GetTopEnmity() const -> CBattleEntity*
+{
+    if (const auto* PMob = dynamic_cast<CMobEntity*>(POwner->GetBattleTarget()))
+    {
+        return PMob->PEnmityContainer->GetHighestEnmity();
+    }
+    return nullptr;
 }
 
 auto CPawnController::GetLivePlayer() const -> CCharEntity*

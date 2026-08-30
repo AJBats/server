@@ -22,4 +22,8 @@ xi.settings.pawn =
     -- clamped to map.SPEED_LIMIT (default 80) each step; raise that limit
     -- above this value or the pawn runs at the limit instead.
     PAWN_SPEED = 107,
+
+    -- Log every gambit action a pawn takes (spell, ability, weapon skill,
+    -- ranged attack) with its target. Dev aid for tuning brains.
+    GAMBIT_DEBUG = false,
 }

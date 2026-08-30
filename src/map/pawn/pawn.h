@@ -63,6 +63,13 @@ namespace pawn
     // pawn_module.cpp so the sol2 cost stays out of pawn.cpp).
     void applyStarterKit(CCharEntity* PPawn);
 
+    // Replace the pawn's gambits with the set xi.pawn.brain selects for it
+    // (its job's default brain today). The controller calls this on its
+    // first tick and whenever the pawn's job changes; !pawnbrain forces it.
+    // Implemented in pawn_module.cpp.
+    void loadBrain(CCharEntity* PPawn);
+    bool reloadBrainByName(const std::string& targetName);
+
     // Remove a pawn from its zone and destroy it. No character state is
     // written back to the DB (the pawn visit leaves no trace).
     bool despawn(const std::string& targetName);

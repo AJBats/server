@@ -24,25 +24,54 @@
 #include "ai/controllers/player_controller.h"
 
 #include <chrono>
+#include <memory>
 #include <vector>
 
 class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
+class CSpell;
 struct position_t;
+
+namespace pawn
+{
+    class CGambits;
+}
 
 // The autonomous controller for pawn characters: CTrustController's physical
 // layer (formation follow, engage-on-the-player's-swing, combat positioning,
 // declumping, rest regen) rebuilt around party membership instead of the
 // trust master/minion model, mounted on CPlayerController so the pawn keeps
-// a real character's action surface. Decision-making (gambits) arrives in a
-// later phase; an engaged pawn auto-attacks via the stock battle engine.
+// a real character's action surface. Decisions come from the pawn gambit
+// interpreter, fed by a Lua brain that is reloaded whenever the pawn's job
+// changes; an engaged pawn also auto-attacks via the stock battle engine.
 class CPawnController : public CPlayerController
 {
 public:
     CPawnController(CCharEntity* PPawn);
+    ~CPawnController() override;
 
     auto Tick(timer::time_point tick) -> Task<void> override;
+
+    // Action surface used by the gambit interpreter. Each faces the target
+    // first (the player weapon-skill path refuses a target the character is
+    // not facing), then runs the stock player validation: known spell or
+    // ability, recasts, TP, ammo, facing.
+    auto Cast(EntityId target, SpellID spellid) -> bool override;
+    auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
+    auto Ability(EntityId target, uint16 abilityid) -> bool override;
+    auto RangedAttack(EntityId target) -> bool override;
+
+    // The human party member the pawn formation anchors on
+    auto GetLivePlayer() const -> CCharEntity*;
+
+    // This pawn's index among the pawns in its party (formation order)
+    auto GetPawnPartyPosition() const -> uint8;
+
+    // Whoever the pawn's current battle target hates most
+    auto GetTopEnmity() const -> CBattleEntity*;
+
+    auto Gambits() -> pawn::CGambits&;
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float CastingDistance  = 15.0f;
@@ -58,12 +87,6 @@ private:
     // requesting a transfer at each zone line.
     void TravelTick();
 
-    // The human party member the pawn formation anchors on
-    auto GetLivePlayer() const -> CCharEntity*;
-
-    // This pawn's index among the pawns in its party (formation order)
-    auto GetPawnPartyPosition() const -> uint8;
-
     // Pawn 0 follows the player; pawn N follows pawn N-1
     auto GetFollowTarget() const -> CBattleEntity*;
 
@@ -74,8 +97,22 @@ private:
     // owner is snapped back onto the mesh. Never falls back to raw stepping.
     auto PathToward(const position_t& point, float closeTo) -> bool;
 
+    void FaceTarget(EntityId target) const;
+
+    // Reload the Lua brain when the pawn's main or support job changed
+    void CheckBrain();
+
+    // Another party member is already casting something that makes this
+    // cast redundant (same buff family, a cure on the same healthy target...)
+    auto PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool;
+
+    std::unique_ptr<pawn::CGambits> m_Gambits;
+    uint8                           m_BrainMainJob = 0xFF;
+    uint8                           m_BrainSubJob  = 0xFF;
+
     timer::time_point                 m_CombatEndTime;
     timer::time_point                 m_LastHealTickTime;
+    timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
     timer::time_point                 m_TravelProgressTime;
     float                             m_TravelBestDist = 0.0f;

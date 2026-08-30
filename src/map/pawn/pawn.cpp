@@ -323,6 +323,17 @@ namespace pawn
         return true;
     }
 
+    bool reloadBrainByName(const std::string& targetName)
+    {
+        const auto it = pawns.find(charutils::getCharIdFromName(targetName));
+        if (it == pawns.end())
+        {
+            return false;
+        }
+        loadBrain(it->second.get());
+        return true;
+    }
+
     bool despawn(const std::string& targetName)
     {
         const uint32 targetCharID = charutils::getCharIdFromName(targetName);

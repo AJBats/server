@@ -20,9 +20,12 @@
 */
 
 #include "pawn.h"
+#include "pawn_controller.h"
+#include "pawn_gambits.h"
 
 #include "common/logging.h"
 
+#include "ai/ai_container.h"
 #include "entities/char_entity.h"
 #include "enums/packet_s2c.h"
 #include "enums/party_kind.h"
@@ -31,7 +34,120 @@
 #include "packets/basic.h"
 #include "utils/moduleutils.h"
 
+#include <string>
 #include <utility>
+#include <vector>
+
+namespace
+{
+    constexpr auto kBrainScript = "./modules/cardian/lua/pawn/brain.lua";
+
+    using namespace gambits;
+
+    auto readPredicate(const sol::table& entry) -> Predicate_t
+    {
+        return { static_cast<G_CONDITION>(entry.get_or<uint16>(1, 0)), entry.get_or<uint32>(2, 0) };
+    }
+
+    auto readAction(const sol::table& entry) -> Action_t
+    {
+        return { static_cast<G_REACTION>(entry.get_or<uint16>(1, 0)), static_cast<G_SELECT>(entry.get_or<uint16>(2, 0)), entry.get_or<uint32>(3, 0) };
+    }
+
+    auto readLogicGroup(const sol::table& entry) -> PredicateGroup_t
+    {
+        std::vector<Predicate_t> predicates;
+        if (const sol::optional<sol::table> nested = entry["conditions"]; nested.has_value())
+        {
+            for (const auto& pair : *nested)
+            {
+                if (pair.second.get_type() == sol::type::table)
+                {
+                    predicates.emplace_back(readPredicate(pair.second.as<sol::table>()));
+                }
+            }
+        }
+        return { static_cast<G_LOGIC>(entry.get_or<uint16>("logic", 0)), std::move(predicates) };
+    }
+
+    // The trust addGambit shapes, plus a bare ai.l.OR(...) as the whole
+    // conditions argument:
+    //   { condition, arg }
+    //   { { condition, arg }, { condition, arg }, ai.l.OR({ c, a }, { c, a }) }
+    //   ai.l.OR({ c, a }, { c, a })
+    auto parsePredicates(const sol::table& conditions) -> std::vector<PredicateGroup_t>
+    {
+        std::vector<PredicateGroup_t> groups;
+
+        if (conditions["logic"].valid())
+        {
+            groups.emplace_back(readLogicGroup(conditions));
+        }
+        else if (conditions[1].get_type() == sol::type::table)
+        {
+            for (const auto& pair : conditions)
+            {
+                if (pair.second.get_type() != sol::type::table)
+                {
+                    continue;
+                }
+
+                const sol::table entry = pair.second.as<sol::table>();
+                if (entry["logic"].valid())
+                {
+                    groups.emplace_back(readLogicGroup(entry));
+                }
+                else
+                {
+                    groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ readPredicate(entry) });
+                }
+            }
+        }
+        else if (conditions[1].get_type() == sol::type::number)
+        {
+            groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ readPredicate(conditions) });
+        }
+
+        return groups;
+    }
+
+    //   { reaction, select, arg }
+    //   { { reaction, select, arg }, { reaction, select, arg } }
+    auto parseActions(const sol::table& reactions) -> std::vector<Action_t>
+    {
+        std::vector<Action_t> actions;
+
+        if (reactions[1].get_type() == sol::type::table)
+        {
+            for (const auto& pair : reactions)
+            {
+                if (pair.second.get_type() == sol::type::table)
+                {
+                    actions.emplace_back(readAction(pair.second.as<sol::table>()));
+                }
+            }
+        }
+        else if (reactions[1].get_type() == sol::type::number)
+        {
+            actions.emplace_back(readAction(reactions));
+        }
+
+        return actions;
+    }
+
+    auto gambitsOf(CLuaBaseEntity* PLuaBaseEntity) -> pawn::CGambits*
+    {
+        auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+        if (PChar == nullptr || !pawn::isPawn(PChar))
+        {
+            ShowWarningFmt("pawn: gambit call on a non-pawn entity ({})", PLuaBaseEntity->GetBaseEntity()->getName());
+            return nullptr;
+        }
+
+        auto* PController = dynamic_cast<CPawnController*>(PChar->PAI->GetController());
+        return PController != nullptr ? &PController->Gambits() : nullptr;
+    }
+} // namespace
 
 namespace pawn
 {
@@ -42,6 +158,51 @@ namespace pawn
         {
             const sol::error err = result;
             ShowErrorFmt("pawn: starter kit failed for {}: {}", PPawn->getName(), err.what());
+        }
+    }
+
+    void loadBrain(CCharEntity* PPawn)
+    {
+        auto brainTable = [&]() -> sol::optional<sol::table>
+        {
+            const sol::optional<sol::table> pawnTable = lua["xi"]["pawn"];
+            if (!pawnTable.has_value())
+            {
+                return std::nullopt;
+            }
+            return (*pawnTable)["brain"];
+        };
+
+        // The brain library normally arrives through modules/init.txt; load
+        // it directly when it hasn't
+        if (!brainTable().has_value())
+        {
+            if (const auto loaded = lua.safe_script_file(kBrainScript); !loaded.valid())
+            {
+                const sol::error err = loaded;
+                ShowErrorFmt("pawn: cannot load {}: {}", kBrainScript, err.what());
+                return;
+            }
+        }
+
+        const auto brain = brainTable();
+        if (!brain.has_value())
+        {
+            ShowErrorFmt("pawn: {} defines no xi.pawn.brain", kBrainScript);
+            return;
+        }
+
+        const sol::protected_function load = (*brain)["load"];
+        if (!load.valid())
+        {
+            ShowErrorFmt("pawn: xi.pawn.brain.load is missing");
+            return;
+        }
+
+        if (const auto result = load(CLuaBaseEntity(PPawn)); !result.valid())
+        {
+            const sol::error err = result;
+            ShowErrorFmt("pawn: brain load failed for {}: {}", PPawn->getName(), err.what());
         }
     }
 } // namespace pawn
@@ -74,6 +235,68 @@ class PawnModule : public CPPModule
         {
             std::ignore = PLuaBaseEntity;
             return pawn::orderTravelByName(targetName, zoneId);
+        };
+
+        lua["CBaseEntity"]["pawnReloadBrain"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        {
+            std::ignore = PLuaBaseEntity;
+            return pawn::reloadBrainByName(targetName);
+        };
+
+        // Gambit surface, trust vocabulary: pawn:pawnAddGambit(ai.t.PARTY,
+        // { ai.c.HPP_LT, 50 }, { ai.r.MA, ai.s.HIGHEST, xi.magic.spellFamily.CURE }, retry)
+        lua["CBaseEntity"]["pawnAddGambit"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 target, const sol::table& conditions, const sol::table& actions, const sol::object& retry) -> std::string
+        {
+            auto* PGambits = gambitsOf(PLuaBaseEntity);
+            if (PGambits == nullptr)
+            {
+                return {};
+            }
+
+            Gambit_t gambit;
+            gambit.target_selector  = static_cast<G_TARGET>(target);
+            gambit.predicate_groups = parsePredicates(conditions);
+            gambit.actions          = parseActions(actions);
+            gambit.retry_delay      = retry.is<uint16>() ? retry.as<uint16>() : 0;
+
+            if (gambit.predicate_groups.empty() || gambit.actions.empty())
+            {
+                ShowWarningFmt("pawn: malformed gambit for {} (target {}): no conditions or no actions", PLuaBaseEntity->GetBaseEntity()->getName(), target);
+                return {};
+            }
+
+            return PGambits->AddGambit(std::move(gambit));
+        };
+
+        lua["CBaseEntity"]["pawnRemoveGambit"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& id) -> void
+        {
+            if (auto* PGambits = gambitsOf(PLuaBaseEntity))
+            {
+                PGambits->RemoveGambit(id);
+            }
+        };
+
+        lua["CBaseEntity"]["pawnClearGambits"] = [](CLuaBaseEntity* PLuaBaseEntity) -> void
+        {
+            if (auto* PGambits = gambitsOf(PLuaBaseEntity))
+            {
+                PGambits->RemoveAllGambits();
+            }
+        };
+
+        lua["CBaseEntity"]["pawnGambitCount"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
+        {
+            auto* PGambits = gambitsOf(PLuaBaseEntity);
+            return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
+        };
+
+        // pawn:pawnSetTPSkillSettings(ai.tp.CLOSER_UNTIL_TP, ai.s.HIGHEST, 1500)
+        lua["CBaseEntity"]["pawnSetTPSkillSettings"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 trigger, const uint16 select, const sol::object& value) -> void
+        {
+            if (auto* PGambits = gambitsOf(PLuaBaseEntity))
+            {
+                PGambits->SetTPSkillSettings(static_cast<G_TP_TRIGGER>(trigger), static_cast<G_SELECT>(select), value.is<uint16>() ? value.as<uint16>() : 0);
+            }
         };
     }
 
