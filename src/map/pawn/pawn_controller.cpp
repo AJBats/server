@@ -35,6 +35,7 @@
 #include "navmesh/navmesh.h"
 #include "party.h"
 #include "utils/charutils.h"
+#include "utils/zoneutils.h"
 #include "zone.h"
 
 CPawnController::CPawnController(CCharEntity* PPawn)
@@ -71,6 +72,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 
     if (PPlayer == nullptr || !PPlayer->PAI->IsEngaged())
     {
+        ShowInfoFmt("pawn: {} disengaging ({})", POwner->getName(), PPlayer == nullptr ? "player gone" : "player disengaged");
         POwner->PAI->Internal_Disengage();
         m_CombatEndTime = m_Tick;
         co_return;
@@ -132,9 +134,21 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     std::ignore = tick;
 
-    CCharEntity* PPlayer = GetLivePlayer();
-    if (PPlayer == nullptr || !POwner->PAI->CanFollowPath())
+    if (!POwner->PAI->CanFollowPath())
     {
+        co_return;
+    }
+
+    if (pawn::travelOrderOf(POwner->id).has_value())
+    {
+        TravelTick();
+        co_return;
+    }
+
+    CCharEntity* PPlayer = GetLivePlayer();
+    if (PPlayer == nullptr)
+    {
+        TravelTick();
         co_return;
     }
 
@@ -177,15 +191,15 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     const float currentDistance = distance(POwner->loc.p, PFollowTarget->loc.p);
 
-    if (currentDistance > WarpDistance)
-    {
-        POwner->PAI->PathFind->WarpTo(PFollowTarget->loc.p);
-        co_return;
-    }
-
     if (currentDistance > followMax)
     {
-        PathToward(PFollowTarget->loc.p, followTarget);
+        // Warp only when pathing genuinely fails; a pawn arriving at a zone
+        // gate runs to its player like anyone else would
+        if (!PathToward(PFollowTarget->loc.p, followTarget) && currentDistance > WarpDistance)
+        {
+            POwner->PAI->PathFind->WarpTo(PFollowTarget->loc.p);
+            co_return;
+        }
     }
     else if (currentDistance < declumpDistance)
     {
@@ -222,6 +236,141 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
 
     co_return;
+}
+
+void CPawnController::TravelTick()
+{
+    const bool narrate = m_Tick - m_LastTravelDebugTime > 5s;
+    if (narrate)
+    {
+        m_LastTravelDebugTime = m_Tick;
+    }
+
+    const auto* PPawn = static_cast<CCharEntity*>(POwner);
+    const auto  order = pawn::travelOrderOf(POwner->id);
+
+    xi::ZoneId targetZone{};
+    if (order.has_value())
+    {
+        if (*order == POwner->getZone())
+        {
+            ShowInfoFmt("pawn: travel {}: arrived at ordered zone {}", POwner->getName(), static_cast<uint16>(*order));
+            pawn::clearTravelOrder(POwner->id);
+            return;
+        }
+        targetZone = *order;
+    }
+    else
+    {
+        if (PPawn->PParty == nullptr)
+        {
+            if (narrate)
+            {
+                ShowInfoFmt("pawn: travel {}: no party, idling", POwner->getName());
+            }
+            return;
+        }
+
+        CCharEntity* PSummoner = zoneutils::GetChar(pawn::summonerOf(POwner->id));
+        if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
+        {
+            if (narrate)
+            {
+                ShowInfoFmt("pawn: travel {}: summoner not in world (loading?), idling", POwner->getName());
+            }
+            return;
+        }
+
+        if (PSummoner->loc.zone == POwner->loc.zone)
+        {
+            if (narrate)
+            {
+                ShowInfoFmt("pawn: travel {}: summoner shares zone {} but no live player found by party scan", POwner->getName(), static_cast<uint16>(POwner->getZone()));
+            }
+            return;
+        }
+
+        targetZone = PSummoner->getZone();
+    }
+
+    const auto hop = pawn::travel::nextHop(POwner->getZone(), targetZone);
+    if (!hop.has_value())
+    {
+        if (order.has_value())
+        {
+            ShowInfoFmt("pawn: travel {}: no route {} -> {}, order cancelled", POwner->getName(), static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone));
+            pawn::clearTravelOrder(POwner->id);
+        }
+        else
+        {
+            ShowInfoFmt("pawn: travel {}: no route {} -> {}, teleporting to summoner", POwner->getName(), static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone));
+            pawn::requestTransfer(POwner->id, std::nullopt);
+        }
+        return;
+    }
+
+    const float distToLine = distance(POwner->loc.p, hop->walkTo);
+
+    if (narrate)
+    {
+        ShowInfoFmt("pawn: travel {}: zone {} -> {} via line at {:.1f}y", POwner->getName(), static_cast<uint16>(POwner->getZone()), static_cast<uint16>(hop->destinationZone), distToLine);
+    }
+
+    // Crossing requires physically reaching the line, like a player does
+    if (distToLine < TransferDistance)
+    {
+        pawn::requestTransfer(POwner->id, hop);
+        return;
+    }
+
+    // Fresh hop: start progress tracking anew
+    if (hop->destinationZone != m_TravelHopZone)
+    {
+        m_TravelHopZone      = hop->destinationZone;
+        m_TravelBestDist     = distToLine;
+        m_TravelProgressTime = m_Tick;
+    }
+
+    if (distToLine + 0.5f < m_TravelBestDist)
+    {
+        m_TravelBestDist     = distToLine;
+        m_TravelProgressTime = m_Tick;
+    }
+    else if (m_Tick - m_TravelProgressTime > 3s && distToLine < CrossingSlack)
+    {
+        // As close as the mesh allows counts as arrival
+        ShowInfoFmt("pawn: travel {}: no progress at {:.1f}y from the line, crossing", POwner->getName(), distToLine);
+        m_TravelHopZone = {};
+        pawn::requestTransfer(POwner->id, hop);
+        return;
+    }
+
+    if (!PathToward(hop->walkTo, 2.0f))
+    {
+        // Walked as far as the mesh reaches; the mesh often ends short of
+        // the zone mouth, and the server itself accepts crossings from up
+        // to ~40 yalms out
+        if (distToLine < CrossingSlack)
+        {
+            pawn::requestTransfer(POwner->id, hop);
+        }
+        else if (order.has_value())
+        {
+            ShowInfoFmt("pawn: travel {}: cannot path to line ({:.1f}y away), order cancelled", POwner->getName(), distToLine);
+            pawn::clearTravelOrder(POwner->id);
+        }
+        else
+        {
+            ShowInfoFmt("pawn: travel {}: cannot path to line ({:.1f}y away), teleporting to summoner", POwner->getName(), distToLine);
+            pawn::requestTransfer(POwner->id, std::nullopt);
+        }
+        return;
+    }
+
+    if (POwner->PAI->PathFind->IsFollowingPath())
+    {
+        POwner->PAI->PathFind->FollowPath(m_Tick);
+    }
 }
 
 auto CPawnController::GetLivePlayer() const -> CCharEntity*

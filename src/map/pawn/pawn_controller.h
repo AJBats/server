@@ -44,13 +44,19 @@ public:
 
     auto Tick(timer::time_point tick) -> Task<void> override;
 
-    static constexpr float RoamDistance    = 3.0f;
-    static constexpr float CastingDistance = 15.0f;
-    static constexpr float WarpDistance    = 30.0f;
+    static constexpr float RoamDistance     = 3.0f;
+    static constexpr float CastingDistance  = 15.0f;
+    static constexpr float WarpDistance     = 30.0f;
+    static constexpr float TransferDistance = 3.0f;
+    static constexpr float CrossingSlack    = 40.0f;
 
 private:
     auto DoCombatTick(timer::time_point tick) -> Task<void>;
     auto DoRoamTick(timer::time_point tick) -> Task<void>;
+
+    // The summoner is in another zone: walk the zone graph toward them,
+    // requesting a transfer at each zone line.
+    void TravelTick();
 
     // The human party member the pawn formation anchors on
     auto GetLivePlayer() const -> CCharEntity*;
@@ -70,6 +76,10 @@ private:
 
     timer::time_point                 m_CombatEndTime;
     timer::time_point                 m_LastHealTickTime;
+    timer::time_point                 m_LastTravelDebugTime;
+    timer::time_point                 m_TravelProgressTime;
+    float                             m_TravelBestDist = 0.0f;
+    xi::ZoneId                        m_TravelHopZone{};
     std::vector<std::chrono::seconds> m_tickDelays      = { std::chrono::seconds(15), std::chrono::seconds(10), std::chrono::seconds(10), std::chrono::seconds(3) };
     std::size_t                       m_NumHealingTicks = 0;
 };

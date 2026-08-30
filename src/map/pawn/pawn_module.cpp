@@ -69,6 +69,12 @@ class PawnModule : public CPPModule
             std::ignore = PLuaBaseEntity;
             return pawn::despawn(targetName);
         };
+
+        lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool
+        {
+            std::ignore = PLuaBaseEntity;
+            return pawn::orderTravelByName(targetName, zoneId);
+        };
     }
 
     void OnZoneTick(CZone* PZone) override

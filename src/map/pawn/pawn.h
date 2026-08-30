@@ -21,8 +21,11 @@
 
 #pragma once
 
+#include "pawn_travel.h"
+
 #include "common/cbasetypes.h"
 
+#include <optional>
 #include <string>
 
 class CCharEntity;
@@ -66,6 +69,21 @@ namespace pawn
 
     // True when the entity is a live pawn owned by this module.
     bool isPawn(const CCharEntity* PChar);
+
+    // The charid of the character that summoned this pawn; 0 when unknown.
+    auto summonerOf(uint32 pawnCharID) -> uint32;
+
+    // Queue a zone transfer, executed on the module tick. Without a hop the
+    // pawn is delivered straight to its summoner's side (the escape hatch
+    // for unroutable or unloaded destinations).
+    void requestTransfer(uint32 pawnCharID, std::optional<TravelHop> hop);
+
+    // Order the named pawn to travel to a zone, independent of its summoner.
+    // The order takes precedence over follow behavior and clears on arrival.
+    bool orderTravelByName(const std::string& targetName, uint16 zoneId);
+
+    auto travelOrderOf(uint32 pawnCharID) -> std::optional<xi::ZoneId>;
+    void clearTravelOrder(uint32 pawnCharID);
 
     // Record that a party invite reached this pawn (seen at OnPushPacket,
     // when InvitePending is already stamped on the entity). The pawn accepts

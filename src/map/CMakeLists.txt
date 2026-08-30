@@ -15,6 +15,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.h
 )
 
 set(MAP_CORE_SOURCES

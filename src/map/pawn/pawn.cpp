@@ -64,6 +64,15 @@ namespace
     // Pawns with a party invite awaiting their next-tick answer
     std::unordered_set<uint32> pendingInvites;
 
+    // pawn charid -> summoner charid
+    std::unordered_map<uint32, uint32> summonerByPawn;
+
+    // pawn charid -> ordered travel destination
+    std::unordered_map<uint32, xi::ZoneId> travelOrders;
+
+    // Zone transfers awaiting execution on the module tick
+    std::unordered_map<uint32, std::optional<pawn::TravelHop>> pendingTransfers;
+
     void savePawnPosition(const CCharEntity* PPawn)
     {
         db::preparedStmt("UPDATE chars "
@@ -309,7 +318,8 @@ namespace pawn
 
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
-        pawns[targetCharID] = std::move(PPawn);
+        summonerByPawn[targetCharID] = PSummoner->id;
+        pawns[targetCharID]          = std::move(PPawn);
         return true;
     }
 
@@ -348,8 +358,56 @@ namespace pawn
 
         ShowInfoFmt("pawn: despawned {} ({})", targetName, targetCharID);
 
+        summonerByPawn.erase(targetCharID);
+        pendingTransfers.erase(targetCharID);
+        travelOrders.erase(targetCharID);
         pawns.erase(it);
         return true;
+    }
+
+    bool orderTravelByName(const std::string& targetName, const uint16 zoneId)
+    {
+        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
+        if (targetCharID == 0 || !pawns.contains(targetCharID))
+        {
+            return false;
+        }
+
+        const auto destination = static_cast<xi::ZoneId>(zoneId);
+        if (zoneutils::GetZone(destination) == nullptr)
+        {
+            ShowWarningFmt("pawn: goto {}: zone {} is not loaded", targetName, zoneId);
+            return false;
+        }
+
+        travelOrders[targetCharID] = destination;
+        ShowInfoFmt("pawn: {} ordered to travel to zone {}", targetName, zoneId);
+        return true;
+    }
+
+    auto travelOrderOf(const uint32 pawnCharID) -> std::optional<xi::ZoneId>
+    {
+        const auto it = travelOrders.find(pawnCharID);
+        return it != travelOrders.end() ? std::optional{ it->second } : std::nullopt;
+    }
+
+    void clearTravelOrder(const uint32 pawnCharID)
+    {
+        travelOrders.erase(pawnCharID);
+    }
+
+    auto summonerOf(const uint32 pawnCharID) -> uint32
+    {
+        const auto it = summonerByPawn.find(pawnCharID);
+        return it != summonerByPawn.end() ? it->second : 0;
+    }
+
+    void requestTransfer(const uint32 pawnCharID, std::optional<TravelHop> hop)
+    {
+        if (pawns.contains(pawnCharID))
+        {
+            pendingTransfers.insert_or_assign(pawnCharID, std::move(hop));
+        }
     }
 
     bool isPawn(const CCharEntity* PChar)
@@ -362,12 +420,95 @@ namespace pawn
         pendingInvites.insert(PPawn->id);
     }
 
+    // Move a live pawn between zones same-process: the M2 despawn/spawn
+    // machinery back to back. Party membership, treasure pool and viewer
+    // packets are handled inside the two counter calls. A missing hop or an
+    // unloaded destination delivers the pawn straight to its summoner.
+    void executeTransfer(CCharEntity* PPawn, const std::optional<TravelHop>& hop)
+    {
+        CZone* POldZone = PPawn->loc.zone;
+        if (POldZone == nullptr)
+        {
+            return;
+        }
+
+        xi::ZoneId destZoneId{};
+        position_t arriveAt{};
+
+        if (hop.has_value())
+        {
+            destZoneId = hop->destinationZone;
+            arriveAt   = hop->arriveAt;
+        }
+
+        CZone* PDestZone = hop.has_value() ? zoneutils::GetZone(destZoneId) : nullptr;
+
+        if (PDestZone == nullptr)
+        {
+            CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
+            if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
+            {
+                return;
+            }
+            destZoneId = PSummoner->getZone();
+            arriveAt   = nearPosition(PSummoner->loc.p, kSpawnDistance, (float)M_PI);
+            PDestZone  = PSummoner->loc.zone;
+        }
+
+        if (PPawn->PAI->IsEngaged())
+        {
+            PPawn->PAI->Internal_Disengage();
+        }
+        PPawn->InvitePending.clean();
+
+        PPawn->loc.destination = destZoneId;
+        POldZone->DecreaseZoneCounter(PPawn);
+
+        PPawn->loc.p = arriveAt;
+        PDestZone->IncreaseZoneCounter(PPawn);
+
+        if (PPawn->loc.zone == nullptr)
+        {
+            ShowErrorFmt("pawn: transfer of {} ({}) into zone {} failed", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
+            return;
+        }
+
+        PPawn->clearPacketList();
+        PPawn->updatemask |= UPDATE_ALL_CHAR;
+
+        // The insert marked nearby viewers as having seen the pawn, but a
+        // viewer whose login handshake is mid-flight has its packet queue
+        // cleared, losing the spawn while the server believes it was sent.
+        // Unmark everyone; the per-tick spawn sync re-delivers cleanly.
+        PDestZone->ForEachChar([&](CCharEntity* PViewer)
+        {
+            if (PViewer != PPawn)
+            {
+                PViewer->SpawnPCList.erase(PPawn->id);
+            }
+        });
+
+        db::preparedStmt("UPDATE accounts_sessions SET targid = ? WHERE charid = ?", PPawn->targid, PPawn->id);
+        savePawnPosition(PPawn);
+
+        ShowInfoFmt("pawn: {} ({}) crossed into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
+    }
+
     void onZoneTick(CZone* PZone)
     {
         for (const auto& [charid, PPawn] : pawns)
         {
             if (PPawn->loc.zone != PZone)
             {
+                continue;
+            }
+
+            if (const auto transferIt = pendingTransfers.find(charid); transferIt != pendingTransfers.end())
+            {
+                const auto hop = std::move(transferIt->second);
+                pendingTransfers.erase(transferIt);
+                executeTransfer(PPawn.get(), hop);
+                PPawn->clearPacketList();
                 continue;
             }
 
