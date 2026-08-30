@@ -373,7 +373,8 @@ target_include_directories(xi_map
 
 target_link_libraries(xi_map
     PUBLIC
-        xi_map_lib)
+        xi_map_lib
+        xi_connect_lib)
 
 if (APPLE)
     disable_lto(xi_map)

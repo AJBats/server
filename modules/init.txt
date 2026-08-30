@@ -39,3 +39,4 @@
 # Live example:
 
 custom/lua/test_npcs_in_gm_home.lua
+cardian/sql/cardian_pawns.sql

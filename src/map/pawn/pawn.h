@@ -43,11 +43,22 @@ namespace pawn
     // Called once at map boot.
     void cleanupStaleRows();
 
-    // Load the named offline character (same account as the summoner) and
-    // insert it into the summoner's zone at the summoner's position.
-    // Returns false with no side effects if the target is unknown, online,
-    // already a pawn, itself, or on another account.
+    // Mint a generated pawn: a real character (male Hume Warrior, defaults)
+    // on its own generated account, registered in cardian_pawns and owned by
+    // the summoner's account. The character has never seen a lobby; spawn()
+    // gives it the standard first-login starter kit on first spawn.
+    bool create(CCharEntity* PSummoner, const std::string& targetName);
+
+    // Load the named offline character (the summoner's own alt, or a
+    // generated pawn owned by the summoner's account) and insert it into the
+    // summoner's zone at the summoner's position. Returns false with no side
+    // effects if the target is unknown, online, already a pawn, itself, or
+    // not owned.
     bool spawn(CCharEntity* PSummoner, const std::string& targetName);
+
+    // Run xi.player.charCreate on a freshly minted pawn (implemented in
+    // pawn_module.cpp so the sol2 cost stays out of pawn.cpp).
+    void applyStarterKit(CCharEntity* PPawn);
 
     // Remove a pawn from its zone and destroy it. No character state is
     // written back to the DB (the pawn visit leaves no trace).

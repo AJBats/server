@@ -21,10 +21,25 @@
 
 #include "pawn.h"
 
+#include "common/logging.h"
+
 #include "entities/char_entity.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
 #include "utils/moduleutils.h"
+
+namespace pawn
+{
+    void applyStarterKit(CCharEntity* PPawn)
+    {
+        const auto result = lua["xi"]["player"]["charCreate"](CLuaBaseEntity(PPawn));
+        if (!result.valid())
+        {
+            const sol::error err = result;
+            ShowErrorFmt("pawn: starter kit failed for {}: {}", PPawn->getName(), err.what());
+        }
+    }
+} // namespace pawn
 
 // Bindings and hooks live apart from the pawn logic: this TU pays the sol2
 // template compile cost, pawn.cpp does not.
@@ -33,6 +48,11 @@ class PawnModule : public CPPModule
     void OnInit() override
     {
         pawn::cleanupStaleRows();
+
+        lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        {
+            return pawn::create(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
+        };
 
         lua["CBaseEntity"]["pawnSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {

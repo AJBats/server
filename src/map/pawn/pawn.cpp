@@ -26,12 +26,16 @@
 #include "common/settings.h"
 
 #include "entities/char_entity.h"
+#include "login/login_helpers.h"
 #include "party.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
+#include <bcrypt/BCrypt.hpp>
+
 #include <memory>
+#include <random>
 #include <unordered_map>
 
 namespace
@@ -73,6 +77,79 @@ namespace pawn
         db::preparedStmt("DELETE FROM accounts_sessions WHERE client_addr = 0");
     }
 
+    bool create(CCharEntity* PSummoner, const std::string& targetName)
+    {
+        if (!isEnabled() || PSummoner == nullptr)
+        {
+            return false;
+        }
+
+        if (const auto invalidReason = loginHelpers::validateCharacterName(targetName); invalidReason.has_value())
+        {
+            ShowWarningFmt("pawn: cannot create {}: {}", targetName, *invalidReason);
+            return false;
+        }
+
+        uint32     accid = 0;
+        const auto accRset = db::preparedStmt("SELECT COALESCE(MAX(id), 0) AS max_id FROM accounts");
+        if (!accRset || !accRset->next())
+        {
+            return false;
+        }
+        accid = std::max<uint32>(1000, accRset->get<uint32>("max_id") + 1);
+
+        // The generated account is never logged into; the credentials exist
+        // only to keep the row shaped like every other account
+        std::random_device rd;
+        const auto         password = fmt::format("{:08x}{:08x}{:08x}{:08x}", rd(), rd(), rd(), rd());
+
+        if (!db::preparedStmt("INSERT INTO accounts (id, login, password, timecreate) VALUES (?, ?, ?, NOW())",
+                              accid, fmt::format("pawn{}", accid), BCrypt::generateHash(password)))
+        {
+            ShowErrorFmt("pawn: account creation failed for {}", targetName);
+            return false;
+        }
+
+        uint32     charid = 0;
+        const auto charRset = db::preparedStmt("SELECT COALESCE(MAX(charid), 0) AS max_id FROM chars");
+        if (!charRset || !charRset->next())
+        {
+            return false;
+        }
+        charid = charRset->get<uint32>("max_id") + 1;
+
+        char_mini mini = {
+            .m_name   = {},
+            .m_mjob   = static_cast<uint8>(xi::Job::WAR),
+            .m_zone   = xi::ZoneId::BastokMines,
+            .m_nation = NATION_BASTOK,
+        };
+
+        mini.m_look.race = static_cast<uint8>(CharRace::HumeMale);
+        mini.m_look.size = static_cast<uint16>(CharSize::Small);
+        mini.m_look.face = static_cast<uint8>(CharFace::Face1A);
+
+        std::strncpy(reinterpret_cast<char*>(mini.m_name), targetName.c_str(), sizeof(mini.m_name) - 1);
+        mini.m_name[sizeof(mini.m_name) - 1] = '\0';
+
+        loginHelpers::saveCharacter(accid, charid, &mini);
+
+        // Pawns never watch the opening cutscene; give them the city start
+        // position and home point that cutscene would have assigned
+        db::preparedStmt("DELETE FROM char_vars WHERE charid = ? AND varname = 'HQuest[newCharacterCS]notSeen'", charid);
+        db::preparedStmt("UPDATE chars "
+                         "SET pos_rot = 192, pos_x = -45, pos_y = 0, pos_z = 25,"
+                         "home_zone = ?, home_rot = 192, home_x = -45, home_y = 0, home_z = 25 "
+                         "WHERE charid = ?",
+                         static_cast<uint16>(xi::ZoneId::BastokMines), charid);
+
+        db::preparedStmt("INSERT INTO cardian_pawns (pawn_charid, owner_accid) VALUES (?, ?)",
+                         charid, PSummoner->accid);
+
+        ShowInfoFmt("pawn: created {} ({}) on generated account {} for {}", targetName, charid, accid, PSummoner->getName());
+        return true;
+    }
+
     bool spawn(CCharEntity* PSummoner, const std::string& targetName)
     {
         if (!isEnabled() || PSummoner == nullptr || PSummoner->loc.zone == nullptr)
@@ -99,14 +176,15 @@ namespace pawn
             return false;
         }
 
-        // Same account only
-        const auto rset = db::preparedStmt("SELECT t.charid FROM chars t "
-                                           "JOIN chars s ON s.accid = t.accid "
-                                           "WHERE t.charid = ? AND s.charid = ?",
-                                           targetCharID, PSummoner->id);
+        // The summoner's own alt, or a generated pawn owned by their account
+        const auto rset = db::preparedStmt("SELECT c.charid FROM chars c "
+                                           "JOIN chars s ON s.charid = ? "
+                                           "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
+                                           "WHERE c.charid = ? AND (c.accid = s.accid OR p.owner_accid = s.accid)",
+                                           PSummoner->id, targetCharID);
         if (!rset || !rset->next())
         {
-            ShowWarningFmt("pawn: target {} ({}) is not on {}'s account, refusing spawn", targetName, targetCharID, PSummoner->getName());
+            ShowWarningFmt("pawn: target {} ({}) is not owned by {}'s account, refusing spawn", targetName, targetCharID, PSummoner->getName());
             return false;
         }
 
@@ -156,6 +234,16 @@ namespace pawn
         db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid) VALUES (?, ?, ?)",
                          kPawnAccidBase + targetCharID, targetCharID, PPawn->targid);
         savePawnPosition(PPawn.get());
+
+        const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", targetCharID);
+        if (kitRset && kitRset->next())
+        {
+            applyStarterKit(PPawn.get());
+            charutils::SaveCharStats(PPawn.get());
+            charutils::SaveCharEquip(PPawn.get());
+            db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", targetCharID);
+            PPawn->clearPacketList();
+        }
 
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
