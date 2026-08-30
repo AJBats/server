@@ -11,8 +11,9 @@ return
 {
     name = 'WAR',
 
-    -- Weapon skills: as soon as TP allows, strongest known
-    tp = { ai.tp.ASAP, ai.s.HIGHEST },
+    -- Weapon skills: close whatever skillchain the party opens; with nothing
+    -- to close, open at 2000 TP rather than sit on it
+    tp = { ai.tp.CLOSER_UNTIL_TP, ai.s.HIGHEST, 2000 },
 
     gambits = b.list({
         -- Damage-dealer stance when someone else tanks
