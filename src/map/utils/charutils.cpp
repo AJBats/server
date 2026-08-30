@@ -6798,6 +6798,13 @@ auto SendToZone(CCharEntity* PChar, const xi::ZoneId zoneId) -> bool
 {
     TracyZoneScoped;
 
+    // Session-less chars (Cardian pawns) cannot zone through the client protocol
+    if (PChar->PSession == nullptr)
+    {
+        ShowWarningFmt("charutils::SendToZone : session-less char {} requested a zone change, ignoring", PChar->getName());
+        return false;
+    }
+
     if (PChar->PSession->blowfish.status == BLOWFISH_PENDING_ZONE)
     {
         return false;
@@ -7613,12 +7620,18 @@ void removeCharFromZone(CCharEntity* PChar)
             PChar->resetPetZoningInfo();
         }
 
-        PChar->PSession->shuttingDown = 1;
+        if (PChar->PSession)
+        {
+            PChar->PSession->shuttingDown = 1;
+        }
         db::preparedStmt("UPDATE char_stats SET zoning = 0 WHERE charid = ?", PChar->id);
     }
     else
     {
-        PChar->PSession->shuttingDown = 2;
+        if (PChar->PSession)
+        {
+            PChar->PSession->shuttingDown = 2;
+        }
         db::preparedStmt("UPDATE char_stats SET zoning = 1 WHERE charid = ?", PChar->id);
     }
 
@@ -7627,7 +7640,7 @@ void removeCharFromZone(CCharEntity* PChar)
         PChar->loc.zone->DecreaseZoneCounter(PChar);
     }
 
-    persist::flush(PChar, IsLogout(PChar->PSession->shuttingDown == 1));
+    persist::flush(PChar, IsLogout(PChar->PSession == nullptr || PChar->PSession->shuttingDown == 1));
     charutils::SavePlayTime(PChar);
     charutils::SaveCharStats(PChar);
     charutils::SaveCharExp(PChar, PChar->GetMJob());
