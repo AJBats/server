@@ -372,6 +372,22 @@ class PawnModule : public CPPModule
             return result;
         };
 
+        // Attack/defense for the companion equip screen; upstream exposes no
+        // Lua accessor for the computed values
+        lua["CBaseEntity"]["cardianCombatStats"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto stats   = ::lua.create_table();
+            stats["att"] = PPawn->ATT(SLOT_MAIN);
+            stats["def"] = PPawn->DEF();
+            return stats;
+        };
+
         lua["CBaseEntity"]["cardianGear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
