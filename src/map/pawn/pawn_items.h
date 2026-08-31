@@ -44,9 +44,20 @@ namespace pawn::items
     // Move qty from the player's LOC_INVENTORY slot into the pawn's
     // inventory, or back. The item must be idle (not equipped, not in a
     // bazaar, not mid-transaction); rare/stack rules on the receiving side
-    // are the transaction layer's.
-    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
+    // are the transaction layer's. landedSlot, when given, receives the
+    // pawn-side slot the stack arrived in (for give-and-use chaining).
+    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> std::string;
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
+
+    // The pawn uses the item in its LOC_INVENTORY slot on itself through
+    // its own AI -- cast time, job/level checks and spell learning all run
+    // the game's item machinery. Refusals raised inside the AI (wrong job,
+    // mid-action) surface only as drained packets; the caller re-syncs for
+    // the truth.
+    auto useItem(CCharEntity* PPawn, uint8 slot) -> std::string;
+
+    // Destroy qty of the stack in the pawn's LOC_INVENTORY slot.
+    auto dropItem(CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
 
     // Equip the item in the pawn's LOC_INVENTORY invSlot into equipSlot
     // (SLOTTYPE), or clear equipSlot. Both re-run gear sets, health and

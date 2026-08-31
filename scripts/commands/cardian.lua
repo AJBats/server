@@ -15,6 +15,10 @@
 --       strip <name> <eqslot>            unequip
 --       equipset <name> <eq:inv,...>     apply a whole loadout in one pass
 --                                        (invslot 0 clears the slot)
+--       use <name> <slot>                cardian uses the item on itself
+--       drop <name> <slot> <qty>         destroy part of a cardian's stack
+--       giveuse <name> <slot> <qty>      give from your inventory, then the
+--                                        cardian uses it (the scroll flow)
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -201,6 +205,31 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok take')
             sendInv(player, name)
         end
+    elseif verb == 'use' and name then
+        local err = player:cardianUse(name, tonumber(args[3]) or 0)
+        if err ~= '' then
+            reply(player, '#cd err use ' .. err)
+        else
+            -- the item decrements only when the use completes; the addon
+            -- re-syncs after the cast to see the result
+            reply(player, '#cd ok use')
+        end
+    elseif verb == 'drop' and name then
+        local err = player:cardianDrop(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
+        if err ~= '' then
+            reply(player, '#cd err drop ' .. err)
+        else
+            reply(player, '#cd ok drop')
+            sendInv(player, name)
+        end
+    elseif verb == 'giveuse' and name then
+        local err = player:cardianGiveUse(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
+        if err ~= '' then
+            reply(player, '#cd err giveuse ' .. err)
+        else
+            reply(player, '#cd ok giveuse')
+            sendInv(player, name)
+        end
     elseif verb == 'wear' and name then
         local err = player:cardianWear(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0)
         if err ~= '' then
@@ -222,7 +251,7 @@ commandObj.onTrigger = function(player, line)
             sendInv(player, name)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> | gear <name> | give <name> <slot> <qty> | take <name> <slot> <qty> | wear <name> <invslot> <eqslot> | strip <name> <eqslot> | equipset <name> <eq:inv,...>')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty>')
     end
 end
 

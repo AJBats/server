@@ -372,6 +372,36 @@ class PawnModule : public CPPModule
             return result;
         };
 
+        lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::useItem(PPawn, slot) : "no such cardian";
+        };
+
+        lua["CBaseEntity"]["cardianDrop"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::dropItem(PPawn, slot, qty) : "no such cardian";
+        };
+
+        // The scroll flow in one action: transfer, then the pawn uses the
+        // stack from wherever it landed
+        lua["CBaseEntity"]["cardianGiveUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+
+            uint8 landed = 0;
+            if (auto err = pawn::items::giveToPawn(PChar, PPawn, slot, qty, &landed); !err.empty())
+            {
+                return err;
+            }
+            return pawn::items::useItem(PPawn, landed);
+        };
+
         // Attack/defense for the companion equip screen; upstream exposes no
         // Lua accessor for the computed values
         lua["CBaseEntity"]["cardianCombatStats"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object

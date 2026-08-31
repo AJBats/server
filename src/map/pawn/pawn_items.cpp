@@ -24,7 +24,9 @@
 
 #include "common/logging.h"
 
+#include "ai/ai_container.h"
 #include "entities/char_entity.h"
+#include "entities/entity_id.h"
 #include "enums/item_state.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -48,6 +50,8 @@ namespace
         {
             this->rollbackIfOpen();
         }
+
+        uint8 landedSlot = 0;
 
         auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> std::string
         {
@@ -84,11 +88,13 @@ namespace
 
             // Receiver first: an out-of-space refusal is the common failure,
             // and this order leaves nothing to undo when it happens
-            if (!this->give(PReceiver, LOC_INVENTORY, std::move(stack)).has_value())
+            const auto landed = this->give(PReceiver, LOC_INVENTORY, std::move(stack));
+            if (!landed.has_value())
             {
                 this->rollback();
                 return "no space";
             }
+            this->landedSlot = *landed;
             if (!this->take(PSender, LOC_INVENTORY, slot, qty))
             {
                 this->rollback();
@@ -131,9 +137,16 @@ namespace
 
 namespace pawn::items
 {
-    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
+    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> std::string
     {
-        return CardianTransfer().move(PPlayer, PPawn, slot, qty);
+        CardianTransfer transfer;
+
+        auto result = transfer.move(PPlayer, PPawn, slot, qty);
+        if (result.empty() && landedSlot != nullptr)
+        {
+            *landedSlot = transfer.landedSlot;
+        }
+        return result;
     }
 
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
@@ -188,6 +201,64 @@ namespace pawn::items
         luautils::CheckForGearSet(PPawn);
         PPawn->UpdateHealth();
         PPawn->retriggerLatents = true;
+        return {};
+    }
+
+    auto useItem(CCharEntity* PPawn, const uint8 slot) -> std::string
+    {
+        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+        const CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
+
+        if (PItem == nullptr || PItem->getQuantity() == 0)
+        {
+            return "no item in that slot";
+        }
+        if (!PItem->isType(ITEM_USABLE))
+        {
+            return "item cannot be used";
+        }
+        if (PItem->isBusy())
+        {
+            return "item is busy";
+        }
+
+        if (!PPawn->PAI->UseItem(EntityId(PPawn), LOC_INVENTORY, slot))
+        {
+            return "cannot use right now";
+        }
+        return {};
+    }
+
+    auto dropItem(CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
+    {
+        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+        const CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
+
+        if (PItem == nullptr || PItem->getQuantity() == 0)
+        {
+            return "no item in that slot";
+        }
+        if (PItem->isType(ITEM_CURRENCY))
+        {
+            return "gil cannot be dropped";
+        }
+        if (PItem->isBusy())
+        {
+            return "item is busy";
+        }
+        if (qty == 0 || qty > PItem->getQuantity())
+        {
+            return "bad quantity";
+        }
+
+        const uint32 before = PItem->getQuantity();
+        charutils::DropItem(PPawn, LOC_INVENTORY, slot, static_cast<int32>(qty), PItem->getID());
+
+        const CItem* PAfter = storage->GetItem(slot);
+        if (PAfter != nullptr && PAfter->getQuantity() == before)
+        {
+            return "cannot drop";
+        }
         return {};
     }
 
