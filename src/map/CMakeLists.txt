@@ -9,6 +9,7 @@ add_subdirectory(packets)
 add_subdirectory(utils)
 
 set(APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/login_party.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
 )
 
