@@ -10,6 +10,17 @@ add_subdirectory(utils)
 
 set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_gambits.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_gambits.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_spellbook.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_spellbook.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.h
 )
 
 set(MAP_CORE_SOURCES
@@ -370,7 +381,8 @@ target_include_directories(xi_map
 
 target_link_libraries(xi_map
     PUBLIC
-        xi_map_lib)
+        xi_map_lib
+        xi_connect_lib)
 
 if (APPLE)
     disable_lto(xi_map)
