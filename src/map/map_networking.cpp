@@ -33,7 +33,7 @@
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 
-#include "charswap.h"
+#include "charswap.h" // CARDIAN
 #include "ipc_client.h"
 #include "latent_effect_container.h"
 #include "map_session.h"
@@ -276,8 +276,8 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
 
         if (PSession->PChar == nullptr)
         {
-            // Cardian charswap: a staged swap answers this re-login with another character
-            packetCharID = charswap::resolve(packetCharID);
+            // CARDIAN: a staged swap answers this re-login with another character
+            packetCharID = charswap::resolve(packetCharID, PSession);
 
             uint16 langID    = loginPacket.uCliLang;
             uint32 accountID = 0;
@@ -307,7 +307,12 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
                 ShowError("recv_parse: Cannot load session_key for charid %u", packetCharID);
             }
 
-            PSession->PChar     = charutils::LoadChar(packetCharID);
+            // CARDIAN: a staged swap may hand over a live entity instead of loading one
+            PSession->PChar = charswap::adopt(packetCharID);
+            if (PSession->PChar == nullptr)
+            {
+                PSession->PChar = charutils::LoadChar(packetCharID);
+            }
             PSession->charID    = packetCharID;
             PSession->accountID = accountID;
 
@@ -649,6 +654,8 @@ int32 MapNetworking::send_parse(uint8* buff, size_t* buffsize, MapSession* PSess
         }
 
         PSession->blowfish.status = BLOWFISH_PENDING_ZONE;
+        // CARDIAN: a staged swap may keep the outgoing character alive
+        charswap::surrender(PChar->id, PChar->PSession->PChar);
         PChar->PSession->PChar.reset(); // destroy PChar
     }
 

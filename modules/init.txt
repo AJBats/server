@@ -39,5 +39,6 @@
 # Live example:
 
 custom/lua/test_npcs_in_gm_home.lua
+# CARDIAN: pawn module (schema + brains)
 cardian/sql/cardian_pawns.sql
 cardian/lua/pawn/brain.lua

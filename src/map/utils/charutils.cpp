@@ -6798,7 +6798,7 @@ auto SendToZone(CCharEntity* PChar, const xi::ZoneId zoneId) -> bool
 {
     TracyZoneScoped;
 
-    // Session-less chars (Cardian pawns) cannot zone through the client protocol
+    // CARDIAN: session-less characters (pawns) cannot zone through the client protocol
     if (PChar->PSession == nullptr)
     {
         ShowWarningFmt("charutils::SendToZone : session-less char {} requested a zone change, ignoring", PChar->getName());
@@ -7620,7 +7620,7 @@ void removeCharFromZone(CCharEntity* PChar)
             PChar->resetPetZoningInfo();
         }
 
-        if (PChar->PSession)
+        if (PChar->PSession) // CARDIAN: pawns have no session
         {
             PChar->PSession->shuttingDown = 1;
         }
@@ -7628,7 +7628,7 @@ void removeCharFromZone(CCharEntity* PChar)
     }
     else
     {
-        if (PChar->PSession)
+        if (PChar->PSession) // CARDIAN: pawns have no session
         {
             PChar->PSession->shuttingDown = 2;
         }
@@ -7640,7 +7640,7 @@ void removeCharFromZone(CCharEntity* PChar)
         PChar->loc.zone->DecreaseZoneCounter(PChar);
     }
 
-    persist::flush(PChar, IsLogout(PChar->PSession == nullptr || PChar->PSession->shuttingDown == 1));
+    persist::flush(PChar, IsLogout(PChar->PSession == nullptr || PChar->PSession->shuttingDown == 1)); // CARDIAN: pawns have no session
     charutils::SavePlayTime(PChar);
     charutils::SaveCharStats(PChar);
     charutils::SaveCharExp(PChar, PChar->GetMJob());

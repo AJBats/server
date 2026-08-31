@@ -23,6 +23,11 @@ xi.settings.pawn =
     -- above this value or the pawn runs at the limit instead.
     PAWN_SPEED = 107,
 
+    -- Milliseconds a pawn waits before answering a party invite. 0 answers on
+    -- the next zone tick; a human takes seconds, and the retail client's
+    -- party UI is being tested against that difference.
+    INVITE_ACCEPT_DELAY = 0,
+
     -- Log every gambit action a pawn takes (spell, ability, weapon skill,
     -- ranged attack) with its target. Dev aid for tuning brains.
     GAMBIT_DEBUG = false,

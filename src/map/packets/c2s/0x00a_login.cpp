@@ -24,7 +24,7 @@
 
 #include "ai/ai_container.h"
 #include "ai/helpers/action_queue.h"
-#include "charswap.h"
+#include "charswap.h" // CARDIAN
 #include "entities/char_entity.h"
 #include "lua/luautils.h"
 #include "packets/s2c/0x01c_item_max.h"
@@ -38,7 +38,7 @@
 auto GP_CLI_COMMAND_LOGIN::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     return PacketValidator(PChar)
-        // Cardian charswap: a swapped client still claims its original charid
+        // CARDIAN: a swapped client still claims its original charid
         .mustEqual(this->UniqueNo == PChar->id || charswap::isClientClaimFor(PChar->id, this->UniqueNo), true, "Player ID mismatch")
         .mustNotEqual(PSession->blowfish.status == BLOWFISH_ACCEPTED && PChar->status == xi::Status::Normal && PSession->hasDecryptedPacket, true, "Player already logged in.");
 }
@@ -72,7 +72,11 @@ void GP_CLI_COMMAND_LOGIN::process(MapSession* PSession, CCharEntity* PChar) con
         PSession->blowfish.status = BLOWFISH_ACCEPTED;
         PChar->clearPacketList();
 
-        if (PChar->loc.zone != nullptr)
+        // CARDIAN: a live character already standing in its zone re-runs the
+        // handshake in place instead of being inserted again
+        const bool inPlace = charswap::takeInPlaceHandover(PChar->id);
+
+        if (PChar->loc.zone != nullptr && !inPlace)
         {
             ShowError(fmt::format("{} sent 0x00A while their original zone wasn't wiped!", PChar->getName()));
             return;
@@ -98,7 +102,15 @@ void GP_CLI_COMMAND_LOGIN::process(MapSession* PSession, CCharEntity* PChar) con
             return;
         }
 
-        destZone->IncreaseZoneCounter(PChar);
+        // CARDIAN: in place, the zone already counts this character
+        if (inPlace)
+        {
+            PChar->loc.destination = xi::ZoneId::Unknown;
+        }
+        else
+        {
+            destZone->IncreaseZoneCounter(PChar);
+        }
 
         if (PChar->loc.zone == nullptr)
         {
@@ -106,8 +118,15 @@ void GP_CLI_COMMAND_LOGIN::process(MapSession* PSession, CCharEntity* PChar) con
             return;
         }
 
-        luautils::OnZoneIn(PChar);
-        luautils::OnGameIn(PChar, PChar->arrivedByZoning);
+        // CARDIAN: an in-place handover is a session move, not an arrival: the
+        // character's zone-in and game-in hooks already ran (or were
+        // deliberately skipped when it crossed as a cardian) and must not
+        // fire a zone-in cutscene into the possession handshake
+        if (!inPlace)
+        {
+            luautils::OnZoneIn(PChar);
+            luautils::OnGameIn(PChar, PChar->arrivedByZoning);
+        }
 
         // Current zone could either be current zone or destination
         CZone* currentZone = zoneutils::GetZone(PChar->getZone());

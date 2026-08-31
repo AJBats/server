@@ -25,6 +25,7 @@
 
 #include "common/cbasetypes.h"
 
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -41,6 +42,12 @@ class CZone;
 namespace pawn
 {
     bool isEnabled();
+
+    // The account that owns what this character can summon or possess: the
+    // session's lobby-authenticated account for a played character (which
+    // may itself be a generated cardian on a generated account), else the
+    // character's own.
+    auto ownerAccountOf(const CCharEntity* PChar) -> uint32;
 
     // Delete orphaned pawn session rows (client_addr = 0) left by a crash.
     // Called once at map boot.
@@ -76,6 +83,28 @@ namespace pawn
 
     // True when the entity is a live pawn owned by this module.
     bool isPawn(const CCharEntity* PChar);
+
+    // The live pawn with this charid, or nullptr.
+    auto findPawn(uint32 pawnCharID) -> CCharEntity*;
+
+    // Possession support --------------------------------------------------
+
+    // Take a live pawn out of the module and out of its zone, restoring a
+    // player's controller, pathing and speed, so a session can adopt it.
+    // Party membership and every live stat, effect and timer stay as they
+    // are; the entity is left the way a fresh load leaves it for the zone-in
+    // handshake (out of zone, Disappear, destination = its own zone, standing
+    // where it stood). Session rows are the swap's business, not this one's.
+    auto release(uint32 pawnCharID) -> std::unique_ptr<CCharEntity>;
+
+    // Make a live character that is currently out of its zone (a session has
+    // just given it up) a pawn: inserted back into loc.destination at its own
+    // position, driven by CPawnController, following summonerCharID. On
+    // failure the entity is destroyed and false returned.
+    bool adopt(std::unique_ptr<CCharEntity> PChar, uint32 summonerCharID);
+
+    // Every pawn following fromCharID follows toCharID from now on.
+    void reparent(uint32 fromCharID, uint32 toCharID);
 
     // The charid of the character that summoned this pawn; 0 when unknown.
     auto summonerOf(uint32 pawnCharID) -> uint32;

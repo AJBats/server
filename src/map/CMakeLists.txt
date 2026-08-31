@@ -10,6 +10,7 @@ add_subdirectory(utils)
 
 set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
+    # CARDIAN: pawn/possession modules -- APP_SOURCES so their self-registration is linked
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.cpp
@@ -17,6 +18,10 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_gambits.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_gambits.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_teach.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_teach.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_spellbook.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_spellbook.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.cpp
@@ -53,6 +58,7 @@ set(MAP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/campaign_system.h
     ${CMAKE_CURRENT_SOURCE_DIR}/char_recast_container.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/char_recast_container.h
+    # CARDIAN: session rebind, core because map_networking calls it
     ${CMAKE_CURRENT_SOURCE_DIR}/charswap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/charswap.h
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.cpp
@@ -384,6 +390,7 @@ target_include_directories(xi_map
 target_link_libraries(xi_map
     PUBLIC
         xi_map_lib
+        # CARDIAN: pawn genesis mints characters through login/login_helpers.h
         xi_connect_lib)
 
 if (APPLE)

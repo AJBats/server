@@ -26,13 +26,16 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/utils.h"
+#include "common/timer.h"
 #include "common/xirand.h"
 
 #include <cmath>
 
 #include "ai/ai_container.h"
+#include "ai/controllers/player_controller.h"
 #include "ai/helpers/pathfind.h"
 #include "entities/char_entity.h"
+#include "map_session.h"
 #include "navmesh/navmesh.h"
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
@@ -66,8 +69,10 @@ namespace
     // cleanupStaleRows() reclaims on the next boot.
     auto& pawns = *new std::unordered_map<uint32, std::unique_ptr<CCharEntity>>();
 
-    // Pawns with a party invite awaiting their next-tick answer
-    std::unordered_set<uint32> pendingInvites;
+    // Pawns with a party invite -> when to answer it. A human answers seconds
+    // after the invite; answering on the next tick is a tell the client's
+    // party UI may not expect (pawn.INVITE_ACCEPT_DELAY, milliseconds).
+    std::unordered_map<uint32, timer::time_point> pendingInvites;
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
@@ -92,6 +97,36 @@ namespace
                          PPawn->loc.p.z,
                          PPawn->id);
     }
+
+    // Everything that turns a character standing in a zone into a pawn:
+    // its own mover and brain, pawn speed, and the session row that gives
+    // it presence (/sea, party queries, the lobby's already-online check;
+    // client_addr stays 0 to mark the row as pawn-owned).
+    void install(CCharEntity* PPawn)
+    {
+        // Chars are built with no pathfinder (clients move them); a pawn
+        // moves itself
+        PPawn->PAI->PathFind = std::make_unique<CPathFind>(PPawn);
+        PPawn->PAI->SetController(std::make_unique<CPawnController>(PPawn));
+
+        PPawn->baseSpeed = settings::get<uint8>("pawn.PAWN_SPEED");
+        PPawn->UpdateSpeed();
+
+        // Upsert, never delete-then-insert: accounts_parties cascades on a
+        // session-row delete, and a character handed over mid-party keeps
+        // its row (parked by charswap) and its party.
+        db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, ?, 0) "
+                         "ON DUPLICATE KEY UPDATE accid = VALUES(accid), targid = VALUES(targid), client_addr = 0",
+                         kPawnAccidBase + PPawn->id, PPawn->id, PPawn->targid);
+        savePawnPosition(PPawn);
+    }
+
+    void registerPawn(std::unique_ptr<CCharEntity> PPawn, const uint32 summonerCharID)
+    {
+        const uint32 charid    = PPawn->id;
+        summonerByPawn[charid] = summonerCharID;
+        pawns[charid]          = std::move(PPawn);
+    }
 } // namespace
 
 namespace pawn
@@ -99,6 +134,28 @@ namespace pawn
     bool isEnabled()
     {
         return settings::get<bool>("pawn.ENABLE_PAWNS");
+    }
+
+    auto ownerAccountOf(const CCharEntity* PChar) -> uint32
+    {
+        if (PChar == nullptr)
+        {
+            return 0;
+        }
+
+        // A played character's session row carries the account the lobby
+        // authenticated, and a swap rebinds only the row's charid; the core
+        // fills PSession->accountID from chars.accid instead, which is the
+        // generated account of a possessed generated cardian.
+        if (PChar->PSession != nullptr)
+        {
+            const auto rset = db::preparedStmt("SELECT accid FROM accounts_sessions WHERE charid = ? AND client_addr <> 0", PChar->id);
+            if (rset && rset->next())
+            {
+                return rset->get<uint32>("accid");
+            }
+        }
+        return PChar->accid;
     }
 
     void cleanupStaleRows()
@@ -174,7 +231,7 @@ namespace pawn
                          static_cast<uint16>(xi::ZoneId::BastokMines), charid);
 
         db::preparedStmt("INSERT INTO cardian_pawns (pawn_charid, owner_accid) VALUES (?, ?)",
-                         charid, PSummoner->accid);
+                         charid, ownerAccountOf(PSummoner));
 
         ShowInfoFmt("pawn: created {} ({}) on generated account {} for {}", targetName, charid, accid, PSummoner->getName());
         return true;
@@ -206,15 +263,18 @@ namespace pawn
             return false;
         }
 
-        // The summoner's own alt, or a generated pawn owned by their account
-        const auto rset = db::preparedStmt("SELECT c.charid FROM chars c "
-                                           "JOIN chars s ON s.charid = ? "
-                                           "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
-                                           "WHERE c.charid = ? AND (c.accid = s.accid OR p.owner_accid = s.accid)",
-                                           PSummoner->id, targetCharID);
+        // The player's own alt, or a generated pawn owned by their account.
+        // The account is the session's (the one the lobby authenticated):
+        // a possessed generated cardian lives on a generated account, and the
+        // player's holdings must not shrink while they play it.
+        const uint32 ownerAccid = ownerAccountOf(PSummoner);
+        const auto   rset       = db::preparedStmt("SELECT c.charid FROM chars c "
+                                                   "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
+                                                   "WHERE c.charid = ? AND (c.accid = ? OR p.owner_accid = ?)",
+                                                   targetCharID, ownerAccid, ownerAccid);
         if (!rset || !rset->next())
         {
-            ShowWarningFmt("pawn: target {} ({}) is not owned by {}'s account, refusing spawn", targetName, targetCharID, PSummoner->getName());
+            ShowWarningFmt("pawn: target {} ({}) is not owned by {}'s account {}, refusing spawn", targetName, targetCharID, PSummoner->getName(), ownerAccid);
             return false;
         }
 
@@ -295,21 +355,7 @@ namespace pawn
         PPawn->clearPacketList();
         PPawn->updatemask |= UPDATE_ALL_CHAR;
 
-        // Chars are built with no pathfinder (clients move them); a pawn
-        // moves itself
-        PPawn->PAI->PathFind = std::make_unique<CPathFind>(PPawn.get());
-        PPawn->PAI->SetController(std::make_unique<CPawnController>(PPawn.get()));
-
-        PPawn->baseSpeed = settings::get<uint8>("pawn.PAWN_SPEED");
-        PPawn->UpdateSpeed();
-
-        // accounts_sessions drives /sea, party membership queries and the
-        // lobby's already-online check; client_addr stays 0 to mark the row
-        // as pawn-owned
-        db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ?", targetCharID);
-        db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid) VALUES (?, ?, ?)",
-                         kPawnAccidBase + targetCharID, targetCharID, PPawn->targid);
-        savePawnPosition(PPawn.get());
+        install(PPawn.get());
 
         const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", targetCharID);
         if (kitRset && kitRset->next())
@@ -323,8 +369,7 @@ namespace pawn
 
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
-        summonerByPawn[targetCharID] = PSummoner->id;
-        pawns[targetCharID]          = std::move(PPawn);
+        registerPawn(std::move(PPawn), PSummoner->id);
         return true;
     }
 
@@ -431,9 +476,98 @@ namespace pawn
         return PChar != nullptr && pawns.contains(PChar->id);
     }
 
+    auto findPawn(const uint32 pawnCharID) -> CCharEntity*
+    {
+        const auto it = pawns.find(pawnCharID);
+        return it != pawns.end() ? it->second.get() : nullptr;
+    }
+
+    auto release(const uint32 pawnCharID) -> std::unique_ptr<CCharEntity>
+    {
+        const auto it = pawns.find(pawnCharID);
+        if (it == pawns.end())
+        {
+            return nullptr;
+        }
+
+        auto PChar = std::move(it->second);
+        pawns.erase(it);
+        summonerByPawn.erase(pawnCharID);
+        pendingInvites.erase(pawnCharID);
+        pendingTransfers.erase(pawnCharID);
+        travelOrders.erase(pawnCharID);
+        PChar->InvitePending.clean();
+
+        // Nothing moves: the character keeps its zone, targid, position,
+        // party, effects and fight. The client about to look through its
+        // eyes re-runs the zone-in handshake in place, so it has to be shown
+        // the world again (the party is re-taught after its handshake, see
+        // party_teach.h).
+        PChar->loc.destination     = PChar->getZone();
+        PChar->loc.prevzone        = PChar->getZone();
+        PChar->arrivedByZoning     = true;
+        PChar->requestedZoneChange = false;
+        PChar->SpawnPCList.clear();
+        PChar->SpawnMOBList.clear();
+        PChar->SpawnNPCList.clear();
+        PChar->SpawnPETList.clear();
+        PChar->SpawnTRUSTList.clear();
+
+        // Back to a player's action surface: the stock controller, no
+        // server-side pathing, stock speed
+        PChar->PAI->SetController(std::make_unique<CPlayerController>(PChar.get()));
+        PChar->PAI->PathFind.reset();
+        PChar->baseSpeed = settings::get<uint8>("map.BASE_SPEED");
+        PChar->UpdateSpeed();
+        PChar->clearPacketList();
+
+        ShowInfoFmt("pawn: released {} ({}) from pawn duty for a session, in place", PChar->getName(), PChar->id);
+        return PChar;
+    }
+
+    bool adopt(std::unique_ptr<CCharEntity> PChar, const uint32 summonerCharID)
+    {
+        if (!isEnabled() || PChar == nullptr || pawns.contains(PChar->id))
+        {
+            return false;
+        }
+
+        if (PChar->loc.zone == nullptr)
+        {
+            ShowErrorFmt("pawn: cannot adopt {} ({}): not standing in a zone", PChar->getName(), PChar->id);
+            return false;
+        }
+
+        // The session that gave this character up is no longer its owner;
+        // the character itself does not move, leave, or re-enter anything
+        PChar->PSession            = nullptr;
+        PChar->requestedZoneChange = false;
+        PChar->status              = xi::Status::Normal;
+        PChar->clearPacketList();
+
+        install(PChar.get());
+
+        ShowInfoFmt("pawn: adopted {} ({}) as a pawn in place, zone {}, following {}", PChar->getName(), PChar->id, static_cast<uint16>(PChar->getZone()), summonerCharID);
+
+        registerPawn(std::move(PChar), summonerCharID);
+        return true;
+    }
+
+    void reparent(const uint32 fromCharID, const uint32 toCharID)
+    {
+        for (auto& [pawnCharID, summonerCharID] : summonerByPawn)
+        {
+            if (summonerCharID == fromCharID)
+            {
+                summonerCharID = toCharID;
+            }
+        }
+    }
+
     void noteInvite(const CCharEntity* PPawn)
     {
-        pendingInvites.insert(PPawn->id);
+        const auto delay = std::chrono::milliseconds(settings::get<uint32>("pawn.INVITE_ACCEPT_DELAY"));
+        pendingInvites.insert_or_assign(PPawn->id, timer::now() + delay);
     }
 
     // Move a live pawn between zones same-process: the M2 despawn/spawn
@@ -528,15 +662,21 @@ namespace pawn
                 continue;
             }
 
-            if (pendingInvites.erase(charid) != 0 && PPawn->InvitePending.UniqueNo != 0)
+            const auto inviteIt = pendingInvites.find(charid);
+            if (inviteIt != pendingInvites.end() && timer::now() >= inviteIt->second)
             {
-                GP_CLI_COMMAND_GROUP_SOLICIT_RES answer{};
-                answer.Res = std::to_underlying(GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Accept);
+                pendingInvites.erase(inviteIt);
 
-                if (answer.validate(nullptr, PPawn.get()).valid())
+                if (PPawn->InvitePending.UniqueNo != 0)
                 {
-                    ShowInfoFmt("pawn: {} accepts the party invite", PPawn->getName());
-                    answer.process(nullptr, PPawn.get());
+                    GP_CLI_COMMAND_GROUP_SOLICIT_RES answer{};
+                    answer.Res = std::to_underlying(GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Accept);
+
+                    if (answer.validate(nullptr, PPawn.get()).valid())
+                    {
+                        ShowInfoFmt("pawn: {} accepts the party invite", PPawn->getName());
+                        answer.process(nullptr, PPawn.get());
+                    }
                 }
             }
 
