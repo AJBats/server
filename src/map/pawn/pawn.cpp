@@ -59,7 +59,12 @@ namespace
 
     // charid -> owned pawn entity. The module is the lifetime owner, the way
     // MapSession owns a player's char; zones and viewers hold raw pointers.
-    std::unordered_map<uint32, std::unique_ptr<CCharEntity>> pawns;
+    // The container is heap-allocated and never freed: ~CCharEntity writes
+    // to the database, and the settings and database statics it relies on
+    // are already destroyed by the time exit handlers would run a static
+    // map's destructor. Pawns still alive at exit leave session rows that
+    // cleanupStaleRows() reclaims on the next boot.
+    auto& pawns = *new std::unordered_map<uint32, std::unique_ptr<CCharEntity>>();
 
     // Pawns with a party invite awaiting their next-tick answer
     std::unordered_set<uint32> pendingInvites;
