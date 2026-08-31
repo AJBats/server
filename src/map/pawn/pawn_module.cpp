@@ -22,12 +22,14 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
+#include "pawn_items.h"
 
 #include "common/logging.h"
 
 #include "ai/ai_container.h"
 #include "entities/char_entity.h"
 #include "enums/packet_s2c.h"
+#include "item_container.h"
 #include "enums/party_kind.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
@@ -297,6 +299,93 @@ class PawnModule : public CPPModule
             {
                 PGambits->SetTPSkillSettings(static_cast<G_TP_TRIGGER>(trigger), static_cast<G_SELECT>(select), value.is<uint16>() ? value.as<uint16>() : 0);
             }
+        };
+
+        // Cardian management surface (!cardian command / companion addon).
+        // Every call resolves the named pawn through findManagedPawn, so only
+        // the summoner can inspect or move a cardian's belongings. Mutators
+        // return "" on success, else a reason forwarded to the addon.
+        const auto managedPair = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::pair<CCharEntity*, CCharEntity*>
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return { PChar, pawn::findManagedPawn(PChar, name) };
+        };
+
+        lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto  names = ::lua.create_table();
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar != nullptr)
+            {
+                for (const auto& name : pawn::managedPawnNames(PChar->id))
+                {
+                    names.add(name);
+                }
+            }
+            return names;
+        };
+
+        lua["CBaseEntity"]["cardianGive"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::giveToPawn(PChar, PPawn, slot, qty) : "no such cardian";
+        };
+
+        lua["CBaseEntity"]["cardianTake"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::takeFromPawn(PChar, PPawn, slot, qty) : "no such cardian";
+        };
+
+        lua["CBaseEntity"]["cardianWear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 invSlot, const uint8 equipSlot) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::equip(PPawn, invSlot, equipSlot) : "no such cardian";
+        };
+
+        lua["CBaseEntity"]["cardianStrip"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::unequip(PPawn, equipSlot) : "no such cardian";
+        };
+
+        lua["CBaseEntity"]["cardianInv"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto result = ::lua.create_table();
+            if (const auto* storage = PPawn->getStorage(LOC_INVENTORY))
+            {
+                result["size"] = storage->GetSize();
+                result["free"] = storage->GetFreeSlotsCount();
+            }
+            auto chunkTable = ::lua.create_table();
+            for (const auto& chunk : pawn::items::inventoryChunks(PPawn))
+            {
+                chunkTable.add(chunk);
+            }
+            result["chunks"] = chunkTable;
+            return result;
+        };
+
+        lua["CBaseEntity"]["cardianGear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto chunkTable = ::lua.create_table();
+            for (const auto& chunk : pawn::items::equipChunks(PPawn))
+            {
+                chunkTable.add(chunk);
+            }
+            return chunkTable;
         };
     }
 

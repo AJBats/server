@@ -46,6 +46,7 @@
 
 #include <bcrypt/BCrypt.hpp>
 
+#include <algorithm>
 #include <memory>
 #include <random>
 #include <unordered_map>
@@ -480,6 +481,35 @@ namespace pawn
     {
         const auto it = pawns.find(pawnCharID);
         return it != pawns.end() ? it->second.get() : nullptr;
+    }
+
+    auto findManagedPawn(const CCharEntity* PSummoner, const std::string& targetName) -> CCharEntity*
+    {
+        if (PSummoner == nullptr)
+        {
+            return nullptr;
+        }
+
+        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
+        if (targetCharID == 0 || summonerOf(targetCharID) != PSummoner->id)
+        {
+            return nullptr;
+        }
+        return findPawn(targetCharID);
+    }
+
+    auto managedPawnNames(const uint32 summonerCharID) -> std::vector<std::string>
+    {
+        std::vector<std::string> names;
+        for (const auto& [charid, PPawn] : pawns)
+        {
+            if (summonerOf(charid) == summonerCharID)
+            {
+                names.emplace_back(PPawn->getName());
+            }
+        }
+        std::ranges::sort(names);
+        return names;
     }
 
     auto release(const uint32 pawnCharID) -> std::unique_ptr<CCharEntity>

@@ -1,0 +1,237 @@
+/*
+===========================================================================
+
+  Copyright (c) 2026 Cardian
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see http://www.gnu.org/licenses/
+
+===========================================================================
+*/
+
+#include "pawn_items.h"
+#include "pawn.h"
+
+#include "common/logging.h"
+
+#include "entities/char_entity.h"
+#include "enums/item_state.h"
+#include "item_container.h"
+#include "items/item.h"
+#include "items/item_equipment.h"
+#include "items/transaction.h"
+#include "lua/luautils.h"
+#include "utils/charutils.h"
+#include "utils/itemutils.h"
+
+#include <fmt/format.h>
+
+namespace
+{
+    // A one-stack move between two live characters: claim the source stack,
+    // give a clone to the receiver, take from the sender, commit. Any
+    // refusal rolls the whole move back through the layer's undo log.
+    class CardianTransfer final : public Transaction
+    {
+    public:
+        ~CardianTransfer() override
+        {
+            this->rollbackIfOpen();
+        }
+
+        auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> std::string
+        {
+            auto* storage = PSender->getStorage(LOC_INVENTORY);
+            CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
+
+            if (PItem == nullptr || PItem->getQuantity() == 0)
+            {
+                return "no item in that slot";
+            }
+            if (PItem->isType(ITEM_CURRENCY))
+            {
+                return "gil cannot be transferred";
+            }
+            if (PItem->state() == ItemState::Equipped)
+            {
+                return "item is equipped";
+            }
+            if (qty == 0 || qty > PItem->getQuantity())
+            {
+                return "bad quantity";
+            }
+            if (!this->claim(PSender, PItem).isSet())
+            {
+                return "item is busy";
+            }
+
+            auto stack = xi::items::clone(*PItem);
+            if (!stack)
+            {
+                return "item cannot move";
+            }
+            stack->setQuantity(qty);
+
+            // Receiver first: an out-of-space refusal is the common failure,
+            // and this order leaves nothing to undo when it happens
+            if (!this->give(PReceiver, LOC_INVENTORY, std::move(stack)).has_value())
+            {
+                this->rollback();
+                return "no space";
+            }
+            if (!this->take(PSender, LOC_INVENTORY, slot, qty))
+            {
+                this->rollback();
+                return "item slipped away";
+            }
+            if (!this->commit())
+            {
+                this->rollback();
+                return "transfer refused";
+            }
+            return {};
+        }
+
+    protected:
+        // give/take above already applied and recorded the work
+        auto doCommit() -> bool override
+        {
+            return true;
+        }
+
+        void doRollback() override
+        {
+        }
+    };
+
+    // Payload fragments sized for one GP_SERV_COMMAND_CHAT_STD each (Mes is
+    // 150 bytes and the command layer prepends "#cd xx.y <name> ")
+    constexpr size_t kChunkLimit = 110;
+
+    void packEntry(std::vector<std::string>& chunks, const std::string& entry)
+    {
+        if (chunks.empty() || chunks.back().size() + entry.size() + 1 > kChunkLimit)
+        {
+            chunks.emplace_back(entry);
+            return;
+        }
+        chunks.back() += "," + entry;
+    }
+} // namespace
+
+namespace pawn::items
+{
+    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
+    {
+        return CardianTransfer().move(PPlayer, PPawn, slot, qty);
+    }
+
+    auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
+    {
+        return CardianTransfer().move(PPawn, PPlayer, slot, qty);
+    }
+
+    auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot) -> std::string
+    {
+        // Inventory slot 0 is the gil slot; to EquipItem it means "unequip"
+        if (equipSlot >= SLOT_LINK1 || invSlot == 0)
+        {
+            return "bad slot";
+        }
+
+        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+        const auto* PItem   = storage != nullptr ? dynamic_cast<CItemEquipment*>(storage->GetItem(invSlot)) : nullptr;
+        if (PItem == nullptr)
+        {
+            return "not equipment";
+        }
+
+        charutils::EquipItem(PPawn, invSlot, equipSlot, LOC_INVENTORY);
+        if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) != PItem)
+        {
+            return "cannot equip";
+        }
+
+        luautils::CheckForGearSet(PPawn);
+        PPawn->UpdateHealth();
+        PPawn->retriggerLatents = true;
+        return {};
+    }
+
+    auto unequip(CCharEntity* PPawn, const uint8 equipSlot) -> std::string
+    {
+        if (equipSlot >= SLOT_LINK1)
+        {
+            return "bad slot";
+        }
+        if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) == nullptr)
+        {
+            return "nothing equipped";
+        }
+
+        charutils::EquipItem(PPawn, 0, equipSlot, LOC_INVENTORY);
+        if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) != nullptr)
+        {
+            return "cannot remove";
+        }
+
+        luautils::CheckForGearSet(PPawn);
+        PPawn->UpdateHealth();
+        PPawn->retriggerLatents = true;
+        return {};
+    }
+
+    auto inventoryChunks(CCharEntity* PPawn) -> std::vector<std::string>
+    {
+        std::vector<std::string> chunks;
+
+        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+        if (storage == nullptr)
+        {
+            return chunks;
+        }
+
+        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
+        {
+            const CItem* PItem = storage->GetItem(slot);
+            if (PItem == nullptr || PItem->getQuantity() == 0)
+            {
+                continue;
+            }
+
+            auto entry = fmt::format("{}:{}:{}", slot, PItem->getID(), PItem->getQuantity());
+            if (PItem->state() == ItemState::Equipped)
+            {
+                entry += ":E";
+            }
+            packEntry(chunks, entry);
+        }
+        return chunks;
+    }
+
+    auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>
+    {
+        std::vector<std::string> chunks;
+
+        for (uint8 equipSlot = SLOT_MAIN; equipSlot < SLOT_LINK1; ++equipSlot)
+        {
+            const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot));
+            if (PItem == nullptr)
+            {
+                continue;
+            }
+            packEntry(chunks, fmt::format("{}:{}:{}", equipSlot, PItem->getID(), PItem->getSlotID()));
+        }
+        return chunks;
+    }
+} // namespace pawn::items

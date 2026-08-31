@@ -28,6 +28,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 class CCharEntity;
 class CZone;
@@ -86,6 +87,13 @@ namespace pawn
 
     // The live pawn with this charid, or nullptr.
     auto findPawn(uint32 pawnCharID) -> CCharEntity*;
+
+    // The named live pawn, but only if this character summoned it (the
+    // management surface: gear and inventory belong to the summoner).
+    auto findManagedPawn(const CCharEntity* PSummoner, const std::string& targetName) -> CCharEntity*;
+
+    // Names of every live pawn this character summoned, sorted by name.
+    auto managedPawnNames(uint32 summonerCharID) -> std::vector<std::string>;
 
     // Possession support --------------------------------------------------
 
