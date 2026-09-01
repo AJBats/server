@@ -19,6 +19,7 @@
 --       drop <name> <slot> <qty>         destroy part of a cardian's stack
 --       giveuse <name> <slot> <qty>      give from your inventory, then the
 --                                        cardian uses it (the scroll flow)
+--       homepoint <name>                 a KO'd cardian home points (yours)
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -204,6 +205,13 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd ok take')
             sendInv(player, name)
+        end
+    elseif verb == 'homepoint' and name then
+        local err = player:cardianHomePoint(name)
+        if err ~= '' then
+            reply(player, '#cd err homepoint ' .. err)
+        else
+            reply(player, '#cd ok homepoint')
         end
     elseif verb == 'use' and name then
         local err = player:cardianUse(name, tonumber(args[3]) or 0)

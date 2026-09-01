@@ -372,6 +372,26 @@ class PawnModule : public CPPModule
             return result;
         };
 
+        lua["CBaseEntity"]["cardianHunt"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            return pawn::setHunting(PPawn, on) ? "" : "no controller";
+        };
+
+        lua["CBaseEntity"]["cardianHomePoint"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            return pawn::homePoint(PPawn) ? "" : "not KO'd";
+        };
+
         lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);

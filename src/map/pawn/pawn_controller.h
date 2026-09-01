@@ -73,6 +73,11 @@ public:
 
     auto Gambits() -> pawn::CGambits&;
 
+    // Hunt mode (!pawnhunt): this pawn picks and pulls exp mobs on its own
+    // while the party is idle, healthy and past the post-fight breather
+    void SetHunting(bool on);
+    auto IsHunting() const -> bool;
+
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float CastingDistance  = 15.0f;
     static constexpr float WarpDistance     = 30.0f;
@@ -106,6 +111,19 @@ private:
     // cast redundant (same buff family, a cure on the same healthy target...)
     auto PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool;
 
+    // The mob this pawn should join on: the player's engaged target first
+    // (gated by the swing/TrustEngageType convention), else any pawn party
+    // member's living target -- how a hunter's pull propagates
+    auto PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEntity*;
+
+    // Everyone in this zone's party above the hunt thresholds and the
+    // post-fight breather elapsed
+    auto HuntReady(const CCharEntity* PPlayer) const -> bool;
+
+    // The nearest idle, non-special mob in the difficulty band within
+    // HUNT_RADIUS of the player
+    auto PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*;
+
     std::unique_ptr<pawn::CGambits> m_Gambits;
     uint8                           m_BrainMainJob = 0xFF;
     uint8                           m_BrainSubJob  = 0xFF;
@@ -119,4 +137,8 @@ private:
     xi::ZoneId                        m_TravelHopZone{};
     std::vector<std::chrono::seconds> m_tickDelays      = { std::chrono::seconds(15), std::chrono::seconds(10), std::chrono::seconds(10), std::chrono::seconds(3) };
     std::size_t                       m_NumHealingTicks = 0;
+
+    bool              m_Hunting = false;
+    bool              m_WasEngaged = false;
+    timer::time_point m_LastHuntCheckTime;
 };

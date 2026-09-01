@@ -35,6 +35,7 @@
 #include "ai/controllers/player_controller.h"
 #include "ai/helpers/pathfind.h"
 #include "entities/char_entity.h"
+#include "status_effect_container.h"
 #include "map_session.h"
 #include "navmesh/navmesh.h"
 #include "login/login_helpers.h"
@@ -371,6 +372,53 @@ namespace pawn
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
         registerPawn(std::move(PPawn), PSummoner->id);
+        return true;
+    }
+
+    bool setHunting(CCharEntity* PPawn, const bool on)
+    {
+        if (PPawn == nullptr)
+        {
+            return false;
+        }
+
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+        {
+            PController->SetHunting(on);
+            return true;
+        }
+        return false;
+    }
+
+    bool homePoint(CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr || !pawns.contains(PPawn->id) || !PPawn->isDead())
+        {
+            return false;
+        }
+
+        CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
+        if (PSummoner == nullptr)
+        {
+            return false;
+        }
+
+        // Cardians share their player's home point
+        PPawn->profile.home_point = PSummoner->profile.home_point;
+        const auto& home          = PPawn->profile.home_point;
+        db::preparedStmt("UPDATE chars SET home_zone = ?, home_rot = ?, home_x = ?, home_y = ?, home_z = ? WHERE charid = ?",
+                         static_cast<uint16>(home.destination), home.p.rotation, home.p.x, home.p.y, home.p.z, PPawn->id);
+
+        PPawn->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Weakness);
+        PPawn->SetDeathTime(timer::time_point::min());
+        PPawn->health.hp = PPawn->GetMaxHP();
+        PPawn->health.mp = PPawn->GetMaxMP();
+        PPawn->animation = xi::Animation::None;
+        PPawn->updatemask |= UPDATE_HP;
+        PPawn->PAI->Accept_Raise();
+
+        ShowInfoFmt("pawn: {} home points to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
+        requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
         return true;
     }
 

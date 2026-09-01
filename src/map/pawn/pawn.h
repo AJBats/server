@@ -71,6 +71,18 @@ namespace pawn
     // pawn_module.cpp so the sol2 cost stays out of pawn.cpp).
     void applyStarterKit(CCharEntity* PPawn);
 
+    // Toggle hunt mode on the named live pawn (see CPawnController); the
+    // usual summoner-only rule is the caller's (findManagedPawn).
+    bool setHunting(CCharEntity* PPawn, bool on);
+
+    // A dead pawn home points: revived the way a home point revives a
+    // player (full HP/MP, no weakness) and moved to its home point -- which
+    // is always its summoner's, copied at this moment -- from where the
+    // travel system walks it back to the party. Party membership is
+    // untouched. false unless the pawn is dead and the summoner is in the
+    // world.
+    bool homePoint(CCharEntity* PPawn);
+
     // Replace the pawn's gambits with the set xi.pawn.brain selects for it
     // (its job's default brain today). The controller calls this on its
     // first tick and whenever the pawn's job changes; !pawnbrain forces it.

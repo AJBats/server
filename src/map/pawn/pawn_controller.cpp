@@ -23,8 +23,11 @@
 #include "pawn.h"
 #include "pawn_gambits.h"
 
+#include "common/settings.h"
 #include "common/utils.h"
 #include "common/xirand.h"
+
+#include <magic_enum/magic_enum.hpp>
 
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
@@ -32,6 +35,7 @@
 #include "ai/states/range_state.h"
 #include "enmity_container.h"
 #include "entities/char_entity.h"
+#include "status_effect_container.h"
 #include "entities/mob_entity.h"
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
@@ -61,12 +65,21 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     m_Tick = tick;
 
+    // The post-fight breather is timed from whenever combat actually ended,
+    // however it ended (mob death, leash break, disengage)
+    const bool engaged = POwner->PAI->IsEngaged();
+    if (m_WasEngaged && !engaged)
+    {
+        m_CombatEndTime = tick;
+    }
+    m_WasEngaged = engaged;
+
     if (!POwner->isDead())
     {
         CheckBrain();
     }
 
-    if (POwner->PAI->IsEngaged())
+    if (engaged)
     {
         co_await DoCombatTick(tick);
     }
@@ -76,6 +89,17 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     }
 
     co_return;
+}
+
+void CPawnController::SetHunting(const bool on)
+{
+    m_Hunting = on;
+    ShowInfoFmt("pawn: {} hunt mode {}", POwner->getName(), on ? "on" : "off");
+}
+
+auto CPawnController::IsHunting() const -> bool
+{
+    return m_Hunting;
 }
 
 void CPawnController::CheckBrain()
@@ -98,15 +122,17 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 
     CCharEntity* PPlayer = GetLivePlayer();
 
-    if (PPlayer == nullptr || !PPlayer->PAI->IsEngaged())
+    // The player is the party's anchor: gone from the zone means stand down.
+    // Their weapon going down does NOT call the party off any more -- a
+    // fight runs until the mob dies or drifts past the leash.
+    if (PPlayer == nullptr)
     {
-        ShowInfoFmt("pawn: {} disengaging ({})", POwner->getName(), PPlayer == nullptr ? "player gone" : "player disengaged");
+        ShowInfoFmt("pawn: {} disengaging (player gone)", POwner->getName());
         POwner->PAI->Internal_Disengage();
-        m_CombatEndTime = m_Tick;
         co_return;
     }
 
-    // Fight what the player fights, once the player has active enmity on it
+    // The player steers: fight what they fight, once they hold enmity on it
     if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget());
         PMob != nullptr && POwner->battleTarget() != PPlayer->battleTarget())
     {
@@ -127,8 +153,17 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     }
 
     CBattleEntity* PTarget = POwner->GetBattleTarget();
-    if (PTarget == nullptr)
+    if (PTarget == nullptr || PTarget->isDead())
     {
+        POwner->PAI->Internal_Disengage();
+        co_return;
+    }
+
+    // Runaway-train guard: a fight that drags too far from the player is abandoned
+    if (distance(POwner->loc.p, PPlayer->loc.p) > settings::get<float>("pawn.HUNT_LEASH"))
+    {
+        ShowInfoFmt("pawn: {} breaking off {} (past the leash)", POwner->getName(), PTarget->getName());
+        POwner->PAI->Internal_Disengage();
         co_return;
     }
 
@@ -180,28 +215,46 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    auto*      playerController = dynamic_cast<CPlayerController*>(PPlayer->PAI->GetController());
-    const bool playerMeleeSwing = playerController != nullptr && playerController->getLastAttackTime() > timer::now() - 1s;
-
-    bool engageCondition = false;
-    switch (charutils::GetCharVar(PPlayer, "TrustEngageType"))
+    if (auto* PTarget = PartyEngageTarget(PPlayer); PTarget != nullptr)
     {
-        case 1: // Player engages a monster, no melee swing required
-        {
-            engageCondition = PPlayer->GetBattleTarget() != nullptr;
-            break;
-        }
-        default: // Retail behavior: player engages a monster and executes a melee swing
-        {
-            engageCondition = PPlayer->GetBattleTarget() != nullptr && playerMeleeSwing;
-            break;
-        }
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        POwner->PAI->Internal_Engage(EntityId(PTarget));
+        co_return;
     }
 
-    if (PPlayer->PAI->IsEngaged() && engageCondition)
+    // Rest with the player: the Healing status is the real thing -- kneel
+    // animation and resting regen ticks -- so the party sits down together
+    const bool playerResting = PPlayer->animation == xi::Animation::Healing;
+    const bool resting       = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    if (playerResting && !resting && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f && !POwner->PAI->PathFind->IsFollowingPath())
     {
-        POwner->PAI->Internal_Engage(PPlayer->battleTarget());
+        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
         co_return;
+    }
+    if (!playerResting && resting)
+    {
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+    }
+    if (resting && playerResting)
+    {
+        co_return;
+    }
+
+    // A hunter picks the party's next fight itself
+    if (m_Hunting && m_Tick - m_LastHuntCheckTime > 3s)
+    {
+        m_LastHuntCheckTime = m_Tick;
+        if (HuntReady(PPlayer))
+        {
+            if (auto* PMob = PickHuntTarget(PPlayer); PMob != nullptr)
+            {
+                ShowInfoFmt("pawn: {} pulls {} ({})", POwner->getName(), PMob->getName(),
+                            magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)));
+                POwner->PAI->Internal_Engage(EntityId(PMob));
+                co_return;
+            }
+        }
     }
 
     const CBattleEntity* PFollowTarget = GetFollowTarget();
@@ -506,6 +559,131 @@ auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* P
                     });
 
     return redundant;
+}
+
+auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEntity*
+{
+    // The player's engagement comes first and keeps the retail trust
+    // convention: a melee swing (or the TrustEngageType charvar) signals
+    // the intent to commit the party
+    if (PPlayer != nullptr && PPlayer->PAI->IsEngaged() && PPlayer->GetBattleTarget() != nullptr)
+    {
+        auto*      playerController = dynamic_cast<CPlayerController*>(PPlayer->PAI->GetController());
+        const bool playerMeleeSwing = playerController != nullptr && playerController->getLastAttackTime() > timer::now() - 1s;
+
+        if (charutils::GetCharVar(PPlayer, "TrustEngageType") == 1 || playerMeleeSwing)
+        {
+            return PPlayer->GetBattleTarget();
+        }
+    }
+
+    // A pawn already fighting pulls the rest of the party in -- how a
+    // hunter's pull propagates without the player tagging anything
+    const auto* PPawn = static_cast<CCharEntity*>(POwner);
+    if (PPawn->PParty == nullptr)
+    {
+        return nullptr;
+    }
+
+    for (auto* PMember : PPawn->PParty->members)
+    {
+        auto* PChar = dynamic_cast<CCharEntity*>(PMember);
+        if (PChar == nullptr || PChar == POwner || !pawn::isPawn(PChar) ||
+            PChar->loc.zone != POwner->loc.zone || !PChar->PAI->IsEngaged())
+        {
+            continue;
+        }
+
+        if (auto* PTarget = PChar->GetBattleTarget(); PTarget != nullptr && !PTarget->isDead())
+        {
+            return PTarget;
+        }
+    }
+    return nullptr;
+}
+
+auto CPawnController::HuntReady(const CCharEntity* PPlayer) const -> bool
+{
+    if (m_Tick - m_CombatEndTime < std::chrono::milliseconds(settings::get<uint32>("pawn.HUNT_DOWNTIME_MS")))
+    {
+        return false;
+    }
+
+    // Pull only from the player's side: the player drives, the hunter scouts
+    if (distance(POwner->loc.p, PPlayer->loc.p) > 10.0f || PPlayer->animation == xi::Animation::Healing)
+    {
+        return false;
+    }
+
+    const auto readyHPP = settings::get<uint8>("pawn.HUNT_READY_HPP");
+    const auto readyMPP = settings::get<uint8>("pawn.HUNT_READY_MPP");
+
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    if (PPawn->PParty == nullptr)
+    {
+        return POwner->GetHPP() >= readyHPP;
+    }
+
+    for (auto* PMember : PPawn->PParty->members)
+    {
+        if (PMember->loc.zone != POwner->loc.zone)
+        {
+            continue;
+        }
+        if (PMember->isDead() || PMember->PAI->IsEngaged() || PMember->GetHPP() < readyHPP ||
+            (PMember->health.maxmp > 0 && PMember->GetMPP() < readyMPP))
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*
+{
+    const auto minCheck = settings::get<uint8>("pawn.HUNT_CHECK_MIN");
+    const auto maxCheck = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
+    const auto radius   = settings::get<float>("pawn.HUNT_RADIUS");
+
+    CMobEntity* best     = nullptr;
+    float       bestDist = radius; // the hunter's own walk is capped too
+
+    POwner->loc.zone->ForEachMob([&](CMobEntity* PMob)
+                                 {
+                                     // idle, ordinary field mobs only
+                                     const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
+                                                          (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
+                                                          (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
+                                                          (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
+                                     if (special || PMob->PMaster != nullptr || !PMob->isAlive() ||
+                                         PMob->PAI->IsEngaged() || PMob->allegiance != xi::Allegiance::Mob)
+                                     {
+                                         return;
+                                     }
+                                     if (!PMob->PEnmityContainer->GetEnmityList()->empty())
+                                     {
+                                         return;
+                                     }
+                                     if (distance(PPlayer->loc.p, PMob->loc.p) > radius)
+                                     {
+                                         return;
+                                     }
+
+                                     const auto check = static_cast<uint8>(charutils::CheckMob(PPlayer->GetMLevel(), PMob));
+                                     if (check < minCheck || check > maxCheck)
+                                     {
+                                         return;
+                                     }
+
+                                     const float toHunter = distance(POwner->loc.p, PMob->loc.p);
+                                     if (toHunter < bestDist)
+                                     {
+                                         best     = PMob;
+                                         bestDist = toHunter;
+                                     }
+                                 });
+
+    return best;
 }
 
 auto CPawnController::GetTopEnmity() const -> CBattleEntity*
