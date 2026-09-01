@@ -92,8 +92,11 @@ private:
     // requesting a transfer at each zone line.
     void TravelTick();
 
-    // Pawn 0 follows the player; pawn N follows pawn N-1
+    // Pawn 0 follows the player; pawn N follows pawn N-1. The lead (a
+    // hunting pawn) is outside the chain: it holds a point ahead of the
+    // player instead.
     auto GetFollowTarget() const -> CBattleEntity*;
+    auto LeadPoint(const CCharEntity* PPlayer) -> position_t;
 
     void Declump(const CBattleEntity* PTarget) const;
 
@@ -141,4 +144,6 @@ private:
     bool              m_Hunting = false;
     bool              m_WasEngaged = false;
     timer::time_point m_LastHuntCheckTime;
+    bool              m_HasLeadPoint = false;
+    position_t        m_LeadPoint{};
 };

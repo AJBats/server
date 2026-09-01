@@ -53,4 +53,16 @@ xi.settings.pawn =
     HUNT_READY_HPP    = 75,
     HUNT_READY_MPP    = 50,
     HUNT_DOWNTIME_MS  = 6000,
+
+    -- Formation: the hunter leads, holding a point this many yalms ahead
+    -- of the player along their facing; the point is re-aimed only when
+    -- the fresh projection drifts more than DEADBAND yalms from the held
+    -- one, so the client's coarse position/heading updates don't twitch it.
+    FORMATION_LEAD_DISTANCE = 5.0,
+    FORMATION_DEADBAND      = 2.5,
+
+    -- Extra lead while the player is moving: the server learns of the
+    -- player's motion a packet bundle late, so the point is aimed further
+    -- out to cover that lag. The deadband never applies while moving.
+    FORMATION_LEAD_MOVING_BONUS = 3.0,
 }

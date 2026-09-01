@@ -257,28 +257,41 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    const CBattleEntity* PFollowTarget = GetFollowTarget();
-    if (PFollowTarget == nullptr)
+    // Where this pawn belongs: the lead holds a point ahead of the player,
+    // everyone else follows the chain
+    position_t followPoint{};
+    float      declumpDistance = 0.0f;
+    float      followMax       = 2.0f;
+    float      followTarget    = 1.0f;
+
+    if (m_Hunting)
     {
-        co_return;
+        followPoint = LeadPoint(PPlayer);
+    }
+    else
+    {
+        const CBattleEntity* PFollowTarget = GetFollowTarget();
+        if (PFollowTarget == nullptr)
+        {
+            co_return;
+        }
+
+        const bool isFirstPawn = GetPawnPartyPosition() == 0;
+        followPoint     = PFollowTarget->loc.p;
+        declumpDistance = isFirstPawn ? 1.0f : 1.5f;
+        followMax       = isFirstPawn ? 2.0f : 3.5f;
+        followTarget    = isFirstPawn ? 1.5f : 3.0f;
     }
 
-    const uint8 currentPartyPos = GetPawnPartyPosition();
-    const bool  isFirstPawn     = currentPartyPos == 0;
-
-    const float declumpDistance = isFirstPawn ? 1.0f : 1.5f;
-    const float followMax       = isFirstPawn ? 2.0f : 3.5f;
-    const float followTarget    = isFirstPawn ? 1.5f : 3.0f;
-
-    const float currentDistance = distance(POwner->loc.p, PFollowTarget->loc.p);
+    const float currentDistance = distance(POwner->loc.p, followPoint);
 
     if (currentDistance > followMax)
     {
         // Warp only when pathing genuinely fails; a pawn arriving at a zone
         // gate runs to its player like anyone else would
-        if (!PathToward(PFollowTarget->loc.p, followTarget) && currentDistance > WarpDistance)
+        if (!PathToward(followPoint, followTarget) && currentDistance > WarpDistance)
         {
-            POwner->PAI->PathFind->WarpTo(PFollowTarget->loc.p);
+            POwner->PAI->PathFind->WarpTo(followPoint);
             co_return;
         }
     }
@@ -286,7 +299,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         if (!POwner->PAI->PathFind->IsFollowingPath())
         {
-            PathToward(PFollowTarget->loc.p, followTarget + 0.5f);
+            PathToward(followPoint, followTarget + 0.5f);
         }
     }
     else if (POwner->PAI->PathFind->IsFollowingPath())
@@ -714,6 +727,38 @@ auto CPawnController::GetLivePlayer() const -> CCharEntity*
     return nullptr;
 }
 
+namespace
+{
+    // A hunting pawn leads from the front and is left out of the follow chain
+    auto isLead(const CCharEntity* PChar) -> bool
+    {
+        const auto* PController = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
+        return PController != nullptr && PController->IsHunting();
+    }
+} // namespace
+
+auto CPawnController::LeadPoint(const CCharEntity* PPlayer) -> position_t
+{
+    // The position packet's MoveFlame counter plus real displacement since the last packet
+    const bool moving = PPlayer->loc.p.moving != 0 || PPlayer->m_lastMoveDistance > 0.05f;
+
+    float lead = settings::get<float>("pawn.FORMATION_LEAD_DISTANCE");
+    if (moving)
+    {
+        lead += settings::get<float>("pawn.FORMATION_LEAD_MOVING_BONUS");
+    }
+    const position_t fresh = nearPosition(PPlayer->loc.p, lead, 0.0f);
+
+    // A moving player is re-aimed every tick; the deadband only absorbs
+    // the coarse position/heading updates of a player standing still
+    if (!m_HasLeadPoint || moving || distance(fresh, m_LeadPoint) > settings::get<float>("pawn.FORMATION_DEADBAND"))
+    {
+        m_LeadPoint    = fresh;
+        m_HasLeadPoint = true;
+    }
+    return m_LeadPoint;
+}
+
 auto CPawnController::GetPawnPartyPosition() const -> uint8
 {
     const auto* PPawn = static_cast<CCharEntity*>(POwner);
@@ -726,7 +771,7 @@ auto CPawnController::GetPawnPartyPosition() const -> uint8
     for (const auto* PMember : PPawn->PParty->members)
     {
         if (const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
-            PChar != nullptr && pawn::isPawn(PChar))
+            PChar != nullptr && pawn::isPawn(PChar) && !isLead(PChar))
         {
             if (PChar == POwner)
             {
@@ -753,7 +798,7 @@ auto CPawnController::GetFollowTarget() const -> CBattleEntity*
     for (auto* PMember : PPawn->PParty->members)
     {
         if (auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-            PChar != nullptr && pawn::isPawn(PChar))
+            PChar != nullptr && pawn::isPawn(PChar) && !isLead(PChar))
         {
             if (position == currentPartyPos - 1 && PChar->loc.zone == POwner->loc.zone)
             {
