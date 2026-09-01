@@ -63,6 +63,9 @@ set(MAP_CORE_SOURCES
     # CARDIAN: session rebind, core because map_networking calls it
     ${CMAKE_CURRENT_SOURCE_DIR}/charswap.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/charswap.h
+    # CARDIAN: addon link listener, core because map_engine starts it
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link.h
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/conquest_data.cpp
