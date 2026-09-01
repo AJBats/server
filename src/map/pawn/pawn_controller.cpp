@@ -20,6 +20,8 @@
 */
 
 #include "pawn_controller.h"
+#include "cardian_link.h"
+#include "formation_math.h"
 #include "pawn.h"
 #include "pawn_gambits.h"
 
@@ -28,6 +30,9 @@
 #include "common/xirand.h"
 
 #include <magic_enum/magic_enum.hpp>
+
+#include <algorithm>
+#include <cmath>
 
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
@@ -94,6 +99,10 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 void CPawnController::SetHunting(const bool on)
 {
     m_Hunting = on;
+    if (!on)
+    {
+        RestoreNormalSpeed();
+    }
     ShowInfoFmt("pawn: {} hunt mode {}", POwner->getName(), on ? "on" : "off");
 }
 
@@ -119,6 +128,8 @@ void CPawnController::CheckBrain()
 auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 {
     TracyZoneScoped;
+
+    RestoreNormalSpeed();
 
     CCharEntity* PPlayer = GetLivePlayer();
 
@@ -267,6 +278,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     if (m_Hunting)
     {
         followPoint = LeadPoint(PPlayer);
+        RampCatchUp(m_PlayerMoving, followPoint);
     }
     else
     {
@@ -281,6 +293,25 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         declumpDistance = isFirstPawn ? 1.0f : 1.5f;
         followMax       = isFirstPawn ? 2.0f : 3.5f;
         followTarget    = isFirstPawn ? 1.5f : 3.0f;
+
+        // Following the live player: the same fresh position the lead uses,
+        // with a gentle prediction, and a slot of its own -- a rear quarter
+        // FORMATION_FOLLOW_DISTANCE behind the player -- parked and held the
+        // way the lead holds its point. Without a slot the follower's
+        // destination is the player themself, and a fresh position puts it
+        // right on top of them. Pawns following pawns keep the plain chain:
+        // server positions have no lag.
+        if (PFollowTarget == static_cast<const CBattleEntity*>(PPlayer))
+        {
+            const auto anchor = PlayerAnchor(PPlayer, settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
+            const auto angle  = static_cast<float>(M_PI) - settings::get<float>("pawn.FORMATION_FOLLOW_ANGLE_DEG") * static_cast<float>(M_PI) / 180.0f;
+            followPoint       = FormationPoint(anchor, settings::get<float>("pawn.FORMATION_FOLLOW_DISTANCE"), angle, m_FollowPoint, m_HasFollowPoint);
+            declumpDistance   = 0.0f;
+            followMax         = 2.0f;
+            followTarget      = 1.0f;
+            RampCatchUp(anchor.moving, followPoint);
+            FormationDebug("follow", PPlayer, anchor, followPoint);
+        }
     }
 
     const float currentDistance = distance(POwner->loc.p, followPoint);
@@ -737,26 +768,143 @@ namespace
     }
 } // namespace
 
-auto CPawnController::LeadPoint(const CCharEntity* PPlayer) -> position_t
+auto CPawnController::PlayerAnchor(const CCharEntity* PPlayer, const float predictScale) -> Anchor
 {
+    Anchor a;
+    a.observed = PPlayer->loc.p;
     // The position packet's MoveFlame counter plus real displacement since the last packet
-    const bool moving = PPlayer->loc.p.moving != 0 || PPlayer->m_lastMoveDistance > 0.05f;
+    a.moving = PPlayer->loc.p.moving != 0 || PPlayer->m_lastMoveDistance > 0.05f;
+    a.anchor = a.observed;
 
-    float lead = settings::get<float>("pawn.FORMATION_LEAD_DISTANCE");
-    if (moving)
+    const auto streamed = cardian::link::freshPositionOf(PPlayer->id);
+    if (!streamed.has_value())
     {
-        lead += settings::get<float>("pawn.FORMATION_LEAD_MOVING_BONUS");
+        return a;
     }
-    const position_t fresh = nearPosition(PPlayer->loc.p, lead, 0.0f);
+
+    a.observed  = position_t(streamed->x, streamed->y, streamed->z, 0, streamed->rotation);
+    a.anchor    = a.observed;
+    a.moving    = streamed->moving;
+    a.streamed  = true;
+    a.streamAge = streamed->age;
+
+    // Prediction: aim at where the player will be once the rest of the loop
+    // (pawn tick, travel, the client's own render cadence) has played out
+    // -- the arithmetic lives in formation_math.h with its tests. A stop
+    // zeroes the stream velocity within one sample, so the prediction
+    // collapses at once and the pawn walks back (the rubber band).
+    const auto predicted = cardian::formation::predictAhead(
+        cardian::formation::Motion{ streamed->vx, streamed->vz, streamed->yawRate }, a.moving,
+        settings::get<float>("pawn.FORMATION_PREDICT_MS") / 1000.0f * predictScale,
+        settings::get<float>("pawn.FORMATION_PREDICT_MAX") * predictScale);
+    a.anchor.x += predicted.dx;
+    a.anchor.z += predicted.dz;
+    a.ahead = predicted.ahead;
+    return a;
+}
+
+void CPawnController::RampCatchUp(const bool playerMoving, const position_t& point)
+{
+    const float normalSpeed = settings::get<float>("pawn.PAWN_SPEED");
+    const float wanted      = cardian::formation::catchUpSpeed(distance(POwner->loc.p, point), playerMoving, normalSpeed,
+                                                               settings::get<float>("pawn.FORMATION_CATCHUP_SPEED"),
+                                                               settings::get<float>("pawn.FORMATION_CATCHUP_DISTANCE"));
+
+    const auto wantedSpeed = static_cast<uint8>(std::lround(wanted));
+    if (wantedSpeed != POwner->baseSpeed)
+    {
+        m_Sprinting       = wantedSpeed > normalSpeed;
+        POwner->baseSpeed = wantedSpeed;
+        POwner->UpdateSpeed();
+    }
+}
+
+void CPawnController::RestoreNormalSpeed()
+{
+    const auto normalSpeed = settings::get<uint8>("pawn.PAWN_SPEED");
+    if (POwner->baseSpeed != normalSpeed)
+    {
+        POwner->baseSpeed = normalSpeed;
+        POwner->UpdateSpeed();
+    }
+    m_Sprinting = false;
+}
+
+void CPawnController::FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& a, const position_t& point)
+{
+    if (!settings::get<bool>("pawn.FORMATION_DEBUG"))
+    {
+        return;
+    }
+
+    // Score the previous prediction once its horizon has elapsed: how far
+    // from the predicted point did the player actually turn up?
+    if (a.streamed)
+    {
+        if (m_Prediction.valid && m_Tick - m_Prediction.at >= m_Prediction.horizon)
+        {
+            m_LastPredictionError = distance(m_Prediction.point, a.observed);
+            m_Prediction.valid    = false;
+        }
+        if (a.ahead > 0.0f && !m_Prediction.valid)
+        {
+            m_Prediction = { a.anchor, m_Tick, std::chrono::milliseconds(static_cast<int64>(settings::get<float>("pawn.FORMATION_PREDICT_MS"))), true };
+        }
+    }
+
+    if (m_Tick - m_LastLeadDebugTime < 1s)
+    {
+        return;
+    }
+    m_LastLeadDebugTime = m_Tick;
+
+    // Freshness of the stream vs the packet, the packet's positional lag,
+    // the prediction applied and how wrong the last one was, how far the
+    // pawn sits from its point, and from the player
+    const auto packetAge = pawn::positionPacketAge(PPlayer->id);
+    ShowInfoFmt("pawn: {} {} on {}: source={} stream={} packet={} gap={:.1f}y moving={} pred=+{:.1f}y predErr={} track={:.1f}y dist={:.1f}y speed={}",
+                role, POwner->getName(), PPlayer->getName(),
+                a.streamed ? "stream" : "packet",
+                a.streamed ? fmt::format("{}ms", a.streamAge.count()) : "none",
+                packetAge.has_value() ? fmt::format("{}ms", packetAge->count()) : "none",
+                a.streamed ? distance(a.observed, PPlayer->loc.p) : 0.0f,
+                a.moving ? 1 : 0,
+                a.ahead,
+                m_LastPredictionError >= 0.0f ? fmt::format("{:.1f}y", m_LastPredictionError) : "n/a",
+                distance(POwner->loc.p, point),
+                distance(POwner->loc.p, a.observed),
+                POwner->baseSpeed);
+}
+
+auto CPawnController::FormationPoint(const Anchor& a, const float offset, const float angle, position_t& held, bool& hasHeld) -> position_t
+{
+    const position_t projected = nearPosition(a.anchor, offset, angle);
 
     // A moving player is re-aimed every tick; the deadband only absorbs
     // the coarse position/heading updates of a player standing still
-    if (!m_HasLeadPoint || moving || distance(fresh, m_LeadPoint) > settings::get<float>("pawn.FORMATION_DEADBAND"))
+    if (!hasHeld || a.moving || distance(projected, held) > settings::get<float>("pawn.FORMATION_DEADBAND"))
     {
-        m_LeadPoint    = fresh;
-        m_HasLeadPoint = true;
+        held    = projected;
+        hasHeld = true;
     }
-    return m_LeadPoint;
+    return held;
+}
+
+auto CPawnController::LeadPoint(const CCharEntity* PPlayer) -> position_t
+{
+    const auto a          = PlayerAnchor(PPlayer, 1.0f);
+    m_PlayerMoving        = a.moving;
+    m_LastPredictionAhead = a.ahead;
+
+    float lead = settings::get<float>("pawn.FORMATION_LEAD_DISTANCE");
+    if (a.moving)
+    {
+        lead += settings::get<float>("pawn.FORMATION_LEAD_MOVING_BONUS");
+    }
+
+    const auto point = FormationPoint(a, lead, 0.0f, m_LeadPoint, m_HasLeadPoint);
+    FormationDebug("lead", PPlayer, a, point);
+    return point;
 }
 
 auto CPawnController::GetPawnPartyPosition() const -> uint8

@@ -28,6 +28,7 @@
 
 #include "ai/ai_container.h"
 #include "entities/char_entity.h"
+#include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
 #include "item_container.h"
 #include "enums/party_kind.h"
@@ -458,6 +459,19 @@ class PawnModule : public CPPModule
     void OnZoneTick(CZone* PZone) override
     {
         pawn::onZoneTick(PZone);
+    }
+
+    // Formation latency instrumentation: when did the client's own position
+    // packet last arrive for this character (compared against the link's
+    // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG)
+    auto OnIncomingPacket(MapSession* PSession, CCharEntity* PChar, CBasicPacket& packet) -> bool override
+    {
+        std::ignore = PSession;
+        if (PChar != nullptr && packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
+        {
+            pawn::notePositionPacket(PChar);
+        }
+        return false;
     }
 
     void OnPushPacket(CCharEntity* PChar, const std::unique_ptr<CBasicPacket>& packet) override

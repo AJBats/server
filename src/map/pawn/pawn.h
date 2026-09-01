@@ -25,6 +25,7 @@
 
 #include "common/cbasetypes.h"
 
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -146,6 +147,12 @@ namespace pawn
     // on the next zone tick through the same code path a real client's
     // Accept answer runs.
     void noteInvite(const CCharEntity* PPawn);
+
+    // Formation latency instrumentation: the moment a played character's own
+    // position packet (0x015) last arrived, so the pawn controller can show
+    // how stale the packet path is next to the Cardian Link's stream.
+    void notePositionPacket(const CCharEntity* PChar);
+    auto positionPacketAge(uint32 charid) -> std::optional<std::chrono::milliseconds>;
 
     // Per-tick maintenance for pawns in this zone (called from OnZoneTick,
     // after all charTicks): answer pending invites, then discard queued
