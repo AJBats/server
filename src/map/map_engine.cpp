@@ -48,6 +48,8 @@
 #include "zone.h"
 #include "zone_entities.h"
 
+#include "pawn/cardian_link.h" // CARDIAN
+
 #include "ai/controllers/automaton_controller.h"
 
 #include "items/item_equipment.h"
@@ -257,6 +259,11 @@ auto MapEngine::init() -> Task<void>
     db::preparedStmt("DELETE FROM server_variables WHERE expiry > 0 AND expiry <= ?", currentTimestamp);
 
     moduleutils::OnInit();
+
+    if (!config_.isTestServer) // CARDIAN: the addon link listener needs the scheduler; modules are handed none
+    {
+        cardian::link::start(scheduler_);
+    }
 
     luautils::OnServerStart();
 

@@ -65,4 +65,40 @@ xi.settings.pawn =
     -- player's motion a packet bundle late, so the point is aimed further
     -- out to cover that lag. The deadband never applies while moving.
     FORMATION_LEAD_MOVING_BONUS = 3.0,
+
+    -- Prediction: with the Cardian Link streaming the player's position,
+    -- the lead aims at where the player will be this many milliseconds
+    -- from now (straight-line from the stream's velocity, shortened while
+    -- the player turns, capped at PREDICT_MAX yalms). Covers the rest of
+    -- the loop -- the pawn tick, its travel, the client's render cadence.
+    -- A stopped player collapses the prediction at once.
+    FORMATION_PREDICT_MS  = 700,
+    FORMATION_PREDICT_MAX = 6.0,
+
+    -- The first follower (the pawn following the player, not another
+    -- pawn) uses the same fresh position with this fraction of the lead's
+    -- prediction -- enough to stay at the player's side, not out front.
+    -- 0 = fresh position only, no prediction.
+    FORMATION_FOLLOW_PREDICT_SCALE = 0.4,
+
+    -- The first follower's slot: this many yalms from the player, this many
+    -- degrees off straight-behind (a rear quarter, out of the camera line).
+    -- Held with the same deadband as the lead's point while the player
+    -- stands, so a player turning in place doesn't make the follower orbit.
+    FORMATION_FOLLOW_DISTANCE  = 2.5,
+    FORMATION_FOLLOW_ANGLE_DEG = 40,
+
+    -- Catch-up: the lead runs at CATCHUP_SPEED while more than
+    -- CATCHUP_DISTANCE yalms from its point, PAWN_SPEED otherwise. It only
+    -- ever closes a gap to a point the player defines, so it nets out no
+    -- faster than the player. map.SPEED_LIMIT must be at least the
+    -- catch-up speed or the clamp eats it (see the local overrides).
+    FORMATION_CATCHUP_DISTANCE = 3.0,
+    FORMATION_CATCHUP_SPEED    = 135,
+
+    -- Log, once a second per lead pawn: how old the Cardian Link's view of
+    -- the player is versus the position packet's, the distance between the
+    -- two (packet lag in yalms), the prediction applied and its error, and
+    -- the lead's distance from its point. Dev aid for the formation work.
+    FORMATION_DEBUG = false,
 }

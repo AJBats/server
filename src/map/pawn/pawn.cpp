@@ -76,6 +76,9 @@ namespace
     // party UI may not expect (pawn.INVITE_ACCEPT_DELAY, milliseconds).
     std::unordered_map<uint32, timer::time_point> pendingInvites;
 
+    // played charid -> arrival time of its last 0x015 position packet
+    std::unordered_map<uint32, timer::time_point> lastPositionPacket;
+
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
 
@@ -646,6 +649,21 @@ namespace pawn
     {
         const auto delay = std::chrono::milliseconds(settings::get<uint32>("pawn.INVITE_ACCEPT_DELAY"));
         pendingInvites.insert_or_assign(PPawn->id, timer::now() + delay);
+    }
+
+    void notePositionPacket(const CCharEntity* PChar)
+    {
+        lastPositionPacket.insert_or_assign(PChar->id, timer::now());
+    }
+
+    auto positionPacketAge(uint32 charid) -> std::optional<std::chrono::milliseconds>
+    {
+        const auto it = lastPositionPacket.find(charid);
+        if (it == lastPositionPacket.end())
+        {
+            return std::nullopt;
+        }
+        return std::chrono::duration_cast<std::chrono::milliseconds>(timer::now() - it->second);
     }
 
     // Move a live pawn between zones same-process: the M2 despawn/spawn

@@ -19,6 +19,7 @@
 ===========================================================================
 */
 
+#include "cardian_link.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
@@ -28,6 +29,7 @@
 
 #include "ai/ai_container.h"
 #include "entities/char_entity.h"
+#include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
 #include "item_container.h"
 #include "enums/party_kind.h"
@@ -311,6 +313,21 @@ class PawnModule : public CPPModule
             return { PChar, pawn::findManagedPawn(PChar, name) };
         };
 
+        // The !cardian command's replies, over the Cardian Link when this
+        // character's addon is bound to one: '#cd tag ...' chat lines become
+        // 'cd tag ...' link lines. false = no link; the command then prints
+        // to chat for a human typing it.
+        lua["CBaseEntity"]["cardianLinkSend"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& line) -> bool
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return false;
+            }
+            const std::string wire = line.rfind("#cd ", 0) == 0 ? "cd " + line.substr(4) : line;
+            return cardian::link::sendToCharacter(PChar->id, wire);
+        };
+
         lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto  names = ::lua.create_table();
@@ -458,6 +475,19 @@ class PawnModule : public CPPModule
     void OnZoneTick(CZone* PZone) override
     {
         pawn::onZoneTick(PZone);
+    }
+
+    // Formation latency instrumentation: when did the client's own position
+    // packet last arrive for this character (compared against the link's
+    // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG)
+    auto OnIncomingPacket(MapSession* PSession, CCharEntity* PChar, CBasicPacket& packet) -> bool override
+    {
+        std::ignore = PSession;
+        if (PChar != nullptr && packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
+        {
+            pawn::notePositionPacket(PChar);
+        }
+        return false;
     }
 
     void OnPushPacket(CCharEntity* PChar, const std::unique_ptr<CBasicPacket>& packet) override

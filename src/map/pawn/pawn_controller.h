@@ -98,6 +98,41 @@ private:
     auto GetFollowTarget() const -> CBattleEntity*;
     auto LeadPoint(const CCharEntity* PPlayer) -> position_t;
 
+    // The player as the formation sees them: the Cardian Link's fresh
+    // position when it streams (loc.p otherwise), and where they will be
+    // predictScale * FORMATION_PREDICT_MS from now along the stream's
+    // velocity. The lead predicts at full scale, the first follower gently.
+    struct Anchor
+    {
+        position_t                observed{};  // where the player is
+        position_t                anchor{};    // where the formation aims (observed + prediction)
+        bool                      moving   = false;
+        bool                      streamed = false;
+        float                     ahead    = 0.0f; // yalms of prediction applied
+        std::chrono::milliseconds streamAge{};
+    };
+    auto PlayerAnchor(const CCharEntity* PPlayer, float predictScale) -> Anchor;
+
+    // A formation slot: `distance` yalms from the anchor at `angle` radians
+    // off the player's facing (0 = ahead, pi = behind), held across the
+    // client's coarse updates: re-aimed every tick while the player moves,
+    // only past FORMATION_DEADBAND while they stand. `held`/`hasHeld` are
+    // the caller's memory of the slot.
+    auto FormationPoint(const Anchor& anchor, float offset, float angle, position_t& held, bool& hasHeld) -> position_t;
+
+    // Run faster only to close a gap to a point the player defines, ramped
+    // with the gap and only while the player moves
+    void RampCatchUp(bool playerMoving, const position_t& point);
+
+    // Back to PAWN_SPEED. Once a fight starts the speed limit is never
+    // broken: the catch-up ramp belongs to walking with the player, not to
+    // combat repositioning.
+    void RestoreNormalSpeed();
+
+    // pawn.FORMATION_DEBUG: score the last prediction and log the formation
+    // evidence once a second
+    void FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& anchor, const position_t& point);
+
     void Declump(const CBattleEntity* PTarget) const;
 
     // Navmesh-path toward a point, healing off-mesh endpoints: an off-mesh
@@ -146,4 +181,22 @@ private:
     timer::time_point m_LastHuntCheckTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};
+    bool              m_HasFollowPoint = false;
+    position_t        m_FollowPoint{};
+    timer::time_point m_LastLeadDebugTime;
+
+    // Prediction scorecard: the player position the lead aimed for, checked
+    // against where the stream later put them once the horizon has elapsed
+    struct Prediction
+    {
+        position_t                point{};
+        timer::time_point         at{};
+        std::chrono::milliseconds horizon{};
+        bool                      valid = false;
+    };
+    Prediction m_Prediction;
+    float      m_LastPredictionError = -1.0f; // yalms; <0 = nothing scored yet
+    float      m_LastPredictionAhead = 0.0f;  // yalms of prediction applied on the last tick
+    bool       m_Sprinting           = false;
+    bool       m_PlayerMoving        = false;  // as of the last LeadPoint
 };

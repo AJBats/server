@@ -1,9 +1,11 @@
 -----------------------------------
 -- func: cardian <verb> [args]
--- desc: Cardian companion-addon API. Structured replies go out as '#cd ...'
---       lines on chat channel 31 (NS_LINKSHELL3); the addon parses and
---       swallows them before the chat log renders them, so this command is
---       machine-facing -- humans get terse errors, the addon gets data.
+-- desc: Cardian companion-addon API. Requests arrive over the Cardian Link
+--       ('cd <verb> ...' lines run this command for the bound character) and
+--       structured replies go back the same way as 'cd ...' lines; with no
+--       link bound (a human typing !cardian in chat) the replies print to
+--       chat channel 31 instead. Machine-facing -- humans get terse errors,
+--       the addon gets data.
 --
 --       list                             roster of your live cardians
 --       sync <name>                      one cardian: stats + gear + inventory
@@ -33,7 +35,9 @@ commandObj.cmdprops =
 local channel = xi.msg.channel.NS_LINKSHELL3
 
 local function reply(player, line)
-    player:printToPlayer(line, channel)
+    if not player:cardianLinkSend(line) then
+        player:printToPlayer(line, channel)
+    end
 end
 
 local function sendInv(player, name)
