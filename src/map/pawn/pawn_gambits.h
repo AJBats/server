@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 class CBattleEntity;
@@ -52,27 +53,50 @@ namespace pawn
     // No strategy exists yet, so a row with it never fires.
     constexpr auto G_CONDITION_STRATEGY = static_cast<gambits::G_CONDITION>(100);
 
-    // The behaviours a row can switch. Values are frozen: they appear in the
-    // row grammar and will be persisted (M3.85). Rows are the ONLY source of
-    // a behaviour -- the console commands edit rows, they set no flags --
-    // and the first row, top down, to speak for a behaviour wins.
+    // The behaviours a row can switch -- engine tuning, not what the party
+    // is doing right now (hunting is the party's strategy, another channel).
+    // Values are frozen: they appear in the row grammar and will be
+    // persisted (M3.85); the gaps are retired values. Rows are the ONLY
+    // source of a behaviour: an unchecked row is off, the first row, top
+    // down, to speak for a behaviour wins, and a switch no row speaks for
+    // is off.
     enum class Behavior : uint16
     {
-        AvoidAggro          = 1, // on/off
-        Hunt                = 2, // on/off: pull for the party when it is idle and healthy
-        HuntBand            = 3, // the hardest check the hunter will pull (charutils::EMobDifficulty)
+        AvoidAggro          = 1, // switch
         Formation           = 4, // a Slot
-        CleanPulls          = 5, // on/off: no pulls with another aggressive or linking mob near the target
-        RestWithPlayer      = 6, // on/off: kneel when the player kneels
-        HomePointWithPlayer = 7, // on/off: a KO'd cardian home points when the player does
+        RestWithPlayer      = 6, // switch: kneel when the player kneels
+        HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
     };
     constexpr uint16 BehaviorCount = 8; // one past the last value
+
+    // A switch row carries the value 1 and its checkbox is the switch; a
+    // parameter row (the formation slot) carries its value
+    constexpr auto isSwitch(const Behavior b) -> bool
+    {
+        return b != Behavior::Formation;
+    }
+
+    // Every cardian starts with these rows (the row grammar, gambit_text.h):
+    // avoid aggro on, rest with the player on. Profiles, when they come, are
+    // rows in storage seeded the same way.
+    auto defaultRows() -> const std::vector<std::pair<std::string, bool>>&;
 
     enum class Slot : uint16
     {
         Follow = 0, // the chain behind the player
         Lead   = 1, // ahead of the player: the hunter's place
     };
+
+    // One row of a cardian's list: the engine's gambit plus the ON/OFF the
+    // player sees in the editor (the trust struct is upstream's, untouched)
+    struct GambitRow
+    {
+        gambits::Gambit_t gambit;
+        bool              enabled = true;
+    };
+
+    // The row as the player reads it: "Party: HP < 50% -> Cure (best)"
+    auto labelGambit(const gambits::Gambit_t& gambit) -> std::string;
 
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
     // for a character owner. It speaks the trust vocabulary (gambits::G_*,
@@ -96,7 +120,7 @@ namespace pawn
     public:
         CGambits(CCharEntity* PPawn, CPawnController* PController);
 
-        auto AddGambit(gambits::Gambit_t gambit) -> std::string;
+        auto AddGambit(gambits::Gambit_t gambit, bool enabled = true) -> std::string;
         void RemoveGambit(const std::string& id);
         void RemoveAllGambits();
         void SetTPSkillSettings(gambits::G_TP_TRIGGER trigger, gambits::G_SELECT select, uint16 value);
@@ -109,9 +133,26 @@ namespace pawn
         // asserted only while their rows' conditions hold
         void TickBehaviors();
 
-        // Set the first unconditional row for a behaviour, or append one at
-        // the bottom, where any conditional row above it wins
+        // The console's way in: the first unconditional row for a behaviour
+        // (appended at the bottom if none, where any conditional row above it
+        // wins). A switch row is checked or unchecked; a parameter row takes
+        // the value.
         void SetBehaviorRow(Behavior behavior, uint16 arg);
+
+        // The editor's view and edits (indices are 1-based, as shown)
+        auto Rows() const -> const std::vector<GambitRow>&
+        {
+            return m_gambits;
+        }
+        auto MasterOn() const -> bool
+        {
+            return m_masterOn;
+        }
+        void SetMaster(bool on);
+        auto SetEnabled(std::size_t index, bool on) -> bool;
+        auto Move(std::size_t from, std::size_t to) -> bool;
+        auto Erase(std::size_t index) -> bool;
+        auto Insert(std::size_t index, gambits::Gambit_t gambit) -> bool;
 
         auto Size() const -> std::size_t
         {
@@ -149,7 +190,8 @@ namespace pawn
         timer::time_point m_lastAction;
         uint32            m_nextId = 0;
 
-        std::vector<gambits::Gambit_t>     m_gambits;
+        std::vector<GambitRow>             m_gambits;
+        bool                               m_masterOn = true;
         std::vector<gambits::TrustSkill_t> m_tpSkills;
         gambits::G_TP_TRIGGER              m_tpTrigger = gambits::G_TP_TRIGGER::ASAP;
         gambits::G_SELECT                  m_tpSelect  = gambits::G_SELECT::HIGHEST;

@@ -72,20 +72,22 @@ public:
 
     auto Gambits() -> pawn::CGambits&;
 
+    // Hunt mode: pull for the party while it is idle and healthy. The
+    // party's strategy, not a gambit -- set by !pawnhunt until the strategy
+    // channel exists (RESEARCH §8)
+    void SetHunting(bool on);
+    auto IsHunting() const -> bool;
+
     // The behaviour layer (M3.85): what the gambit rows assert this think,
     // by pawn::Behavior. Cleared at the start of every think; the first row,
-    // top down, to speak for a behaviour wins; a behaviour no row speaks for
-    // takes its default below. Rows are the only source: the console
-    // commands edit rows and set no flags.
+    // top down, to speak for a behaviour wins; a switch no row speaks for
+    // is off, a parameter takes its default. Rows are the only source.
     void ClearGambitBehaviors();
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
 
-    auto IsHunting() const -> bool;        // pull for the party while it is idle and healthy
-    auto HuntBand() const -> uint8;        // the hardest check the hunter will pull
     auto FormationSlot() const -> pawn::Slot;
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
-    auto CleanPulls() const -> bool;
     auto RestsWithPlayer() const -> bool;
     auto HomePointsWithPlayer() const -> bool;
 
@@ -208,8 +210,7 @@ private:
     void WatchPlayerHomePoint();
 
     std::unique_ptr<pawn::CGambits> m_Gambits;
-    uint8                           m_BrainMainJob = 0xFF;
-    uint8                           m_BrainSubJob  = 0xFF;
+    bool                            m_BrainLoaded = false;
 
     timer::time_point                 m_CombatEndTime;
     timer::time_point                 m_LastHealTickTime;
@@ -221,6 +222,7 @@ private:
     std::vector<std::chrono::seconds> m_tickDelays      = { std::chrono::seconds(15), std::chrono::seconds(10), std::chrono::seconds(10), std::chrono::seconds(3) };
     std::size_t                       m_NumHealingTicks = 0;
 
+    bool              m_Hunting    = false;
     bool              m_WasEngaged = false;
     timer::time_point m_LastHuntCheckTime;
     bool              m_HasLeadPoint = false;

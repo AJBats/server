@@ -80,6 +80,10 @@ namespace pawn
     // console commands' way in
     bool setBehaviorRow(CCharEntity* PPawn, Behavior behavior, uint16 arg);
 
+    // Hunt mode: the party's strategy, a controller flag until the strategy
+    // channel exists
+    bool setHunting(CCharEntity* PPawn, bool on);
+
     // The party strategy channel (RESEARCH §8): not built, always 0
     auto partyStrategy(const CCharEntity* PPawn) -> uint16;
 
@@ -97,7 +101,15 @@ namespace pawn
     // first tick and whenever the pawn's job changes; !pawnbrain forces it.
     // Implemented in pawn_module.cpp.
     void loadBrain(CCharEntity* PPawn);
+
+    // The saved gambit set (cardian_gambits, M3.85): the rows in the row
+    // grammar, one "on spec" line each, and the master switch. Saved after
+    // every edit; loaded at spawn instead of the defaults when present.
+    void saveGambits(CCharEntity* PPawn);
+    bool loadSavedGambits(CCharEntity* PPawn);
+    void forgetGambits(CCharEntity* PPawn);
     bool reloadBrainByName(const std::string& targetName);
+    bool reloadBrain(CCharEntity* PPawn);
 
     // Remove a pawn from its zone and destroy it. No character state is
     // written back to the DB (the pawn visit leaves no trace).

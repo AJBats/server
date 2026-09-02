@@ -23,8 +23,13 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 
+#include "utils/battleutils.h"
+#include "spell.h"
+#include "weapon_skill.h"
+
 #include <algorithm>
 #include <array>
+#include <magic_enum/magic_enum.hpp>
 
 #include "common/logging.h"
 #include "common/settings.h"
@@ -160,19 +165,28 @@ namespace pawn
     {
     }
 
-    auto CGambits::AddGambit(Gambit_t gambit) -> std::string
+    auto defaultRows() -> const std::vector<std::pair<std::string, bool>>&
+    {
+        static const std::vector<std::pair<std::string, bool>> rows{
+            { "0|0:0|100:1:1|0", true }, // Self -> Avoid aggro
+            { "0|0:0|100:6:1|0", true }, // Self -> Rest with the player
+        };
+        return rows;
+    }
+
+    auto CGambits::AddGambit(Gambit_t gambit, const bool enabled) -> std::string
     {
         gambit.identifier = fmt::format("{}", ++m_nextId);
         gambit.last_used  = {};
-        m_gambits.emplace_back(std::move(gambit));
-        return m_gambits.back().identifier;
+        m_gambits.push_back(GambitRow{ std::move(gambit), enabled });
+        return m_gambits.back().gambit.identifier;
     }
 
     void CGambits::RemoveGambit(const std::string& id)
     {
-        std::erase_if(m_gambits, [&id](const Gambit_t& gambit)
+        std::erase_if(m_gambits, [&id](const GambitRow& row)
                       {
-                          return gambit.identifier == id;
+                          return row.gambit.identifier == id;
                       });
 
         const auto prefix = fmt::format("{}:", id);
@@ -218,14 +232,21 @@ namespace pawn
 
         m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
 
+        // The master switch: nothing of her own -- no weapon skill, no row
+        if (!m_masterOn)
+        {
+            return;
+        }
+
         if (engaged && POwner->health.tp >= 1000 && TryWeaponSkill())
         {
             return;
         }
 
-        for (auto& gambit : m_gambits)
+        for (auto& row : m_gambits)
         {
-            if (IsBehavior(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
+            auto& gambit = row.gambit;
+            if (!row.enabled || IsBehavior(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
             {
                 continue;
             }
@@ -782,11 +803,15 @@ namespace pawn
         // row's conditions hold, so the controller falls back to its base the
         // moment they stop. Never takes the think away from action rows.
         m_PController->ClearGambitBehaviors();
-        for (const auto& gambit : m_gambits)
+        if (!m_masterOn)
         {
-            if (IsBehavior(gambit) && SelectTarget(gambit) != nullptr)
+            return;
+        }
+        for (const auto& row : m_gambits)
+        {
+            if (row.enabled && IsBehavior(row.gambit) && SelectTarget(row.gambit) != nullptr)
             {
-                ApplyBehavior(gambit);
+                ApplyBehavior(row.gambit);
             }
         }
     }
@@ -810,28 +835,340 @@ namespace pawn
 
     void CGambits::SetBehaviorRow(const pawn::Behavior behavior, const uint16 arg)
     {
-        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "hunt", "hunt band", "formation", "clean pulls", "rest with player", "home point with player" };
+        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player" };
         const auto                                                         name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
+        const bool                                                         sw   = pawn::isSwitch(behavior);
 
-        const auto unconditional = [&](const Gambit_t& g)
+        const auto unconditional = [&](const GambitRow& row)
         {
+            const auto& g = row.gambit;
             return IsBehavior(g) && g.actions.size() == 1 && static_cast<pawn::Behavior>(g.actions[0].select) == behavior &&
                    g.predicate_groups.size() == 1 && g.predicate_groups[0].predicates.size() == 1 &&
                    g.predicate_groups[0].predicates[0].condition == G_CONDITION::ALWAYS;
         };
         if (const auto it = std::find_if(m_gambits.begin(), m_gambits.end(), unconditional); it != m_gambits.end())
         {
-            it->actions[0].select_arg = arg;
+            it->gambit.actions[0].select_arg = sw ? 1 : arg;
+            it->enabled                      = sw ? arg != 0 : true;
         }
         else
         {
             Gambit_t row;
             row.target_selector = G_TARGET::SELF;
             row.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::ALWAYS, 0) });
-            row.actions.emplace_back(G_REACTION_BEHAVIOR, static_cast<G_SELECT>(behavior), arg);
-            AddGambit(std::move(row));
+            row.actions.emplace_back(G_REACTION_BEHAVIOR, static_cast<G_SELECT>(behavior), sw ? 1 : arg);
+            AddGambit(std::move(row), sw ? arg != 0 : true);
         }
-        ShowInfoFmt("pawn: {} gambit row: {} = {}", POwner->getName(), name, arg);
+        if (sw)
+        {
+            ShowInfoFmt("pawn: {} gambit row: {} {}", POwner->getName(), name, arg != 0 ? "checked" : "unchecked");
+        }
+        else
+        {
+            ShowInfoFmt("pawn: {} gambit row: {} = {}", POwner->getName(), name, arg);
+        }
+    }
+
+    void CGambits::SetMaster(const bool on)
+    {
+        if (m_masterOn != on)
+        {
+            ShowInfoFmt("pawn: {} gambits {}", POwner->getName(), on ? "on" : "off");
+        }
+        m_masterOn = on;
+    }
+
+    auto CGambits::SetEnabled(const std::size_t index, const bool on) -> bool
+    {
+        if (index == 0 || index > m_gambits.size())
+        {
+            return false;
+        }
+        m_gambits[index - 1].enabled = on;
+        return true;
+    }
+
+    auto CGambits::Move(const std::size_t from, const std::size_t to) -> bool
+    {
+        if (from == 0 || to == 0 || from > m_gambits.size() || to > m_gambits.size())
+        {
+            return false;
+        }
+        if (from != to)
+        {
+            GambitRow row = std::move(m_gambits[from - 1]);
+            m_gambits.erase(m_gambits.begin() + static_cast<std::ptrdiff_t>(from - 1));
+            m_gambits.insert(m_gambits.begin() + static_cast<std::ptrdiff_t>(to - 1), std::move(row));
+        }
+        return true;
+    }
+
+    auto CGambits::Erase(const std::size_t index) -> bool
+    {
+        if (index == 0 || index > m_gambits.size())
+        {
+            return false;
+        }
+        m_gambits.erase(m_gambits.begin() + static_cast<std::ptrdiff_t>(index - 1));
+        return true;
+    }
+
+    auto CGambits::Insert(const std::size_t index, Gambit_t gambit) -> bool
+    {
+        if (index == 0 || index > m_gambits.size() + 1)
+        {
+            return false;
+        }
+        gambit.identifier = fmt::format("{}", ++m_nextId);
+        gambit.last_used  = {};
+        m_gambits.insert(m_gambits.begin() + static_cast<std::ptrdiff_t>(index - 1), GambitRow{ std::move(gambit), true });
+        return true;
+    }
+
+    namespace
+    {
+        // "cure_iii" -> "Cure III", "provoke" -> "Provoke"
+        auto titleCase(std::string_view raw) -> std::string
+        {
+            std::string out;
+            std::string word;
+            const auto  flush = [&]()
+            {
+                if (word.empty())
+                {
+                    return;
+                }
+                const bool numeral = std::all_of(word.begin(), word.end(), [](const char c)
+                                                 {
+                                                     return c == 'i' || c == 'v' || c == 'x' || c == 'I' || c == 'V' || c == 'X';
+                                                 });
+                for (std::size_t i = 0; i < word.size(); ++i)
+                {
+                    const auto c = static_cast<unsigned char>(word[i]);
+                    out += static_cast<char>((numeral || i == 0) ? std::toupper(c) : std::tolower(c));
+                }
+                word.clear();
+            };
+            for (const char c : raw)
+            {
+                if (c == '_' || c == ' ')
+                {
+                    flush();
+                    out += ' ';
+                }
+                else
+                {
+                    word += c;
+                }
+            }
+            flush();
+            return out;
+        }
+
+        auto familyName(const uint32 family) -> std::string
+        {
+            auto name = std::string(magic_enum::enum_name(static_cast<SPELLFAMILY>(family)));
+            if (name.rfind("SPELLFAMILY_", 0) == 0)
+            {
+                name.erase(0, 12);
+            }
+            return name.empty() ? fmt::format("family {}", family) : titleCase(name);
+        }
+
+        auto conditionText(const Predicate_t& p) -> std::string
+        {
+            const auto arg = p.condition_arg;
+            switch (p.condition)
+            {
+                case G_CONDITION::ALWAYS:
+                    return "always";
+                case G_CONDITION::HPP_LT:
+                    return fmt::format("HP < {}%", arg);
+                case G_CONDITION::HPP_GTE:
+                    return fmt::format("HP >= {}%", arg);
+                case G_CONDITION::MPP_LT:
+                    return fmt::format("MP < {}%", arg);
+                case G_CONDITION::MPP_GTE:
+                    return fmt::format("MP >= {}%", arg);
+                case G_CONDITION::TP_LT:
+                    return fmt::format("TP < {}", arg);
+                case G_CONDITION::TP_GTE:
+                    return fmt::format("TP >= {}", arg);
+                case G_CONDITION::LVL_LT:
+                    return fmt::format("level < {}", arg);
+                case G_CONDITION::LVL_GTE:
+                    return fmt::format("level >= {}", arg);
+                case G_CONDITION::STATUS:
+                    return fmt::format("has {}", titleCase(effects::GetEffectName(static_cast<uint16>(arg))));
+                case G_CONDITION::NOT_STATUS:
+                    return fmt::format("no {}", titleCase(effects::GetEffectName(static_cast<uint16>(arg))));
+                case G_CONDITION::STATUS_FLAG:
+                    return fmt::format("status flag {}", arg);
+                case G_CONDITION::HAS_TOP_ENMITY:
+                    return "holds hate";
+                case G_CONDITION::NOT_HAS_TOP_ENMITY:
+                    return "does not hold hate";
+                case G_CONDITION::SC_AVAILABLE:
+                    return "skillchain open";
+                case G_CONDITION::NOT_SC_AVAILABLE:
+                    return "no skillchain open";
+                case G_CONDITION::MB_AVAILABLE:
+                    return "magic burst open";
+                case G_CONDITION::READYING_WS:
+                    return "readying a weapon skill";
+                case G_CONDITION::READYING_MS:
+                    return "readying a mob skill";
+                case G_CONDITION::READYING_JA:
+                    return "readying an ability";
+                case G_CONDITION::CASTING_MA:
+                    return "casting";
+                case G_CONDITION::CASTING_DEBUFF:
+                    return "casting a debuff";
+                case G_CONDITION::RANDOM:
+                    return fmt::format("{}% of the time", arg);
+                case G_CONDITION::NO_SAMBA:
+                    return "no samba up";
+                case G_CONDITION::NO_STORM:
+                    return "no storm up";
+                case G_CONDITION::PT_HAS_TANK:
+                    return "party has a tank";
+                case G_CONDITION::NOT_PT_HAS_TANK:
+                    return "no tank in the party";
+                case G_CONDITION::IS_ECOSYSTEM:
+                    return fmt::format("ecosystem {}", arg);
+                case G_CONDITION::HP_MISSING:
+                    return fmt::format("missing {} HP", arg);
+                case G_CONDITION::JA_ON_COOLDOWN:
+                    return fmt::format("{} on cooldown", ability::GetAbility(static_cast<uint16>(arg)) != nullptr ? ability::GetAbility(static_cast<uint16>(arg))->getName() : std::to_string(arg));
+                case G_CONDITION::TIMER:
+                    return fmt::format("every {}s", arg);
+                case pawn::G_CONDITION_STRATEGY:
+                    return fmt::format("strategy {}", arg);
+                default:
+                    return fmt::format("condition {}:{}", static_cast<uint16>(p.condition), arg);
+            }
+        }
+
+        // A switch row reads as its name; only an explicit "off" (a
+        // conditional override) says so
+        auto behaviorText(const Action_t& a) -> std::string
+        {
+            const auto  behavior = static_cast<pawn::Behavior>(a.select);
+            const char* off      = a.select_arg == 0 ? ": off" : "";
+            switch (behavior)
+            {
+                case pawn::Behavior::AvoidAggro:
+                    return fmt::format("Avoid aggro{}", off);
+                case pawn::Behavior::Formation:
+                    return fmt::format("Formation: {}", static_cast<pawn::Slot>(a.select_arg) == pawn::Slot::Lead ? "lead" : "follow");
+                case pawn::Behavior::RestWithPlayer:
+                    return fmt::format("Rest with the player{}", off);
+                case pawn::Behavior::HomePointWithPlayer:
+                    return fmt::format("Home point with the player{}", off);
+                default:
+                    return fmt::format("behaviour {} = {}", static_cast<uint16>(a.select), a.select_arg);
+            }
+        }
+
+        auto actionText(const Action_t& a) -> std::string
+        {
+            if (a.reaction == pawn::G_REACTION_BEHAVIOR)
+            {
+                return behaviorText(a);
+            }
+            switch (a.reaction)
+            {
+                case G_REACTION::MA:
+                {
+                    switch (a.select)
+                    {
+                        case G_SELECT::SPECIFIC:
+                        {
+                            auto* PSpell = spell::GetSpell(static_cast<SpellID>(a.select_arg));
+                            return PSpell != nullptr ? titleCase(PSpell->getName()) : fmt::format("spell {}", a.select_arg);
+                        }
+                        case G_SELECT::HIGHEST:
+                            return familyName(a.select_arg) + " (best)";
+                        case G_SELECT::LOWEST:
+                            return familyName(a.select_arg) + " (lowest)";
+                        case G_SELECT::RANDOM:
+                            return familyName(a.select_arg) + " (random)";
+                        case G_SELECT::MB_ELEMENT:
+                            return "Magic burst";
+                        case G_SELECT::ENTRUSTED:
+                            return "Entrust " + familyName(a.select_arg);
+                        case G_SELECT::BEST_INDI:
+                            return "Best indi";
+                        case G_SELECT::BEST_AGAINST_TARGET:
+                            return familyName(a.select_arg) + " (best against target)";
+                        default:
+                            return fmt::format("magic ({}:{})", static_cast<uint16>(a.select), a.select_arg);
+                    }
+                }
+                case G_REACTION::JA:
+                {
+                    if (a.select == G_SELECT::SPECIFIC)
+                    {
+                        auto* PAbility = ability::GetAbility(static_cast<uint16>(a.select_arg));
+                        return PAbility != nullptr ? titleCase(PAbility->getName()) : fmt::format("ability {}", a.select_arg);
+                    }
+                    return fmt::format("ability ({}:{})", static_cast<uint16>(a.select), a.select_arg);
+                }
+                case G_REACTION::WS:
+                {
+                    if (a.select == G_SELECT::SPECIFIC)
+                    {
+                        auto* PSkill = battleutils::GetWeaponSkill(static_cast<uint16>(a.select_arg));
+                        return PSkill != nullptr ? titleCase(PSkill->getName()) : fmt::format("weapon skill {}", a.select_arg);
+                    }
+                    return a.select == G_SELECT::RANDOM ? "Any weapon skill" : "Best weapon skill";
+                }
+                case G_REACTION::RATTACK:
+                    return "Ranged attack";
+                case G_REACTION::ATTACK:
+                    return "Attack";
+                default:
+                    return fmt::format("action {}:{}:{}", static_cast<uint16>(a.reaction), static_cast<uint16>(a.select), a.select_arg);
+            }
+        }
+    } // namespace
+
+    auto labelGambit(const Gambit_t& g) -> std::string
+    {
+        static constexpr std::array<std::string_view, 14> targets{ "Self", "Party", "Target", "The player", "Tank", "Melee", "Ranged", "Casters", "Top enmity", "Curilla", "Dead ally", "Party", "Self", "Target" };
+        const auto                                        t = static_cast<std::size_t>(g.target_selector);
+
+        std::string out(t < targets.size() ? targets[t] : std::string_view("?"));
+        std::string conditions;
+        for (const auto& group : g.predicate_groups)
+        {
+            for (std::size_t i = 0; i < group.predicates.size(); ++i)
+            {
+                if (!conditions.empty())
+                {
+                    conditions += (i != 0 && group.logic == G_LOGIC::OR) ? " or " : ", ";
+                }
+                conditions += conditionText(group.predicates[i]);
+            }
+        }
+        if (conditions != "always")
+        {
+            out += ": " + conditions;
+        }
+        out += " -> ";
+        for (std::size_t i = 0; i < g.actions.size(); ++i)
+        {
+            if (i != 0)
+            {
+                out += " + ";
+            }
+            out += actionText(g.actions[i]);
+        }
+        if (g.retry_delay != 0)
+        {
+            out += fmt::format(" (every {}s)", g.retry_delay);
+        }
+        return out;
     }
 
     auto CGambits::Execute(const Gambit_t& gambit, CBattleEntity* PTarget, const bool engaged) -> bool

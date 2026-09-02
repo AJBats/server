@@ -22,6 +22,13 @@
 --       giveuse <name> <slot> <qty>      give from your inventory, then the
 --                                        cardian uses it (the scroll flow)
 --       homepoint <name>                 a KO'd cardian home points (yours)
+--       gambits <name>                   the cardian's gambit rows (gb.b / g / gb.e)
+--       gtoggle <name> <row> <on|off>    a row's switch
+--       gmove <name> <from> <to>         reorder a row (1-based, as shown)
+--       gdel <name> <row>                delete a row
+--       gins <name> <row> <spec>         insert a row (the row grammar) at a position
+--       gmaster <name> <on|off>          the cardian's master gambit switch
+--       greset <name>                    back to the job's default rows
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -167,6 +174,31 @@ local function sendList(player)
     reply(player, '#cd list.e')
 end
 
+-- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <spec> <label>'
+-- per row, 'gb.e <name>'. The label is the rest of the line.
+local function sendGambits(player, name)
+    local g = player:cardianGambits(name)
+    if g == nil then
+        reply(player, '#cd err gambits no such cardian')
+        return
+    end
+    reply(player, string.format('#cd gb.b %s %d', name, g.master and 1 or 0))
+    for _, row in ipairs(g.rows) do
+        reply(player, string.format('#cd g %s %d %d %s %s', name, row.index, row.on and 1 or 0, row.spec, row.label))
+    end
+    reply(player, '#cd gb.e ' .. name)
+end
+
+-- A gambit edit: the reply is ok or err, then the authoritative rows either way
+local function gambitEdit(player, name, verb, err)
+    if err ~= '' then
+        reply(player, '#cd err ' .. verb .. ' ' .. err)
+    else
+        reply(player, '#cd ok ' .. verb)
+    end
+    sendGambits(player, name)
+end
+
 commandObj.onTrigger = function(player, line)
     local args = {}
     for word in tostring(line or ''):gmatch('%S+') do
@@ -178,6 +210,20 @@ commandObj.onTrigger = function(player, line)
 
     if verb == 'list' then
         sendList(player)
+    elseif verb == 'gambits' and name then
+        sendGambits(player, name)
+    elseif verb == 'gtoggle' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitToggle(name, tonumber(args[3]) or 0, args[4] == 'on'))
+    elseif verb == 'gmove' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitMove(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0))
+    elseif verb == 'gdel' and name and args[3] then
+        gambitEdit(player, name, verb, player:cardianGambitDelete(name, tonumber(args[3]) or 0))
+    elseif verb == 'gins' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitInsert(name, tonumber(args[3]) or 0, args[4]))
+    elseif verb == 'gmaster' and name and args[3] then
+        gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
+    elseif verb == 'greset' and name then
+        gambitEdit(player, name, verb, player:cardianGambitReset(name))
     elseif verb == 'sync' and name then
         -- ownership gate: cardianGear returns nil for a pawn that isn't yours
         if player:cardianGear(name) == nil then

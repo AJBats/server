@@ -4,8 +4,8 @@
 --       keeps itself, its formation slot and its paths outside every
 --       nearby mob's detection range and is pushed away as mobs roam
 --       toward it; the hunter also refuses pulls with other aggressive
---       mobs near the target. Off lets it walk anywhere. This edits the
---       cardian's Avoid aggro gambit row (xi.pawn.behavior.AVOID_AGGRO).
+--       mobs near the target. Off lets it walk anywhere. This checks or
+--       unchecks the cardian's Avoid aggro gambit row.
 -----------------------------------
 ---@type TCommand
 local commandObj = {}

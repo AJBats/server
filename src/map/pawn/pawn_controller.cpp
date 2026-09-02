@@ -77,14 +77,18 @@ auto CPawnController::Behavior(const pawn::Behavior behavior) const -> std::opti
     return m_Behaviors[static_cast<uint16>(behavior)];
 }
 
-auto CPawnController::IsHunting() const -> bool
+void CPawnController::SetHunting(const bool on)
 {
-    return Behavior(pawn::Behavior::Hunt).value_or(0) != 0;
+    if (m_Hunting != on)
+    {
+        ShowInfoFmt("pawn: {} hunt mode {}", POwner->getName(), on ? "on" : "off");
+    }
+    m_Hunting = on;
 }
 
-auto CPawnController::HuntBand() const -> uint8
+auto CPawnController::IsHunting() const -> bool
 {
-    return static_cast<uint8>(Behavior(pawn::Behavior::HuntBand).value_or(settings::get<uint8>("pawn.HUNT_CHECK_MAX")));
+    return m_Hunting;
 }
 
 auto CPawnController::FormationSlot() const -> pawn::Slot
@@ -94,17 +98,12 @@ auto CPawnController::FormationSlot() const -> pawn::Slot
 
 auto CPawnController::IsAvoidingAggro() const -> bool
 {
-    return Behavior(pawn::Behavior::AvoidAggro).value_or(settings::get<bool>("pawn.AVOID_AGGRO") ? 1 : 0) != 0;
-}
-
-auto CPawnController::CleanPulls() const -> bool
-{
-    return Behavior(pawn::Behavior::CleanPulls).value_or(settings::get<bool>("pawn.HUNT_CLEAN_PULLS") ? 1 : 0) != 0;
+    return Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
 }
 
 auto CPawnController::RestsWithPlayer() const -> bool
 {
-    return Behavior(pawn::Behavior::RestWithPlayer).value_or(1) != 0;
+    return Behavior(pawn::Behavior::RestWithPlayer).value_or(0) != 0;
 }
 
 auto CPawnController::HomePointsWithPlayer() const -> bool
@@ -202,15 +201,11 @@ void CPawnController::WatchPlayerHomePoint()
 
 void CPawnController::CheckBrain()
 {
-    auto*      PPawn = static_cast<CCharEntity*>(POwner);
-    const auto mjob  = static_cast<uint8>(PPawn->GetMJob());
-    const auto sjob  = static_cast<uint8>(PPawn->GetSJob());
-
-    if (mjob != m_BrainMainJob || sjob != m_BrainSubJob)
+    // The default rows once; a job change keeps the player's edits
+    if (!m_BrainLoaded)
     {
-        m_BrainMainJob = mjob;
-        m_BrainSubJob  = sjob;
-        pawn::loadBrain(PPawn);
+        m_BrainLoaded = true;
+        pawn::loadBrain(static_cast<CCharEntity*>(POwner));
     }
 }
 
@@ -858,13 +853,13 @@ auto CPawnController::HuntReady(const CCharEntity* PPlayer) const -> bool
 auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*
 {
     const auto  minCheck    = settings::get<uint8>("pawn.HUNT_CHECK_MIN");
-    const auto  maxCheck    = HuntBand();
+    const auto  maxCheck    = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
     const auto  radius      = settings::get<float>("pawn.HUNT_RADIUS");
     const auto  cleanRadius = settings::get<float>("pawn.HUNT_CLEAN_RADIUS");
 
     // One danger scan per hunt check, wide enough to cover every candidate's
     // clean radius and every approach from the hunter; candidates filter it
-    const bool                        cleanPulls = CleanPulls();
+    const bool                        cleanPulls = settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
     std::vector<pawn::danger::Danger> dangers;
     if (cleanPulls)
     {

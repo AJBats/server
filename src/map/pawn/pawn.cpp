@@ -21,6 +21,8 @@
 
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "pawn_gambits.h"
+#include "gambit_text.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -393,6 +395,20 @@ namespace pawn
         return false;
     }
 
+    bool setHunting(CCharEntity* PPawn, const bool on)
+    {
+        if (PPawn == nullptr)
+        {
+            return false;
+        }
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+        {
+            PController->SetHunting(on);
+            return true;
+        }
+        return false;
+    }
+
     auto partyStrategy(const CCharEntity* PPawn) -> uint16
     {
         (void)PPawn;
@@ -428,6 +444,103 @@ namespace pawn
 
         ShowInfoFmt("pawn: {} home points to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
         requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
+        return true;
+    }
+
+    namespace
+    {
+        auto gambitsOf(CCharEntity* PPawn) -> CGambits*
+        {
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr ? &PController->Gambits() : nullptr;
+        }
+    } // namespace
+
+    void saveGambits(CCharEntity* PPawn)
+    {
+        auto* PGambits = gambitsOf(PPawn);
+        if (PGambits == nullptr)
+        {
+            return;
+        }
+        std::string blob;
+        for (const auto& row : PGambits->Rows())
+        {
+            blob += row.enabled ? "1 " : "0 ";
+            blob += text::formatRow(row.gambit);
+            blob += '\n';
+        }
+        db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, 0, ?, ?) "
+                         "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
+                         PPawn->id, static_cast<uint8>(PGambits->MasterOn() ? 1 : 0), blob);
+    }
+
+    bool loadSavedGambits(CCharEntity* PPawn)
+    {
+        auto* PGambits = gambitsOf(PPawn);
+        if (PGambits == nullptr)
+        {
+            return false;
+        }
+        const auto rset = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
+        if (!rset || !rset->next())
+        {
+            return false;
+        }
+
+        PGambits->RemoveAllGambits();
+        PGambits->SetMaster(rset->get<uint8>("master_on") != 0);
+
+        const auto  blob  = rset->get<std::string>("set_rows");
+        std::size_t count = 0;
+        std::size_t bad   = 0;
+        std::size_t start = 0;
+        while (start < blob.size())
+        {
+            auto end = blob.find('\n', start);
+            if (end == std::string::npos)
+            {
+                end = blob.size();
+            }
+            const std::string_view line(blob.data() + start, end - start);
+            start = end + 1;
+            if (line.size() < 3 || line[1] != ' ')
+            {
+                if (!line.empty())
+                {
+                    ++bad;
+                }
+                continue;
+            }
+            if (auto row = text::parseRow(line.substr(2)); row.has_value())
+            {
+                PGambits->AddGambit(std::move(*row), line[0] == '1');
+                ++count;
+            }
+            else
+            {
+                ++bad;
+            }
+        }
+        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{})", PPawn->getName(), count, bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
+        return true;
+    }
+
+    void forgetGambits(CCharEntity* PPawn)
+    {
+        if (PPawn != nullptr)
+        {
+            db::preparedStmt("DELETE FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
+        }
+    }
+
+    bool reloadBrain(CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr || !pawns.contains(PPawn->id))
+        {
+            return false;
+        }
+        loadBrain(PPawn);
         return true;
     }
 
