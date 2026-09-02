@@ -341,6 +341,15 @@ class PawnModule : public CPPModule
             return cardian::link::sendToCharacter(PChar->id, wire);
         };
 
+        lua["CBaseEntity"]["cardianAccountPawns"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto names = ::lua.create_table();
+            for (const auto& name : pawn::accountPawnNames(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
+            {
+                names.add(name);
+            }
+            return names;
+        };
         lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto  names = ::lua.create_table();

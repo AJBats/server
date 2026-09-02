@@ -51,6 +51,11 @@ namespace pawn
     // character's own.
     auto ownerAccountOf(const CCharEntity* PChar) -> uint32;
 
+    // Every character the player could spawn as a cardian, by name: their
+    // account's own alts and the generated cardians it owns, never the one
+    // they are playing -- spawn()'s eligibility, as a list
+    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>;
+
     // Delete orphaned pawn session rows (client_addr = 0) left by a crash.
     // Called once at map boot.
     void cleanupStaleRows();

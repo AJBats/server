@@ -668,6 +668,28 @@ namespace pawn
         return findPawn(targetCharID);
     }
 
+    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>
+    {
+        std::vector<std::string> names;
+        if (PChar == nullptr)
+        {
+            return names;
+        }
+        // The same eligibility spawn() applies: the player's own alts and the
+        // generated cardians their account owns, never the character they
+        // are playing
+        const uint32 ownerAccid = ownerAccountOf(PChar);
+        const auto   rset       = db::preparedStmt("SELECT c.charname FROM chars c "
+                                                   "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
+                                                   "WHERE c.charid <> ? AND (c.accid = ? OR p.owner_accid = ?) ORDER BY c.charname",
+                                                   PChar->id, ownerAccid, ownerAccid);
+        while (rset && rset->next())
+        {
+            names.emplace_back(rset->get<std::string>("charname"));
+        }
+        return names;
+    }
+
     auto managedPawnNames(const uint32 summonerCharID) -> std::vector<std::string>
     {
         std::vector<std::string> names;

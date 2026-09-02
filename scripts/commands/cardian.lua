@@ -29,6 +29,8 @@
 --       gins <name> <row> <spec>         insert a row (the row grammar) at a position
 --       gset <name> <row> <spec>         replace a row in place (keeps its switch)
 --       gvocab <name>                    the pickers' catalogue for the cardian
+--       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
+--       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
 --                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the job's default rows
@@ -264,6 +266,30 @@ commandObj.onTrigger = function(player, line)
         gambitEdit(player, name, verb, player:cardianGambitReplace(name, tonumber(args[3]) or 0, args[4]))
     elseif verb == 'gvocab' and name then
         sendVocab(player, name)
+    elseif verb == 'owned' then
+        reply(player, '#cd own.b')
+        for _, n in ipairs(player:cardianAccountPawns()) do
+            reply(player, '#cd o ' .. n)
+        end
+        reply(player, '#cd own.e')
+    elseif verb == 'spawn' and name then
+        if player:pawnSpawn(name) then
+            reply(player, '#cd ok spawn')
+        else
+            reply(player, '#cd err spawn cannot spawn (unknown, online, already out, wrong account, or pawns disabled)')
+        end
+        sendList(player)
+    elseif verb == 'despawn' and name then
+        local mine = false
+        for _, n in ipairs(player:cardianAccountPawns()) do
+            if n == name then mine = true end
+        end
+        if mine and player:pawnDespawn(name) then
+            reply(player, '#cd ok despawn')
+        else
+            reply(player, '#cd err despawn not one of yours, or not out')
+        end
+        sendList(player)
     elseif verb == 'gmaster' and name and args[3] then
         gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then
