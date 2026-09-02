@@ -37,5 +37,6 @@ return
 
         { ai.t.SELF, { { ai.c.MPP_LT, 15 }, { ai.c.HPP_GTE, 60 } }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.CONVERT } },
         b.nuke(50),
+        b.defaults(),
     }),
 }

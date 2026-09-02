@@ -18,5 +18,6 @@ return
         b.magicBurst,
         b.cureParty(40),
         b.nuke(30),
+        b.defaults(),
     }),
 }

@@ -1,9 +1,11 @@
 -----------------------------------
 -- func: pawnhunt <charname> <on|off>
--- desc: Cardian pawns - hunt mode. The flagged cardian picks and pulls
---       exp mobs on its own whenever the party is idle, healthy and past
---       the post-fight breather; the rest of the party joins the pull.
---       One hunter per party is the intended shape (usually the tank).
+-- desc: Cardian pawns - hunt mode. The cardian picks and pulls exp mobs
+--       on its own whenever the party is idle, healthy and past the
+--       post-fight breather; the rest of the party joins the pull. One
+--       hunter per party is the intended shape (usually the tank). This
+--       edits the cardian's Hunt gambit row and its Formation row (lead
+--       while hunting) -- the same rows the gambit editor shows.
 -----------------------------------
 ---@type TCommand
 local commandObj = {}

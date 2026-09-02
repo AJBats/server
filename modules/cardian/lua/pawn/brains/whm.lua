@@ -43,5 +43,6 @@ return
         b.debuff(xi.effect.SLOW,      family.SLOW,     60),
         b.debuff(xi.effect.DIA,       family.DIA,      60),
         b.debuffSpell(xi.effect.FLASH, spell.FLASH,    45),
+        b.defaults(),
     }),
 }

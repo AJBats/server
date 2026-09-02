@@ -22,5 +22,6 @@ return
         b.debuff(xi.effect.SLOW,      family.HOJO,     60),
         b.debuff(xi.effect.PARALYSIS, family.JUBAKU,   60),
         b.debuff(xi.effect.BLINDNESS, family.KURAYAMI, 60),
+        b.defaults(),
     }),
 }

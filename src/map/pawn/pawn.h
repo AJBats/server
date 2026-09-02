@@ -74,11 +74,15 @@ namespace pawn
 
     // Toggle hunt mode on the named live pawn (see CPawnController); the
     // usual summoner-only rule is the caller's (findManagedPawn).
-    bool setHunting(CCharEntity* PPawn, bool on);
+    enum class Behavior : uint16;
 
-    // Toggle aggro avoidance on the named live pawn (see CPawnController);
-    // pawn.AVOID_AGGRO is every pawn's default.
-    bool setAvoidAggro(CCharEntity* PPawn, bool on);
+    // Set a behaviour's unconditional gambit row (pawn_gambits.h): the
+    // console commands' way in
+    bool setBehaviorRow(CCharEntity* PPawn, Behavior behavior, uint16 arg);
+
+    // The party strategy channel (RESEARCH §8): not built, always 0
+    auto partyStrategy(const CCharEntity* PPawn) -> uint16;
+
 
     // A dead pawn home points: revived the way a home point revives a
     // player (full HP/MP, no weakness) and moved to its home point -- which

@@ -25,5 +25,6 @@ return
         b.selfBuff(xi.effect.PROTECT, family.PROTECT),
         b.selfBuff(xi.effect.SHELL,   family.SHELL),
         b.provokeToSave(ai.t.MASTER, 50),
+        b.defaults(),
     }),
 }

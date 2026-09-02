@@ -35,7 +35,9 @@ xi.settings.pawn =
     -- Hunt mode (!pawnhunt): a flagged pawn picks and pulls exp mobs on
     -- its own while the party is idle and healthy. Difficulty band uses
     -- the check scale: 2 = Easy Prey, 3 = Decent Challenge, 4 = Even
-    -- Match, 5 = Tough, 6 = Very Tough, 7 = Incredibly Tough.
+    -- Match, 5 = Tough, 6 = Very Tough, 7 = Incredibly Tough. Hunting itself
+    -- is a gambit row (!pawnhunt edits it); a "hunt up to" row replaces
+    -- HUNT_CHECK_MAX per cardian, and HUNT_CHECK_MAX is the fallback.
     HUNT_CHECK_MIN = 3,
     HUNT_CHECK_MAX = 5,
 
@@ -102,9 +104,10 @@ xi.settings.pawn =
     -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
     -- and itself outside those circles, and is pushed away as a mob roams
     -- toward it. Cardians move on the server with the mobs, so nothing
-    -- surprises them: they stand boldly just outside. AVOID_AGGRO is the
-    -- default for every cardian; a gambit row or !pawnavoid changes it per
-    -- cardian. AVOID_SCAN is how far around itself a cardian looks.
+    -- surprises them: they stand boldly just outside. Behaviours are gambit
+    -- rows (every job brain ends with its default rows; !pawnavoid edits
+    -- that row); AVOID_AGGRO is the fallback for a cardian whose rows say
+    -- nothing about it. AVOID_SCAN is how far around itself a cardian looks.
     AVOID_AGGRO  = true,
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
@@ -132,7 +135,7 @@ xi.settings.pawn =
     AVOID_ITCH_TOLERANCE = 3.0,
     AVOID_ITCH_PATIENCE  = 20,
 
-    -- Clean pulls (independent of AVOID_AGGRO): the hunter skips a target
+    -- Clean pulls (a gambit row; HUNT_CLEAN_PULLS is the fallback): the hunter skips a target
     -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
     -- with a danger circle across the approach. Link-aware pulls (same-
     -- family linking mobs, aggressive or not) are a later refinement.

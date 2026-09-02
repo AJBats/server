@@ -23,5 +23,6 @@ return
         { ai.t.SELF, { ai.c.MPP_LT, 50 }, { ai.r.MA, ai.s.HIGHEST, family.ASPIR } },
         b.debuff(xi.effect.BIO, family.BIO, 60),
         { ai.t.TARGET, { ai.c.TIMER, 60 }, { ai.r.MA, ai.s.HIGHEST, family.ABSORB } },
+        b.defaults(),
     }),
 }

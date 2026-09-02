@@ -23,5 +23,6 @@ return
         b.debuff(xi.effect.BLINDNESS, family.BLIND,  60),
         b.debuff(xi.effect.POISON,    family.POISON, 60),
         b.nuke(30),
+        b.defaults(),
     }),
 }

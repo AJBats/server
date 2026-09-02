@@ -16,5 +16,6 @@ return
 
     gambits = b.list({
         b.provokeToSave(ai.t.MASTER, 40),
+        b.defaults(),
     }),
 }

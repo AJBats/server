@@ -22,5 +22,6 @@ return
         b.debuff(xi.effect.ELEGY,   family.ELEGY,       60),
         b.debuff(xi.effect.REQUIEM, family.FOE_REQUIEM, 60),
         b.cureParty(30),
+        b.defaults(),
     }),
 }

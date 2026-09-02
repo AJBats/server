@@ -19,5 +19,6 @@ return
         b.jaSelf(xi.effect.VELOCITY_SHOT, xi.ja.VELOCITY_SHOT),
         b.jaTarget(xi.ja.BARRAGE, 60),
         b.shoot,
+        b.defaults(),
     }),
 }

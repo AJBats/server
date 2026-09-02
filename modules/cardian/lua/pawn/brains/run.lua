@@ -21,5 +21,6 @@ return
         { ai.t.TARGET, { ai.c.LUNGE_MB_AVAILABLE, 0 }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.LUNGE } },
         b.debuffSpell(xi.effect.FLASH, spell.FLASH, 45),
         b.provokeIfLoose,
+        b.defaults(),
     }),
 }

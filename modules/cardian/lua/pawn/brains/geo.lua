@@ -19,5 +19,6 @@ return
         { ai.t.TARGET, { ai.c.TIMER, 120 }, { ai.r.MA, ai.s.HIGHEST, family.GEO_DEBUFF } },
         b.cureParty(40),
         b.nuke(50),
+        b.defaults(),
     }),
 }

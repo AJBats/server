@@ -378,7 +378,7 @@ namespace pawn
         return true;
     }
 
-    bool setHunting(CCharEntity* PPawn, const bool on)
+    bool setBehaviorRow(CCharEntity* PPawn, const Behavior behavior, const uint16 arg)
     {
         if (PPawn == nullptr)
         {
@@ -387,25 +387,16 @@ namespace pawn
 
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
         {
-            PController->SetHunting(on);
+            PController->Gambits().SetBehaviorRow(behavior, arg);
             return true;
         }
         return false;
     }
 
-    bool setAvoidAggro(CCharEntity* PPawn, const bool on)
+    auto partyStrategy(const CCharEntity* PPawn) -> uint16
     {
-        if (PPawn == nullptr)
-        {
-            return false;
-        }
-
-        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
-        {
-            PController->SetAvoidAggro(on);
-            return true;
-        }
-        return false;
+        (void)PPawn;
+        return 0;
     }
 
     bool homePoint(CCharEntity* PPawn)

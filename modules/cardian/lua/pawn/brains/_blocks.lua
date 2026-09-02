@@ -30,11 +30,59 @@ end
 -----------------------------------
 -- Behaviour switches (never consume the think)
 -----------------------------------
--- Avoid aggro on/off while the conditions hold; conditions default to always.
--- The controller's default comes from pawn.AVOID_AGGRO, so brains only need
--- a row to change it or to make it conditional.
+-- A behaviour row asserts its value while its conditions hold (default:
+-- always). Rows are the only source of a behaviour: the first row, top
+-- down, to speak for one wins, so a conditional row above a default row
+-- overrides it. Every brain ends with b.defaults(), the rows a player sees
+-- and can turn off; !pawnhunt and !pawnavoid edit those rows.
+b.behavior = function(id, arg, conditions)
+    return { ai.t.SELF, conditions or { ai.c.ALWAYS, 0 }, { xi.pawn.r.BEHAVIOR, id, arg } }
+end
+
 b.avoidAggro = function(on, conditions)
-    return { ai.t.SELF, conditions or { ai.c.ALWAYS, 0 }, { xi.pawn.r.BEHAVIOR, xi.pawn.behavior.AVOID_AGGRO, on and 1 or 0 } }
+    return b.behavior(xi.pawn.behavior.AVOID_AGGRO, on and 1 or 0, conditions)
+end
+
+-- Pull for the party when it is idle and healthy
+b.hunt = function(on, conditions)
+    return b.behavior(xi.pawn.behavior.HUNT, on and 1 or 0, conditions)
+end
+
+-- The hardest check the hunter will pull (charutils::EMobDifficulty:
+-- 3 = Decent Challenge, 4 = Even Match, 5 = Tough, 6 = Very Tough)
+b.huntUpTo = function(check, conditions)
+    return b.behavior(xi.pawn.behavior.HUNT_BAND, check, conditions)
+end
+
+-- xi.pawn.slot.FOLLOW (the chain behind the player) or LEAD (ahead of them)
+b.formation = function(slot, conditions)
+    return b.behavior(xi.pawn.behavior.FORMATION, slot, conditions)
+end
+
+b.cleanPulls = function(on, conditions)
+    return b.behavior(xi.pawn.behavior.CLEAN_PULLS, on and 1 or 0, conditions)
+end
+
+b.restWithPlayer = function(on, conditions)
+    return b.behavior(xi.pawn.behavior.REST_WITH_PLAYER, on and 1 or 0, conditions)
+end
+
+b.homePointWithPlayer = function(on, conditions)
+    return b.behavior(xi.pawn.behavior.HOME_POINT_WITH_PLAYER, on and 1 or 0, conditions)
+end
+
+-- The rows every brain ends with: the party rules a player sees in the
+-- gambit list and can turn off. At the bottom so any conditional row
+-- above wins.
+b.defaults = function()
+    return {
+        b.avoidAggro(true),
+        b.cleanPulls(true),
+        b.restWithPlayer(true),
+        b.homePointWithPlayer(false),
+        b.hunt(false),
+        b.formation(xi.pawn.slot.FOLLOW),
+    }
 end
 
 -----------------------------------

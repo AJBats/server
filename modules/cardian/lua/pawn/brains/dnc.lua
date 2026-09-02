@@ -18,5 +18,6 @@ return
         { ai.t.PARTY, { ai.c.HPP_LT, 50 }, { ai.r.JA, ai.s.HIGHEST_WALTZ, 0 } },
         { ai.t.SELF,  { ai.c.NO_SAMBA, 0 }, { ai.r.JA, ai.s.BEST_SAMBA, 0 } },
         { ai.t.TARGET, { ai.c.TP_GTE, 300 }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.QUICKSTEP }, 30 },
+        b.defaults(),
     }),
 }

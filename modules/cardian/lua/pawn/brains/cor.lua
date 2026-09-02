@@ -18,5 +18,6 @@ return
         { ai.t.SELF, { ai.c.NOT_STATUS, xi.effect.CHAOS_ROLL },    { ai.r.JA, ai.s.SPECIFIC, xi.ja.CHAOS_ROLL },    60 },
         { ai.t.SELF, { ai.c.NOT_STATUS, xi.effect.CORSAIRS_ROLL }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.CORSAIRS_ROLL }, 60 },
         b.shoot,
+        b.defaults(),
     }),
 }

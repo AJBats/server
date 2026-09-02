@@ -16,5 +16,6 @@ return
 
     gambits = b.list({
         b.cureParty(40),
+        b.defaults(),
     }),
 }

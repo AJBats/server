@@ -27,5 +27,6 @@ return
         b.jaSelf(xi.effect.SUBLIMATION_ACTIVATED, xi.ja.SUBLIMATION),
         b.debuff(xi.effect.DIA, family.DIA, 60),
         b.nuke(60),
+        b.defaults(),
     }),
 }

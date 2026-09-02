@@ -20,7 +20,11 @@
 */
 
 #include "pawn_gambits.h"
+#include "pawn.h"
 #include "pawn_controller.h"
+
+#include <algorithm>
+#include <array>
 
 #include "common/logging.h"
 #include "common/settings.h"
@@ -681,6 +685,9 @@ namespace pawn
                 case G_CONDITION::SUB_ANIMATION:
                     results.push_back(PTrigger->animationsub == arg);
                     break;
+                case pawn::G_CONDITION_STRATEGY:
+                    results.push_back(pawn::partyStrategy(POwner) == arg);
+                    break;
                 default:
                     // VAL_URIEL_CHECK and anything newer: trust-NPC specific
                     results.push_back(false);
@@ -797,8 +804,34 @@ namespace pawn
     {
         for (const auto& action : gambit.actions)
         {
-            m_PController->SetGambitBehavior(static_cast<uint16>(action.select), action.select_arg != 0);
+            m_PController->SetGambitBehavior(static_cast<uint16>(action.select), static_cast<uint16>(action.select_arg));
         }
+    }
+
+    void CGambits::SetBehaviorRow(const pawn::Behavior behavior, const uint16 arg)
+    {
+        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "hunt", "hunt band", "formation", "clean pulls", "rest with player", "home point with player" };
+        const auto                                                         name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
+
+        const auto unconditional = [&](const Gambit_t& g)
+        {
+            return IsBehavior(g) && g.actions.size() == 1 && static_cast<pawn::Behavior>(g.actions[0].select) == behavior &&
+                   g.predicate_groups.size() == 1 && g.predicate_groups[0].predicates.size() == 1 &&
+                   g.predicate_groups[0].predicates[0].condition == G_CONDITION::ALWAYS;
+        };
+        if (const auto it = std::find_if(m_gambits.begin(), m_gambits.end(), unconditional); it != m_gambits.end())
+        {
+            it->actions[0].select_arg = arg;
+        }
+        else
+        {
+            Gambit_t row;
+            row.target_selector = G_TARGET::SELF;
+            row.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::ALWAYS, 0) });
+            row.actions.emplace_back(G_REACTION_BEHAVIOR, static_cast<G_SELECT>(behavior), arg);
+            AddGambit(std::move(row));
+        }
+        ShowInfoFmt("pawn: {} gambit row: {} = {}", POwner->getName(), name, arg);
     }
 
     auto CGambits::Execute(const Gambit_t& gambit, CBattleEntity* PTarget, const bool engaged) -> bool

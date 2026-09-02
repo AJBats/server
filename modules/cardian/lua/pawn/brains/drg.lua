@@ -18,5 +18,6 @@ return
         b.jaSelf(xi.effect.ANCIENT_CIRCLE, xi.ja.ANCIENT_CIRCLE),
         b.jaTarget(xi.ja.JUMP),
         b.jaTarget(xi.ja.HIGH_JUMP),
+        b.defaults(),
     }),
 }

@@ -21,5 +21,6 @@ return
         { ai.t.SELF, { ai.c.HPP_LT, 50 }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.CHAKRA } },
         { ai.t.SELF, { ai.c.NOT_STATUS, xi.effect.BOOST }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.BOOST }, 15 },
         b.provokeToSave(ai.t.MASTER, 40),
+        b.defaults(),
     }),
 }

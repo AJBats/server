@@ -19,5 +19,6 @@ return
         b.jaSelf(xi.effect.THIRD_EYE,      xi.ja.THIRD_EYE),
         { ai.t.SELF, { ai.c.TP_LT, 1000 }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.MEDITATE } },
         b.jaSelf(xi.effect.WARDING_CIRCLE, xi.ja.WARDING_CIRCLE),
+        b.defaults(),
     }),
 }

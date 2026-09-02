@@ -29,5 +29,6 @@ return
         -- Always: peel the mob off the player, shout when fresh
         b.provokeToSave(ai.t.MASTER, 50),
         b.jaSelf(xi.effect.WARCRY, xi.ja.WARCRY),
+        b.defaults(),
     }),
 }

@@ -29,6 +29,8 @@
 
 #include "ai/helpers/gambits_container.h"
 
+#include <optional>
+
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -45,9 +47,31 @@ namespace pawn
     // while the row's conditions hold, and it never consumes the think.
     constexpr auto G_REACTION_BEHAVIOR = static_cast<gambits::G_REACTION>(100);
 
+    // Cardian-only gambit condition, reserved for the party strategy channel
+    // (RESEARCH §8): holds while the party's strategy equals the argument.
+    // No strategy exists yet, so a row with it never fires.
+    constexpr auto G_CONDITION_STRATEGY = static_cast<gambits::G_CONDITION>(100);
+
+    // The behaviours a row can switch. Values are frozen: they appear in the
+    // row grammar and will be persisted (M3.85). Rows are the ONLY source of
+    // a behaviour -- the console commands edit rows, they set no flags --
+    // and the first row, top down, to speak for a behaviour wins.
     enum class Behavior : uint16
     {
-        AvoidAggro = 1,
+        AvoidAggro          = 1, // on/off
+        Hunt                = 2, // on/off: pull for the party when it is idle and healthy
+        HuntBand            = 3, // the hardest check the hunter will pull (charutils::EMobDifficulty)
+        Formation           = 4, // a Slot
+        CleanPulls          = 5, // on/off: no pulls with another aggressive or linking mob near the target
+        RestWithPlayer      = 6, // on/off: kneel when the player kneels
+        HomePointWithPlayer = 7, // on/off: a KO'd cardian home points when the player does
+    };
+    constexpr uint16 BehaviorCount = 8; // one past the last value
+
+    enum class Slot : uint16
+    {
+        Follow = 0, // the chain behind the player
+        Lead   = 1, // ahead of the player: the hunter's place
     };
 
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
@@ -84,6 +108,10 @@ namespace pawn
         // The behaviour pass alone, every tick, pathing or not: switches are
         // asserted only while their rows' conditions hold
         void TickBehaviors();
+
+        // Set the first unconditional row for a behaviour, or append one at
+        // the bottom, where any conditional row above it wins
+        void SetBehaviorRow(Behavior behavior, uint16 arg);
 
         auto Size() const -> std::size_t
         {

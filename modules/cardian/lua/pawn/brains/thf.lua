@@ -17,5 +17,6 @@ return
     gambits = b.list({
         { ai.t.TARGET, { ai.c.ALWAYS, 0 }, { ai.r.JA, ai.s.SPECIFIC, xi.ja.STEAL }, 300 },
         b.provokeToSave(ai.t.MASTER, 40),
+        b.defaults(),
     }),
 }

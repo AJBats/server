@@ -224,7 +224,16 @@ class PawnModule : public CPPModule
         // definitions so the brains cannot drift from the interpreter
         lua["xi"]["pawn"]             = lua["xi"]["pawn"].get_or_create<sol::table>();
         lua["xi"]["pawn"]["r"]        = lua.create_table_with("BEHAVIOR", static_cast<uint16>(pawn::G_REACTION_BEHAVIOR));
-        lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro));
+        lua["xi"]["pawn"]["c"]        = lua.create_table_with("STRATEGY", static_cast<uint16>(pawn::G_CONDITION_STRATEGY));
+        lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro),
+                                                              "HUNT", static_cast<uint16>(pawn::Behavior::Hunt),
+                                                              "HUNT_BAND", static_cast<uint16>(pawn::Behavior::HuntBand),
+                                                              "FORMATION", static_cast<uint16>(pawn::Behavior::Formation),
+                                                              "CLEAN_PULLS", static_cast<uint16>(pawn::Behavior::CleanPulls),
+                                                              "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
+                                                              "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));
+        lua["xi"]["pawn"]["slot"]     = lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
+                                                              "LEAD", static_cast<uint16>(pawn::Slot::Lead));
 
         lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
@@ -415,7 +424,10 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
-            return pawn::setHunting(PPawn, on) ? "" : "no controller";
+            // The hunter also takes the lead slot: one command, as before
+            const bool ok = pawn::setBehaviorRow(PPawn, pawn::Behavior::Hunt, on ? 1 : 0) &&
+                            pawn::setBehaviorRow(PPawn, pawn::Behavior::Formation, static_cast<uint16>(on ? pawn::Slot::Lead : pawn::Slot::Follow));
+            return ok ? "" : "no controller";
         };
 
         lua["CBaseEntity"]["cardianAvoid"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
@@ -425,7 +437,7 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
-            return pawn::setAvoidAggro(PPawn, on) ? "" : "no controller";
+            return pawn::setBehaviorRow(PPawn, pawn::Behavior::AvoidAggro, on ? 1 : 0) ? "" : "no controller";
         };
 
         lua["CBaseEntity"]["cardianHomePoint"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
