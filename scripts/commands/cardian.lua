@@ -194,8 +194,10 @@ local function sendGambits(player, name)
     reply(player, '#cd gb.e ' .. name)
 end
 
--- The pickers' catalogue: 'gv.b <name>', then chunked 'gvt|gvc|gvs <name> k=label;...'
--- and 'gva <name> <group> k=label;...' lines under the link's line cap, 'gv.e <name>'
+-- The pickers' catalogue: 'gv.b <name>', then chunked 'gvt|gvs <name> k=label;...',
+-- 'gvc <name> <range|-> k=label;...' (range = min,max,step,default for a numeric
+-- condition) and 'gva <name> <group> k=label;...' lines under the link's line cap,
+-- then 'gv.e <name>'
 local function sendVocab(player, name)
     local v = player:cardianGambitVocab(name)
     if v == nil then
@@ -225,7 +227,7 @@ local function sendVocab(player, name)
         flush()
     end
     chunked('gvt', function () return '' end, v.targets)
-    chunked('gvc', function () return '' end, v.conditions)
+    chunked('gvc', function (g) return (g ~= '' and g or '-') .. ' ' end, v.conditions, function (e) return e.group end)
     chunked('gvs', function () return '' end, v.statuses)
     chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
     reply(player, '#cd gv.e ' .. name)

@@ -105,9 +105,9 @@ namespace pawn
     // weapon skills, plus the behaviours. Keys are row-grammar fragments.
     struct VocabEntry
     {
-        std::string key;   // "target", "cond:arg", "status id", or "reaction:select:arg"
-        std::string label; // as the player reads it
-        std::string group; // actions only: Behaviours / Magic / Abilities / WeaponSkills / Ranged
+        std::string key;   // "target", "cond:arg" ("cond:*" when numeric), "status id", or "reaction:select:arg"
+        std::string label; // as the player reads it; a '*' stands for the number
+        std::string group; // actions: Behaviours / Magic / Abilities / WeaponSkills / Ranged; numeric conditions: "min,max,step,default"
     };
     struct Vocabulary
     {

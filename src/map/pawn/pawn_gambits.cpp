@@ -987,6 +987,14 @@ namespace pawn
             return name.empty() ? fmt::format("family {}", family) : titleCase(name);
         }
 
+        // The target names, by G_TARGET; the vocabulary and the row labels
+        // read from the same table so a picker never renames a row.
+        auto targetName(const std::size_t target) -> std::string_view
+        {
+            static constexpr std::array<std::string_view, 14> names{ "Self", "Party member", "Target", "The player", "Tank", "Melee", "Ranged", "Casters", "Top enmity", "Curilla", "Dead ally", "Party member", "Self", "Target" };
+            return target < names.size() ? names[target] : std::string_view("?");
+        }
+
         auto conditionText(const Predicate_t& p) -> std::string
         {
             const auto arg = p.condition_arg;
@@ -995,17 +1003,17 @@ namespace pawn
                 case G_CONDITION::ALWAYS:
                     return "always";
                 case G_CONDITION::HPP_LT:
-                    return fmt::format("HP < {}%", arg);
+                    return fmt::format("HP below {}%", arg);
                 case G_CONDITION::HPP_GTE:
-                    return fmt::format("HP >= {}%", arg);
+                    return fmt::format("HP at least {}%", arg);
                 case G_CONDITION::MPP_LT:
-                    return fmt::format("MP < {}%", arg);
+                    return fmt::format("MP below {}%", arg);
                 case G_CONDITION::MPP_GTE:
-                    return fmt::format("MP >= {}%", arg);
+                    return fmt::format("MP at least {}%", arg);
                 case G_CONDITION::TP_LT:
-                    return fmt::format("TP < {}", arg);
+                    return fmt::format("TP below {}", arg);
                 case G_CONDITION::TP_GTE:
-                    return fmt::format("TP >= {}", arg);
+                    return fmt::format("TP at least {}", arg);
                 case G_CONDITION::LVL_LT:
                     return fmt::format("level < {}", arg);
                 case G_CONDITION::LVL_GTE:
@@ -1147,10 +1155,7 @@ namespace pawn
 
     auto labelGambit(const Gambit_t& g) -> std::string
     {
-        static constexpr std::array<std::string_view, 14> targets{ "Self", "Party", "Target", "The player", "Tank", "Melee", "Ranged", "Casters", "Top enmity", "Curilla", "Dead ally", "Party", "Self", "Target" };
-        const auto                                        t = static_cast<std::size_t>(g.target_selector);
-
-        std::string out(t < targets.size() ? targets[t] : std::string_view("?"));
+        std::string out(targetName(static_cast<std::size_t>(g.target_selector)));
         std::string conditions;
         for (const auto& group : g.predicate_groups)
         {
@@ -1636,28 +1641,19 @@ namespace pawn
             return v;
         }
 
-        v.targets = {
-            { "0", "Self", "" }, { "1", "Party member", "" }, { "2", "Target", "" }, { "3", "The player", "" }, { "4", "Tank", "" },
-            { "5", "Melee", "" }, { "6", "Ranged", "" }, { "7", "Casters", "" }, { "8", "Top enmity", "" }, { "10", "Dead ally", "" },
-        };
+        for (const std::size_t id : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 10u })
+        {
+            v.targets.push_back({ fmt::format("{}", id), std::string(targetName(id)), "" });
+        }
 
+        // Numeric conditions are one entry per comparator: the key and label
+        // carry a '*' where the number goes, and group carries its range as
+        // min,max,step,default. The number itself is picked on the row.
         v.conditions.push_back({ "0:0", "Always", "" });
-        for (uint32 pct = 10; pct <= 90; pct += 10)
-        {
-            v.conditions.push_back({ fmt::format("1:{}", pct), fmt::format("HP < {}%", pct), "" });
-        }
-        for (const uint32 pct : { 50u, 75u, 100u })
-        {
-            v.conditions.push_back({ fmt::format("2:{}", pct), fmt::format("HP >= {}%", pct), "" });
-        }
-        for (uint32 pct = 10; pct <= 90; pct += 10)
-        {
-            v.conditions.push_back({ fmt::format("3:{}", pct), fmt::format("MP < {}%", pct), "" });
-        }
-        for (const uint32 tp : { 1000u, 2000u, 3000u })
-        {
-            v.conditions.push_back({ fmt::format("6:{}", tp), fmt::format("TP >= {}", tp), "" });
-        }
+        v.conditions.push_back({ "1:*", "HP below *%", "10,90,10,50" });
+        v.conditions.push_back({ "2:*", "HP at least *%", "10,100,10,75" });
+        v.conditions.push_back({ "3:*", "MP below *%", "10,90,10,30" });
+        v.conditions.push_back({ "6:*", "TP at least *", "500,3000,500,1000" });
         v.conditions.push_back({ "12:0", "Holds hate", "" });
         v.conditions.push_back({ "13:0", "Does not hold hate", "" });
         v.conditions.push_back({ "25:0", "Party has a tank", "" });
