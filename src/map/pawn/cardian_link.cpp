@@ -28,11 +28,20 @@
 #include "common/timer.h"
 #include "common/version.h"
 
+#include "command_handler.h"
 #include "common/types/position.h"
 #include "entities/char_entity.h"
 #include "map_session.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
+
+// The map's Lua state (luautils.h), taken by forward declaration so this
+// transport never pays sol2's compile cost
+namespace sol
+{
+class state;
+}
+extern sol::state lua;
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>
@@ -76,6 +85,12 @@ namespace
     std::unordered_map<uint32, StoredPosition> g_freshPositions;
 
     constexpr auto FreshPositionMaxAge = std::chrono::seconds(1);
+
+    class Connection;
+    // charid -> the connection bound to it, for replies addressed to a
+    // character (sendToCharacter). Maintained by bind/unbind/disconnect on
+    // the main thread; a connection erases itself before it can die.
+    std::unordered_map<uint32, Connection*> g_boundConnections;
 
     auto splitWords(std::string_view line) -> std::vector<std::string_view>
     {
@@ -217,10 +232,7 @@ namespace
                 ++g_stats.dropped;
             }
             --g_stats.live;
-            if (boundCharID_ != 0)
-            {
-                g_freshPositions.erase(boundCharID_); // no ghost freshness after the link is gone
-            }
+            unbind(); // no ghost freshness or replies after the link is gone
             ShowInfoFmt("link: {} disconnected ({})", peer_, closeReason);
 
             asio::error_code ec;
@@ -228,7 +240,27 @@ namespace
             socket_.close(ec);
         }
 
+        // A line addressed to this connection's character (cd replies)
+        void push(std::string line)
+        {
+            enqueue(std::move(line));
+        }
+
     private:
+        void unbind()
+        {
+            if (boundCharID_ == 0)
+            {
+                return;
+            }
+            if (const auto it = g_boundConnections.find(boundCharID_); it != g_boundConnections.end() && it->second == this)
+            {
+                g_boundConnections.erase(it);
+            }
+            g_freshPositions.erase(boundCharID_);
+            boundCharID_ = 0;
+        }
+
         // The only path to the wire. Never blocks, never writes.
         void enqueue(std::string line)
         {
@@ -379,7 +411,7 @@ namespace
             auto* PChar = zoneutils::GetChar(boundCharID_);
             if (PChar == nullptr || PChar->PSession == nullptr || PChar->PSession->client_ipp.getIPString() != peerAddress_)
             {
-                boundCharID_ = 0;
+                unbind();
                 return nullptr;
             }
             return PChar;
@@ -449,12 +481,13 @@ namespace
                     enqueue("err bind address mismatch");
                     return true;
                 }
-                if (boundCharID_ != 0 && boundCharID_ != id)
+                if (boundCharID_ != id)
                 {
-                    g_freshPositions.erase(boundCharID_); // the old identity's stream dies with the bind
+                    unbind(); // the old identity's stream and replies die with the bind
                 }
-                boundCharID_ = id;
-                calibrated_  = false;
+                boundCharID_             = id;
+                g_boundConnections[id]   = this; // a later bind of the same character from another link takes over
+                calibrated_              = false;
                 ShowInfoFmt("link: {} bound to {} ({})", peer_, PChar->getName(), id);
                 enqueue(fmt::format("bound {} {}", id, PChar->getName()));
                 return true;
@@ -479,6 +512,32 @@ namespace
             if (verb == "pos")
             {
                 handlePos(words);
+                return true;
+            }
+            if (verb == "cd")
+            {
+                // The cardian management API over the link: the rest of the
+                // line runs as the bound character's !cardian command, whose
+                // replies come back through sendToCharacter
+                if (boundCharID_ == 0)
+                {
+                    enqueue("err not bound");
+                    return true;
+                }
+                auto* PChar = resolveBound();
+                if (PChar == nullptr)
+                {
+                    enqueue("err bind stale");
+                    return true;
+                }
+                const auto rest = line.substr(line.find("cd") + 2);
+                const auto args = rest.substr(std::min(rest.find_first_not_of(' '), rest.size()));
+                if (args.empty())
+                {
+                    enqueue("err cd empty");
+                    return true;
+                }
+                CCommandHandler::call(scheduler_, ::lua, PChar, fmt::format("cardian {}", args));
                 return true;
             }
             if (verb == "bye")
@@ -695,6 +754,17 @@ namespace cardian::link
     auto stats() -> Stats
     {
         return g_stats;
+    }
+
+    auto sendToCharacter(const uint32 charid, std::string line) -> bool
+    {
+        const auto it = g_boundConnections.find(charid);
+        if (it == g_boundConnections.end())
+        {
+            return false;
+        }
+        it->second->push(std::move(line));
+        return true;
     }
 
     auto freshPositionOf(uint32 charid) -> std::optional<FreshPosition>

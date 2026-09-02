@@ -19,6 +19,7 @@
 ===========================================================================
 */
 
+#include "cardian_link.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
@@ -310,6 +311,21 @@ class PawnModule : public CPPModule
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return { PChar, pawn::findManagedPawn(PChar, name) };
+        };
+
+        // The !cardian command's replies, over the Cardian Link when this
+        // character's addon is bound to one: '#cd tag ...' chat lines become
+        // 'cd tag ...' link lines. false = no link; the command then prints
+        // to chat for a human typing it.
+        lua["CBaseEntity"]["cardianLinkSend"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& line) -> bool
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return false;
+            }
+            const std::string wire = line.rfind("#cd ", 0) == 0 ? "cd " + line.substr(4) : line;
+            return cardian::link::sendToCharacter(PChar->id, wire);
         };
 
         lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table

@@ -38,10 +38,17 @@ class Scheduler;
 //
 // Wire (both directions are lines of space-separated words):
 //   addon -> server   hello <addon version> | bind <charid> | whoami
+//                     | pos <x> <y> <z> <yaw> <moving> | cd <cardian command...>
 //                     | ping <n> | pong <n> | stats | bye
 //   server -> addon   welcome <server build> <charid> | bound <charid> <name>
-//                     | you <charid> <name> <zone> | ping <n> | pong <n>
-//                     | stats k=v ... | err <text>
+//                     | you <charid> <name> <zone> | cd <tag> ... | ping <n>
+//                     | pong <n> | stats k=v ... | err <text>
+//
+// cd carries the cardian management API (scripts/commands/cardian.lua): the
+// line after the verb runs as the bound character's `!cardian ...` command,
+// and the command's replies come back as cd lines through sendToCharacter.
+// This replaced the chat-channel transport (say packets in, channel-31
+// lines out) on 2026-09-01.
 // The first line must be hello. Each side pings after Config::pingInterval
 // of silence and drops the peer after Config::deadAfter of it.
 //
@@ -57,7 +64,7 @@ namespace cardian::link
     {
         std::chrono::milliseconds pingInterval      = std::chrono::seconds(5);
         std::chrono::milliseconds deadAfter         = std::chrono::seconds(15);
-        std::size_t               maxLine           = 512; // bytes, newline included
+        std::size_t               maxLine           = 2048; // bytes, newline included (equipset manifests ride cd lines)
         uint32                    maxConnections    = 32;
         uint32                    maxLinesPerSecond = 200;
         std::size_t               maxOutboxLines    = 256; // per connection; a full outbox drops the newest line
@@ -83,6 +90,11 @@ namespace cardian::link
     };
 
     auto stats() -> Stats;
+
+    // Push a line to the connection bound to this character (its cd replies).
+    // false when no link is bound to them -- the caller decides what that
+    // means (the cardian command falls back to chat for a human typing it).
+    auto sendToCharacter(uint32 charid, std::string line) -> bool;
 
     // The uplink side store (RESEARCH.md par.7, option B): the freshest
     // client-reported position of a bound character, already converted to
