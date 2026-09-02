@@ -120,6 +120,18 @@ xi.settings.pawn =
     AVOID_LINKS = true,
     AVOID_TAIL  = 3.0,
 
+    -- The settle rule (the itch): a cardian whose spot lies inside a circle
+    -- takes the best clear spot on offer when she arrives, then stands
+    -- there. Every second the itch grows by how much better than her spot
+    -- the best spot on offer now is, minus AVOID_ITCH_TOLERANCE yalms (an
+    -- improvement under that is never worth walking for, and drains it);
+    -- when it reaches AVOID_ITCH_PATIENCE (yalm-seconds) she moves once, in
+    -- one go, and the itch resets. Four yalms better with a tolerance of
+    -- three fires after twenty seconds; eight yalms better, after four.
+    -- Escapes and fights never wait on it.
+    AVOID_ITCH_TOLERANCE = 3.0,
+    AVOID_ITCH_PATIENCE  = 20,
+
     -- Clean pulls (independent of AVOID_AGGRO): the hunter skips a target
     -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
     -- with a danger circle across the approach. Link-aware pulls (same-

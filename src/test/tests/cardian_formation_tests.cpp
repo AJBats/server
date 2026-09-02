@@ -301,3 +301,55 @@ TEST_CASE("approachRim: the first point on the way at the ring, none once that c
     REQUIRE_FALSE(approachRim(c, 6.5f, 0.0f, 10.0f, 0.0f, 1.0f).has_value()); // already inside the ring
     REQUIRE_FALSE(approachRim(c, 0.0f, 5.0f, 20.0f, 5.0f, 1.0f).has_value()); // never reaches it
 }
+
+TEST_CASE("itchAfter: charges above the tolerance, drains below it, and the worked example holds", "[cardian][avoid]")
+{
+    // four yalms better with a tolerance of three: one per second, so a
+    // patience of twenty is reached in twenty seconds of 400 ms ticks
+    float itch = 0.0f;
+    for (int tick = 0; tick < 50; ++tick)
+    {
+        itch = itchAfter(itch, 4.0f, 3.0f, 0.4f);
+    }
+    REQUIRE_THAT(itch, WithinAbs(20.0f, 0.01f));
+
+    // eight yalms better: five per second, twenty in four seconds
+    itch = 0.0f;
+    for (int tick = 0; tick < 10; ++tick)
+    {
+        itch = itchAfter(itch, 8.0f, 3.0f, 0.4f);
+    }
+    REQUIRE_THAT(itch, WithinAbs(20.0f, 0.01f));
+
+    // two yalms better drains at the shortfall, and never below zero
+    itch = itchAfter(5.0f, 2.0f, 3.0f, 1.0f);
+    REQUIRE_THAT(itch, WithinAbs(4.0f, 0.001f));
+    itch = itchAfter(itch, 0.0f, 3.0f, 10.0f);
+    REQUIRE_THAT(itch, WithinAbs(0.0f, 0.001f));
+}
+
+TEST_CASE("detourAround: a forced direction goes the long way round, still along the ring", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+    const float  ring = 3.5f;
+
+    // from straight behind, wanting the far side: both ways are equal, so
+    // force each and check they are mirror images on the ring
+    const auto [ux, uz] = detourAround(c, 10.0f - ring, 0.0f, 20.0f, 0.0f, 0.5f, 3.0f, 1.0f, 1.0f);
+    const auto [dx, dz] = detourAround(c, 10.0f - ring, 0.0f, 20.0f, 0.0f, 0.5f, 3.0f, 1.0f, -1.0f);
+
+    REQUIRE_THAT(planarDistance(c.x, c.z, ux, uz), WithinAbs(ring, 0.001f));
+    REQUIRE_THAT(planarDistance(c.x, c.z, dx, dz), WithinAbs(ring, 0.001f));
+    REQUIRE_THAT(ux, WithinAbs(dx, 0.001f));
+    REQUIRE_THAT(uz, WithinAbs(-dz, 0.001f));
+    REQUIRE(uz != 0.0f);
+}
+
+TEST_CASE("segmentClosest: the nearest approach of a segment to the centre, endpoints included", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 20.0f, 0.0f), WithinAbs(0.0f, 0.001f)); // through the centre
+    REQUIRE_THAT(segmentClosest(c, 0.0f, 5.0f, 20.0f, 5.0f), WithinAbs(5.0f, 0.001f)); // passes 5 y to the side
+    REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 6.0f, 0.0f), WithinAbs(4.0f, 0.001f));  // stops short: the end is nearest
+}

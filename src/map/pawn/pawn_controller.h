@@ -163,6 +163,7 @@ private:
         Escape,     // the pawn itself was inside a circle
         Slot,       // its slot was; re-seated on the ring
         PushedSlot, // its slot was; no clear angle, pushed straight out
+        Perch,      // its slot is in or beside a circle; standing on the perch it took
         Hold,       // its target was; standing at the boundary
         Detour,     // the way there crossed a circle
     };
@@ -172,6 +173,10 @@ private:
     // a yalm and plans nothing: such a move steps straight at its point when
     // the point is on the mesh
     auto IsShortHop(const position_t& point, float followMax) const -> bool;
+
+    // An avoidance move the planner could not path: one line a second, so a
+    // cardian standing still in Escape, Hold or Detour names its cause
+    void NotePathFailure(AvoidAction action, const position_t& point, float away);
 
     void Declump(const CBattleEntity* PTarget) const;
 
@@ -248,5 +253,11 @@ private:
     float             m_SlotOffset      = 0.0f;
     float             m_SlotAngle       = 0.0f;
     AvoidAction       m_LastAvoidAction = AvoidAction::None;
+    // The settle rule: the clear spot she committed to while her own spot
+    // lies inside a circle, and the itch to leave it (yalm-seconds)
+    std::optional<position_t> m_AvoidPerch;
+    float                     m_AvoidItch = 0.0f;
+    timer::time_point         m_LastItchTick;
     timer::time_point m_LastAvoidDebugTime;
+    timer::time_point m_LastPathFailTime;
 };

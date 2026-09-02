@@ -262,6 +262,30 @@ namespace cardian::formation
         return planarDistance(c.x, c.z, px, pz) < c.radius;
     }
 
+    // The settle rule's meter. `improvement` is how much closer to her ideal
+    // spot the best clear spot on offer would put her than the spot she
+    // holds; beyond `tolerance` it charges the itch at that rate (yalms per
+    // second), below it the itch drains at the shortfall. The caller moves
+    // her when the level reaches her patience. Never below zero.
+    inline auto itchAfter(const float level, const float improvement, const float tolerance, const float dtSeconds) -> float
+    {
+        return std::max(0.0f, level + (improvement - tolerance) * dtSeconds);
+    }
+
+    // The closest the segment a->b comes to the circle's centre
+    inline auto segmentClosest(const Circle& c, const float ax, const float az, const float bx, const float bz) -> float
+    {
+        const float dx  = bx - ax;
+        const float dz  = bz - az;
+        const float len = dx * dx + dz * dz;
+        float       t   = 0.0f;
+        if (len > 0.0f)
+        {
+            t = std::clamp(((c.x - ax) * dx + (c.z - az) * dz) / len, 0.0f, 1.0f);
+        }
+        return planarDistance(c.x, c.z, ax + dx * t, az + dz * t);
+    }
+
     // Does the segment a->b go INTO the circle: closer to the centre than
     // both the rim and where it starts, by more than `slack`. A start that
     // is already within the rim and moves away does not count (planning
@@ -270,16 +294,7 @@ namespace cardian::formation
     inline auto segmentEnters(const Circle& c, const float ax, const float az, const float bx, const float bz, const float slack = 0.3f) -> bool
     {
         const float start = planarDistance(c.x, c.z, ax, az);
-        const float limit = std::min(c.radius, start) - slack;
-        const float dx    = bx - ax;
-        const float dz    = bz - az;
-        const float len   = dx * dx + dz * dz;
-        float       t     = 0.0f;
-        if (len > 0.0f)
-        {
-            t = std::clamp(((c.x - ax) * dx + (c.z - az) * dz) / len, 0.0f, 1.0f);
-        }
-        return planarDistance(c.x, c.z, ax + dx * t, az + dz * t) < limit;
+        return segmentClosest(c, ax, az, bx, bz) < std::min(c.radius, start) - slack;
     }
 
     // The first point along a->b at `clearance` outside the circle: where
@@ -323,8 +338,10 @@ namespace cardian::formation
     // touches the ring and no more. From the ring itself (within `band` of
     // it) it is a step of at most `arc` yalms along the ring -- a cardian at
     // the boundary walks along it, never across it (a chord between two rim
-    // points cuts inside). At the clear point already: no step.
-    inline auto detourAround(const Circle& c, const float ax, const float az, const float bx, const float bz, const float clearance = 0.5f, const float arc = 3.0f, const float band = 1.0f) -> std::pair<float, float>
+    // points cuts inside). At the clear point already: no step. `preferDir`
+    // forces the way round (+1 counter-clockwise, -1 clockwise); 0 takes
+    // the shorter.
+    inline auto detourAround(const Circle& c, const float ax, const float az, const float bx, const float bz, const float clearance = 0.5f, const float arc = 3.0f, const float band = 1.0f, const float preferDir = 0.0f) -> std::pair<float, float>
     {
         constexpr float twoPi = 2.0f * std::numbers::pi_v<float>;
 
@@ -341,6 +358,10 @@ namespace cardian::formation
         float left = twoPi;
         for (const float d : { 1.0f, -1.0f })
         {
+            if (preferDir != 0.0f && d != preferDir)
+            {
+                continue;
+            }
             float turn = std::fmod(d * ((thetaB - d * exitHalf) - thetaA), twoPi);
             if (turn < 0.0f)
             {
