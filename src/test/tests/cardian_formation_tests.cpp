@@ -245,7 +245,7 @@ TEST_CASE("segmentCrosses: through, past, and ending inside", "[cardian][avoid]"
     REQUIRE_FALSE(segmentCrosses(c, 0.0f, 0.0f, 6.0f, 0.0f));  // stops a yalm short
 }
 
-TEST_CASE("detourAround: the waypoint clears the circle on the side the path leans toward", "[cardian][avoid]")
+TEST_CASE("detourAround: from outside, the tangent point on the side the path leans toward", "[cardian][avoid]")
 {
     const Circle c{ 10.0f, 1.0f, 3.0f }; // centre slightly left of the +x path
 
@@ -255,4 +255,49 @@ TEST_CASE("detourAround: the waypoint clears the circle on the side the path lea
     REQUIRE(wz < c.z); // went round the right (the side away from the centre)
     REQUIRE_FALSE(segmentCrosses(c, 0.0f, 0.0f, wx, wz));
     REQUIRE_FALSE(segmentCrosses(c, wx, wz, 20.0f, 0.0f));
+}
+
+TEST_CASE("detourAround: from the ring, a short arc step along it, never a chord across", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+    const float  ring = 3.5f; // clearance 0.5
+
+    // standing on the ring, straight behind the circle, wanting the far side
+    const auto [wx, wz] = detourAround(c, 10.0f - ring, 0.0f, 20.0f, 0.0f, 0.5f, 3.0f, 1.0f);
+
+    REQUIRE_THAT(planarDistance(c.x, c.z, wx, wz), WithinAbs(ring, 0.001f));                // still on the ring
+    REQUIRE(planarDistance(10.0f - ring, 0.0f, wx, wz) <= 3.0f + 0.001f);                   // at most the arc step away
+    REQUIRE(planarDistance(10.0f - ring, 0.0f, wx, wz) > 2.0f);                              // and a real step, not a shuffle
+    REQUIRE_FALSE(segmentCrosses(c, 10.0f - ring, 0.0f, wx, wz));                             // the chord stays out of the circle
+
+    // at the exit point already (b is in the clear from here): no step at all
+    const float exitX = 10.0f + ring * std::cos(std::numbers::pi_v<float> * 0.75f);
+    const float exitZ = ring * std::sin(std::numbers::pi_v<float> * 0.75f);
+    const auto [ex, ez] = detourAround(c, exitX, exitZ, exitX + 10.0f * std::cos(std::numbers::pi_v<float> * 0.25f), exitZ + 10.0f * std::sin(std::numbers::pi_v<float> * 0.25f), 0.5f, 3.0f, 1.0f);
+    REQUIRE_THAT(planarDistance(exitX, exitZ, ex, ez), WithinAbs(0.0f, 0.01f));
+}
+
+TEST_CASE("segmentEnters: cutting in counts, moving away from within the rim does not", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    REQUIRE(segmentEnters(c, 0.0f, 0.0f, 20.0f, 0.0f));        // straight through
+    REQUIRE_FALSE(segmentEnters(c, 0.0f, 5.0f, 20.0f, 5.0f));  // passes 5 y to the side
+    REQUIRE_FALSE(segmentEnters(c, 7.2f, 0.0f, 0.0f, 0.0f));   // within the rim, walking away
+    REQUIRE(segmentEnters(c, 7.2f, 0.0f, 10.0f, 0.0f));        // within the rim, walking in
+    REQUIRE_FALSE(segmentEnters(c, 7.0f, 0.0f, 7.0f, 4.0f));   // from the rim, tangent along it
+    REQUIRE_FALSE(segmentEnters(c, 0.0f, 2.9f, 20.0f, 2.9f));  // grazes by less than the slack
+}
+
+TEST_CASE("approachRim: the first point on the way at the ring, none once that close", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    const auto p = approachRim(c, 0.0f, 0.0f, 10.0f, 0.0f, 1.0f);
+    REQUIRE(p.has_value());
+    REQUIRE_THAT(p->first, WithinAbs(6.0f, 0.001f));
+    REQUIRE_THAT(p->second, WithinAbs(0.0f, 0.001f));
+
+    REQUIRE_FALSE(approachRim(c, 6.5f, 0.0f, 10.0f, 0.0f, 1.0f).has_value()); // already inside the ring
+    REQUIRE_FALSE(approachRim(c, 0.0f, 5.0f, 20.0f, 5.0f, 1.0f).has_value()); // never reaches it
 }

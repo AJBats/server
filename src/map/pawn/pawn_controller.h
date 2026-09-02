@@ -148,10 +148,14 @@ private:
     // evidence once a second
     void FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& anchor, const position_t& point);
 
-    // The avoidance pass over a roam decision: the pawn itself inside a
-    // danger circle is pushed out (that wins over everything); a slot inside
-    // one moves to the nearest clear angle on its ring, or is pushed out; a
-    // straight way there through a circle goes around it first. Adjusts the
+    // The avoidance pass over a movement decision, roaming or fighting: the
+    // pawn itself inside a danger circle is pushed out (that wins over
+    // everything); a slot inside one moves to the nearest clear angle on its
+    // ring, or is pushed out; a fight's target inside one is not approached
+    // -- she walks up to the boundary and stands there until the tank
+    // brings it out; a way to the point that cuts into a circle goes round
+    // it first. Every point she walks to is planned against the circles
+    // padded by a margin, so the boundary is not slippery. Adjusts the
     // point and the follow tolerances in place; logs once a second.
     enum class AvoidAction : uint8
     {
@@ -159,9 +163,15 @@ private:
         Escape,     // the pawn itself was inside a circle
         Slot,       // its slot was; re-seated on the ring
         PushedSlot, // its slot was; no clear angle, pushed straight out
+        Hold,       // its target was; standing at the boundary
         Detour,     // the way there crossed a circle
     };
-    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance) -> AvoidAction;
+    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, bool fighting) -> AvoidAction;
+
+    // An avoidance move too short for the planner, which refuses a hop under
+    // a yalm and plans nothing: such a move steps straight at its point when
+    // the point is on the mesh
+    auto IsShortHop(const position_t& point, float followMax) const -> bool;
 
     void Declump(const CBattleEntity* PTarget) const;
 

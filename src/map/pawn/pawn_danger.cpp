@@ -57,6 +57,7 @@ namespace pawn::danger
         // (CanDetectTarget); a permanent circle would make every bat and
         // elemental a wider no-go zone than a sight mob
         p.casting = PPawn->PAI->IsCurrentState<CMagicState>();
+        p.tailed  = PPawn;
         return p;
     }
 
@@ -68,93 +69,104 @@ namespace pawn::danger
             return out;
         }
 
-        const float buffer    = settings::get<float>("pawn.AVOID_BUFFER");
-        const bool  lowHP     = profile.lowHP;
-        const bool  sneak     = profile.sneak;
-        const bool  invisible = profile.invisible;
-        const bool  illusion  = profile.illusion;
-        const bool  casting   = profile.casting;
+        const float buffer = settings::get<float>("pawn.AVOID_BUFFER");
+        const float tail   = settings::get<float>("pawn.AVOID_TAIL");
 
         // Cheapest test first: the coarse cut needs no modifier reads and
         // rejects nearly every mob in the zone. It is bounded by the largest
         // detection range in shipped data, never by a per-type guess.
         const float coarse = scan + MaxDetectionRange + buffer;
 
+        // The link parties of every mob fighting the one asking, gathered
+        // first so the main pass is one lookup per mob (the game keeps every
+        // linking mob of a family in one party per zone, and checks the link
+        // distance only when a kin is engaged -- TryLink). A mob on her is
+        // at her, so the coarse cut bounds this pass too.
+        std::vector<const CParty*> fighting;
+        if (profile.tailed != nullptr && settings::get<bool>("pawn.AVOID_LINKS"))
+        {
+            zone->ForEachMob([&](CMobEntity* PMob)
+                             {
+                                 if (PMob->PParty != nullptr && PMob->PAI->IsEngaged() && PMob->GetBattleTarget() == profile.tailed &&
+                                     isWithinDistance(center, PMob->loc.p, coarse))
+                                 {
+                                     fighting.push_back(PMob->PParty);
+                                 }
+                             });
+        }
+
         zone->ForEachMob([&](CMobEntity* PMob)
-                                    {
-                                        if (PMob == exclude || !isWithinDistance(center, PMob->loc.p, coarse))
-                                        {
-                                            return;
-                                        }
-                                        if (PMob->isDead() || PMob->PMaster != nullptr || PMob->m_neutral ||
-                                            !PMob->PAI->IsSpawned() || PMob->PAI->IsEngaged())
-                                        {
-                                            return;
-                                        }
-                                        if ((PMob->getMobMod(xi::MobMod::AlwaysAggro) == 0 && !PMob->m_Aggro) || PMob->getMobMod(xi::MobMod::NoAggro) > 0)
-                                        {
-                                            return;
-                                        }
+                         {
+                             if (PMob == exclude || !isWithinDistance(center, PMob->loc.p, coarse))
+                             {
+                                 return;
+                             }
+                             if (PMob->isDead() || PMob->PMaster != nullptr || PMob->m_neutral ||
+                                 !PMob->PAI->IsSpawned() || PMob->PAI->IsEngaged())
+                             {
+                                 return;
+                             }
 
-                                        // The cardian's own concealment, the way CanDetectTarget
-                                        // reads it: Sneak/Invisible unless the mob has true
-                                        // detection; Illusion counts as both unless the mob sees
-                                        // through illusions
-                                        const bool hidesFromSight = (!PMob->m_TrueDetection && invisible) || (illusion && PMob->getMobMod(xi::MobMod::SeesThroughIllusion) == 0);
-                                        const bool hidesFromSound = (!PMob->m_TrueDetection && sneak) || (illusion && PMob->getMobMod(xi::MobMod::SeesThroughIllusion) == 0);
-                                        const auto detects        = static_cast<xi::Detects>(PMob->getMobMod(xi::MobMod::Detection));
+                             const bool aggressive = (PMob->getMobMod(xi::MobMod::AlwaysAggro) != 0 || PMob->m_Aggro) &&
+                                                     PMob->getMobMod(xi::MobMod::NoAggro) == 0;
 
-                                        float radius = 0.0f;
-                                        if (hasFlag(detects, xi::Detects::Sight) && !hidesFromSight)
-                                        {
-                                            radius = std::max(radius, static_cast<float>(PMob->getMobMod(xi::MobMod::SightRange)));
-                                        }
-                                        if (hasFlag(detects, xi::Detects::Hearing) && !hidesFromSound)
-                                        {
-                                            radius = std::max(radius, static_cast<float>(PMob->getMobMod(xi::MobMod::SoundRange)));
-                                        }
-                                        if (hasFlag(detects, xi::Detects::Magic) && casting)
-                                        {
-                                            radius = std::max(radius, static_cast<float>(PMob->getMobMod(xi::MobMod::MagicRange)));
-                                        }
-                                        if (hasFlag(detects, xi::Detects::Lowhp) && lowHP)
-                                        {
-                                            radius = std::max(radius, CloseDetectionRange);
-                                        }
-                                        if (hasFlag(PMob->m_Behavior, xi::Behavior::AggroAmbush) && !hidesFromSound)
-                                        {
-                                            radius = std::max(radius, AmbushRange);
-                                        }
-                                        if (radius <= 0.0f)
-                                        {
-                                            return;
-                                        }
-                                        radius += buffer;
+                             // Its kin are on her: it links the way CanLink allows -- not
+                             // flagged no-link, not an underground worm or antlion
+                             const bool underground = (hasFlag(PMob->m_roamFlags, xi::RoamFlag::Worm) || hasFlag(PMob->m_roamFlags, xi::RoamFlag::Ambush)) &&
+                                                      PMob->IsNameHidden();
+                             const bool links = !fighting.empty() && PMob->PParty != nullptr && PMob->getMobMod(xi::MobMod::NoLink) == 0 && !underground &&
+                                                std::find(fighting.begin(), fighting.end(), PMob->PParty) != fighting.end();
+                             if (!aggressive && !links)
+                             {
+                                 return;
+                             }
 
-                                        // Detection is a sphere and the map is flat: the circle is
-                                        // that sphere sliced at the query height, and a mob too far
-                                        // above or below (a bridge, a cliff) is no danger at all
-                                        const float dy = center.y - PMob->loc.p.y;
-                                        if (std::fabs(dy) >= radius)
-                                        {
-                                            return;
-                                        }
-                                        radius = std::sqrt(radius * radius - dy * dy);
+                             const auto detects = static_cast<xi::Detects>(PMob->getMobMod(xi::MobMod::Detection));
+                             Detection  d;
+                             d.sight               = aggressive && hasFlag(detects, xi::Detects::Sight);
+                             d.hearing             = aggressive && hasFlag(detects, xi::Detects::Hearing);
+                             d.magic               = aggressive && hasFlag(detects, xi::Detects::Magic);
+                             d.lowHP               = aggressive && hasFlag(detects, xi::Detects::Lowhp);
+                             d.ambush              = aggressive && hasFlag(PMob->m_Behavior, xi::Behavior::AggroAmbush);
+                             d.trueDetection       = PMob->m_TrueDetection;
+                             d.seesThroughIllusion = PMob->getMobMod(xi::MobMod::SeesThroughIllusion) != 0;
+                             d.sightRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::SightRange));
+                             d.soundRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::SoundRange));
+                             d.magicRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::MagicRange));
+                             d.links               = links;
+                             d.linkRange           = static_cast<float>(PMob->getMobMod(xi::MobMod::LinkRadius));
 
-                                        const float dist = distance(center, PMob->loc.p, true); // planar, like the circle
-                                        if (dist > scan + radius)
-                                        {
-                                            return;
-                                        }
+                             float radius = radiusFor(d, profile, buffer, tail);
+                             if (radius <= 0.0f)
+                             {
+                                 return;
+                             }
 
-                                        Danger d;
-                                        d.x        = PMob->loc.p.x;
-                                        d.z        = PMob->loc.p.z;
-                                        d.radius   = radius;
-                                        d.mob      = PMob;
-                                        d.distance = dist;
-                                        out.push_back(d);
-                                    });
+                             // Detection is a sphere and the map is flat: the circle is
+                             // that sphere sliced at the query height, and a mob too far
+                             // above or below (a bridge, a cliff) is no danger at all
+                             const float dy = center.y - PMob->loc.p.y;
+                             if (std::fabs(dy) >= radius)
+                             {
+                                 return;
+                             }
+                             radius = std::sqrt(radius * radius - dy * dy);
+
+                             const float dist = distance(center, PMob->loc.p, true); // planar, like the circle
+                             if (dist > scan + radius)
+                             {
+                                 return;
+                             }
+
+                             Danger danger;
+                             danger.x        = PMob->loc.p.x;
+                             danger.z        = PMob->loc.p.z;
+                             danger.radius   = radius;
+                             danger.mob      = PMob;
+                             danger.distance = dist;
+                             danger.linked   = links;
+                             out.push_back(danger);
+                         });
 
         return out;
     }

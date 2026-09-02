@@ -77,6 +77,7 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/rng_runtime_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/roam_region_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_formation_tests.cpp # CARDIAN: formation arithmetic behind the link's position stream
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_danger_tests.cpp # CARDIAN: the danger map's radius rule
     ${resource})
 add_dependencies(xi_test data_schema_generate)
 

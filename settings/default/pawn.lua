@@ -109,6 +109,17 @@ xi.settings.pawn =
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
 
+    -- Linking: the idle kin of any mob fighting a cardian are circles for
+    -- that cardian alone -- link range plus AVOID_TAIL, the distance the mob
+    -- keeps behind her as it follows -- so she leads her fight away from the
+    -- kin and no one else has to. A kin that joins is a fight, not a danger,
+    -- and drops out on its own. A mob that both aggroes and links is the
+    -- larger of its two circles. The same pass runs mid-fight: a target
+    -- parked inside another mob's circle is not approached; she waits at
+    -- the rim for the tank to bring it.
+    AVOID_LINKS = true,
+    AVOID_TAIL  = 3.0,
+
     -- Clean pulls (independent of AVOID_AGGRO): the hunter skips a target
     -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
     -- with a danger circle across the approach. Link-aware pulls (same-
