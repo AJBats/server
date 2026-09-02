@@ -96,6 +96,26 @@ xi.settings.pawn =
     FORMATION_CATCHUP_DISTANCE = 3.0,
     FORMATION_CATCHUP_SPEED    = 135,
 
+    -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
+    -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
+    -- always, low-HP while the cardian is under 75%, magic only while it is
+    -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
+    -- and itself outside those circles, and is pushed away as a mob roams
+    -- toward it. Cardians move on the server with the mobs, so nothing
+    -- surprises them: they stand boldly just outside. AVOID_AGGRO is the
+    -- default for every cardian; a gambit row or !pawnavoid changes it per
+    -- cardian. AVOID_SCAN is how far around itself a cardian looks.
+    AVOID_AGGRO  = true,
+    AVOID_BUFFER = 1.5,
+    AVOID_SCAN   = 30,
+
+    -- Clean pulls (independent of AVOID_AGGRO): the hunter skips a target
+    -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
+    -- with a danger circle across the approach. Link-aware pulls (same-
+    -- family linking mobs, aggressive or not) are a later refinement.
+    HUNT_CLEAN_PULLS  = true,
+    HUNT_CLEAN_RADIUS = 10,
+
     -- Log, once a second per lead pawn: how old the Cardian Link's view of
     -- the player is versus the position packet's, the distance between the
     -- two (packet lag in yalms), the prediction applied and its error, and

@@ -25,6 +25,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <vector>
 
 class CBattleEntity;
@@ -77,6 +78,20 @@ public:
     // while the party is idle, healthy and past the post-fight breather
     void SetHunting(bool on);
     auto IsHunting() const -> bool;
+
+    // Aggro avoidance (M3.87): keep this pawn, its slot and its way there
+    // outside every nearby mob's detection circle, and step away when a mob
+    // roams in. Off lets it walk anywhere. Two layers: the BASE
+    // (pawn.AVOID_AGGRO, changed by !pawnavoid) and the GAMBIT layer -- a
+    // behaviour row asserts a value only while its conditions hold, and
+    // wins over the base while it does.
+    void SetAvoidAggro(bool on);           // the base
+    auto IsAvoidingAggro() const -> bool;  // the effective value
+
+    // The gambit interpreter's behaviour pass: cleared at the start of every
+    // think, then each matching behaviour row asserts its value
+    void ClearGambitBehaviors();
+    void SetGambitBehavior(uint16 behavior, bool on);
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float CastingDistance  = 15.0f;
@@ -132,6 +147,21 @@ private:
     // pawn.FORMATION_DEBUG: score the last prediction and log the formation
     // evidence once a second
     void FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& anchor, const position_t& point);
+
+    // The avoidance pass over a roam decision: the pawn itself inside a
+    // danger circle is pushed out (that wins over everything); a slot inside
+    // one moves to the nearest clear angle on its ring, or is pushed out; a
+    // straight way there through a circle goes around it first. Adjusts the
+    // point and the follow tolerances in place; logs once a second.
+    enum class AvoidAction : uint8
+    {
+        None,
+        Escape,     // the pawn itself was inside a circle
+        Slot,       // its slot was; re-seated on the ring
+        PushedSlot, // its slot was; no clear angle, pushed straight out
+        Detour,     // the way there crossed a circle
+    };
+    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance) -> AvoidAction;
 
     void Declump(const CBattleEntity* PTarget) const;
 
@@ -199,4 +229,14 @@ private:
     float      m_LastPredictionAhead = 0.0f;  // yalms of prediction applied on the last tick
     bool       m_Sprinting           = false;
     bool       m_PlayerMoving        = false;  // as of the last LeadPoint
+
+    // Aggro avoidance state
+    bool                m_AvoidAggroBase;   // seeded from pawn.AVOID_AGGRO in the constructor
+    std::optional<bool> m_AvoidAggroGambit; // asserted by a behaviour row this think, if any
+    bool                m_HasSlot = false;  // this tick's FormationPoint ring, for re-seating a slot in danger
+    position_t        m_SlotAnchor{};
+    float             m_SlotOffset      = 0.0f;
+    float             m_SlotAngle       = 0.0f;
+    AvoidAction       m_LastAvoidAction = AvoidAction::None;
+    timer::time_point m_LastAvoidDebugTime;
 };

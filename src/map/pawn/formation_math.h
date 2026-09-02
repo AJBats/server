@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <utility>
 
 // The formation's arithmetic, kept free of entities, settings and clocks so
 // xi_test can pin it (src/test/tests/cardian_formation_tests.cpp). The link
@@ -134,5 +136,157 @@ namespace cardian::formation
         const float distance = std::max(catchUpDistance, 1.0f);
         const float ramp     = std::clamp((gapYalms - 1.0f) / (distance - 1.0f + 0.001f), 0.0f, 1.0f);
         return normalSpeed + (catchUp - normalSpeed) * ramp;
+    }
+    // ------------------------------------------------------------------
+    // Aggro avoidance geometry (M3.87). Every detection type is a circle of
+    // that type's range plus a buffer; a cardian moves on the server with
+    // the mobs, so it may stand boldly just outside and is pushed away as
+    // a mob roams toward it.
+    // ------------------------------------------------------------------
+
+    struct Circle
+    {
+        float x      = 0.0f;
+        float z      = 0.0f;
+        float radius = 0.0f;
+    };
+
+    inline auto planarDistance(const float ax, const float az, const float bx, const float bz) -> float
+    {
+        return std::hypot(ax - bx, az - bz);
+    }
+
+    // How deep inside the circle a point is (0 = outside or on the rim)
+    inline auto depthInside(const Circle& c, const float x, const float z) -> float
+    {
+        return std::max(0.0f, c.radius - planarDistance(c.x, c.z, x, z));
+    }
+
+    template <typename Circles>
+    inline auto insideAny(const Circles& circles, const float x, const float z) -> bool
+    {
+        for (const auto& c : circles)
+        {
+            if (depthInside(c, x, z) > 0.0f)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Move the point radially out of every circle it sits in, a few passes
+    // so overlapping circles settle. A point exactly at a centre is pushed
+    // along +x. Returns the new point; unchanged when already clear.
+    template <typename Circles>
+    inline auto pushOut(const Circles& circles, float x, float z, const float clearance = 0.1f) -> std::pair<float, float>
+    {
+        for (int pass = 0; pass < 6; ++pass)
+        {
+            bool moved = false;
+            for (const auto& c : circles)
+            {
+                const float d = planarDistance(c.x, c.z, x, z);
+                if (d >= c.radius)
+                {
+                    continue;
+                }
+                const float want = c.radius + clearance;
+                if (d < 0.001f)
+                {
+                    x = c.x + want;
+                }
+                else
+                {
+                    x = c.x + (x - c.x) / d * want;
+                    z = c.z + (z - c.z) / d * want;
+                }
+                moved = true;
+            }
+            if (!moved)
+            {
+                break;
+            }
+        }
+        return { x, z };
+    }
+
+    // The nearest clear angle to `idealAngle` on a ring, sampled every
+    // `stepRadians` outward on both sides out to the opposite point.
+    // `pointAt(angle)` produces the candidate as {x, z} in whatever angle
+    // convention the caller's ring uses (nearPosition's, for formation
+    // slots), so this stays convention-free. nullopt when the whole ring is
+    // inside danger.
+    template <typename Circles, typename PointAt>
+    inline auto safestAngleOnRing(const Circles& circles, const float idealAngle, PointAt&& pointAt, const float stepRadians = 0.2617994f) -> std::optional<float>
+    {
+        const auto clearAt = [&](const float angle) -> bool
+        {
+            const auto [x, z] = pointAt(angle);
+            return !insideAny(circles, x, z);
+        };
+
+        if (clearAt(idealAngle))
+        {
+            return idealAngle;
+        }
+        const int steps = static_cast<int>(std::ceil(std::numbers::pi_v<float> / stepRadians));
+        for (int k = 1; k <= steps; ++k)
+        {
+            const float delta = static_cast<float>(k) * stepRadians;
+            if (clearAt(idealAngle + delta))
+            {
+                return idealAngle + delta;
+            }
+            if (clearAt(idealAngle - delta))
+            {
+                return idealAngle - delta;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Does the segment a->b pass through the circle? (endpoints included)
+    inline auto segmentCrosses(const Circle& c, const float ax, const float az, const float bx, const float bz) -> bool
+    {
+        const float dx  = bx - ax;
+        const float dz  = bz - az;
+        const float len = dx * dx + dz * dz;
+        float       t   = 0.0f;
+        if (len > 0.0f)
+        {
+            t = std::clamp(((c.x - ax) * dx + (c.z - az) * dz) / len, 0.0f, 1.0f);
+        }
+        const float px = ax + dx * t;
+        const float pz = az + dz * t;
+        return planarDistance(c.x, c.z, px, pz) < c.radius;
+    }
+
+    // A waypoint that takes the segment a->b around the circle: the point on
+    // the circle's rim (plus clearance) perpendicular to the segment, on the
+    // side the segment already leans toward (or +perpendicular when it aims
+    // straight at the centre).
+    inline auto detourAround(const Circle& c, const float ax, const float az, const float bx, const float bz, const float clearance = 0.5f) -> std::pair<float, float>
+    {
+        float dx  = bx - ax;
+        float dz  = bz - az;
+        float len = std::hypot(dx, dz);
+        if (len < 0.001f)
+        {
+            dx  = 1.0f;
+            dz  = 0.0f;
+            len = 1.0f;
+        }
+        dx /= len;
+        dz /= len;
+
+        // perpendicular (left of travel) and which side the centre is on
+        const float px   = -dz;
+        const float pz   = dx;
+        const float side = (c.x - ax) * px + (c.z - az) * pz; // >0: centre is to the left
+        const float sign = side > 0.0f ? -1.0f : 1.0f;        // go the other way round
+
+        const float r = c.radius + clearance;
+        return { c.x + px * r * sign, c.z + pz * r * sign };
     }
 } // namespace cardian::formation

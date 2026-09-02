@@ -40,6 +40,16 @@ class CPawnController;
 
 namespace pawn
 {
+    // Cardian-only gambit reaction: flip a controller behaviour instead of
+    // acting. select = the behaviour (Behavior below), arg = on/off. Applied
+    // while the row's conditions hold, and it never consumes the think.
+    constexpr auto G_REACTION_BEHAVIOR = static_cast<gambits::G_REACTION>(100);
+
+    enum class Behavior : uint16
+    {
+        AvoidAggro = 1,
+    };
+
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
     // for a character owner. It speaks the trust vocabulary (gambits::G_*,
     // the same Lua table shapes) so brains transfer verbatim, but the party
@@ -71,6 +81,10 @@ namespace pawn
         // no ranged attacks, no gambits carrying offensive reactions.
         void Tick(timer::time_point tick, bool engaged);
 
+        // The behaviour pass alone, every tick, pathing or not: switches are
+        // asserted only while their rows' conditions hold
+        void TickBehaviors();
+
         auto Size() const -> std::size_t
         {
             return m_gambits.size();
@@ -86,6 +100,11 @@ namespace pawn
         auto SelectTarget(const gambits::Gambit_t& gambit) -> CBattleEntity*;
         auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex) -> bool;
         auto ResolveSpell(const gambits::Action_t& action, CBattleEntity* PTarget) -> Maybe<SpellID>;
+        // Behaviour rows (G_REACTION_BEHAVIOR only) flip controller switches
+        // and never consume the think
+        auto IsBehavior(const gambits::Gambit_t& gambit) const -> bool;
+        void ApplyBehavior(const gambits::Gambit_t& gambit);
+
         auto Execute(const gambits::Gambit_t& gambit, CBattleEntity* PTarget, bool engaged) -> bool;
         auto ExecuteAbility(const gambits::Action_t& action, CBattleEntity* PTarget, bool engaged) -> bool;
         auto ExecuteWeaponSkill(const gambits::Action_t& action, bool engaged) -> bool;

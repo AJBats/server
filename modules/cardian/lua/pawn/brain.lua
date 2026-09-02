@@ -16,6 +16,14 @@ xi = xi or {}
 xi.pawn = xi.pawn or {}
 xi.pawn.brain = xi.pawn.brain or {}
 
+-- Cardian-only gambit vocabulary on top of the trust ai.* tables, published
+-- by the pawn module (pawn_module.cpp) from the interpreter's definitions:
+-- xi.pawn.r.BEHAVIOR and xi.pawn.behavior.*. A BEHAVIOR action flips a
+-- controller switch instead of acting: the row is applied while its
+-- conditions hold and never consumes the think, so
+-- { ai.t.SELF, { ai.c.HPP_LT, 50 }, { xi.pawn.r.BEHAVIOR, xi.pawn.behavior.AVOID_AGGRO, 1 } }
+-- reads "avoid aggro while under half health".
+
 local brainDir  = 'modules/cardian/lua/pawn/brains/'
 local blocksPath = brainDir .. '_blocks'
 

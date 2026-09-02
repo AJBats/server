@@ -393,6 +393,21 @@ namespace pawn
         return false;
     }
 
+    bool setAvoidAggro(CCharEntity* PPawn, const bool on)
+    {
+        if (PPawn == nullptr)
+        {
+            return false;
+        }
+
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+        {
+            PController->SetAvoidAggro(on);
+            return true;
+        }
+        return false;
+    }
+
     bool homePoint(CCharEntity* PPawn)
     {
         if (PPawn == nullptr || !pawns.contains(PPawn->id) || !PPawn->isDead())
