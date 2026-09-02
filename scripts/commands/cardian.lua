@@ -27,6 +27,9 @@
 --       gmove <name> <from> <to>         reorder a row (1-based, as shown)
 --       gdel <name> <row>                delete a row
 --       gins <name> <row> <spec>         insert a row (the row grammar) at a position
+--       gset <name> <row> <spec>         replace a row in place (keeps its switch)
+--       gvocab <name>                    the pickers' catalogue for the cardian
+--                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the job's default rows
 -----------------------------------
@@ -189,6 +192,43 @@ local function sendGambits(player, name)
     reply(player, '#cd gb.e ' .. name)
 end
 
+-- The pickers' catalogue: 'gv.b <name>', then chunked 'gvt|gvc|gvs <name> k=label;...'
+-- and 'gva <name> <group> k=label;...' lines under the link's line cap, 'gv.e <name>'
+local function sendVocab(player, name)
+    local v = player:cardianGambitVocab(name)
+    if v == nil then
+        reply(player, '#cd err gvocab no such cardian')
+        return
+    end
+    reply(player, '#cd gv.b ' .. name)
+    local function chunked(tag, prefix, entries, groupOf)
+        local buf, bufGroup = {}, nil
+        local size = 0
+        local function flush()
+            if #buf > 0 then
+                reply(player, string.format('#cd %s %s %s%s', tag, name, prefix(bufGroup), table.concat(buf, ';')))
+            end
+            buf, size = {}, 0
+        end
+        for _, e in ipairs(entries) do
+            local group = groupOf and groupOf(e) or nil
+            local pair  = e.key .. '=' .. e.label
+            if #buf > 0 and (size + #pair > 1700 or group ~= bufGroup) then
+                flush()
+            end
+            bufGroup = group
+            buf[#buf + 1] = pair
+            size = size + #pair + 1
+        end
+        flush()
+    end
+    chunked('gvt', function () return '' end, v.targets)
+    chunked('gvc', function () return '' end, v.conditions)
+    chunked('gvs', function () return '' end, v.statuses)
+    chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
+    reply(player, '#cd gv.e ' .. name)
+end
+
 -- A gambit edit: the reply is ok or err, then the authoritative rows either way
 local function gambitEdit(player, name, verb, err)
     if err ~= '' then
@@ -220,6 +260,10 @@ commandObj.onTrigger = function(player, line)
         gambitEdit(player, name, verb, player:cardianGambitDelete(name, tonumber(args[3]) or 0))
     elseif verb == 'gins' and name and args[3] and args[4] then
         gambitEdit(player, name, verb, player:cardianGambitInsert(name, tonumber(args[3]) or 0, args[4]))
+    elseif verb == 'gset' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitReplace(name, tonumber(args[3]) or 0, args[4]))
+    elseif verb == 'gvocab' and name then
+        sendVocab(player, name)
     elseif verb == 'gmaster' and name and args[3] then
         gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then

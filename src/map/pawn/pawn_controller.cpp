@@ -496,22 +496,6 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         m_Gambits->Tick(tick, false);
     }
 
-    if (POwner->CanRest() &&
-        m_Tick - POwner->LastAttacked > m_tickDelays.at(0) &&
-        m_Tick - m_CombatEndTime > m_tickDelays.at(0) &&
-        m_Tick - m_LastHealTickTime > m_tickDelays.at(m_NumHealingTicks))
-    {
-        if (POwner->health.hp != POwner->health.maxhp || POwner->health.mp != POwner->health.maxmp)
-        {
-            const auto recoverHP = static_cast<uint32>(POwner->health.maxhp * 0.05);
-            const auto recoverMP = static_cast<uint32>(POwner->health.maxmp * 0.05);
-            POwner->addHP(recoverHP);
-            POwner->addMP(recoverMP);
-            m_LastHealTickTime = m_Tick;
-            POwner->updatemask |= UPDATE_HP;
-            m_NumHealingTicks = std::clamp(m_NumHealingTicks + 1, static_cast<std::size_t>(0U), m_tickDelays.size() - 1U);
-        }
-    }
 
     co_return;
 }

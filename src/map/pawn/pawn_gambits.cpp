@@ -925,6 +925,18 @@ namespace pawn
         return true;
     }
 
+    auto CGambits::Replace(const std::size_t index, Gambit_t gambit) -> bool
+    {
+        if (index == 0 || index > m_gambits.size())
+        {
+            return false;
+        }
+        gambit.identifier          = fmt::format("{}", ++m_nextId);
+        gambit.last_used           = {};
+        m_gambits[index - 1].gambit = std::move(gambit);
+        return true;
+    }
+
     namespace
     {
         // "cure_iii" -> "Cure III", "provoke" -> "Provoke"
@@ -1615,5 +1627,109 @@ namespace pawn
         {
             ShowInfoFmt("pawn: {} {} {} -> {}", POwner->getName(), what, id, PTarget != nullptr ? PTarget->getName() : "-");
         }
+    }
+    auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary
+    {
+        Vocabulary v;
+        if (PPawn == nullptr)
+        {
+            return v;
+        }
+
+        v.targets = {
+            { "0", "Self", "" }, { "1", "Party member", "" }, { "2", "Target", "" }, { "3", "The player", "" }, { "4", "Tank", "" },
+            { "5", "Melee", "" }, { "6", "Ranged", "" }, { "7", "Casters", "" }, { "8", "Top enmity", "" }, { "10", "Dead ally", "" },
+        };
+
+        v.conditions.push_back({ "0:0", "Always", "" });
+        for (uint32 pct = 10; pct <= 90; pct += 10)
+        {
+            v.conditions.push_back({ fmt::format("1:{}", pct), fmt::format("HP < {}%", pct), "" });
+        }
+        for (const uint32 pct : { 50u, 75u, 100u })
+        {
+            v.conditions.push_back({ fmt::format("2:{}", pct), fmt::format("HP >= {}%", pct), "" });
+        }
+        for (uint32 pct = 10; pct <= 90; pct += 10)
+        {
+            v.conditions.push_back({ fmt::format("3:{}", pct), fmt::format("MP < {}%", pct), "" });
+        }
+        for (const uint32 tp : { 1000u, 2000u, 3000u })
+        {
+            v.conditions.push_back({ fmt::format("6:{}", tp), fmt::format("TP >= {}", tp), "" });
+        }
+        v.conditions.push_back({ "12:0", "Holds hate", "" });
+        v.conditions.push_back({ "13:0", "Does not hold hate", "" });
+        v.conditions.push_back({ "25:0", "Party has a tank", "" });
+        v.conditions.push_back({ "26:0", "No tank in the party", "" });
+        v.conditions.push_back({ "14:0", "Skillchain open", "" });
+        v.conditions.push_back({ "16:0", "Magic burst open", "" });
+
+        // The statuses "has X" / "no X" can name: the ones a party fights
+        // and buffs with. Ids are xi::StatusEffect.
+        for (const uint16 id : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 15u, 16u, 28u, 31u,
+                                 33u, 36u, 37u, 40u, 41u, 42u, 43u, 56u, 57u, 58u, 66u, 68u, 158u })
+        {
+            v.statuses.push_back({ fmt::format("{}", id), titleCase(effects::GetEffectName(id)), "" });
+        }
+
+        v.actions = {
+            { "100:1:1", "Avoid aggro", "Behaviours" },
+            { "100:6:1", "Rest with the player", "Behaviours" },
+            { "100:7:1", "Home point with the player", "Behaviours" },
+            { "100:4:1", "Formation: lead", "Behaviours" },
+            { "100:4:0", "Formation: follow", "Behaviours" },
+        };
+
+        // Magic she knows and can cast now, plus "best of the family" for
+        // every family she has a spell in
+        std::vector<SPELLFAMILY> families;
+        for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
+        {
+            auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
+            if (PSpell == nullptr || !charutils::hasSpell(PPawn, id) || !spell::CanUseSpell(PPawn, PSpell))
+            {
+                continue;
+            }
+            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic" });
+            if (const auto family = PSpell->getSpellFamily(); family != SPELLFAMILY_NONE && std::find(families.begin(), families.end(), family) == families.end())
+            {
+                families.push_back(family);
+            }
+        }
+        for (const auto family : families)
+        {
+            v.actions.push_back({ fmt::format("2:0:{}", static_cast<uint32>(family)), familyName(static_cast<uint32>(family)) + " (best)", "Magic" });
+        }
+
+        // Job abilities she has (the ability table is built per job and level)
+        for (const auto job : { PPawn->GetMJob(), PPawn->GetSJob() })
+        {
+            for (auto* PAbility : ability::GetAbilities(job))
+            {
+                if (PAbility != nullptr && charutils::hasAbility(PPawn, PAbility->getID()))
+                {
+                    const auto key = fmt::format("3:2:{}", PAbility->getID());
+                    if (std::none_of(v.actions.begin(), v.actions.end(), [&](const VocabEntry& e) { return e.key == key; }))
+                    {
+                        v.actions.push_back({ key, titleCase(PAbility->getName()), "Abilities" });
+                    }
+                }
+            }
+        }
+
+        v.actions.push_back({ "4:0:0", "Best weapon skill", "WeaponSkills" });
+        v.actions.push_back({ "4:3:0", "Any weapon skill", "WeaponSkills" });
+        for (uint16 id = 1; id < MAX_WEAPONSKILL_ID; ++id)
+        {
+            auto* PWeaponSkill = battleutils::GetWeaponSkill(id);
+            if (PWeaponSkill != nullptr && charutils::hasWeaponSkill(PPawn, id) && charutils::canUseWeaponSkill(PPawn, id))
+            {
+                v.actions.push_back({ fmt::format("4:2:{}", id), titleCase(PWeaponSkill->getName()), "WeaponSkills" });
+            }
+        }
+
+        v.actions.push_back({ "1:0:0", "Ranged attack", "Ranged" });
+        return v;
     }
 } // namespace pawn

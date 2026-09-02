@@ -213,14 +213,11 @@ private:
     bool                            m_BrainLoaded = false;
 
     timer::time_point                 m_CombatEndTime;
-    timer::time_point                 m_LastHealTickTime;
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
     timer::time_point                 m_TravelProgressTime;
     float                             m_TravelBestDist = 0.0f;
     xi::ZoneId                        m_TravelHopZone{};
-    std::vector<std::chrono::seconds> m_tickDelays      = { std::chrono::seconds(15), std::chrono::seconds(10), std::chrono::seconds(10), std::chrono::seconds(3) };
-    std::size_t                       m_NumHealingTicks = 0;
 
     bool              m_Hunting    = false;
     bool              m_WasEngaged = false;

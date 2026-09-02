@@ -98,6 +98,26 @@ namespace pawn
     // The row as the player reads it: "Party: HP < 50% -> Cure (best)"
     auto labelGambit(const gambits::Gambit_t& gambit) -> std::string;
 
+    // The catalogue the editor's pickers offer for one cardian: targets,
+    // conditions (thresholds pre-expanded, FFXII-style: "HP < 50%" and
+    // "HP < 60%" are two entries), statuses (for "has X" / "no X"), and
+    // the actions she can take right now -- her spells, abilities and
+    // weapon skills, plus the behaviours. Keys are row-grammar fragments.
+    struct VocabEntry
+    {
+        std::string key;   // "target", "cond:arg", "status id", or "reaction:select:arg"
+        std::string label; // as the player reads it
+        std::string group; // actions only: Behaviours / Magic / Abilities / WeaponSkills / Ranged
+    };
+    struct Vocabulary
+    {
+        std::vector<VocabEntry> targets;
+        std::vector<VocabEntry> conditions;
+        std::vector<VocabEntry> statuses;
+        std::vector<VocabEntry> actions;
+    };
+    auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary;
+
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
     // for a character owner. It speaks the trust vocabulary (gambits::G_*,
     // the same Lua table shapes) so brains transfer verbatim, but the party
@@ -153,6 +173,7 @@ namespace pawn
         auto Move(std::size_t from, std::size_t to) -> bool;
         auto Erase(std::size_t index) -> bool;
         auto Insert(std::size_t index, gambits::Gambit_t gambit) -> bool;
+        auto Replace(std::size_t index, gambits::Gambit_t gambit) -> bool; // keeps the row's ON/OFF
 
         auto Size() const -> std::size_t
         {

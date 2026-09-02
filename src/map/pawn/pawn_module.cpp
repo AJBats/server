@@ -500,6 +500,54 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
+        lua["CBaseEntity"]["cardianGambitReplace"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            auto gambit = pawn::text::parseRow(spec);
+            if (!gambit.has_value())
+            {
+                return "malformed row";
+            }
+            if (!PGambits->Replace(index, std::move(*gambit)))
+            {
+                return "no such row";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitVocab"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            auto* PPawn = managedPair(PLuaBaseEntity, name).second;
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+            const auto vocab  = pawn::vocabularyFor(PPawn);
+            auto       result = ::lua.create_table();
+            const auto pack   = [](const std::vector<pawn::VocabEntry>& entries)
+            {
+                auto list = ::lua.create_table();
+                for (const auto& e : entries)
+                {
+                    auto entry     = ::lua.create_table();
+                    entry["key"]   = e.key;
+                    entry["label"] = e.label;
+                    entry["group"] = e.group;
+                    list.add(entry);
+                }
+                return list;
+            };
+            result["targets"]    = pack(vocab.targets);
+            result["conditions"] = pack(vocab.conditions);
+            result["statuses"]   = pack(vocab.statuses);
+            result["actions"]    = pack(vocab.actions);
+            return result;
+        };
         lua["CBaseEntity"]["cardianGambitMaster"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
             auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
