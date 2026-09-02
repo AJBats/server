@@ -125,6 +125,10 @@ namespace
         db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, ?, 0) "
                          "ON DUPLICATE KEY UPDATE accid = VALUES(accid), targid = VALUES(targid), client_addr = 0",
                          kPawnAccidBase + PPawn->id, PPawn->id, PPawn->targid);
+        // The login server clears this on a real login; a pawn never passes
+        // through it, and a link-dead flag left by an earlier possession
+        // would show her as logging out in /sea for good
+        db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", PPawn->id);
         savePawnPosition(PPawn);
     }
 
