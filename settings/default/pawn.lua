@@ -96,6 +96,49 @@ xi.settings.pawn =
     FORMATION_CATCHUP_DISTANCE = 3.0,
     FORMATION_CATCHUP_SPEED    = 135,
 
+    -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
+    -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
+    -- always, low-HP while the cardian is under 75%, magic only while it is
+    -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
+    -- and itself outside those circles, and is pushed away as a mob roams
+    -- toward it. Cardians move on the server with the mobs, so nothing
+    -- surprises them: they stand boldly just outside. AVOID_AGGRO is the
+    -- default for every cardian; a gambit row or !pawnavoid changes it per
+    -- cardian. AVOID_SCAN is how far around itself a cardian looks.
+    AVOID_AGGRO  = true,
+    AVOID_BUFFER = 1.5,
+    AVOID_SCAN   = 30,
+
+    -- Linking: the idle kin of any mob fighting a cardian are circles for
+    -- that cardian alone -- link range plus AVOID_TAIL, the distance the mob
+    -- keeps behind her as it follows -- so she leads her fight away from the
+    -- kin and no one else has to. A kin that joins is a fight, not a danger,
+    -- and drops out on its own. A mob that both aggroes and links is the
+    -- larger of its two circles. The same pass runs mid-fight: a target
+    -- parked inside another mob's circle is not approached; she waits at
+    -- the rim for the tank to bring it.
+    AVOID_LINKS = true,
+    AVOID_TAIL  = 3.0,
+
+    -- The settle rule (the itch): a cardian whose spot lies inside a circle
+    -- takes the best clear spot on offer when she arrives, then stands
+    -- there. Every second the itch grows by how much better than her spot
+    -- the best spot on offer now is, minus AVOID_ITCH_TOLERANCE yalms (an
+    -- improvement under that is never worth walking for, and drains it);
+    -- when it reaches AVOID_ITCH_PATIENCE (yalm-seconds) she moves once, in
+    -- one go, and the itch resets. Four yalms better with a tolerance of
+    -- three fires after twenty seconds; eight yalms better, after four.
+    -- Escapes and fights never wait on it.
+    AVOID_ITCH_TOLERANCE = 3.0,
+    AVOID_ITCH_PATIENCE  = 20,
+
+    -- Clean pulls (independent of AVOID_AGGRO): the hunter skips a target
+    -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
+    -- with a danger circle across the approach. Link-aware pulls (same-
+    -- family linking mobs, aggressive or not) are a later refinement.
+    HUNT_CLEAN_PULLS  = true,
+    HUNT_CLEAN_RADIUS = 10,
+
     -- Log, once a second per lead pawn: how old the Cardian Link's view of
     -- the player is versus the position packet's, the distance between the
     -- two (packet lag in yalms), the prediction applied and its error, and

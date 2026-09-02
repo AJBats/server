@@ -38,6 +38,7 @@
 #include "packets/basic.h"
 #include "utils/moduleutils.h"
 
+#include <algorithm>
 #include <string>
 #include <utility>
 #include <vector>
@@ -219,6 +220,12 @@ class PawnModule : public CPPModule
     {
         pawn::cleanupStaleRows();
 
+        // The Cardian-only gambit vocabulary, published once from the C++
+        // definitions so the brains cannot drift from the interpreter
+        lua["xi"]["pawn"]             = lua["xi"]["pawn"].get_or_create<sol::table>();
+        lua["xi"]["pawn"]["r"]        = lua.create_table_with("BEHAVIOR", static_cast<uint16>(pawn::G_REACTION_BEHAVIOR));
+        lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro));
+
         lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             return pawn::create(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
@@ -266,6 +273,18 @@ class PawnModule : public CPPModule
             if (gambit.predicate_groups.empty() || gambit.actions.empty())
             {
                 ShowWarningFmt("pawn: malformed gambit for {} (target {}): no conditions or no actions", PLuaBaseEntity->GetBaseEntity()->getName(), target);
+                return {};
+            }
+
+            // A behaviour switch is a row of its own: mixed with a real
+            // action it would be silently ignored by the action interpreter
+            const auto behaviors = std::count_if(gambit.actions.begin(), gambit.actions.end(), [](const Action_t& a)
+                                                 {
+                                                     return a.reaction == pawn::G_REACTION_BEHAVIOR;
+                                                 });
+            if (behaviors != 0 && static_cast<std::size_t>(behaviors) != gambit.actions.size())
+            {
+                ShowWarningFmt("pawn: malformed gambit for {} (target {}): a BEHAVIOR action cannot share a row with other actions", PLuaBaseEntity->GetBaseEntity()->getName(), target);
                 return {};
             }
 
@@ -397,6 +416,16 @@ class PawnModule : public CPPModule
                 return "no such cardian";
             }
             return pawn::setHunting(PPawn, on) ? "" : "no controller";
+        };
+
+        lua["CBaseEntity"]["cardianAvoid"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            return pawn::setAvoidAggro(PPawn, on) ? "" : "no controller";
         };
 
         lua["CBaseEntity"]["cardianHomePoint"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string

@@ -23,6 +23,7 @@
 #include "cardian_link.h"
 #include "formation_math.h"
 #include "pawn.h"
+#include "pawn_danger.h"
 #include "pawn_gambits.h"
 
 #include "common/settings.h"
@@ -33,6 +34,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <tuple>
+#include <vector>
 
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
@@ -53,7 +56,36 @@
 CPawnController::CPawnController(CCharEntity* PPawn)
 : CPlayerController(PPawn)
 , m_Gambits(std::make_unique<pawn::CGambits>(PPawn, this))
+, m_AvoidAggroBase(settings::get<bool>("pawn.AVOID_AGGRO"))
 {
+}
+
+void CPawnController::SetAvoidAggro(const bool on)
+{
+    if (m_AvoidAggroBase != on)
+    {
+        ShowInfoFmt("pawn: {} aggro avoidance {}{}", POwner->getName(), on ? "on" : "off",
+                    m_AvoidAggroGambit.has_value() ? " (a gambit row currently overrides it)" : "");
+    }
+    m_AvoidAggroBase = on;
+}
+
+auto CPawnController::IsAvoidingAggro() const -> bool
+{
+    return m_AvoidAggroGambit.value_or(m_AvoidAggroBase);
+}
+
+void CPawnController::ClearGambitBehaviors()
+{
+    m_AvoidAggroGambit.reset();
+}
+
+void CPawnController::SetGambitBehavior(const uint16 behavior, const bool on)
+{
+    if (static_cast<pawn::Behavior>(behavior) == pawn::Behavior::AvoidAggro)
+    {
+        m_AvoidAggroGambit = on;
+    }
 }
 
 CPawnController::~CPawnController() = default;
@@ -130,6 +162,9 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     TracyZoneScoped;
 
     RestoreNormalSpeed();
+    m_Gambits->TickBehaviors();
+    m_AvoidPerch.reset();
+    m_AvoidItch = 0.0f;
 
     CCharEntity* PPlayer = GetLivePlayer();
 
@@ -178,28 +213,68 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    auto avoidAction = AvoidAction::None;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
-        const float currentDistanceToTarget = distance(POwner->loc.p, PTarget->loc.p);
-
         POwner->PAI->PathFind->LookAt(PTarget->loc.p);
 
-        // Melee archetype: continually reposition into attack range
-        std::unique_ptr<CBasicPacket> err;
-        if (!POwner->CanAttack(PTarget, err) && currentDistanceToTarget > RoamDistance)
+        // The same avoidance pass as roaming, with the target as the point:
+        // inside a circle she steps out mid-fight, and a target parked
+        // inside another mob's circle is not approached -- she waits at the
+        // rim for the tank to bring it
+        m_HasSlot = false;
+        position_t point           = PTarget->loc.p;
+        float      followMax       = RoamDistance;
+        float      followTarget    = RoamDistance;
+        float      declumpDistance = 0.0f;
+        if (IsAvoidingAggro())
         {
-            PathToward(PTarget->loc.p, RoamDistance);
+            avoidAction = Avoid(point, followMax, followTarget, declumpDistance, true);
         }
 
-        if (!POwner->PAI->PathFind->IsFollowingPath())
+        if (avoidAction != AvoidAction::None)
         {
-            Declump(PTarget);
+            if (IsShortHop(point, followMax))
+            {
+                POwner->PAI->PathFind->Clear();
+                POwner->PAI->PathFind->StepTo(point);
+            }
+            else if (const float away = distance(POwner->loc.p, point); away > followMax)
+            {
+                if (!PathToward(point, followTarget))
+                {
+                    NotePathFailure(avoidAction, point, away);
+                }
+            }
+            else if (POwner->PAI->PathFind->IsFollowingPath())
+            {
+                POwner->PAI->PathFind->Clear();
+            }
+        }
+        else
+        {
+            // Melee archetype: continually reposition into attack range
+            std::unique_ptr<CBasicPacket> err;
+            if (!POwner->CanAttack(PTarget, err) && distance(POwner->loc.p, PTarget->loc.p) > RoamDistance)
+            {
+                PathToward(PTarget->loc.p, RoamDistance);
+            }
+
+            if (!POwner->PAI->PathFind->IsFollowingPath())
+            {
+                Declump(PTarget);
+            }
         }
 
         POwner->PAI->PathFind->FollowPath(m_Tick);
     }
 
-    m_Gambits->Tick(tick, true);
+    // Never a cast in a tick spent stepping to safety: it would root her
+    // inside the circle
+    if (avoidAction != AvoidAction::Escape && avoidAction != AvoidAction::Detour)
+    {
+        m_Gambits->Tick(tick, true);
+    }
 
     co_return;
 }
@@ -269,7 +344,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
 
     // Where this pawn belongs: the lead holds a point ahead of the player,
-    // everyone else follows the chain
+    // everyone else follows the chain. A slot exists only if this tick's
+    // decision comes from FormationPoint (chain followers have none).
+    m_Gambits->TickBehaviors();
+    m_HasSlot = false;
     position_t followPoint{};
     float      declumpDistance = 0.0f;
     float      followMax       = 2.0f;
@@ -314,16 +392,31 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
+    auto avoidAction = AvoidAction::None;
+    if (IsAvoidingAggro())
+    {
+        avoidAction = Avoid(followPoint, followMax, followTarget, declumpDistance, false);
+    }
+
     const float currentDistance = distance(POwner->loc.p, followPoint);
 
-    if (currentDistance > followMax)
+    if (avoidAction != AvoidAction::None && IsShortHop(followPoint, followMax))
+    {
+        POwner->PAI->PathFind->Clear();
+        POwner->PAI->PathFind->StepTo(followPoint);
+    }
+    else if (currentDistance > followMax)
     {
         // Warp only when pathing genuinely fails; a pawn arriving at a zone
         // gate runs to its player like anyone else would
-        if (!PathToward(followPoint, followTarget) && currentDistance > WarpDistance)
+        if (!PathToward(followPoint, followTarget))
         {
-            POwner->PAI->PathFind->WarpTo(followPoint);
-            co_return;
+            if (currentDistance > WarpDistance)
+            {
+                POwner->PAI->PathFind->WarpTo(followPoint);
+                co_return;
+            }
+            NotePathFailure(avoidAction, followPoint, currentDistance);
         }
     }
     else if (currentDistance < declumpDistance)
@@ -342,9 +435,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         POwner->PAI->PathFind->FollowPath(m_Tick);
     }
-    else if (!POwner->PAI->IsCurrentState<CMagicState>())
+    else if (!POwner->PAI->IsCurrentState<CMagicState>() && avoidAction != AvoidAction::Escape && avoidAction != AvoidAction::Detour)
     {
-        // Between fights, standing still: cures, raises, buffs
+        // Between fights, standing still: cures, raises, buffs -- but never
+        // in a tick spent stepping to safety, since a cast would root the
+        // pawn inside the circle
         m_Gambits->Tick(tick, false);
     }
 
@@ -685,9 +780,22 @@ auto CPawnController::HuntReady(const CCharEntity* PPlayer) const -> bool
 
 auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*
 {
-    const auto minCheck = settings::get<uint8>("pawn.HUNT_CHECK_MIN");
-    const auto maxCheck = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
-    const auto radius   = settings::get<float>("pawn.HUNT_RADIUS");
+    const auto  minCheck    = settings::get<uint8>("pawn.HUNT_CHECK_MIN");
+    const auto  maxCheck    = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
+    const auto  radius      = settings::get<float>("pawn.HUNT_RADIUS");
+    const auto  cleanRadius = settings::get<float>("pawn.HUNT_CLEAN_RADIUS");
+
+    // One danger scan per hunt check, wide enough to cover every candidate's
+    // clean radius and every approach from the hunter; candidates filter it
+    const bool                        cleanPulls = settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
+    std::vector<pawn::danger::Danger> dangers;
+    if (cleanPulls)
+    {
+        // Judged for the whole party that will fight beside the target, not
+        // for the hunter's own buffs and health
+        dangers = pawn::danger::around(POwner->loc.zone, PPlayer->loc.p, radius + std::max(cleanRadius, distance(POwner->loc.p, PPlayer->loc.p)),
+                                       pawn::danger::Profile::worstCase());
+    }
 
     CMobEntity* best     = nullptr;
     float       bestDist = radius; // the hunter's own walk is capped too
@@ -720,11 +828,46 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEn
                                      }
 
                                      const float toHunter = distance(POwner->loc.p, PMob->loc.p);
-                                     if (toHunter < bestDist)
+                                     if (toHunter >= bestDist)
                                      {
-                                         best     = PMob;
-                                         bestDist = toHunter;
+                                         return;
                                      }
+
+                                     // Clean pulls: no other aggressive mob near the target, no
+                                     // danger circle across the approach, and no linking family
+                                     // member (aggressive or not) within the clean radius
+                                     for (const auto& d : dangers)
+                                     {
+                                         if (d.mob == PMob)
+                                         {
+                                             continue;
+                                         }
+                                         if (isWithinDistance(d.mob->loc.p, PMob->loc.p, cleanRadius) ||
+                                             cardian::formation::segmentCrosses(d, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z))
+                                         {
+                                             return;
+                                         }
+                                     }
+                                     if (cleanPulls && PMob->m_Link != 0)
+                                     {
+                                         bool linked = false;
+                                         POwner->loc.zone->ForEachMob([&](CMobEntity* POther)
+                                                                      {
+                                                                          if (!linked && POther != PMob && POther->m_Link != 0 && POther->m_Family == PMob->m_Family &&
+                                                                              POther->isAlive() && POther->PMaster == nullptr &&
+                                                                              isWithinDistance(POther->loc.p, PMob->loc.p, cleanRadius))
+                                                                          {
+                                                                              linked = true;
+                                                                          }
+                                                                      });
+                                         if (linked)
+                                         {
+                                             return;
+                                         }
+                                     }
+
+                                     best     = PMob;
+                                     bestDist = toHunter;
                                  });
 
     return best;
@@ -880,6 +1023,12 @@ auto CPawnController::FormationPoint(const Anchor& a, const float offset, const 
 {
     const position_t projected = nearPosition(a.anchor, offset, angle);
 
+    // Remembered so Avoid() can re-seat the slot on the same ring
+    m_HasSlot    = true;
+    m_SlotAnchor = a.anchor;
+    m_SlotOffset = offset;
+    m_SlotAngle  = angle;
+
     // A moving player is re-aimed every tick; the deadband only absorbs
     // the coarse position/heading updates of a player standing still
     if (!hasHeld || a.moving || distance(projected, held) > settings::get<float>("pawn.FORMATION_DEADBAND"))
@@ -888,6 +1037,337 @@ auto CPawnController::FormationPoint(const Anchor& a, const float offset, const 
         hasHeld = true;
     }
     return held;
+}
+
+auto CPawnController::IsShortHop(const position_t& point, const float followMax) const -> bool
+{
+    constexpr float plannerMinimumHop = 1.2f;
+    const float     hop               = distance(POwner->loc.p, point);
+    return hop > followMax && hop < plannerMinimumHop && POwner->PAI->PathFind->ValidPosition(point);
+}
+
+void CPawnController::NotePathFailure(const AvoidAction action, const position_t& point, const float away)
+{
+    if (action == AvoidAction::None || m_Tick - m_LastPathFailTime < 1s)
+    {
+        return;
+    }
+    m_LastPathFailTime = m_Tick;
+    ShowInfoFmt("pawn: {} cannot path to her {} point ({:.1f}y away, at {:.1f} {:.1f} {:.1f}, on mesh: {})", POwner->getName(),
+                magic_enum::enum_name(action), away, point.x, point.y, point.z, POwner->PAI->PathFind->ValidPosition(point) ? "yes" : "no");
+}
+
+auto CPawnController::Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const bool fighting) -> AvoidAction
+{
+    using namespace cardian::formation;
+
+    const auto* PPawn   = static_cast<const CCharEntity*>(POwner);
+    const auto  dangers = pawn::danger::around(POwner->loc.zone, POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn));
+
+    // The margins that keep the boundary from being slippery: every point
+    // she walks to is planned against the circles padded by kClearance, so
+    // a 400 ms step (about two yalms) and the circle's breathing as she
+    // walks over bumps (the height slice) cannot land her inside. Only the
+    // escape test uses the true circle, and it pushes her a little further
+    // out than the padding. A hold stands anywhere within kHoldBand of the
+    // padded ring.
+    constexpr float kClearance   = 1.5f;
+    constexpr float kEscapeExtra = 0.5f;
+    constexpr float kHoldBand    = 1.0f;
+    constexpr float kDetourArc   = 3.0f;
+
+    AvoidAction action  = AvoidAction::None;
+    bool        perched = false; // this tick used or took a perch
+    if (!dangers.empty())
+    {
+        const auto&         circles = dangers; // the true circles: is she inside one
+        std::vector<Circle> padded;            // the planning circles: every point she walks to
+        padded.reserve(dangers.size());
+        for (const auto& d : dangers)
+        {
+            padded.push_back(Circle{ d.x, d.z, d.radius + kClearance });
+        }
+        const position_t me = POwner->loc.p;
+
+        // A perch sits on the padded ring by construction, so only a circle
+        // that has grown well over it (half a yalm) takes it away; float
+        // error and the ring's breathing do not
+        const auto overgrown = [&](const position_t& perch)
+        {
+            return std::ranges::any_of(padded, [&](const Circle& c)
+                                       {
+                                           return planarDistance(c.x, c.z, perch.x, perch.z) < c.radius - 0.5f;
+                                       });
+        };
+
+        if (insideAny(circles, me.x, me.z))
+        {
+            // Pushed away: the minimum proximity is never violated, whatever
+            // the formation wanted. Straight out is the first choice; with a
+            // wall at her back, other directions around the deepest circle
+            // are tried for an on-mesh, clear point.
+            auto [x, z] = pushOut(padded, me.x, me.z, kEscapeExtra);
+            if (!POwner->PAI->PathFind->ValidPosition(position_t(x, me.y, z, 0, 0)))
+            {
+                const auto deepest = std::max_element(padded.begin(), padded.end(), [&](const auto& a, const auto& b)
+                                                      {
+                                                          return depthInside(a, me.x, me.z) < depthInside(b, me.x, me.z);
+                                                      });
+                const float base = std::atan2(me.z - deepest->z, me.x - deepest->x);
+                for (const float turn : { 0.5f, -0.5f, 1.0f, -1.0f, 1.6f, -1.6f, 2.2f, -2.2f, 3.1f })
+                {
+                    const float cx = deepest->x + std::cos(base + turn) * (deepest->radius + kEscapeExtra);
+                    const float cz = deepest->z + std::sin(base + turn) * (deepest->radius + kEscapeExtra);
+                    if (!insideAny(padded, cx, cz) && POwner->PAI->PathFind->ValidPosition(position_t(cx, me.y, cz, 0, 0)))
+                    {
+                        x = cx;
+                        z = cz;
+                        break;
+                    }
+                }
+            }
+            point           = position_t(x, me.y, z, 0, me.rotation);
+            followMax       = 0.0f;
+            followTarget    = 0.3f;
+            declumpDistance = 0.0f;
+            action          = AvoidAction::Escape;
+        }
+        else
+        {
+            if (insideAny(padded, point.x, point.z))
+            {
+                if (fighting)
+                {
+                    // Hold: the target is in danger and is not approached. At
+                    // the boundary already she stands where she is -- a player
+                    // hangs at the edge rather than pacing round it -- else she
+                    // walks up to it along her own line to the target
+                    bool                                   stay = false;
+                    std::optional<std::pair<float, float>> rim;
+                    float                                  rimDistance = 0.0f;
+                    for (const auto& c : padded)
+                    {
+                        if (planarDistance(c.x, c.z, point.x, point.z) >= c.radius)
+                        {
+                            continue;
+                        }
+                        if (planarDistance(c.x, c.z, me.x, me.z) <= c.radius + kHoldBand)
+                        {
+                            stay = true;
+                            break;
+                        }
+                        if (const auto p = approachRim(c, me.x, me.z, point.x, point.z); p.has_value())
+                        {
+                            const float d = planarDistance(me.x, me.z, p->first, p->second);
+                            if (!rim.has_value() || d < rimDistance)
+                            {
+                                rim         = p;
+                                rimDistance = d;
+                            }
+                        }
+                    }
+                    if (stay || !rim.has_value())
+                    {
+                        point = me;
+                    }
+                    else
+                    {
+                        const auto [x, z] = pushOut(padded, rim->first, rim->second);
+                        point             = position_t(x, me.y, z, 0, me.rotation);
+                    }
+                    followMax       = 1.0f;
+                    followTarget    = 0.5f;
+                    declumpDistance = 0.0f;
+                    action          = AvoidAction::Hold;
+                }
+                else
+                {
+                    // The slot is in danger: the nearest clear angle on its own
+                    // ring (the sandwich -- as close to the ideal spot as safety
+                    // allows), else the point pushed straight out, is the best
+                    // spot on offer
+                    const position_t ideal  = point;
+                    bool             seated = false;
+                    if (m_HasSlot)
+                    {
+                        const auto onRing = [&](const float angle)
+                        {
+                            const position_t p = nearPosition(m_SlotAnchor, m_SlotOffset, angle);
+                            return std::pair{ p.x, p.z };
+                        };
+                        if (const auto angle = safestAngleOnRing(padded, m_SlotAngle, onRing); angle.has_value())
+                        {
+                            point  = nearPosition(m_SlotAnchor, m_SlotOffset, *angle);
+                            seated = true;
+                        }
+                    }
+                    if (!seated)
+                    {
+                        const auto [x, z] = pushOut(padded, point.x, point.z);
+                        point.x           = x;
+                        point.z           = z;
+                    }
+                    action = seated ? AvoidAction::Slot : AvoidAction::PushedSlot;
+
+                    // The settle rule: she does not chase that spot every tick.
+                    // On arrival she takes it and perches; after that the itch
+                    // grows with how much better the spot on offer has become
+                    // than her perch, beyond what she tolerates, and drains
+                    // otherwise -- and only when it crosses her patience does
+                    // she move, once, in one go. A perch a circle has grown
+                    // well over is given up at once.
+                    const position_t candidate = point;
+                    const float      dt        = std::clamp(std::chrono::duration<float>(m_Tick - m_LastItchTick).count(), 0.0f, 1.0f);
+                    m_LastItchTick             = m_Tick;
+                    if (m_AvoidPerch.has_value() && !overgrown(*m_AvoidPerch))
+                    {
+                        const float improvement = planarDistance(m_AvoidPerch->x, m_AvoidPerch->z, ideal.x, ideal.z) -
+                                                  planarDistance(candidate.x, candidate.z, ideal.x, ideal.z);
+                        m_AvoidItch = itchAfter(m_AvoidItch, improvement, settings::get<float>("pawn.AVOID_ITCH_TOLERANCE"), dt);
+                        if (m_AvoidItch >= settings::get<float>("pawn.AVOID_ITCH_PATIENCE"))
+                        {
+                            ShowInfoFmt("pawn: {} moves her perch ({:.1f}y closer to her spot)", POwner->getName(), improvement);
+                            m_AvoidPerch = candidate;
+                            m_AvoidItch  = 0.0f;
+                        }
+                        else
+                        {
+                            point  = *m_AvoidPerch;
+                            action = AvoidAction::Perch;
+                        }
+                    }
+                    else
+                    {
+                        if (!m_AvoidPerch.has_value())
+                        {
+                            ShowInfoFmt("pawn: {} perches {:.1f}y off her spot", POwner->getName(), planarDistance(candidate.x, candidate.z, ideal.x, ideal.z));
+                        }
+                        m_AvoidPerch = candidate;
+                        m_AvoidItch  = 0.0f;
+                    }
+                    perched = true;
+                }
+            }
+            else if (!fighting && m_AvoidPerch.has_value() && !overgrown(*m_AvoidPerch) &&
+                     planarDistance(point.x, point.z, m_AvoidPerch->x, m_AvoidPerch->z) <= settings::get<float>("pawn.AVOID_ITCH_TOLERANCE"))
+            {
+                // Her spot hovers just outside the bubble, within the tolerance
+                // of the perch: not worth leaving it for
+                point   = *m_AvoidPerch;
+                action  = AvoidAction::Perch;
+                perched = true;
+            }
+
+            // The way to the point (as it now stands) cuts into a circle: go
+            // round the NEAREST such one first (the list is unordered), with
+            // the waypoint itself pushed clear of any other circle; next tick
+            // re-plans
+            const Circle* nearestCrossing = nullptr;
+            float         nearestDist     = 0.0f;
+            for (const auto& c : padded)
+            {
+                if (!segmentEnters(c, me.x, me.z, point.x, point.z))
+                {
+                    continue;
+                }
+                const float d = planarDistance(c.x, c.z, me.x, me.z);
+                if (nearestCrossing == nullptr || d < nearestDist)
+                {
+                    nearestCrossing = &c;
+                    nearestDist     = d;
+                }
+            }
+            if (nearestCrossing != nullptr)
+            {
+                // A detour that makes no progress is no detour: at the clear
+                // point already, the short way round yields a waypoint she is
+                // standing on. Then the long way round is tried only when the
+                // straight walk would reach the true circle; a shallow clip
+                // is walked. No way round a deep one: she stands and says so.
+                constexpr float kDetourStep = 0.3f;
+                const auto      waypoint    = [&](const float preferDir)
+                {
+                    auto [x, z]    = detourAround(*nearestCrossing, me.x, me.z, point.x, point.z, 0.0f, kDetourArc, kHoldBand, preferDir);
+                    std::tie(x, z) = pushOut(padded, x, z);
+                    return std::pair{ x, z };
+                };
+                auto [x, z]   = waypoint(0.0f);
+                bool progress = planarDistance(me.x, me.z, x, z) > kDetourStep;
+                const bool deep = segmentClosest(*nearestCrossing, me.x, me.z, point.x, point.z) < nearestCrossing->radius - kClearance;
+                if (!progress && deep)
+                {
+                    const auto [px, pz] = waypoint(1.0f);
+                    const auto [nx, nz] = waypoint(-1.0f);
+                    std::tie(x, z)      = planarDistance(me.x, me.z, px, pz) >= planarDistance(me.x, me.z, nx, nz) ? std::pair{ px, pz } : std::pair{ nx, nz };
+                    progress            = planarDistance(me.x, me.z, x, z) > kDetourStep;
+                }
+                if (progress)
+                {
+                    point           = position_t(x, me.y, z, 0, me.rotation);
+                    followMax       = kDetourStep;
+                    followTarget    = kDetourStep;
+                    declumpDistance = 0.0f;
+                    action          = AvoidAction::Detour;
+                }
+                else if (deep)
+                {
+                    point = me;
+                    if (m_Tick - m_LastPathFailTime >= 1s)
+                    {
+                        m_LastPathFailTime = m_Tick;
+                        ShowInfoFmt("pawn: {} is boxed in: the way to her point crosses {} and there is no way round", POwner->getName(),
+                                    std::find_if(dangers.begin(), dangers.end(), [&](const auto& d)
+                                                 {
+                                                     return d.x == nearestCrossing->x && d.z == nearestCrossing->z;
+                                                 })
+                                        ->mob->getName());
+                    }
+                }
+            }
+        }
+    }
+
+    if (!perched)
+    {
+        m_AvoidPerch.reset();
+        m_AvoidItch    = 0.0f;
+        m_LastItchTick = m_Tick;
+    }
+
+    // A change of action is always worth a line; the full picture once a
+    // second under FORMATION_DEBUG. The nearest danger is found only when a
+    // line is actually printed.
+    const bool changed = m_LastAvoidAction != action && action != AvoidAction::None;
+    const bool debug   = settings::get<bool>("pawn.FORMATION_DEBUG") && m_Tick - m_LastAvoidDebugTime >= 1s;
+    m_LastAvoidAction  = action;
+
+    if (changed || debug)
+    {
+        const auto nearest = std::min_element(dangers.begin(), dangers.end(), [](const auto& a, const auto& b)
+                                              {
+                                                  return a.distance < b.distance;
+                                              });
+        if (changed)
+        {
+            ShowInfoFmt("pawn: {} avoids {}{} ({}: {:.1f}y of a {:.1f}y circle)", POwner->getName(),
+                        nearest->mob->getName(), nearest->linked ? " [link]" : "", magic_enum::enum_name(action), nearest->distance, nearest->radius);
+        }
+        if (debug)
+        {
+            m_LastAvoidDebugTime = m_Tick;
+            if (dangers.empty())
+            {
+                ShowInfoFmt("pawn: avoid {}: dangers=0", POwner->getName());
+            }
+            else
+            {
+                ShowInfoFmt("pawn: avoid {}: dangers={} nearest={}{} d={:.1f}y r={:.1f}y action={} pt={:.1f}y itch={:.1f} perch={}", POwner->getName(), dangers.size(),
+                            nearest->mob->getName(), nearest->linked ? " [link]" : "", nearest->distance, nearest->radius, magic_enum::enum_name(action),
+                            distance(POwner->loc.p, point), m_AvoidItch, m_AvoidPerch.has_value() ? fmt::format("{:.1f}y", distance(POwner->loc.p, *m_AvoidPerch)) : "-");
+            }
+        }
+    }
+    return action;
 }
 
 auto CPawnController::LeadPoint(const CCharEntity* PPlayer) -> position_t

@@ -28,6 +28,16 @@ b.list = function(items)
 end
 
 -----------------------------------
+-- Behaviour switches (never consume the think)
+-----------------------------------
+-- Avoid aggro on/off while the conditions hold; conditions default to always.
+-- The controller's default comes from pawn.AVOID_AGGRO, so brains only need
+-- a row to change it or to make it conditional.
+b.avoidAggro = function(on, conditions)
+    return { ai.t.SELF, conditions or { ai.c.ALWAYS, 0 }, { xi.pawn.r.BEHAVIOR, xi.pawn.behavior.AVOID_AGGRO, on and 1 or 0 } }
+end
+
+-----------------------------------
 -- Healing
 -----------------------------------
 b.cureParty = function(hpp)

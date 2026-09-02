@@ -221,7 +221,7 @@ namespace pawn
 
         for (auto& gambit : m_gambits)
         {
-            if (tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
+            if (IsBehavior(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
             {
                 continue;
             }
@@ -766,6 +766,38 @@ namespace pawn
             }
             default:
                 return std::nullopt;
+        }
+    }
+
+    void CGambits::TickBehaviors()
+    {
+        // All behaviour rows, every tick: a switch is asserted only while its
+        // row's conditions hold, so the controller falls back to its base the
+        // moment they stop. Never takes the think away from action rows.
+        m_PController->ClearGambitBehaviors();
+        for (const auto& gambit : m_gambits)
+        {
+            if (IsBehavior(gambit) && SelectTarget(gambit) != nullptr)
+            {
+                ApplyBehavior(gambit);
+            }
+        }
+    }
+
+    auto CGambits::IsBehavior(const Gambit_t& gambit) const -> bool
+    {
+        return !gambit.actions.empty() &&
+               std::all_of(gambit.actions.begin(), gambit.actions.end(), [](const Action_t& action)
+                           {
+                               return action.reaction == G_REACTION_BEHAVIOR;
+                           });
+    }
+
+    void CGambits::ApplyBehavior(const Gambit_t& gambit)
+    {
+        for (const auto& action : gambit.actions)
+        {
+            m_PController->SetGambitBehavior(static_cast<uint16>(action.select), action.select_arg != 0);
         }
     }
 

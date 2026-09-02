@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <utility>
 
 // The formation's arithmetic, kept free of entities, settings and clocks so
 // xi_test can pin it (src/test/tests/cardian_formation_tests.cpp). The link
@@ -134,5 +136,250 @@ namespace cardian::formation
         const float distance = std::max(catchUpDistance, 1.0f);
         const float ramp     = std::clamp((gapYalms - 1.0f) / (distance - 1.0f + 0.001f), 0.0f, 1.0f);
         return normalSpeed + (catchUp - normalSpeed) * ramp;
+    }
+    // ------------------------------------------------------------------
+    // Aggro avoidance geometry (M3.87). Every detection type is a circle of
+    // that type's range plus a buffer; a cardian moves on the server with
+    // the mobs, so it may stand boldly just outside and is pushed away as
+    // a mob roams toward it.
+    // ------------------------------------------------------------------
+
+    struct Circle
+    {
+        float x      = 0.0f;
+        float z      = 0.0f;
+        float radius = 0.0f;
+    };
+
+    inline auto planarDistance(const float ax, const float az, const float bx, const float bz) -> float
+    {
+        return std::hypot(ax - bx, az - bz);
+    }
+
+    // How deep inside the circle a point is (0 = outside or on the rim)
+    inline auto depthInside(const Circle& c, const float x, const float z) -> float
+    {
+        return std::max(0.0f, c.radius - planarDistance(c.x, c.z, x, z));
+    }
+
+    template <typename Circles>
+    inline auto insideAny(const Circles& circles, const float x, const float z) -> bool
+    {
+        for (const auto& c : circles)
+        {
+            if (depthInside(c, x, z) > 0.0f)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Move the point radially out of every circle it sits in, a few passes
+    // so overlapping circles settle. A point exactly at a centre is pushed
+    // along +x. Returns the new point; unchanged when already clear.
+    template <typename Circles>
+    inline auto pushOut(const Circles& circles, float x, float z, const float clearance = 0.1f) -> std::pair<float, float>
+    {
+        for (int pass = 0; pass < 6; ++pass)
+        {
+            bool moved = false;
+            for (const auto& c : circles)
+            {
+                const float d = planarDistance(c.x, c.z, x, z);
+                if (d >= c.radius)
+                {
+                    continue;
+                }
+                const float want = c.radius + clearance;
+                if (d < 0.001f)
+                {
+                    x = c.x + want;
+                }
+                else
+                {
+                    x = c.x + (x - c.x) / d * want;
+                    z = c.z + (z - c.z) / d * want;
+                }
+                moved = true;
+            }
+            if (!moved)
+            {
+                break;
+            }
+        }
+        return { x, z };
+    }
+
+    // The nearest clear angle to `idealAngle` on a ring, sampled every
+    // `stepRadians` outward on both sides out to the opposite point.
+    // `pointAt(angle)` produces the candidate as {x, z} in whatever angle
+    // convention the caller's ring uses (nearPosition's, for formation
+    // slots), so this stays convention-free. nullopt when the whole ring is
+    // inside danger.
+    template <typename Circles, typename PointAt>
+    inline auto safestAngleOnRing(const Circles& circles, const float idealAngle, PointAt&& pointAt, const float stepRadians = 0.2617994f) -> std::optional<float>
+    {
+        const auto clearAt = [&](const float angle) -> bool
+        {
+            const auto [x, z] = pointAt(angle);
+            return !insideAny(circles, x, z);
+        };
+
+        if (clearAt(idealAngle))
+        {
+            return idealAngle;
+        }
+        const int steps = static_cast<int>(std::ceil(std::numbers::pi_v<float> / stepRadians));
+        for (int k = 1; k <= steps; ++k)
+        {
+            const float delta = static_cast<float>(k) * stepRadians;
+            if (clearAt(idealAngle + delta))
+            {
+                return idealAngle + delta;
+            }
+            if (clearAt(idealAngle - delta))
+            {
+                return idealAngle - delta;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Does the segment a->b pass through the circle? (endpoints included)
+    inline auto segmentCrosses(const Circle& c, const float ax, const float az, const float bx, const float bz) -> bool
+    {
+        const float dx  = bx - ax;
+        const float dz  = bz - az;
+        const float len = dx * dx + dz * dz;
+        float       t   = 0.0f;
+        if (len > 0.0f)
+        {
+            t = std::clamp(((c.x - ax) * dx + (c.z - az) * dz) / len, 0.0f, 1.0f);
+        }
+        const float px = ax + dx * t;
+        const float pz = az + dz * t;
+        return planarDistance(c.x, c.z, px, pz) < c.radius;
+    }
+
+    // The settle rule's meter. `improvement` is how much closer to her ideal
+    // spot the best clear spot on offer would put her than the spot she
+    // holds; beyond `tolerance` it charges the itch at that rate (yalms per
+    // second), below it the itch drains at the shortfall. The caller moves
+    // her when the level reaches her patience. Never below zero.
+    inline auto itchAfter(const float level, const float improvement, const float tolerance, const float dtSeconds) -> float
+    {
+        return std::max(0.0f, level + (improvement - tolerance) * dtSeconds);
+    }
+
+    // The closest the segment a->b comes to the circle's centre
+    inline auto segmentClosest(const Circle& c, const float ax, const float az, const float bx, const float bz) -> float
+    {
+        const float dx  = bx - ax;
+        const float dz  = bz - az;
+        const float len = dx * dx + dz * dz;
+        float       t   = 0.0f;
+        if (len > 0.0f)
+        {
+            t = std::clamp(((c.x - ax) * dx + (c.z - az) * dz) / len, 0.0f, 1.0f);
+        }
+        return planarDistance(c.x, c.z, ax + dx * t, az + dz * t);
+    }
+
+    // Does the segment a->b go INTO the circle: closer to the centre than
+    // both the rim and where it starts, by more than `slack`. A start that
+    // is already within the rim and moves away does not count (planning
+    // against padded circles puts a cardian there on purpose); a start
+    // outside that cuts in does.
+    inline auto segmentEnters(const Circle& c, const float ax, const float az, const float bx, const float bz, const float slack = 0.3f) -> bool
+    {
+        const float start = planarDistance(c.x, c.z, ax, az);
+        return segmentClosest(c, ax, az, bx, bz) < std::min(c.radius, start) - slack;
+    }
+
+    // The first point along a->b at `clearance` outside the circle: where
+    // an approach to something inside it stops. nullopt when `a` is already
+    // that close or closer, or the segment never reaches the ring.
+    inline auto approachRim(const Circle& c, const float ax, const float az, const float bx, const float bz, const float clearance = 0.0f) -> std::optional<std::pair<float, float>>
+    {
+        const float r  = c.radius + clearance;
+        const float fx = ax - c.x;
+        const float fz = az - c.z;
+        if (fx * fx + fz * fz <= r * r)
+        {
+            return std::nullopt;
+        }
+        const float dx = bx - ax;
+        const float dz = bz - az;
+        const float A  = dx * dx + dz * dz;
+        if (A <= 0.0f)
+        {
+            return std::nullopt;
+        }
+        const float B    = 2.0f * (fx * dx + fz * dz);
+        const float C    = fx * fx + fz * fz - r * r;
+        const float disc = B * B - 4.0f * A * C;
+        if (disc < 0.0f)
+        {
+            return std::nullopt;
+        }
+        const float t = (-B - std::sqrt(disc)) / (2.0f * A);
+        if (t < 0.0f || t > 1.0f)
+        {
+            return std::nullopt;
+        }
+        return std::pair{ ax + dx * t, az + dz * t };
+    }
+
+    // A waypoint that takes the way a->b round the circle without ever
+    // cutting into it, the shorter way round to the point from which b is
+    // in the clear (the tangent from b). From outside the ring (the radius
+    // plus clearance) it is the tangent point from a, so the walk there
+    // touches the ring and no more. From the ring itself (within `band` of
+    // it) it is a step of at most `arc` yalms along the ring -- a cardian at
+    // the boundary walks along it, never across it (a chord between two rim
+    // points cuts inside). At the clear point already: no step. `preferDir`
+    // forces the way round (+1 counter-clockwise, -1 clockwise); 0 takes
+    // the shorter.
+    inline auto detourAround(const Circle& c, const float ax, const float az, const float bx, const float bz, const float clearance = 0.5f, const float arc = 3.0f, const float band = 1.0f, const float preferDir = 0.0f) -> std::pair<float, float>
+    {
+        constexpr float twoPi = 2.0f * std::numbers::pi_v<float>;
+
+        const float r        = c.radius + clearance;
+        const float da       = planarDistance(c.x, c.z, ax, az);
+        const float db       = planarDistance(c.x, c.z, bx, bz);
+        const float thetaA   = std::atan2(az - c.z, ax - c.x);
+        const float thetaB   = std::atan2(bz - c.z, bx - c.x);
+        const float exitHalf = db > r ? std::acos(r / db) : 0.0f;
+
+        // How far round, in each direction, to the clear point on that side;
+        // the shorter wins
+        float dir  = 1.0f;
+        float left = twoPi;
+        for (const float d : { 1.0f, -1.0f })
+        {
+            if (preferDir != 0.0f && d != preferDir)
+            {
+                continue;
+            }
+            float turn = std::fmod(d * ((thetaB - d * exitHalf) - thetaA), twoPi);
+            if (turn < 0.0f)
+            {
+                turn += twoPi;
+            }
+            if (turn > twoPi - 0.01f)
+            {
+                turn = 0.0f;
+            }
+            if (turn < left)
+            {
+                left = turn;
+                dir  = d;
+            }
+        }
+
+        const float step  = da > r + band ? std::acos(std::clamp(r / da, -1.0f, 1.0f)) : arc / r;
+        const float angle = thetaA + dir * std::min(step, left);
+        return { c.x + std::cos(angle) * r, c.z + std::sin(angle) * r };
     }
 } // namespace cardian::formation

@@ -28,6 +28,11 @@
 
 #include "map/pawn/formation_math.h"
 
+#include <cmath>
+#include <numbers>
+#include <utility>
+#include <vector>
+
 using namespace cardian::formation;
 using Catch::Matchers::WithinAbs;
 
@@ -156,4 +161,195 @@ TEST_CASE("catchUpSpeed: a catch-up distance under a yalm still ramps sanely", "
 {
     REQUIRE_THAT(catchUpSpeed(0.5f, true, 107.0f, 135.0f, 0.2f), WithinAbs(107.0f, 0.001f));
     REQUIRE_THAT(catchUpSpeed(5.0f, true, 107.0f, 135.0f, 0.2f), WithinAbs(135.0f, 0.001f));
+}
+
+// ---------------------------------------------------------------- aggro avoidance geometry
+
+TEST_CASE("depthInside / insideAny: rim counts as outside", "[cardian][avoid]")
+{
+    const std::vector<Circle> circles{ { 0.0f, 0.0f, 8.0f } };
+
+    REQUIRE(insideAny(circles, 5.0f, 0.0f));
+    REQUIRE_FALSE(insideAny(circles, 8.0f, 0.0f));
+    REQUIRE_FALSE(insideAny(circles, 9.0f, 0.0f));
+    REQUIRE_THAT(depthInside(circles[0], 5.0f, 0.0f), WithinAbs(3.0f, 0.001f));
+}
+
+TEST_CASE("pushOut: a point inside is moved radially to the rim plus clearance", "[cardian][avoid]")
+{
+    const std::vector<Circle> circles{ { 0.0f, 0.0f, 8.0f } };
+
+    const auto [x, z] = pushOut(circles, 3.0f, 4.0f, 0.1f); // 5 y in, along (0.6, 0.8)
+
+    REQUIRE_THAT(std::hypot(x, z), WithinAbs(8.1f, 0.001f));
+    REQUIRE_THAT(x / std::hypot(x, z), WithinAbs(0.6f, 0.001f));
+    REQUIRE_THAT(z / std::hypot(x, z), WithinAbs(0.8f, 0.001f));
+}
+
+TEST_CASE("pushOut: a clear point is untouched, a centred point goes along +x", "[cardian][avoid]")
+{
+    const std::vector<Circle> circles{ { 0.0f, 0.0f, 8.0f } };
+
+    REQUIRE(pushOut(circles, 20.0f, 0.0f) == std::pair{ 20.0f, 0.0f });
+
+    const auto [x, z] = pushOut(circles, 0.0f, 0.0f, 0.1f);
+    REQUIRE_THAT(x, WithinAbs(8.1f, 0.001f));
+    REQUIRE_THAT(z, WithinAbs(0.0f, 0.001f));
+}
+
+TEST_CASE("pushOut: overlapping circles settle in a few passes", "[cardian][avoid]")
+{
+    const std::vector<Circle> circles{ { 0.0f, 0.0f, 8.0f }, { 12.0f, 0.0f, 8.0f } };
+
+    const auto [x, z] = pushOut(circles, 6.0f, 1.0f, 0.1f); // inside both
+
+    REQUIRE_FALSE(insideAny(circles, x, z));
+}
+
+TEST_CASE("safestAngleOnRing: the ideal angle when clear, the nearest clear angle otherwise", "[cardian][avoid]")
+{
+    const float pi   = std::numbers::pi_v<float>;
+    const auto  ring = [](const float r)
+    {
+        return [r](const float a)
+        {
+            return std::pair{ r * std::cos(a), r * std::sin(a) };
+        };
+    };
+
+    const std::vector<Circle> none{};
+    REQUIRE_THAT(*safestAngleOnRing(none, 0.3f, ring(5.0f)), WithinAbs(0.3f, 0.0001f));
+
+    // a danger sitting exactly where the ideal spot (5 y ahead along +x) is
+    const std::vector<Circle> ahead{ { 5.0f, 0.0f, 3.0f } };
+    const auto                a = safestAngleOnRing(ahead, 0.0f, ring(5.0f));
+    REQUIRE(a.has_value());
+    REQUIRE(std::fabs(*a) > 0.0f);
+    REQUIRE(std::fabs(*a) < pi / 2.0f); // it stayed on the forward half
+    REQUIRE_FALSE(insideAny(ahead, 5.0f * std::cos(*a), 5.0f * std::sin(*a)));
+}
+
+TEST_CASE("safestAngleOnRing: nothing when the whole ring is engulfed", "[cardian][avoid]")
+{
+    const std::vector<Circle> engulf{ { 0.0f, 0.0f, 50.0f } };
+    REQUIRE_FALSE(safestAngleOnRing(engulf, 0.0f, [](const float a) { return std::pair{ 5.0f * std::cos(a), 5.0f * std::sin(a) }; }).has_value());
+}
+
+TEST_CASE("segmentCrosses: through, past, and ending inside", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    REQUIRE(segmentCrosses(c, 0.0f, 0.0f, 20.0f, 0.0f));       // straight through
+    REQUIRE_FALSE(segmentCrosses(c, 0.0f, 5.0f, 20.0f, 5.0f)); // passes 5 y to the side
+    REQUIRE(segmentCrosses(c, 0.0f, 0.0f, 10.0f, 0.0f));       // ends at the centre
+    REQUIRE_FALSE(segmentCrosses(c, 0.0f, 0.0f, 6.0f, 0.0f));  // stops a yalm short
+}
+
+TEST_CASE("detourAround: from outside, the tangent point on the side the path leans toward", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 1.0f, 3.0f }; // centre slightly left of the +x path
+
+    const auto [wx, wz] = detourAround(c, 0.0f, 0.0f, 20.0f, 0.0f, 0.5f);
+
+    REQUIRE_THAT(planarDistance(c.x, c.z, wx, wz), WithinAbs(3.5f, 0.001f));
+    REQUIRE(wz < c.z); // went round the right (the side away from the centre)
+    REQUIRE_FALSE(segmentCrosses(c, 0.0f, 0.0f, wx, wz));
+    REQUIRE_FALSE(segmentCrosses(c, wx, wz, 20.0f, 0.0f));
+}
+
+TEST_CASE("detourAround: from the ring, a short arc step along it, never a chord across", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+    const float  ring = 3.5f; // clearance 0.5
+
+    // standing on the ring, straight behind the circle, wanting the far side
+    const auto [wx, wz] = detourAround(c, 10.0f - ring, 0.0f, 20.0f, 0.0f, 0.5f, 3.0f, 1.0f);
+
+    REQUIRE_THAT(planarDistance(c.x, c.z, wx, wz), WithinAbs(ring, 0.001f));                // still on the ring
+    REQUIRE(planarDistance(10.0f - ring, 0.0f, wx, wz) <= 3.0f + 0.001f);                   // at most the arc step away
+    REQUIRE(planarDistance(10.0f - ring, 0.0f, wx, wz) > 2.0f);                              // and a real step, not a shuffle
+    REQUIRE_FALSE(segmentCrosses(c, 10.0f - ring, 0.0f, wx, wz));                             // the chord stays out of the circle
+
+    // at the exit point already (b is in the clear from here): no step at all
+    const float exitX = 10.0f + ring * std::cos(std::numbers::pi_v<float> * 0.75f);
+    const float exitZ = ring * std::sin(std::numbers::pi_v<float> * 0.75f);
+    const auto [ex, ez] = detourAround(c, exitX, exitZ, exitX + 10.0f * std::cos(std::numbers::pi_v<float> * 0.25f), exitZ + 10.0f * std::sin(std::numbers::pi_v<float> * 0.25f), 0.5f, 3.0f, 1.0f);
+    REQUIRE_THAT(planarDistance(exitX, exitZ, ex, ez), WithinAbs(0.0f, 0.01f));
+}
+
+TEST_CASE("segmentEnters: cutting in counts, moving away from within the rim does not", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    REQUIRE(segmentEnters(c, 0.0f, 0.0f, 20.0f, 0.0f));        // straight through
+    REQUIRE_FALSE(segmentEnters(c, 0.0f, 5.0f, 20.0f, 5.0f));  // passes 5 y to the side
+    REQUIRE_FALSE(segmentEnters(c, 7.2f, 0.0f, 0.0f, 0.0f));   // within the rim, walking away
+    REQUIRE(segmentEnters(c, 7.2f, 0.0f, 10.0f, 0.0f));        // within the rim, walking in
+    REQUIRE_FALSE(segmentEnters(c, 7.0f, 0.0f, 7.0f, 4.0f));   // from the rim, tangent along it
+    REQUIRE_FALSE(segmentEnters(c, 0.0f, 2.9f, 20.0f, 2.9f));  // grazes by less than the slack
+}
+
+TEST_CASE("approachRim: the first point on the way at the ring, none once that close", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    const auto p = approachRim(c, 0.0f, 0.0f, 10.0f, 0.0f, 1.0f);
+    REQUIRE(p.has_value());
+    REQUIRE_THAT(p->first, WithinAbs(6.0f, 0.001f));
+    REQUIRE_THAT(p->second, WithinAbs(0.0f, 0.001f));
+
+    REQUIRE_FALSE(approachRim(c, 6.5f, 0.0f, 10.0f, 0.0f, 1.0f).has_value()); // already inside the ring
+    REQUIRE_FALSE(approachRim(c, 0.0f, 5.0f, 20.0f, 5.0f, 1.0f).has_value()); // never reaches it
+}
+
+TEST_CASE("itchAfter: charges above the tolerance, drains below it, and the worked example holds", "[cardian][avoid]")
+{
+    // four yalms better with a tolerance of three: one per second, so a
+    // patience of twenty is reached in twenty seconds of 400 ms ticks
+    float itch = 0.0f;
+    for (int tick = 0; tick < 50; ++tick)
+    {
+        itch = itchAfter(itch, 4.0f, 3.0f, 0.4f);
+    }
+    REQUIRE_THAT(itch, WithinAbs(20.0f, 0.01f));
+
+    // eight yalms better: five per second, twenty in four seconds
+    itch = 0.0f;
+    for (int tick = 0; tick < 10; ++tick)
+    {
+        itch = itchAfter(itch, 8.0f, 3.0f, 0.4f);
+    }
+    REQUIRE_THAT(itch, WithinAbs(20.0f, 0.01f));
+
+    // two yalms better drains at the shortfall, and never below zero
+    itch = itchAfter(5.0f, 2.0f, 3.0f, 1.0f);
+    REQUIRE_THAT(itch, WithinAbs(4.0f, 0.001f));
+    itch = itchAfter(itch, 0.0f, 3.0f, 10.0f);
+    REQUIRE_THAT(itch, WithinAbs(0.0f, 0.001f));
+}
+
+TEST_CASE("detourAround: a forced direction goes the long way round, still along the ring", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+    const float  ring = 3.5f;
+
+    // from straight behind, wanting the far side: both ways are equal, so
+    // force each and check they are mirror images on the ring
+    const auto [ux, uz] = detourAround(c, 10.0f - ring, 0.0f, 20.0f, 0.0f, 0.5f, 3.0f, 1.0f, 1.0f);
+    const auto [dx, dz] = detourAround(c, 10.0f - ring, 0.0f, 20.0f, 0.0f, 0.5f, 3.0f, 1.0f, -1.0f);
+
+    REQUIRE_THAT(planarDistance(c.x, c.z, ux, uz), WithinAbs(ring, 0.001f));
+    REQUIRE_THAT(planarDistance(c.x, c.z, dx, dz), WithinAbs(ring, 0.001f));
+    REQUIRE_THAT(ux, WithinAbs(dx, 0.001f));
+    REQUIRE_THAT(uz, WithinAbs(-dz, 0.001f));
+    REQUIRE(uz != 0.0f);
+}
+
+TEST_CASE("segmentClosest: the nearest approach of a segment to the centre, endpoints included", "[cardian][avoid]")
+{
+    const Circle c{ 10.0f, 0.0f, 3.0f };
+
+    REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 20.0f, 0.0f), WithinAbs(0.0f, 0.001f)); // through the centre
+    REQUIRE_THAT(segmentClosest(c, 0.0f, 5.0f, 20.0f, 5.0f), WithinAbs(5.0f, 0.001f)); // passes 5 y to the side
+    REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 6.0f, 0.0f), WithinAbs(4.0f, 0.001f));  // stops short: the end is nearest
 }
