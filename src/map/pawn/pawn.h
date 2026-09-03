@@ -51,6 +51,11 @@ namespace pawn
     // character's own.
     auto ownerAccountOf(const CCharEntity* PChar) -> uint32;
 
+    // Every character the player could spawn as a cardian, by name: their
+    // account's own alts and the generated cardians it owns, never the one
+    // they are playing -- spawn()'s eligibility, as a list
+    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>;
+
     // Delete orphaned pawn session rows (client_addr = 0) left by a crash.
     // Called once at map boot.
     void cleanupStaleRows();
@@ -74,11 +79,35 @@ namespace pawn
 
     // Toggle hunt mode on the named live pawn (see CPawnController); the
     // usual summoner-only rule is the caller's (findManagedPawn).
+    enum class Behavior : uint16;
+
+    // Set a behaviour's unconditional gambit row (pawn_gambits.h): the
+    // console commands' way in
+    bool setBehaviorRow(CCharEntity* PPawn, Behavior behavior, uint16 arg);
+
+    // Hunt mode: the party's strategy, a controller flag until the strategy
+    // channel exists
     bool setHunting(CCharEntity* PPawn, bool on);
 
-    // Toggle aggro avoidance on the named live pawn (see CPawnController);
-    // pawn.AVOID_AGGRO is every pawn's default.
-    bool setAvoidAggro(CCharEntity* PPawn, bool on);
+    // The party strategy channel (RESEARCH §8): not built, always 0
+    auto partyStrategy(const CCharEntity* PPawn) -> uint16;
+
+    // The party strategy channel (M3.9): one set of orders per player, read
+    // by every cardian of theirs. Strategy 0 = Off, 1 = Roam (the hunters
+    // pull). Retreat is the "on me" switch over it: nobody engages, nobody
+    // avoids aggro, hunting pauses, until it clears. Orders live in memory;
+    // a map restart starts everyone at Off.
+    constexpr uint16 kStrategyCount = 2;
+    auto strategyName(uint16 strategy) -> std::string_view;
+    auto strategyOf(uint32 ownerCharID) -> uint16;
+    auto isRetreating(uint32 ownerCharID) -> bool;
+    void setStrategy(CCharEntity* POwner, uint16 strategy);
+    void setRetreat(CCharEntity* POwner, bool on);
+
+    // Every cardian of the owner's in the zone fights the entity with this
+    // targid. "" when they go; otherwise why not, as the player reads it.
+    auto partyEngage(CCharEntity* POwner, uint16 targid) -> std::string;
+
 
     // A dead pawn home points: revived the way a home point revives a
     // player (full HP/MP, no weakness) and moved to its home point -- which
@@ -93,7 +122,15 @@ namespace pawn
     // first tick and whenever the pawn's job changes; !pawnbrain forces it.
     // Implemented in pawn_module.cpp.
     void loadBrain(CCharEntity* PPawn);
+
+    // The saved gambit set (cardian_gambits, M3.85): the rows in the row
+    // grammar, one "on spec" line each, and the master switch. Saved after
+    // every edit; loaded at spawn instead of the defaults when present.
+    void saveGambits(CCharEntity* PPawn);
+    bool loadSavedGambits(CCharEntity* PPawn);
+    void forgetGambits(CCharEntity* PPawn);
     bool reloadBrainByName(const std::string& targetName);
+    bool reloadBrain(CCharEntity* PPawn);
 
     // Remove a pawn from its zone and destroy it. No character state is
     // written back to the DB (the pawn visit leaves no trace).

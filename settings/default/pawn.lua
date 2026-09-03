@@ -35,7 +35,9 @@ xi.settings.pawn =
     -- Hunt mode (!pawnhunt): a flagged pawn picks and pulls exp mobs on
     -- its own while the party is idle and healthy. Difficulty band uses
     -- the check scale: 2 = Easy Prey, 3 = Decent Challenge, 4 = Even
-    -- Match, 5 = Tough, 6 = Very Tough, 7 = Incredibly Tough.
+    -- Match, 5 = Tough, 6 = Very Tough, 7 = Incredibly Tough. Hunting is
+    -- the party's strategy, not a gambit (!pawnhunt until the strategy
+    -- channel exists).
     HUNT_CHECK_MIN = 3,
     HUNT_CHECK_MAX = 5,
 
@@ -91,10 +93,14 @@ xi.settings.pawn =
     -- Catch-up: the lead runs at CATCHUP_SPEED while more than
     -- CATCHUP_DISTANCE yalms from its point, PAWN_SPEED otherwise. It only
     -- ever closes a gap to a point the player defines, so it nets out no
-    -- faster than the player. map.SPEED_LIMIT must be at least the
-    -- catch-up speed or the clamp eats it (see the local overrides).
+    -- faster than the player -- and it is a hair above run speed, not a
+    -- sprint: enough to stay ahead of the predicted spot, never enough to
+    -- whip around. A cardian never speeds up at all while a mob holds
+    -- hate on her (she would be a kiting exploit otherwise).
+    -- map.SPEED_LIMIT must be at least the catch-up speed or the clamp
+    -- eats it (see the local overrides).
     FORMATION_CATCHUP_DISTANCE = 3.0,
-    FORMATION_CATCHUP_SPEED    = 135,
+    FORMATION_CATCHUP_SPEED    = 118,
 
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
     -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
@@ -102,10 +108,9 @@ xi.settings.pawn =
     -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
     -- and itself outside those circles, and is pushed away as a mob roams
     -- toward it. Cardians move on the server with the mobs, so nothing
-    -- surprises them: they stand boldly just outside. AVOID_AGGRO is the
-    -- default for every cardian; a gambit row or !pawnavoid changes it per
-    -- cardian. AVOID_SCAN is how far around itself a cardian looks.
-    AVOID_AGGRO  = true,
+    -- surprises them: they stand boldly just outside. Avoidance is a gambit
+    -- row (on in every cardian's default rows; !pawnavoid checks and
+    -- unchecks it). AVOID_SCAN is how far around itself a cardian looks.
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
 
@@ -132,7 +137,7 @@ xi.settings.pawn =
     AVOID_ITCH_TOLERANCE = 3.0,
     AVOID_ITCH_PATIENCE  = 20,
 
-    -- Clean pulls (independent of AVOID_AGGRO): the hunter skips a target
+    -- Clean pulls: the hunter skips a target
     -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
     -- with a danger circle across the approach. Link-aware pulls (same-
     -- family linking mobs, aggressive or not) are a later refinement.

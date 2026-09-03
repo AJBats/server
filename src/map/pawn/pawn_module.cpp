@@ -22,6 +22,7 @@
 #include "cardian_link.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "gambit_text.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 
@@ -45,7 +46,6 @@
 
 namespace
 {
-    constexpr auto kBrainScript = "./modules/cardian/lua/pawn/brain.lua";
 
     using namespace gambits;
 
@@ -168,47 +168,34 @@ namespace pawn
 
     void loadBrain(CCharEntity* PPawn)
     {
-        auto brainTable = [&]() -> sol::optional<sol::table>
+        auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+        if (PController == nullptr)
         {
-            const sol::optional<sol::table> pawnTable = lua["xi"]["pawn"];
-            if (!pawnTable.has_value())
-            {
-                return std::nullopt;
-            }
-            return (*pawnTable)["brain"];
-        };
-
-        // The brain library normally arrives through modules/init.txt; load
-        // it directly when it hasn't
-        if (!brainTable().has_value())
-        {
-            if (const auto loaded = lua.safe_script_file(kBrainScript); !loaded.valid())
-            {
-                const sol::error err = loaded;
-                ShowErrorFmt("pawn: cannot load {}: {}", kBrainScript, err.what());
-                return;
-            }
-        }
-
-        const auto brain = brainTable();
-        if (!brain.has_value())
-        {
-            ShowErrorFmt("pawn: {} defines no xi.pawn.brain", kBrainScript);
             return;
         }
 
-        const sol::protected_function load = (*brain)["load"];
-        if (!load.valid())
+        auto& gambits = PController->Gambits();
+        gambits.RemoveAllGambits();
+
+        if (pawn::loadSavedGambits(PPawn))
         {
-            ShowErrorFmt("pawn: xi.pawn.brain.load is missing");
             return;
         }
 
-        if (const auto result = load(CLuaBaseEntity(PPawn)); !result.valid())
+        std::size_t count = 0;
+        for (const auto& [spec, enabled] : pawn::defaultRows())
         {
-            const sol::error err = result;
-            ShowErrorFmt("pawn: brain load failed for {}: {}", PPawn->getName(), err.what());
+            if (auto row = pawn::text::parseRow(spec); row.has_value())
+            {
+                gambits.AddGambit(std::move(*row), enabled);
+                ++count;
+            }
+            else
+            {
+                ShowErrorFmt("pawn: malformed default row '{}'", spec);
+            }
         }
+        ShowInfoFmt("pawn: default gambits loaded for {} ({} rows)", PPawn->getName(), count);
     }
 } // namespace pawn
 
@@ -224,7 +211,13 @@ class PawnModule : public CPPModule
         // definitions so the brains cannot drift from the interpreter
         lua["xi"]["pawn"]             = lua["xi"]["pawn"].get_or_create<sol::table>();
         lua["xi"]["pawn"]["r"]        = lua.create_table_with("BEHAVIOR", static_cast<uint16>(pawn::G_REACTION_BEHAVIOR));
-        lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro));
+        lua["xi"]["pawn"]["c"]        = lua.create_table_with("STRATEGY", static_cast<uint16>(pawn::G_CONDITION_STRATEGY));
+        lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro),
+                                                              "FORMATION", static_cast<uint16>(pawn::Behavior::Formation),
+                                                              "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
+                                                              "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));
+        lua["xi"]["pawn"]["slot"]     = lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
+                                                              "LEAD", static_cast<uint16>(pawn::Slot::Lead));
 
         lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
@@ -313,15 +306,6 @@ class PawnModule : public CPPModule
             return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
         };
 
-        // pawn:pawnSetTPSkillSettings(ai.tp.CLOSER_UNTIL_TP, ai.s.HIGHEST, 1500)
-        lua["CBaseEntity"]["pawnSetTPSkillSettings"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 trigger, const uint16 select, const sol::object& value) -> void
-        {
-            if (auto* PGambits = gambitsOf(PLuaBaseEntity))
-            {
-                PGambits->SetTPSkillSettings(static_cast<G_TP_TRIGGER>(trigger), static_cast<G_SELECT>(select), value.is<uint16>() ? value.as<uint16>() : 0);
-            }
-        };
-
         // Cardian management surface (!cardian command / companion addon).
         // Every call resolves the named pawn through findManagedPawn, so only
         // the summoner can inspect or move a cardian's belongings. Mutators
@@ -347,6 +331,15 @@ class PawnModule : public CPPModule
             return cardian::link::sendToCharacter(PChar->id, wire);
         };
 
+        lua["CBaseEntity"]["cardianAccountPawns"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto names = ::lua.create_table();
+            for (const auto& name : pawn::accountPawnNames(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
+            {
+                names.add(name);
+            }
+            return names;
+        };
         lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto  names = ::lua.create_table();
@@ -408,6 +401,175 @@ class PawnModule : public CPPModule
             return result;
         };
 
+        // The gambit editor's view of a cardian's rows (M3.85): index, on,
+        // the row in the grammar, and the label as the player reads it
+        const auto gambitsOf = [](CCharEntity* PPawn) -> pawn::CGambits*
+        {
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr ? &PController->Gambits() : nullptr;
+        };
+        lua["CBaseEntity"]["cardianGambits"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            auto* PGambits            = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return sol::lua_nil;
+            }
+            auto result   = ::lua.create_table();
+            auto rows     = ::lua.create_table();
+            std::size_t n = 0;
+            for (const auto& row : PGambits->Rows())
+            {
+                ++n;
+                auto entry     = ::lua.create_table();
+                entry["index"] = n;
+                entry["on"]    = row.enabled;
+                entry["spec"]  = pawn::text::formatRow(row.gambit);
+                entry["label"] = pawn::labelGambit(row.gambit);
+                rows.add(entry);
+            }
+            result["master"] = PGambits->MasterOn();
+            result["rows"]   = rows;
+            return result;
+        };
+        // Every edit saves the set (cardian_gambits)
+        lua["CBaseEntity"]["cardianGambitToggle"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const bool on) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            if (!PGambits->SetEnabled(index, on))
+            {
+                return "no such row";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitMove"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 from, const uint32 to) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            if (!PGambits->Move(from, to))
+            {
+                return "no such row";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitDelete"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            if (!PGambits->Erase(index))
+            {
+                return "no such row";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitInsert"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            auto gambit = pawn::text::parseRow(spec);
+            if (!gambit.has_value())
+            {
+                return "malformed row";
+            }
+            if (!PGambits->Insert(index, std::move(*gambit)))
+            {
+                return "no such row";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitReplace"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            auto gambit = pawn::text::parseRow(spec);
+            if (!gambit.has_value())
+            {
+                return "malformed row";
+            }
+            if (!PGambits->Replace(index, std::move(*gambit)))
+            {
+                return "no such row";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitVocab"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            auto* PPawn = managedPair(PLuaBaseEntity, name).second;
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+            const auto vocab  = pawn::vocabularyFor(PPawn);
+            auto       result = ::lua.create_table();
+            const auto pack   = [](const std::vector<pawn::VocabEntry>& entries)
+            {
+                auto list = ::lua.create_table();
+                for (const auto& e : entries)
+                {
+                    auto entry     = ::lua.create_table();
+                    entry["key"]   = e.key;
+                    entry["label"] = e.label;
+                    entry["group"] = e.group;
+                    list.add(entry);
+                }
+                return list;
+            };
+            result["targets"]    = pack(vocab.targets);
+            result["conditions"] = pack(vocab.conditions);
+            result["statuses"]   = pack(vocab.statuses);
+            result["actions"]    = pack(vocab.actions);
+            return result;
+        };
+        lua["CBaseEntity"]["cardianGambitMaster"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        {
+            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PGambits = gambitsOf(PPawn);
+            if (PGambits == nullptr)
+            {
+                return "no such cardian";
+            }
+            PGambits->SetMaster(on);
+            pawn::saveGambits(PPawn);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianGambitReset"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            pawn::forgetGambits(PPawn);
+            return pawn::reloadBrain(PPawn) ? "" : "no such cardian";
+        };
+
         lua["CBaseEntity"]["cardianHunt"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
@@ -415,7 +577,62 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
+            // A flag, never a gambit row: the lead slot is the list's call
             return pawn::setHunting(PPawn, on) ? "" : "no controller";
+        };
+
+        // The party strategy channel: orders live on the player and every
+        // cardian of theirs follows them
+        lua["CBaseEntity"]["cardianOrders"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return sol::lua_nil;
+            }
+            auto result        = ::lua.create_table();
+            result["strategy"] = pawn::strategyOf(PChar->id);
+            result["retreat"]  = pawn::isRetreating(PChar->id);
+            auto names         = ::lua.create_table();
+            for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
+            {
+                names.add(std::string(pawn::strategyName(i)));
+            }
+            result["names"] = names;
+            return result;
+        };
+        lua["CBaseEntity"]["cardianSetStrategy"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 strategy) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            if (strategy >= pawn::kStrategyCount)
+            {
+                return "no such strategy";
+            }
+            pawn::setStrategy(PChar, strategy);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            pawn::setRetreat(PChar, on);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianEngage"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 targid) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            return pawn::partyEngage(PChar, targid);
         };
 
         lua["CBaseEntity"]["cardianAvoid"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
@@ -425,7 +642,12 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
-            return pawn::setAvoidAggro(PPawn, on) ? "" : "no controller";
+            if (!pawn::setBehaviorRow(PPawn, pawn::Behavior::AvoidAggro, on ? 1 : 0))
+            {
+                return "no controller";
+            }
+            pawn::saveGambits(PPawn);
+            return "";
         };
 
         lua["CBaseEntity"]["cardianHomePoint"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string

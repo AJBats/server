@@ -29,9 +29,12 @@
 
 #include "ai/helpers/gambits_container.h"
 
+#include <optional>
+
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 class CBattleEntity;
@@ -45,10 +48,75 @@ namespace pawn
     // while the row's conditions hold, and it never consumes the think.
     constexpr auto G_REACTION_BEHAVIOR = static_cast<gambits::G_REACTION>(100);
 
+    // Cardian-only gambit condition, reserved for the party strategy channel
+    // (RESEARCH §8): holds while the party's strategy equals the argument.
+    // No strategy exists yet, so a row with it never fires.
+    constexpr auto G_CONDITION_STRATEGY = static_cast<gambits::G_CONDITION>(100);
+
+    // The behaviours a row can switch -- engine tuning, not what the party
+    // is doing right now (hunting is the party's strategy, another channel).
+    // Values are frozen: they appear in the row grammar and will be
+    // persisted (M3.85); the gaps are retired values. Rows are the ONLY
+    // source of a behaviour: an unchecked row is off, the first row, top
+    // down, to speak for a behaviour wins, and a switch no row speaks for
+    // is off.
     enum class Behavior : uint16
     {
-        AvoidAggro = 1,
+        AvoidAggro          = 1, // switch
+        Formation           = 4, // a Slot
+        RestWithPlayer      = 6, // switch: kneel when the player kneels
+        HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
     };
+    constexpr uint16 BehaviorCount = 8; // one past the last value
+
+    // A switch row carries the value 1 and its checkbox is the switch; a
+    // parameter row (the formation slot) carries its value
+    constexpr auto isSwitch(const Behavior b) -> bool
+    {
+        return b != Behavior::Formation;
+    }
+
+    // Every cardian starts with these rows (the row grammar, gambit_text.h):
+    // avoid aggro on, rest with the player on. Profiles, when they come, are
+    // rows in storage seeded the same way.
+    auto defaultRows() -> const std::vector<std::pair<std::string, bool>>&;
+
+    enum class Slot : uint16
+    {
+        Follow = 0, // the chain behind the player
+        Lead   = 1, // ahead of the player: the hunter's place
+    };
+
+    // One row of a cardian's list: the engine's gambit plus the ON/OFF the
+    // player sees in the editor (the trust struct is upstream's, untouched)
+    struct GambitRow
+    {
+        gambits::Gambit_t gambit;
+        bool              enabled = true;
+    };
+
+    // The row as the player reads it: "Party: HP < 50% -> Cure (best)"
+    auto labelGambit(const gambits::Gambit_t& gambit) -> std::string;
+
+    // The catalogue the editor's pickers offer for one cardian: targets,
+    // conditions (thresholds pre-expanded, FFXII-style: "HP < 50%" and
+    // "HP < 60%" are two entries), statuses (for "has X" / "no X"), and
+    // the actions she can take right now -- her spells, abilities and
+    // weapon skills, plus the behaviours. Keys are row-grammar fragments.
+    struct VocabEntry
+    {
+        std::string key;   // "target", "cond:arg" ("cond:*" when numeric), "status id", or "reaction:select:arg"
+        std::string label; // as the player reads it; a '*' stands for the number
+        std::string group; // actions: Behaviours / Magic / Abilities / WeaponSkills / Ranged; numeric conditions: "min,max,step,default"
+    };
+    struct Vocabulary
+    {
+        std::vector<VocabEntry> targets;
+        std::vector<VocabEntry> conditions;
+        std::vector<VocabEntry> statuses;
+        std::vector<VocabEntry> actions;
+    };
+    auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary;
 
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
     // for a character owner. It speaks the trust vocabulary (gambits::G_*,
@@ -72,10 +140,9 @@ namespace pawn
     public:
         CGambits(CCharEntity* PPawn, CPawnController* PController);
 
-        auto AddGambit(gambits::Gambit_t gambit) -> std::string;
+        auto AddGambit(gambits::Gambit_t gambit, bool enabled = true) -> std::string;
         void RemoveGambit(const std::string& id);
         void RemoveAllGambits();
-        void SetTPSkillSettings(gambits::G_TP_TRIGGER trigger, gambits::G_SELECT select, uint16 value);
 
         // engaged == false runs the between-fights pass: no weapon skills,
         // no ranged attacks, no gambits carrying offensive reactions.
@@ -84,6 +151,28 @@ namespace pawn
         // The behaviour pass alone, every tick, pathing or not: switches are
         // asserted only while their rows' conditions hold
         void TickBehaviors();
+
+        // The console's way in: the first unconditional row for a behaviour
+        // (appended at the bottom if none, where any conditional row above it
+        // wins). A switch row is checked or unchecked; a parameter row takes
+        // the value.
+        void SetBehaviorRow(Behavior behavior, uint16 arg);
+
+        // The editor's view and edits (indices are 1-based, as shown)
+        auto Rows() const -> const std::vector<GambitRow>&
+        {
+            return m_gambits;
+        }
+        auto MasterOn() const -> bool
+        {
+            return m_masterOn;
+        }
+        void SetMaster(bool on);
+        auto SetEnabled(std::size_t index, bool on) -> bool;
+        auto Move(std::size_t from, std::size_t to) -> bool;
+        auto Erase(std::size_t index) -> bool;
+        auto Insert(std::size_t index, gambits::Gambit_t gambit) -> bool;
+        auto Replace(std::size_t index, gambits::Gambit_t gambit) -> bool; // keeps the row's ON/OFF
 
         auto Size() const -> std::size_t
         {
@@ -108,7 +197,6 @@ namespace pawn
         auto Execute(const gambits::Gambit_t& gambit, CBattleEntity* PTarget, bool engaged) -> bool;
         auto ExecuteAbility(const gambits::Action_t& action, CBattleEntity* PTarget, bool engaged) -> bool;
         auto ExecuteWeaponSkill(const gambits::Action_t& action, bool engaged) -> bool;
-        auto TryWeaponSkill() -> bool;
         void RefreshWeaponSkills();
         auto PartyHasHealer() const -> bool;
         auto PartyHasTank() const -> bool;
@@ -121,11 +209,9 @@ namespace pawn
         timer::time_point m_lastAction;
         uint32            m_nextId = 0;
 
-        std::vector<gambits::Gambit_t>     m_gambits;
+        std::vector<GambitRow>             m_gambits;
+        bool                               m_masterOn = true;
         std::vector<gambits::TrustSkill_t> m_tpSkills;
-        gambits::G_TP_TRIGGER              m_tpTrigger = gambits::G_TP_TRIGGER::ASAP;
-        gambits::G_SELECT                  m_tpSelect  = gambits::G_SELECT::HIGHEST;
-        uint16                             m_tpValue   = 0;
 
         HashMap<std::string, timer::time_point> m_timerConditionLastTrigger;
     };

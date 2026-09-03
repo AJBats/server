@@ -21,6 +21,8 @@
 
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "pawn_gambits.h"
+#include "gambit_text.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -35,6 +37,7 @@
 #include "ai/controllers/player_controller.h"
 #include "ai/helpers/pathfind.h"
 #include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "status_effect_container.h"
 #include "map_session.h"
 #include "navmesh/navmesh.h"
@@ -82,6 +85,14 @@ namespace
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
 
+    // player charid -> the party's orders (the strategy channel)
+    struct PartyOrders
+    {
+        uint16 strategy = 0;
+        bool   retreat  = false;
+    };
+    std::unordered_map<uint32, PartyOrders> ordersByOwner;
+
     // pawn charid -> ordered travel destination
     std::unordered_map<uint32, xi::ZoneId> travelOrders;
 
@@ -123,6 +134,10 @@ namespace
         db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, ?, 0) "
                          "ON DUPLICATE KEY UPDATE accid = VALUES(accid), targid = VALUES(targid), client_addr = 0",
                          kPawnAccidBase + PPawn->id, PPawn->id, PPawn->targid);
+        // The login server clears this on a real login; a pawn never passes
+        // through it, and a link-dead flag left by an earlier possession
+        // would show her as logging out in /sea for good
+        db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", PPawn->id);
         savePawnPosition(PPawn);
     }
 
@@ -378,13 +393,27 @@ namespace pawn
         return true;
     }
 
-    bool setHunting(CCharEntity* PPawn, const bool on)
+    bool setBehaviorRow(CCharEntity* PPawn, const Behavior behavior, const uint16 arg)
     {
         if (PPawn == nullptr)
         {
             return false;
         }
 
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+        {
+            PController->Gambits().SetBehaviorRow(behavior, arg);
+            return true;
+        }
+        return false;
+    }
+
+    bool setHunting(CCharEntity* PPawn, const bool on)
+    {
+        if (PPawn == nullptr)
+        {
+            return false;
+        }
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
         {
             PController->SetHunting(on);
@@ -393,19 +422,127 @@ namespace pawn
         return false;
     }
 
-    bool setAvoidAggro(CCharEntity* PPawn, const bool on)
+    auto partyStrategy(const CCharEntity* PPawn) -> uint16
     {
-        if (PPawn == nullptr)
+        return PPawn != nullptr ? strategyOf(summonerOf(PPawn->id)) : 0;
+    }
+
+    auto strategyName(const uint16 strategy) -> std::string_view
+    {
+        static constexpr std::array<std::string_view, kStrategyCount> names{ "Off", "Roam" };
+        return strategy < names.size() ? names[strategy] : std::string_view("?");
+    }
+
+    auto strategyOf(const uint32 ownerCharID) -> uint16
+    {
+        const auto it = ordersByOwner.find(ownerCharID);
+        return it != ordersByOwner.end() ? it->second.strategy : 0;
+    }
+
+    auto isRetreating(const uint32 ownerCharID) -> bool
+    {
+        const auto it = ordersByOwner.find(ownerCharID);
+        return it != ordersByOwner.end() && it->second.retreat;
+    }
+
+    namespace
+    {
+        // The owner's orders reach every cardian of theirs that is out.
+        // Orders are the other channel: they set controller flags and never
+        // touch a gambit row -- who leads, who avoids, stays the list's call
+        void applyOrders(const uint32 ownerCharID)
         {
-            return false;
+            const auto orders = ordersByOwner[ownerCharID];
+            const bool hunt   = orders.strategy == 1 && !orders.retreat;
+            for (auto& [charid, PPawn] : pawns)
+            {
+                if (summonerOf(charid) != ownerCharID)
+                {
+                    continue;
+                }
+                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+                {
+                    PController->SetRetreat(orders.retreat);
+                    PController->SetHunting(hunt);
+                }
+            }
+        }
+    } // namespace
+
+    void setStrategy(CCharEntity* POwner, const uint16 strategy)
+    {
+        if (POwner == nullptr || strategy >= kStrategyCount)
+        {
+            return;
+        }
+        auto& orders = ordersByOwner[POwner->id];
+        if (orders.strategy != strategy)
+        {
+            ShowInfoFmt("pawn: {} sets the party strategy to {}", POwner->getName(), strategyName(strategy));
+        }
+        orders.strategy = strategy;
+        applyOrders(POwner->id);
+    }
+
+    void setRetreat(CCharEntity* POwner, const bool on)
+    {
+        if (POwner == nullptr)
+        {
+            return;
+        }
+        auto& orders = ordersByOwner[POwner->id];
+        if (orders.retreat != on)
+        {
+            ShowInfoFmt("pawn: {} calls retreat {}", POwner->getName(), on ? "on" : "off");
+        }
+        orders.retreat = on;
+        applyOrders(POwner->id);
+    }
+
+    auto partyEngage(CCharEntity* POwner, const uint16 targid) -> std::string
+    {
+        if (POwner == nullptr || POwner->loc.zone == nullptr)
+        {
+            return "no zone";
+        }
+        if (targid == 0)
+        {
+            return "no target";
+        }
+        if (isRetreating(POwner->id))
+        {
+            return "retreating";
+        }
+        auto* PEntity = POwner->loc.zone->GetEntity(targid, TYPE_MOB | TYPE_PC);
+        if (PEntity == nullptr)
+        {
+            return "no target";
+        }
+        if (auto* PChar = dynamic_cast<CCharEntity*>(PEntity); PChar != nullptr)
+        {
+            return isPawn(PChar) ? "talk comes later" : "that is a player";
+        }
+        auto* PMob = dynamic_cast<CMobEntity*>(PEntity);
+        if (PMob == nullptr || PMob->isDead())
+        {
+            return "no target";
         }
 
-        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+        uint32 sent = 0;
+        for (auto& [charid, PPawn] : pawns)
         {
-            PController->SetAvoidAggro(on);
-            return true;
+            if (summonerOf(charid) != POwner->id || PPawn->loc.zone != POwner->loc.zone || PPawn->isDead())
+            {
+                continue;
+            }
+            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+            {
+                PController->EngageOn(PMob);
+                ++sent;
+            }
         }
-        return false;
+        ShowInfoFmt("pawn: {} sends {} cardian(s) at {}", POwner->getName(), sent, PMob->getName());
+        return sent > 0 ? "" : "no cardians out";
     }
 
     bool homePoint(CCharEntity* PPawn)
@@ -437,6 +574,103 @@ namespace pawn
 
         ShowInfoFmt("pawn: {} home points to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
         requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
+        return true;
+    }
+
+    namespace
+    {
+        auto gambitsOf(CCharEntity* PPawn) -> CGambits*
+        {
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr ? &PController->Gambits() : nullptr;
+        }
+    } // namespace
+
+    void saveGambits(CCharEntity* PPawn)
+    {
+        auto* PGambits = gambitsOf(PPawn);
+        if (PGambits == nullptr)
+        {
+            return;
+        }
+        std::string blob;
+        for (const auto& row : PGambits->Rows())
+        {
+            blob += row.enabled ? "1 " : "0 ";
+            blob += text::formatRow(row.gambit);
+            blob += '\n';
+        }
+        db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, 0, ?, ?) "
+                         "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
+                         PPawn->id, static_cast<uint8>(PGambits->MasterOn() ? 1 : 0), blob);
+    }
+
+    bool loadSavedGambits(CCharEntity* PPawn)
+    {
+        auto* PGambits = gambitsOf(PPawn);
+        if (PGambits == nullptr)
+        {
+            return false;
+        }
+        const auto rset = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
+        if (!rset || !rset->next())
+        {
+            return false;
+        }
+
+        PGambits->RemoveAllGambits();
+        PGambits->SetMaster(rset->get<uint8>("master_on") != 0);
+
+        const auto  blob  = rset->get<std::string>("set_rows");
+        std::size_t count = 0;
+        std::size_t bad   = 0;
+        std::size_t start = 0;
+        while (start < blob.size())
+        {
+            auto end = blob.find('\n', start);
+            if (end == std::string::npos)
+            {
+                end = blob.size();
+            }
+            const std::string_view line(blob.data() + start, end - start);
+            start = end + 1;
+            if (line.size() < 3 || line[1] != ' ')
+            {
+                if (!line.empty())
+                {
+                    ++bad;
+                }
+                continue;
+            }
+            if (auto row = text::parseRow(line.substr(2)); row.has_value())
+            {
+                PGambits->AddGambit(std::move(*row), line[0] == '1');
+                ++count;
+            }
+            else
+            {
+                ++bad;
+            }
+        }
+        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{})", PPawn->getName(), count, bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
+        return true;
+    }
+
+    void forgetGambits(CCharEntity* PPawn)
+    {
+        if (PPawn != nullptr)
+        {
+            db::preparedStmt("DELETE FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
+        }
+    }
+
+    bool reloadBrain(CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr || !pawns.contains(PPawn->id))
+        {
+            return false;
+        }
+        loadBrain(PPawn);
         return true;
     }
 
@@ -562,6 +796,28 @@ namespace pawn
             return nullptr;
         }
         return findPawn(targetCharID);
+    }
+
+    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>
+    {
+        std::vector<std::string> names;
+        if (PChar == nullptr)
+        {
+            return names;
+        }
+        // The same eligibility spawn() applies: the player's own alts and the
+        // generated cardians their account owns, never the character they
+        // are playing
+        const uint32 ownerAccid = ownerAccountOf(PChar);
+        const auto   rset       = db::preparedStmt("SELECT c.charname FROM chars c "
+                                                   "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
+                                                   "WHERE c.charid <> ? AND (c.accid = ? OR p.owner_accid = ?) ORDER BY c.charname",
+                                                   PChar->id, ownerAccid, ownerAccid);
+        while (rset && rset->next())
+        {
+            names.emplace_back(rset->get<std::string>("charname"));
+        }
+        return names;
     }
 
     auto managedPawnNames(const uint32 summonerCharID) -> std::vector<std::string>

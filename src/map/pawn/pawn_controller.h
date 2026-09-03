@@ -21,8 +21,11 @@
 
 #pragma once
 
+#include "pawn_gambits.h"
+
 #include "ai/controllers/player_controller.h"
 
+#include <array>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -33,11 +36,6 @@ class CCharEntity;
 class CMobEntity;
 class CSpell;
 struct position_t;
-
-namespace pawn
-{
-    class CGambits;
-}
 
 // The autonomous controller for pawn characters: CTrustController's physical
 // layer (formation follow, engage-on-the-player's-swing, combat positioning,
@@ -74,24 +72,28 @@ public:
 
     auto Gambits() -> pawn::CGambits&;
 
-    // Hunt mode (!pawnhunt): this pawn picks and pulls exp mobs on its own
-    // while the party is idle, healthy and past the post-fight breather
+    // Hunt mode: pull for the party while it is idle and healthy. The
+    // party's strategy, not a gambit -- set by !pawnhunt until the strategy
+    // channel exists (RESEARCH §8)
     void SetHunting(bool on);
     auto IsHunting() const -> bool;
+    void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
+    auto IsRetreating() const -> bool;
+    void EngageOn(CMobEntity* PMob);        // the player's order: fight this, closing at once
+    auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
 
-    // Aggro avoidance (M3.87): keep this pawn, its slot and its way there
-    // outside every nearby mob's detection circle, and step away when a mob
-    // roams in. Off lets it walk anywhere. Two layers: the BASE
-    // (pawn.AVOID_AGGRO, changed by !pawnavoid) and the GAMBIT layer -- a
-    // behaviour row asserts a value only while its conditions hold, and
-    // wins over the base while it does.
-    void SetAvoidAggro(bool on);           // the base
-    auto IsAvoidingAggro() const -> bool;  // the effective value
-
-    // The gambit interpreter's behaviour pass: cleared at the start of every
-    // think, then each matching behaviour row asserts its value
+    // The behaviour layer (M3.85): what the gambit rows assert this think,
+    // by pawn::Behavior. Cleared at the start of every think; the first row,
+    // top down, to speak for a behaviour wins; a switch no row speaks for
+    // is off, a parameter takes its default. Rows are the only source.
     void ClearGambitBehaviors();
-    void SetGambitBehavior(uint16 behavior, bool on);
+    void SetGambitBehavior(uint16 behavior, uint16 arg);
+    auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
+
+    auto FormationSlot() const -> pawn::Slot;
+    auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
+    auto RestsWithPlayer() const -> bool;
+    auto HomePointsWithPlayer() const -> bool;
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float CastingDistance  = 15.0f;
@@ -207,23 +209,26 @@ private:
     // HUNT_RADIUS of the player
     auto PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*;
 
+    // Home point with the player: a KO'd cardian whose player has died and
+    // come back at their home point goes there too
+    void WatchPlayerHomePoint();
+
     std::unique_ptr<pawn::CGambits> m_Gambits;
-    uint8                           m_BrainMainJob = 0xFF;
-    uint8                           m_BrainSubJob  = 0xFF;
+    bool                            m_BrainLoaded = false;
 
     timer::time_point                 m_CombatEndTime;
-    timer::time_point                 m_LastHealTickTime;
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
     timer::time_point                 m_TravelProgressTime;
     float                             m_TravelBestDist = 0.0f;
     xi::ZoneId                        m_TravelHopZone{};
-    std::vector<std::chrono::seconds> m_tickDelays      = { std::chrono::seconds(15), std::chrono::seconds(10), std::chrono::seconds(10), std::chrono::seconds(3) };
-    std::size_t                       m_NumHealingTicks = 0;
 
-    bool              m_Hunting = false;
+    bool              m_Hunting    = false;
+    bool              m_Retreat    = false;
     bool              m_WasEngaged = false;
+    bool              m_HoldForPlayer = false; // drawn on the player's word: no closing until they strike
     timer::time_point m_LastHuntCheckTime;
+    timer::time_point m_LastHuntLogTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};
     bool              m_HasFollowPoint = false;
@@ -245,9 +250,10 @@ private:
     bool       m_Sprinting           = false;
     bool       m_PlayerMoving        = false;  // as of the last LeadPoint
 
+    std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{}; // the behaviour layer, by pawn::Behavior
+    bool                                                    m_PlayerSeenDead = false; // while KO'd: the player has been seen dead since
+
     // Aggro avoidance state
-    bool                m_AvoidAggroBase;   // seeded from pawn.AVOID_AGGRO in the constructor
-    std::optional<bool> m_AvoidAggroGambit; // asserted by a behaviour row this think, if any
     bool                m_HasSlot = false;  // this tick's FormationPoint ring, for re-seating a slot in danger
     position_t        m_SlotAnchor{};
     float             m_SlotOffset      = 0.0f;

@@ -22,6 +22,23 @@
 --       giveuse <name> <slot> <qty>      give from your inventory, then the
 --                                        cardian uses it (the scroll flow)
 --       homepoint <name>                 a KO'd cardian home points (yours)
+--       gambits <name>                   the cardian's gambit rows (gb.b / g / gb.e)
+--       gtoggle <name> <row> <on|off>    a row's switch
+--       gmove <name> <from> <to>         reorder a row (1-based, as shown)
+--       gdel <name> <row>                delete a row
+--       gins <name> <row> <spec>         insert a row (the row grammar) at a position
+--       gset <name> <row> <spec>         replace a row in place (keeps its switch)
+--       gvocab <name>                    the pickers' catalogue for the cardian
+--       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
+--       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
+--                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
+--       orders                           the party's orders (st <strategy> <retreat> <name;name>)
+--       strategy next|<n>                the party strategy (0 Off, 1 Roam); every cardian follows
+--       retreat [on|off]                 the "on me" switch, no arg toggles: disengage, engage nobody,
+--                                        avoid nothing, hunting pauses, until it clears
+--       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
+--       gmaster <name> <on|off>          the cardian's master gambit switch
+--       greset <name>                    back to the job's default rows
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -167,6 +184,80 @@ local function sendList(player)
     reply(player, '#cd list.e')
 end
 
+-- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <spec> <label>'
+-- per row, 'gb.e <name>'. The label is the rest of the line.
+local function sendGambits(player, name)
+    local g = player:cardianGambits(name)
+    if g == nil then
+        reply(player, '#cd err gambits no such cardian')
+        return
+    end
+    reply(player, string.format('#cd gb.b %s %d', name, g.master and 1 or 0))
+    for _, row in ipairs(g.rows) do
+        reply(player, string.format('#cd g %s %d %d %s %s', name, row.index, row.on and 1 or 0, row.spec, row.label))
+    end
+    reply(player, '#cd gb.e ' .. name)
+end
+
+-- The pickers' catalogue: 'gv.b <name>', then chunked 'gvt|gvs <name> k=label;...',
+-- 'gvc <name> <range|-> k=label;...' (range = min,max,step,default for a numeric
+-- condition) and 'gva <name> <group> k=label;...' lines under the link's line cap,
+-- then 'gv.e <name>'
+local function sendVocab(player, name)
+    local v = player:cardianGambitVocab(name)
+    if v == nil then
+        reply(player, '#cd err gvocab no such cardian')
+        return
+    end
+    reply(player, '#cd gv.b ' .. name)
+    local function chunked(tag, prefix, entries, groupOf)
+        local buf, bufGroup = {}, nil
+        local size = 0
+        local function flush()
+            if #buf > 0 then
+                reply(player, string.format('#cd %s %s %s%s', tag, name, prefix(bufGroup), table.concat(buf, ';')))
+            end
+            buf, size = {}, 0
+        end
+        for _, e in ipairs(entries) do
+            local group = groupOf and groupOf(e) or nil
+            local pair  = e.key .. '=' .. e.label
+            if #buf > 0 and (size + #pair > 1700 or group ~= bufGroup) then
+                flush()
+            end
+            bufGroup = group
+            buf[#buf + 1] = pair
+            size = size + #pair + 1
+        end
+        flush()
+    end
+    chunked('gvt', function () return '' end, v.targets)
+    chunked('gvc', function (g) return (g ~= '' and g or '-') .. ' ' end, v.conditions, function (e) return e.group end)
+    chunked('gvs', function () return '' end, v.statuses)
+    chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
+    reply(player, '#cd gv.e ' .. name)
+end
+
+-- The party's orders, one line: 'st <strategy> <retreat> <name;name...>'
+local function sendOrders(player)
+    local o = player:cardianOrders()
+    if o == nil then
+        reply(player, '#cd err orders no character')
+        return
+    end
+    reply(player, string.format('#cd st %d %d %s', o.strategy, o.retreat and 1 or 0, table.concat(o.names, ';')))
+end
+
+-- A gambit edit: the reply is ok or err, then the authoritative rows either way
+local function gambitEdit(player, name, verb, err)
+    if err ~= '' then
+        reply(player, '#cd err ' .. verb .. ' ' .. err)
+    else
+        reply(player, '#cd ok ' .. verb)
+    end
+    sendGambits(player, name)
+end
+
 commandObj.onTrigger = function(player, line)
     local args = {}
     for word in tostring(line or ''):gmatch('%S+') do
@@ -178,6 +269,77 @@ commandObj.onTrigger = function(player, line)
 
     if verb == 'list' then
         sendList(player)
+    elseif verb == 'gambits' and name then
+        sendGambits(player, name)
+    elseif verb == 'gtoggle' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitToggle(name, tonumber(args[3]) or 0, args[4] == 'on'))
+    elseif verb == 'gmove' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitMove(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0))
+    elseif verb == 'gdel' and name and args[3] then
+        gambitEdit(player, name, verb, player:cardianGambitDelete(name, tonumber(args[3]) or 0))
+    elseif verb == 'gins' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitInsert(name, tonumber(args[3]) or 0, args[4]))
+    elseif verb == 'gset' and name and args[3] and args[4] then
+        gambitEdit(player, name, verb, player:cardianGambitReplace(name, tonumber(args[3]) or 0, args[4]))
+    elseif verb == 'gvocab' and name then
+        sendVocab(player, name)
+    elseif verb == 'owned' then
+        reply(player, '#cd own.b')
+        for _, n in ipairs(player:cardianAccountPawns()) do
+            reply(player, '#cd o ' .. n)
+        end
+        reply(player, '#cd own.e')
+    elseif verb == 'spawn' and name then
+        if player:pawnSpawn(name) then
+            reply(player, '#cd ok spawn')
+        else
+            reply(player, '#cd err spawn cannot spawn (unknown, online, already out, wrong account, or pawns disabled)')
+        end
+        sendList(player)
+    elseif verb == 'despawn' and name then
+        local mine = false
+        for _, n in ipairs(player:cardianAccountPawns()) do
+            if n == name then mine = true end
+        end
+        if mine and player:pawnDespawn(name) then
+            reply(player, '#cd ok despawn')
+        else
+            reply(player, '#cd err despawn not one of yours, or not out')
+        end
+        sendList(player)
+    elseif verb == 'orders' then
+        sendOrders(player)
+    elseif verb == 'strategy' and args[2] then
+        local o    = player:cardianOrders()
+        local want = args[2] == 'next' and ((o.strategy + 1) % #o.names) or tonumber(args[2])
+        local err  = want ~= nil and player:cardianSetStrategy(want) or 'usage: strategy next|<n>'
+        if err == '' then
+            reply(player, '#cd ok strategy')
+        else
+            reply(player, '#cd err strategy ' .. err)
+        end
+        sendOrders(player)
+    elseif verb == 'retreat' then
+        local o   = player:cardianOrders()
+        local on  = (args[2] == nil and not o.retreat) or args[2] == 'on'
+        local err = player:cardianRetreat(on)
+        if err == '' then
+            reply(player, '#cd ok retreat')
+        else
+            reply(player, '#cd err retreat ' .. err)
+        end
+        sendOrders(player)
+    elseif verb == 'engage' and args[2] then
+        local err = player:cardianEngage(tonumber(args[2]) or 0)
+        if err == '' then
+            reply(player, '#cd ok engage')
+        else
+            reply(player, '#cd err engage ' .. err)
+        end
+    elseif verb == 'gmaster' and name and args[3] then
+        gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
+    elseif verb == 'greset' and name then
+        gambitEdit(player, name, verb, player:cardianGambitReset(name))
     elseif verb == 'sync' and name then
         -- ownership gate: cardianGear returns nil for a pawn that isn't yours
         if player:cardianGear(name) == nil then
