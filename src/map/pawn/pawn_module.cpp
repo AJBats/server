@@ -217,7 +217,12 @@ class PawnModule : public CPPModule
                                                               "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
                                                               "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));
         lua["xi"]["pawn"]["slot"]     = lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
-                                                              "LEAD", static_cast<uint16>(pawn::Slot::Lead));
+                                                              "LEAD", static_cast<uint16>(pawn::Slot::Lead),
+                                                              "FLANK_LEFT", static_cast<uint16>(pawn::Slot::FlankLeft),
+                                                              "FLANK_RIGHT", static_cast<uint16>(pawn::Slot::FlankRight),
+                                                              "REAR_LEFT", static_cast<uint16>(pawn::Slot::RearLeft),
+                                                              "REAR_RIGHT", static_cast<uint16>(pawn::Slot::RearRight),
+                                                              "BEHIND", static_cast<uint16>(pawn::Slot::Behind));
 
         lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {

@@ -21,7 +21,10 @@
 
 #pragma once
 
+#include "formation_math.h"
 #include "pawn_spellbook.h"
+
+#include "data/enums/job.h"
 
 #include "common/cbasetypes.h"
 #include "common/timer.h"
@@ -81,11 +84,12 @@ namespace pawn
     // rows in storage seeded the same way.
     auto defaultRows() -> const std::vector<std::pair<std::string, bool>>&;
 
-    enum class Slot : uint16
-    {
-        Follow = 0, // the chain behind the player
-        Lead   = 1, // ahead of the player: the hunter's place
-    };
+    // The formation slots live with the ring's arithmetic (formation_math.h)
+    using Slot = cardian::formation::Slot;
+
+    // A melee job: the gambit engine's MELEE group, and seated on the
+    // flanks first
+    auto isMeleeJob(xi::Job job) -> bool;
 
     // One row of a cardian's list: the engine's gambit plus the ON/OFF the
     // player sees in the editor (the trust struct is upstream's, untouched)

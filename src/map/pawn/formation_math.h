@@ -22,10 +22,13 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstddef>
 #include <numbers>
 #include <optional>
 #include <utility>
+#include <vector>
 
 // The formation's arithmetic, kept free of entities, settings and clocks so
 // xi_test can pin it (src/test/tests/cardian_formation_tests.cpp). The link
@@ -170,6 +173,136 @@ namespace cardian::formation
             return { x, z };
         }
         return { mobX + dx / len * radius, mobZ + dz / len * radius };
+    }
+
+    // ------------------------------------------------------------------
+    // The ring (M3.9, "re-parent the followers"): every cardian but the
+    // lead follows the player themself, in a seat on the ring around them.
+    // Follow is the silent default -- a seat picked by job, below -- and
+    // Lead is ahead of the player, off the ring. The values are what
+    // Formation rows persist, so they are frozen.
+    // ------------------------------------------------------------------
+
+    enum class Slot : unsigned short
+    {
+        Follow     = 0, // auto: a seat by job
+        Lead       = 1, // ahead of the player: the hunter's place
+        FlankLeft  = 2,
+        FlankRight = 3,
+        RearLeft   = 4,
+        RearRight  = 5,
+        Behind     = 6,
+    };
+    constexpr unsigned short SlotCount = 7;
+
+    inline auto slotName(const Slot slot) -> const char*
+    {
+        constexpr std::array<const char*, SlotCount> names{ "auto", "lead", "flank left", "flank right", "rear left", "rear right", "behind" };
+        const auto                                   i = static_cast<std::size_t>(slot);
+        return i < names.size() ? names[i] : "?";
+    }
+
+    inline auto isRingSlot(const Slot slot) -> bool
+    {
+        return slot != Slot::Follow && slot != Slot::Lead;
+    }
+
+    // One cardian to seat, in party order
+    struct Seat
+    {
+        bool                melee = false; // a melee job: the flanks first
+        std::optional<Slot> claimed;       // a Formation row's ring seat
+    };
+
+    // Seat the ring. Rows claim first; then the melee, then everyone else,
+    // each in party order. A melee prefers a flank, then a rear quarter,
+    // then behind; the others prefer a rear quarter, then behind, then a
+    // flank. Within a kind the side with fewer cardians so far wins, ties
+    // to the right; behind counts as neither side. A full ring doubles up
+    // behind. A Follow or Lead claim is no claim (the caller keeps leads
+    // off the list). Returns one ring seat per entry.
+    inline auto assignSlots(const std::vector<Seat>& seats) -> std::vector<Slot>
+    {
+        std::vector<Slot>          result(seats.size(), Slot::Follow);
+        std::array<int, SlotCount> taken{};
+        int                        left  = 0;
+        int                        right = 0;
+
+        const auto occupy = [&](const std::size_t i, const Slot slot)
+        {
+            result[i] = slot;
+            ++taken[static_cast<std::size_t>(slot)];
+            if (slot == Slot::FlankLeft || slot == Slot::RearLeft)
+            {
+                ++left;
+            }
+            if (slot == Slot::FlankRight || slot == Slot::RearRight)
+            {
+                ++right;
+            }
+        };
+        const auto isFree = [&](const Slot slot)
+        {
+            return taken[static_cast<std::size_t>(slot)] == 0;
+        };
+        const auto sides = [&](const Slot rightSeat, const Slot leftSeat) -> std::optional<Slot>
+        {
+            if (isFree(rightSeat) && isFree(leftSeat))
+            {
+                return left < right ? leftSeat : rightSeat;
+            }
+            if (isFree(rightSeat))
+            {
+                return rightSeat;
+            }
+            if (isFree(leftSeat))
+            {
+                return leftSeat;
+            }
+            return std::nullopt;
+        };
+        const auto flank = [&]
+        {
+            return sides(Slot::FlankRight, Slot::FlankLeft);
+        };
+        const auto rear = [&]
+        {
+            return sides(Slot::RearRight, Slot::RearLeft);
+        };
+        const auto behind = [&]() -> std::optional<Slot>
+        {
+            return isFree(Slot::Behind) ? std::optional<Slot>{ Slot::Behind } : std::nullopt;
+        };
+
+        for (std::size_t i = 0; i < seats.size(); ++i)
+        {
+            if (seats[i].claimed.has_value() && isRingSlot(*seats[i].claimed))
+            {
+                occupy(i, *seats[i].claimed);
+            }
+        }
+
+        for (const bool meleePass : { true, false })
+        {
+            for (std::size_t i = 0; i < seats.size(); ++i)
+            {
+                if (result[i] != Slot::Follow || seats[i].melee != meleePass)
+                {
+                    continue;
+                }
+                std::optional<Slot> seat = meleePass ? flank() : rear();
+                if (!seat.has_value())
+                {
+                    seat = meleePass ? rear() : behind();
+                }
+                if (!seat.has_value())
+                {
+                    seat = meleePass ? behind() : flank();
+                }
+                occupy(i, seat.value_or(Slot::Behind));
+            }
+        }
+        return result;
     }
     // ------------------------------------------------------------------
     // Aggro avoidance geometry (M3.87). Every detection type is a circle of

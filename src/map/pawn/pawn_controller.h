@@ -110,11 +110,19 @@ private:
     // requesting a transfer at each zone line.
     void TravelTick();
 
-    // Pawn 0 follows the player; pawn N follows pawn N-1. The lead (a
-    // hunting pawn) is outside the chain: it holds a point ahead of the
-    // player instead.
-    auto GetFollowTarget() const -> CBattleEntity*;
+    // The lead holds a point ahead of the player; everyone else holds a
+    // seat on the ring around them. RingSlot is a Formation row's seat, or
+    // the silent one by job over the party's cardians in this zone
+    // (formation_math.h assignSlots); SeatOf places it from the
+    // FORMATION_FLANK_* / FOLLOW_* / REAR_DISTANCE settings.
     auto LeadPoint(const CCharEntity* PPlayer) -> position_t;
+    auto RingSlot() const -> pawn::Slot;
+    struct SeatGeometry
+    {
+        float offset = 0.0f; // yalms from the anchor
+        float angle  = 0.0f; // radians off the player's facing
+    };
+    static auto SeatOf(pawn::Slot slot) -> SeatGeometry;
 
     // The player as the formation sees them: the Cardian Link's fresh
     // position when it streams (loc.p otherwise), and where they will be

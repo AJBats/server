@@ -30,6 +30,8 @@
 
 #include <cmath>
 #include <numbers>
+#include <optional>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -205,6 +207,64 @@ TEST_CASE("standOff: the ring is measured in the ground plane, the rim counts as
     const auto [x, z] = standOff(0.0f, 0.0f, 10.0f, 0.0f, 6.0f, 6.0f, 0.0f);
     CHECK(x == 6.0f);
     CHECK(z == 0.0f);
+}
+
+namespace
+{
+    auto seated(const std::vector<Seat>& seats) -> std::vector<Slot>
+    {
+        return assignSlots(seats);
+    }
+    constexpr Seat melee{ true, std::nullopt };
+    constexpr Seat mage{ false, std::nullopt };
+} // namespace
+
+TEST_CASE("assignSlots: one melee and one mage sit on a diagonal", "[cardian][formation]")
+{
+    CHECK(seated({ melee, mage }) == std::vector<Slot>{ Slot::FlankRight, Slot::RearLeft });
+    // Party order does not matter: the melee is seated first either way
+    CHECK(seated({ mage, melee }) == std::vector<Slot>{ Slot::RearLeft, Slot::FlankRight });
+}
+
+TEST_CASE("assignSlots: melee take the flanks, then the rear; ties go right", "[cardian][formation]")
+{
+    CHECK(seated({ melee, melee, mage }) == std::vector<Slot>{ Slot::FlankRight, Slot::FlankLeft, Slot::RearRight });
+    CHECK(seated({ melee, mage, mage }) == std::vector<Slot>{ Slot::FlankRight, Slot::RearLeft, Slot::RearRight });
+    CHECK(seated({ melee, melee, melee, melee, melee }) == std::vector<Slot>{ Slot::FlankRight, Slot::FlankLeft, Slot::RearRight, Slot::RearLeft, Slot::Behind });
+}
+
+TEST_CASE("assignSlots: mages cluster behind, and only spill to the flanks when the rear is full", "[cardian][formation]")
+{
+    CHECK(seated({ mage, mage, mage }) == std::vector<Slot>{ Slot::RearRight, Slot::RearLeft, Slot::Behind });
+    CHECK(seated({ mage, mage, mage, mage, melee }) == std::vector<Slot>{ Slot::RearLeft, Slot::RearRight, Slot::Behind, Slot::FlankLeft, Slot::FlankRight });
+}
+
+TEST_CASE("assignSlots: a row's claim comes first and counts toward the side balance", "[cardian][formation]")
+{
+    const Seat claimingRight{ false, Slot::FlankRight };
+    CHECK(seated({ claimingRight, melee }) == std::vector<Slot>{ Slot::FlankRight, Slot::FlankLeft });
+    // A Lead or auto claim is no claim
+    const Seat claimingAuto{ true, Slot::Follow };
+    CHECK(seated({ claimingAuto }) == std::vector<Slot>{ Slot::FlankRight });
+}
+
+TEST_CASE("assignSlots: a full ring doubles up behind", "[cardian][formation]")
+{
+    const auto slots = seated({ mage, mage, mage, mage, mage, mage });
+    CHECK(slots.size() == 6);
+    CHECK(slots[5] == Slot::Behind);
+    CHECK(slots[2] == Slot::Behind);
+}
+
+TEST_CASE("slotName: every seat has a name, and the values are frozen", "[cardian][formation]")
+{
+    CHECK(std::string(slotName(Slot::Follow)) == "auto");
+    CHECK(std::string(slotName(Slot::Lead)) == "lead");
+    CHECK(std::string(slotName(Slot::Behind)) == "behind");
+    CHECK(static_cast<int>(Slot::Follow) == 0);
+    CHECK(static_cast<int>(Slot::Lead) == 1);
+    CHECK(static_cast<int>(Slot::Behind) == 6);
+    CHECK(std::string(slotName(static_cast<Slot>(99))) == "?");
 }
 
 TEST_CASE("depthInside / insideAny: rim counts as outside", "[cardian][avoid]")

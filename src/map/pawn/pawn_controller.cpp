@@ -580,8 +580,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 auto CPawnController::FollowFormation(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> std::optional<AvoidAction>
 {
     // Where this pawn belongs: the lead holds a point ahead of the player,
-    // everyone else follows the chain. A slot exists only if this tick's
-    // decision comes from FormationPoint (chain followers have none).
+    // everyone else a seat on the ring around them. FormationPoint sets
+    // m_HasSlot for the avoidance pass.
     m_HasSlot = false;
     position_t followPoint{};
     float      declumpDistance = 0.0f;
@@ -614,36 +614,17 @@ auto CPawnController::FollowFormation(CCharEntity* PPlayer, const CBattleEntity*
     }
     else
     {
-        const CBattleEntity* PFollowTarget = GetFollowTarget();
-        if (PFollowTarget == nullptr)
-        {
-            return std::nullopt;
-        }
-
-        const bool isFirstPawn = GetPawnPartyPosition() == 0;
-        followPoint     = standOff(PFollowTarget->loc.p);
-        declumpDistance = isFirstPawn ? 1.0f : 1.5f;
-        followMax       = isFirstPawn ? 2.0f : 3.5f;
-        followTarget    = isFirstPawn ? 1.5f : 3.0f;
-
-        // Following the live player: the same fresh position the lead uses,
-        // with a gentle prediction, and a slot of its own -- a rear quarter
-        // FORMATION_FOLLOW_DISTANCE behind the player -- parked and held the
-        // way the lead holds its point. Without a slot the follower's
-        // destination is the player themself, and a fresh position puts it
-        // right on top of them. Pawns following pawns keep the plain chain:
-        // server positions have no lag.
-        if (PFollowTarget == static_cast<const CBattleEntity*>(PPlayer))
-        {
-            const auto anchor = PlayerAnchor(PPlayer, settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
-            const auto angle  = static_cast<float>(M_PI) - settings::get<float>("pawn.FORMATION_FOLLOW_ANGLE_DEG") * static_cast<float>(M_PI) / 180.0f;
-            followPoint       = standOff(FormationPoint(anchor, settings::get<float>("pawn.FORMATION_FOLLOW_DISTANCE"), angle, m_FollowPoint, m_HasFollowPoint));
-            declumpDistance   = 0.0f;
-            followMax         = 2.0f;
-            followTarget      = 1.0f;
-            RampCatchUp(anchor.moving, followPoint);
-            FormationDebug("follow", PPlayer, anchor, followPoint);
-        }
+        // Everyone else follows the player themself, in a seat on the ring
+        // around them: the same fresh position the lead uses, with a gentle
+        // prediction, parked and held the way the lead holds its point. (A
+        // seat, not the player: a fresh position would put her right on top
+        // of them.)
+        const auto slot   = RingSlot();
+        const auto seat   = SeatOf(slot);
+        const auto anchor = PlayerAnchor(PPlayer, settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
+        followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowPoint, m_HasFollowPoint));
+        RampCatchUp(anchor.moving, followPoint);
+        FormationDebug(cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
     }
 
     auto avoidAction = AvoidAction::None;
@@ -1194,7 +1175,7 @@ auto CPawnController::GetLivePlayer() const -> CCharEntity*
 namespace
 {
     // The pawn in the lead slot holds a point ahead of the player and is
-    // left out of the follow chain
+    // off the ring
     auto isLead(const CCharEntity* PChar) -> bool
     {
         const auto* PController = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
@@ -1742,6 +1723,79 @@ auto CPawnController::LeadPoint(const CCharEntity* PPlayer) -> position_t
     return point;
 }
 
+auto CPawnController::RingSlot() const -> pawn::Slot
+{
+    using cardian::formation::isRingSlot;
+    using cardian::formation::Seat;
+
+    const auto seatOf = [](const CCharEntity* PChar, const pawn::Slot slot) -> Seat
+    {
+        return { pawn::isMeleeJob(PChar->GetMJob()), isRingSlot(slot) ? std::optional<pawn::Slot>{ slot } : std::nullopt };
+    };
+
+    // The party's cardians in this zone, alive and not leading, in party
+    // order -- the same list for everyone, so the seats agree
+    std::vector<Seat> seats;
+    std::size_t       mine  = 0;
+    bool              found = false;
+
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    if (PPawn->PParty != nullptr)
+    {
+        for (const auto* PMember : PPawn->PParty->members)
+        {
+            const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
+            if (PChar == nullptr || !pawn::isPawn(PChar) || PChar->loc.zone != POwner->loc.zone || PChar->isDead())
+            {
+                continue;
+            }
+            const auto* PController = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
+            if (PController == nullptr || PController->FormationSlot() == pawn::Slot::Lead)
+            {
+                continue;
+            }
+            if (PChar == POwner)
+            {
+                mine  = seats.size();
+                found = true;
+            }
+            seats.push_back(seatOf(PChar, PController->FormationSlot()));
+        }
+    }
+
+    if (!found)
+    {
+        seats = { seatOf(PPawn, FormationSlot()) };
+        mine  = 0;
+    }
+    return cardian::formation::assignSlots(seats)[mine];
+}
+
+auto CPawnController::SeatOf(const pawn::Slot slot) -> SeatGeometry
+{
+    // nearPosition's angle runs to the player's right for positive values
+    // (checked in play against the debug line's seat name)
+    constexpr float kRight = 1.0f;
+    constexpr float kPi    = static_cast<float>(M_PI);
+    const float     flank  = settings::get<float>("pawn.FORMATION_FLANK_ANGLE_DEG") * kPi / 180.0f;
+    const float     rear   = kPi - settings::get<float>("pawn.FORMATION_FOLLOW_ANGLE_DEG") * kPi / 180.0f;
+
+    switch (slot)
+    {
+        case pawn::Slot::FlankRight:
+            return { settings::get<float>("pawn.FORMATION_FLANK_DISTANCE"), kRight * flank };
+        case pawn::Slot::FlankLeft:
+            return { settings::get<float>("pawn.FORMATION_FLANK_DISTANCE"), -kRight * flank };
+        case pawn::Slot::RearLeft:
+            return { settings::get<float>("pawn.FORMATION_FOLLOW_DISTANCE"), -kRight * rear };
+        case pawn::Slot::Behind:
+            return { settings::get<float>("pawn.FORMATION_REAR_DISTANCE"), kPi };
+        case pawn::Slot::RearRight:
+        default:
+            return { settings::get<float>("pawn.FORMATION_FOLLOW_DISTANCE"), kRight * rear };
+    }
+}
+
 auto CPawnController::GetPawnPartyPosition() const -> uint8
 {
     const auto* PPawn = static_cast<CCharEntity*>(POwner);
@@ -1764,33 +1818,6 @@ auto CPawnController::GetPawnPartyPosition() const -> uint8
         }
     }
     return 0;
-}
-
-auto CPawnController::GetFollowTarget() const -> CBattleEntity*
-{
-    const auto* PPawn = static_cast<CCharEntity*>(POwner);
-    CCharEntity* PPlayer = GetLivePlayer();
-
-    const uint8 currentPartyPos = GetPawnPartyPosition();
-    if (currentPartyPos == 0 || PPawn->PParty == nullptr)
-    {
-        return PPlayer;
-    }
-
-    uint8 position = 0;
-    for (auto* PMember : PPawn->PParty->members)
-    {
-        if (auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-            PChar != nullptr && pawn::isPawn(PChar) && !isLead(PChar))
-        {
-            if (position == currentPartyPos - 1 && PChar->loc.zone == POwner->loc.zone)
-            {
-                return PChar;
-            }
-            ++position;
-        }
-    }
-    return PPlayer;
 }
 
 void CPawnController::Declump(const CBattleEntity* PTarget) const

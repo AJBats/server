@@ -78,12 +78,24 @@ xi.settings.pawn =
     -- 0 = fresh position only, no prediction.
     FORMATION_FOLLOW_PREDICT_SCALE = 0.4,
 
-    -- The first follower's slot: this many yalms from the player, this many
-    -- degrees off straight-behind (a rear quarter, out of the camera line).
-    -- Held with the same deadband as the lead's point while the player
-    -- stands, so a player turning in place doesn't make the follower orbit.
+    -- The rear-quarter seats: this many yalms from the player, this many
+    -- degrees off straight-behind on each side (out of the camera line).
+    -- Every seat is held with the same deadband as the lead's point while
+    -- the player stands, so a player turning in place makes nobody orbit.
     FORMATION_FOLLOW_DISTANCE  = 2.5,
     FORMATION_FOLLOW_ANGLE_DEG = 40,
+
+    -- The ring's other seats. Without a Formation row a cardian is seated
+    -- by job (the silent default): melee jobs take the flanks first --
+    -- FLANK_ANGLE_DEG off straight-ahead, FLANK_DISTANCE out -- then the
+    -- rear quarters, then behind; everyone else takes the rear quarters
+    -- first, then behind (REAR_DISTANCE, a step further back so it is not
+    -- in the quarters' way), then the flanks. Within a kind the side with
+    -- fewer cardians wins, ties to the right. A Formation row claims its
+    -- seat ahead of all of this.
+    FORMATION_FLANK_ANGLE_DEG = 90,
+    FORMATION_FLANK_DISTANCE  = 2.5,
+    FORMATION_REAR_DISTANCE   = 3.5,
 
     -- Holding for the player's strike (a weapon drawn on a mob commits the
     -- party; the first hit is the player's), the cardians walk in with

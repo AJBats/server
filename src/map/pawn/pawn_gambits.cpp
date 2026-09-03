@@ -1070,7 +1070,7 @@ namespace pawn
                 case pawn::Behavior::AvoidAggro:
                     return fmt::format("Avoid aggro{}", off);
                 case pawn::Behavior::Formation:
-                    return fmt::format("Formation: {}", static_cast<pawn::Slot>(a.select_arg) == pawn::Slot::Lead ? "lead" : "follow");
+                    return fmt::format("Formation: {}", cardian::formation::slotName(static_cast<pawn::Slot>(a.select_arg)));
                 case pawn::Behavior::RestWithPlayer:
                     return fmt::format("Rest with the player{}", off);
                 case pawn::Behavior::HomePointWithPlayer:
@@ -1556,9 +1556,12 @@ namespace pawn
             { "100:1:1", "Avoid aggro", "Behaviours" },
             { "100:6:1", "Rest with the player", "Behaviours" },
             { "100:7:1", "Home point with the player", "Behaviours" },
-            { "100:4:1", "Formation: lead", "Behaviours" },
-            { "100:4:0", "Formation: follow", "Behaviours" },
         };
+        // Formation: the lead, then auto (a seat by job), then the ring's seats
+        for (const auto slot : { pawn::Slot::Lead, pawn::Slot::Follow, pawn::Slot::FlankLeft, pawn::Slot::FlankRight, pawn::Slot::RearLeft, pawn::Slot::RearRight, pawn::Slot::Behind })
+        {
+            v.actions.push_back({ fmt::format("100:4:{}", static_cast<uint16>(slot)), fmt::format("Formation: {}", cardian::formation::slotName(slot)), "Behaviours" });
+        }
 
         // Magic she knows and can cast now, plus "best of the family" for
         // every family she has a spell in
@@ -1611,4 +1614,8 @@ namespace pawn
         v.actions.push_back({ "1:0:0", "Ranged attack", "Ranged" });
         return v;
     }
+auto isMeleeJob(const xi::Job job) -> bool
+{
+    return kMeleeJobs.contains(job);
+}
 } // namespace pawn
