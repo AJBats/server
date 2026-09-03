@@ -682,6 +682,52 @@ class PawnModule : public CPPModule
             return pawn::homePoint(PPawn) ? "" : "not KO'd";
         };
 
+        // A cardian, for the Lua module that moves quest and mission
+        // progress with the party (modules/cardian/lua/party_progress.lua)
+        lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
+        {
+            const auto* PChar = dynamic_cast<const CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return PChar != nullptr && pawn::isPawn(PChar);
+        };
+
+        // The command window: one action now, on a target index in the
+        // zone (0 = herself)
+        lua["CBaseEntity"]["cardianDo"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            if (PPawn->loc.zone == nullptr)
+            {
+                return "not in a zone";
+            }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController == nullptr)
+            {
+                return "no controller";
+            }
+            CBattleEntity* PTarget = targid == 0 ? static_cast<CBattleEntity*>(PPawn)
+                                                 : dynamic_cast<CBattleEntity*>(PPawn->loc.zone->GetEntity(targid, TYPE_PC | TYPE_MOB | TYPE_NPC));
+            if (PTarget == nullptr)
+            {
+                return "no such target";
+            }
+            const auto err = PController->DoAction(key, PTarget);
+            if (err.empty())
+            {
+                ShowInfoFmt("pawn: {} does {} on {} ({}'s order)", PPawn->getName(), key, PTarget->getName(), PChar->getName());
+            }
+            return err;
+        };
+
+        lua["CBaseEntity"]["cardianRescue"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::rescue(PChar, PPawn) : "no such cardian";
+        };
+
         lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);

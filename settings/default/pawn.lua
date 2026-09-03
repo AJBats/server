@@ -50,6 +50,13 @@ xi.settings.pawn =
     -- distance -- retreat is how the player calls the party back.
     HUNT_LEASH = 50,
 
+    -- Rescue: a stuck cardian teleports to the player's side, only from
+    -- within RESCUE_RANGE yalms (proximity is the anti-exploit -- no
+    -- summoning across the zone), on a RESCUE_COOLDOWN in seconds shared
+    -- by all the player's cardians.
+    RESCUE_RANGE    = 15,
+    RESCUE_COOLDOWN = 300,
+
 
     -- Formation: the hunter leads, holding a point this many yalms ahead
     -- of the player along their facing; the point is re-aimed only when

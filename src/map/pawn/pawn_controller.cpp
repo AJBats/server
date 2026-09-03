@@ -34,13 +34,17 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdio>
 #include <tuple>
 #include <vector>
 
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
 #include "ai/states/magic_state.h"
+#include "ai/states/weaponskill_state.h"
+#include "ai/states/ability_state.h"
 #include "ai/states/range_state.h"
 #include "enmity_container.h"
 #include "entities/char_entity.h"
@@ -49,6 +53,7 @@
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
 #include "party.h"
+#include "packets/s2c/0x05a_motionmes.h"
 #include "spell.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
@@ -175,6 +180,99 @@ void CPawnController::ShareSignet(CCharEntity* PPlayer)
     }
     POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, remaining);
     ShowInfoFmt("pawn: {} takes Signet with {} ({} min left)", POwner->getName(), PPlayer->getName(), remaining.count() / 60000);
+}
+
+auto CPawnController::Acting() const -> bool
+{
+    return POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CWeaponSkillState>() ||
+           POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>();
+}
+
+void CPawnController::HeadLook(const CBaseEntity* PAt)
+{
+    const uint16 want = PAt != nullptr ? PAt->targid : 0;
+    if (POwner->m_TargID != want)
+    {
+        POwner->m_TargID = want;
+        POwner->updatemask |= UPDATE_POS;
+    }
+}
+
+auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string
+{
+    unsigned kind = 0;
+    unsigned mode = 0;
+    unsigned id   = 0;
+    if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    {
+        return "bad action";
+    }
+    if (PTarget == nullptr)
+    {
+        return "no target";
+    }
+    if (POwner->isDead())
+    {
+        return "KO'd";
+    }
+    if (Acting())
+    {
+        return "busy";
+    }
+
+    const EntityId target(PTarget);
+    bool           fired = false;
+    switch (kind)
+    {
+        case 1:
+            fired = RangedAttack(target);
+            break;
+        case 2:
+            if (mode != 2)
+            {
+                return "pick a spell";
+            }
+            fired = Cast(target, static_cast<SpellID>(id));
+            break;
+        case 3:
+            if (mode != 2)
+            {
+                return "pick an ability";
+            }
+            fired = Ability(target, static_cast<uint16>(id));
+            break;
+        case 4:
+            if (mode != 2)
+            {
+                return "pick a weapon skill";
+            }
+            fired = WeaponSkill(target, static_cast<uint16>(id));
+            break;
+        default:
+            return "bad action";
+    }
+    return fired ? "" : "cannot do that now";
+}
+
+void CPawnController::IdleEmote(const CCharEntity* PPlayer)
+{
+    // The first idle moment only sets the clock: no fidget on arrival
+    if (m_NextIdleEmoteTime == timer::time_point::min() || m_Tick >= m_NextIdleEmoteTime)
+    {
+        const bool due      = m_NextIdleEmoteTime != timer::time_point::min();
+        m_NextIdleEmoteTime = m_Tick + std::chrono::seconds(xirand::GetRandomNumber(45, 120));
+        if (!due || POwner->PAI->IsCurrentState<CMagicState>() || POwner->loc.zone == nullptr || distance(POwner->loc.p, PPlayer->loc.p) > 20.0f)
+        {
+            return;
+        }
+
+        static constexpr std::array<Emote, 4> kFidgets{ Emote::Think, Emote::Sigh, Emote::Huh, Emote::Stare };
+        const auto                            emote = kFidgets[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(kFidgets.size())))];
+        const CBaseEntity*                    PAt   = emote == Emote::Stare ? static_cast<const CBaseEntity*>(PPlayer) : POwner;
+
+        const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+        POwner->loc.zone->PushPacket(POwner, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(PPawn, PAt->id, PAt->targid, emote, EmoteMode::Motion, 0));
+    }
 }
 
 void CPawnController::TidyBag()
@@ -373,10 +471,23 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         m_AvoidItch = 0.0f;
     }
 
+    // Her head tracks the target -- except through an action, when it
+    // stays on the action's own target (a cure on a friend mid-fight);
+    // her body turns only when the target leaves her front arc, or when
+    // an action fires -- a body snapped to the target every tick is the
+    // mob tell
+    if (!Acting())
+    {
+        HeadLook(PTarget);
+    }
+
     auto avoidAction = AvoidAction::None;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
-        POwner->PAI->PathFind->LookAt(PTarget->loc.p);
+        if (!facing(POwner->loc.p, PTarget->loc.p, 64))
+        {
+            POwner->PAI->PathFind->LookAt(PTarget->loc.p);
+        }
 
         if (m_HoldForPlayer)
         {
@@ -502,6 +613,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     ShareSignet(PPlayer);
     TidyBag();
+    if (!Acting())
+    {
+        HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
+    }
     m_Gambits->TickBehaviors();
 
     if (auto* PTarget = PartyEngageTarget(PPlayer); PTarget != nullptr)
@@ -588,6 +703,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         // in a tick spent stepping to safety, since a cast would root the
         // pawn inside the circle
         m_Gambits->Tick(tick, false);
+        IdleEmote(PPlayer);
     }
 
     co_return;
@@ -836,18 +952,21 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
     }
 
     FaceTarget(castTarget);
+    HeadLook(castTarget.resolve<CBattleEntity>());
     return CPlayerController::Cast(castTarget, spellid);
 }
 
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
 {
     FaceTarget(target);
+    HeadLook(target.resolve<CBattleEntity>());
     return CPlayerController::WeaponSkill(target, wsid);
 }
 
 auto CPawnController::Ability(const EntityId target, const uint16 abilityid) -> bool
 {
     FaceTarget(target);
+    HeadLook(target.resolve<CBattleEntity>());
     return CPlayerController::Ability(target, abilityid);
 }
 

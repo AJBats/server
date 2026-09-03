@@ -144,6 +144,12 @@ namespace pawn
     // world.
     bool homePoint(CCharEntity* PPawn);
 
+    // A stuck cardian teleports to her player's side: only from within
+    // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
+    // across the zone), on a RESCUE_COOLDOWN shared by all the player's
+    // cardians. "" on success, else why not.
+    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string;
+
     // Replace the pawn's gambits with the set xi.pawn.brain selects for it
     // (its job's default brain today). The controller calls this on its
     // first tick and whenever the pawn's job changes; !pawnbrain forces it.

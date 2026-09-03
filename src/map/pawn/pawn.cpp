@@ -646,6 +646,49 @@ namespace pawn
         return sent > 0 ? "" : "no cardians out";
     }
 
+    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string
+    {
+        // By player, for this process's life: a restart forgives the cooldown
+        static std::unordered_map<uint32, timer::time_point> lastRescue;
+
+        if (PPawn == nullptr || !pawns.contains(PPawn->id))
+        {
+            return "no such cardian";
+        }
+        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr || PPawn->loc.zone != PPlayer->loc.zone)
+        {
+            return "not in your zone";
+        }
+        if (PPawn->isDead())
+        {
+            return "KO'd";
+        }
+
+        const float range = settings::get<float>("pawn.RESCUE_RANGE");
+        const float away  = distance(PPlayer->loc.p, PPawn->loc.p);
+        if (away > range)
+        {
+            return fmt::format("too far ({:.0f} y; within {:.0f})", away, range);
+        }
+
+        const auto cooldown = std::chrono::seconds(static_cast<int64>(settings::get<float>("pawn.RESCUE_COOLDOWN")));
+        const auto now      = timer::now();
+        if (const auto it = lastRescue.find(PPlayer->id); it != lastRescue.end() && now - it->second < cooldown)
+        {
+            const auto left = std::chrono::duration_cast<std::chrono::seconds>(cooldown - (now - it->second)).count();
+            return fmt::format("cooling down ({} s left)", left);
+        }
+        lastRescue[PPlayer->id] = now;
+
+        // Beside the player, facing them; every path and hold she had goes
+        // with it
+        PPawn->PAI->PathFind->WarpTo(PPlayer->loc.p, 1.5f);
+        PPawn->updatemask |= UPDATE_POS;
+
+        ShowInfoFmt("pawn: {} rescued to {}'s side ({:.1f} y)", PPawn->getName(), PPlayer->getName(), away);
+        return "";
+    }
+
     bool homePoint(CCharEntity* PPawn)
     {
         if (PPawn == nullptr || !pawns.contains(PPawn->id) || !PPawn->isDead())

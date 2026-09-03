@@ -85,6 +85,27 @@ public:
     // Her bag kept stacked (pawn::items::tidyStacks), a quiet sweep every
     // 15 s between fights: a drop lands unstacked like anything else
     void TidyBag();
+
+    // Her head turns to PAt (nullptr: straight ahead): the face-target
+    // index in the character update, which the client turns a player's
+    // head with -- players set it with every position packet, she never
+    // sends one. An update goes out only when it changes.
+    void HeadLook(const CBaseEntity* PAt);
+
+    // Mid-action: casting, readying a weapon skill or ability, or shooting
+    auto Acting() const -> bool;
+
+    // A fidget now and then while standing about -- motion only, no text,
+    // to everyone in range; a stare goes to the player. Never mid-walk,
+    // in a fight, resting or casting.
+    void IdleEmote(const CCharEntity* PPlayer);
+
+    // The command window: one action now, on the target the player picked.
+    // `key` is the vocabulary's action key, kind:mode:id -- the concrete
+    // ones only: a spell (2:2:id), an ability (3:2:id), a weapon skill
+    // (4:2:id), the ranged attack (1:0:0); the "best of" entries are the
+    // gambit engine's. "" when it fired, else why not.
+    auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
     auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
@@ -251,6 +272,7 @@ private:
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
     timer::time_point m_LastHuntCheckTime;
     timer::time_point m_LastTidyTime;
+    timer::time_point m_NextIdleEmoteTime;
     timer::time_point m_LastHuntLogTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};

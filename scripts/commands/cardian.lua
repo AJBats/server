@@ -447,6 +447,20 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok take')
             sendInv(player, name)
         end
+    elseif verb == 'do' and name and args[3] then
+        local err = player:cardianDo(name, args[3], tonumber(args[4]) or 0)
+        if err ~= '' then
+            reply(player, '#cd err do ' .. err)
+        else
+            reply(player, '#cd ok do')
+        end
+    elseif verb == 'rescue' and name then
+        local err = player:cardianRescue(name)
+        if err ~= '' then
+            reply(player, '#cd err rescue ' .. err)
+        else
+            reply(player, '#cd ok rescue')
+        end
     elseif verb == 'homepoint' and name then
         local err = player:cardianHomePoint(name)
         if err ~= '' then
@@ -500,7 +514,7 @@ commandObj.onTrigger = function(player, line)
             sendInv(player, name)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty>')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | do <name> <action> [targid]')
     end
 end
 
