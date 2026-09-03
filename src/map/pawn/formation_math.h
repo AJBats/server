@@ -137,6 +137,40 @@ namespace cardian::formation
         const float ramp     = std::clamp((gapYalms - 1.0f) / (distance - 1.0f + 0.001f), 0.0f, 1.0f);
         return normalSpeed + (catchUp - normalSpeed) * ramp;
     }
+
+    // The stand-off ring: while the party holds for the player's strike,
+    // no formation point sits within `radius` of the mob (melee reach plus
+    // a margin). A point inside the ring is pushed out along its own
+    // bearing from the mob; one past the mob from the player's side (the
+    // lead's point, aimed ahead of a player standing at the mob) comes
+    // round to the player's bearing, so nobody circles behind an unstruck
+    // mob. Returns the new x/z; unchanged when already outside, or when
+    // there is no bearing to take (the point and the player both on the
+    // mob).
+    inline auto standOff(const float mobX, const float mobZ, const float playerX, const float playerZ, const float radius, const float x, const float z) -> std::pair<float, float>
+    {
+        float dx = x - mobX;
+        float dz = z - mobZ;
+        if (std::hypot(dx, dz) >= radius)
+        {
+            return { x, z };
+        }
+
+        const float px = playerX - mobX;
+        const float pz = playerZ - mobZ;
+        if (std::hypot(px, pz) > 0.001f && dx * px + dz * pz <= 0.0f)
+        {
+            dx = px;
+            dz = pz;
+        }
+
+        const float len = std::hypot(dx, dz);
+        if (len < 0.001f)
+        {
+            return { x, z };
+        }
+        return { mobX + dx / len * radius, mobZ + dz / len * radius };
+    }
     // ------------------------------------------------------------------
     // Aggro avoidance geometry (M3.87). Every detection type is a circle of
     // that type's range plus a buffer; a cardian moves on the server with

@@ -165,6 +165,48 @@ TEST_CASE("catchUpSpeed: a catch-up distance under a yalm still ramps sanely", "
 
 // ---------------------------------------------------------------- aggro avoidance geometry
 
+TEST_CASE("standOff: a point outside the ring is untouched", "[cardian][formation]")
+{
+    const auto [x, z] = standOff(0.0f, 0.0f, 10.0f, 0.0f, 6.0f, 8.0f, 1.0f);
+    CHECK(x == 8.0f);
+    CHECK(z == 1.0f);
+}
+
+TEST_CASE("standOff: a point inside on the player's side is pushed out along its own bearing", "[cardian][formation]")
+{
+    // Mob at the origin, player 10 y along +x, the point 3 y out at 45 degrees
+    const auto [x, z] = standOff(0.0f, 0.0f, 10.0f, 0.0f, 6.0f, 2.1213f, 2.1213f);
+    CHECK_THAT(std::hypot(x, z), WithinAbs(6.0f, 0.001f));
+    CHECK_THAT(x, WithinAbs(z, 0.001f)); // the bearing kept
+    CHECK(x > 0.0f);
+}
+
+TEST_CASE("standOff: a point past the mob comes round to the player's side", "[cardian][formation]")
+{
+    // The lead's point 2 y beyond the mob, away from the player
+    const auto [x, z] = standOff(0.0f, 0.0f, 10.0f, 0.0f, 6.0f, -2.0f, 0.5f);
+    CHECK_THAT(x, WithinAbs(6.0f, 0.001f));
+    CHECK_THAT(z, WithinAbs(0.0f, 0.001f));
+}
+
+TEST_CASE("standOff: a point on the mob takes the player's bearing; both on the mob, nothing to aim by", "[cardian][formation]")
+{
+    const auto [x, z] = standOff(5.0f, 5.0f, 5.0f, 15.0f, 4.0f, 5.0f, 5.0f);
+    CHECK_THAT(x, WithinAbs(5.0f, 0.001f));
+    CHECK_THAT(z, WithinAbs(9.0f, 0.001f));
+
+    const auto [x2, z2] = standOff(5.0f, 5.0f, 5.0f, 5.0f, 4.0f, 5.0f, 5.0f);
+    CHECK(x2 == 5.0f);
+    CHECK(z2 == 5.0f);
+}
+
+TEST_CASE("standOff: the ring is measured in the ground plane, the rim counts as outside", "[cardian][formation]")
+{
+    const auto [x, z] = standOff(0.0f, 0.0f, 10.0f, 0.0f, 6.0f, 6.0f, 0.0f);
+    CHECK(x == 6.0f);
+    CHECK(z == 0.0f);
+}
+
 TEST_CASE("depthInside / insideAny: rim counts as outside", "[cardian][avoid]")
 {
     const std::vector<Circle> circles{ { 0.0f, 0.0f, 8.0f } };

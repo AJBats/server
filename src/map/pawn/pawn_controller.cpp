@@ -308,10 +308,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 {
     TracyZoneScoped;
 
-    RestoreNormalSpeed();
     m_Gambits->TickBehaviors();
-    m_AvoidPerch.reset();
-    m_AvoidItch = 0.0f;
 
     CCharEntity* PPlayer = GetLivePlayer();
 
@@ -351,76 +348,104 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         m_HoldForPlayer = false;
     }
 
+    // Holding, she walks with the player, and the formation's pace and
+    // perch are hers. Fighting, neither is: the speed limit is never
+    // broken once a fight starts, and a perch belongs to a slot
+    if (!m_HoldForPlayer)
+    {
+        RestoreNormalSpeed();
+        m_AvoidPerch.reset();
+        m_AvoidItch = 0.0f;
+    }
+
     auto avoidAction = AvoidAction::None;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
         POwner->PAI->PathFind->LookAt(PTarget->loc.p);
 
-        // The same avoidance pass as roaming, with the target as the point:
-        // inside a circle she steps out mid-fight, and a target parked
-        // inside another mob's circle is not approached -- she waits at the
-        // rim for the tank to bring it
-        m_HasSlot = false;
-        position_t point           = PTarget->loc.p;
-        float      followMax       = RoamDistance;
-        float      followTarget    = RoamDistance;
-        float      declumpDistance = 0.0f;
-        if (IsAvoidingAggro())
+        if (m_HoldForPlayer)
         {
-            avoidAction = Avoid(point, followMax, followTarget, declumpDistance, true);
-        }
-
-        // Holding at the rim only makes sense for a target that is coming
-        // (fighting someone). An idle target parked in another mob's circle
-        // is fetched when the party allows aggressive company, and let go
-        // when it does not -- never waited on
-        if (avoidAction != AvoidAction::None && !PTarget->PAI->IsEngaged())
-        {
-            if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
-            {
-                avoidAction = AvoidAction::None;
-            }
-            else
-            {
-                ShowInfoFmt("pawn: {} lets {} go (idle inside another mob's circle)", POwner->getName(), PTarget->getName());
-                POwner->PAI->Internal_Disengage();
-                co_return;
-            }
-        }
-
-        if (avoidAction != AvoidAction::None)
-        {
-            if (IsShortHop(point, followMax))
-            {
-                POwner->PAI->PathFind->Clear();
-                POwner->PAI->PathFind->StepTo(point);
-            }
-            else if (const float away = distance(POwner->loc.p, point); away > followMax)
-            {
-                if (!PathToward(point, followTarget))
-                {
-                    NotePathFailure(avoidAction, point, away);
-                }
-            }
-            else if (POwner->PAI->PathFind->IsFollowingPath())
-            {
-                POwner->PAI->PathFind->Clear();
-            }
+            // Walking in with the player, in formation, never within reach
+            // of the mob: the strike is the player's, and the pounce after
+            // it is a few yalms from a slot
+            avoidAction = FollowFormation(PPlayer, PTarget).value_or(AvoidAction::None);
         }
         else
         {
-            // Melee archetype: continually reposition into attack range --
-            // unless holding for the player's strike (one already in range
-            // may swing)
-            std::unique_ptr<CBasicPacket> err;
-            if (!m_HoldForPlayer && !POwner->CanAttack(PTarget, err) && distance(POwner->loc.p, PTarget->loc.p) > RoamDistance)
+            // The same avoidance pass as roaming, with the target as the
+            // point: inside a circle she steps out mid-fight, and a target
+            // parked inside another mob's circle is not approached -- she
+            // waits at the rim for the tank to bring it
+            m_HasSlot = false;
+            position_t point           = PTarget->loc.p;
+            float      followMax       = RoamDistance;
+            float      followTarget    = RoamDistance;
+            float      declumpDistance = 0.0f;
+            if (IsAvoidingAggro())
             {
-                PathToward(PTarget->loc.p, RoamDistance);
+                avoidAction = Avoid(point, followMax, followTarget, declumpDistance, PTarget, true);
             }
 
-            if (!POwner->PAI->PathFind->IsFollowingPath())
+            // Holding at the rim only makes sense for a target that is
+            // coming (fighting someone). An idle target parked in another
+            // mob's circle is fetched when the party allows aggressive
+            // company, and let go when it does not -- never waited on
+            if (avoidAction != AvoidAction::None && !PTarget->PAI->IsEngaged())
             {
-                Declump(PTarget);
+                if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+                {
+                    avoidAction = AvoidAction::None;
+                }
+                else
+                {
+                    ShowInfoFmt("pawn: {} lets {} go (idle inside another mob's circle)", POwner->getName(), PTarget->getName());
+                    POwner->PAI->Internal_Disengage();
+                    co_return;
+                }
+            }
+
+            if (avoidAction != AvoidAction::None)
+            {
+                if (IsShortHop(point, followMax))
+                {
+                    POwner->PAI->PathFind->Clear();
+                    POwner->PAI->PathFind->StepTo(point);
+                }
+                else if (const float away = distance(POwner->loc.p, point); away > followMax)
+                {
+                    if (!PathToward(point, followTarget))
+                    {
+                        NotePathFailure(avoidAction, point, away);
+                    }
+                }
+                else if (POwner->PAI->PathFind->IsFollowingPath())
+                {
+                    POwner->PAI->PathFind->Clear();
+                }
+            }
+            else
+            {
+                // Melee archetype: continually reposition into attack range.
+                // In range, a path still under her feet is dropped: a path
+                // ends against the mob's position when it was planned, and
+                // a mob that has moved since would be walked past
+                std::unique_ptr<CBasicPacket> err;
+                if (POwner->CanAttack(PTarget, err))
+                {
+                    if (POwner->PAI->PathFind->IsFollowingPath())
+                    {
+                        POwner->PAI->PathFind->Clear();
+                    }
+                }
+                else if (distance(POwner->loc.p, PTarget->loc.p) > RoamDistance)
+                {
+                    PathToward(PTarget->loc.p, RoamDistance);
+                }
+
+                if (!POwner->PAI->PathFind->IsFollowingPath())
+                {
+                    Declump(PTarget);
+                }
             }
         }
 
@@ -428,10 +453,11 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     }
 
     // Never a cast in a tick spent stepping to safety: it would root her
-    // inside the circle
+    // inside the circle. Holding, only what she would do between fights
+    // -- cures and buffs -- since a nuke is a first hit too
     if (avoidAction != AvoidAction::Escape && avoidAction != AvoidAction::Detour)
     {
-        m_Gambits->Tick(tick, true);
+        m_Gambits->Tick(tick, !m_HoldForPlayer);
     }
 
     co_return;
@@ -530,6 +556,29 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
+    const auto avoidAction = FollowFormation(PPlayer, nullptr);
+    if (!avoidAction.has_value())
+    {
+        co_return;
+    }
+
+    if (POwner->PAI->PathFind->IsFollowingPath())
+    {
+        POwner->PAI->PathFind->FollowPath(m_Tick);
+    }
+    else if (!POwner->PAI->IsCurrentState<CMagicState>() && *avoidAction != AvoidAction::Escape && *avoidAction != AvoidAction::Detour)
+    {
+        // Between fights, standing still: cures, raises, buffs -- but never
+        // in a tick spent stepping to safety, since a cast would root the
+        // pawn inside the circle
+        m_Gambits->Tick(tick, false);
+    }
+
+    co_return;
+}
+
+auto CPawnController::FollowFormation(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> std::optional<AvoidAction>
+{
     // Where this pawn belongs: the lead holds a point ahead of the player,
     // everyone else follows the chain. A slot exists only if this tick's
     // decision comes from FormationPoint (chain followers have none).
@@ -539,9 +588,28 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     float      followMax       = 2.0f;
     float      followTarget    = 1.0f;
 
+    // No point within reach of a mob the party is holding on: pushed out
+    // to the ring, and round to the player's side from behind it
+    const auto standOff = [&](position_t point) -> position_t
+    {
+        if (PStandOff == nullptr)
+        {
+            return point;
+        }
+        const float radius = POwner->GetMeleeRange(PStandOff) + settings::get<float>("pawn.FORMATION_STANDOFF");
+        const auto [x, z]  = cardian::formation::standOff(PStandOff->loc.p.x, PStandOff->loc.p.z, PPlayer->loc.p.x, PPlayer->loc.p.z, radius, point.x, point.z);
+        if (x != point.x || z != point.z)
+        {
+            point.x = x;
+            point.y = PStandOff->loc.p.y;
+            point.z = z;
+        }
+        return point;
+    };
+
     if (FormationSlot() == pawn::Slot::Lead)
     {
-        followPoint = LeadPoint(PPlayer);
+        followPoint = standOff(LeadPoint(PPlayer));
         RampCatchUp(m_PlayerMoving, followPoint);
     }
     else
@@ -549,11 +617,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         const CBattleEntity* PFollowTarget = GetFollowTarget();
         if (PFollowTarget == nullptr)
         {
-            co_return;
+            return std::nullopt;
         }
 
         const bool isFirstPawn = GetPawnPartyPosition() == 0;
-        followPoint     = PFollowTarget->loc.p;
+        followPoint     = standOff(PFollowTarget->loc.p);
         declumpDistance = isFirstPawn ? 1.0f : 1.5f;
         followMax       = isFirstPawn ? 2.0f : 3.5f;
         followTarget    = isFirstPawn ? 1.5f : 3.0f;
@@ -569,7 +637,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             const auto anchor = PlayerAnchor(PPlayer, settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
             const auto angle  = static_cast<float>(M_PI) - settings::get<float>("pawn.FORMATION_FOLLOW_ANGLE_DEG") * static_cast<float>(M_PI) / 180.0f;
-            followPoint       = FormationPoint(anchor, settings::get<float>("pawn.FORMATION_FOLLOW_DISTANCE"), angle, m_FollowPoint, m_HasFollowPoint);
+            followPoint       = standOff(FormationPoint(anchor, settings::get<float>("pawn.FORMATION_FOLLOW_DISTANCE"), angle, m_FollowPoint, m_HasFollowPoint));
             declumpDistance   = 0.0f;
             followMax         = 2.0f;
             followTarget      = 1.0f;
@@ -581,7 +649,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     auto avoidAction = AvoidAction::None;
     if (IsAvoidingAggro())
     {
-        avoidAction = Avoid(followPoint, followMax, followTarget, declumpDistance, false);
+        avoidAction = Avoid(followPoint, followMax, followTarget, declumpDistance, PStandOff, false);
     }
 
     const float currentDistance = distance(POwner->loc.p, followPoint);
@@ -600,7 +668,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             if (currentDistance > WarpDistance)
             {
                 POwner->PAI->PathFind->WarpTo(followPoint);
-                co_return;
+                return std::nullopt;
             }
             NotePathFailure(avoidAction, followPoint, currentDistance);
         }
@@ -617,20 +685,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         POwner->PAI->PathFind->Clear();
     }
 
-    if (POwner->PAI->PathFind->IsFollowingPath())
-    {
-        POwner->PAI->PathFind->FollowPath(m_Tick);
-    }
-    else if (!POwner->PAI->IsCurrentState<CMagicState>() && avoidAction != AvoidAction::Escape && avoidAction != AvoidAction::Detour)
-    {
-        // Between fights, standing still: cures, raises, buffs -- but never
-        // in a tick spent stepping to safety, since a cast would root the
-        // pawn inside the circle
-        m_Gambits->Tick(tick, false);
-    }
-
-
-    co_return;
+    return avoidAction;
 }
 
 void CPawnController::TravelTick()
@@ -1298,16 +1353,16 @@ void CPawnController::NotePathFailure(const AvoidAction action, const position_t
                 magic_enum::enum_name(action), away, point.x, point.y, point.z, POwner->PAI->PathFind->ValidPosition(point) ? "yes" : "no");
 }
 
-auto CPawnController::Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const bool fighting) -> AvoidAction
+auto CPawnController::Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const CBattleEntity* PIgnore, const bool fighting) -> AvoidAction
 {
     using namespace cardian::formation;
 
     const auto* PPawn   = static_cast<const CCharEntity*>(POwner);
-    // Her own target is never a danger to keep out of: a freshly pulled
-    // aggressive mob is not fighting anyone yet, and its circle would hold
-    // her at the rim of the very mob she is meant to hit
-    const auto  dangers = pawn::danger::around(POwner->loc.zone, POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn),
-                                               fighting ? POwner->GetBattleTarget() : nullptr);
+    // The party's own mob is never a danger to keep out of: a freshly
+    // pulled aggressive mob is not fighting anyone yet, and its circle
+    // would hold her at the rim of the very mob she is meant to hit, or
+    // walk up to
+    const auto  dangers = pawn::danger::around(POwner->loc.zone, POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
 
     // The margins that keep the boundary from being slippery: every point
     // she walks to is planned against the circles padded by kClearance, so

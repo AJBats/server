@@ -85,6 +85,14 @@ xi.settings.pawn =
     FORMATION_FOLLOW_DISTANCE  = 2.5,
     FORMATION_FOLLOW_ANGLE_DEG = 40,
 
+    -- Holding for the player's strike (a weapon drawn on a mob commits the
+    -- party; the first hit is the player's), the cardians walk in with
+    -- them in this same formation, but no point is placed within melee
+    -- reach of the mob plus this many yalms: a lead point aimed into the
+    -- mob stops at that ring, on the player's side. Wider than the follow
+    -- tolerance (2 y) so the walk to the point never crosses into reach.
+    FORMATION_STANDOFF = 2.5,
+
     -- Catch-up: the lead runs at CATCHUP_SPEED while more than
     -- CATCHUP_DISTANCE yalms from its point, PAWN_SPEED otherwise. It only
     -- ever closes a gap to a point the player defines, so it nets out no

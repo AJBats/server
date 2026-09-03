@@ -158,8 +158,9 @@ private:
     // -- she walks up to the boundary and stands there until the tank
     // brings it out; a way to the point that cuts into a circle goes round
     // it first. Every point she walks to is planned against the circles
-    // padded by a margin, so the boundary is not slippery. Adjusts the
-    // point and the follow tolerances in place; logs once a second.
+    // padded by a margin, so the boundary is not slippery. PIgnore is the
+    // party's own mob, never a danger. Adjusts the point and the follow
+    // tolerances in place; logs once a second.
     enum class AvoidAction : uint8
     {
         None,
@@ -170,7 +171,17 @@ private:
         Hold,       // its target was; standing at the boundary
         Detour,     // the way there crossed a circle
     };
-    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, bool fighting) -> AvoidAction;
+    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const CBattleEntity* PIgnore, bool fighting) -> AvoidAction;
+
+    // The formation step, roaming or holding for the player's strike:
+    // where this pawn belongs (the lead's point ahead of the player, or a
+    // chain slot), the avoidance pass, and the path there. PStandOff is a
+    // mob the party is holding on: its circle never counts, and no point
+    // is placed within its reach plus FORMATION_STANDOFF (a point aimed
+    // past it comes round to the player's side). Returns the tick's
+    // avoidance action, or nothing when the tick is spent (no one to
+    // follow, or a warp). The caller follows the path.
+    auto FollowFormation(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> std::optional<AvoidAction>;
 
     // An avoidance move too short for the planner, which refuses a hop under
     // a yalm and plans nothing: such a move steps straight at its point when
@@ -225,7 +236,7 @@ private:
 
     bool              m_Hunting    = false;
     bool              m_Retreat    = false;
-    bool              m_HoldForPlayer = false; // drawn on the player's word: no closing until they strike
+    bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
     timer::time_point m_LastHuntCheckTime;
     timer::time_point m_LastHuntLogTime;
     bool              m_HasLeadPoint = false;
