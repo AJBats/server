@@ -480,6 +480,24 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 POwner->PAI->Internal_Engage(EntityId(PMob));
                 co_return;
             }
+            // A quiet hunt says why, now and then: the band is judged
+            // against the player's level, and a low zone has nothing in it
+            if (m_Tick - m_LastHuntLogTime > 15s)
+            {
+                m_LastHuntLogTime = m_Tick;
+                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{})",
+                            POwner->getName(), settings::get<float>("pawn.HUNT_RADIUS"), PPlayer->getName(), PPlayer->GetMLevel(),
+                            magic_enum::enum_name(static_cast<EMobDifficulty>(settings::get<uint8>("pawn.HUNT_CHECK_MIN"))),
+                            magic_enum::enum_name(static_cast<EMobDifficulty>(settings::get<uint8>("pawn.HUNT_CHECK_MAX"))),
+                            settings::get<bool>("pawn.HUNT_CLEAN_PULLS") ? ", clean pull" : "");
+            }
+        }
+        else if (m_Tick - m_LastHuntLogTime > 15s)
+        {
+            m_LastHuntLogTime = m_Tick;
+            ShowInfoFmt("pawn: {} hunt waits (downtime {} ms, {:.0f} y from {}, resting, or the party under {}% HP / {}% MP)",
+                        POwner->getName(), settings::get<uint32>("pawn.HUNT_DOWNTIME_MS"), distance(POwner->loc.p, PPlayer->loc.p),
+                        PPlayer->getName(), settings::get<uint8>("pawn.HUNT_READY_HPP"), settings::get<uint8>("pawn.HUNT_READY_MPP"));
         }
     }
 
