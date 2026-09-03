@@ -38,6 +38,8 @@
 #include "lua/luautils.h"
 #include "packets/basic.h"
 #include "utils/moduleutils.h"
+#include "utils/zoneutils.h"
+#include "zone.h"
 
 #include <algorithm>
 #include <string>
@@ -724,6 +726,29 @@ class PawnModule : public CPPModule
             stats["att"] = PPawn->ATT(SLOT_MAIN);
             stats["def"] = PPawn->DEF();
             return stats;
+        };
+
+        // The Profile page: what the client's own Profile screen shows --
+        // title, nation, race, home point, rank and rank points
+        lua["CBaseEntity"]["cardianProfile"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            const auto nation = std::min<uint8>(PPawn->profile.nation, 2);
+            auto*      PZone  = zoneutils::GetZone(PPawn->profile.home_point.destination);
+
+            auto table          = ::lua.create_table();
+            table["title"]      = PPawn->profile.title;
+            table["nation"]     = nation;
+            table["race"]       = PPawn->look.race;
+            table["rank"]       = PPawn->profile.rank[nation];
+            table["rankpoints"] = PPawn->profile.rankpoints;
+            table["home"]       = PZone != nullptr ? PZone->getName() : std::string("?");
+            return table;
         };
 
         lua["CBaseEntity"]["cardianGear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object

@@ -47,6 +47,14 @@ namespace pawn::items
     // are the transaction layer's. landedSlot, when given, receives the
     // pawn-side slot the stack arrived in (for give-and-use chaining).
     auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> std::string;
+
+    // Retail's auto-sort is a client option: the client asks for a stack
+    // merge whenever an item lands. A cardian has no client, so the server
+    // merges her partial stacks itself -- at spawn, after a transfer into
+    // her bag, and on a quiet sweep while she roams. Returns the merges
+    // made. The loop is the item-stack packet handler's (0x03A), without
+    // its anti-cheat and its refresh packet.
+    auto tidyStacks(CCharEntity* PPawn) -> uint8;
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
 
     // The pawn uses the item in its LOC_INVENTORY slot on itself through

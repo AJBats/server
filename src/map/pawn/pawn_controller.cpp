@@ -25,6 +25,7 @@
 #include "pawn.h"
 #include "pawn_danger.h"
 #include "pawn_gambits.h"
+#include "pawn_items.h"
 
 #include "common/settings.h"
 #include "common/utils.h"
@@ -174,6 +175,20 @@ void CPawnController::ShareSignet(CCharEntity* PPlayer)
     }
     POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, remaining);
     ShowInfoFmt("pawn: {} takes Signet with {} ({} min left)", POwner->getName(), PPlayer->getName(), remaining.count() / 60000);
+}
+
+void CPawnController::TidyBag()
+{
+    if (m_Tick - m_LastTidyTime < 15s)
+    {
+        return;
+    }
+    m_LastTidyTime = m_Tick;
+
+    if (const auto merges = pawn::items::tidyStacks(static_cast<CCharEntity*>(POwner)); merges > 0)
+    {
+        ShowInfoFmt("pawn: {} stacks her bag ({} merges)", POwner->getName(), merges);
+    }
 }
 
 auto CPawnController::HatedByAnyMob() const -> bool
@@ -486,6 +501,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
 
     ShareSignet(PPlayer);
+    TidyBag();
     m_Gambits->TickBehaviors();
 
     if (auto* PTarget = PartyEngageTarget(PPlayer); PTarget != nullptr)

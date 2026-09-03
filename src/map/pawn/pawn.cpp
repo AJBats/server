@@ -20,6 +20,7 @@
 */
 
 #include "pawn.h"
+#include "pawn_items.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "gambit_text.h"
@@ -412,6 +413,13 @@ namespace pawn
             charutils::SaveCharStats(PPawn.get());
             charutils::SaveCharEquip(PPawn.get());
             db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", targetCharID);
+            PPawn->clearPacketList();
+        }
+
+        // Her bag is kept stacked, however she was last played
+        if (const auto merges = items::tidyStacks(PPawn.get()); merges > 0)
+        {
+            ShowInfoFmt("pawn: {} stacks her bag ({} merges)", targetName, merges);
             PPawn->clearPacketList();
         }
 

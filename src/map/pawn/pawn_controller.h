@@ -81,6 +81,10 @@ public:
     auto IsRetreating() const -> bool;
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, closing at once
     void ShareSignet(CCharEntity* PPlayer); // the gate guard's Signet, taken with the player for its remaining time
+
+    // Her bag kept stacked (pawn::items::tidyStacks), a quiet sweep every
+    // 15 s between fights: a drop lands unstacked like anything else
+    void TidyBag();
     auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
@@ -246,6 +250,7 @@ private:
     bool              m_Retreat    = false;
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
     timer::time_point m_LastHuntCheckTime;
+    timer::time_point m_LastTidyTime;
     timer::time_point m_LastHuntLogTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};

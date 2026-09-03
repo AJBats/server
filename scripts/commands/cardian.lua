@@ -124,6 +124,63 @@ local function sendStatsLine(player, name)
     reply(player, table.concat(parts, ' '))
 end
 
+-- The three read-only pages under the cardian's menu: her profile, her
+-- job levels, her combat skills -- what the client's own screens show for
+-- the player, read for a cardian instead
+
+local function sendProfile(player, name)
+    local p = player:cardianProfile(name)
+    if p == nil then
+        reply(player, '#cd err profile no such cardian')
+        return
+    end
+    reply(player, string.format('#cd pf %s %d %d %d %d %d %s', name, p.title, p.nation, p.race, p.rank, p.rankpoints, p.home))
+end
+
+-- Every job she has a level in, as job:level
+local function sendJobs(player, name)
+    local targ = GetPlayerByName(name)
+    if targ == nil or player:cardianGear(name) == nil then
+        reply(player, '#cd err jobs no such cardian')
+        return
+    end
+    local parts = {}
+    for job = 1, 22 do
+        local level = targ:getJobLevel(job)
+        if level > 0 then
+            parts[#parts + 1] = string.format('%d:%d', job, level)
+        end
+    end
+    reply(player, '#cd jl ' .. name .. ' ' .. table.concat(parts, ','))
+end
+
+-- The combat skills her jobs can raise, as skill:level:cap -- the base
+-- skill level the client's Combat Skills page shows (the server keeps
+-- skills in tenths; the cap table is in whole levels), and the cap at
+-- her level (the higher of main and support job)
+local kCombatSkills = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 25, 26, 27, 28, 29, 30, 31 }
+
+local function sendSkills(player, name)
+    local targ = GetPlayerByName(name)
+    if targ == nil or player:cardianGear(name) == nil then
+        reply(player, '#cd err skills no such cardian')
+        return
+    end
+    local mjob, mlvl = targ:getMainJob(), targ:getMainLvl()
+    local sjob, slvl = targ:getSubJob(), targ:getSubLvl()
+    local parts = {}
+    for _, skill in ipairs(kCombatSkills) do
+        local cap = targ:getMaxSkillLevel(mlvl, mjob, skill)
+        if sjob ~= 0 and slvl > 0 then
+            cap = math.max(cap, targ:getMaxSkillLevel(slvl, sjob, skill))
+        end
+        if cap > 0 then
+            parts[#parts + 1] = string.format('%d:%d:%d', skill, math.floor(targ:getCharSkillLevel(skill) / 10), cap)
+        end
+    end
+    reply(player, '#cd cs ' .. name .. ' ' .. table.concat(parts, ','))
+end
+
 -- Strips first (freeing hands and slots), then equips main-hand upward so
 -- sub-slot rules see the new main. Per-slot failures are collected, not
 -- fatal: the reply names what refused and the gear block that follows is
@@ -368,6 +425,12 @@ commandObj.onTrigger = function(player, line)
         sendInv(player, name)
     elseif verb == 'gear' and name then
         sendGear(player, name)
+    elseif verb == 'profile' and name then
+        sendProfile(player, name)
+    elseif verb == 'jobs' and name then
+        sendJobs(player, name)
+    elseif verb == 'skills' and name then
+        sendSkills(player, name)
     elseif verb == 'give' and name then
         local err = player:cardianGive(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
         if err ~= '' then

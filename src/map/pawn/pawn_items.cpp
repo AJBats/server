@@ -32,6 +32,7 @@
 #include "items/item.h"
 #include "items/item_equipment.h"
 #include "items/transaction.h"
+#include "items/transactions/item_claim.h"
 #include "lua/luautils.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
@@ -51,7 +52,8 @@ namespace
             this->rollbackIfOpen();
         }
 
-        uint8 landedSlot = 0;
+        uint8  landedSlot   = 0;
+        uint16 landedItemId = 0;
 
         auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> std::string
         {
@@ -66,6 +68,7 @@ namespace
             {
                 return "gil cannot be transferred";
             }
+            this->landedItemId = PItem->getID();
             if (PItem->state() == ItemState::Equipped)
             {
                 return "item is equipped";
@@ -142,11 +145,93 @@ namespace pawn::items
         CardianTransfer transfer;
 
         auto result = transfer.move(PPlayer, PPawn, slot, qty);
-        if (result.empty() && landedSlot != nullptr)
+        if (!result.empty())
+        {
+            return result;
+        }
+
+        // Her bag is kept stacked: the given stack may have merged into an
+        // earlier one, so the landed slot is wherever that item is now
+        tidyStacks(PPawn);
+        if (landedSlot != nullptr)
         {
             *landedSlot = transfer.landedSlot;
+            if (const auto* storage = PPawn->getStorage(LOC_INVENTORY); storage != nullptr)
+            {
+                const CItem* PLanded = storage->GetItem(transfer.landedSlot);
+                if (PLanded == nullptr || PLanded->getID() != transfer.landedItemId)
+                {
+                    for (uint8 s = 1; s <= storage->GetSize(); ++s)
+                    {
+                        if (const CItem* PItem = storage->GetItem(s); PItem != nullptr && PItem->getID() == transfer.landedItemId)
+                        {
+                            *landedSlot = s;
+                            break;
+                        }
+                    }
+                }
+            }
         }
         return result;
+    }
+
+    auto tidyStacks(CCharEntity* PPawn) -> uint8
+    {
+        CItemContainer* PContainer = PPawn->getStorage(LOC_INVENTORY);
+        if (PContainer == nullptr)
+        {
+            return 0;
+        }
+
+        uint8       merges = 0;
+        const uint8 size   = PContainer->GetSize();
+        for (uint8 slotId = 1; slotId <= size; ++slotId)
+        {
+            const CItem* PItem = PContainer->GetItem(slotId);
+            if (PItem == nullptr || PItem->isBusy() || PItem->getQuantity() >= PItem->getStackSize())
+            {
+                continue;
+            }
+            for (uint8 slotId2 = slotId + 1; slotId2 <= size; ++slotId2)
+            {
+                const CItem* PItem2 = PContainer->GetItem(slotId2);
+                if (PItem2 == nullptr || PItem2->getID() != PItem->getID() || PItem2->isBusy() || PItem2->getQuantity() >= PItem2->getStackSize())
+                {
+                    continue;
+                }
+
+                const uint32 totalQty = PItem->getQuantity() + PItem2->getQuantity();
+                const uint32 moveQty  = totalQty >= PItem->getStackSize() ? PItem->getStackSize() - PItem->getQuantity() : PItem2->getQuantity();
+                if (moveQty == 0)
+                {
+                    continue;
+                }
+
+                // One transaction per pair, so a stack merged away is released
+                // before the next pass
+                const auto containerId = static_cast<uint8>(PContainer->GetID());
+                auto       transaction = ItemClaimTransaction::start(PPawn);
+                if (!transaction || !transaction->claimSlot(containerId, slotId) || !transaction->claimSlot(containerId, slotId2))
+                {
+                    continue;
+                }
+                if (!transaction->moveBetween(containerId, slotId2, containerId, slotId, moveQty) || !transaction->commit())
+                {
+                    ShowErrorFmt("pawn: {} could not merge stacks in slots {} and {}", PPawn->getName(), slotId, slotId2);
+                    continue;
+                }
+                ++merges;
+
+                // The destination as it stands after the commit, not the
+                // pointer from before it
+                PItem = PContainer->GetItem(slotId);
+                if (PItem == nullptr || PItem->getQuantity() >= PItem->getStackSize())
+                {
+                    break;
+                }
+            }
+        }
+        return merges;
     }
 
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
