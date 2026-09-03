@@ -80,6 +80,7 @@ public:
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, closing at once
+    auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
     // by pawn::Behavior. Cleared at the start of every think; the first row,

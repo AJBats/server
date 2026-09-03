@@ -143,6 +143,23 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
 }
 
+auto CPawnController::HatedByAnyMob() const -> bool
+{
+    bool        hated = false;
+    const float reach = settings::get<float>("pawn.HUNT_LEASH");
+    POwner->loc.zone->ForEachMob([&](CMobEntity* PMob)
+                                 {
+                                     if (hated || !PMob->isAlive() || !isWithinDistance(POwner->loc.p, PMob->loc.p, reach))
+                                     {
+                                         return;
+                                     }
+                                     const auto* enmityList = PMob->PEnmityContainer->GetEnmityList();
+                                     const auto  it         = enmityList->find(POwner->id);
+                                     hated                  = it != enmityList->end() && it->second.active;
+                                 });
+    return hated;
+}
+
 auto CPawnController::FormationSlot() const -> pawn::Slot
 {
     return static_cast<pawn::Slot>(Behavior(pawn::Behavior::Formation).value_or(static_cast<uint16>(pawn::Slot::Follow)));
@@ -1079,9 +1096,14 @@ auto CPawnController::PlayerAnchor(const CCharEntity* PPlayer, const float predi
 void CPawnController::RampCatchUp(const bool playerMoving, const position_t& point)
 {
     const float normalSpeed = settings::get<float>("pawn.PAWN_SPEED");
-    const float wanted      = cardian::formation::catchUpSpeed(distance(POwner->loc.p, point), playerMoving, normalSpeed,
+    float       wanted      = cardian::formation::catchUpSpeed(distance(POwner->loc.p, point), playerMoving, normalSpeed,
                                                                settings::get<float>("pawn.FORMATION_CATCHUP_SPEED"),
                                                                settings::get<float>("pawn.FORMATION_CATCHUP_DISTANCE"));
+    // Never a step faster than the player while a mob holds hate on her
+    if (wanted > normalSpeed && HatedByAnyMob())
+    {
+        wanted = normalSpeed;
+    }
 
     const auto wantedSpeed = static_cast<uint8>(std::lround(wanted));
     if (wantedSpeed != POwner->baseSpeed)

@@ -93,10 +93,14 @@ xi.settings.pawn =
     -- Catch-up: the lead runs at CATCHUP_SPEED while more than
     -- CATCHUP_DISTANCE yalms from its point, PAWN_SPEED otherwise. It only
     -- ever closes a gap to a point the player defines, so it nets out no
-    -- faster than the player. map.SPEED_LIMIT must be at least the
-    -- catch-up speed or the clamp eats it (see the local overrides).
+    -- faster than the player -- and it is a hair above run speed, not a
+    -- sprint: enough to stay ahead of the predicted spot, never enough to
+    -- whip around. A cardian never speeds up at all while a mob holds
+    -- hate on her (she would be a kiting exploit otherwise).
+    -- map.SPEED_LIMIT must be at least the catch-up speed or the clamp
+    -- eats it (see the local overrides).
     FORMATION_CATCHUP_DISTANCE = 3.0,
-    FORMATION_CATCHUP_SPEED    = 135,
+    FORMATION_CATCHUP_SPEED    = 118,
 
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
     -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
