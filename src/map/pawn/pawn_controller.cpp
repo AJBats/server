@@ -143,6 +143,39 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
 }
 
+// A cardian cannot talk to the gate guard, so she takes Signet from the
+// player: whenever the player has it and she does not (or hers is the
+// shorter), she gets it for the player's remaining time. Conquest points,
+// crystals and the Easy Prey bonus then land on her as they do on him.
+void CPawnController::ShareSignet(CCharEntity* PPlayer)
+{
+    if (PPlayer == nullptr)
+    {
+        return;
+    }
+    const auto* theirs = PPlayer->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Signet);
+    if (theirs == nullptr)
+    {
+        return;
+    }
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(theirs->GetStartTime() + theirs->GetDuration() - timer::now());
+    if (remaining < 60s)
+    {
+        return;
+    }
+    if (const auto* mine = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Signet); mine != nullptr)
+    {
+        const auto left = mine->GetStartTime() + mine->GetDuration() - timer::now();
+        if (left + 60s >= remaining)
+        {
+            return;
+        }
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Signet);
+    }
+    POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, remaining);
+    ShowInfoFmt("pawn: {} takes Signet with {} ({} min left)", POwner->getName(), PPlayer->getName(), remaining.count() / 60000);
+}
+
 auto CPawnController::HatedByAnyMob() const -> bool
 {
     bool        hated = false;
@@ -426,6 +459,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    ShareSignet(PPlayer);
     m_Gambits->TickBehaviors();
 
     if (auto* PTarget = PartyEngageTarget(PPlayer); PTarget != nullptr)
