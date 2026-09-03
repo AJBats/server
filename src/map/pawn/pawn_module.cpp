@@ -587,14 +587,62 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
-            // The hunter also takes the lead slot (a Formation row): one command
-            const bool ok = pawn::setHunting(PPawn, on) &&
-                            pawn::setBehaviorRow(PPawn, pawn::Behavior::Formation, static_cast<uint16>(on ? pawn::Slot::Lead : pawn::Slot::Follow));
-            if (ok)
+            // A flag, never a gambit row: the lead slot is the list's call
+            return pawn::setHunting(PPawn, on) ? "" : "no controller";
+        };
+
+        // The party strategy channel: orders live on the player and every
+        // cardian of theirs follows them
+        lua["CBaseEntity"]["cardianOrders"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
             {
-                pawn::saveGambits(PPawn);
+                return sol::lua_nil;
             }
-            return ok ? "" : "no controller";
+            auto result        = ::lua.create_table();
+            result["strategy"] = pawn::strategyOf(PChar->id);
+            result["retreat"]  = pawn::isRetreating(PChar->id);
+            auto names         = ::lua.create_table();
+            for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
+            {
+                names.add(std::string(pawn::strategyName(i)));
+            }
+            result["names"] = names;
+            return result;
+        };
+        lua["CBaseEntity"]["cardianSetStrategy"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 strategy) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            if (strategy >= pawn::kStrategyCount)
+            {
+                return "no such strategy";
+            }
+            pawn::setStrategy(PChar, strategy);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            pawn::setRetreat(PChar, on);
+            return "";
+        };
+        lua["CBaseEntity"]["cardianEngage"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 targid) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            return pawn::partyEngage(PChar, targid);
         };
 
         lua["CBaseEntity"]["cardianAvoid"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string

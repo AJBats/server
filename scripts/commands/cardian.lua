@@ -32,6 +32,11 @@
 --       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
 --       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
 --                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
+--       orders                           the party's orders (st <strategy> <retreat> <name;name>)
+--       strategy next|<n>                the party strategy (0 Off, 1 Roam); every cardian follows
+--       retreat [on|off]                 the "on me" switch, no arg toggles: disengage, engage nobody,
+--                                        avoid nothing, hunting pauses, until it clears
+--       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the job's default rows
 -----------------------------------
@@ -233,6 +238,16 @@ local function sendVocab(player, name)
     reply(player, '#cd gv.e ' .. name)
 end
 
+-- The party's orders, one line: 'st <strategy> <retreat> <name;name...>'
+local function sendOrders(player)
+    local o = player:cardianOrders()
+    if o == nil then
+        reply(player, '#cd err orders no character')
+        return
+    end
+    reply(player, string.format('#cd st %d %d %s', o.strategy, o.retreat and 1 or 0, table.concat(o.names, ';')))
+end
+
 -- A gambit edit: the reply is ok or err, then the authoritative rows either way
 local function gambitEdit(player, name, verb, err)
     if err ~= '' then
@@ -292,6 +307,35 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err despawn not one of yours, or not out')
         end
         sendList(player)
+    elseif verb == 'orders' then
+        sendOrders(player)
+    elseif verb == 'strategy' and args[2] then
+        local o    = player:cardianOrders()
+        local want = args[2] == 'next' and ((o.strategy + 1) % #o.names) or tonumber(args[2])
+        local err  = want ~= nil and player:cardianSetStrategy(want) or 'usage: strategy next|<n>'
+        if err == '' then
+            reply(player, '#cd ok strategy')
+        else
+            reply(player, '#cd err strategy ' .. err)
+        end
+        sendOrders(player)
+    elseif verb == 'retreat' then
+        local o   = player:cardianOrders()
+        local on  = (args[2] == nil and not o.retreat) or args[2] == 'on'
+        local err = player:cardianRetreat(on)
+        if err == '' then
+            reply(player, '#cd ok retreat')
+        else
+            reply(player, '#cd err retreat ' .. err)
+        end
+        sendOrders(player)
+    elseif verb == 'engage' and args[2] then
+        local err = player:cardianEngage(tonumber(args[2]) or 0)
+        if err == '' then
+            reply(player, '#cd ok engage')
+        else
+            reply(player, '#cd err engage ' .. err)
+        end
     elseif verb == 'gmaster' and name and args[3] then
         gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then

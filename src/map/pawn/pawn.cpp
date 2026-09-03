@@ -37,6 +37,7 @@
 #include "ai/controllers/player_controller.h"
 #include "ai/helpers/pathfind.h"
 #include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "status_effect_container.h"
 #include "map_session.h"
 #include "navmesh/navmesh.h"
@@ -83,6 +84,14 @@ namespace
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
+
+    // player charid -> the party's orders (the strategy channel)
+    struct PartyOrders
+    {
+        uint16 strategy = 0;
+        bool   retreat  = false;
+    };
+    std::unordered_map<uint32, PartyOrders> ordersByOwner;
 
     // pawn charid -> ordered travel destination
     std::unordered_map<uint32, xi::ZoneId> travelOrders;
@@ -415,8 +424,125 @@ namespace pawn
 
     auto partyStrategy(const CCharEntity* PPawn) -> uint16
     {
-        (void)PPawn;
-        return 0;
+        return PPawn != nullptr ? strategyOf(summonerOf(PPawn->id)) : 0;
+    }
+
+    auto strategyName(const uint16 strategy) -> std::string_view
+    {
+        static constexpr std::array<std::string_view, kStrategyCount> names{ "Off", "Roam" };
+        return strategy < names.size() ? names[strategy] : std::string_view("?");
+    }
+
+    auto strategyOf(const uint32 ownerCharID) -> uint16
+    {
+        const auto it = ordersByOwner.find(ownerCharID);
+        return it != ordersByOwner.end() ? it->second.strategy : 0;
+    }
+
+    auto isRetreating(const uint32 ownerCharID) -> bool
+    {
+        const auto it = ordersByOwner.find(ownerCharID);
+        return it != ordersByOwner.end() && it->second.retreat;
+    }
+
+    namespace
+    {
+        // The owner's orders reach every cardian of theirs that is out.
+        // Orders are the other channel: they set controller flags and never
+        // touch a gambit row -- who leads, who avoids, stays the list's call
+        void applyOrders(const uint32 ownerCharID)
+        {
+            const auto orders = ordersByOwner[ownerCharID];
+            const bool hunt   = orders.strategy == 1 && !orders.retreat;
+            for (auto& [charid, PPawn] : pawns)
+            {
+                if (summonerOf(charid) != ownerCharID)
+                {
+                    continue;
+                }
+                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+                {
+                    PController->SetRetreat(orders.retreat);
+                    PController->SetHunting(hunt);
+                }
+            }
+        }
+    } // namespace
+
+    void setStrategy(CCharEntity* POwner, const uint16 strategy)
+    {
+        if (POwner == nullptr || strategy >= kStrategyCount)
+        {
+            return;
+        }
+        auto& orders = ordersByOwner[POwner->id];
+        if (orders.strategy != strategy)
+        {
+            ShowInfoFmt("pawn: {} sets the party strategy to {}", POwner->getName(), strategyName(strategy));
+        }
+        orders.strategy = strategy;
+        applyOrders(POwner->id);
+    }
+
+    void setRetreat(CCharEntity* POwner, const bool on)
+    {
+        if (POwner == nullptr)
+        {
+            return;
+        }
+        auto& orders = ordersByOwner[POwner->id];
+        if (orders.retreat != on)
+        {
+            ShowInfoFmt("pawn: {} calls retreat {}", POwner->getName(), on ? "on" : "off");
+        }
+        orders.retreat = on;
+        applyOrders(POwner->id);
+    }
+
+    auto partyEngage(CCharEntity* POwner, const uint16 targid) -> std::string
+    {
+        if (POwner == nullptr || POwner->loc.zone == nullptr)
+        {
+            return "no zone";
+        }
+        if (targid == 0)
+        {
+            return "no target";
+        }
+        if (isRetreating(POwner->id))
+        {
+            return "retreating";
+        }
+        auto* PEntity = POwner->loc.zone->GetEntity(targid, TYPE_MOB | TYPE_PC);
+        if (PEntity == nullptr)
+        {
+            return "no target";
+        }
+        if (auto* PChar = dynamic_cast<CCharEntity*>(PEntity); PChar != nullptr)
+        {
+            return isPawn(PChar) ? "talk comes later" : "that is a player";
+        }
+        auto* PMob = dynamic_cast<CMobEntity*>(PEntity);
+        if (PMob == nullptr || PMob->isDead())
+        {
+            return "no target";
+        }
+
+        uint32 sent = 0;
+        for (auto& [charid, PPawn] : pawns)
+        {
+            if (summonerOf(charid) != POwner->id || PPawn->loc.zone != POwner->loc.zone || PPawn->isDead())
+            {
+                continue;
+            }
+            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+            {
+                PController->EngageOn(PMob);
+                ++sent;
+            }
+        }
+        ShowInfoFmt("pawn: {} sends {} cardian(s) at {}", POwner->getName(), sent, PMob->getName());
+        return sent > 0 ? "" : "no cardians out";
     }
 
     bool homePoint(CCharEntity* PPawn)

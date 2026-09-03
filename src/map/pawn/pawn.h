@@ -92,6 +92,22 @@ namespace pawn
     // The party strategy channel (RESEARCH §8): not built, always 0
     auto partyStrategy(const CCharEntity* PPawn) -> uint16;
 
+    // The party strategy channel (M3.9): one set of orders per player, read
+    // by every cardian of theirs. Strategy 0 = Off, 1 = Roam (the hunters
+    // pull). Retreat is the "on me" switch over it: nobody engages, nobody
+    // avoids aggro, hunting pauses, until it clears. Orders live in memory;
+    // a map restart starts everyone at Off.
+    constexpr uint16 kStrategyCount = 2;
+    auto strategyName(uint16 strategy) -> std::string_view;
+    auto strategyOf(uint32 ownerCharID) -> uint16;
+    auto isRetreating(uint32 ownerCharID) -> bool;
+    void setStrategy(CCharEntity* POwner, uint16 strategy);
+    void setRetreat(CCharEntity* POwner, bool on);
+
+    // Every cardian of the owner's in the zone fights the entity with this
+    // targid. "" when they go; otherwise why not, as the player reads it.
+    auto partyEngage(CCharEntity* POwner, uint16 targid) -> std::string;
+
 
     // A dead pawn home points: revived the way a home point revives a
     // player (full HP/MP, no weakness) and moved to its home point -- which

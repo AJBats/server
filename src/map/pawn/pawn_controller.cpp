@@ -91,6 +91,41 @@ auto CPawnController::IsHunting() const -> bool
     return m_Hunting;
 }
 
+void CPawnController::SetRetreat(const bool on)
+{
+    if (m_Retreat != on)
+    {
+        ShowInfoFmt("pawn: {} retreat {}", POwner->getName(), on ? "on" : "off");
+        if (on && POwner->PAI->IsEngaged())
+        {
+            POwner->PAI->Internal_Disengage();
+        }
+    }
+    m_Retreat = on;
+}
+
+auto CPawnController::IsRetreating() const -> bool
+{
+    return m_Retreat;
+}
+
+void CPawnController::EngageOn(CMobEntity* PMob)
+{
+    if (PMob == nullptr || PMob->isDead())
+    {
+        return;
+    }
+    POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+    if (POwner->PAI->IsEngaged())
+    {
+        POwner->PAI->Internal_ChangeTarget(EntityId(PMob));
+    }
+    else
+    {
+        POwner->PAI->Internal_Engage(EntityId(PMob));
+    }
+}
+
 auto CPawnController::FormationSlot() const -> pawn::Slot
 {
     return static_cast<pawn::Slot>(Behavior(pawn::Behavior::Formation).value_or(static_cast<uint16>(pawn::Slot::Follow)));
@@ -98,7 +133,7 @@ auto CPawnController::FormationSlot() const -> pawn::Slot
 
 auto CPawnController::IsAvoidingAggro() const -> bool
 {
-    return Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
+    return !m_Retreat && Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
 }
 
 auto CPawnController::RestsWithPlayer() const -> bool
@@ -739,6 +774,12 @@ auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* P
 
 auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEntity*
 {
+    // Retreat: the party's fight is nobody's, whoever swings or aggroes
+    if (m_Retreat)
+    {
+        return nullptr;
+    }
+
     // The player's engagement comes first and keeps the retail trust
     // convention: a melee swing (or the TrustEngageType charvar) signals
     // the intent to commit the party

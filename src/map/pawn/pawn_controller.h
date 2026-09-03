@@ -77,6 +77,9 @@ public:
     // channel exists (RESEARCH §8)
     void SetHunting(bool on);
     auto IsHunting() const -> bool;
+    void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
+    auto IsRetreating() const -> bool;
+    void EngageOn(CMobEntity* PMob);        // the player's order: fight this, closing at once
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
     // by pawn::Behavior. Cleared at the start of every think; the first row,
@@ -220,6 +223,7 @@ private:
     xi::ZoneId                        m_TravelHopZone{};
 
     bool              m_Hunting    = false;
+    bool              m_Retreat    = false;
     bool              m_WasEngaged = false;
     timer::time_point m_LastHuntCheckTime;
     bool              m_HasLeadPoint = false;
