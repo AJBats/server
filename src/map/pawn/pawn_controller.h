@@ -225,6 +225,7 @@ private:
     bool              m_Hunting    = false;
     bool              m_Retreat    = false;
     bool              m_WasEngaged = false;
+    bool              m_HoldForPlayer = false; // drawn on the player's word: no closing until they strike
     timer::time_point m_LastHuntCheckTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};

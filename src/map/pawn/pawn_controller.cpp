@@ -91,6 +91,22 @@ auto CPawnController::IsHunting() const -> bool
     return m_Hunting;
 }
 
+namespace
+{
+    // The player has struck: an active enmity entry of theirs on the mob
+    auto playerHasEnmity(const CCharEntity* PPlayer, const CBattleEntity* PTarget) -> bool
+    {
+        const auto* PMob = dynamic_cast<const CMobEntity*>(PTarget);
+        if (PPlayer == nullptr || PMob == nullptr)
+        {
+            return false;
+        }
+        const auto* enmityList = PMob->PEnmityContainer->GetEnmityList();
+        const auto  it         = enmityList->find(PPlayer->id);
+        return it != enmityList->end() && it->second.active && (it->second.CE + it->second.VE) > 0;
+    }
+} // namespace
+
 void CPawnController::SetRetreat(const bool on)
 {
     if (m_Retreat != on)
@@ -115,6 +131,7 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     {
         return;
     }
+    m_HoldForPlayer = false;
     POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
     if (POwner->PAI->IsEngaged())
     {
@@ -300,6 +317,12 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // The hold ends the moment the player has struck or the mob has come
+    if (m_HoldForPlayer && (playerHasEnmity(PPlayer, PTarget) || PTarget->PAI->IsEngaged()))
+    {
+        m_HoldForPlayer = false;
+    }
+
     auto avoidAction = AvoidAction::None;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
@@ -340,9 +363,11 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         }
         else
         {
-            // Melee archetype: continually reposition into attack range
+            // Melee archetype: continually reposition into attack range --
+            // unless holding for the player's strike (one already in range
+            // may swing)
             std::unique_ptr<CBasicPacket> err;
-            if (!POwner->CanAttack(PTarget, err) && distance(POwner->loc.p, PTarget->loc.p) > RoamDistance)
+            if (!m_HoldForPlayer && !POwner->CanAttack(PTarget, err) && distance(POwner->loc.p, PTarget->loc.p) > RoamDistance)
             {
                 PathToward(PTarget->loc.p, RoamDistance);
             }
@@ -392,6 +417,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     if (auto* PTarget = PartyEngageTarget(PPlayer); PTarget != nullptr)
     {
+        // Drawn on the player's word alone: hold until they strike, or the
+        // mob comes to us. A pull, an answer to aggro, or an order closes.
+        m_HoldForPlayer = PPlayer->PAI->IsEngaged() && PTarget == PPlayer->GetBattleTarget() &&
+                          !playerHasEnmity(PPlayer, PTarget) && !PTarget->PAI->IsEngaged();
+        if (m_HoldForPlayer)
+        {
+            ShowInfoFmt("pawn: {} draws on {} (holding for {}'s strike)", POwner->getName(), PTarget->getName(), PPlayer->getName());
+        }
         POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
         POwner->PAI->Internal_Engage(EntityId(PTarget));
         co_return;
@@ -426,6 +459,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             {
                 ShowInfoFmt("pawn: {} pulls {} ({})", POwner->getName(), PMob->getName(),
                             magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)));
+                m_HoldForPlayer = false;
                 POwner->PAI->Internal_Engage(EntityId(PMob));
                 co_return;
             }
@@ -780,17 +814,15 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
         return nullptr;
     }
 
-    // The player's engagement comes first and keeps the retail trust
-    // convention: a melee swing (or the TrustEngageType charvar) signals
-    // the intent to commit the party
-    if (PPlayer != nullptr && PPlayer->PAI->IsEngaged() && PPlayer->GetBattleTarget() != nullptr)
+    // The player's engagement comes first: a weapon drawn on a mob commits
+    // the party. The cardians draw too, and hold their ground until the
+    // player has struck or the mob comes to them (m_HoldForPlayer, set
+    // where they engage)
+    if (PPlayer != nullptr && PPlayer->PAI->IsEngaged())
     {
-        auto*      playerController = dynamic_cast<CPlayerController*>(PPlayer->PAI->GetController());
-        const bool playerMeleeSwing = playerController != nullptr && playerController->getLastAttackTime() > timer::now() - 1s;
-
-        if (charutils::GetCharVar(PPlayer, "TrustEngageType") == 1 || playerMeleeSwing)
+        if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget()); PMob != nullptr && !PMob->isDead())
         {
-            return PPlayer->GetBattleTarget();
+            return PMob;
         }
     }
 
