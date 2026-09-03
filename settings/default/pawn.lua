@@ -45,16 +45,11 @@ xi.settings.pawn =
     -- the party's anchor -- walk away and the pulling stops.
     HUNT_RADIUS = 30,
 
-    -- Yalms from the player beyond which an engaged pawn breaks off and
-    -- comes home (runaway-train guard).
+    -- How far around a cardian the party's aggro is answered and hate on
+    -- her is noticed (yalms). Not a leash: a fight is never broken off by
+    -- distance -- retreat is how the player calls the party back.
     HUNT_LEASH = 50,
 
-    -- The party is "ready" for the next pull when everyone is above
-    -- these thresholds (percent; MP applies only to characters with MP)
-    -- and the post-fight breather has passed.
-    HUNT_READY_HPP    = 75,
-    HUNT_READY_MPP    = 50,
-    HUNT_DOWNTIME_MS  = 6000,
 
     -- Formation: the hunter leads, holding a point this many yalms ahead
     -- of the player along their facing; the point is re-aimed only when
@@ -137,10 +132,11 @@ xi.settings.pawn =
     AVOID_ITCH_TOLERANCE = 3.0,
     AVOID_ITCH_PATIENCE  = 20,
 
-    -- Clean pulls: the hunter skips a target
-    -- with another aggressive mob within HUNT_CLEAN_RADIUS yalms of it, or
-    -- with a danger circle across the approach. Link-aware pulls (same-
-    -- family linking mobs, aggressive or not) are a later refinement.
+    -- Company around a pull is the party's call (the Party page: aggressive
+    -- company and linking company, saved per player in cardian_orders).
+    -- CLEAN_PULLS is only the default for a player with no row yet: true
+    -- avoids both. CLEAN_RADIUS is the link distance: a linking family
+    -- member within it makes a target unclean when links are avoided.
     HUNT_CLEAN_PULLS  = true,
     HUNT_CLEAN_RADIUS = 10,
 

@@ -51,6 +51,7 @@
 #include <bcrypt/BCrypt.hpp>
 
 #include <algorithm>
+#include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
 #include <unordered_map>
@@ -85,13 +86,40 @@ namespace
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
 
-    // player charid -> the party's orders (the strategy channel)
+    // player charid -> the party's orders (the strategy channel). The hunt
+    // rules load from cardian_orders on first use; strategy and retreat
+    // are the session's
     struct PartyOrders
     {
-        uint16 strategy = 0;
-        bool   retreat  = false;
+        uint16          strategy = 0;
+        bool            retreat  = false;
+        pawn::HuntRules rules;
+        bool            loaded = false;
     };
     std::unordered_map<uint32, PartyOrders> ordersByOwner;
+
+    auto ordersFor(const uint32 ownerCharID) -> PartyOrders&
+    {
+        auto& o = ordersByOwner[ownerCharID];
+        if (!o.loaded)
+        {
+            o.loaded           = true;
+            o.rules.minCheck   = settings::get<uint8>("pawn.HUNT_CHECK_MIN");
+            o.rules.maxCheck   = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
+            o.rules.aggressive = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
+            o.rules.links      = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
+            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links FROM cardian_orders WHERE charid = ?", ownerCharID);
+            if (rset && rset->next())
+            {
+                o.rules.minCheck   = rset->get<uint8>("hunt_min");
+                o.rules.maxCheck   = rset->get<uint8>("hunt_max");
+                o.rules.pullFirst  = rset->get<uint8>("pull_first");
+                o.rules.aggressive = rset->get<uint8>("aggressive") != 0;
+                o.rules.links      = rset->get<uint8>("links") != 0;
+            }
+        }
+        return o;
+    }
 
     // pawn charid -> ordered travel destination
     std::unordered_map<uint32, xi::ZoneId> travelOrders;
@@ -499,6 +527,67 @@ namespace pawn
         applyOrders(POwner->id);
     }
 
+    auto huntRulesOf(const uint32 ownerCharID) -> HuntRules
+    {
+        return ordersFor(ownerCharID).rules;
+    }
+
+    auto setHuntRule(CCharEntity* POwner, const std::string_view field, const int value) -> std::string
+    {
+        if (POwner == nullptr)
+        {
+            return "no character";
+        }
+        auto&          o     = ordersFor(POwner->id);
+        auto&          r     = o.rules;
+        constexpr int  top   = static_cast<int>(EMobDifficulty::MAX) - 1;
+        const auto     check = [&](const int v, const int lo, const int hi) { return v >= lo && v <= hi; };
+        if (field == "min" && check(value, 0, top))
+        {
+            r.minCheck = static_cast<uint8>(value);
+            r.maxCheck = std::max(r.maxCheck, r.minCheck);
+        }
+        else if (field == "max" && check(value, 0, top))
+        {
+            r.maxCheck = static_cast<uint8>(value);
+            r.minCheck = std::min(r.minCheck, r.maxCheck);
+        }
+        else if (field == "pull" && check(value, 0, static_cast<int>(kPullFirstNames.size()) - 1))
+        {
+            r.pullFirst = static_cast<uint8>(value);
+        }
+        else if (field == "aggressive" && check(value, 0, 1))
+        {
+            r.aggressive = value != 0;
+        }
+        else if (field == "links" && check(value, 0, 1))
+        {
+            r.links = value != 0;
+        }
+        else
+        {
+            return "no such rule or value";
+        }
+        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links) VALUES (?, ?, ?, ?, ?, ?) "
+                         "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
+                         "aggressive = VALUES(aggressive), links = VALUES(links)",
+                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0);
+        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}", POwner->getName(),
+                    magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
+                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided");
+        return "";
+    }
+
+    auto isUnderground(const CMobEntity* PMob) -> bool
+    {
+        if (PMob == nullptr)
+        {
+            return false;
+        }
+        const bool worm = (PMob->m_roamFlags & xi::RoamFlag::Worm) != xi::RoamFlag::None;
+        return PMob->GetUntargetable() || (worm && PMob->IsNameHidden());
+    }
+
     auto partyEngage(CCharEntity* POwner, const uint16 targid) -> std::string
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr)
@@ -526,6 +615,10 @@ namespace pawn
         if (PMob == nullptr || PMob->isDead())
         {
             return "no target";
+        }
+        if (isUnderground(PMob))
+        {
+            return "underground";
         }
 
         uint32 sent = 0;

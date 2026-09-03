@@ -42,3 +42,4 @@ custom/lua/test_npcs_in_gm_home.lua
 # CARDIAN: pawn module (schema)
 cardian/sql/cardian_pawns.sql
 cardian/sql/cardian_gambits.sql
+cardian/sql/cardian_orders.sql

@@ -590,10 +590,16 @@ class PawnModule : public CPPModule
             {
                 return sol::lua_nil;
             }
-            auto result        = ::lua.create_table();
-            result["strategy"] = pawn::strategyOf(PChar->id);
-            result["retreat"]  = pawn::isRetreating(PChar->id);
-            auto names         = ::lua.create_table();
+            const auto rules     = pawn::huntRulesOf(PChar->id);
+            auto       result    = ::lua.create_table();
+            result["strategy"]   = pawn::strategyOf(PChar->id);
+            result["retreat"]    = pawn::isRetreating(PChar->id);
+            result["hunt_min"]   = rules.minCheck;
+            result["hunt_max"]   = rules.maxCheck;
+            result["pull_first"] = rules.pullFirst;
+            result["aggressive"] = rules.aggressive;
+            result["links"]      = rules.links;
+            auto names           = ::lua.create_table();
             for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
             {
                 names.add(std::string(pawn::strategyName(i)));
@@ -614,6 +620,15 @@ class PawnModule : public CPPModule
             }
             pawn::setStrategy(PChar, strategy);
             return "";
+        };
+        lua["CBaseEntity"]["cardianSetHunt"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& field, const int value) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            return pawn::setHuntRule(PChar, field, value);
         };
         lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
         {

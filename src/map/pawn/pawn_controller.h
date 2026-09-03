@@ -203,7 +203,7 @@ private:
 
     // Everyone in this zone's party above the hunt thresholds and the
     // post-fight breather elapsed
-    auto HuntReady(const CCharEntity* PPlayer) const -> bool;
+    auto HuntBlocker(const CCharEntity* PPlayer) const -> std::string; // "" when the hunt may pull; otherwise what holds it
 
     // The nearest idle, non-special mob in the difficulty band within
     // HUNT_RADIUS of the player
@@ -216,7 +216,6 @@ private:
     std::unique_ptr<pawn::CGambits> m_Gambits;
     bool                            m_BrainLoaded = false;
 
-    timer::time_point                 m_CombatEndTime;
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
     timer::time_point                 m_TravelProgressTime;
@@ -225,7 +224,6 @@ private:
 
     bool              m_Hunting    = false;
     bool              m_Retreat    = false;
-    bool              m_WasEngaged = false;
     bool              m_HoldForPlayer = false; // drawn on the player's word: no closing until they strike
     timer::time_point m_LastHuntCheckTime;
     timer::time_point m_LastHuntLogTime;

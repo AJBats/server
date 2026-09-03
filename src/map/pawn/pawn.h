@@ -22,6 +22,8 @@
 #pragma once
 
 #include "pawn_travel.h"
+#include <array>
+#include <string_view>
 
 #include "common/cbasetypes.h"
 
@@ -32,6 +34,7 @@
 #include <vector>
 
 class CCharEntity;
+class CMobEntity;
 class CZone;
 
 // Cardian pawns: session-less CCharEntity instances loaded from real DB
@@ -107,6 +110,30 @@ namespace pawn
     // Every cardian of the owner's in the zone fights the entity with this
     // targid. "" when they go; otherwise why not, as the player reads it.
     auto partyEngage(CCharEntity* POwner, uint16 targid) -> std::string;
+
+    // A mob nobody can hit right now: a worm underground (the game's own
+    // test -- the worm roam flag with its name hidden), or anything the
+    // server flags untargetable. Never pulled, never sent at, let go of.
+    auto isUnderground(const CMobEntity* PMob) -> bool;
+
+    // What the hunters pull -- the strategy's rules, per player, saved in
+    // cardian_orders: the check band (EMobDifficulty), which end of it
+    // first, and what company around a target is fair. The settings'
+    // HUNT_CHECK_MIN/MAX and HUNT_CLEAN_PULLS are the defaults for a player
+    // with no row yet.
+    struct HuntRules
+    {
+        uint8 minCheck   = 3;
+        uint8 maxCheck   = 5;
+        uint8 pullFirst  = 1;     // 0 nearest, 1 easiest, 2 toughest
+        bool  aggressive = false; // prey inside an aggressive mob's circle: allowed = that mob (the guard) is the pull, avoided = skipped, and no circle across the approach
+        bool  links      = false; // pull with a linking family member near the target
+    };
+    constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
+    auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
+    // field: min | max | pull | aggressive | links. "" or the reason not.
+    // A band end pushed past the other drags it along.
+    auto setHuntRule(CCharEntity* POwner, std::string_view field, int value) -> std::string;
 
 
     // A dead pawn home points: revived the way a home point revives a

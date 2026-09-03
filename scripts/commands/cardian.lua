@@ -32,7 +32,10 @@
 --       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
 --       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
 --                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
---       orders                           the party's orders (st <strategy> <retreat> <name;name>)
+--       orders                           the party's orders: st <strategy> <retreat> <min> <max> <pull>
+--                                        <aggressive> <links> <name;name>
+--       hunt <rule> <n>                  a hunt rule: min|max (check 0 Too Weak .. 7 Incredibly Tough),
+--                                        pull (0 nearest, 1 easiest, 2 toughest), aggressive|links (0/1)
 --       strategy next|<n>                the party strategy (0 Off, 1 Roam); every cardian follows
 --       retreat [on|off]                 the "on me" switch, no arg toggles: disengage, engage nobody,
 --                                        avoid nothing, hunting pauses, until it clears
@@ -245,7 +248,8 @@ local function sendOrders(player)
         reply(player, '#cd err orders no character')
         return
     end
-    reply(player, string.format('#cd st %d %d %s', o.strategy, o.retreat and 1 or 0, table.concat(o.names, ';')))
+    reply(player, string.format('#cd st %d %d %d %d %d %d %d %s', o.strategy, o.retreat and 1 or 0,
+                                o.hunt_min, o.hunt_max, o.pull_first, o.aggressive and 1 or 0, o.links and 1 or 0, table.concat(o.names, ';')))
 end
 
 -- A gambit edit: the reply is ok or err, then the authoritative rows either way
@@ -317,6 +321,14 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok strategy')
         else
             reply(player, '#cd err strategy ' .. err)
+        end
+        sendOrders(player)
+    elseif verb == 'hunt' and args[2] and args[3] then
+        local err = player:cardianSetHunt(args[2], tonumber(args[3]) or -1)
+        if err == '' then
+            reply(player, '#cd ok hunt')
+        else
+            reply(player, '#cd err hunt ' .. err)
         end
         sendOrders(player)
     elseif verb == 'retreat' then

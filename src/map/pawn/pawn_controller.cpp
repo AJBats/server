@@ -194,14 +194,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     m_Tick = tick;
 
-    // The post-fight breather is timed from whenever combat actually ended,
-    // however it ended (mob death, leash break, disengage)
     const bool engaged = POwner->PAI->IsEngaged();
-    if (m_WasEngaged && !engaged)
-    {
-        m_CombatEndTime = tick;
-    }
-    m_WasEngaged = engaged;
 
     if (POwner->isDead())
     {
@@ -299,21 +292,6 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // The player steers: fight what they fight, once they hold enmity on it
-    if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget());
-        PMob != nullptr && POwner->battleTarget() != PPlayer->battleTarget())
-    {
-        const auto* enmityList = PMob->PEnmityContainer->GetEnmityList();
-        if (const auto it = enmityList->find(PPlayer->id); it != enmityList->end())
-        {
-            const EnmityObject_t& entry = it->second;
-            if (entry.active && (entry.CE + entry.VE) > 0)
-            {
-                POwner->PAI->Internal_ChangeTarget(PPlayer->battleTarget());
-            }
-        }
-    }
-
     if (POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CRangeState>())
     {
         co_return;
@@ -326,10 +304,10 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Runaway-train guard: a fight that drags too far from the player is abandoned
-    if (distance(POwner->loc.p, PPlayer->loc.p) > settings::get<float>("pawn.HUNT_LEASH"))
+    // A target gone underground with no fight on is let go, not waited on
+    if (auto* PMobTarget = dynamic_cast<CMobEntity*>(PTarget); PMobTarget != nullptr && pawn::isUnderground(PMobTarget) && !PMobTarget->PAI->IsEngaged())
     {
-        ShowInfoFmt("pawn: {} breaking off {} (past the leash)", POwner->getName(), PTarget->getName());
+        ShowInfoFmt("pawn: {} lets {} go (underground)", POwner->getName(), PTarget->getName());
         POwner->PAI->Internal_Disengage();
         co_return;
     }
@@ -357,6 +335,24 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         if (IsAvoidingAggro())
         {
             avoidAction = Avoid(point, followMax, followTarget, declumpDistance, true);
+        }
+
+        // Holding at the rim only makes sense for a target that is coming
+        // (fighting someone). An idle target parked in another mob's circle
+        // is fetched when the party allows aggressive company, and let go
+        // when it does not -- never waited on
+        if (avoidAction != AvoidAction::None && !PTarget->PAI->IsEngaged())
+        {
+            if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+            {
+                avoidAction = AvoidAction::None;
+            }
+            else
+            {
+                ShowInfoFmt("pawn: {} lets {} go (idle inside another mob's circle)", POwner->getName(), PTarget->getName());
+                POwner->PAI->Internal_Disengage();
+                co_return;
+            }
         }
 
         if (avoidAction != AvoidAction::None)
@@ -470,7 +466,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     if (IsHunting() && m_Tick - m_LastHuntCheckTime > 3s)
     {
         m_LastHuntCheckTime = m_Tick;
-        if (HuntReady(PPlayer))
+        const auto blocker = HuntBlocker(PPlayer);
+        if (blocker.empty())
         {
             if (auto* PMob = PickHuntTarget(PPlayer); PMob != nullptr)
             {
@@ -485,19 +482,17 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             if (m_Tick - m_LastHuntLogTime > 15s)
             {
                 m_LastHuntLogTime = m_Tick;
-                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{})",
+                const auto rules = pawn::huntRulesOf(pawn::summonerOf(POwner->id));
+                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{}{})",
                             POwner->getName(), settings::get<float>("pawn.HUNT_RADIUS"), PPlayer->getName(), PPlayer->GetMLevel(),
-                            magic_enum::enum_name(static_cast<EMobDifficulty>(settings::get<uint8>("pawn.HUNT_CHECK_MIN"))),
-                            magic_enum::enum_name(static_cast<EMobDifficulty>(settings::get<uint8>("pawn.HUNT_CHECK_MAX"))),
-                            settings::get<bool>("pawn.HUNT_CLEAN_PULLS") ? ", clean pull" : "");
+                            magic_enum::enum_name(static_cast<EMobDifficulty>(rules.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(rules.maxCheck)),
+                            rules.aggressive ? "" : ", aggressive company avoided", rules.links ? "" : ", links avoided");
             }
         }
         else if (m_Tick - m_LastHuntLogTime > 15s)
         {
             m_LastHuntLogTime = m_Tick;
-            ShowInfoFmt("pawn: {} hunt waits (downtime {} ms, {:.0f} y from {}, resting, or the party under {}% HP / {}% MP)",
-                        POwner->getName(), settings::get<uint32>("pawn.HUNT_DOWNTIME_MS"), distance(POwner->loc.p, PPlayer->loc.p),
-                        PPlayer->getName(), settings::get<uint8>("pawn.HUNT_READY_HPP"), settings::get<uint8>("pawn.HUNT_READY_MPP"));
+            ShowInfoFmt("pawn: {} hunt waits: {}", POwner->getName(), blocker);
         }
     }
 
@@ -905,133 +900,175 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
     return attacker;
 }
 
-auto CPawnController::HuntReady(const CCharEntity* PPlayer) const -> bool
+auto CPawnController::HuntBlocker(const CCharEntity* PPlayer) const -> std::string
 {
-    if (m_Tick - m_CombatEndTime < std::chrono::milliseconds(settings::get<uint32>("pawn.HUNT_DOWNTIME_MS")))
-    {
-        return false;
-    }
-
     // Pull only from the player's side: the player drives, the hunter scouts
-    if (distance(POwner->loc.p, PPlayer->loc.p) > 10.0f || PPlayer->animation == xi::Animation::Healing)
+    if (const float away = distance(POwner->loc.p, PPlayer->loc.p); away > 10.0f)
     {
-        return false;
+        return fmt::format("{:.0f} y from {}", away, PPlayer->getName());
+    }
+    if (PPlayer->animation == xi::Animation::Healing)
+    {
+        return fmt::format("{} resting", PPlayer->getName());
     }
 
-    const auto readyHPP = settings::get<uint8>("pawn.HUNT_READY_HPP");
-    const auto readyMPP = settings::get<uint8>("pawn.HUNT_READY_MPP");
-
+    // No HP or MP gate: the player paces the party and rests it when it
+    // needs resting. A member down or still fighting is not pacing.
     const auto* PPawn = static_cast<const CCharEntity*>(POwner);
     if (PPawn->PParty == nullptr)
     {
-        return POwner->GetHPP() >= readyHPP;
+        return "";
     }
-
     for (auto* PMember : PPawn->PParty->members)
     {
         if (PMember->loc.zone != POwner->loc.zone)
         {
             continue;
         }
-        if (PMember->isDead() || PMember->PAI->IsEngaged() || PMember->GetHPP() < readyHPP ||
-            (PMember->health.maxmp > 0 && PMember->GetMPP() < readyMPP))
+        if (PMember->isDead())
         {
-            return false;
+            return fmt::format("{} down", PMember->getName());
+        }
+        if (PMember->PAI->IsEngaged())
+        {
+            return fmt::format("{} engaged", PMember->getName());
         }
     }
-    return true;
+    return "";
 }
 
 auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*
 {
-    const auto  minCheck    = settings::get<uint8>("pawn.HUNT_CHECK_MIN");
-    const auto  maxCheck    = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
+    const auto  rules       = pawn::huntRulesOf(pawn::summonerOf(POwner->id));
+    const auto  minCheck    = rules.minCheck;
+    const auto  maxCheck    = rules.maxCheck;
     const auto  radius      = settings::get<float>("pawn.HUNT_RADIUS");
     const auto  cleanRadius = settings::get<float>("pawn.HUNT_CLEAN_RADIUS");
 
     // One danger scan per hunt check, wide enough to cover every candidate's
-    // clean radius and every approach from the hunter; candidates filter it
-    const bool                        cleanPulls = settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
-    std::vector<pawn::danger::Danger> dangers;
-    if (cleanPulls)
+    // circle and every approach from the hunter. Judged for the whole party
+    // that will fight beside the target, not for the hunter's own buffs
+    const auto dangers = pawn::danger::around(POwner->loc.zone, PPlayer->loc.p, radius + std::max(cleanRadius, distance(POwner->loc.p, PPlayer->loc.p)),
+                                              pawn::danger::Profile::worstCase());
+
+    // An idle, unclaimed, ordinary field mob in the band, within the hunt
+    // radius of the player
+    const auto eligible = [&](CMobEntity* PMob) -> bool
     {
-        // Judged for the whole party that will fight beside the target, not
-        // for the hunter's own buffs and health
-        dangers = pawn::danger::around(POwner->loc.zone, PPlayer->loc.p, radius + std::max(cleanRadius, distance(POwner->loc.p, PPlayer->loc.p)),
-                                       pawn::danger::Profile::worstCase());
-    }
+        const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
+                             (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
+                             (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
+                             (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
+        if (special || PMob->PMaster != nullptr || !PMob->isAlive() || pawn::isUnderground(PMob) ||
+            PMob->PAI->IsEngaged() || PMob->allegiance != xi::Allegiance::Mob || !PMob->PEnmityContainer->GetEnmityList()->empty())
+        {
+            return false;
+        }
+        if (distance(PPlayer->loc.p, PMob->loc.p) > radius)
+        {
+            return false;
+        }
+        const auto check = static_cast<uint8>(charutils::CheckMob(PPlayer->GetMLevel(), PMob));
+        return check >= minCheck && check <= maxCheck;
+    };
+
+    // The aggressive mob whose detection circle a candidate stands in
+    const auto guardOf = [&](const CMobEntity* PMob) -> const pawn::danger::Danger*
+    {
+        for (const auto& d : dangers)
+        {
+            if (d.mob != PMob && isWithinDistance(d.mob->loc.p, PMob->loc.p, d.radius))
+            {
+                return &d;
+            }
+        }
+        return nullptr;
+    };
+
+    // A linking family member (aggressive or not) within the clean radius
+    const auto linked = [&](const CMobEntity* PMob) -> bool
+    {
+        bool found = false;
+        POwner->loc.zone->ForEachMob([&](CMobEntity* POther)
+                                     {
+                                         if (!found && POther != PMob && POther->m_Link != 0 && POther->m_Family == PMob->m_Family &&
+                                             POther->isAlive() && POther->PMaster == nullptr &&
+                                             isWithinDistance(POther->loc.p, PMob->loc.p, cleanRadius))
+                                         {
+                                             found = true;
+                                         }
+                                     });
+        return found;
+    };
+
+    // The pull order: easiest first (the lowest thing that still pays --
+    // the signet sweet spot), nearest, or toughest; distance breaks ties
+    const auto keyOf = [&](const CMobEntity* PMob) -> int
+    {
+        switch (rules.pullFirst)
+        {
+            case 1:
+                return PMob->GetMLevel();
+            case 2:
+                return -PMob->GetMLevel();
+            default:
+                return 0;
+        }
+    };
 
     CMobEntity* best     = nullptr;
     float       bestDist = radius; // the hunter's own walk is capped too
+    int         bestKey  = 0;
 
     POwner->loc.zone->ForEachMob([&](CMobEntity* PMob)
                                  {
-                                     // idle, ordinary field mobs only
-                                     const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
-                                                          (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
-                                                          (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
-                                                          (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
-                                     if (special || PMob->PMaster != nullptr || !PMob->isAlive() ||
-                                         PMob->PAI->IsEngaged() || PMob->allegiance != xi::Allegiance::Mob)
-                                     {
-                                         return;
-                                     }
-                                     if (!PMob->PEnmityContainer->GetEnmityList()->empty())
-                                     {
-                                         return;
-                                     }
-                                     if (distance(PPlayer->loc.p, PMob->loc.p) > radius)
+                                     if (!eligible(PMob))
                                      {
                                          return;
                                      }
 
-                                     const auto check = static_cast<uint8>(charutils::CheckMob(PPlayer->GetMLevel(), PMob));
-                                     if (check < minCheck || check > maxCheck)
+                                     // Prey standing in an aggressive mob's circle is not the
+                                     // pull: the guard is, when the party allows aggressive
+                                     // company and the guard is itself fair game; otherwise the
+                                     // prey is skipped. The player can still sneak behind the
+                                     // guard and pull it to the party waiting outside its circle
+                                     CMobEntity* pick = PMob;
+                                     if (const auto* guard = guardOf(PMob); guard != nullptr)
                                      {
-                                         return;
-                                     }
-
-                                     const float toHunter = distance(POwner->loc.p, PMob->loc.p);
-                                     if (toHunter >= bestDist)
-                                     {
-                                         return;
-                                     }
-
-                                     // Clean pulls: no other aggressive mob near the target, no
-                                     // danger circle across the approach, and no linking family
-                                     // member (aggressive or not) within the clean radius
-                                     for (const auto& d : dangers)
-                                     {
-                                         if (d.mob == PMob)
-                                         {
-                                             continue;
-                                         }
-                                         if (isWithinDistance(d.mob->loc.p, PMob->loc.p, cleanRadius) ||
-                                             cardian::formation::segmentCrosses(d, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z))
+                                         if (!rules.aggressive || !eligible(guard->mob))
                                          {
                                              return;
                                          }
-                                     }
-                                     if (cleanPulls && PMob->m_Link != 0)
-                                     {
-                                         bool linked = false;
-                                         POwner->loc.zone->ForEachMob([&](CMobEntity* POther)
-                                                                      {
-                                                                          if (!linked && POther != PMob && POther->m_Link != 0 && POther->m_Family == PMob->m_Family &&
-                                                                              POther->isAlive() && POther->PMaster == nullptr &&
-                                                                              isWithinDistance(POther->loc.p, PMob->loc.p, cleanRadius))
-                                                                          {
-                                                                              linked = true;
-                                                                          }
-                                                                      });
-                                         if (linked)
-                                         {
-                                             return;
-                                         }
+                                         pick = guard->mob;
                                      }
 
-                                     best     = PMob;
+                                     // Aggressive company avoided: no danger circle across the
+                                     // hunter's approach either
+                                     if (!rules.aggressive)
+                                     {
+                                         for (const auto& d : dangers)
+                                         {
+                                             if (d.mob != pick && cardian::formation::segmentCrosses(d, POwner->loc.p.x, POwner->loc.p.z, pick->loc.p.x, pick->loc.p.z))
+                                             {
+                                                 return;
+                                             }
+                                         }
+                                     }
+                                     if (!rules.links && pick->m_Link != 0 && linked(pick))
+                                     {
+                                         return;
+                                     }
+
+                                     const float toHunter = distance(POwner->loc.p, pick->loc.p);
+                                     const int   key      = keyOf(pick);
+                                     if (toHunter >= radius || (best != nullptr && (key > bestKey || (key == bestKey && toHunter >= bestDist))))
+                                     {
+                                         return;
+                                     }
+
+                                     best     = pick;
                                      bestDist = toHunter;
+                                     bestKey  = key;
                                  });
 
     return best;
@@ -1232,7 +1269,11 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
     using namespace cardian::formation;
 
     const auto* PPawn   = static_cast<const CCharEntity*>(POwner);
-    const auto  dangers = pawn::danger::around(POwner->loc.zone, POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn));
+    // Her own target is never a danger to keep out of: a freshly pulled
+    // aggressive mob is not fighting anyone yet, and its circle would hold
+    // her at the rim of the very mob she is meant to hit
+    const auto  dangers = pawn::danger::around(POwner->loc.zone, POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn),
+                                               fighting ? POwner->GetBattleTarget() : nullptr);
 
     // The margins that keep the boundary from being slippery: every point
     // she walks to is planned against the circles padded by kClearance, so
