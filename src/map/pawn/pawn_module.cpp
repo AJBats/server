@@ -176,7 +176,6 @@ namespace pawn
 
         auto& gambits = PController->Gambits();
         gambits.RemoveAllGambits();
-        gambits.SetTPSkillSettings(gambits::G_TP_TRIGGER::ASAP, gambits::G_SELECT::HIGHEST, 0);
 
         if (pawn::loadSavedGambits(PPawn))
         {
@@ -305,15 +304,6 @@ class PawnModule : public CPPModule
         {
             auto* PGambits = gambitsOf(PLuaBaseEntity);
             return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
-        };
-
-        // pawn:pawnSetTPSkillSettings(ai.tp.CLOSER_UNTIL_TP, ai.s.HIGHEST, 1500)
-        lua["CBaseEntity"]["pawnSetTPSkillSettings"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 trigger, const uint16 select, const sol::object& value) -> void
-        {
-            if (auto* PGambits = gambitsOf(PLuaBaseEntity))
-            {
-                PGambits->SetTPSkillSettings(static_cast<G_TP_TRIGGER>(trigger), static_cast<G_SELECT>(select), value.is<uint16>() ? value.as<uint16>() : 0);
-            }
         };
 
         // Cardian management surface (!cardian command / companion addon).

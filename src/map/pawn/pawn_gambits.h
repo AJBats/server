@@ -143,7 +143,6 @@ namespace pawn
         auto AddGambit(gambits::Gambit_t gambit, bool enabled = true) -> std::string;
         void RemoveGambit(const std::string& id);
         void RemoveAllGambits();
-        void SetTPSkillSettings(gambits::G_TP_TRIGGER trigger, gambits::G_SELECT select, uint16 value);
 
         // engaged == false runs the between-fights pass: no weapon skills,
         // no ranged attacks, no gambits carrying offensive reactions.
@@ -198,7 +197,6 @@ namespace pawn
         auto Execute(const gambits::Gambit_t& gambit, CBattleEntity* PTarget, bool engaged) -> bool;
         auto ExecuteAbility(const gambits::Action_t& action, CBattleEntity* PTarget, bool engaged) -> bool;
         auto ExecuteWeaponSkill(const gambits::Action_t& action, bool engaged) -> bool;
-        auto TryWeaponSkill() -> bool;
         void RefreshWeaponSkills();
         auto PartyHasHealer() const -> bool;
         auto PartyHasTank() const -> bool;
@@ -214,9 +212,6 @@ namespace pawn
         std::vector<GambitRow>             m_gambits;
         bool                               m_masterOn = true;
         std::vector<gambits::TrustSkill_t> m_tpSkills;
-        gambits::G_TP_TRIGGER              m_tpTrigger = gambits::G_TP_TRIGGER::ASAP;
-        gambits::G_SELECT                  m_tpSelect  = gambits::G_SELECT::HIGHEST;
-        uint16                             m_tpValue   = 0;
 
         HashMap<std::string, timer::time_point> m_timerConditionLastTrigger;
     };

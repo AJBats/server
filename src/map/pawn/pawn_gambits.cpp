@@ -202,13 +202,6 @@ namespace pawn
         m_timerConditionLastTrigger.clear();
     }
 
-    void CGambits::SetTPSkillSettings(const G_TP_TRIGGER trigger, const G_SELECT select, const uint16 value)
-    {
-        m_tpTrigger = trigger;
-        m_tpSelect  = select;
-        m_tpValue   = value;
-    }
-
     void CGambits::Tick(const timer::time_point tick, const bool engaged)
     {
         TracyZoneScoped;
@@ -232,13 +225,10 @@ namespace pawn
 
         m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
 
-        // The master switch: nothing of her own -- no weapon skill, no row
+        // The master switch: nothing of her own. A weapon skill, like
+        // everything else, is a row's doing -- there is no TP trigger
+        // behind the list
         if (!m_masterOn)
-        {
-            return;
-        }
-
-        if (engaged && POwner->health.tp >= 1000 && TryWeaponSkill())
         {
             return;
         }
@@ -1445,113 +1435,6 @@ namespace pawn
         }
 
         Debug("weapon skill", wsid, PTarget);
-        return true;
-    }
-
-    auto CGambits::TryWeaponSkill() -> bool
-    {
-        TracyZoneScoped;
-
-        CBattleEntity* PTarget = POwner->GetBattleTarget();
-        if (PTarget == nullptr || m_tpSkills.empty())
-        {
-            return false;
-        }
-
-        const int16 tp = POwner->health.tp;
-
-        auto triggered = [&]() -> bool
-        {
-            if (tp >= 3000)
-            {
-                return true;
-            }
-
-            switch (m_tpTrigger)
-            {
-                case G_TP_TRIGGER::ASAP:
-                    return true;
-                case G_TP_TRIGGER::RANDOM:
-                {
-                    const auto threshold = std::max<uint16>(m_tpValue, 1000);
-                    return tp >= threshold && xirand::GetRandomNumber<uint16>(10000) < threshold;
-                }
-                case G_TP_TRIGGER::OPENER:
-                {
-                    const auto threshold = std::max<uint16>(m_tpValue, 1000);
-                    bool       partnerReady = false;
-                    POwner->ForParty([&](const CBattleEntity* PMember)
-                                     {
-                                         if (PMember != POwner && PMember->health.tp >= threshold)
-                                         {
-                                             partnerReady = true;
-                                         }
-                                     });
-                    return partnerReady;
-                }
-                case G_TP_TRIGGER::CLOSER:
-                {
-                    const auto* PSCEffect = openWindow(PTarget);
-                    return PSCEffect != nullptr && PSCEffect->GetTier() == 0;
-                }
-                case G_TP_TRIGGER::CLOSER_UNTIL_TP:
-                {
-                    if (tp >= std::max<uint16>(m_tpValue, 1500))
-                    {
-                        return true;
-                    }
-                    const auto* PSCEffect = openWindow(PTarget);
-                    return PSCEffect != nullptr && PSCEffect->GetTier() == 0;
-                }
-                default:
-                    return false;
-            }
-        };
-
-        if (!triggered())
-        {
-            return false;
-        }
-
-        Maybe<TrustSkill_t> chosen;
-
-        if (const auto* PSCEffect = PTarget->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Skillchain))
-        {
-            // A chain is open: close it with the best possible skillchain, or
-            // hold TP rather than break it
-            SKILLCHAIN_ELEMENT best      = SC_NONE;
-            const auto         resonance = resonanceOf(PSCEffect);
-            for (const auto& skill : m_tpSkills)
-            {
-                if (const auto possible = battleutils::FormSkillchain(resonance, propertiesOf(skill)); possible != SC_NONE && possible >= best)
-                {
-                    chosen = skill;
-                    best   = possible;
-                }
-            }
-        }
-        else if (m_tpSelect == G_SELECT::RANDOM)
-        {
-            chosen = xirand::GetRandomElement(m_tpSkills);
-        }
-        else
-        {
-            chosen = m_tpSkills.back();
-        }
-
-        if (!chosen.has_value())
-        {
-            return false;
-        }
-
-        CBattleEntity* PWSTarget = (chosen->valid_targets & TARGET_SELF) ? POwner : PTarget;
-        const auto     wsid      = static_cast<uint16>(chosen->skill_id);
-        if (!m_PController->WeaponSkill(PWSTarget->entityId(), wsid))
-        {
-            return false;
-        }
-
-        Debug("weapon skill", wsid, PWSTarget);
         return true;
     }
 
