@@ -79,6 +79,15 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
+
+    // Wait here / follow me. Waiting, she holds her ground: no following,
+    // hunting or travel, but she answers a mob that comes for her, keeps
+    // her gambits and fidgets. An ordered wait holds until told otherwise;
+    // an automatic one (left behind by a warp or a teleport, or carried
+    // off alone) ends when the player is back in her zone.
+    void SetWaiting(bool on, bool ordered);
+    auto IsWaiting() const -> bool;
+    void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, closing at once
     void ShareSignet(CCharEntity* PPlayer); // the gate guard's Signet, taken with the player for its remaining time
 
@@ -260,6 +269,13 @@ private:
     // member's living target -- how a hunter's pull propagates
     auto PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEntity*;
 
+    // Waiting: the tick that holds her ground (WaitTick), the mob that has
+    // come for her (SelfDefenceTarget), and the player's magic noted while
+    // they are still here (NotePlayerMagic)
+    void WaitTick(CCharEntity* PPlayer);
+    auto SelfDefenceTarget() -> CMobEntity*;
+    void NotePlayerMagic(const CCharEntity* PPlayer);
+
     // Everyone in this zone's party above the hunt thresholds and the
     // post-fight breather elapsed
     auto HuntBlocker(const CCharEntity* PPlayer) const -> std::string; // "" when the hunt may pull; otherwise what holds it
@@ -288,6 +304,9 @@ private:
 
     bool              m_Hunting    = false;
     bool              m_Retreat    = false;
+    bool              m_Waiting     = false;
+    bool              m_WaitOrdered = false;
+    timer::time_point m_PlayerMagicSeen{ timer::time_point::min() }; // the player seen mid-warp or mid-teleport, so their vanishing reads as magic
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
 
     // The mob a hunter has chosen and is walking to, weapon still away:

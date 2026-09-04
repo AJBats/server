@@ -641,6 +641,45 @@ class PawnModule : public CPPModule
             }
             return pawn::setHuntRule(PChar, field, value);
         };
+        // Wait here / follow me. Follow from another zone is a travel order
+        // to the player's: she treks the world to meet them
+        lua["CBaseEntity"]["cardianWait"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController == nullptr)
+            {
+                return "she is not herself right now";
+            }
+            PController->SetWaiting(on, true);
+            if (on)
+            {
+                pawn::clearTravelOrder(PPawn->id);
+                ShowInfoFmt("pawn: {} waits here (ordered)", PPawn->getName());
+            }
+            else if (PPawn->loc.zone != PChar->loc.zone)
+            {
+                ShowInfoFmt("pawn: {} sets out to meet {} in zone {}", PPawn->getName(), PChar->getName(), static_cast<uint16>(PChar->getZone()));
+                pawn::orderTravelByName(name, static_cast<uint16>(PChar->getZone()));
+            }
+            else
+            {
+                ShowInfoFmt("pawn: {} follows (ordered)", PPawn->getName());
+            }
+            return "";
+        };
+
+        lua["CBaseEntity"]["cardianWaiting"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr && PController->IsWaiting();
+        };
+
         lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());

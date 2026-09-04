@@ -98,6 +98,97 @@ auto CPawnController::IsHunting() const -> bool
     return m_Hunting;
 }
 
+void CPawnController::SetWaiting(const bool on, const bool ordered)
+{
+    m_Waiting     = on;
+    m_WaitOrdered = on && ordered;
+    if (on)
+    {
+        m_HuntApproach.reset();
+        m_HoldForPlayer = false;
+        if (POwner->PAI->PathFind)
+        {
+            POwner->PAI->PathFind->Clear();
+        }
+    }
+}
+
+auto CPawnController::IsWaiting() const -> bool
+{
+    return m_Waiting;
+}
+
+void CPawnController::Carried(const bool withPlayer)
+{
+    // The player's magic, seen a moment ago, was this same carry: it must
+    // not read as them leaving her behind once she lands
+    m_PlayerMagicSeen = timer::time_point::min();
+    if (withPlayer)
+    {
+        if (m_Waiting && !m_WaitOrdered)
+        {
+            SetWaiting(false, false);
+        }
+    }
+    else
+    {
+        SetWaiting(true, false);
+        ShowInfoFmt("pawn: {} will wait where she lands", POwner->getName());
+    }
+}
+
+void CPawnController::NotePlayerMagic(const CCharEntity* PPlayer)
+{
+    if (PPlayer->requestedWarp != WarpRequest::None || PPlayer->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Teleport))
+    {
+        m_PlayerMagicSeen = m_Tick;
+    }
+}
+
+auto CPawnController::SelfDefenceTarget() -> CMobEntity*
+{
+    CMobEntity* PAttacker = nullptr;
+    const auto  answers   = [&](CMobEntity* PMob)
+    {
+        if (PAttacker == nullptr && PMob->PAI->IsEngaged() && !PMob->isDead() && PMob->GetBattleTarget() == POwner)
+        {
+            PAttacker = PMob;
+        }
+    };
+    pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 20.0f, answers);
+    return PAttacker;
+}
+
+void CPawnController::WaitTick(CCharEntity* PPlayer)
+{
+    m_Gambits->TickBehaviors();
+
+    // Her ground is hers to hold: a mob that has come for her is answered
+    if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
+    {
+        ShowInfoFmt("pawn: {} answers {} (waiting)", POwner->getName(), PMob->getName());
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        POwner->PAI->Internal_Engage(EntityId(PMob));
+        return;
+    }
+
+    if (PPlayer != nullptr)
+    {
+        ShareSignet(PPlayer);
+        TidyBag();
+        if (!Acting())
+        {
+            HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
+        }
+    }
+
+    if (!POwner->PAI->IsCurrentState<CMagicState>())
+    {
+        m_Gambits->Tick(m_Tick, false);
+        IdleEmote(PPlayer);
+    }
+}
+
 namespace
 {
     // The player has struck: an active enmity entry of theirs on the mob
@@ -345,14 +436,20 @@ void CPawnController::IdleEmote(const CCharEntity* PPlayer)
     {
         const bool due      = m_NextIdleEmoteTime != timer::time_point::min();
         m_NextIdleEmoteTime = m_Tick + std::chrono::seconds(xirand::GetRandomNumber(45, 120));
-        if (!due || POwner->PAI->IsCurrentState<CMagicState>() || POwner->loc.zone == nullptr || distance(POwner->loc.p, PPlayer->loc.p) > 20.0f)
+        // Alone (waiting somewhere), she fidgets too; with the player far
+        // off she does not, and a stare needs someone to stare at
+        if (!due || POwner->PAI->IsCurrentState<CMagicState>() || POwner->loc.zone == nullptr || (PPlayer != nullptr && distance(POwner->loc.p, PPlayer->loc.p) > 20.0f))
         {
             return;
         }
 
         static constexpr std::array<Emote, 4> kFidgets{ Emote::Think, Emote::Sigh, Emote::Huh, Emote::Stare };
-        const auto                            emote = kFidgets[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(kFidgets.size())))];
-        const CBaseEntity*                    PAt   = emote == Emote::Stare ? static_cast<const CBaseEntity*>(PPlayer) : POwner;
+        auto                                  emote = kFidgets[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(kFidgets.size())))];
+        if (emote == Emote::Stare && PPlayer == nullptr)
+        {
+            emote = Emote::Think;
+        }
+        const CBaseEntity* PAt = emote == Emote::Stare ? static_cast<const CBaseEntity*>(PPlayer) : POwner;
 
         const auto* PPawn = static_cast<const CCharEntity*>(POwner);
         POwner->loc.zone->PushPacket(POwner, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(PPawn, PAt->id, PAt->targid, emote, EmoteMode::Motion, 0));
@@ -530,11 +627,15 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // Their weapon going down does not call the party off a fight that has
     // started -- it runs until the mob dies or drifts past the leash -- but
     // it does end a hold (below), which the party only drew for.
-    if (PPlayer == nullptr)
+    if (PPlayer == nullptr && !m_Waiting)
     {
         ShowInfoFmt("pawn: {} disengaging (player gone)", POwner->getName());
         POwner->PAI->Internal_Disengage();
         co_return;
+    }
+    if (PPlayer != nullptr)
+    {
+        NotePlayerMagic(PPlayer);
     }
 
     if (POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CRangeState>())
@@ -564,7 +665,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // The hold ends the moment the player has struck or the mob has come,
     // and says which: without it, a cardian closing on her own is a
     // mystery in the log
-    if (m_HoldForPlayer)
+    if (m_HoldForPlayer && PPlayer != nullptr)
     {
         const bool struck = playerHasEnmity(PPlayer, PTarget);
         const bool came   = PTarget->PAI->IsEngaged();
@@ -581,7 +682,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // Still holding and the player has put their weapon away: they thought
     // better of it before a blow was struck, and the party drew on that
     // word alone -- so it stands down with them
-    if (m_HoldForPlayer && !PPlayer->PAI->IsEngaged())
+    if (m_HoldForPlayer && PPlayer != nullptr && !PPlayer->PAI->IsEngaged())
     {
         ShowInfoFmt("pawn: {} stands down ({} thought better of {})", POwner->getName(), PPlayer->getName(), PTarget->getName());
         m_HoldForPlayer = false;
@@ -617,7 +718,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             POwner->PAI->PathFind->LookAt(PTarget->loc.p);
         }
 
-        if (m_HoldForPlayer)
+        if (m_HoldForPlayer && PPlayer != nullptr)
         {
             // Walking in with the player, in formation, never within reach
             // of the mob: the strike is the player's, and the pounce after
@@ -735,7 +836,36 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     CCharEntity* PPlayer = GetLivePlayer();
     if (PPlayer == nullptr)
     {
+        // Gone by magic a moment ago -- a warp, a teleport -- she waits
+        // where she stands and says so; gone on foot, she follows through
+        // the zone line as ever
+        if (!m_Waiting && m_PlayerMagicSeen != timer::time_point::min() && m_Tick - m_PlayerMagicSeen < 5s)
+        {
+            m_PlayerMagicSeen = timer::time_point::min();
+            SetWaiting(true, false);
+            ShowInfoFmt("pawn: {} waits in {} (the player warped away)", POwner->getName(), POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?");
+        }
+        if (m_Waiting)
+        {
+            WaitTick(nullptr);
+            co_return;
+        }
         TravelTick();
+        co_return;
+    }
+
+    NotePlayerMagic(PPlayer);
+
+    // An automatic wait ends with the player back in her zone; an ordered
+    // one holds until told otherwise
+    if (m_Waiting && !m_WaitOrdered)
+    {
+        SetWaiting(false, false);
+        ShowInfoFmt("pawn: {} follows again ({} is back)", POwner->getName(), PPlayer->getName());
+    }
+    if (m_Waiting)
+    {
+        WaitTick(PPlayer);
         co_return;
     }
 

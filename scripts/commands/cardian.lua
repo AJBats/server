@@ -291,7 +291,7 @@ end
 local function pawnLine(player, name, targ)
     local xp    = player:cardianExp(name)
     local guard = guardNear(player) ~= nil
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d',
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %s',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
@@ -299,7 +299,8 @@ local function pawnLine(player, name, targ)
         targ:getMP(), targ:getMaxMP(),
         targ:getTP(),
         xp and xp.exp or 0, xp and xp.tnl or 0,
-        guard and 1 or 0)
+        guard and 1 or 0,
+        player:cardianWaiting(name) and 1 or 0, targ:getZoneName())
 end
 
 local function sendPawnLine(player, name)
@@ -796,6 +797,14 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err do ' .. err)
         else
             reply(player, '#cd ok do')
+        end
+    elseif (verb == 'wait' or verb == 'follow') and name then
+        local err = player:cardianWait(name, verb == 'wait')
+        if err ~= '' then
+            reply(player, '#cd err ' .. verb .. ' ' .. err)
+        else
+            reply(player, '#cd ok ' .. verb)
+            sendPawnLine(player, name)
         end
     elseif verb == 'rescue' and name then
         local err = player:cardianRescue(name)

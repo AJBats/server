@@ -728,6 +728,23 @@ namespace pawn
             return false;
         }
 
+        // Carried alone, she waits where she lands; carried with her player
+        // -- the same teleport, or a warp home on the player's heels -- she
+        // arrives following
+        const auto settle = [&](const xi::ZoneId destination)
+        {
+            const CCharEntity* PSummoner  = zoneutils::GetChar(summonerOf(PPawn->id));
+            const bool         withPlayer = PSummoner != nullptr &&
+                                    (PSummoner->getZone() == destination ||
+                                     (PSummoner->requestedZoneChange && PSummoner->loc.destination == destination) ||
+                                     (PSummoner->requestedWarp != WarpRequest::None && PSummoner->profile.home_point.destination == destination) ||
+                                     PSummoner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Teleport));
+            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+            {
+                PController->Carried(withPlayer);
+            }
+        };
+
         // A warp: the party's home point, revived if it was the death timer's
         if (PPawn->requestedWarp != WarpRequest::None)
         {
@@ -745,6 +762,7 @@ namespace pawn
             const auto& home = PPawn->profile.home_point;
 
             ShowInfoFmt("pawn: {} warps to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
+            settle(home.destination);
             requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
             return true;
         }
@@ -757,6 +775,7 @@ namespace pawn
             if (PPawn->loc.destination != ZONE_NO_DESTINATION && PPawn->loc.destination != PPawn->getZone())
             {
                 ShowInfoFmt("pawn: {} is carried to zone {}", PPawn->getName(), static_cast<uint16>(PPawn->loc.destination));
+                settle(PPawn->loc.destination);
                 requestTransfer(PPawn->id, TravelHop{ .destinationZone = PPawn->loc.destination, .walkTo = {}, .arriveAt = PPawn->loc.p });
                 return true;
             }
