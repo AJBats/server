@@ -702,7 +702,15 @@ class PawnModule : public CPPModule
             const auto now   = timer::now();
             const auto left  = [&](const Recast_t& recast) -> double
             {
-                const auto remaining = (recast.TimeStamp + recast.RecastTime) - now;
+                auto remaining = (recast.TimeStamp + recast.RecastTime) - now;
+                // A charged ability is usable while any charge is back, so
+                // only the wait for the next charge counts: the recast holds
+                // every spent charge's time end to end, and the ability is
+                // ready once fewer than all but one remain (HasRecast)
+                if (recast.chargeTime != 0s && recast.maxCharges > 0)
+                {
+                    remaining -= recast.chargeTime * (recast.maxCharges - 1);
+                }
                 return remaining > 0s ? std::chrono::duration<double>(remaining).count() : 0.0;
             };
 

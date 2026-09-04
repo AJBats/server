@@ -734,7 +734,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     ShareSignet(PPlayer);
     TidyBag();
-    if (!Acting())
+    // Walking in on a hunt, her eye is on the mob (below), not the player
+    if (!Acting() && !m_HuntApproach.has_value())
     {
         HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
     }
@@ -759,35 +760,36 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Rest with the player: the Healing status is the real thing -- kneel
-    // animation and resting regen ticks -- so the party sits down together
-    const bool playerResting = RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
-    const bool resting       = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    if (playerResting && !resting && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f && !POwner->PAI->PathFind->IsFollowingPath())
+    // The player has drawn on a burrowed mob: the party waits for it to
+    // surface, and says so now and then
+    if (PPlayer->PAI->IsEngaged())
     {
-        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
-        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-        co_return;
-    }
-    if (!playerResting && resting)
-    {
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-    }
-    if (resting && playerResting)
-    {
-        co_return;
+        if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget());
+            PMob != nullptr && pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged() && m_Tick - m_LastSurfaceLogTime > 5s)
+        {
+            m_LastSurfaceLogTime = m_Tick;
+            ShowInfoFmt("pawn: {} waits for {} to surface", POwner->getName(), PMob->getName());
+        }
     }
 
     // A hunter walking to the mob she chose: she committed the moment it
     // was picked and closes with her weapon away, drawing only once the
     // re-engage timer allows -- so the party moves on at once after a
-    // kill and the pause is at the draw, not before the choice
+    // kill and the pause is at the draw, not before the choice. Every
+    // reason to let the mob go is judged here, ahead of the party's rest
     if (m_HuntApproach.has_value())
     {
         auto* PMob = m_HuntApproach->resolve<CMobEntity>();
         if (PMob == nullptr || PMob->isDead() || PMob->PAI->IsEngaged() || !IsHunting() ||
             distance(PPlayer->loc.p, PMob->loc.p) > settings::get<float>("pawn.HUNT_RADIUS"))
         {
+            m_HuntApproach.reset();
+        }
+        // The party is no longer paced for a pull -- the player sat, a
+        // member fell -- so the choice goes too, to be made afresh
+        else if (const auto blocker = PacingBlocker(PPlayer); !blocker.empty())
+        {
+            ShowInfoFmt("pawn: {} lets {} go ({})", POwner->getName(), PMob->getName(), blocker);
             m_HuntApproach.reset();
         }
         else
@@ -818,6 +820,25 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             }
             co_return;
         }
+    }
+
+    // Rest with the player: the Healing status is the real thing -- kneel
+    // animation and resting regen ticks -- so the party sits down together
+    const bool playerResting = RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
+    const bool resting       = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    if (playerResting && !resting && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f && !POwner->PAI->PathFind->IsFollowingPath())
+    {
+        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
+        co_return;
+    }
+    if (!playerResting && resting)
+    {
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+    }
+    if (resting && playerResting)
+    {
+        co_return;
     }
 
     // A hunter picks the party's next fight itself, the moment it is free
@@ -1006,6 +1027,16 @@ void CPawnController::TravelTick()
             if (narrate)
             {
                 ShowInfoFmt("pawn: travel {}: summoner not in world (loading?), idling", POwner->getName());
+            }
+            return;
+        }
+
+        // In their Mog House: the party waits at the door
+        if (PSummoner->loc.zone == POwner->loc.zone && PSummoner->inMogHouse())
+        {
+            if (narrate)
+            {
+                ShowInfoFmt("pawn: travel {}: {} is in their Mog House, waiting", POwner->getName(), PSummoner->getName());
             }
             return;
         }
@@ -1223,6 +1254,13 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
     {
         if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget()); PMob != nullptr && !PMob->isDead())
         {
+            // Underground with no fight on, it is not the party's fight yet:
+            // the party waits, weapons away, and draws when it surfaces (the
+            // combat tick lets such a target go)
+            if (pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged())
+            {
+                return nullptr;
+            }
             return PMob;
         }
     }
@@ -1253,6 +1291,7 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
     // Self-defence: a mob that has chosen a member of this party is the
     // party's fight, whether or not anyone has swung yet -- aggro on a
     // cardian, or on the player, is answered
+    const float    leash    = settings::get<float>("pawn.HUNT_LEASH");
     CBattleEntity* attacker = nullptr;
     const auto     answers  = [&](CMobEntity* PMob)
     {
@@ -1279,6 +1318,11 @@ auto CPawnController::HuntBlocker(const CCharEntity* PPlayer) const -> std::stri
     {
         return fmt::format("{:.0f} y from {}", away, PPlayer->getName());
     }
+    return PacingBlocker(PPlayer);
+}
+
+auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::string
+{
     if (PPlayer->animation == xi::Animation::Healing)
     {
         return fmt::format("{} resting", PPlayer->getName());
@@ -1292,7 +1336,6 @@ auto CPawnController::HuntBlocker(const CCharEntity* PPlayer) const -> std::stri
         return "";
     }
     for (auto* PMember : PPawn->PParty->members)
-    const float    leash    = settings::get<float>("pawn.HUNT_LEASH");
     {
         if (PMember->loc.zone != POwner->loc.zone)
         {
@@ -1317,6 +1360,7 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEn
     const auto  maxCheck    = rules.maxCheck;
     const auto  radius      = settings::get<float>("pawn.HUNT_RADIUS");
     const auto  cleanRadius = settings::get<float>("pawn.HUNT_CLEAN_RADIUS");
+    auto*       entities    = pawn::entitiesAround(POwner);
 
     // One danger scan per hunt check, wide enough to cover every candidate's
     // circle and every approach from the hunter. Judged for the whole party
@@ -1360,7 +1404,6 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEn
 
     // A linking family member (aggressive or not) within the clean radius
     const auto linked = [&](const CMobEntity* PMob) -> bool
-    auto*       entities    = pawn::entitiesAround(POwner);
     {
         bool       found = false;
         const auto kin   = [&](CMobEntity* POther)
@@ -1469,8 +1512,10 @@ auto CPawnController::GetLivePlayer() const -> CCharEntity*
 
     for (auto* PMember : PPawn->PParty->members)
     {
+        // A Mog House stay keeps the player in the zone, parked at its origin
+        // and out of sight: not someone to follow, fight beside or rest with
         if (auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-            PChar != nullptr && PChar->PSession != nullptr && PChar->loc.zone == POwner->loc.zone)
+            PChar != nullptr && PChar->PSession != nullptr && PChar->loc.zone == POwner->loc.zone && !PChar->inMogHouse())
         {
             return PChar;
         }

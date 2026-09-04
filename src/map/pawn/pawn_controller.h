@@ -264,6 +264,11 @@ private:
     // post-fight breather elapsed
     auto HuntBlocker(const CCharEntity* PPlayer) const -> std::string; // "" when the hunt may pull; otherwise what holds it
 
+    // HuntBlocker without the distance rule: the player resting, a member
+    // down or fighting. Judged again on the walk in, where the hunter is
+    // meant to be away from the player
+    auto PacingBlocker(const CCharEntity* PPlayer) const -> std::string;
+
     // The nearest idle, non-special mob in the difficulty band within
     // HUNT_RADIUS of the player
     auto PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*;
@@ -304,6 +309,7 @@ private:
     // not
     auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
     timer::time_point m_LastHuntLogTime;
+    timer::time_point m_LastSurfaceLogTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};
     bool              m_HasFollowPoint = false;
