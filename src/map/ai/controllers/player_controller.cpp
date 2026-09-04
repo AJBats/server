@@ -23,6 +23,7 @@
 
 #include "ability.h"
 #include "ai/ai_container.h"
+#include "common/settings.h" // CARDIAN
 #include "entities/char_entity.h"
 #include "items/item_weapon.h"
 #include "latent_effect_container.h"
@@ -76,10 +77,20 @@ auto CPlayerController::Engage(const EntityId& target) -> bool
     {
         if (distance(PChar->loc.p, PTarget->loc.p) < 30)
         {
-            if (m_lastAttackTime + std::chrono::milliseconds(PChar->GetWeaponDelay(false)) < timer::now())
+            // CARDIAN: the disengage/re-engage nerf -- the full weapon delay,
+            // which punished slow weapons for a trick only they could work --
+            // applies only to the mob just fought. A switch to a different mob
+            // takes the pre-nerf fixed wait (cardian.REENGAGE_SWITCH_DELAY).
+            const bool cardianSameTarget = PChar->GetLocalVar("cardianLastEngaged") == PTarget->id;
+            const auto cardianWait       = cardianSameTarget
+                                               ? std::chrono::milliseconds(PChar->GetWeaponDelay(false))
+                                               : std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
+
+            if (m_lastAttackTime + cardianWait < timer::now())
             {
                 if (CController::Engage(target))
                 {
+                    PChar->SetLocalVar("cardianLastEngaged", PTarget->id); // CARDIAN: which mob the wait above is measured against
                     PChar->PLatentEffectContainer->CheckLatentsWeaponDraw(true);
                     PChar->pushPacket<GP_SERV_COMMAND_ASSIST>(PChar, PTarget);
                     return true;

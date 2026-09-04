@@ -38,6 +38,9 @@
 #include "lua/luautils.h"
 #include "packets/basic.h"
 #include "utils/moduleutils.h"
+#include "ability.h"
+#include "recast_container.h"
+#include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -681,6 +684,83 @@ class PawnModule : public CPPModule
                 return "no such cardian";
             }
             return pawn::homePoint(PPawn) ? "" : "not KO'd";
+        };
+
+        // What she cannot do yet and for how long: the seconds left on
+        // every spell and ability still on recast, keyed the way the
+        // vocabulary keys them so a command list can label its own rows.
+        // Only what is actually waiting is sent; the rest are ready.
+        lua["CBaseEntity"]["cardianRecasts"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto       table = ::lua.create_table();
+            const auto now   = timer::now();
+            const auto left  = [&](const Recast_t& recast) -> double
+            {
+                const auto remaining = (recast.TimeStamp + recast.RecastTime) - now;
+                return remaining > 0s ? std::chrono::duration<double>(remaining).count() : 0.0;
+            };
+
+            if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_MAGIC); PList != nullptr)
+            {
+                for (const auto& recast : *PList)
+                {
+                    if (const auto seconds = left(recast); seconds > 0.0)
+                    {
+                        table[fmt::format("2:2:{}", static_cast<uint16>(recast.ID))] = seconds;
+                    }
+                }
+            }
+
+            // Abilities are stored by recast id, the vocabulary keys them by
+            // ability id, so they are matched through her own ability list
+            if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_ABILITY); PList != nullptr)
+            {
+                for (const auto job : { PPawn->GetMJob(), PPawn->GetSJob() })
+                {
+                    for (auto* PAbility : ability::GetAbilities(job))
+                    {
+                        if (PAbility == nullptr || !charutils::hasAbility(PPawn, PAbility->getID()))
+                        {
+                            continue;
+                        }
+                        for (const auto& recast : *PList)
+                        {
+                            if (recast.ID != PAbility->getRecastId())
+                            {
+                                continue;
+                            }
+                            if (const auto seconds = left(recast); seconds > 0.0)
+                            {
+                                table[fmt::format("3:2:{}", PAbility->getID())] = seconds;
+                            }
+                        }
+                    }
+                }
+            }
+            return table;
+        };
+
+        // Her experience on her main job, and what the next level costs:
+        // the character's own screens show it, and there is no upstream
+        // getter for either
+        lua["CBaseEntity"]["cardianExp"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto table   = ::lua.create_table();
+            table["exp"] = PPawn->jobs.exp[static_cast<uint8>(PPawn->GetMJob())];
+            table["tnl"] = charutils::GetExpNEXTLevel(PPawn->GetMLevel());
+            return table;
         };
 
         // A cardian, for the Lua module that moves quest and mission

@@ -323,6 +323,21 @@ void CPawnController::FireQueuedOrder()
     ShowInfoFmt("pawn: {} fires the queued {} on {}{}", POwner->getName(), key, PTarget->getName(), err.empty() ? "" : " -- " + err);
 }
 
+auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool
+{
+    // Never left a fight: nothing to wait out
+    if (m_LeftFightAt == timer::time_point::min())
+    {
+        return true;
+    }
+
+    const bool same = PTarget != nullptr && PTarget->id == m_LastFoughtId;
+    const auto wait = same
+                          ? std::chrono::milliseconds(static_cast<CCharEntity*>(POwner)->GetWeaponDelay(false))
+                          : std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
+    return m_LeftFightAt + wait < m_Tick;
+}
+
 void CPawnController::IdleEmote(const CCharEntity* PPlayer)
 {
     // The first idle moment only sets the clock: no fidget on arrival
@@ -411,6 +426,14 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     const bool engaged = POwner->PAI->IsEngaged();
 
+    // Leaving a fight starts the draw cooldown; who it was with decides
+    // how long (CanDrawOn)
+    if (m_WasEngaged && !engaged)
+    {
+        m_LeftFightAt = tick;
+    }
+    m_WasEngaged = engaged;
+
     if (POwner->isDead())
     {
         WatchPlayerHomePoint();
@@ -496,8 +519,9 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     CCharEntity* PPlayer = GetLivePlayer();
 
     // The player is the party's anchor: gone from the zone means stand down.
-    // Their weapon going down does NOT call the party off any more -- a
-    // fight runs until the mob dies or drifts past the leash.
+    // Their weapon going down does not call the party off a fight that has
+    // started -- it runs until the mob dies or drifts past the leash -- but
+    // it does end a hold (below), which the party only drew for.
     if (PPlayer == nullptr)
     {
         ShowInfoFmt("pawn: {} disengaging (player gone)", POwner->getName());
@@ -525,10 +549,36 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // The hold ends the moment the player has struck or the mob has come
-    if (m_HoldForPlayer && (playerHasEnmity(PPlayer, PTarget) || PTarget->PAI->IsEngaged()))
+    // Whoever she is fighting is the mob the draw cooldown will measure
+    // against once this fight ends
+    m_LastFoughtId = PTarget->id;
+
+    // The hold ends the moment the player has struck or the mob has come,
+    // and says which: without it, a cardian closing on her own is a
+    // mystery in the log
+    if (m_HoldForPlayer)
     {
+        const bool struck = playerHasEnmity(PPlayer, PTarget);
+        const bool came   = PTarget->PAI->IsEngaged();
+        if (struck || came)
+        {
+            m_HoldForPlayer = false;
+            ShowInfoFmt("pawn: {} closes on {} ({})", POwner->getName(), PTarget->getName(),
+                        struck ? fmt::format("{} has its attention", PPlayer->getName())
+                               : fmt::format("{} is fighting {}", PTarget->getName(),
+                                             PTarget->GetBattleTarget() != nullptr ? PTarget->GetBattleTarget()->getName() : "someone"));
+        }
+    }
+
+    // Still holding and the player has put their weapon away: they thought
+    // better of it before a blow was struck, and the party drew on that
+    // word alone -- so it stands down with them
+    if (m_HoldForPlayer && !PPlayer->PAI->IsEngaged())
+    {
+        ShowInfoFmt("pawn: {} stands down ({} thought better of {})", POwner->getName(), PPlayer->getName(), PTarget->getName());
         m_HoldForPlayer = false;
+        POwner->PAI->Internal_Disengage();
+        co_return;
     }
 
     // Holding, she walks with the player, and the formation's pace and
@@ -723,19 +773,60 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // A hunter picks the party's next fight itself
-    if (IsHunting() && m_Tick - m_LastHuntCheckTime > 3s)
+    // A hunter walking to the mob she chose: she committed the moment it
+    // was picked and closes with her weapon away, drawing only once the
+    // re-engage timer allows -- so the party moves on at once after a
+    // kill and the pause is at the draw, not before the choice
+    if (m_HuntApproach.has_value())
     {
-        m_LastHuntCheckTime = m_Tick;
+        auto* PMob = m_HuntApproach->resolve<CMobEntity>();
+        if (PMob == nullptr || PMob->isDead() || PMob->PAI->IsEngaged() || !IsHunting() ||
+            distance(PPlayer->loc.p, PMob->loc.p) > settings::get<float>("pawn.HUNT_RADIUS"))
+        {
+            m_HuntApproach.reset();
+        }
+        else
+        {
+            // her eye is on it the whole way in, and while she stands there
+            // waiting to draw
+            HeadLook(PMob);
+
+            // The cooldown gates the DRAW, not the arrival: ready, she
+            // draws where she stands and charges in with her weapon out,
+            // as she always did; still waiting, she walks in with it away
+            // and draws the moment the wait is served, wherever that
+            // catches her
+            if (CanDrawOn(PMob))
+            {
+                ShowInfoFmt("pawn: {} draws on {} ({})", POwner->getName(), PMob->getName(),
+                            magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)));
+                m_HuntApproach.reset();
+                m_HoldForPlayer = false;
+                POwner->PAI->Internal_Engage(EntityId(PMob));
+            }
+            else if (distance(POwner->loc.p, PMob->loc.p) > RoamDistance)
+            {
+                if (PathToward(PMob->loc.p, RoamDistance))
+                {
+                    POwner->PAI->PathFind->FollowPath(m_Tick);
+                }
+            }
+            co_return;
+        }
+    }
+
+    // A hunter picks the party's next fight itself, the moment it is free
+    // to: the choice is never throttled, only the draw
+    if (IsHunting() && !m_HuntApproach.has_value())
+    {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
         {
             if (auto* PMob = PickHuntTarget(PPlayer); PMob != nullptr)
             {
-                ShowInfoFmt("pawn: {} pulls {} ({})", POwner->getName(), PMob->getName(),
+                ShowInfoFmt("pawn: {} sets off after {} ({})", POwner->getName(), PMob->getName(),
                             magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)));
-                m_HoldForPlayer = false;
-                POwner->PAI->Internal_Engage(EntityId(PMob));
+                m_HuntApproach = EntityId(PMob);
                 co_return;
             }
             // A quiet hunt says why, now and then: the band is judged

@@ -100,6 +100,13 @@ public:
     // in a fight, resting or casting.
     void IdleEmote(const CCharEntity* PPlayer);
 
+    // May she draw on this target yet? The cooldown is set when she LEAVES
+    // a fight, not by her last swing: a cardian fresh from rest draws at
+    // once, one just off a kill waits. The mob she just left costs the
+    // longer wait (her weapon delay, the anti-exploit), anything else the
+    // shorter one (cardian.REENGAGE_SWITCH_DELAY).
+    auto CanDrawOn(CBattleEntity* PTarget) -> bool;
+
     // The command window: one action now, on the target the player picked.
     // `key` is the vocabulary's action key, kind:mode:id -- the concrete
     // ones only: a spell (2:2:id), an ability (3:2:id), a weapon skill
@@ -277,7 +284,17 @@ private:
     bool              m_Hunting    = false;
     bool              m_Retreat    = false;
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
-    timer::time_point m_LastHuntCheckTime;
+
+    // The mob a hunter has chosen and is walking to, weapon still away:
+    // she commits at once and closes, and only the draw waits on the
+    // re-engage timer
+    std::optional<EntityId> m_HuntApproach;
+
+    // The draw cooldown's memory: when she last left a fight and who it
+    // was with. Never fought means ready.
+    timer::time_point m_LeftFightAt{ timer::time_point::min() };
+    uint32            m_LastFoughtId = 0;
+    bool              m_WasEngaged   = false;
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;

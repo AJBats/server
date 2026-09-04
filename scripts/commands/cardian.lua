@@ -88,16 +88,26 @@ local function sendGear(player, name)
     reply(player, '#cd gear.e ' .. name)
 end
 
+-- One roster line: her jobs, health, TP, and how far she is from her next
+-- level. Both the roster list and a single sync send it, so a screen sees
+-- the same fields either way. Experience comes from the Cardian binding --
+-- upstream has no getter for it or for the level's cost.
+local function pawnLine(player, name, targ)
+    local xp = player:cardianExp(name)
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d',
+        name,
+        targ:getMainJob(), targ:getMainLvl(),
+        targ:getSubJob(), targ:getSubLvl(),
+        targ:getHP(), targ:getMaxHP(),
+        targ:getMP(), targ:getMaxMP(),
+        targ:getTP(),
+        xp and xp.exp or 0, xp and xp.tnl or 0)
+end
+
 local function sendPawnLine(player, name)
     local targ = GetPlayerByName(name)
     if targ then
-        reply(player, string.format('#cd p %s %d %d %d %d %d %d %d %d %d',
-            name,
-            targ:getMainJob(), targ:getMainLvl(),
-            targ:getSubJob(), targ:getSubLvl(),
-            targ:getHP(), targ:getMaxHP(),
-            targ:getMP(), targ:getMaxMP(),
-            targ:getTP()))
+        reply(player, pawnLine(player, name, targ))
     end
 end
 
@@ -122,6 +132,22 @@ local function sendStatsLine(player, name)
     parts[#parts + 1] = string.format('%d:%d', combat and combat.att or 0, combat and combat.def or 0)
     parts[#parts + 1] = tostring(targ:getGil())
     reply(player, table.concat(parts, ' '))
+end
+
+-- What she cannot do yet: 'rc <name> key=seconds;...' for every spell
+-- and ability still on recast. Nothing listed means everything is ready.
+local function sendRecasts(player, name)
+    local recasts = player:cardianRecasts(name)
+    if recasts == nil then
+        reply(player, '#cd err recasts no such cardian')
+        return
+    end
+
+    local parts = {}
+    for key, seconds in pairs(recasts) do
+        parts[#parts + 1] = string.format('%s=%.1f', key, seconds)
+    end
+    reply(player, '#cd rc ' .. name .. ' ' .. table.concat(parts, ';'))
 end
 
 -- The three read-only pages under the cardian's menu: her profile, her
@@ -233,12 +259,7 @@ local function sendList(player)
     for _, name in ipairs(names) do
         local targ = GetPlayerByName(name)
         if targ then
-            reply(player, string.format('#cd p %s %d %d %d %d %d %d %d %d',
-                name,
-                targ:getMainJob(), targ:getMainLvl(),
-                targ:getSubJob(), targ:getSubLvl(),
-                targ:getHP(), targ:getMaxHP(),
-                targ:getMP(), targ:getMaxMP()))
+            reply(player, pawnLine(player, name, targ))
         end
     end
     reply(player, '#cd list.e')
@@ -434,6 +455,8 @@ commandObj.onTrigger = function(player, line)
         sendInv(player, name)
     elseif verb == 'gear' and name then
         sendGear(player, name)
+    elseif verb == 'recasts' and name then
+        sendRecasts(player, name)
     elseif verb == 'profile' and name then
         sendProfile(player, name)
     elseif verb == 'jobs' and name then
