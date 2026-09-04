@@ -749,6 +749,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             ShowInfoFmt("pawn: {} draws on {} (holding for {}'s strike)", POwner->getName(), PTarget->getName(), PPlayer->getName());
         }
+        // The party's fight replaces whatever she had set off after: she
+        // chooses again when this one is over, rather than walking back to
+        // a mob picked before it started
+        m_HuntApproach.reset();
         POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
         POwner->PAI->Internal_Engage(EntityId(PTarget));
         co_return;

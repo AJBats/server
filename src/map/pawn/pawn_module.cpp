@@ -757,9 +757,10 @@ class PawnModule : public CPPModule
                 return sol::lua_nil;
             }
 
-            auto table   = ::lua.create_table();
-            table["exp"] = PPawn->jobs.exp[static_cast<uint8>(PPawn->GetMJob())];
-            table["tnl"] = charutils::GetExpNEXTLevel(PPawn->GetMLevel());
+            const auto job   = static_cast<uint8>(PPawn->GetMJob());
+            auto       table = ::lua.create_table();
+            table["exp"]     = job < MAX_JOBTYPE ? PPawn->jobs.exp[job] : 0;
+            table["tnl"]     = charutils::GetExpNEXTLevel(PPawn->GetMLevel());
             return table;
         };
 
