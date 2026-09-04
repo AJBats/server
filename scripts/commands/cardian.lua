@@ -88,20 +88,192 @@ local function sendGear(player, name)
     reply(player, '#cd gear.e ' .. name)
 end
 
--- One roster line: her jobs, health, TP, and how far she is from her next
--- level. Both the roster list and a single sync send it, so a screen sees
--- the same fields either way. Experience comes from the Cardian binding --
--- upstream has no getter for it or for the level's cost.
+-- The conquest exchange by proxy -------------------------------------------
+-- A cardian cannot talk to a gate guard, but her player can stand beside
+-- one, and she stands beside them with conquest points of her own. The
+-- guards are a fixed list; a slow check asks whether the player is within
+-- reach of one, and its answer rides on the roster line so her menu grows
+-- the Conquest exchange row only while it says yes. cpshop and cpbuy sell
+-- to her from that guard's stock at that guard's prices, out of her own
+-- points. The stock is the guard's own -- conquest.lua keeps it in
+-- file-local tables -- read from the file once, when the commands load.
+
+-- The city and embassy guards: grep overseerOnTrigger scripts/zones/*/npcs,
+-- keeping guard types CITY and FOREIGN (the outpost and border overseers
+-- sell nothing)
+local guards =
+{
+    ['Achantere_TK']      = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.CITY,    zone = 'Northern_San_dOria' },
+    ['Alrauverat']        = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'Lower_Jeuno' },
+    ['Aravoge_TK']        = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.CITY,    zone = 'Southern_San_dOria' },
+    ['Arpevion_TK']       = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.CITY,    zone = 'Southern_San_dOria' },
+    ['Chapal-Afal_WW']    = { nation = xi.nation.WINDURST, type = xi.conquest.guard.FOREIGN, zone = 'Northern_San_dOria' },
+    ['Crying_Wind_IM']    = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.CITY,    zone = 'Bastok_Mines' },
+    ['Emitt']             = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'Upper_Jeuno' },
+    ['Flying_Axe_IM']     = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.CITY,    zone = 'Port_Bastok' },
+    ['Glarociquet_TK']    = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.FOREIGN, zone = 'Metalworks' },
+    ['Harara_WW']         = { nation = xi.nation.WINDURST, type = xi.conquest.guard.CITY,    zone = 'Windurst_Woods' },
+    ['Kochahy-Muwachahy'] = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'Port_Jeuno' },
+    ['Lexun-Marixun_WW']  = { nation = xi.nation.WINDURST, type = xi.conquest.guard.FOREIGN, zone = 'Metalworks' },
+    ['Milma-Hapilma_WW']  = { nation = xi.nation.WINDURST, type = xi.conquest.guard.CITY,    zone = 'Port_Windurst' },
+    ['Morlepiche']        = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'RuLude_Gardens' },
+    ['Panoquieur_TK']     = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.FOREIGN, zone = 'Windurst_Woods' },
+    ['Puroiko-Maiko_WW']  = { nation = xi.nation.WINDURST, type = xi.conquest.guard.CITY,    zone = 'Windurst_Waters' },
+    ['Rabid_Wolf_IM']     = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.CITY,    zone = 'Bastok_Markets' },
+    ['Sachetan_IM']       = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.FOREIGN, zone = 'Port_Windurst' },
+    ['Yevgeny_IM']        = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.FOREIGN, zone = 'Northern_San_dOria' },
+}
+
+-- The guards by zone, so a check only looks up the names that live there
+local guardsByZone = {}
+for name, g in pairs(guards) do
+    guardsByZone[g.zone] = guardsByZone[g.zone] or {}
+    table.insert(guardsByZone[g.zone], name)
+end
+
+local kGuardReach = 8 -- yalms
+
+-- The guard within reach of the player, or nil: { npc, nation, type }.
+-- Asked once a second by the roster line, so the answer is kept for two
+-- seconds per player; the zone resolves names from a cache of its own.
+local nearCache = {}
+local function guardNear(player)
+    local id  = player:getID()
+    local now = os.time()
+    local c   = nearCache[id]
+    if c ~= nil and now - c.at < 2 then
+        return c.guard
+    end
+
+    local found = nil
+    local names = guardsByZone[player:getZoneName()]
+    if names ~= nil then
+        local zone = player:getZone()
+        for _, name in ipairs(names) do
+            for _, npc in pairs(zone:queryEntitiesByName(name)) do
+                if player:checkDistance(npc) <= kGuardReach then
+                    local g = guards[name]
+                    found   = { npc = npc, nation = g.nation, type = g.type }
+                    break
+                end
+            end
+            if found ~= nil then
+                break
+            end
+        end
+    end
+    nearCache[id] = { at = now, guard = found }
+    return found
+end
+
+-- The guard's stock tables, as conquest.lua writes them: one entry per
+-- line, '[option] = { cp = N, lvl = N, item = xi.item.NAME, rank = N }',
+-- the common table then one block per nation
+local function readStock()
+    local common, nations = {}, {}
+    local f = io.open('scripts/globals/conquest.lua', 'r')
+    if f == nil then
+        print('[cardian] conquest exchange: scripts/globals/conquest.lua is not readable, the shop is empty')
+        return common, nations
+    end
+
+    local section, nation = nil, nil
+    for line in f:lines() do
+        if line:match('^local overseerInvCommon') then
+            section = 'common'
+        elseif line:match('^local overseerInvNation') then
+            section = 'nation'
+        elseif section ~= nil and line:match('^}') then
+            section = nil
+        elseif section == 'nation' then
+            local n = line:match('%[xi%.nation%.(%u+)%]%s*=')
+            if n ~= nil then
+                nation          = xi.nation[n]
+                nations[nation] = nations[nation] or {}
+            end
+        end
+
+        if section ~= nil then
+            local option, body = line:match('^%s*%[(%d+)%]%s*=%s*{(.-)}')
+            if option ~= nil then
+                local itemName = body:match('item%s*=%s*xi%.item%.([%w_]+)')
+                local entry    = {
+                    cp   = tonumber(body:match('cp%s*=%s*(%d+)')) or 0,
+                    lvl  = tonumber(body:match('lvl%s*=%s*(%d+)')) or 1,
+                    rank = tonumber(body:match('rank%s*=%s*(%d+)')),
+                    item = itemName ~= nil and xi.item[itemName] or nil,
+                }
+                if entry.item ~= nil then
+                    if section == 'common' then
+                        common[tonumber(option)] = entry
+                    elseif nation ~= nil then
+                        nations[nation][tonumber(option)] = entry
+                    end
+                end
+            end
+        end
+    end
+    f:close()
+    return common, nations
+end
+
+local common, nations = readStock()
+
+local function count(t)
+    local n = 0
+    for _ in pairs(t) do
+        n = n + 1
+    end
+    return n
+end
+print(string.format('[cardian] conquest exchange: %d common items, %d nations stocked', count(common), count(nations)))
+
+-- What this guard sells to this buyer: the common stock plus the guard's
+-- nation's, or the buyer's own at a nationless overseer (getStock)
+local function cpStockFor(guardNation, buyerNation)
+    local out = {}
+    for option, entry in pairs(common) do
+        out[option] = entry
+    end
+    local nation = guardNation ~= xi.nation.OTHER and guardNation or buyerNation
+    for option, entry in pairs(nations[nation] or {}) do
+        out[option] = entry
+    end
+    return out
+end
+
+-- The guard's price for this buyer: another nation's guard charges more
+-- for its nation's own gear (the overseer's rule)
+local function cpPrice(entry, buyerNation, guardNation)
+    local price = entry.cp
+    if entry.rank and buyerNation ~= guardNation and guardNation ~= xi.nation.OTHER then
+        if price <= 8000 then
+            price = price * 2
+        else
+            price = price + 8000
+        end
+    end
+    return price
+end
+
+-- One roster line: her jobs, health, TP, how far she is from her next
+-- level, and whether a gate guard is within the player's reach (the
+-- Conquest exchange row on her page). Both the roster list and a single
+-- sync send it, so a screen sees the same fields either way. Experience
+-- comes from the Cardian binding -- upstream has no getter for it or for
+-- the level's cost.
 local function pawnLine(player, name, targ)
-    local xp = player:cardianExp(name)
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d',
+    local xp    = player:cardianExp(name)
+    local guard = guardNear(player) ~= nil
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
         targ:getHP(), targ:getMaxHP(),
         targ:getMP(), targ:getMaxMP(),
         targ:getTP(),
-        xp and xp.exp or 0, xp and xp.tnl or 0)
+        xp and xp.exp or 0, xp and xp.tnl or 0,
+        guard and 1 or 0)
 end
 
 local function sendPawnLine(player, name)
@@ -150,6 +322,87 @@ local function sendRecasts(player, name)
     reply(player, '#cd rc ' .. name .. ' ' .. table.concat(parts, ';'))
 end
 
+-- The conquest exchange verbs: the gate guard within the player's reach
+-- sells to her out of her own conquest points. 'cps.b <name> <cp> <rank> <nation> <guard>', one
+-- 'cps <name> <option> <item> <price> <lvl> <rank>' per item, 'cps.e'.
+local function ownedCardian(player, name)
+    for _, owned in ipairs(player:cardianNames()) do
+        if owned == name then
+            return GetPlayerByName(name)
+        end
+    end
+    return nil
+end
+
+local function guardFor(player)
+    local g = guardNear(player)
+    if g == nil then
+        return nil, 'no gate guard within reach'
+    end
+    return g
+end
+
+local function sendCpShop(player, name)
+    local targ = ownedCardian(player, name)
+    if targ == nil then
+        reply(player, '#cd err cpshop no such cardian')
+        return
+    end
+    local g, why = guardFor(player)
+    if g == nil then
+        reply(player, '#cd err cpshop ' .. why)
+        return
+    end
+
+    local nation = targ:getNation()
+    local stock  = cpStockFor(g.nation, nation)
+    reply(player, string.format('#cd cps.b %s %d %d %d %d', name, targ:getCP(), targ:getRank(nation), nation, g.nation))
+    local options = {}
+    for option in pairs(stock) do
+        options[#options + 1] = option
+    end
+    table.sort(options)
+    for _, option in ipairs(options) do
+        local entry = stock[option]
+        reply(player, string.format('#cd cps %s %d %d %d %d %d', name, option, entry.item, cpPrice(entry, nation, g.nation), entry.lvl, entry.rank or 0))
+    end
+    reply(player, '#cd cps.e ' .. name)
+end
+
+local function cpBuy(player, name, option)
+    local targ = ownedCardian(player, name)
+    if targ == nil then
+        return 'no such cardian'
+    end
+    local g, why = guardFor(player)
+    if g == nil then
+        return why
+    end
+    local nation = targ:getNation()
+    local entry  = cpStockFor(g.nation, nation)[option]
+    if entry == nil then
+        return 'the guard does not sell that'
+    end
+    if option >= 32933 and option <= 32935 then
+        return 'the experience rings are not sold by proxy'
+    end
+    if entry.rank and targ:getRank(nation) < entry.rank then
+        return string.format('%s is rank %d, that needs rank %d', name, targ:getRank(nation), entry.rank)
+    end
+    local price = cpPrice(entry, nation, g.nation)
+    if targ:getCP() < price then
+        return string.format('%s has %d conquest points, that costs %d', name, targ:getCP(), price)
+    end
+    if targ:getFreeSlotsCount() < 1 then
+        return string.format('%s has no room', name)
+    end
+    if not targ:addItem(entry.item) then
+        return 'the item could not be handed over'
+    end
+    targ:delCP(price)
+    return ''
+end
+
 -- The three read-only pages under the cardian's menu: her profile, her
 -- job levels, her combat skills -- what the client's own screens show for
 -- the player, read for a cardian instead
@@ -185,17 +438,20 @@ end
 -- skills in tenths; the cap table is in whole levels), and the cap at
 -- her level (the higher of main and support job)
 local kCombatSkills = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 25, 26, 27, 28, 29, 30, 31 }
+local kMagicSkills  = { 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 }
 
-local function sendSkills(player, name)
+-- A skill list: '<tag> <name> skill:level:cap,...' for every skill of the
+-- set her jobs can raise
+local function sendSkillList(player, name, verb, tag, skills)
     local targ = GetPlayerByName(name)
     if targ == nil or player:cardianGear(name) == nil then
-        reply(player, '#cd err skills no such cardian')
+        reply(player, '#cd err ' .. verb .. ' no such cardian')
         return
     end
     local mjob, mlvl = targ:getMainJob(), targ:getMainLvl()
     local sjob, slvl = targ:getSubJob(), targ:getSubLvl()
     local parts = {}
-    for _, skill in ipairs(kCombatSkills) do
+    for _, skill in ipairs(skills) do
         local cap = targ:getMaxSkillLevel(mlvl, mjob, skill)
         if sjob ~= 0 and slvl > 0 then
             cap = math.max(cap, targ:getMaxSkillLevel(slvl, sjob, skill))
@@ -204,7 +460,15 @@ local function sendSkills(player, name)
             parts[#parts + 1] = string.format('%d:%d:%d', skill, math.floor(targ:getCharSkillLevel(skill) / 10), cap)
         end
     end
-    reply(player, '#cd cs ' .. name .. ' ' .. table.concat(parts, ','))
+    reply(player, '#cd ' .. tag .. ' ' .. name .. ' ' .. table.concat(parts, ','))
+end
+
+local function sendSkills(player, name)
+    sendSkillList(player, name, 'skills', 'cs', kCombatSkills)
+end
+
+local function sendMagicSkills(player, name)
+    sendSkillList(player, name, 'mskills', 'ms', kMagicSkills)
 end
 
 -- Strips first (freeing hands and slots), then equips main-hand upward so
@@ -457,12 +721,25 @@ commandObj.onTrigger = function(player, line)
         sendGear(player, name)
     elseif verb == 'recasts' and name then
         sendRecasts(player, name)
+    elseif verb == 'cpshop' and name then
+        sendCpShop(player, name)
+    elseif verb == 'cpbuy' and name and args[3] then
+        local err = cpBuy(player, name, tonumber(args[3]) or 0)
+        if err ~= '' then
+            reply(player, '#cd err cpbuy ' .. err)
+        else
+            reply(player, '#cd ok cpbuy')
+            sendCpShop(player, name)
+            sendInv(player, name)
+        end
     elseif verb == 'profile' and name then
         sendProfile(player, name)
     elseif verb == 'jobs' and name then
         sendJobs(player, name)
     elseif verb == 'skills' and name then
         sendSkills(player, name)
+    elseif verb == 'mskills' and name then
+        sendMagicSkills(player, name)
     elseif verb == 'give' and name then
         local err = player:cardianGive(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
         if err ~= '' then
