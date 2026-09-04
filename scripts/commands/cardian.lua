@@ -295,6 +295,15 @@ local function sendVocab(player, name)
     chunked('gvc', function (g) return (g ~= '' and g or '-') .. ' ' end, v.conditions, function (e) return e.group end)
     chunked('gvs', function () return '' end, v.statuses)
     chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
+    -- The valid-target mask of every action that has one, key=mask: what
+    -- a command window may aim it at
+    local masks = {}
+    for _, e in ipairs(v.actions) do
+        if e.targets ~= nil and e.targets > 0 then
+            masks[#masks + 1] = { key = e.key, label = tostring(e.targets) }
+        end
+    end
+    chunked('gvx', function () return '' end, masks)
     reply(player, '#cd gv.e ' .. name)
 end
 

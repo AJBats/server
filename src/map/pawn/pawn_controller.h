@@ -106,6 +106,13 @@ public:
     // (4:2:id), the ranged attack (1:0:0); the "best of" entries are the
     // gambit engine's. "" when it fired, else why not.
     auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
+
+    // The order given while she acts, or while the spell is on recast,
+    // fired the moment both allow -- the client queues one action behind
+    // a cast the same way, and a string of the same spell fires each one
+    // the moment its timer allows. A newer order replaces it; 30 s
+    // without a chance and it is let go.
+    void FireQueuedOrder();
     auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
@@ -273,6 +280,12 @@ private:
     timer::time_point m_LastHuntCheckTime;
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
+    std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
+    timer::time_point                               m_QueuedOrderDeadline;
+
+    // The action itself, no queueing: "" when it fired, "recast", or why
+    // not
+    auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
     timer::time_point m_LastHuntLogTime;
     bool              m_HasLeadPoint = false;
     position_t        m_LeadPoint{};

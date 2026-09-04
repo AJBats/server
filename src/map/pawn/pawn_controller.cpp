@@ -53,6 +53,7 @@
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
 #include "party.h"
+#include "recast_container.h"
 #include "packets/s2c/0x05a_motionmes.h"
 #include "spell.h"
 #include "utils/charutils.h"
@@ -215,25 +216,54 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     {
         return "KO'd";
     }
-    if (Acting())
-    {
-        return "busy";
-    }
 
     const EntityId target(PTarget);
-    bool           fired = false;
+    const auto     err = Acting() ? std::string("busy") : TryAction(kind, mode, id, target);
+    if (err == "busy" || err == "recast")
+    {
+        m_QueuedOrder         = std::make_pair(key, target);
+        m_QueuedOrderDeadline = m_Tick + 30s;
+        ShowInfoFmt("pawn: {} queues {} on {} ({})", POwner->getName(), key, PTarget->getName(), err);
+        return "";
+    }
+    return err;
+}
+
+auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const unsigned id, const EntityId target) -> std::string
+{
+    bool fired = false;
     switch (kind)
     {
         case 1:
             fired = RangedAttack(target);
             break;
         case 2:
+        {
             if (mode != 2)
             {
                 return "pick a spell";
             }
-            fired = Cast(target, static_cast<SpellID>(id));
+            const auto spellId = static_cast<SpellID>(id);
+            CSpell*    PSpell  = spell::GetSpell(spellId);
+            if (PSpell == nullptr)
+            {
+                return "no such spell";
+            }
+            if (static_cast<CCharEntity*>(POwner)->PRecastContainer->HasRecast(RECAST_MAGIC, static_cast<Recast>(spellId), 0s))
+            {
+                return "recast";
+            }
+            // An order is never second-guessed: straight to the base
+            // controller's cast, past the gambit engine's redundancy rule
+            // (which declines a cure on a healthy friend) and past the
+            // player controller's 2.5 s post-spell delay. The magic state
+            // is the only gate, as it is for a player.
+            const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
+            FaceTarget(castTarget);
+            HeadLook(castTarget.resolve<CBattleEntity>());
+            fired = CController::Cast(castTarget, spellId);
             break;
+        }
         case 3:
             if (mode != 2)
             {
@@ -252,6 +282,45 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
             return "bad action";
     }
     return fired ? "" : "cannot do that now";
+}
+
+void CPawnController::FireQueuedOrder()
+{
+    if (!m_QueuedOrder.has_value() || Acting())
+    {
+        return;
+    }
+    const auto [key, target] = *m_QueuedOrder;
+    if (m_Tick > m_QueuedOrderDeadline)
+    {
+        ShowInfoFmt("pawn: {} lets the queued {} go (30 s without a chance)", POwner->getName(), key);
+        m_QueuedOrder.reset();
+        return;
+    }
+
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (PTarget == nullptr || PTarget->isDead())
+    {
+        m_QueuedOrder.reset();
+        return;
+    }
+
+    unsigned kind = 0;
+    unsigned mode = 0;
+    unsigned id   = 0;
+    if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    {
+        m_QueuedOrder.reset();
+        return;
+    }
+
+    const auto err = TryAction(kind, mode, id, target);
+    if (err == "recast")
+    {
+        return; // the timer has not run out: next tick
+    }
+    m_QueuedOrder.reset();
+    ShowInfoFmt("pawn: {} fires the queued {} on {}{}", POwner->getName(), key, PTarget->getName(), err.empty() ? "" : " -- " + err);
 }
 
 void CPawnController::IdleEmote(const CCharEntity* PPlayer)
@@ -350,6 +419,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     {
         m_PlayerSeenDead = false;
         CheckBrain();
+        FireQueuedOrder();
 
         // Mobs check a character for aggro only when that character's client
         // sends a position or action packet (CZoneEntities::tapMobAggro). A

@@ -112,6 +112,7 @@ namespace pawn
         std::string key;   // "target", "cond:arg" ("cond:*" when numeric), "status id", or "reaction:select:arg"
         std::string label; // as the player reads it; a '*' stands for the number
         std::string group; // actions: Behaviours / Magic / Abilities / WeaponSkills / Ranged; numeric conditions: "min,max,step,default"
+        uint16      targets = 0; // actions: the valid-target mask (TARGET_*), so a command window knows which cursor to open
     };
     struct Vocabulary
     {

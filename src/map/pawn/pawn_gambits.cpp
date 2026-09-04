@@ -1573,7 +1573,7 @@ namespace pawn
             {
                 continue;
             }
-            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic" });
+            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget() });
             if (const auto family = PSpell->getSpellFamily(); family != SPELLFAMILY_NONE && std::find(families.begin(), families.end(), family) == families.end())
             {
                 families.push_back(family);
@@ -1594,7 +1594,7 @@ namespace pawn
                     const auto key = fmt::format("3:2:{}", PAbility->getID());
                     if (std::none_of(v.actions.begin(), v.actions.end(), [&](const VocabEntry& e) { return e.key == key; }))
                     {
-                        v.actions.push_back({ key, titleCase(PAbility->getName()), "Abilities" });
+                        v.actions.push_back({ key, titleCase(PAbility->getName()), "Abilities", PAbility->getValidTarget() });
                     }
                 }
             }
@@ -1607,11 +1607,11 @@ namespace pawn
             auto* PWeaponSkill = battleutils::GetWeaponSkill(id);
             if (PWeaponSkill != nullptr && charutils::hasWeaponSkill(PPawn, id) && charutils::canUseWeaponSkill(PPawn, id))
             {
-                v.actions.push_back({ fmt::format("4:2:{}", id), titleCase(PWeaponSkill->getName()), "WeaponSkills" });
+                v.actions.push_back({ fmt::format("4:2:{}", id), titleCase(PWeaponSkill->getName()), "WeaponSkills", TARGET_ENEMY });
             }
         }
 
-        v.actions.push_back({ "1:0:0", "Ranged attack", "Ranged" });
+        v.actions.push_back({ "1:0:0", "Ranged attack", "Ranged", TARGET_ENEMY });
         return v;
     }
 auto isMeleeJob(const xi::Job job) -> bool

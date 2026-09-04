@@ -541,9 +541,10 @@ class PawnModule : public CPPModule
                 for (const auto& e : entries)
                 {
                     auto entry     = ::lua.create_table();
-                    entry["key"]   = e.key;
-                    entry["label"] = e.label;
-                    entry["group"] = e.group;
+                    entry["key"]     = e.key;
+                    entry["label"]   = e.label;
+                    entry["group"]   = e.group;
+                    entry["targets"] = e.targets;
                     list.add(entry);
                 }
                 return list;
