@@ -133,9 +133,11 @@ end
 
 local kGuardReach = 8 -- yalms
 
--- The guard within reach of the player, or nil: { npc, nation, type }.
--- Asked once a second by the roster line, so the answer is kept for two
--- seconds per player; the zone resolves names from a cache of its own.
+-- The nearest guard within reach of the player, or nil: { npc, name,
+-- nation, type } -- nearest, because a consulate stands its guards
+-- together. Asked once a second by the roster line, so the answer is kept
+-- for two seconds per player; the zone resolves names from a cache of
+-- its own.
 local nearCache = {}
 local function guardNear(player)
     local id  = player:getID()
@@ -145,20 +147,18 @@ local function guardNear(player)
         return c.guard
     end
 
-    local found = nil
+    local found, nearest = nil, kGuardReach
     local names = guardsByZone[player:getZoneName()]
     if names ~= nil then
         local zone = player:getZone()
         for _, name in ipairs(names) do
             for _, npc in pairs(zone:queryEntitiesByName(name)) do
-                if player:checkDistance(npc) <= kGuardReach then
+                local away = player:checkDistance(npc)
+                if away <= nearest then
                     local g = guards[name]
-                    found   = { npc = npc, nation = g.nation, type = g.type }
-                    break
+                    found   = { npc = npc, name = name, nation = g.nation, type = g.type }
+                    nearest = away
                 end
-            end
-            if found ~= nil then
-                break
             end
         end
     end
@@ -198,10 +198,11 @@ local function readStock()
             if option ~= nil then
                 local itemName = body:match('item%s*=%s*xi%.item%.([%w_]+)')
                 local entry    = {
-                    cp   = tonumber(body:match('cp%s*=%s*(%d+)')) or 0,
-                    lvl  = tonumber(body:match('lvl%s*=%s*(%d+)')) or 1,
-                    rank = tonumber(body:match('rank%s*=%s*(%d+)')),
-                    item = itemName ~= nil and xi.item[itemName] or nil,
+                    cp    = tonumber(body:match('cp%s*=%s*(%d+)')) or 0,
+                    lvl   = tonumber(body:match('lvl%s*=%s*(%d+)')) or 1,
+                    rank  = tonumber(body:match('rank%s*=%s*(%d+)')),
+                    place = tonumber(body:match('place%s*=%s*(%d+)')),
+                    item  = itemName ~= nil and xi.item[itemName] or nil,
                 }
                 if entry.item ~= nil then
                     if section == 'common' then
@@ -240,6 +241,31 @@ local function cpStockFor(guardNation, buyerNation)
         out[option] = entry
     end
     return out
+end
+
+local nationNames = { [xi.nation.SANDORIA] = "San d'Oria", [xi.nation.BASTOK] = 'Bastok', [xi.nation.WINDURST] = 'Windurst' }
+
+-- A foreign counter: another nation's guard, not Jeuno's
+local function foreignGuard(buyerNation, guardNation)
+    return guardNation ~= xi.nation.OTHER and guardNation ~= buyerNation
+end
+
+-- The guard's own refusals (overseerOnEventUpdate): another nation's guard
+-- sells only to a buyer whose nation outranks the guard's in the conquest
+-- tally, and never its place-ranked gear; a nation's own place-ranked gear
+-- needs the nation ranked at or above the place. nil when the sale stands.
+local function cpRefusal(entry, buyerNation, guardNation)
+    if foreignGuard(buyerNation, guardNation) then
+        if GetNationRank(guardNation) <= GetNationRank(buyerNation) then
+            return string.format('%s does not outrank %s in conquest; its guards sell her nothing', nationNames[buyerNation], nationNames[guardNation])
+        end
+        if entry.place ~= nil then
+            return "another nation's guard does not sell that"
+        end
+    elseif entry.place ~= nil and GetNationRank(buyerNation) > entry.place then
+        return string.format('that needs %s ranked %d or better in conquest', nationNames[buyerNation], entry.place)
+    end
+    return nil
 end
 
 -- The guard's price for this buyer: another nation's guard charges more
@@ -354,9 +380,12 @@ local function sendCpShop(player, name)
         return
     end
 
-    local nation = targ:getNation()
-    local stock  = cpStockFor(g.nation, nation)
-    reply(player, string.format('#cd cps.b %s %d %d %d %d', name, targ:getCP(), targ:getRank(nation), nation, g.nation))
+    local nation  = targ:getNation()
+    local stock   = cpStockFor(g.nation, nation)
+    local foreign = foreignGuard(nation, g.nation)
+    local blocked = foreign and GetNationRank(g.nation) <= GetNationRank(nation)
+    reply(player, string.format('#cd cps.b %s %d %d %d %d %d %d %d %s', name, targ:getCP(), targ:getRank(nation), nation, g.nation,
+        GetNationRank(nation), foreign and 1 or 0, blocked and 1 or 0, g.name))
     local options = {}
     for option in pairs(stock) do
         options[#options + 1] = option
@@ -364,7 +393,7 @@ local function sendCpShop(player, name)
     table.sort(options)
     for _, option in ipairs(options) do
         local entry = stock[option]
-        reply(player, string.format('#cd cps %s %d %d %d %d %d', name, option, entry.item, cpPrice(entry, nation, g.nation), entry.lvl, entry.rank or 0))
+        reply(player, string.format('#cd cps %s %d %d %d %d %d %d', name, option, entry.item, cpPrice(entry, nation, g.nation), entry.lvl, entry.rank or 0, entry.place or 0))
     end
     reply(player, '#cd cps.e ' .. name)
 end
@@ -386,20 +415,25 @@ local function cpBuy(player, name, option)
     if option >= 32933 and option <= 32935 then
         return 'the experience rings are not sold by proxy'
     end
-    if entry.rank and targ:getRank(nation) < entry.rank then
-        return string.format('%s is rank %d, that needs rank %d', name, targ:getRank(nation), entry.rank)
+
+    -- The guard's own judgement and its own sale, her cutscene answered for
+    -- her: overseerOnEventUpdate weighs the item the way the menu would --
+    -- job, level, points, rank, the nations' standing, the place -- and arms
+    -- the sale; overseerOnEventFinish makes it, charging her and handing
+    -- her the item. The rules stay upstream's. Refused, nothing changes
+    -- hands, and cpRefusal only puts the guard's reason into words.
+    local before = targ:getCP()
+    xi.conquest.overseerOnEventUpdate(targ, 0, option, g.nation)
+    xi.conquest.overseerOnEventFinish(targ, 0, option, g.nation, g.type, nil)
+    if targ:getCP() == before then
+        if targ:getFreeSlotsCount() < 1 then
+            return string.format('%s has no room', name)
+        end
+        return cpRefusal(entry, nation, g.nation)
+            or (targ:getCP() < cpPrice(entry, nation, g.nation) and string.format('%s has %d conquest points, that costs %d', name, targ:getCP(), cpPrice(entry, nation, g.nation)))
+            or (entry.rank ~= nil and targ:getRank(nation) < entry.rank and string.format('%s is rank %d, that needs rank %d', name, targ:getRank(nation), entry.rank))
+            or 'the guard would not sell that to her'
     end
-    local price = cpPrice(entry, nation, g.nation)
-    if targ:getCP() < price then
-        return string.format('%s has %d conquest points, that costs %d', name, targ:getCP(), price)
-    end
-    if targ:getFreeSlotsCount() < 1 then
-        return string.format('%s has no room', name)
-    end
-    if not targ:addItem(entry.item) then
-        return 'the item could not be handed over'
-    end
-    targ:delCP(price)
     return ''
 end
 
