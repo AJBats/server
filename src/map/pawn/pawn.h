@@ -144,6 +144,14 @@ namespace pawn
     // world.
     bool homePoint(CCharEntity* PPawn);
 
+    // A zone change the server meant to carry through the client protocol
+    // -- a warp of her own (a scroll, Warp, Warp II on her) or a party
+    // teleport she stood in range of -- is carried by the pawn transfer
+    // instead: a warp to the party's home point, a teleport to where it
+    // put her. Called each tick ahead of the zone's own check; true when
+    // a carry was requested.
+    bool carryZoning(CCharEntity* PPawn);
+
     // A stuck cardian teleports to her player's side: only from within
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's

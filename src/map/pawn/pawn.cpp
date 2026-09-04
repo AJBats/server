@@ -721,6 +721,60 @@ namespace pawn
         return true;
     }
 
+    bool carryZoning(CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr || !pawns.contains(PPawn->id))
+        {
+            return false;
+        }
+
+        // A warp: the party's home point, revived if it was the death timer's
+        if (PPawn->requestedWarp != WarpRequest::None)
+        {
+            PPawn->requestedWarp = WarpRequest::None;
+            if (PPawn->isDead())
+            {
+                return homePoint(PPawn);
+            }
+
+            CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
+            if (PSummoner != nullptr)
+            {
+                PPawn->profile.home_point = PSummoner->profile.home_point;
+            }
+            const auto& home = PPawn->profile.home_point;
+
+            ShowInfoFmt("pawn: {} warps to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
+            requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
+            return true;
+        }
+
+        // A teleport: setPos has already written where it put her and asked
+        // for the zone; she goes there by transfer
+        if (PPawn->requestedZoneChange)
+        {
+            PPawn->requestedZoneChange = false;
+            if (PPawn->loc.destination != ZONE_NO_DESTINATION && PPawn->loc.destination != PPawn->getZone())
+            {
+                ShowInfoFmt("pawn: {} is carried to zone {}", PPawn->getName(), static_cast<uint16>(PPawn->loc.destination));
+                requestTransfer(PPawn->id, TravelHop{ .destinationZone = PPawn->loc.destination, .walkTo = {}, .arriveAt = PPawn->loc.p });
+                return true;
+            }
+
+            // Within the zone: setPos has moved her already, and only the
+            // zone change it asked for is refused
+            PPawn->status = xi::Status::Normal;
+            PPawn->updatemask |= UPDATE_ALL_CHAR;
+            if (PPawn->PAI->PathFind)
+            {
+                PPawn->PAI->PathFind->Clear();
+            }
+            ShowInfoFmt("pawn: {} is moved within zone {}", PPawn->getName(), static_cast<uint16>(PPawn->getZone()));
+            return true;
+        }
+        return false;
+    }
+
     namespace
     {
         auto gambitsOf(CCharEntity* PPawn) -> CGambits*
@@ -1136,6 +1190,10 @@ namespace pawn
 
         PPawn->clearPacketList();
         PPawn->updatemask |= UPDATE_ALL_CHAR;
+        if (PPawn->status == xi::Status::Disappear)
+        {
+            PPawn->status = xi::Status::Normal;
+        }
 
         // The insert marked nearby viewers as having seen the pawn, but a
         // viewer whose login handshake is mid-flight has its packet queue

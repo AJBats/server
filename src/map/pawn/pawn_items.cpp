@@ -23,6 +23,8 @@
 #include "pawn.h"
 
 #include "common/logging.h"
+#include "common/settings.h"
+#include "common/utils.h"
 
 #include "ai/ai_container.h"
 #include "entities/char_entity.h"
@@ -140,8 +142,32 @@ namespace
 
 namespace pawn::items
 {
+    namespace
+    {
+        // No item teleportation: a trade reaches pawn.TRADE_RANGE yalms, in
+        // the same zone
+        auto outOfReach(const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string
+        {
+            if (PPlayer->loc.zone != PPawn->loc.zone)
+            {
+                return fmt::format("{} is in another zone", PPawn->getName());
+            }
+            const float range = settings::get<float>("pawn.TRADE_RANGE");
+            if (const float away = distance(PPlayer->loc.p, PPawn->loc.p); away > range)
+            {
+                return fmt::format("{} is {:.0f} y away, out of trading reach ({:.0f})", PPawn->getName(), away, range);
+            }
+            return "";
+        }
+    } // namespace
+
     auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> std::string
     {
+        if (const auto far = outOfReach(PPlayer, PPawn); !far.empty())
+        {
+            return far;
+        }
+
         CardianTransfer transfer;
 
         auto result = transfer.move(PPlayer, PPawn, slot, qty);
@@ -236,6 +262,10 @@ namespace pawn::items
 
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
     {
+        if (const auto far = outOfReach(PPlayer, PPawn); !far.empty())
+        {
+            return far;
+        }
         return CardianTransfer().move(PPawn, PPlayer, slot, qty);
     }
 

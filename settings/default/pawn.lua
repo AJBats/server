@@ -57,6 +57,10 @@ xi.settings.pawn =
     RESCUE_RANGE    = 15,
     RESCUE_COOLDOWN = 300,
 
+    -- Trading with a cardian -- give, take, give and use -- reaches
+    -- TRADE_RANGE yalms, in the same zone: no item teleportation.
+    TRADE_RANGE = 20,
+
 
     -- Formation: the hunter leads, holding a point this many yalms ahead
     -- of the player along their facing; the point is re-aimed only when

@@ -425,6 +425,13 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     m_Tick = tick;
 
+    // A zone change meant for the client protocol -- a warp, a teleport --
+    // is hers to carry by transfer, ahead of the zone's own check
+    if (pawn::carryZoning(static_cast<CCharEntity*>(POwner)))
+    {
+        co_return;
+    }
+
     const bool engaged = POwner->PAI->IsEngaged();
 
     // Leaving a fight starts the draw cooldown; who it was with decides
