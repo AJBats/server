@@ -109,6 +109,12 @@ public:
     void ForEachPet(FnRef<void(CPetEntity*)> func);
     void ForEachAlly(FnRef<void(CMobEntity*)> func);
 
+    // CARDIAN: the proximity grid, read-only, for the pawn code's range queries (hunt pick, danger scan, self-defence) in place of a mob-list sweep
+    auto spatialGrid() const -> const SpatialGrid&
+    {
+        return spatialGrid_;
+    }
+
     auto GetNewCharTargID() -> uint16;
     void AssignDynamicTargIDandLongID(CBaseEntity* PEntity);
     void EraseStaleDynamicTargIDs();

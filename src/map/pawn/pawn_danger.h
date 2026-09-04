@@ -23,6 +23,8 @@
 
 #include "formation_math.h"
 
+#include "common/types/fn.h"
+
 #include <algorithm>
 #include <vector>
 
@@ -30,7 +32,7 @@ class CBaseEntity;
 class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
-class CZone;
+class CZoneEntities;
 struct position_t;
 
 // The danger map (M3.87): every mob near a cardian that could turn on it,
@@ -144,5 +146,18 @@ namespace pawn::danger
     // Dangers whose circle comes within `scan` yalms (planar) of `center`,
     // each circle being the mob's detection sphere sliced at center's height
     // (unordered).
-    auto around(CZone* zone, const position_t& center, float scan, const Profile& profile, const CBaseEntity* exclude = nullptr) -> std::vector<Danger>;
+    auto around(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile, const CBaseEntity* exclude = nullptr) -> std::vector<Danger>;
 } // namespace pawn::danger
+
+// The zone's proximity grid, queried for mobs: the same set a sweep of the
+// mob list yields, narrowed to the cells within `radius` of `center`. The
+// grid only narrows -- callers keep their own precise distance and status
+// filters, as they did over the sweep.
+namespace pawn
+{
+    // The entity list a mob near this entity is filed in: its instance's
+    // when it stands in one, else its zone's
+    auto entitiesAround(const CBaseEntity* PEntity) -> CZoneEntities*;
+
+    auto forEachMobNear(CZoneEntities* entities, const position_t& center, float radius, FnRef<void(CMobEntity*)> fn) -> void;
+} // namespace pawn

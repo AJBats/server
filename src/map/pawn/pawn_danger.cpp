@@ -29,8 +29,10 @@
 #include "data/enums/detects.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "instance.h"
 #include "status_effect_container.h"
 #include "zone.h"
+#include "zone_entities.h"
 
 #include <algorithm>
 #include <cmath>
@@ -61,10 +63,10 @@ namespace pawn::danger
         return p;
     }
 
-    auto around(CZone* zone, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude) -> std::vector<Danger>
+    auto around(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude) -> std::vector<Danger>
     {
         std::vector<Danger> out;
-        if (zone == nullptr)
+        if (entities == nullptr)
         {
             return out;
         }
@@ -85,89 +87,126 @@ namespace pawn::danger
         std::vector<const CParty*> fighting;
         if (profile.tailed != nullptr && settings::get<bool>("pawn.AVOID_LINKS"))
         {
-            zone->ForEachMob([&](CMobEntity* PMob)
-                             {
-                                 if (PMob->PParty != nullptr && PMob->PAI->IsEngaged() && PMob->GetBattleTarget() == profile.tailed &&
-                                     isWithinDistance(center, PMob->loc.p, coarse))
-                                 {
-                                     fighting.push_back(PMob->PParty);
-                                 }
-                             });
+            const auto noteFighting = [&](CMobEntity* PMob)
+            {
+                if (PMob->PParty != nullptr && PMob->PAI->IsEngaged() && PMob->GetBattleTarget() == profile.tailed &&
+                    isWithinDistance(center, PMob->loc.p, coarse))
+                {
+                    fighting.push_back(PMob->PParty);
+                }
+            };
+            forEachMobNear(entities, center, coarse, noteFighting);
         }
 
-        zone->ForEachMob([&](CMobEntity* PMob)
-                         {
-                             if (PMob == exclude || !isWithinDistance(center, PMob->loc.p, coarse))
-                             {
-                                 return;
-                             }
-                             if (PMob->isDead() || PMob->PMaster != nullptr || PMob->m_neutral ||
-                                 !PMob->PAI->IsSpawned() || PMob->PAI->IsEngaged())
-                             {
-                                 return;
-                             }
+        const auto consider = [&](CMobEntity* PMob)
+        {
+            if (PMob == exclude || !isWithinDistance(center, PMob->loc.p, coarse))
+            {
+                return;
+            }
+            if (PMob->isDead() || PMob->PMaster != nullptr || PMob->m_neutral ||
+                !PMob->PAI->IsSpawned() || PMob->PAI->IsEngaged())
+            {
+                return;
+            }
 
-                             const bool aggressive = (PMob->getMobMod(xi::MobMod::AlwaysAggro) != 0 || PMob->m_Aggro) &&
-                                                     PMob->getMobMod(xi::MobMod::NoAggro) == 0;
+            const bool aggressive = (PMob->getMobMod(xi::MobMod::AlwaysAggro) != 0 || PMob->m_Aggro) &&
+                                    PMob->getMobMod(xi::MobMod::NoAggro) == 0;
 
-                             // Its kin are on her: it links the way CanLink allows -- not
-                             // flagged no-link, not an underground worm or antlion
-                             const bool underground = (hasFlag(PMob->m_roamFlags, xi::RoamFlag::Worm) || hasFlag(PMob->m_roamFlags, xi::RoamFlag::Ambush)) &&
-                                                      PMob->IsNameHidden();
-                             const bool links = !fighting.empty() && PMob->PParty != nullptr && PMob->getMobMod(xi::MobMod::NoLink) == 0 && !underground &&
-                                                std::find(fighting.begin(), fighting.end(), PMob->PParty) != fighting.end();
-                             if (!aggressive && !links)
-                             {
-                                 return;
-                             }
+            // Its kin are on her: it links the way CanLink allows -- not
+            // flagged no-link, not an underground worm or antlion
+            const bool underground = (hasFlag(PMob->m_roamFlags, xi::RoamFlag::Worm) || hasFlag(PMob->m_roamFlags, xi::RoamFlag::Ambush)) &&
+                                     PMob->IsNameHidden();
+            const bool links = !fighting.empty() && PMob->PParty != nullptr && PMob->getMobMod(xi::MobMod::NoLink) == 0 && !underground &&
+                               std::find(fighting.begin(), fighting.end(), PMob->PParty) != fighting.end();
+            if (!aggressive && !links)
+            {
+                return;
+            }
 
-                             const auto detects = static_cast<xi::Detects>(PMob->getMobMod(xi::MobMod::Detection));
-                             Detection  d;
-                             d.sight               = aggressive && hasFlag(detects, xi::Detects::Sight);
-                             d.hearing             = aggressive && hasFlag(detects, xi::Detects::Hearing);
-                             d.magic               = aggressive && hasFlag(detects, xi::Detects::Magic);
-                             d.lowHP               = aggressive && hasFlag(detects, xi::Detects::Lowhp);
-                             d.ambush              = aggressive && hasFlag(PMob->m_Behavior, xi::Behavior::AggroAmbush);
-                             d.trueDetection       = PMob->m_TrueDetection;
-                             d.seesThroughIllusion = PMob->getMobMod(xi::MobMod::SeesThroughIllusion) != 0;
-                             d.sightRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::SightRange));
-                             d.soundRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::SoundRange));
-                             d.magicRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::MagicRange));
-                             d.links               = links;
-                             d.linkRange           = static_cast<float>(PMob->getMobMod(xi::MobMod::LinkRadius));
+            const auto detects = static_cast<xi::Detects>(PMob->getMobMod(xi::MobMod::Detection));
+            Detection  d;
+            d.sight               = aggressive && hasFlag(detects, xi::Detects::Sight);
+            d.hearing             = aggressive && hasFlag(detects, xi::Detects::Hearing);
+            d.magic               = aggressive && hasFlag(detects, xi::Detects::Magic);
+            d.lowHP               = aggressive && hasFlag(detects, xi::Detects::Lowhp);
+            d.ambush              = aggressive && hasFlag(PMob->m_Behavior, xi::Behavior::AggroAmbush);
+            d.trueDetection       = PMob->m_TrueDetection;
+            d.seesThroughIllusion = PMob->getMobMod(xi::MobMod::SeesThroughIllusion) != 0;
+            d.sightRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::SightRange));
+            d.soundRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::SoundRange));
+            d.magicRange          = static_cast<float>(PMob->getMobMod(xi::MobMod::MagicRange));
+            d.links               = links;
+            d.linkRange           = static_cast<float>(PMob->getMobMod(xi::MobMod::LinkRadius));
 
-                             float radius = radiusFor(d, profile, buffer, tail);
-                             if (radius <= 0.0f)
-                             {
-                                 return;
-                             }
+            float radius = radiusFor(d, profile, buffer, tail);
+            if (radius <= 0.0f)
+            {
+                return;
+            }
 
-                             // Detection is a sphere and the map is flat: the circle is
-                             // that sphere sliced at the query height, and a mob too far
-                             // above or below (a bridge, a cliff) is no danger at all
-                             const float dy = center.y - PMob->loc.p.y;
-                             if (std::fabs(dy) >= radius)
-                             {
-                                 return;
-                             }
-                             radius = std::sqrt(radius * radius - dy * dy);
+            // Detection is a sphere and the map is flat: the circle is
+            // that sphere sliced at the query height, and a mob too far
+            // above or below (a bridge, a cliff) is no danger at all
+            const float dy = center.y - PMob->loc.p.y;
+            if (std::fabs(dy) >= radius)
+            {
+                return;
+            }
+            radius = std::sqrt(radius * radius - dy * dy);
 
-                             const float dist = distance(center, PMob->loc.p, true); // planar, like the circle
-                             if (dist > scan + radius)
-                             {
-                                 return;
-                             }
+            const float dist = distance(center, PMob->loc.p, true); // planar, like the circle
+            if (dist > scan + radius)
+            {
+                return;
+            }
 
-                             Danger danger;
-                             danger.x        = PMob->loc.p.x;
-                             danger.z        = PMob->loc.p.z;
-                             danger.radius   = radius;
-                             danger.mob      = PMob;
-                             danger.distance = dist;
-                             danger.linked   = links;
-                             out.push_back(danger);
-                         });
+            Danger danger;
+            danger.x        = PMob->loc.p.x;
+            danger.z        = PMob->loc.p.z;
+            danger.radius   = radius;
+            danger.mob      = PMob;
+            danger.distance = dist;
+            danger.linked   = links;
+            out.push_back(danger);
+        };
+        forEachMobNear(entities, center, coarse, consider);
 
         return out;
     }
 } // namespace pawn::danger
+
+namespace pawn
+{
+    auto entitiesAround(const CBaseEntity* PEntity) -> CZoneEntities*
+    {
+        if (PEntity->PInstance != nullptr)
+        {
+            return PEntity->PInstance;
+        }
+        return PEntity->loc.zone != nullptr ? PEntity->loc.zone->GetZoneEntities() : nullptr;
+    }
+
+    auto forEachMobNear(CZoneEntities* entities, const position_t& center, const float radius, FnRef<void(CMobEntity*)> fn) -> void
+    {
+        if (entities == nullptr)
+        {
+            return;
+        }
+
+        // Allies are mobs too, filed apart; the mob list is what a sweep walks
+        const auto& mobs  = entities->GetMobList();
+        const auto  visit = [&](CBaseEntity* PEntity)
+        {
+            if (PEntity->objtype != TYPE_MOB)
+            {
+                return;
+            }
+            if (const auto it = mobs.find(PEntity->targid); it != mobs.end() && it->second == PEntity)
+            {
+                fn(static_cast<CMobEntity*>(PEntity));
+            }
+        };
+        entities->spatialGrid().forEachInRange(center, radius, visit);
+    }
+} // namespace pawn
