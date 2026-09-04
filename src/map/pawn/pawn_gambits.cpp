@@ -1600,6 +1600,14 @@ namespace pawn
             }
         }
 
+        // Her learned-weapon-skill bitfield is rebuilt only when equipment,
+        // merits or latents change -- never on a skill-up or a level. A
+        // player zones and swaps gear often enough not to notice; a cardian
+        // does neither, so hers stays frozen at whatever it was when she was
+        // last handed a weapon, and a skill she has since earned never
+        // appears. Rebuilt here, where the list is about to be read.
+        charutils::BuildingCharWeaponSkills(PPawn);
+
         v.actions.push_back({ "4:0:0", "Best weapon skill", "WeaponSkills" });
         v.actions.push_back({ "4:3:0", "Any weapon skill", "WeaponSkills" });
         for (uint16 id = 1; id < MAX_WEAPONSKILL_ID; ++id)
