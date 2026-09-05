@@ -218,7 +218,6 @@ void CPawnController::SetRetreat(const bool on)
         if (on)
         {
             m_Approach.reset();
-            m_OrderedMob = 0;
         }
     }
     m_Retreat = on;
@@ -237,9 +236,8 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
     // The beat: the order is taken now, her draw comes a beat later -- the
     // front row first, so the party never draws on one tick
-    m_Order      = EntityId(PMob);
-    m_OrderAt    = m_Tick + ReactionBeat();
-    m_OrderedMob = PMob->id;
+    m_Order   = EntityId(PMob);
+    m_OrderAt = m_Tick + ReactionBeat();
 }
 
 void CPawnController::FireOrderedEngage()
@@ -479,9 +477,31 @@ void CPawnController::SayRefusal(const CBattleEntity* PTarget, const std::string
     ShowInfoFmt("pawn: {} does not draw on {} ({})", POwner->getName(), PTarget->getName(), why);
 }
 
+auto CPawnController::Refusal(CBattleEntity* PTarget, const cardian::rules::EngageFacts& facts) const -> std::string
+{
+    const auto verdict = cardian::rules::mayFight(facts);
+    if (!verdict && !cardian::rules::worthWalkingIn(facts))
+    {
+        return verdict.why;
+    }
+    if (!PTarget->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+    {
+        if (const auto* PMob = dynamic_cast<const CMobEntity*>(PTarget); PMob != nullptr)
+        {
+            return PullBlocker(PMob);
+        }
+    }
+    return "";
+}
+
 auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, const std::string_view how) -> bool
 {
-    const auto facts   = EngageFactsFor(PTarget);
+    const auto facts = EngageFactsFor(PTarget);
+    if (const auto why = Refusal(PTarget, facts); !why.empty())
+    {
+        SayRefusal(PTarget, why);
+        return false;
+    }
     const auto verdict = cardian::rules::mayFight(facts);
     if (verdict)
     {
@@ -562,7 +582,7 @@ void CPawnController::MoveByAvoid(const AvoidAction action, const position_t& po
     }
 }
 
-void CPawnController::WalkToward(CBattleEntity* PTarget, const bool avoid)
+void CPawnController::WalkToward(CBattleEntity* PTarget)
 {
     if (!POwner->PAI->CanFollowPath() || POwner->GetSpeed() <= 0)
     {
@@ -573,7 +593,7 @@ void CPawnController::WalkToward(CBattleEntity* PTarget, const bool avoid)
     float      followTarget    = RoamDistance;
     float      declumpDistance = 0.0f;
     auto       action          = AvoidAction::None;
-    if (avoid && IsAvoidingAggro())
+    if (IsAvoidingAggro())
     {
         action = Avoid(point, followMax, followTarget, declumpDistance, PTarget, true);
     }
@@ -708,7 +728,6 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         m_FightSeat   = {};
         m_SeatVia     = false;
         m_CloseAt     = timer::time_point::min();
-        m_OrderedMob  = 0;
     }
     m_WasEngaged = engaged;
 
@@ -941,12 +960,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             // the pick used (PullBlocker), never by the shape of her own
             // avoidance: a detour round a circle is a walk, not a reason.
             // Unclean, it is let go when the party wants clean pulls and
-            // fetched when it allows aggressive company -- or when the
-            // player ordered it, their call outranking the rule. A target
-            // that is fighting is held at the rim: the tank brings it
+            // fetched when it allows aggressive company (the door refused
+            // it by the same rule, so this catches only a guard that has
+            // roamed over since). A target that is fighting is held at the
+            // rim: the tank brings it
             if (!PTarget->PAI->IsEngaged())
             {
-                if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive || m_OrderedMob == PTarget->id)
+                if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
                 {
                     avoidAction = AvoidAction::None;
                 }
@@ -1081,13 +1101,13 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
     if (PPartyTarget != nullptr && !walkingIn)
     {
-        const auto facts   = EngageFactsFor(PPartyTarget);
-        const auto verdict = cardian::rules::mayFight(facts);
-        if (!verdict && !cardian::rules::worthWalkingIn(facts))
+        const auto facts = EngageFactsFor(PPartyTarget);
+        if (const auto why = Refusal(PPartyTarget, facts); !why.empty())
         {
-            // A refusal that stands (claimed by another party, say) is
-            // said once, and she keeps to the formation
-            SayRefusal(PPartyTarget, verdict.why);
+            // A refusal that stands (claimed by another party, an idle
+            // target the party would not pull) is said once, and she
+            // keeps to the formation
+            SayRefusal(PPartyTarget, why);
             m_EngageBeatMob = 0;
         }
         else
@@ -1210,9 +1230,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 m_Approach.reset();
                 co_return;
             }
-            // A clean pull that has turned unclean on the way in (the guard
-            // roamed over it) is let go, as the fight lets it go
-            if (hunt && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+            // A pull that has turned unclean on the way in (a guard roamed
+            // over it) is let go, as the fight lets it go -- whoever chose
+            // it, and said, so she never stands at a rim with no reason
+            if (!PMob->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
             {
                 if (const auto unclean = PullBlocker(PMob); !unclean.empty())
                 {
@@ -1221,9 +1242,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                     co_return;
                 }
             }
-            // The player's order goes straight there: their call outranks
-            // the company around it
-            WalkToward(PMob, m_Approach->kind != ApproachKind::Order);
+            WalkToward(PMob);
             co_return;
         }
     }

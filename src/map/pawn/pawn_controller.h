@@ -365,15 +365,21 @@ private:
     auto EngageFactsFor(CBattleEntity* PTarget) -> cardian::rules::EngageFacts;
     void SayRefusal(const CBattleEntity* PTarget, const std::string& why);
 
+    // Why she will neither draw on nor walk in on this target: the rules
+    // (mayFight, past what a walk in cures), then the pull rule as the
+    // fight asks it -- an idle target the party would not pull is refused
+    // at the door too, so the door and the fight never disagree. "" when
+    // she may.
+    auto Refusal(CBattleEntity* PTarget, const cardian::rules::EngageFacts& facts) const -> std::string;
+
     // The pull rule as the fight and the walk in ask it: the pick's padded
     // circles, scanned around her now. "" when clean, else what makes it
     // unclean
     auto PullBlocker(const CMobEntity* PMob) const -> std::string;
 
     // The walk in on a mob by the fight's own avoidance pass: a circle
-    // across the way is gone round, one she stands in is stepped out of.
-    // Without avoidance (an order), straight at it
-    void WalkToward(CBattleEntity* PTarget, bool avoid);
+    // across the way is gone round, one she stands in is stepped out of
+    void WalkToward(CBattleEntity* PTarget);
 
     // The step an avoidance action asks for: a short hop straight to the
     // point, a path when it is far, a path dropped when she is there
@@ -399,11 +405,6 @@ private:
     // commits the moment it is chosen and closes; only the draw waits, on
     // the rules and the re-engage timer
     std::optional<Approach> m_Approach;
-
-    // The mob the player ordered her at: their call outranks the party's
-    // pull rule, so the walk in goes straight and the fight is not let go
-    // for the company around it. Cleared when the fight ends.
-    uint32 m_OrderedMob = 0;
 
     // The last refusal said, so a standing reason is not said every beat
     uint32      m_RefusedTarget = 0;
