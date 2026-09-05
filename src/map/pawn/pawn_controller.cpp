@@ -2618,7 +2618,7 @@ auto CPawnController::GetPawnPartyPosition() const -> uint8
 
 auto CPawnController::FightSeatOn(const uint32 mobId) const -> std::optional<pawn::Slot>
 {
-    if (mobId != 0 && m_FightSeat.mob == mobId)
+    if (mobId != 0 && m_FightSeat.mob == mobId && !m_FightSeat.none)
     {
         return m_FightSeat.seat;
     }
@@ -2661,7 +2661,7 @@ auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot s
 
 auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>
 {
-    if (PTarget == nullptr || m_FightSeat.mob != PTarget->id)
+    if (PTarget == nullptr || m_FightSeat.mob != PTarget->id || m_FightSeat.none)
     {
         return std::nullopt;
     }
@@ -2691,9 +2691,14 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         return std::nullopt;
     }
 
-    // Hers for the fight
+    // Hers for the fight -- or given up for it: she fights from where she
+    // stands, as the front does, and no other seat is tried
     if (m_FightSeat.mob == PTarget->id)
     {
+        if (m_FightSeat.none)
+        {
+            return std::nullopt;
+        }
         return m_FightSeat.seat;
     }
 
@@ -2732,8 +2737,12 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         }
     }
 
-    // A seat off the mesh (the mob against a wall) is no seat; none on
-    // the mesh and she closes as the front does
+    // A seat off the mesh (the mob against a wall) is no seat, nor one on
+    // another level (a ledge: the mesh has ground there, a cliff's height
+    // away -- the walk to it is a walk round the cliff); none on the mesh
+    // and she closes as the front does
+    constexpr float                kSeatLevel = 2.0f;
+    const auto*                    navMesh    = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
     cardian::formation::SeatPoints points{};
     for (std::size_t i = 0; i < RingSeats.size(); ++i)
     {
@@ -2742,6 +2751,14 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         if (!POwner->PAI->PathFind->ValidPosition(p))
         {
             taken[i] = true;
+        }
+        else if (navMesh != nullptr)
+        {
+            const auto ground = navMesh->findClosestValidPoint(p);
+            if (!ground.has_value() || std::fabs(ground->y - PTarget->loc.p.y) > kSeatLevel)
+            {
+                taken[i] = true;
+            }
         }
         for (const auto& held : heldPoints)
         {
@@ -2755,9 +2772,12 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
     {
         return std::nullopt;
     }
-    const auto seat = RingSeats[cardian::formation::nearestSeat(points, taken, POwner->loc.p.x, POwner->loc.p.z)];
-    m_FightSeat     = { PTarget->id, seat };
-    m_SeatVia       = false;
+    const auto seat    = RingSeats[cardian::formation::nearestSeat(points, taken, POwner->loc.p.x, POwner->loc.p.z)];
+    m_FightSeat        = {};
+    m_FightSeat.mob    = PTarget->id;
+    m_FightSeat.seat   = seat;
+    m_FightSeat.takenAt = m_Tick;
+    m_SeatVia          = false;
     ShowInfoFmt("pawn: {} takes {}'s {}", POwner->getName(), PTarget->getName(), seatName(seat));
     return seat;
 }
@@ -2793,6 +2813,29 @@ void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t&
         return;
     }
 
+    // A seat is worth a short walk, never a long one. Not reached within
+    // kSeatPatience of taking it (a ledge, a wall, a mob that keeps
+    // walking), it is given up for the fight; so is one round the mob's
+    // far side while she is already in reach -- a fight with the seat
+    // on the other side of the mob is a fight, not a walk. She fights
+    // from where she stands, as the front does.
+    constexpr auto kSeatPatience = 5s;
+    const auto     giveUp        = [&](const char* why)
+    {
+        ShowInfoFmt("pawn: {} gives up {}'s {} ({})", POwner->getName(), PTarget->getName(), seatName(m_FightSeat.seat), why);
+        m_FightSeat.none = true;
+        m_SeatVia        = false;
+        if (PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+    };
+    if (!m_FightSeat.settled && m_FightSeat.takenAt != timer::time_point::min() && m_Tick - m_FightSeat.takenAt > kSeatPatience)
+    {
+        giveUp("no way there in 5 s");
+        return;
+    }
+
     // A hop under the planner's floor (IsShortHop): straight at it, on
     // the mesh
     if (off < 1.2f)
@@ -2824,6 +2867,11 @@ void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t&
     const Circle body{ PTarget->loc.p.x, PTarget->loc.p.z, PTarget->modelHitboxSize + 0.8f };
     if (segmentCrosses(body, me.x, me.z, seat.x, seat.z))
     {
+        if (inReach)
+        {
+            giveUp("in reach, and the seat is round its far side");
+            return;
+        }
         const auto  right = SeatPoint(PTarget, pawn::Slot::FlankRight);
         const auto  left  = SeatPoint(PTarget, pawn::Slot::FlankLeft);
         const bool  byRight = distance(me, right) <= distance(me, left);
