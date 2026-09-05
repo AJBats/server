@@ -155,6 +155,35 @@ xi.settings.pawn =
     MELEE_BACKOFF_MARGIN   = 0.6,
     MELEE_BACKOFF_COOLDOWN = 2.0,
 
+    -- The fight ring: every cardian on a mob but the one it is fighting
+    -- takes a seat around it -- the flanks at FIGHT_FLANK_DEG off the mob's
+    -- facing, the rear quarters at FIGHT_REAR_DEG, behind at 180 --
+    -- measured off the bearing from the mob to its target, so the ring
+    -- turns with the fight; the seat sits at the step back's radius (3 y,
+    -- inside the mob's reach). The nearest free seat is hers: near seats
+    -- first, the far side as they fill, kept for the fight. A far seat is
+    -- reached round the mob's side, never through it. She walks to her
+    -- seat when more than FIGHT_SEAT_DEADBAND yalms off it. As the mob's
+    -- target she has no seat: the front is wherever she stands.
+    FIGHT_FLANK_DEG     = 80,
+    FIGHT_REAR_DEG      = 140,
+    FIGHT_SEAT_DEADBAND = 1.2,
+
+    -- The beat: how long a cardian takes to act on a decision -- to set
+    -- off on a hunt and again to draw once the re-engage wait is served,
+    -- to draw on the player's order or with the party, to close when the
+    -- hold ends, to step back -- by her formation row (the Formation
+    -- gambit, silently): the lead at once, the others REACTION_BEATS_*
+    -- beats of REACTION_BEAT seconds later, plus up to REACTION_JITTER
+    -- random beats. The front line reacts first; the back line is a touch
+    -- behind, never much (not a nerf, just never the same tick). Her eyes
+    -- go to the mob at once; safety moves never wait. A tick is 0.4 s.
+    REACTION_BEAT         = 0.4,
+    REACTION_BEATS_FLANK  = 1,
+    REACTION_BEATS_REAR   = 3,
+    REACTION_BEATS_BEHIND = 4,
+    REACTION_JITTER       = 1,
+
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
     -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
     -- always, low-HP while the cardian is under 75%, magic only while it is

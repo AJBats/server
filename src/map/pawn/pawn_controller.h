@@ -88,7 +88,7 @@ public:
     void SetWaiting(bool on, bool ordered);
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
-    void EngageOn(CMobEntity* PMob);        // the player's order: fight this, closing at once
+    void EngageOn(CMobEntity* PMob);        // the player's order: fight this, after her beat (FireOrderedEngage)
     void ShareSignet(CCharEntity* PPlayer); // the gate guard's Signet, taken with the player for its remaining time
 
     // Her bag kept stacked (pawn::items::tidyStacks), a quiet sweep every
@@ -129,6 +129,10 @@ public:
     // the moment its timer allows. A newer order replaces it; 30 s
     // without a chance and it is let go.
     void FireQueuedOrder();
+
+    // The attack order, fired once her beat is served: the front row draws
+    // first, the back line a touch later
+    void FireOrderedEngage();
     auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
@@ -140,6 +144,10 @@ public:
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
 
     auto FormationSlot() const -> pawn::Slot;
+
+    // Her seat on a mob's fight ring, for the party's other cardians to
+    // read when they pick theirs (TakeFightSeat)
+    auto FightSeatOn(uint32 mobId) const -> std::optional<pawn::Slot>;
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto RestsWithPlayer() const -> bool;
     auto HomePointsWithPlayer() const -> bool;
@@ -259,6 +267,25 @@ private:
     // MELEE_BACKOFF_COOLDOWN. True when she stepped this tick.
     auto StepBack(const CBattleEntity* PTarget) -> bool;
 
+    // The fight ring (formation_math.h RingSeats): every cardian on a mob
+    // but the one it is fighting takes a seat around it -- the nearest
+    // free one, kept for the fight -- and walks to it; as the mob's target
+    // she has none, the front being wherever she stands. The seat sits
+    // FightRadius out: RoamDistance, capped inside the mob's reach (the
+    // step back's rule). A far seat is reached round the mob's side, never
+    // through it.
+    auto FightRadius(const CBattleEntity* PTarget) const -> float;
+    auto TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>;
+    auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t;
+    void WalkToSeat(const CBattleEntity* PTarget, const position_t& seat, bool inReach);
+
+    // The beat: how long she takes to act on a decision -- to set off on
+    // a hunt, to draw with the party, to close when the hold ends, to step
+    // back -- by her formation row (the Formation gambit): the lead at
+    // once, the others REACTION_BEATS_* beats later, plus up to
+    // REACTION_JITTER random beats. Safety moves never wait on it.
+    auto ReactionBeat() const -> timer::duration;
+
     // Navmesh-path toward a point, healing off-mesh endpoints: an off-mesh
     // destination is snapped to the nearest valid point, and an off-mesh
     // owner is snapped back onto the mesh. Never falls back to raw stepping.
@@ -335,6 +362,29 @@ private:
     position_t        m_TargetRestPos{};
     timer::time_point m_TargetRestSince{ timer::time_point::min() };
     timer::time_point m_LastStepBackAt{ timer::time_point::min() };
+    std::optional<timer::duration> m_TargetRestBeat; // the step back's beat, drawn once the rest is seen
+
+    // The fight ring: her seat on the mob she fights, the way round to it,
+    // and where the seat was when the path there was planned
+    struct FightSeat
+    {
+        uint32     mob  = 0;
+        pawn::Slot seat = pawn::Slot::Follow;
+    };
+    FightSeat  m_FightSeat;
+    bool       m_SeatVia = false;
+    position_t m_SeatDestination{};
+
+    // The beats: a hunt's walk starts here; the party's draw, on this mob,
+    // here; the hold's end was seen and she closes here
+    timer::time_point m_SetOffAt{ timer::time_point::min() };
+    uint32            m_EngageBeatMob = 0;
+    timer::time_point m_EngageAt{ timer::time_point::min() };
+    timer::time_point m_CloseAt{ timer::time_point::min() };
+    timer::duration   m_HuntBeat{};                                // the hunt's beat, drawn at set-off; the draw takes it again
+    timer::time_point m_DrawAt{ timer::time_point::min() };        // the hunt's draw, once the re-engage wait is served plus the beat
+    std::optional<EntityId> m_Order;                               // the player's attack order, waiting its beat
+    timer::time_point       m_OrderAt{ timer::time_point::min() };
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;

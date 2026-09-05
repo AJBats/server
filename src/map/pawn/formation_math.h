@@ -572,4 +572,75 @@ namespace cardian::formation
         const float angle = thetaA + dir * std::min(step, left);
         return { c.x + std::cos(angle) * r, c.z + std::sin(angle) * r };
     }
+    // ------------------------------------------------------------------
+    // The fight ring: every cardian on a mob but the one it is fighting
+    // takes a seat around it -- the flanks, the rear quarters, behind --
+    // measured off the bearing from the mob to its target, so the ring
+    // turns with the fight. The seats in a fixed order, their bearings
+    // (right positive, nearPosition's convention), their names, and the
+    // pick: the nearest free seat to where she stands, so near seats go
+    // first and the far side fills as they do. All taken, the nearest of
+    // them all.
+    // ------------------------------------------------------------------
+    constexpr std::array<Slot, 5> RingSeats{ Slot::FlankRight, Slot::FlankLeft, Slot::RearRight, Slot::RearLeft, Slot::Behind };
+
+    using SeatPoints = std::array<std::pair<float, float>, RingSeats.size()>;
+    using SeatsTaken = std::array<bool, RingSeats.size()>;
+
+    inline auto seatBearing(const Slot seat, const float flank, const float rear) -> float
+    {
+        switch (seat)
+        {
+            case Slot::FlankRight:
+                return flank;
+            case Slot::FlankLeft:
+                return -flank;
+            case Slot::RearRight:
+                return rear;
+            case Slot::RearLeft:
+                return -rear;
+            default:
+                return std::numbers::pi_v<float>;
+        }
+    }
+
+    inline auto seatName(const Slot seat) -> const char*
+    {
+        switch (seat)
+        {
+            case Slot::FlankRight:
+                return "right flank";
+            case Slot::FlankLeft:
+                return "left flank";
+            case Slot::RearRight:
+                return "right rear";
+            case Slot::RearLeft:
+                return "left rear";
+            default:
+                return "back";
+        }
+    }
+
+    inline auto nearestSeat(const SeatPoints& points, const SeatsTaken& taken, const float x, const float z) -> std::size_t
+    {
+        std::size_t best  = points.size();
+        std::size_t any   = 0;
+        float       bestD = 0.0f;
+        float       anyD  = 0.0f;
+        for (std::size_t i = 0; i < points.size(); ++i)
+        {
+            const float d = planarDistance(points[i].first, points[i].second, x, z);
+            if (i == 0 || d < anyD)
+            {
+                any  = i;
+                anyD = d;
+            }
+            if (!taken[i] && (best == points.size() || d < bestD))
+            {
+                best  = i;
+                bestD = d;
+            }
+        }
+        return best < points.size() ? best : any;
+    }
 } // namespace cardian::formation
