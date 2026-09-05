@@ -45,5 +45,7 @@ cardian/sql/cardian_gambits.sql
 cardian/sql/cardian_orders.sql
 # CARDIAN: the party progresses together (quests, missions, battlefields)
 cardian/lua/party_progress.lua
-# CARDIAN: NM kills and battlefield wins open the auction house crowd's gates
+# CARDIAN: NM kills, battlefield wins and quests open the auction house crowd's gates
 cardian/lua/market_unlocks.lua
+# CARDIAN: era vendor stock the era module does not cover (active while WotG is off)
+cardian/lua/era_vendors.lua

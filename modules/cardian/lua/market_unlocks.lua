@@ -8,6 +8,7 @@
 --
 --   [MKT]nm:<mob entity id>            the NM died with the player's party there
 --   [MKT]tier:<orb item id>/<cap>      an orb fight at that level cap was won
+--   [MKT]quest:<log id>/<quest id>     a quest was completed (its rewards)
 --
 -- The price book (tools/economy/compile.py) names the same vars on each
 -- gated item. Cardians take part in the kill but the var is the player's;
@@ -24,6 +25,14 @@ local function record(player, var)
     end
 end
 
+m:addOverride('npcUtil.completeQuest', function(player, area, quest, params)
+    local ok = super(player, area, quest, params)
+    if ok then
+        record(player, string.format('[MKT]quest:%d/%d', area, quest))
+    end
+    return ok
+end)
+
 m:addOverride('xi.mob.onMobDeathEx', function(mob, player, isKiller, isWeaponSkillKill)
     super(mob, player, isKiller, isWeaponSkillKill)
     if mob ~= nil and mob:isNM() then
@@ -37,8 +46,11 @@ m:addOverride('Battlefield.onBattlefieldWin', function(self, player, battlefield
         return
     end
 
-    local orb = self.requiredItems and self.requiredItems[1] or nil
-    if type(orb) == 'number' and orb > 0 then
-        record(player, string.format('[MKT]tier:%d/%d', orb, self.levelCap or 0))
+    -- the tier is the orb and the cap; a fight with no orb (the memory-cluster
+    -- ENMs) is tier 0 at its cap, which the book names the same way
+    local orb = self.requiredItems and self.requiredItems[1] or 0
+    if type(orb) ~= 'number' then
+        orb = 0
     end
+    record(player, string.format('[MKT]tier:%d/%d', orb, self.levelCap or 0))
 end)
