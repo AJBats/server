@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "pawn_danger.h"
 #include "pawn_gambits.h"
 #include "pawn_rules.h"
 
@@ -262,17 +263,57 @@ private:
         Hold,       // its target was; standing at the boundary
         Detour,     // the way there crossed a circle
     };
-    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const CBattleEntity* PIgnore, bool fighting) -> AvoidAction;
+    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, bool fighting) -> AvoidAction;
 
-    // The formation step, roaming or holding for the player's strike:
+    // The locomotion pass (pawn-modes step 3). The movers -- formation,
+    // the walk in, the seat, the step back, the declump -- only propose:
+    // an Intent says where she wants to be this tick and how. Move is
+    // the one walker: it vets the proposal against the tick's danger map
+    // the same way for every mover (escape, hold at the rim, detour,
+    // re-seat a slot), makes the tick's one path or step, and keeps her
+    // face on the mob in reach. Nothing else moves her.
+    struct Intent
+    {
+        enum class Kind : uint8
+        {
+            Stand,     // stay: drop any path under her feet
+            Keep,      // leave the path she is on alone
+            Hop,       // a step under the planner's floor, straight at the point
+            Path,      // a path to the point, when farther than `tolerance`
+            Formation, // the follow rules: path, nudge out of a clump, warp when lost
+        };
+        Kind                 kind       = Kind::Stand;
+        position_t           point{};
+        float                arrive     = 1.0f;    // close enough: the path's end
+        float                tolerance  = 2.0f;    // this far off before she walks
+        float                declump    = 0.0f;    // Formation: nudge out when closer than this
+        const CBattleEntity* target     = nullptr; // the mob in the fight: lock-on in reach
+        bool                 fighting   = false;   // in danger, hold at the rim (else re-seat the slot)
+        bool                 vet        = true;    // false: the party waved the company through
+        bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
+        bool                 seat       = false;   // a seat's path: failing it drops the seat
+    };
+
+    // The tick's danger map, scanned once before the movers run so every
+    // one of them can ask IsClear while choosing, and the vet sees the
+    // same circles. PIgnore is the party's own mob, never a danger.
+    void RefreshDangers(const CBattleEntity* PIgnore);
+    auto IsClear(float x, float z) const -> bool;    // outside every padded circle
+    auto InsideDanger() const -> bool;               // she stands inside a true circle
+
+    // The walker. Returns the vet's action, or nothing when the tick was
+    // spent on a warp.
+    auto Move(Intent intent) -> std::optional<AvoidAction>;
+
+    // The formation mover, roaming or holding for the player's strike:
     // where this pawn belongs (the lead's point ahead of the player, or a
-    // chain slot), the avoidance pass, and the path there. PStandOff is a
-    // mob the party is holding on: its circle never counts, and no point
-    // is placed within its reach plus FORMATION_STANDOFF (a point aimed
-    // past it comes round to the player's side). Returns the tick's
-    // avoidance action, or nothing when the tick is spent (no one to
-    // follow, or a warp). The caller follows the path.
-    auto FollowFormation(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> std::optional<AvoidAction>;
+    // chain slot). PStandOff is a mob the party is holding on: no point is
+    // placed within its reach plus FORMATION_STANDOFF (a point aimed past
+    // it comes round to the player's side).
+    auto FormationIntent(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
+
+    // The walk in on a mob: to within RoamDistance of it
+    auto ApproachIntent(const CBattleEntity* PTarget) const -> Intent;
 
     // An avoidance move too short for the planner, which refuses a hop under
     // a yalm and plans nothing: such a move steps straight at its point when
@@ -283,7 +324,9 @@ private:
     // cardian standing still in Escape, Hold or Detour names its cause
     void NotePathFailure(AvoidAction action, const position_t& point, float away);
 
-    void Declump(const CBattleEntity* PTarget) const;
+    // The declump mover: a party cardian standing on her at the front is
+    // given room by a sidestep round the mob, to a clear spot
+    auto DeclumpIntent(const CBattleEntity* PTarget) const -> std::optional<Intent>;
 
     // The step back: a target that has settled on her toes (a mob walks
     // onto its target's exact coordinates) is given room. Once it has
@@ -291,8 +334,10 @@ private:
     // MELEE_BACKOFF_TRIGGER steps straight back to RoamDistance, capped at
     // its melee reach less MELEE_BACKOFF_MARGIN -- a target out of reach is
     // one it walks onto again -- and never twice within
-    // MELEE_BACKOFF_COOLDOWN. True when she stepped this tick.
-    auto StepBack(const CBattleEntity* PTarget) -> bool;
+    // MELEE_BACKOFF_COOLDOWN. The step is proposed to a clear spot (a wall
+    // or a circle behind her: round the mob a little, either side), or
+    // not at all.
+    auto StepBackIntent(const CBattleEntity* PTarget) -> std::optional<Intent>;
 
     // The fight ring (formation_math.h RingSeats): every cardian on a mob
     // but the one it is fighting takes a seat around it -- the nearest
@@ -306,7 +351,7 @@ private:
     auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t; // by the live frame
-    void WalkToSeat(const CBattleEntity* PTarget, const position_t& seat, bool inReach);
+    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side
 
     // The beat: how long she takes to act on a decision -- to set off on
     // a hunt, to draw with the party, to close when the hold ends, to step
@@ -416,13 +461,14 @@ private:
     // unclean
     auto PullBlocker(const CMobEntity* PMob) const -> std::string;
 
-    // The walk in on a mob by the fight's own avoidance pass: a circle
-    // across the way is gone round, one she stands in is stepped out of
+    // The walk in on a mob, through the locomotion pass: the danger map,
+    // the approach proposal, the vet, the step
     void WalkToward(CBattleEntity* PTarget);
 
-    // The step an avoidance action asks for: a short hop straight to the
-    // point, a path when it is far, a path dropped when she is there
-    void MoveByAvoid(AvoidAction action, const position_t& point, float followMax, float followTarget);
+    // The tick's danger map (RefreshDangers): the true circles, and the
+    // planning circles padded by the clearance
+    std::vector<pawn::danger::Danger>       m_Dangers;
+    std::vector<cardian::formation::Circle> m_Padded;
 
     std::unique_ptr<pawn::CGambits> m_Gambits;
     bool                            m_BrainLoaded = false;
