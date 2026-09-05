@@ -209,6 +209,33 @@ TEST_CASE("standOff: the ring is measured in the ground plane, the rim counts as
     CHECK(z == 0.0f);
 }
 
+TEST_CASE("backOff: a cardian under the mob's feet steps out along her own bearing", "[cardian][formation]")
+{
+    // Mob at the origin, the cardian half a yalm out at 45 degrees
+    const auto [x, z] = backOff(0.0f, 0.0f, 0.3536f, 0.3536f, 3.0f, 0.0f);
+    CHECK_THAT(std::hypot(x, z), WithinAbs(3.0f, 0.001f));
+    CHECK_THAT(x, WithinAbs(z, 0.001f)); // the bearing kept
+    CHECK(x > 0.0f);
+}
+
+TEST_CASE("backOff: on the mob, with no bearing to keep, she takes the fallback", "[cardian][formation]")
+{
+    const auto [x, z] = backOff(5.0f, 5.0f, 5.0f, 5.0f, 3.0f, std::numbers::pi_v<float> / 2.0f);
+    CHECK_THAT(x, WithinAbs(5.0f, 0.001f));
+    CHECK_THAT(z, WithinAbs(8.0f, 0.001f));
+}
+
+TEST_CASE("backOff: at or beyond the radius nothing moves", "[cardian][formation]")
+{
+    const auto [x, z] = backOff(0.0f, 0.0f, 3.0f, 0.0f, 3.0f, 0.0f);
+    CHECK(x == 3.0f);
+    CHECK(z == 0.0f);
+
+    const auto [x2, z2] = backOff(0.0f, 0.0f, 4.0f, 1.0f, 3.0f, 0.0f);
+    CHECK(x2 == 4.0f);
+    CHECK(z2 == 1.0f);
+}
+
 namespace
 {
     auto seated(const std::vector<Seat>& seats) -> std::vector<Slot>

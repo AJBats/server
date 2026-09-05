@@ -141,6 +141,20 @@ xi.settings.pawn =
     FORMATION_CATCHUP_DISTANCE = 3.0,
     FORMATION_CATCHUP_SPEED    = 118,
 
+    -- The step back: a mob walks onto its target's exact coordinates and
+    -- stops there (upstream's approach since the 2026-06 pathfind
+    -- refactor), so a cardian it targets ends up under its feet. Once it
+    -- has stood still for BACKOFF_DELAY seconds, a cardian nearer it than
+    -- BACKOFF_TRIGGER yalms steps straight back, in one go, to 3 yalms from
+    -- it -- never past its melee reach less BACKOFF_MARGIN, because a
+    -- target out of reach is one it walks onto again, and never twice
+    -- within BACKOFF_COOLDOWN seconds (the mob's own re-path cadence), so
+    -- the two can never chase each other. A TRIGGER of 0 turns it off.
+    MELEE_BACKOFF_DELAY    = 0.5,
+    MELEE_BACKOFF_TRIGGER  = 1.5,
+    MELEE_BACKOFF_MARGIN   = 0.6,
+    MELEE_BACKOFF_COOLDOWN = 2.0,
+
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
     -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
     -- always, low-HP while the cardian is under 75%, magic only while it is

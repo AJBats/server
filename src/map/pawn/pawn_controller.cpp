@@ -38,6 +38,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <numbers>
 #include <tuple>
 #include <vector>
 
@@ -817,7 +818,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
                     PathToward(PTarget->loc.p, RoamDistance);
                 }
 
-                if (!POwner->PAI->PathFind->IsFollowingPath())
+                if (!POwner->PAI->PathFind->IsFollowingPath() && !StepBack(PTarget))
                 {
                     Declump(PTarget);
                 }
@@ -2326,6 +2327,88 @@ auto CPawnController::GetPawnPartyPosition() const -> uint8
         }
     }
     return 0;
+}
+
+auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
+{
+    TracyZoneScoped;
+
+    // The rest clock: the target is settled once it is off its path and on
+    // the same spot as last tick; any move restarts the clock
+    const bool pathing = PTarget->PAI->PathFind != nullptr && PTarget->PAI->PathFind->IsFollowingPath();
+    const bool settled = !pathing && PTarget->id == m_TargetRestId && isWithinDistance(PTarget->loc.p, m_TargetRestPos, 0.1f);
+    if (!settled)
+    {
+        m_TargetRestId    = PTarget->id;
+        m_TargetRestPos   = PTarget->loc.p;
+        m_TargetRestSince = m_Tick;
+        return false;
+    }
+
+    const auto seconds = [](const char* key)
+    {
+        return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>(key)));
+    };
+    if (m_Tick < m_TargetRestSince + seconds("pawn.MELEE_BACKOFF_DELAY") || m_Tick < m_LastStepBackAt + seconds("pawn.MELEE_BACKOFF_COOLDOWN"))
+    {
+        return false;
+    }
+
+    const float away = distance(POwner->loc.p, PTarget->loc.p);
+    if (away >= settings::get<float>("pawn.MELEE_BACKOFF_TRIGGER"))
+    {
+        return false;
+    }
+
+    // Inside its reach, always: a target it cannot reach is one it walks
+    // onto again, and that chase is what this exists to avoid
+    const float radius = std::min(RoamDistance, POwner->GetMeleeRange(PTarget) - settings::get<float>("pawn.MELEE_BACKOFF_MARGIN"));
+    if (radius <= away)
+    {
+        return false;
+    }
+
+    const position_t& me  = POwner->loc.p;
+    const position_t& mob = PTarget->loc.p;
+
+    // Standing on the mob there is no bearing to keep: she backs away the
+    // way she faces it, turned round
+    const float facingRadians = 2.0f * std::numbers::pi_v<float> - rotationToRadian(me.rotation);
+    auto [x, z]               = cardian::formation::backOff(mob.x, mob.z, me.x, me.z, radius, facingRadians + std::numbers::pi_v<float>);
+
+    // A wall at her back: round the mob a little, either side
+    if (!POwner->PAI->PathFind->ValidPosition(position_t(x, me.y, z, 0, 0)))
+    {
+        const float base  = std::atan2(z - mob.z, x - mob.x);
+        bool        found = false;
+        for (const float turn : { 0.8f, -0.8f, 1.6f, -1.6f })
+        {
+            const float cx = mob.x + std::cos(base + turn) * radius;
+            const float cz = mob.z + std::sin(base + turn) * radius;
+            if (POwner->PAI->PathFind->ValidPosition(position_t(cx, me.y, cz, 0, 0)))
+            {
+                x     = cx;
+                z     = cz;
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            m_LastStepBackAt = m_Tick;
+            ShowInfoFmt("pawn: {} has nowhere to step back from {} ({:.1f}y, off the mesh all round)", POwner->getName(), PTarget->getName(), away);
+            return false;
+        }
+    }
+
+    // A hop this short is under the planner's floor (IsShortHop): straight
+    // at the point, and her face back on the mob -- the step turned her
+    POwner->PAI->PathFind->Clear();
+    POwner->PAI->PathFind->StepTo(position_t(x, me.y, z, 0, me.rotation));
+    POwner->PAI->PathFind->LookAt(mob);
+    m_LastStepBackAt = m_Tick;
+    ShowInfoFmt("pawn: {} steps back from {} ({:.1f}y -> {:.1f}y)", POwner->getName(), PTarget->getName(), away, distance(POwner->loc.p, mob));
+    return true;
 }
 
 void CPawnController::Declump(const CBattleEntity* PTarget) const

@@ -175,6 +175,29 @@ namespace cardian::formation
         return { mobX + dx / len * radius, mobZ + dz / len * radius };
     }
 
+    // The step back: a settled mob stands on its target's exact
+    // coordinates (upstream's approach lands there), so a cardian it
+    // targets is under its feet. She steps out to `radius` from the mob
+    // along her own bearing from it -- straight back, no circling. On the
+    // mob, with no bearing to keep, she takes `fallbackRadians` (the way
+    // she faces, turned round: away from the mob she was facing). Returns
+    // the point; unchanged when already at or beyond the radius.
+    inline auto backOff(const float mobX, const float mobZ, const float x, const float z, const float radius, const float fallbackRadians) -> std::pair<float, float>
+    {
+        const float dx  = x - mobX;
+        const float dz  = z - mobZ;
+        const float len = std::hypot(dx, dz);
+        if (len >= radius)
+        {
+            return { x, z };
+        }
+        if (len < 0.05f)
+        {
+            return { mobX + std::cos(fallbackRadians) * radius, mobZ + std::sin(fallbackRadians) * radius };
+        }
+        return { mobX + dx / len * radius, mobZ + dz / len * radius };
+    }
+
     // ------------------------------------------------------------------
     // The ring (M3.9, "re-parent the followers"): every cardian but the
     // lead follows the player themself, in a seat on the ring around them.

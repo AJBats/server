@@ -250,6 +250,15 @@ private:
 
     void Declump(const CBattleEntity* PTarget) const;
 
+    // The step back: a target that has settled on her toes (a mob walks
+    // onto its target's exact coordinates) is given room. Once it has
+    // stood still for MELEE_BACKOFF_DELAY, a cardian nearer it than
+    // MELEE_BACKOFF_TRIGGER steps straight back to RoamDistance, capped at
+    // its melee reach less MELEE_BACKOFF_MARGIN -- a target out of reach is
+    // one it walks onto again -- and never twice within
+    // MELEE_BACKOFF_COOLDOWN. True when she stepped this tick.
+    auto StepBack(const CBattleEntity* PTarget) -> bool;
+
     // Navmesh-path toward a point, healing off-mesh endpoints: an off-mesh
     // destination is snapped to the nearest valid point, and an off-mesh
     // owner is snapped back onto the mesh. Never falls back to raw stepping.
@@ -319,6 +328,13 @@ private:
     timer::time_point m_LeftFightAt{ timer::time_point::min() };
     uint32            m_LastFoughtId = 0;
     bool              m_WasEngaged   = false;
+
+    // The step back's rest clock: the target's id and spot as of the tick
+    // it was last seen moving, and when she last stepped
+    uint32            m_TargetRestId = 0;
+    position_t        m_TargetRestPos{};
+    timer::time_point m_TargetRestSince{ timer::time_point::min() };
+    timer::time_point m_LastStepBackAt{ timer::time_point::min() };
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
