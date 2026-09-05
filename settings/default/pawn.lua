@@ -158,13 +158,16 @@ xi.settings.pawn =
     -- The fight ring: every cardian on a mob but the one it is fighting
     -- takes a seat around it -- the flanks at FIGHT_FLANK_DEG off the mob's
     -- facing, the rear quarters at FIGHT_REAR_DEG, behind at 180 --
-    -- measured off the bearing from the mob to its target, so the ring
-    -- turns with the fight; the seat sits at the step back's radius (3 y,
-    -- inside the mob's reach). The nearest free seat is hers: near seats
-    -- first, the far side as they fill, kept for the fight. A far seat is
-    -- reached round the mob's side, never through it. She walks to her
-    -- seat when more than FIGHT_SEAT_DEADBAND yalms off it. As the mob's
-    -- target she has no seat: the front is wherever she stands.
+    -- measured off the bearing from the mob to its target; the seat sits
+    -- at the step back's radius (3 y, inside the mob's reach). The
+    -- nearest free seat is hers: near seats first, the far side as they
+    -- fill, kept for the fight. A far seat is reached round the mob's
+    -- side, never through it. She walks to her seat when more than
+    -- FIGHT_SEAT_DEADBAND yalms off it, and once there the seat is
+    -- sticky: it keeps the ring's frame she settled by, so a hate swing
+    -- that turns the mob moves nobody who is already seated (a seat
+    -- turned into the mob's front is left for a later rule). As the
+    -- mob's target she has no seat: the front is wherever she stands.
     FIGHT_FLANK_DEG     = 80,
     FIGHT_REAR_DEG      = 140,
     FIGHT_SEAT_DEADBAND = 1.2,

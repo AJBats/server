@@ -218,6 +218,7 @@ void CPawnController::SetRetreat(const bool on)
         if (on)
         {
             m_Approach.reset();
+            m_OrderedMob = 0;
         }
     }
     m_Retreat = on;
@@ -236,8 +237,9 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
     // The beat: the order is taken now, her draw comes a beat later -- the
     // front row first, so the party never draws on one tick
-    m_Order   = EntityId(PMob);
-    m_OrderAt = m_Tick + ReactionBeat();
+    m_Order      = EntityId(PMob);
+    m_OrderAt    = m_Tick + ReactionBeat();
+    m_OrderedMob = PMob->id;
 }
 
 void CPawnController::FireOrderedEngage()
@@ -560,7 +562,7 @@ void CPawnController::MoveByAvoid(const AvoidAction action, const position_t& po
     }
 }
 
-void CPawnController::WalkToward(CBattleEntity* PTarget)
+void CPawnController::WalkToward(CBattleEntity* PTarget, const bool avoid)
 {
     if (!POwner->PAI->CanFollowPath() || POwner->GetSpeed() <= 0)
     {
@@ -571,7 +573,7 @@ void CPawnController::WalkToward(CBattleEntity* PTarget)
     float      followTarget    = RoamDistance;
     float      declumpDistance = 0.0f;
     auto       action          = AvoidAction::None;
-    if (IsAvoidingAggro())
+    if (avoid && IsAvoidingAggro())
     {
         action = Avoid(point, followMax, followTarget, declumpDistance, PTarget, true);
     }
@@ -706,6 +708,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         m_FightSeat   = {};
         m_SeatVia     = false;
         m_CloseAt     = timer::time_point::min();
+        m_OrderedMob  = 0;
     }
     m_WasEngaged = engaged;
 
@@ -925,7 +928,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             // Her place on the mob: a seat on the fight ring, or, as its
             // target, wherever she stands -- the front
             const auto seat            = TakeFightSeat(PTarget);
-            position_t point           = seat.has_value() ? SeatPoint(PTarget, *seat) : PTarget->loc.p;
+            position_t point           = HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
             float      followMax       = RoamDistance;
             float      followTarget    = RoamDistance;
             float      declumpDistance = 0.0f;
@@ -938,11 +941,12 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             // the pick used (PullBlocker), never by the shape of her own
             // avoidance: a detour round a circle is a walk, not a reason.
             // Unclean, it is let go when the party wants clean pulls and
-            // fetched when it allows aggressive company. A target that is
-            // fighting is held at the rim: the tank brings it
+            // fetched when it allows aggressive company -- or when the
+            // player ordered it, their call outranking the rule. A target
+            // that is fighting is held at the rim: the tank brings it
             if (!PTarget->PAI->IsEngaged())
             {
-                if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+                if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive || m_OrderedMob == PTarget->id)
                 {
                     avoidAction = AvoidAction::None;
                 }
@@ -1217,7 +1221,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                     co_return;
                 }
             }
-            WalkToward(PMob);
+            // The player's order goes straight there: their call outranks
+            // the company around it
+            WalkToward(PMob, m_Approach->kind != ApproachKind::Order);
             co_return;
         }
     }
@@ -2607,20 +2613,42 @@ auto CPawnController::FightRadius(const CBattleEntity* PTarget) const -> float
     return std::min(RoamDistance, POwner->GetMeleeRange(PTarget) - settings::get<float>("pawn.MELEE_BACKOFF_MARGIN"));
 }
 
-auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat) const -> position_t
+auto CPawnController::LiveFrame(const CBattleEntity* PTarget) const -> uint8
+{
+    // The ring's frame: the mob facing its target; a mob with none faces
+    // where it faces
+    if (const auto* PFront = PTarget->GetBattleTarget(); PFront != nullptr)
+    {
+        return worldAngle(PTarget->loc.p, PFront->loc.p);
+    }
+    return PTarget->loc.p.rotation;
+}
+
+auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat, const uint8 frameRotation) const -> position_t
 {
     constexpr float kPi = std::numbers::pi_v<float>;
 
-    // The ring's frame: the mob facing its target; a mob with none faces
-    // where it faces
     position_t frame = PTarget->loc.p;
-    if (const auto* PFront = PTarget->GetBattleTarget(); PFront != nullptr)
-    {
-        frame.rotation = worldAngle(PTarget->loc.p, PFront->loc.p);
-    }
+    frame.rotation   = frameRotation;
     const float bearing = cardian::formation::seatBearing(seat, settings::get<float>("pawn.FIGHT_FLANK_DEG") * kPi / 180.0f,
                                                           settings::get<float>("pawn.FIGHT_REAR_DEG") * kPi / 180.0f);
     return nearPosition(frame, FightRadius(PTarget), bearing);
+}
+
+auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat) const -> position_t
+{
+    return SeatPoint(PTarget, seat, LiveFrame(PTarget));
+}
+
+auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>
+{
+    if (PTarget == nullptr || m_FightSeat.mob != PTarget->id)
+    {
+        return std::nullopt;
+    }
+    // Settled, the seat keeps the frame she settled by; on the way to it,
+    // it follows the live ring
+    return SeatPoint(PTarget, m_FightSeat.seat, m_FightSeat.settled ? m_FightSeat.frame : LiveFrame(PTarget));
 }
 
 auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>
@@ -2650,8 +2678,13 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         return m_FightSeat.seat;
     }
 
-    // The seats the party's other cardians hold on this mob
+    // The seats the party's other cardians hold on this mob, by name and
+    // by spot: a settled seat keeps its own frame, so the ring's live
+    // "left flank" can sit where another cardian's settled "right flank"
+    // is -- a seat within kSeatSpacing of a held spot is taken too
+    constexpr float                kSeatSpacing = 2.0f;
     cardian::formation::SeatsTaken taken{};
+    std::vector<position_t>        heldPoints;
     if (const auto* PPawn = static_cast<const CCharEntity*>(POwner); PPawn->PParty != nullptr)
     {
         for (const auto* PMember : PPawn->PParty->members)
@@ -2673,6 +2706,10 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
                     taken[static_cast<std::size_t>(it - RingSeats.begin())] = true;
                 }
             }
+            if (const auto spot = PController->HeldSeatPoint(PTarget); spot.has_value())
+            {
+                heldPoints.push_back(*spot);
+            }
         }
     }
 
@@ -2686,6 +2723,13 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         if (!POwner->PAI->PathFind->ValidPosition(p))
         {
             taken[i] = true;
+        }
+        for (const auto& held : heldPoints)
+        {
+            if (cardian::formation::planarDistance(p.x, p.z, held.x, held.z) < kSeatSpacing)
+            {
+                taken[i] = true;
+            }
         }
     }
     if (std::ranges::all_of(taken, [](const bool t) { return t; }))
@@ -2710,7 +2754,9 @@ void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t&
     const float off       = distance(me, seat);
 
     // On her seat, or near enough while in reach: she stands, and a path
-    // still under her feet is dropped (it ends where the seat was)
+    // still under her feet is dropped (it ends where the seat was). The
+    // first time, the seat settles: the ring's frame as it stands is hers
+    // for the fight, whatever the mob turns to face
     const float deadband = inReach ? settings::get<float>("pawn.FIGHT_SEAT_DEADBAND") : 0.5f;
     if (off <= deadband)
     {
@@ -2719,6 +2765,12 @@ void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t&
             PPathFind->Clear();
         }
         m_SeatVia = false;
+        if (m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
+        {
+            m_FightSeat.settled = true;
+            m_FightSeat.frame   = LiveFrame(PTarget);
+            ShowInfoFmt("pawn: {} settles on {}'s {}", POwner->getName(), PTarget->getName(), seatName(m_FightSeat.seat));
+        }
         return;
     }
 

@@ -148,9 +148,10 @@ public:
 
     auto FormationSlot() const -> pawn::Slot;
 
-    // Her seat on a mob's fight ring, for the party's other cardians to
-    // read when they pick theirs (TakeFightSeat)
+    // Her seat on a mob's fight ring, and where it is, for the party's
+    // other cardians to read when they pick theirs (TakeFightSeat)
     auto FightSeatOn(uint32 mobId) const -> std::optional<pawn::Slot>;
+    auto HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>;
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto RestsWithPlayer() const -> bool;
     auto HomePointsWithPlayer() const -> bool;
@@ -279,7 +280,9 @@ private:
     // through it.
     auto FightRadius(const CBattleEntity* PTarget) const -> float;
     auto TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>;
-    auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t;
+    auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
+    auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
+    auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t; // by the live frame
     void WalkToSeat(const CBattleEntity* PTarget, const position_t& seat, bool inReach);
 
     // The beat: how long she takes to act on a decision -- to set off on
@@ -368,8 +371,9 @@ private:
     auto PullBlocker(const CMobEntity* PMob) const -> std::string;
 
     // The walk in on a mob by the fight's own avoidance pass: a circle
-    // across the way is gone round, one she stands in is stepped out of
-    void WalkToward(CBattleEntity* PTarget);
+    // across the way is gone round, one she stands in is stepped out of.
+    // Without avoidance (an order), straight at it
+    void WalkToward(CBattleEntity* PTarget, bool avoid);
 
     // The step an avoidance action asks for: a short hop straight to the
     // point, a path when it is far, a path dropped when she is there
@@ -396,6 +400,11 @@ private:
     // the rules and the re-engage timer
     std::optional<Approach> m_Approach;
 
+    // The mob the player ordered her at: their call outranks the party's
+    // pull rule, so the walk in goes straight and the fight is not let go
+    // for the company around it. Cleared when the fight ends.
+    uint32 m_OrderedMob = 0;
+
     // The last refusal said, so a standing reason is not said every beat
     uint32      m_RefusedTarget = 0;
     std::string m_RefusedWhy;
@@ -415,11 +424,17 @@ private:
     std::optional<timer::duration> m_TargetRestBeat; // the step back's beat, drawn once the rest is seen
 
     // The fight ring: her seat on the mob she fights, the way round to it,
-    // and where the seat was when the path there was planned
+    // and where the seat was when the path there was planned. A seat is
+    // sticky: walking to it she follows the live ring (the mob's bearing
+    // to its target), and once she has settled on it the ring's frame is
+    // hers for the fight, so a hate swing that turns the mob does not
+    // send her round its body to the same seat on the other side
     struct FightSeat
     {
-        uint32     mob  = 0;
-        pawn::Slot seat = pawn::Slot::Follow;
+        uint32     mob     = 0;
+        pawn::Slot seat    = pawn::Slot::Follow;
+        bool       settled = false;
+        uint8      frame   = 0; // the ring's rotation she settled by
     };
     FightSeat  m_FightSeat;
     bool       m_SeatVia = false;
