@@ -491,7 +491,17 @@ auto CPawnController::HatedByAnyMob() const -> bool
 
 auto CPawnController::FormationSlot() const -> pawn::Slot
 {
-    return static_cast<pawn::Slot>(Behavior(pawn::Behavior::Formation).value_or(static_cast<uint16>(pawn::Slot::Follow)));
+    const auto slot = static_cast<pawn::Slot>(Behavior(pawn::Behavior::Formation).value_or(static_cast<uint16>(pawn::Slot::Follow)));
+
+    // The lead's point ahead is a hunter's stance and silent in town: a
+    // Lead row reads as auto (a seat on the ring) while her zone is a
+    // city and takes effect again on the field. The row itself stands.
+    if (slot == pawn::Slot::Lead && !settings::get<bool>("pawn.FORMATION_LEAD_IN_TOWN") &&
+        POwner->loc.zone != nullptr && (POwner->loc.zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown)
+    {
+        return pawn::Slot::Follow;
+    }
+    return slot;
 }
 
 auto CPawnController::IsAvoidingAggro() const -> bool

@@ -77,6 +77,11 @@ xi.settings.pawn =
     FORMATION_LEAD_DISTANCE = 5.0,
     FORMATION_DEADBAND      = 2.5,
 
+    -- The lead's point is a hunter's stance and silent in town: a Lead
+    -- row reads as auto (a seat on the ring) while her zone is a city and
+    -- takes effect again on the field. true lets her lead in town too.
+    FORMATION_LEAD_IN_TOWN = false,
+
     -- Extra lead while the player is moving: the server learns of the
     -- player's motion a packet bundle late, so the point is aimed further
     -- out to cover that lag. The deadband never applies while moving.
