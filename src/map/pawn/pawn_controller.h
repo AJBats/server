@@ -55,6 +55,28 @@ public:
 
     auto Tick(timer::time_point tick) -> Task<void> override;
 
+    // The mode (pawn-modes step 2): what she is doing, one word, with one
+    // writer (Transition) and every change said with its reason. Follow is
+    // the rest state; Wait, Travel and Retreat are the player's; Approach
+    // is a walk in with her weapon away; Hold is drawn on the player's
+    // word, waiting for their strike; Fight is a fight; Down is KO'd. The
+    // server's attack state is an input, not the mode: every tick the two
+    // are reconciled, and a fight the server ended is a transition out of
+    // Fight with the server's reason -- never a silent one.
+    enum class Mode : uint8
+    {
+        Follow,
+        Wait,
+        Travel,
+        Approach,
+        Hold,
+        Fight,
+        Retreat,
+        Down
+    };
+    static auto modeName(Mode mode) -> const char*;
+    auto        CurrentMode() const -> Mode;
+
     // Action surface used by the gambit interpreter. Each faces the target
     // first (the player weapon-skill path refuses a target the character is
     // not facing), then runs the stock player validation: known spell or
@@ -88,7 +110,7 @@ public:
     // her gambits and fidgets. An ordered wait holds until told otherwise;
     // an automatic one (left behind by a warp or a teleport, or carried
     // off alone) ends when the player is back in her zone.
-    void SetWaiting(bool on, bool ordered);
+    void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, after her beat (FireOrderedEngage)
@@ -335,8 +357,10 @@ private:
     auto PacingBlocker(const CCharEntity* PPlayer) const -> std::string;
 
     // The nearest idle, non-special mob in the difficulty band within
-    // HUNT_RADIUS of the player
-    auto PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*;
+    // HUNT_RADIUS of the player. `skipped`, when given, collects what
+    // was in the band but not pulled, and why (a few at most), for the
+    // quiet hunt's line
+    auto PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped = nullptr) const -> CMobEntity*;
 
     // Home point with the player: a KO'd cardian whose player has died and
     // come back at their home point goes there too
@@ -362,7 +386,21 @@ private:
     // when they allow, said as `how`; the walk in, weapon away, when only
     // the distance or the draw's own wait stands in the way (m_Approach);
     // a refusal said once otherwise. True when she drew.
-    auto Draw(CBattleEntity* PTarget, ApproachKind kind, std::string_view how) -> bool;
+    auto Draw(CBattleEntity* PTarget, ApproachKind kind, std::string_view how, bool hold = false) -> bool;
+
+    // The one writer of the mode: the exits it owns (a fight's draw
+    // cooldown, seat and beats; a walk in's target) happen here, and the
+    // change is said -- "Follow -> Fight: draws on X (with Jevyak)". A call
+    // that changes nothing still says its reason (a new target in a fight).
+    void Transition(Mode to, std::string_view why);
+
+    // The mode she rests in when a fight or a walk in ends: Retreat while
+    // the switch is up, Wait while she holds her ground, else Follow
+    auto IdleMode() const -> Mode;
+
+    // Why the server ended her fight, read from the rules on the target she
+    // had: it died, she lost sight of it, another party claimed it
+    auto ServerExitReason() -> std::string;
     auto EngageFactsFor(CBattleEntity* PTarget) -> cardian::rules::EngageFacts;
     void SayRefusal(const CBattleEntity* PTarget, const std::string& why);
 
@@ -411,11 +449,14 @@ private:
     uint32      m_RefusedTarget = 0;
     std::string m_RefusedWhy;
 
+    Mode m_Mode = Mode::Follow;
+
     // The draw cooldown's memory: when she last left a fight and who it
-    // was with. Never fought means ready.
-    timer::time_point m_LeftFightAt{ timer::time_point::min() };
-    uint32            m_LastFoughtId = 0;
-    bool              m_WasEngaged   = false;
+    // was with. Never fought means ready. m_LastFought is the same mob as
+    // a handle, for the server's exit reason.
+    timer::time_point       m_LeftFightAt{ timer::time_point::min() };
+    uint32                  m_LastFoughtId = 0;
+    std::optional<EntityId> m_LastFought;
 
     // The step back's rest clock: the target's id and spot as of the tick
     // it was last seen moving, and when she last stepped
