@@ -22,6 +22,7 @@
 #pragma once
 
 #include "pawn_gambits.h"
+#include "pawn_rules.h"
 
 #include "ai/controllers/player_controller.h"
 
@@ -29,6 +30,8 @@
 #include <chrono>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 class CBattleEntity;
@@ -300,10 +303,16 @@ private:
     // cast redundant (same buff family, a cure on the same healthy target...)
     auto PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool;
 
-    // The mob this pawn should join on: the player's engaged target first
-    // (gated by the swing/TrustEngageType convention), else any pawn party
-    // member's living target -- how a hunter's pull propagates
-    auto PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEntity*;
+    // The mob this pawn should join on, and why: the player's engaged
+    // target first (gated by the swing/TrustEngageType convention), else
+    // any pawn party member's living target -- how a hunter's pull
+    // propagates -- else a mob that has chosen one of us
+    struct PartyFight
+    {
+        CBattleEntity* target = nullptr;
+        std::string    why;
+    };
+    auto PartyEngageTarget(CCharEntity* PPlayer) const -> PartyFight;
 
     // Waiting: the tick that holds her ground (WaitTick), the mob that has
     // come for her (SelfDefenceTarget), and the player's magic noted while
@@ -329,6 +338,43 @@ private:
     // come back at their home point goes there too
     void WatchPlayerHomePoint();
 
+    // A walk in on a mob, weapon away: her own pull (the hunt's pacing and
+    // radius keep applying), the party's fight when it is farther than she
+    // may draw from (dropped when the party moves on), or the player's
+    // order (dropped only with the mob)
+    enum class ApproachKind : uint8
+    {
+        Hunt,
+        Join,
+        Order
+    };
+    struct Approach
+    {
+        EntityId     target;
+        ApproachKind kind = ApproachKind::Hunt;
+    };
+
+    // The one door into a fight (pawn_rules.h): the rules first; the draw
+    // when they allow, said as `how`; the walk in, weapon away, when only
+    // the distance or the draw's own wait stands in the way (m_Approach);
+    // a refusal said once otherwise. True when she drew.
+    auto Draw(CBattleEntity* PTarget, ApproachKind kind, std::string_view how) -> bool;
+    auto EngageFactsFor(CBattleEntity* PTarget) -> cardian::rules::EngageFacts;
+    void SayRefusal(const CBattleEntity* PTarget, const std::string& why);
+
+    // The pull rule as the fight and the walk in ask it: the pick's padded
+    // circles, scanned around her now. "" when clean, else what makes it
+    // unclean
+    auto PullBlocker(const CMobEntity* PMob) const -> std::string;
+
+    // The walk in on a mob by the fight's own avoidance pass: a circle
+    // across the way is gone round, one she stands in is stepped out of
+    void WalkToward(CBattleEntity* PTarget);
+
+    // The step an avoidance action asks for: a short hop straight to the
+    // point, a path when it is far, a path dropped when she is there
+    void MoveByAvoid(AvoidAction action, const position_t& point, float followMax, float followTarget);
+
     std::unique_ptr<pawn::CGambits> m_Gambits;
     bool                            m_BrainLoaded = false;
 
@@ -345,10 +391,14 @@ private:
     timer::time_point m_PlayerMagicSeen{ timer::time_point::min() }; // the player seen mid-warp or mid-teleport, so their vanishing reads as magic
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
 
-    // The mob a hunter has chosen and is walking to, weapon still away:
-    // she commits at once and closes, and only the draw waits on the
-    // re-engage timer
-    std::optional<EntityId> m_HuntApproach;
+    // The mob she is walking to, weapon still away (Approach, above): she
+    // commits the moment it is chosen and closes; only the draw waits, on
+    // the rules and the re-engage timer
+    std::optional<Approach> m_Approach;
+
+    // The last refusal said, so a standing reason is not said every beat
+    uint32      m_RefusedTarget = 0;
+    std::string m_RefusedWhy;
 
     // The draw cooldown's memory: when she last left a fight and who it
     // was with. Never fought means ready.
