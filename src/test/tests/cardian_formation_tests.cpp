@@ -29,6 +29,7 @@
 #include "map/pawn/formation_math.h"
 
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <string>
@@ -514,4 +515,28 @@ TEST_CASE("segmentClosest: the nearest approach of a segment to the centre, endp
     REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 20.0f, 0.0f), WithinAbs(0.0f, 0.001f)); // through the centre
     REQUIRE_THAT(segmentClosest(c, 0.0f, 5.0f, 20.0f, 5.0f), WithinAbs(5.0f, 0.001f)); // passes 5 y to the side
     REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 6.0f, 0.0f), WithinAbs(4.0f, 0.001f));  // stops short: the end is nearest
+}
+
+TEST_CASE("cheapestSeat: the least walk wins, infinity is no seat", "[cardian][formation][ring]")
+{
+    SeatCosts costs{};
+    costs.fill(std::numeric_limits<float>::infinity());
+    REQUIRE_FALSE(cheapestSeat(costs).has_value());
+
+    costs[1] = 9.0f;
+    costs[3] = 4.0f;
+    costs[4] = 4.5f;
+    REQUIRE(cheapestSeat(costs) == 3);
+}
+
+TEST_CASE("worthTheWalk: a detour past the factor and slack is not", "[cardian][formation][ring]")
+{
+    // Straight across 3 y: a 7.5 y walk (1.5 x 3 + 3) is the limit
+    REQUIRE(worthTheWalk(7.5f, 3.0f));
+    REQUIRE_FALSE(worthTheWalk(7.6f, 3.0f));
+    // The cliff: 3 y across, 40 y round
+    REQUIRE_FALSE(worthTheWalk(40.0f, 3.0f));
+    // The long approach: 28 y straight, 30 y walked
+    REQUIRE(worthTheWalk(30.0f, 28.0f));
+    REQUIRE_FALSE(worthTheWalk(std::numeric_limits<float>::infinity(), 3.0f));
 }

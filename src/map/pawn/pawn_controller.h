@@ -157,6 +157,7 @@ public:
     auto HomePointsWithPlayer() const -> bool;
 
     static constexpr float RoamDistance     = 3.0f;
+    static constexpr float LockOnSlack      = 2.0f; // lock-on holds this far beyond melee reach, so a step out of reach does not drop it
     static constexpr float CastingDistance  = 15.0f;
     static constexpr float WarpDistance     = 30.0f;
     static constexpr float TransferDistance = 3.0f;

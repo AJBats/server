@@ -39,6 +39,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <numbers>
 #include <tuple>
 #include <vector>
@@ -1019,6 +1020,20 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         }
 
         POwner->PAI->PathFind->FollowPath(m_Tick);
+
+        // Lock-on: within melee reach of the mob, her heading goes back
+        // onto it after every step, the way a locked-on player strafes.
+        // A step points her down her path, and the swing asks that she
+        // face her target, so without this a cardian moving to her seat
+        // -- or thrashing in a tight spot beside the mob -- never swings.
+        // Not while holding for the player: she walks with them then.
+        // (The client draws other characters facing their heading; the
+        // strafe itself is not animated for them -- a quirk of the
+        // protocol. The swings are real.)
+        if (!m_HoldForPlayer && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) + LockOnSlack)
+        {
+            POwner->PAI->PathFind->LookAt(PTarget->loc.p);
+        }
     }
 
     // Never a cast in a tick spent stepping to safety: it would root her
@@ -2755,7 +2770,52 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
     {
         return std::nullopt;
     }
-    const auto seat = RingSeats[cardian::formation::nearestSeat(points, taken, POwner->loc.p.x, POwner->loc.p.z)];
+
+    // The seat that costs the least walk (formation_math.h cheapestSeat):
+    // each free seat is priced by the navmesh's own path from where she
+    // stands, not the straight line, so a seat across a cliff's edge is
+    // priced by the walk round the cliff and loses to one she can step
+    // to; a detour past what a seat is worth (worthTheWalk), or no path
+    // at all, prices it out. Five queries at most, once per seat pick,
+    // never again for the fight
+    cardian::formation::SeatCosts costs{};
+    costs.fill(std::numeric_limits<float>::infinity());
+    auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    for (std::size_t i = 0; i < RingSeats.size(); ++i)
+    {
+        if (taken[i])
+        {
+            continue;
+        }
+        const position_t p(points[i].first, PTarget->loc.p.y, points[i].second, 0, 0);
+        const float      straight = distance(POwner->loc.p, p);
+        float            cost     = straight;
+        if (navMesh != nullptr)
+        {
+            const auto path = navMesh->findPath(POwner->loc.p, p);
+            if (!path.has_value() || path->isPartial)
+            {
+                continue;
+            }
+            cost            = 0.0f;
+            position_t prev = POwner->loc.p;
+            for (const auto& point : path->points)
+            {
+                cost += distance(prev, point.position);
+                prev = point.position;
+            }
+        }
+        if (cardian::formation::worthTheWalk(cost, straight))
+        {
+            costs[i] = cost;
+        }
+    }
+    const auto pick = cardian::formation::cheapestSeat(costs);
+    if (!pick.has_value())
+    {
+        return std::nullopt;
+    }
+    const auto seat = RingSeats[*pick];
     m_FightSeat     = { PTarget->id, seat };
     m_SeatVia       = false;
     ShowInfoFmt("pawn: {} takes {}'s {}", POwner->getName(), PTarget->getName(), seatName(seat));
