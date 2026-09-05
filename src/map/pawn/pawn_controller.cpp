@@ -24,6 +24,7 @@
 #include "formation_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
+#include "pawn_doors.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 
@@ -556,6 +557,15 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         {
             POwner->loc.zone->SpawnMOBs(static_cast<CCharEntity*>(POwner));
         }
+    }
+
+    // A closed door on her way opens as she walks up, the way the client
+    // opens one for a player: the navmesh knows no doors (pawn_doors.h).
+    // Her facing is the way to her next waypoint; a door within two yalms
+    // of that line, out to DOOR_REACH, is hers to open
+    if (!POwner->isDead() && POwner->PAI->PathFind && POwner->PAI->PathFind->IsFollowingPath())
+    {
+        pawn::doors::openAhead(static_cast<CCharEntity*>(POwner), settings::get<float>("pawn.DOOR_REACH"), 2.0f);
     }
 
     if (engaged)

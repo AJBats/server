@@ -23,6 +23,14 @@ xi.settings.pawn =
     -- above this value or the pawn runs at the limit instead.
     PAWN_SPEED = 107,
 
+    -- Doors: a closed door within this many yalms ahead of a walking
+    -- cardian opens as she approaches, the way the client opens one for a
+    -- player (the collision data has no door slabs, so her path runs
+    -- straight through them). Only generic doors -- one with a script of
+    -- its own (a key, a quest) stays the player's to open, and ferry gates
+    -- and elevator doors keep to their timetables. 0 = never.
+    DOOR_REACH = 5.0,
+
     -- Milliseconds a pawn waits before answering a party invite. 0 answers on
     -- the next zone tick; a human takes seconds, and the retail client's
     -- party UI is being tested against that difference.
