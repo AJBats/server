@@ -430,19 +430,12 @@ private:
     // to its target), and once she has settled on it the ring's frame is
     // hers for the fight, so a hate swing that turns the mob does not
     // send her round its body to the same seat on the other side
-    // A seat is worth a short walk, never a long one: one she cannot
-    // reach in a few seconds (a ledge, the mob against a wall), or one
-    // round the mob's far side while she is already in reach, is given
-    // up for the fight, and she fights from where she stands as the
-    // front does. Hitting is the job; the seat is the nicety.
     struct FightSeat
     {
-        uint32            mob     = 0;
-        pawn::Slot        seat    = pawn::Slot::Follow;
-        bool              settled = false;
-        uint8             frame   = 0; // the ring's rotation she settled by
-        bool              none    = false; // given up for this fight
-        timer::time_point takenAt{ timer::time_point::min() };
+        uint32     mob     = 0;
+        pawn::Slot seat    = pawn::Slot::Follow;
+        bool       settled = false;
+        uint8      frame   = 0; // the ring's rotation she settled by
     };
     FightSeat  m_FightSeat;
     bool       m_SeatVia = false;
