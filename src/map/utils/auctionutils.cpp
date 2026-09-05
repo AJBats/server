@@ -122,9 +122,12 @@ void auctionutils::RetrieveListOfItemsSoldByPlayer(CCharEntity* PChar)
 
     DebugAuctionsFmt("AH: RetrieveListOfItemsSoldByPlayer: player: {}", PChar->getName());
 
-    const auto totalItemsOnAh = PChar->m_ah_history.size();
-
-    for (size_t auctionSlot = 0; auctionSlot < totalItemsOnAh; auctionSlot++)
+    // CARDIAN: report all seven slots, the empty ones too. The client keeps its
+    // own slot table and counts a listing that sold as still occupied until it
+    // is told otherwise; with nothing said about the slots past the open
+    // listings, a player whose goods sell (the crowd buys them) ends up with a
+    // "full" table and bids with slot 7, which the validator drops unanswered.
+    for (size_t auctionSlot = 0; auctionSlot < 7; auctionSlot++)
     {
         PChar->pushPacket<GP_SERV_COMMAND_AUC>(static_cast<GP_CLI_COMMAND_AUC_COMMAND>(0x0C), static_cast<uint8>(auctionSlot), PChar);
     }

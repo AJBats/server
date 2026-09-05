@@ -65,7 +65,7 @@ auto GP_CLI_COMMAND_AUC::validate(MapSession* PSession, const CCharEntity* PChar
         case GP_CLI_COMMAND_AUC_COMMAND::Bid:
         {
             pv
-                .range("AucWorkIndex", this->AucWorkIndex, 0, 6)
+                .range("AucWorkIndex", this->AucWorkIndex, 0, 7) // CARDIAN: 7 when the client's slot table is full; the purchase never reads it
                 .range("BidPrice", this->Param.Bid.BidPrice, 1, 999999999)
                 .range("ItemStacks", this->Param.Bid.ItemStacks, 0, 1);
         }
