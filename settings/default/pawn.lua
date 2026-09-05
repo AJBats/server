@@ -152,7 +152,7 @@ xi.settings.pawn =
     -- the two can never chase each other. A TRIGGER of 0 turns it off.
     MELEE_BACKOFF_DELAY    = 0.5,
     MELEE_BACKOFF_TRIGGER  = 1.5,
-    MELEE_BACKOFF_MARGIN   = 0.6,
+    MELEE_BACKOFF_MARGIN   = 1.6, -- was 0.6: she sat at the edge of her reach; now about 1.6 y off a small mob (2026-09-05)
     MELEE_BACKOFF_COOLDOWN = 2.0,
 
     -- The fight ring: every cardian on a mob but the one it is fighting
