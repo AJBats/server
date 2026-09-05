@@ -510,7 +510,6 @@ private:
     position_t        m_TargetRestPos{};
     timer::time_point m_TargetRestSince{ timer::time_point::min() };
     timer::time_point m_LastStepBackAt{ timer::time_point::min() };
-    std::optional<timer::duration> m_TargetRestBeat; // the step back's beat, drawn once the rest is seen
 
     // The fight ring: her seat on the mob she fights, the way round to it,
     // and where the seat was when the path there was planned. A seat is
@@ -529,16 +528,41 @@ private:
     bool       m_SeatVia = false;
     position_t m_SeatDestination{};
 
-    // The beats: a hunt's walk starts here; the party's draw, on this mob,
-    // here; the hold's end was seen and she closes here
-    timer::time_point m_SetOffAt{ timer::time_point::min() };
-    uint32            m_EngageBeatMob = 0;
-    timer::time_point m_EngageAt{ timer::time_point::min() };
-    timer::time_point m_CloseAt{ timer::time_point::min() };
-    timer::duration   m_HuntBeat{};                                // the hunt's beat, drawn at set-off; the draw takes it again
-    timer::time_point m_DrawAt{ timer::time_point::min() };        // the hunt's draw, once the re-engage wait is served plus the beat
-    std::optional<EntityId> m_Order;                               // the player's attack order, waiting its beat
-    timer::time_point       m_OrderAt{ timer::time_point::min() };
+    // The beat (pawn-modes step 4): one pending act, due at a time. A
+    // decision is acted on a beat later, by formation row (ReactionBeat)
+    // -- the lead at once, the back line later. When it comes due the
+    // rules run again: pass and it fires, fail and it is dropped with its
+    // reason (the refusal line) and a hold-off on that target, never
+    // re-armed in silence. One slot: a newer act replaces an older one,
+    // and a mode change drops all but the player's order.
+    struct Pending
+    {
+        enum class Act : uint8
+        {
+            SetOff,   // a hunt's walk starts
+            Draw,     // a walk in's draw, once the rules allow
+            Join,     // the party's fight, at the door
+            Close,    // the hold's end was seen; she closes
+            Order,    // the player's attack order
+            StepBack, // the mob settled on her toes
+        };
+        Act               act;
+        EntityId          target;
+        timer::time_point due;
+    };
+    std::optional<Pending> m_Pending;
+    timer::duration        m_HuntBeat{}; // the hunt's beat, drawn at set-off; the draw takes it again
+
+    void Schedule(Pending::Act act, const CBattleEntity* PTarget, timer::duration beat);
+    auto PendingIs(Pending::Act act, const CBattleEntity* PTarget) const -> bool; // this act on this mob is pending, due or not
+    auto Due(Pending::Act act, const CBattleEntity* PTarget) const -> bool;       // pending, and the beat served
+
+    // A target refused at the door is left alone for a while, so a
+    // standing refusal (claimed, unclean) is not tried every beat
+    uint32            m_HoldOffTarget = 0;
+    timer::time_point m_HoldOffUntil{ timer::time_point::min() };
+    void              HoldOff(const CBattleEntity* PTarget);
+    auto              HoldingOff(const CBattleEntity* PTarget) const -> bool;
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;

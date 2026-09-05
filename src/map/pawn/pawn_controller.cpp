@@ -187,13 +187,17 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_LeftFightAt   = m_Tick;
         m_FightSeat     = {};
         m_SeatVia       = false;
-        m_CloseAt       = timer::time_point::min();
         m_HoldForPlayer = false;
     }
     if (from == Mode::Approach && to != Mode::Approach)
     {
         m_Approach.reset();
-        m_DrawAt = timer::time_point::min();
+    }
+    // A pending act belongs to the mode it was scheduled in; only the
+    // player's order outlives a change
+    if (from != to && m_Pending.has_value() && m_Pending->act != Pending::Act::Order)
+    {
+        m_Pending.reset();
     }
 
     m_Mode = to;
@@ -348,18 +352,44 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
     // The beat: the order is taken now, her draw comes a beat later -- the
     // front row first, so the party never draws on one tick
-    m_Order   = EntityId(PMob);
-    m_OrderAt = m_Tick + ReactionBeat();
+    Schedule(Pending::Act::Order, PMob, ReactionBeat());
+}
+
+void CPawnController::Schedule(const Pending::Act act, const CBattleEntity* PTarget, const timer::duration beat)
+{
+    m_Pending = Pending{ act, EntityId(PTarget), m_Tick + beat };
+}
+
+auto CPawnController::PendingIs(const Pending::Act act, const CBattleEntity* PTarget) const -> bool
+{
+    return m_Pending.has_value() && m_Pending->act == act && PTarget != nullptr && m_Pending->target.resolve<CBattleEntity>() == PTarget;
+}
+
+auto CPawnController::Due(const Pending::Act act, const CBattleEntity* PTarget) const -> bool
+{
+    return PendingIs(act, PTarget) && m_Tick >= m_Pending->due;
+}
+
+void CPawnController::HoldOff(const CBattleEntity* PTarget)
+{
+    constexpr auto kRefusalHoldOff = 3s;
+    m_HoldOffTarget                = PTarget->id;
+    m_HoldOffUntil                 = m_Tick + kRefusalHoldOff;
+}
+
+auto CPawnController::HoldingOff(const CBattleEntity* PTarget) const -> bool
+{
+    return PTarget != nullptr && m_HoldOffTarget == PTarget->id && m_Tick < m_HoldOffUntil;
 }
 
 void CPawnController::FireOrderedEngage()
 {
-    if (!m_Order.has_value() || m_Tick < m_OrderAt)
+    if (!m_Pending.has_value() || m_Pending->act != Pending::Act::Order || m_Tick < m_Pending->due)
     {
         return;
     }
-    auto* PMob = m_Order->resolve<CMobEntity>();
-    m_Order.reset();
+    auto* PMob = m_Pending->target.resolve<CMobEntity>();
+    m_Pending.reset();
     if (PMob == nullptr || PMob->isDead())
     {
         return;
@@ -642,8 +672,6 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         if (!m_Approach.has_value() || m_Approach->target.resolve<CBattleEntity>() != PTarget)
         {
             m_Approach = Approach{ EntityId(PTarget), kind };
-            m_SetOffAt = m_Tick;
-            m_DrawAt   = timer::time_point::min();
             Transition(Mode::Approach, fmt::format("walks in on {} ({})", PTarget->getName(), verdict.why));
         }
         return false;
@@ -1129,15 +1157,15 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         {
             // The beat: the hold's end is seen now, the close comes a beat
             // later -- the lead first
-            if (m_CloseAt == timer::time_point::min())
+            if (!PendingIs(Pending::Act::Close, PTarget))
             {
-                m_CloseAt = m_Tick + ReactionBeat();
+                Schedule(Pending::Act::Close, PTarget, ReactionBeat());
             }
         }
-        if (m_CloseAt != timer::time_point::min() && m_Tick >= m_CloseAt)
+        if (Due(Pending::Act::Close, PTarget))
         {
+            m_Pending.reset();
             m_HoldForPlayer = false;
-            m_CloseAt       = timer::time_point::min();
             Transition(Mode::Fight, fmt::format("closes on {} ({})", PTarget->getName(),
                                                 struck ? fmt::format("{} has its attention", PPlayer->getName())
                                                        : fmt::format("{} is fighting {}", PTarget->getName(),
@@ -1352,45 +1380,46 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const auto     party        = PartyEngageTarget(PPlayer);
     CBattleEntity* PPartyTarget = party.target;
     const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
-    if (PPartyTarget != nullptr && !walkingIn)
+    if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget))
     {
         const auto facts = EngageFactsFor(PPartyTarget);
         if (const auto why = Refusal(PPartyTarget, facts); !why.empty())
         {
             // A refusal that stands (claimed by another party, an idle
-            // target the party would not pull) is said once, and she
-            // keeps to the formation
+            // target the party would not pull) is said once, the target
+            // left alone for a while, and she keeps to the formation
             SayRefusal(PPartyTarget, why);
-            m_EngageBeatMob = 0;
+            HoldOff(PPartyTarget);
         }
         else
         {
             // The beat: the party's fight is seen now, her draw comes a
-            // beat later, her eyes on it in the meantime
-            if (m_EngageBeatMob != PPartyTarget->id)
+            // beat later, her eyes on it in the meantime. Due, the rules
+            // run again at the door (Draw): a refusal then is said and
+            // holds the target off
+            if (!PendingIs(Pending::Act::Join, PPartyTarget))
             {
-                m_EngageBeatMob = PPartyTarget->id;
-                m_EngageAt      = m_Tick + ReactionBeat();
+                Schedule(Pending::Act::Join, PPartyTarget, ReactionBeat());
             }
-            if (m_Tick < m_EngageAt)
+            if (!Due(Pending::Act::Join, PPartyTarget))
             {
                 HeadLook(PPartyTarget);
                 co_return;
             }
-            m_EngageBeatMob = 0;
+            m_Pending.reset();
 
             // Drawn on the player's word alone: hold until they strike, or
             // the mob comes to us. A pull, an answer to aggro, or an order
             // closes.
             const bool hold = PPlayer->PAI->IsEngaged() && PPartyTarget == PPlayer->GetBattleTarget() &&
                               !playerHasEnmity(PPlayer, PPartyTarget) && !PPartyTarget->PAI->IsEngaged();
-            Draw(PPartyTarget, ApproachKind::Join, hold ? fmt::format("holding for {}'s strike", PPlayer->getName()) : party.why, hold);
+            if (!Draw(PPartyTarget, ApproachKind::Join, hold ? fmt::format("holding for {}'s strike", PPlayer->getName()) : party.why, hold) &&
+                !m_Approach.has_value())
+            {
+                HoldOff(PPartyTarget);
+            }
             co_return;
         }
-    }
-    else if (!walkingIn)
-    {
-        m_EngageBeatMob = 0;
     }
 
     // The player has drawn on a burrowed mob: the party waits for it to
@@ -1444,9 +1473,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             // her eye is on it the whole way in, and while she stands there
             // waiting to draw
             HeadLook(PMob);
-            if (m_Tick < m_SetOffAt)
+            // A hunt's walk starts a beat after the pick
+            if (PendingIs(Pending::Act::SetOff, PMob))
             {
-                co_return;
+                if (!Due(Pending::Act::SetOff, PMob))
+                {
+                    co_return;
+                }
+                m_Pending.reset();
             }
 
             // The rules gate the DRAW, not the arrival: allowed, she draws
@@ -1457,17 +1491,19 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             // ends the walk.
             // The beat again at a hunt's draw: the wait is served for the
             // whole party at once, and without it they would all draw on
-            // one tick
+            // one tick. A join's or an order's draw waits no beat: its
+            // beat was served at the door
             const auto facts = EngageFactsFor(PMob);
             const auto ready = cardian::rules::mayFight(facts);
             if (ready)
             {
-                if (m_DrawAt == timer::time_point::min())
+                if (!PendingIs(Pending::Act::Draw, PMob))
                 {
-                    m_DrawAt = m_Tick + (hunt ? m_HuntBeat : timer::duration{});
+                    Schedule(Pending::Act::Draw, PMob, hunt ? m_HuntBeat : timer::duration{});
                 }
-                if (m_Tick >= m_DrawAt)
+                if (Due(Pending::Act::Draw, PMob))
                 {
+                    m_Pending.reset();
                     m_HoldForPlayer = false;
                     Draw(PMob, m_Approach->kind, hunt ? std::string(magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob))) : std::string("walked in"));
                 }
@@ -1527,12 +1563,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 // later, her eyes on it in the meantime
                 const auto beat = ReactionBeat();
                 m_HuntBeat      = beat;
-                m_SetOffAt      = m_Tick + beat;
-                m_DrawAt        = timer::time_point::min();
                 m_Approach      = Approach{ EntityId(PMob), ApproachKind::Hunt };
                 Transition(Mode::Approach, fmt::format("sets off after {} ({}{})", PMob->getName(),
                                                        magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)),
                                                        beat > 0s ? fmt::format(", in {:.1f}s", std::chrono::duration<float>(beat).count()) : ""));
+                Schedule(Pending::Act::SetOff, PMob, beat);
                 co_return;
             }
             // A quiet hunt says why, now and then: the band is judged
@@ -3143,24 +3178,32 @@ auto CPawnController::StepBackIntent(const CBattleEntity* PTarget) -> std::optio
     // the same spot as last tick; any move restarts the clock
     const bool pathing = PTarget->PAI->PathFind != nullptr && PTarget->PAI->PathFind->IsFollowingPath();
     const bool settled = !pathing && PTarget->id == m_TargetRestId && isWithinDistance(PTarget->loc.p, m_TargetRestPos, 0.1f);
+    const auto seconds = [](const char* key)
+    {
+        return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>(key)));
+    };
     if (!settled)
     {
         m_TargetRestId    = PTarget->id;
         m_TargetRestPos   = PTarget->loc.p;
         m_TargetRestSince = m_Tick;
-        m_TargetRestBeat.reset();
+        if (PendingIs(Pending::Act::StepBack, PTarget))
+        {
+            m_Pending.reset(); // the rest restarted
+        }
         return std::nullopt;
     }
-    if (!m_TargetRestBeat.has_value())
+    // The step back waits the rest delay and her beat; never over the
+    // player's order or the hold's close, which are about to act
+    if (m_Pending.has_value() && m_Pending->act != Pending::Act::StepBack)
     {
-        m_TargetRestBeat = ReactionBeat();
+        return std::nullopt;
     }
-
-    const auto seconds = [](const char* key)
+    if (!PendingIs(Pending::Act::StepBack, PTarget))
     {
-        return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>(key)));
-    };
-    if (m_Tick < m_TargetRestSince + seconds("pawn.MELEE_BACKOFF_DELAY") + *m_TargetRestBeat || m_Tick < m_LastStepBackAt + seconds("pawn.MELEE_BACKOFF_COOLDOWN"))
+        Schedule(Pending::Act::StepBack, PTarget, seconds("pawn.MELEE_BACKOFF_DELAY") + ReactionBeat());
+    }
+    if (!Due(Pending::Act::StepBack, PTarget) || m_Tick < m_LastStepBackAt + seconds("pawn.MELEE_BACKOFF_COOLDOWN"))
     {
         return std::nullopt;
     }
@@ -3220,6 +3263,7 @@ auto CPawnController::StepBackIntent(const CBattleEntity* PTarget) -> std::optio
     // A hop this short is under the planner's floor: straight at the
     // point (the walker's lock-on turns her face back to the mob)
     m_LastStepBackAt = m_Tick;
+    m_Pending.reset();
     Intent intent;
     intent.kind  = Intent::Kind::Hop;
     intent.point = position_t(x, me.y, z, 0, me.rotation);
