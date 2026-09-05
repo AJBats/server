@@ -21,6 +21,7 @@
 
 #include "pawn.h"
 #include "pawn_items.h"
+#include "pawn_loot.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "gambit_text.h"
@@ -1240,6 +1241,8 @@ namespace pawn
             {
                 continue;
             }
+
+            loot::handOff(PPawn.get());
 
             if (const auto transferIt = pendingTransfers.find(charid); transferIt != pendingTransfers.end())
             {

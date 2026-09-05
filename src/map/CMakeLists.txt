@@ -23,6 +23,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_gambits.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_items.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_items.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_loot.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_loot.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.h
