@@ -9,6 +9,7 @@
 --   [MKT]nm:<mob entity id>            the NM died with the player's party there
 --   [MKT]tier:<orb item id>/<cap>      an orb fight at that level cap was won
 --   [MKT]quest:<log id>/<quest id>     a quest was completed (its rewards)
+--   [MKT]chest:<zone id>/<1 chest|2 coffer>  a key was traded to a container in that zone
 --
 -- The price book (tools/economy/compile.py) names the same vars on each
 -- gated item. Cardians take part in the kill but the var is the player's;
@@ -16,6 +17,7 @@
 -----------------------------------
 require('modules/module_utils')
 require('scripts/globals/battlefield')
+require('scripts/globals/treasure')
 -----------------------------------
 local m = Module:new('cardian_market_unlocks')
 
@@ -31,6 +33,17 @@ m:addOverride('npcUtil.completeQuest', function(player, area, quest, params)
         record(player, string.format('[MKT]quest:%d/%d', area, quest))
     end
     return ok
+end)
+
+-- A key traded to a chest or coffer opens the zone's chest loot for the
+-- crowd, mimic or not: the key was the achievement
+m:addOverride('xi.treasure.onTrade', function(player, npc, trade, bypassType, bypassReward)
+    local result = super(player, npc, trade, bypassType, bypassReward)
+    local container = ({ Treasure_Chest = 1, Treasure_Coffer = 2 })[npc:getName()]
+    if container ~= nil and trade ~= nil and trade:getItemCount() >= 1 then
+        record(player, string.format('[MKT]chest:%d/%d', player:getZoneID(), container))
+    end
+    return result
 end)
 
 m:addOverride('xi.mob.onMobDeathEx', function(mob, player, isKiller, isWeaponSkillKill)
