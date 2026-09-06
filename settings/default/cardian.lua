@@ -30,4 +30,12 @@ xi.settings.cardian =
     -- a different mob takes this pre-nerf wait, in seconds. Cardians
     -- drawing on their own hunt target obey the same rule.
     REENGAGE_SWITCH_DELAY = 2.0,
+
+    -- An order from the command window given a little early -- she is
+    -- mid-action, or the spell is still on recast -- is held and fires the
+    -- moment it can, as long as that moment is within this many seconds of
+    -- the press. Later than that the order is refused with the wait, and a
+    -- held order the grace runs out on is let go with a note: a spell
+    -- pressed twice is one cast, not two.
+    ORDER_GRACE = 3.0,
 }

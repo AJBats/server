@@ -59,7 +59,10 @@
 #include "party.h"
 #include "recast_container.h"
 #include "packets/s2c/0x05a_motionmes.h"
+#include "ability.h"
 #include "spell.h"
+#include "utils/battleutils.h"
+#include "weapon_skill.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -450,6 +453,21 @@ void CPawnController::HeadLook(const CBaseEntity* PAt)
     }
 }
 
+namespace
+{
+    // cardian.ORDER_GRACE, as a duration
+    auto orderGrace() -> timer::duration
+    {
+        return std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.ORDER_GRACE") * 1000.0f));
+    }
+
+    // A wait as the player reads it: whole seconds, rounded up
+    auto wholeSeconds(const timer::duration d) -> int
+    {
+        return static_cast<int>(std::ceil(std::chrono::duration<double>(d).count()));
+    }
+} // namespace
+
 auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string
 {
     unsigned kind = 0;
@@ -470,14 +488,81 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
 
     const EntityId target(PTarget);
     const auto     err = Acting() ? std::string("busy") : TryAction(kind, mode, id, target);
-    if (err == "busy" || err == "recast")
+    if (err != "busy" && err != "recast")
     {
-        m_QueuedOrder         = std::make_pair(key, target);
-        m_QueuedOrderDeadline = m_Tick + 30s;
-        ShowInfoFmt("pawn: {} queues {} on {} ({})", POwner->getName(), key, PTarget->getName(), err);
-        return "";
+        return err;
     }
-    return err;
+
+    // A little early is held, too early refused. The wait is the least
+    // she has to wait (an action in progress adds what the state does not
+    // tell), so a refusal here is certain and the deadline judges the rest
+    const auto grace = orderGrace();
+    const auto wait  = OrderWait(kind, id);
+    if (wait > grace)
+    {
+        return fmt::format("{} is {} s away", OrderName(kind, id), wholeSeconds(wait));
+    }
+    m_QueuedOrder         = std::make_pair(key, target);
+    m_QueuedOrderDeadline = m_Tick + grace;
+    ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), err, wholeSeconds(grace));
+    return "";
+}
+
+auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
+{
+    if (kind != 2)
+    {
+        return 0s;
+    }
+    const auto spellId = static_cast<SpellID>(id);
+    if (const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState()); PState != nullptr)
+    {
+        if (auto* PSpell = PState->GetSpell(); PSpell != nullptr && PSpell->getID() == spellId)
+        {
+            return PState->GetRecast(); // the same spell again: its timer starts when this cast lands
+        }
+    }
+    const auto* recast = static_cast<CCharEntity*>(POwner)->PRecastContainer->GetRecast(RECAST_MAGIC, static_cast<Recast>(spellId));
+    if (recast == nullptr || recast->RecastTime <= 0s)
+    {
+        return 0s;
+    }
+    const auto left = recast->TimeStamp + recast->RecastTime - m_Tick;
+    return left > timer::duration::zero() ? left : timer::duration::zero();
+}
+
+auto CPawnController::OrderName(const unsigned kind, const unsigned id) const -> std::string
+{
+    switch (kind)
+    {
+        case 1:
+            return "the ranged attack";
+        case 2:
+        {
+            auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
+            return PSpell != nullptr ? PSpell->getName() : "that spell";
+        }
+        case 3:
+        {
+            auto* PAbility = ability::GetAbility(static_cast<uint16>(id));
+            return PAbility != nullptr ? PAbility->getName() : "that ability";
+        }
+        case 4:
+        {
+            auto* PSkill = battleutils::GetWeaponSkill(static_cast<uint16>(id));
+            return PSkill != nullptr ? PSkill->getName() : "that weapon skill";
+        }
+        default:
+            return "that";
+    }
+}
+
+void CPawnController::Note(const std::string& text) const
+{
+    if (const auto summoner = pawn::summonerOf(POwner->id); summoner != 0)
+    {
+        cardian::link::sendToCharacter(summoner, "cd note " + text);
+    }
 }
 
 auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const unsigned id, const EntityId target) -> std::string
@@ -537,15 +622,32 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
 
 void CPawnController::FireQueuedOrder()
 {
-    if (!m_QueuedOrder.has_value() || Acting())
+    if (!m_QueuedOrder.has_value())
     {
         return;
     }
     const auto [key, target] = *m_QueuedOrder;
+    unsigned   kind          = 0;
+    unsigned   mode          = 0;
+    unsigned   id            = 0;
+    if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    {
+        m_QueuedOrder.reset();
+        return;
+    }
+
+    // The grace ran out: with her still busy, or the timer still running
     if (m_Tick > m_QueuedOrderDeadline)
     {
-        ShowInfoFmt("pawn: {} lets the queued {} go (30 s without a chance)", POwner->getName(), key);
         m_QueuedOrder.reset();
+        const auto wait = OrderWait(kind, id);
+        const auto why  = (Acting() || wait <= 0s) ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait));
+        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
+        Note(fmt::format("{} let go: {}", OrderName(kind, id), why));
+        return;
+    }
+    if (Acting())
+    {
         return;
     }
 
@@ -556,22 +658,19 @@ void CPawnController::FireQueuedOrder()
         return;
     }
 
-    unsigned kind = 0;
-    unsigned mode = 0;
-    unsigned id   = 0;
-    if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
-    {
-        m_QueuedOrder.reset();
-        return;
-    }
-
     const auto err = TryAction(kind, mode, id, target);
     if (err == "recast")
     {
-        return; // the timer has not run out: next tick
+        return; // the timer has not run out: next tick, until the deadline
     }
     m_QueuedOrder.reset();
-    ShowInfoFmt("pawn: {} fires the queued {} on {}{}", POwner->getName(), key, PTarget->getName(), err.empty() ? "" : " -- " + err);
+    if (!err.empty())
+    {
+        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, err);
+        Note(fmt::format("{} let go: {}", OrderName(kind, id), err));
+        return;
+    }
+    ShowInfoFmt("pawn: {} fires the queued {} on {}", POwner->getName(), key, PTarget->getName());
 }
 
 auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool

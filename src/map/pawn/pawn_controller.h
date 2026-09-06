@@ -149,11 +149,13 @@ public:
     // gambit engine's. "" when it fired, else why not.
     auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
 
-    // The order given while she acts, or while the spell is on recast,
-    // fired the moment both allow -- the client queues one action behind
-    // a cast the same way, and a string of the same spell fires each one
-    // the moment its timer allows. A newer order replaces it; 30 s
-    // without a chance and it is let go.
+    // The order given a little early -- while she acts, or while the
+    // spell is on recast -- is held and fired the moment both allow, the
+    // way the client queues one action behind a cast. Held only within
+    // cardian.ORDER_GRACE of the press: an order that cannot fire in that
+    // time is refused at once (a spell on a long recast, the same spell
+    // pressed twice mid-cast), and a held order the grace runs out on is
+    // let go with a note to the addon. A newer order replaces it.
     void FireQueuedOrder();
 
     // The attack order, fired once her beat is served: the front row draws
@@ -608,6 +610,15 @@ private:
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
     timer::time_point                               m_QueuedOrderDeadline;
+
+    // The least an order has to wait before she could take it: a spell's
+    // recast left, or the recast the cast in progress will set when it is
+    // the same spell. 0 for the rest -- abilities and weapon skills carry
+    // their own refusals, and the states do not tell how long an action
+    // in progress has left
+    auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
+    auto OrderName(unsigned kind, unsigned id) const -> std::string;
+    void Note(const std::string& text) const; // one line to the player's addon, printed as a complaint
 
     // The action itself, no queueing: "" when it fired, "recast", or why
     // not
