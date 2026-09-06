@@ -144,8 +144,25 @@ local function withoutItems(params)
     return copy
 end
 
+-- Her rank follows her player's at every checkpoint she is present for:
+-- some mission scripts set the player's rank directly, outside the reward
+-- table the mirror passes on. Nation logs only; setRank writes her own
+-- nation's slot
+local function catchUpRank(player, cardian, logId)
+    if logId > xi.mission.log_id.WINDURST or cardian:getNation() ~= logId then
+        return nil
+    end
+
+    local theirs = player:getRank(logId)
+    if cardian:getRank(logId) < theirs then
+        cardian:setRank(theirs)
+        return string.format('rank %d', theirs)
+    end
+    return nil
+end
+
 -- act(cardian) returns ok, detail: the reason when she could not, or a
--- note when she did with something left out
+-- note when she did with something left out or caught up
 local did = { accept = 'accepted', complete = 'completed' }
 
 local function mirror(player, verb, kind, title, act)
@@ -179,7 +196,7 @@ m:addOverride('Mission.begin', function(self, player)
             return false, 'already on another mission'
         end
         super(self, cardian)
-        return true
+        return true, catchUpRank(player, cardian, self.areaId)
     end)
 end)
 
@@ -203,11 +220,16 @@ m:addOverride('npcUtil.completeMission', function(player, logId, missionId, para
             if cardian:getCurrentMission(logId) ~= missionId then
                 cardian:addMission(logId, missionId)
             end
-            if super(cardian, logId, missionId, params) then
-                return true
+            local notes = {}
+            if not super(cardian, logId, missionId, params) then
+                super(cardian, logId, missionId, withoutItems(params))
+                notes[#notes + 1] = 'no room for the item'
             end
-            super(cardian, logId, missionId, withoutItems(params))
-            return true, 'no room for the item'
+            notes[#notes + 1] = catchUpRank(player, cardian, logId)
+            if #notes > 0 then
+                return true, table.concat(notes, ', ')
+            end
+            return true
         end)
     end
     return ok
