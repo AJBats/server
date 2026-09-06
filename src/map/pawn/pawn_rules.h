@@ -155,8 +155,10 @@ namespace cardian::rules
 
     constexpr std::size_t npos = static_cast<std::size_t>(-1);
 
-    // The planning circles: every danger grown by the clearance
-    inline auto padded(const Circles& circles, const float clearance = kClearance) -> Circles
+    // The planning circles: every danger grown by the clearance. Any range
+    // of circles (the danger map's entries are circles too)
+    template <typename Range>
+    inline auto padded(const Range& circles, const float clearance = kClearance) -> Circles
     {
         Circles out;
         out.reserve(circles.size());

@@ -687,18 +687,15 @@ auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
     // circles are the pick's: every danger, worst case, padded
     const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"),
                                               pawn::danger::Profile::worstCase(), PMob);
-    cardian::rules::Circles circles;
-    circles.reserve(dangers.size());
-    for (const auto& d : dangers)
-    {
-        circles.push_back(d);
-    }
-    const auto block = cardian::rules::pullBlocked(cardian::rules::padded(circles), POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z);
+    // Only the guards that matter to the way in (forWalk): a mob behind a
+    // wall is no company
+    const auto seen  = pawn::danger::forWalk(dangers, POwner->loc.p, PMob->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
+    const auto block = cardian::rules::pullBlocked(cardian::rules::padded(seen), POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z);
     if (!block.has_value())
     {
         return "";
     }
-    const auto* guard = dangers[block->circle].mob;
+    const auto* guard = seen[block->circle].mob;
     return block->targetInside ? fmt::format("inside {}'s circle", guard->getName())
                                : fmt::format("the way in crosses {}'s circle", guard->getName());
 }
@@ -706,7 +703,7 @@ auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
 void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
 {
     m_Dangers.clear();
-    m_Padded.clear();
+    m_SightMemo.clear();
     if (!IsAvoidingAggro())
     {
         return;
@@ -717,21 +714,50 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // walk up to
     const auto* PPawn = static_cast<const CCharEntity*>(POwner);
     m_Dangers         = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
-    m_Padded.reserve(m_Dangers.size());
-    for (const auto& d : m_Dangers)
+}
+
+auto CPawnController::Sees(const pawn::danger::Danger& danger, const position_t& point) const -> bool
+{
+    // Memoised per tick, to the yalm: the mob's own line-of-sight cache is
+    // eight entries deep and one tick's questions from a party would
+    // thrash it
+    const uint32 mob = danger.mob != nullptr ? danger.mob->id : 0;
+    const int    qx  = static_cast<int>(std::lround(point.x));
+    const int    qz  = static_cast<int>(std::lround(point.z));
+    for (const auto& m : m_SightMemo)
     {
-        m_Padded.push_back(cardian::formation::Circle{ d.x, d.z, d.radius + cardian::rules::kClearance });
+        if (m.mob == mob && m.x == qx && m.z == qz)
+        {
+            return m.seen;
+        }
     }
+    const bool seen = pawn::danger::sees(danger, point);
+    m_SightMemo.push_back(SightMemo{ mob, qx, qz, seen });
+    return seen;
+}
+
+void CPawnController::FocusDangers(const position_t& from, const position_t& to)
+{
+    const auto sight = [this](const auto& d, const auto& p) { return Sees(d, p); };
+    m_ActiveDangers  = pawn::danger::forWalk(m_Dangers, from, to, sight);
+    m_ActivePadded   = cardian::rules::padded(m_ActiveDangers);
+    m_EscapeDangers  = pawn::danger::forWalk(m_Dangers, from, from, sight);
+    m_EscapePadded   = cardian::rules::padded(m_EscapeDangers);
 }
 
 auto CPawnController::IsClear(const float x, const float z) const -> bool
 {
-    return !cardian::formation::insideAny(m_Padded, x, z);
+    // A spot is clear when the walk to it, vetted as Move will vet it,
+    // ends outside every padded circle that matters
+    const position_t spot(x, POwner->loc.p.y, z, 0, 0);
+    const auto       matter = pawn::danger::forWalk(m_Dangers, POwner->loc.p, spot, [this](const auto& d, const auto& p) { return Sees(d, p); });
+    return !cardian::formation::insideAny(cardian::rules::padded(matter), x, z);
 }
 
 auto CPawnController::InsideDanger() const -> bool
 {
-    return cardian::formation::insideAny(m_Dangers, POwner->loc.p.x, POwner->loc.p.z);
+    const auto matter = pawn::danger::forWalk(m_Dangers, POwner->loc.p, POwner->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
+    return cardian::formation::insideAny(matter, POwner->loc.p.x, POwner->loc.p.z);
 }
 
 auto CPawnController::ApproachIntent(const CBattleEntity* PTarget) const -> Intent
@@ -766,6 +792,9 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
         {
             point = POwner->loc.p;
         }
+        // The circles that matter to this walk: their mobs see her, the
+        // point, or the way between. A wall makes the rest no danger
+        FocusDangers(POwner->loc.p, point);
         action = Avoid(point, followMax, followTarget, declump, intent.fighting);
     }
 
@@ -1653,7 +1682,7 @@ auto CPawnController::FormationIntent(CCharEntity* PPlayer, const CBattleEntity*
         const auto slot   = RingSlot();
         const auto seat   = SeatOf(slot);
         const auto anchor = PlayerAnchor(PPlayer, settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
-        followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowPoint, m_HasFollowPoint));
+        followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowHeld));
         RampCatchUp(anchor.moving, followPoint);
         FormationDebug(cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
     }
@@ -2089,28 +2118,28 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* sk
         return check >= minCheck && check <= maxCheck;
     };
 
-    // The pull rule's circles (pawn_rules.h): the dangers, padded as the
-    // fight pads them, so the fight never drops what the pick approved
-    cardian::rules::Circles circles;
-    circles.reserve(dangers.size());
-    for (const auto& d : dangers)
+    // The pull rule's circles (pawn_rules.h) for one candidate: the
+    // dangers that matter to the hunter's way in (forWalk: they see the
+    // player at the scan's centre, the candidate, the hunter, or the way
+    // between -- a mob behind a wall is no company), padded as the fight
+    // pads them. The pick's set holds everything the fight's does, so the
+    // fight never drops what the pick approved. The candidate's own
+    // circle, when it is a danger itself, is no reason against pulling it
+    std::vector<pawn::danger::Danger> seen;
+    cardian::rules::Circles           paddedCircles;
+    std::size_t                       ownCircle = cardian::rules::npos;
+    const auto                        focusOn   = [&](const CMobEntity* PMob)
     {
-        circles.push_back(d);
-    }
-    const auto paddedCircles = cardian::rules::padded(circles);
-
-    // A mob's own circle, when it is a danger itself: no reason against
-    // pulling it
-    const auto ownCircle = [&](const CMobEntity* PMob) -> std::size_t
-    {
-        for (std::size_t i = 0; i < dangers.size(); ++i)
+        seen          = pawn::danger::forWalk(dangers, POwner->loc.p, PMob->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
+        paddedCircles = cardian::rules::padded(seen);
+        ownCircle     = cardian::rules::npos;
+        for (std::size_t i = 0; i < seen.size(); ++i)
         {
-            if (dangers[i].mob == PMob)
+            if (seen[i].mob == PMob)
             {
-                return i;
+                ownCircle = i;
             }
         }
-        return cardian::rules::npos;
     };
 
     // A linking family member (aggressive or not) within the clean radius
@@ -2164,9 +2193,10 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* sk
         // can still sneak behind a guard and pull it to the party waiting
         // outside its circle
         CMobEntity* pick = PMob;
-        if (const auto block = cardian::rules::pullBlocked(paddedCircles, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z, ownCircle(PMob)); block.has_value())
+        focusOn(PMob);
+        if (const auto block = cardian::rules::pullBlocked(paddedCircles, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z, ownCircle); block.has_value())
         {
-            CMobEntity* guard = dangers[block->circle].mob;
+            CMobEntity* guard = seen[block->circle].mob;
             if (!rules.aggressive)
             {
                 skip(PMob, block->targetInside ? fmt::format("inside {}'s circle", guard->getName())
@@ -2359,24 +2389,113 @@ void CPawnController::FormationDebug(const char* role, const CCharEntity* PPlaye
                 POwner->baseSpeed);
 }
 
-auto CPawnController::FormationPoint(const Anchor& a, const float offset, const float angle, position_t& held, bool& hasHeld) -> position_t
+auto CPawnController::WalkLength(const position_t& to) const -> std::optional<float>
+{
+    auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    if (navMesh == nullptr)
+    {
+        return distance(POwner->loc.p, to);
+    }
+    const auto path = navMesh->findPath(POwner->loc.p, to);
+    if (!path.has_value() || path->isPartial)
+    {
+        return std::nullopt;
+    }
+    float      length = 0.0f;
+    position_t prev   = POwner->loc.p;
+    for (const auto& point : path->points)
+    {
+        length += distance(prev, point.position);
+        prev = point.position;
+    }
+    return length;
+}
+
+auto CPawnController::ReachableFormationPoint(const Anchor& a, const float offset, const float angle) -> position_t
+{
+    auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+
+    // The ray from the player (where they are, not where they are
+    // predicted to be: a prediction can run through a wall) to the
+    // projected point, clipped where the mesh ends -- a wall, a cliff's
+    // edge, a doorway's frame. Most cases end here, on the player's side
+    const position_t from    = a.observed;
+    position_t       point   = nearPosition(a.anchor, offset, angle);
+    bool             clipped = false;
+    if (navMesh != nullptr && offset > 0.0f)
+    {
+        // Judged on the ground (planar): the mesh's height is the point's
+        // whenever it has one, and a slope is no clip
+        if (const auto end = navMesh->findFurthestValidPoint(from, point); end.has_value())
+        {
+            clipped = distance(*end, point, true) > 0.5f;
+            point   = *end;
+        }
+    }
+
+    // Then priced by the walk: a point on the mesh but only reachable the
+    // long way round (a thin wall with its opening far off, a ledge joined
+    // by a ramp) is brought in toward the player, a third of the way at a
+    // time, the last step a yalm from them -- within the tick, so she
+    // never starts the long walk. The measure is the walk to the point
+    // against the walk to the player and on: when she is the one behind
+    // the wall every point costs the maze and none is brought in (she has
+    // the maze to walk either way), and when she stands off the mesh (a
+    // push-out, a ledge lip) no walk can be priced and the point stands
+    bool             walkedIn = false;
+    const position_t far      = point;
+    if (const auto toPlayer = navMesh != nullptr ? WalkLength(from) : std::nullopt; toPlayer.has_value())
+    {
+        const float span = distance(from, far);
+        for (int step = 0; step <= 3; ++step)
+        {
+            if (step > 0)
+            {
+                const float t = std::max(1.0f - step / 3.0f, span > 0.0f ? 1.0f / span : 0.0f);
+                point         = position_t(from.x + (far.x - from.x) * t, from.y + (far.y - from.y) * t, from.z + (far.z - from.z) * t, 0, 0);
+                if (const auto onMesh = navMesh->findClosestValidPoint(point); onMesh.has_value())
+                {
+                    point = *onMesh;
+                }
+                walkedIn = true;
+            }
+            const auto walk = WalkLength(point);
+            if (walk.has_value() && cardian::formation::worthTheWalk(*walk, *toPlayer + distance(from, point)))
+            {
+                break;
+            }
+        }
+    }
+
+    if ((clipped || walkedIn) && m_Tick - m_LastFormationClipTime >= 5s)
+    {
+        m_LastFormationClipTime = m_Tick;
+        ShowInfoFmt("pawn: {} brings her point in ({:.1f}y of {:.1f}y: {}{}{})", POwner->getName(), distance(from, point), offset,
+                    clipped ? "the mesh ends" : "", clipped && walkedIn ? ", " : "", walkedIn ? "a long walk round" : "");
+    }
+    return point;
+}
+
+auto CPawnController::FormationPoint(const Anchor& a, const float offset, const float angle, HeldPoint& held) -> position_t
 {
     const position_t projected = nearPosition(a.anchor, offset, angle);
 
     // Remembered so Avoid() can re-seat the slot on the same ring
     m_HasSlot    = true;
-    m_SlotAnchor = a.anchor;
+    m_Slot       = a;
     m_SlotOffset = offset;
     m_SlotAngle  = angle;
 
     // A moving player is re-aimed every tick; the deadband only absorbs
-    // the coarse position/heading updates of a player standing still
-    if (!hasHeld || a.moving || distance(projected, held) > settings::get<float>("pawn.FORMATION_DEADBAND"))
+    // the coarse position/heading updates of a player standing still, and
+    // is judged on the raw projection (HeldPoint)
+    if (!held.has || a.moving || distance(projected, held.raw) > settings::get<float>("pawn.FORMATION_DEADBAND"))
     {
-        held    = projected;
-        hasHeld = true;
+        held.raw   = projected;
+        held.point = ReachableFormationPoint(a, offset, angle);
+        held.has   = true;
     }
-    return held;
+    return held.point;
 }
 
 auto CPawnController::IsShortHop(const position_t& point, const float followMax) const -> bool
@@ -2401,8 +2520,9 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
 {
     using namespace cardian::formation;
 
-    // The tick's danger map (RefreshDangers), the same the movers chose by
-    const auto& dangers = m_Dangers;
+    // The tick's danger map, focused on this walk (FocusDangers): the
+    // circles whose mobs can see her, the point, or the way between
+    const auto& dangers = m_ActiveDangers;
 
     // The margins that keep the boundary from being slippery: every point
     // she walks to is planned against the circles padded by kClearance, so
@@ -2420,8 +2540,9 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
     bool        perched = false; // this tick used or took a perch
     if (!dangers.empty())
     {
-        const auto&      circles = dangers;  // the true circles: is she inside one
-        const auto&      padded  = m_Padded; // the planning circles: every point she walks to
+        const auto&      padded  = m_ActivePadded;  // the planning circles: every point she walks to
+        const auto&      seeing  = m_EscapeDangers; // the true circles whose mobs see her: is she inside one
+        const auto&      escape  = m_EscapePadded;  // and the way out of them
         const position_t me      = POwner->loc.p;
 
         // A point she is sent to must be on the mesh and clear: an off-mesh
@@ -2469,16 +2590,16 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
                                        });
         };
 
-        if (insideAny(circles, me.x, me.z))
+        if (insideAny(seeing, me.x, me.z))
         {
             // Pushed away: the minimum proximity is never violated, whatever
             // the formation wanted. Straight out is the first choice; with a
             // wall at her back, other directions around the deepest circle
             // are tried for an on-mesh, clear point.
-            auto [x, z] = pushOut(padded, me.x, me.z, kEscapeExtra);
+            auto [x, z] = pushOut(escape, me.x, me.z, kEscapeExtra);
             if (!POwner->PAI->PathFind->ValidPosition(position_t(x, me.y, z, 0, 0)))
             {
-                const auto deepest = std::max_element(padded.begin(), padded.end(), [&](const auto& a, const auto& b)
+                const auto deepest = std::max_element(escape.begin(), escape.end(), [&](const auto& a, const auto& b)
                                                       {
                                                           return depthInside(a, me.x, me.z) < depthInside(b, me.x, me.z);
                                                       });
@@ -2487,7 +2608,7 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
                 {
                     const float cx = deepest->x + std::cos(base + turn) * (deepest->radius + kEscapeExtra);
                     const float cz = deepest->z + std::sin(base + turn) * (deepest->radius + kEscapeExtra);
-                    if (!insideAny(padded, cx, cz) && POwner->PAI->PathFind->ValidPosition(position_t(cx, me.y, cz, 0, 0)))
+                    if (!insideAny(escape, cx, cz) && POwner->PAI->PathFind->ValidPosition(position_t(cx, me.y, cz, 0, 0)))
                     {
                         x = cx;
                         z = cz;
@@ -2561,19 +2682,20 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
                     // The slot is in danger: the nearest clear angle on its own
                     // ring (the sandwich -- as close to the ideal spot as safety
                     // allows), else the point pushed straight out, is the best
-                    // spot on offer
+                    // spot on offer. The re-seat is a formation point like any
+                    // other: the world clips and prices it the same way
                     const position_t ideal  = point;
                     bool             seated = false;
                     if (m_HasSlot)
                     {
                         const auto onRing = [&](const float angle)
                         {
-                            const position_t p = nearPosition(m_SlotAnchor, m_SlotOffset, angle);
+                            const position_t p = nearPosition(m_Slot.anchor, m_SlotOffset, angle);
                             return std::pair{ p.x, p.z };
                         };
                         if (const auto angle = safestAngleOnRing(padded, m_SlotAngle, onRing); angle.has_value())
                         {
-                            point  = nearPosition(m_SlotAnchor, m_SlotOffset, *angle);
+                            point  = ReachableFormationPoint(m_Slot, m_SlotOffset, *angle);
                             seated = true;
                         }
                     }
@@ -2772,7 +2894,7 @@ auto CPawnController::LeadPoint(const CCharEntity* PPlayer) -> position_t
         lead += settings::get<float>("pawn.FORMATION_LEAD_MOVING_BONUS");
     }
 
-    const auto point = FormationPoint(a, lead, 0.0f, m_LeadPoint, m_HasLeadPoint);
+    const auto point = FormationPoint(a, lead, 0.0f, m_LeadHeld);
     FormationDebug("lead", PPlayer, a, point);
     return point;
 }
@@ -3023,7 +3145,6 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
     // never again for the fight
     cardian::formation::SeatCosts costs{};
     costs.fill(std::numeric_limits<float>::infinity());
-    auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
     for (std::size_t i = 0; i < RingSeats.size(); ++i)
     {
         if (taken[i])
@@ -3031,26 +3152,10 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
             continue;
         }
         const position_t p(points[i].first, PTarget->loc.p.y, points[i].second, 0, 0);
-        const float      straight = distance(POwner->loc.p, p);
-        float            cost     = straight;
-        if (navMesh != nullptr)
+        const auto       walk = WalkLength(p);
+        if (walk.has_value() && cardian::formation::worthTheWalk(*walk, distance(POwner->loc.p, p)))
         {
-            const auto path = navMesh->findPath(POwner->loc.p, p);
-            if (!path.has_value() || path->isPartial)
-            {
-                continue;
-            }
-            cost            = 0.0f;
-            position_t prev = POwner->loc.p;
-            for (const auto& point : path->points)
-            {
-                cost += distance(prev, point.position);
-                prev = point.position;
-            }
-        }
-        if (cardian::formation::worthTheWalk(cost, straight))
-        {
-            costs[i] = cost;
+            costs[i] = *walk;
         }
     }
     const auto pick = cardian::formation::cheapestSeat(costs);

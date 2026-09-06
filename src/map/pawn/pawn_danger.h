@@ -24,6 +24,7 @@
 #include "formation_math.h"
 
 #include "common/types/fn.h"
+#include "common/types/position.h"
 
 #include <algorithm>
 #include <vector>
@@ -33,7 +34,6 @@ class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
 class CZoneEntities;
-struct position_t;
 
 // The danger map (M3.87): every mob near a cardian that could turn on it,
 // as a circle it must stay out of. Each detection type an idle aggressive
@@ -60,10 +60,56 @@ namespace pawn::danger
     // vector of these directly
     struct Danger : cardian::formation::Circle
     {
-        CMobEntity* mob      = nullptr;
-        float       distance = 0.0f;  // from the query centre to the mob
-        bool        linked   = false; // kin of a mob fighting the one asking
+        CMobEntity* mob          = nullptr;
+        float       distance     = 0.0f;  // from the query centre to the mob
+        bool        linked       = false; // kin of a mob fighting the one asking
+        float       unseenRadius = 0.0f;  // the circle that holds with no line of sight: the ambush's (0 when none)
     };
+
+    // Line of sight from the danger's mob to a point, the mob's own test
+    // (CBaseEntity::CanSeeTarget: a ray against the zone's collision mesh,
+    // cached). Every way a mob notices a character but the 3 y ambush ends
+    // in this test, and so does linking, so a mob behind a wall is no
+    // danger to a point it cannot see. The circle is the range; the sight
+    // is the rest of the rule.
+    auto sees(const Danger& danger, const position_t& point) -> bool;
+
+    // The dangers that matter to a walk from `from` to `to`: those whose
+    // mobs see the start, the end, or the point of the way nearest to them
+    // -- a wall between makes the rest no danger, except that an ambusher
+    // keeps its unseen circle, which the server tests without sight. One
+    // rule for the vet, the clear-spot test, the escape test (a walk of no
+    // length: the mobs that see her where she stands) and the pull rule,
+    // so no two of them disagree. `sees` is the caller's line-of-sight
+    // test, memoised per tick.
+    using Sight = FnRef<bool(const Danger&, const position_t&)>;
+    inline auto forWalk(const std::vector<Danger>& all, const position_t& from, const position_t& to, Sight sees) -> std::vector<Danger>
+    {
+        std::vector<Danger> out;
+        out.reserve(all.size());
+        for (const auto& d : all)
+        {
+            // The point of the way nearest the mob: where a circle across
+            // the middle of a walk would first see her
+            const float dx  = to.x - from.x;
+            const float dz  = to.z - from.z;
+            const float len = dx * dx + dz * dz;
+            const float t   = len > 0.0f ? std::clamp(((d.x - from.x) * dx + (d.z - from.z) * dz) / len, 0.0f, 1.0f) : 0.0f;
+            const position_t nearest(from.x + dx * t, from.y + (to.y - from.y) * t, from.z + dz * t, 0, 0);
+
+            if (sees(d, from) || (len > 0.0f && sees(d, to)) || (t > 0.0f && t < 1.0f && sees(d, nearest)))
+            {
+                out.push_back(d);
+            }
+            else if (d.unseenRadius > 0.0f)
+            {
+                Danger unseen = d;
+                unseen.radius = d.unseenRadius;
+                out.push_back(unseen);
+            }
+        }
+        return out;
+    }
 
     // What the mobs can detect about the one asking: a cardian's own
     // concealment, health and casting state shrink or grow the map the way

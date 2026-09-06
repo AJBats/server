@@ -26,6 +26,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include <cmath>
+#include <vector>
+
 #include "map/pawn/pawn_danger.h"
 
 using namespace pawn::danger;
@@ -127,4 +130,74 @@ TEST_CASE("radiusFor: magic only while casting, low HP only under the mark, ambu
     REQUIRE_THAT(radiusFor(ambush, p, kBuffer, kTail), WithinAbs(AmbushRange + kBuffer, 0.001f));
     p.sneak = true;
     REQUIRE_THAT(radiusFor(ambush, p, kBuffer, kTail), WithinAbs(0.0f, 0.001f));
+}
+
+namespace
+{
+    auto dangerAt(const float x, const float z, const float radius, const float unseenRadius = 0.0f) -> Danger
+    {
+        Danger d;
+        d.x            = x;
+        d.z            = z;
+        d.radius       = radius;
+        d.unseenRadius = unseenRadius;
+        return d;
+    }
+
+    auto at(const float x, const float z) -> position_t
+    {
+        return position_t(x, 0.0f, z, 0, 0);
+    }
+} // namespace
+
+TEST_CASE("forWalk: a mob that sees the start, the end or the way between matters; one that sees none is no danger", "[cardian][avoid]")
+{
+    const std::vector<Danger> all{ dangerAt(5.0f, 3.0f, 10.0f) };
+    const position_t          from = at(0.0f, 0.0f);
+    const position_t          to   = at(10.0f, 0.0f);
+
+    const auto seesOnly = [](const position_t& where)
+    {
+        return [where](const Danger&, const position_t& p)
+        {
+            return std::fabs(p.x - where.x) < 0.01f && std::fabs(p.z - where.z) < 0.01f;
+        };
+    };
+
+    REQUIRE(forWalk(all, from, to, seesOnly(from)).size() == 1);
+    REQUIRE(forWalk(all, from, to, seesOnly(to)).size() == 1);
+    // The point of the way nearest the mob: straight below it on the segment
+    REQUIRE(forWalk(all, from, to, seesOnly(at(5.0f, 0.0f))).size() == 1);
+    REQUIRE(forWalk(all, from, to, seesOnly(at(2.0f, 0.0f))).empty());
+    REQUIRE(forWalk(all, from, to, [](const Danger&, const position_t&) { return false; }).empty());
+}
+
+TEST_CASE("forWalk: an ambusher unseen keeps its unseen circle, seen its whole one", "[cardian][avoid]")
+{
+    const std::vector<Danger> all{ dangerAt(5.0f, 3.0f, 10.0f, 4.5f) };
+    const position_t          from = at(0.0f, 0.0f);
+    const position_t          to   = at(10.0f, 0.0f);
+
+    const auto unseen = forWalk(all, from, to, [](const Danger&, const position_t&) { return false; });
+    REQUIRE(unseen.size() == 1);
+    REQUIRE_THAT(unseen[0].radius, WithinAbs(4.5f, 0.001f));
+
+    const auto seen = forWalk(all, from, to, [](const Danger&, const position_t&) { return true; });
+    REQUIRE(seen.size() == 1);
+    REQUIRE_THAT(seen[0].radius, WithinAbs(10.0f, 0.001f));
+}
+
+TEST_CASE("forWalk: a walk of no length asks about the spot alone", "[cardian][avoid]")
+{
+    const std::vector<Danger> all{ dangerAt(5.0f, 3.0f, 10.0f) };
+    const position_t          spot = at(4.0f, 1.0f);
+
+    int asked = 0;
+    const auto count = [&asked](const Danger&, const position_t&)
+    {
+        ++asked;
+        return false;
+    };
+    REQUIRE(forWalk(all, spot, spot, count).empty());
+    REQUIRE(asked == 1);
 }

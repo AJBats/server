@@ -228,7 +228,30 @@ private:
     // client's coarse updates: re-aimed every tick while the player moves,
     // only past FORMATION_DEADBAND while they stand. `held`/`hasHeld` are
     // the caller's memory of the slot.
-    auto FormationPoint(const Anchor& anchor, float offset, float angle, position_t& held, bool& hasHeld) -> position_t;
+    // A held formation point: the point she holds, as the world allows,
+    // and the raw projection it came from, which the deadband is judged
+    // on -- so a point brought in by a wall stays put until the player
+    // turns away from the wall
+    struct HeldPoint
+    {
+        position_t point{};
+        position_t raw{};
+        bool       has = false;
+    };
+    auto FormationPoint(const Anchor& anchor, float offset, float angle, HeldPoint& held) -> position_t;
+
+    // The formation point the world allows: the ray from the player to the
+    // projected point clipped where the mesh ends (a wall, a cliff's edge),
+    // then priced by the walk from where she stands; a walk not worth it
+    // (the seats' rule, worthTheWalk) brings the point in toward the
+    // player a third at a time, so a lead point across a wall never sends
+    // her round the maze
+    auto ReachableFormationPoint(const Anchor& anchor, float offset, float angle) -> position_t;
+
+    // The navmesh's walk from where she stands to a point, in yalms; none
+    // when there is no path (or only a partial one). No mesh: the straight
+    // line.
+    auto WalkLength(const position_t& to) const -> std::optional<float>;
 
     // Run faster only to close a gap to a point the player defines, ramped
     // with the gap and only while the player moves
@@ -298,8 +321,8 @@ private:
     // one of them can ask IsClear while choosing, and the vet sees the
     // same circles. PIgnore is the party's own mob, never a danger.
     void RefreshDangers(const CBattleEntity* PIgnore);
-    auto IsClear(float x, float z) const -> bool;    // outside every padded circle
-    auto InsideDanger() const -> bool;               // she stands inside a true circle
+    auto IsClear(float x, float z) const -> bool; // the walk to the spot ends outside every padded circle that matters to it
+    auto InsideDanger() const -> bool;      // she stands inside a true circle whose mob sees her (or an ambusher's)
 
     // The walker. Returns the vet's action, or nothing when the tick was
     // spent on a warp.
@@ -465,10 +488,28 @@ private:
     // the approach proposal, the vet, the step
     void WalkToward(CBattleEntity* PTarget);
 
-    // The tick's danger map (RefreshDangers): the true circles, and the
-    // planning circles padded by the clearance
+    // The tick's danger map (RefreshDangers): every circle in range. The
+    // vet works on the ones that matter to the walk in question
+    // (FocusDangers, pawn::danger::forWalk) -- the active set, which Avoid
+    // plans against -- and its escape test on the ones whose mobs see her
+    // where she stands. Sees is the line-of-sight test the whole tick
+    // shares, memoised so the mobs' own small caches are not thrashed by
+    // one tick's questions.
     std::vector<pawn::danger::Danger>       m_Dangers;
-    std::vector<cardian::formation::Circle> m_Padded;
+    std::vector<pawn::danger::Danger>       m_ActiveDangers;
+    std::vector<cardian::formation::Circle> m_ActivePadded;
+    std::vector<pawn::danger::Danger>       m_EscapeDangers;
+    std::vector<cardian::formation::Circle> m_EscapePadded;
+    void                                    FocusDangers(const position_t& from, const position_t& to);
+    auto                                    Sees(const pawn::danger::Danger& danger, const position_t& point) const -> bool;
+    struct SightMemo
+    {
+        uint32 mob = 0;
+        int    x   = 0;
+        int    z   = 0;
+        bool   seen = false;
+    };
+    mutable std::vector<SightMemo> m_SightMemo;
 
     std::unique_ptr<pawn::CGambits> m_Gambits;
     bool                            m_BrainLoaded = false;
@@ -573,10 +614,9 @@ private:
     auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
     timer::time_point m_LastHuntLogTime;
     timer::time_point m_LastSurfaceLogTime;
-    bool              m_HasLeadPoint = false;
-    position_t        m_LeadPoint{};
-    bool              m_HasFollowPoint = false;
-    position_t        m_FollowPoint{};
+    HeldPoint         m_LeadHeld;
+    HeldPoint         m_FollowHeld;
+    timer::time_point m_LastFormationClipTime;
     timer::time_point m_LastLeadDebugTime;
 
     // Prediction scorecard: the player position the lead aimed for, checked
@@ -599,7 +639,7 @@ private:
 
     // Aggro avoidance state
     bool                m_HasSlot = false;  // this tick's FormationPoint ring, for re-seating a slot in danger
-    position_t        m_SlotAnchor{};
+    Anchor            m_Slot{};
     float             m_SlotOffset      = 0.0f;
     float             m_SlotAngle       = 0.0f;
     AvoidAction       m_LastAvoidAction = AvoidAction::None;

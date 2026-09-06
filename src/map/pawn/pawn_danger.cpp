@@ -155,6 +155,16 @@ namespace pawn::danger
             }
             radius = std::sqrt(radius * radius - dy * dy);
 
+            // The ambush's circle needs no sight (CanDetectTarget tests it
+            // by distance alone), so it holds behind a wall: sliced the
+            // same way
+            const bool  hidesFromSound = (!d.trueDetection && profile.sneak) || (profile.illusion && !d.seesThroughIllusion);
+            float       unseen         = d.ambush && !hidesFromSound ? AmbushRange + buffer : 0.0f;
+            if (unseen > 0.0f)
+            {
+                unseen = std::fabs(dy) >= unseen ? 0.0f : std::sqrt(unseen * unseen - dy * dy);
+            }
+
             const float dist = distance(center, PMob->loc.p, true); // planar, like the circle
             if (dist > scan + radius)
             {
@@ -162,17 +172,23 @@ namespace pawn::danger
             }
 
             Danger danger;
-            danger.x        = PMob->loc.p.x;
-            danger.z        = PMob->loc.p.z;
-            danger.radius   = radius;
-            danger.mob      = PMob;
-            danger.distance = dist;
-            danger.linked   = links;
+            danger.x          = PMob->loc.p.x;
+            danger.z          = PMob->loc.p.z;
+            danger.radius     = radius;
+            danger.mob        = PMob;
+            danger.distance   = dist;
+            danger.linked       = links;
+            danger.unseenRadius = unseen;
             out.push_back(danger);
         };
         forEachMobNear(entities, center, coarse, consider);
 
         return out;
+    }
+
+    auto sees(const Danger& danger, const position_t& point) -> bool
+    {
+        return danger.mob != nullptr && danger.mob->CanSeeTarget(point);
     }
 } // namespace pawn::danger
 
