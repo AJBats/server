@@ -376,10 +376,11 @@ class PawnModule : public CPPModule
             return PPawn != nullptr ? pawn::items::takeFromPawn(PChar, PPawn, slot, qty) : "no such cardian";
         };
 
-        lua["CBaseEntity"]["cardianWear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 invSlot, const uint8 equipSlot) -> std::string
+        // location: the inventory (0) or a wardrobe the piece is worn from
+        lua["CBaseEntity"]["cardianWear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::equip(PPawn, invSlot, equipSlot) : "no such cardian";
+            return PPawn != nullptr ? pawn::items::equip(PPawn, invSlot, equipSlot, location) : "no such cardian";
         };
 
         lua["CBaseEntity"]["cardianStrip"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> std::string
@@ -388,7 +389,32 @@ class PawnModule : public CPPModule
             return PPawn != nullptr ? pawn::items::unequip(PPawn, equipSlot) : "no such cardian";
         };
 
-        lua["CBaseEntity"]["cardianInv"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        // One of her containers: the inventory (location 0) or a storage bag
+        lua["CBaseEntity"]["cardianInv"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location) -> sol::object
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr || location > LOC_WARDROBE8)
+            {
+                return sol::lua_nil;
+            }
+
+            auto result = ::lua.create_table();
+            if (const auto* storage = PPawn->getStorage(location))
+            {
+                result["size"] = storage->GetSize();
+                result["free"] = storage->GetFreeSlotsCount();
+            }
+            auto chunkTable = ::lua.create_table();
+            for (const auto& chunk : pawn::items::containerChunks(PPawn, location))
+            {
+                chunkTable.add(chunk);
+            }
+            result["chunks"] = chunkTable;
+            return result;
+        };
+
+        // Her storage bags, { loc, size, used } each, in cycling order
+        lua["CBaseEntity"]["cardianBags"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
@@ -397,18 +423,21 @@ class PawnModule : public CPPModule
             }
 
             auto result = ::lua.create_table();
-            if (const auto* storage = PPawn->getStorage(LOC_INVENTORY))
+            for (const auto& bag : pawn::items::bags(PPawn))
             {
-                result["size"] = storage->GetSize();
-                result["free"] = storage->GetFreeSlotsCount();
+                auto entry    = ::lua.create_table();
+                entry["loc"]  = bag.location;
+                entry["size"] = bag.size;
+                entry["used"] = bag.used;
+                result.add(entry);
             }
-            auto chunkTable = ::lua.create_table();
-            for (const auto& chunk : pawn::items::inventoryChunks(PPawn))
-            {
-                chunkTable.add(chunk);
-            }
-            result["chunks"] = chunkTable;
             return result;
+        };
+
+        lua["CBaseEntity"]["cardianMove"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::moveItem(PPawn, fromLoc, slot, toLoc, qty) : "no such cardian";
         };
 
         // The gambit editor's view of a cardian's rows (M3.85): index, on,
@@ -857,16 +886,23 @@ class PawnModule : public CPPModule
             return PPawn != nullptr ? pawn::rescue(PChar, PPawn) : "no such cardian";
         };
 
-        lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot) -> std::string
+        lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint8 location) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::useItem(PPawn, slot) : "no such cardian";
+            return PPawn != nullptr ? pawn::items::useItem(PPawn, slot, location) : "no such cardian";
         };
 
-        lua["CBaseEntity"]["cardianDrop"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
+        lua["CBaseEntity"]["cardianDrop"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty, const uint8 location) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::dropItem(PPawn, slot, qty) : "no such cardian";
+            return PPawn != nullptr ? pawn::items::dropItem(PPawn, slot, qty, location) : "no such cardian";
+        };
+
+        // Merge and compact one of her containers (the inventory or a bag)
+        lua["CBaseEntity"]["cardianSort"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::sortBag(PPawn, location) : "no such cardian";
         };
 
         // The scroll flow in one action: transfer, then the pawn uses the

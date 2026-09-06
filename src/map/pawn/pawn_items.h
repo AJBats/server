@@ -55,28 +55,62 @@ namespace pawn::items
     // made. The loop is the item-stack packet handler's (0x03A), without
     // its anti-cheat and its refresh packet.
     auto tidyStacks(CCharEntity* PPawn) -> uint8;
+    auto tidyContainer(CCharEntity* PPawn, uint8 location) -> uint8;
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
 
-    // The pawn uses the item in its LOC_INVENTORY slot on itself through
-    // its own AI -- cast time, job/level checks and spell learning all run
-    // the game's item machinery. Refusals raised inside the AI (wrong job,
+    // Sort one of her containers: partial stacks merged, then every stack
+    // compacted from slot 1 in item-id order, fuller stacks first. The
+    // item objects move, so worn gear stays worn; the saved equip rows and
+    // recast entries follow. Refused while any stack is mid-transaction or
+    // an item use is in flight, and undone if the database does not follow.
+    auto sortBag(CCharEntity* PPawn, uint8 location) -> std::string;
+
+    // The pawn uses the item in the given container's slot on itself
+    // through its own AI -- cast time, job/level checks and spell learning
+    // all run the game's item machinery. The inventory only; a bag's
+    // contents are worn or fetched first. Refusals raised inside the AI (wrong job,
     // mid-action) surface only as drained packets; the caller re-syncs for
     // the truth.
-    auto useItem(CCharEntity* PPawn, uint8 slot) -> std::string;
+    auto useItem(CCharEntity* PPawn, uint8 slot, uint8 location = 0) -> std::string;
 
-    // Destroy qty of the stack in the pawn's LOC_INVENTORY slot.
-    auto dropItem(CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
+    // Destroy qty of the stack in the inventory slot; any other container
+    // refuses (its contents are fetched first).
+    auto dropItem(CCharEntity* PPawn, uint8 slot, uint32 qty, uint8 location = 0) -> std::string;
 
-    // Equip the item in the pawn's LOC_INVENTORY invSlot into equipSlot
+    // Equip the item in invSlot of location (the inventory or a wardrobe;
+    // the storage-only bags refuse, as on retail) into equipSlot
     // (SLOTTYPE), or clear equipSlot. Both re-run gear sets, health and
     // latents the way the 0x050 handler does for a real client.
-    auto equip(CCharEntity* PPawn, uint8 invSlot, uint8 equipSlot) -> std::string;
+    auto equip(CCharEntity* PPawn, uint8 invSlot, uint8 equipSlot, uint8 location = 0) -> std::string;
     auto unequip(CCharEntity* PPawn, uint8 equipSlot) -> std::string;
+
+    // Her storage bags, the ones a character reaches from the field: Mog
+    // Case, the sized Mog Wardrobes, Satchel and Sack -- the item-move
+    // handler's own list for a player, minus the Mog House containers
+    // (Safe, Storage, Locker) a cardian never stands in. Inventory is not
+    // a bag; it is the other side of every move.
+    struct Bag
+    {
+        uint8 location = 0;
+        uint8 size     = 0;
+        uint8 used     = 0;
+    };
+    auto bags(CCharEntity* PPawn) -> std::vector<Bag>;
+
+    // Move qty of the stack in fromLoc/slot into toLoc, between her own
+    // inventory and one of her bags either way: the item-move handler's
+    // path (a same-item partial stack in the destination is topped up
+    // first, the rest lands in a free slot), the wardrobe's equipment-only
+    // rule, and the transaction layer's write-through. Worn gear moves as
+    // it is between the inventory and a wardrobe, either way, and stays
+    // worn; the storage-only bags take nothing worn.
+    auto moveItem(CCharEntity* PPawn, uint8 fromLoc, uint8 slot, uint8 toLoc, uint32 qty) -> std::string;
 
     // Protocol chunks for the companion addon, each short enough for one
     // chat-packet reply (~140 bytes).
-    //   inventory: "i <size>|<slot>:<itemId>:<qty>,..."   (used slots only)
-    //   equipment: "e <equipSlot>:<itemId>:<invSlot>,..." (filled slots only)
-    auto inventoryChunks(CCharEntity* PPawn) -> std::vector<std::string>;
+    //   container: "<slot>:<itemId>:<qty>[:E],..."        (used slots only)
+    //   equipment: "e <equipSlot>:<itemId>:<slot>[:<loc>],..." (filled slots
+    //              only; loc present when the piece is worn from a wardrobe)
+    auto containerChunks(CCharEntity* PPawn, uint8 location) -> std::vector<std::string>;
     auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>;
 } // namespace pawn::items

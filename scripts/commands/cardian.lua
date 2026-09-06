@@ -9,16 +9,20 @@
 --
 --       list                             roster of your live cardians
 --       sync <name>                      one cardian: stats + gear + inventory
---       inv <name>                       a cardian's inventory
+--       inv <name> [loc]                 a cardian's inventory (loc 0), or one of her storage bags
+--       bags <name>                      her storage bags as loc:size:used,... -- Mog Case, the Mog
+--                                        Wardrobes, Satchel and Sack when she has them
+--       move <name> <from> <slot> <to> <qty>  a stack between her inventory and a bag, either way
 --       gear <name>                      a cardian's equipment
 --       give <name> <slot> <qty>         your inventory slot -> cardian
 --       take <name> <slot> <qty>         cardian inventory slot -> you
---       wear <name> <invslot> <eqslot>   equip from the cardian's inventory
+--       wear <name> <invslot> <eqslot> [loc]  equip from the cardian's inventory, or a wardrobe (loc)
 --       strip <name> <eqslot>            unequip
---       equipset <name> <eq:inv,...>     apply a whole loadout in one pass
---                                        (invslot 0 clears the slot)
---       use <name> <slot>                cardian uses the item on itself
---       drop <name> <slot> <qty>         destroy part of a cardian's stack
+--       equipset <name> <eq:slot[:loc],...>   apply a whole loadout in one pass
+--                                        (slot 0 clears the slot; loc = a wardrobe, else the inventory)
+--       use <name> <slot> [loc]          cardian uses the item on itself (the inventory only; a bag refuses)
+--       drop <name> <slot> <qty> [loc]   destroy part of a cardian's stack (the inventory only; a bag refuses)
+--       sort <name> <loc>                merge and compact a container (0 = inventory)
 --       giveuse <name> <slot> <qty>      give from your inventory, then the
 --                                        cardian uses it (the scroll flow)
 --       homepoint <name>                 a KO'd cardian home points (yours)
@@ -60,18 +64,63 @@ local function reply(player, line)
     end
 end
 
-local function sendInv(player, name)
-    local inv = player:cardianInv(name)
+-- One container: the inventory unless a bag's location is given
+local function sendInv(player, name, loc)
+    loc = loc or 0
+    local inv = player:cardianInv(name, loc)
     if inv == nil then
         reply(player, '#cd err inv no such cardian')
         return
     end
 
-    reply(player, string.format('#cd inv.b %s %d %d', name, inv.size or 0, inv.free or 0))
+    reply(player, string.format('#cd inv.b %s %d %d %d', name, inv.size or 0, inv.free or 0, loc))
     for _, chunk in ipairs(inv.chunks) do
         reply(player, string.format('#cd i %s %s', name, chunk))
     end
     reply(player, '#cd inv.e ' .. name)
+end
+
+-- The wardrobes holding worn gear, read off the gear line's trailing loc
+local function wornWardrobes(player, name)
+    local set = {}
+    for _, chunk in ipairs(player:cardianGear(name) or {}) do
+        for loc in chunk:gmatch('%d+:%d+:%d+:(%d+)') do
+            set[tonumber(loc)] = true
+        end
+    end
+    return set
+end
+
+-- The wardrobes an equip change touched -- those holding worn gear before
+-- and after, and any a piece was worn from (extra) -- each sent once, since
+-- a worn mark lives in its container's rows
+local function sendTouchedWardrobes(player, name, before, extra)
+    local locs = wornWardrobes(player, name)
+    for loc in pairs(before or {}) do
+        locs[loc] = true
+    end
+    for loc in pairs(extra or {}) do
+        locs[loc] = true
+    end
+    for loc in pairs(locs) do
+        if loc ~= 0 then
+            sendInv(player, name, loc)
+        end
+    end
+end
+
+local function sendBags(player, name)
+    local bags = player:cardianBags(name)
+    if bags == nil then
+        reply(player, '#cd err bags no such cardian')
+        return
+    end
+
+    local parts = {}
+    for _, bag in ipairs(bags) do
+        parts[#parts + 1] = string.format('%d:%d:%d', bag.loc, bag.size, bag.used)
+    end
+    reply(player, string.format('#cd bags %s %s', name, table.concat(parts, ',')))
 end
 
 local function sendGear(player, name)
@@ -511,15 +560,18 @@ end
 -- fatal: the reply names what refused and the gear block that follows is
 -- the authoritative result.
 local function applyEquipSet(player, name, manifest)
+    local before = wornWardrobes(player, name)
     local strips = {}
     local wears  = {}
+    local extra  = {}
     for pair in manifest:gmatch('[^,]+') do
-        local eqslot, invslot = pair:match('^(%d+):(%d+)$')
+        local eqslot, invslot, loc = pair:match('^(%d+):(%d+):?(%d*)$')
         if eqslot then
             if tonumber(invslot) == 0 then
                 strips[#strips + 1] = tonumber(eqslot)
             else
-                wears[#wears + 1] = { eqslot = tonumber(eqslot), invslot = tonumber(invslot) }
+                wears[#wears + 1] = { eqslot = tonumber(eqslot), invslot = tonumber(invslot), loc = tonumber(loc) or 0 }
+                extra[tonumber(loc) or 0] = true
             end
         end
     end
@@ -536,7 +588,7 @@ local function applyEquipSet(player, name, manifest)
         end
     end
     for _, w in ipairs(wears) do
-        local err = player:cardianWear(name, w.invslot, w.eqslot)
+        local err = player:cardianWear(name, w.invslot, w.eqslot, w.loc)
         if err ~= '' then
             fails[#fails + 1] = string.format('%d: %s', w.eqslot, err)
         end
@@ -550,6 +602,7 @@ local function applyEquipSet(player, name, manifest)
     sendStatsLine(player, name)
     sendGear(player, name)
     sendInv(player, name)
+    sendTouchedWardrobes(player, name, before, extra)
 end
 
 local function sendList(player)
@@ -751,7 +804,21 @@ commandObj.onTrigger = function(player, line)
     elseif verb == 'equipset' and name and args[3] then
         applyEquipSet(player, name, args[3])
     elseif verb == 'inv' and name then
-        sendInv(player, name)
+        sendInv(player, name, tonumber(args[3]) or 0)
+    elseif verb == 'bags' and name then
+        sendBags(player, name)
+    elseif verb == 'move' and name and args[6] then
+        local from, to = tonumber(args[3]) or 0, tonumber(args[5]) or 0
+        local err = player:cardianMove(name, from, tonumber(args[4]) or 0, to, tonumber(args[6]) or 1)
+        if err ~= '' then
+            reply(player, '#cd err move ' .. err)
+        else
+            reply(player, '#cd ok move')
+            sendInv(player, name, from)
+            sendInv(player, name, to)
+            sendBags(player, name)
+            sendGear(player, name) -- a worn piece carried into a wardrobe reports its new home
+        end
     elseif verb == 'gear' and name then
         sendGear(player, name)
     elseif verb == 'recasts' and name then
@@ -821,7 +888,7 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok homepoint')
         end
     elseif verb == 'use' and name then
-        local err = player:cardianUse(name, tonumber(args[3]) or 0)
+        local err = player:cardianUse(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0)
         if err ~= '' then
             reply(player, '#cd err use ' .. err)
         else
@@ -830,12 +897,25 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok use')
         end
     elseif verb == 'drop' and name then
-        local err = player:cardianDrop(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
+        local loc = tonumber(args[5]) or 0
+        local err = player:cardianDrop(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1, loc)
         if err ~= '' then
             reply(player, '#cd err drop ' .. err)
         else
             reply(player, '#cd ok drop')
-            sendInv(player, name)
+            sendInv(player, name, loc)
+            sendBags(player, name)
+        end
+    elseif verb == 'sort' and name then
+        local loc = tonumber(args[3]) or 0
+        local err = player:cardianSort(name, loc)
+        if err ~= '' then
+            reply(player, '#cd err sort ' .. err)
+        else
+            reply(player, '#cd ok sort')
+            sendInv(player, name, loc)
+            sendBags(player, name)
+            sendGear(player, name) -- worn pieces may sit in new slots
         end
     elseif verb == 'giveuse' and name then
         local err = player:cardianGiveUse(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
@@ -846,7 +926,9 @@ commandObj.onTrigger = function(player, line)
             sendInv(player, name)
         end
     elseif verb == 'wear' and name then
-        local err = player:cardianWear(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0)
+        local loc    = tonumber(args[5]) or 0
+        local before = wornWardrobes(player, name)
+        local err    = player:cardianWear(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0, loc)
         if err ~= '' then
             reply(player, '#cd err wear ' .. err)
         else
@@ -854,9 +936,11 @@ commandObj.onTrigger = function(player, line)
             sendStatsLine(player, name)
             sendGear(player, name)
             sendInv(player, name)
+            sendTouchedWardrobes(player, name, before, { [loc] = true })
         end
     elseif verb == 'strip' and name then
-        local err = player:cardianStrip(name, tonumber(args[3]) or 0)
+        local before = wornWardrobes(player, name)
+        local err    = player:cardianStrip(name, tonumber(args[3]) or 0)
         if err ~= '' then
             reply(player, '#cd err strip ' .. err)
         else
@@ -864,9 +948,10 @@ commandObj.onTrigger = function(player, line)
             sendStatsLine(player, name)
             sendGear(player, name)
             sendInv(player, name)
+            sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | do <name> <action> [targid]')
     end
 end
 
