@@ -141,16 +141,28 @@ xi.settings.pawn =
     FORMATION_CATCHUP_DISTANCE = 3.0,
     FORMATION_CATCHUP_SPEED    = 118,
 
-    -- The lane past the player: until a cardian is in front of them (one
-    -- and a half lanes along the way to her point) a formation walk aims
-    -- at the point's lane, this many yalms to her side of that way -- and
-    -- round the circle of this radius about the player when even that
-    -- line would cut through them. So a front-liner starting behind
-    -- overtakes beside the player and centres out only once clear ahead,
-    -- where a player running on cannot catch her in the merge. Her side
-    -- is kept for the length of one pass. 0 = off (walk straight, through
-    -- them).
-    PASSING_LANE = 3.0,
+    -- The courtesy: where a walk would cut straight through the player,
+    -- this tick's step is planned instead over a one-yalm grid round the
+    -- cardian (src/map/pawn/local_planner.h) against a field of soft
+    -- costs, with the navmesh saying which cells can be walked at all.
+    -- The field: the player's body, a disc of BODY_RADIUS yalms costing
+    -- BODY_COST extra per yalm walked inside it, and their wake along the
+    -- way they face, in two bands that get wider and dearer the further
+    -- ahead -- a narrow band (half a yalm wider than the body) from a
+    -- body's radius ahead, so the seats beside and behind the player stay
+    -- clear of it, and the full band of WAKE_RADIUS from WAKE_RADIUS
+    -- ahead, each costing WAKE_COST and summing where they overlap on the
+    -- player's own line. The wake reaches WAKE_RUN yalms out while they
+    -- move and WAKE_STANDING while they stand. Where there is room the
+    -- cheap way round wins; where the walls leave nothing cheaper the
+    -- walk goes through. Suggestions only: the danger map and the mesh
+    -- still rule. BODY_COST 0 switches it off.
+    COURTESY_BODY_RADIUS   = 1.5,
+    COURTESY_BODY_COST     = 6.0,
+    COURTESY_WAKE_RADIUS   = 3.5,
+    COURTESY_WAKE_COST     = 2.0,
+    COURTESY_WAKE_RUN      = 8.0,
+    COURTESY_WAKE_STANDING = 2.0,
 
     -- The step back: a mob walks onto its target's exact coordinates and
     -- stops there (upstream's approach since the 2026-06 pathfind

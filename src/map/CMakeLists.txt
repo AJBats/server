@@ -17,6 +17,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_danger.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_danger.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/local_planner.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_doors.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_doors.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_gambits.cpp

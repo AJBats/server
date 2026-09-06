@@ -337,16 +337,12 @@ private:
     // it comes round to the player's side).
     auto FormationIntent(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
 
-    // The lane past the player (formation_math passingLane): where a
-    // formation walk aims until she is in front of them -- the point's
-    // lane beside them, or a waypoint on the rim of the circle round them
-    // -- and nothing once she is. pawn.PASSING_LANE is the lane; 0 is off.
-    struct PassLane
-    {
-        position_t point{};
-        bool       rim = false;
-    };
-    auto PassBeside(const CCharEntity* PPlayer, const position_t& point) -> std::optional<PassLane>;
+    // The courtesy (local_planner.h): this tick's step toward `point`,
+    // planned over a one-yalm grid round her against the player's body
+    // and wake, where the straight walk would cut through them; the point
+    // itself otherwise. Under every path the walker makes (PathToward).
+    // pawn.COURTESY_* size and price the field; BODY_COST 0 is off.
+    auto CourtesyStep(const position_t& point) -> position_t;
 
     // The walk in on a mob: to within RoamDistance of it
     auto ApproachIntent(const CBattleEntity* PTarget) const -> Intent;
@@ -638,9 +634,9 @@ private:
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;
-    float             m_PassSide = 0.0f; // her side of the pass in progress (PassBeside)
-    timer::time_point m_PassStart;
-    timer::time_point m_LastPassTime;
+    float             m_CourtesySide = 0.0f; // her side of the line last tick, kept a little cheaper (CourtesyStep)
+    timer::time_point m_LastCourtesyTime;
+    timer::time_point m_LastCourtesySaid;
     timer::time_point m_LastFormationClipTime;
     timer::time_point m_LastLeadDebugTime;
 

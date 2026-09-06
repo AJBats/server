@@ -20,6 +20,8 @@
 */
 
 #include "pawn_controller.h"
+
+#include "local_planner.h"
 #include "cardian_link.h"
 #include "formation_math.h"
 #include "pawn.h"
@@ -1793,58 +1795,138 @@ auto CPawnController::FormationIntent(CCharEntity* PPlayer, const CBattleEntity*
     intent.tolerance  = 2.0f;
     intent.warpIfLost = true;
 
-    // Never through the player: until she is in front of them she walks
-    // the point's lane beside them (PassBeside); a waypoint on the rim of
-    // the circle round them is walked precisely, since it is close and
-    // the formation tolerance would have her stand short of it
-    if (const auto lane = PassBeside(PPlayer, followPoint); lane.has_value())
-    {
-        intent.point = lane->point;
-        if (lane->rim)
-        {
-            intent.arrive    = 0.5f;
-            intent.tolerance = 0.5f;
-        }
-    }
     return intent;
 }
 
-auto CPawnController::PassBeside(const CCharEntity* PPlayer, const position_t& point) -> std::optional<PassLane>
+auto CPawnController::CourtesyStep(const position_t& point) -> position_t
 {
-    const float lane = settings::get<float>("pawn.PASSING_LANE");
-    if (lane <= 0.0f)
+    const float bodyCost = settings::get<float>("pawn.COURTESY_BODY_COST");
+    const auto* PPlayer  = GetLivePlayer();
+    auto*       navMesh  = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    if (bodyCost <= 0.0f || PPlayer == nullptr || PPlayer == POwner || PPlayer->loc.zone != POwner->loc.zone || navMesh == nullptr)
     {
-        return std::nullopt;
+        return point;
     }
 
-    // Her side is kept for the length of one pass, so a cardian dead
-    // behind the player does not change her mind each tick; a pass a
-    // second old is over. Dead in line, the party's even numbers take one
-    // side and the odd the other
-    const float      kept        = m_Tick - m_LastPassTime <= 1s ? m_PassSide : 0.0f;
-    const float      defaultSide = GetPawnPartyPosition() % 2 == 0 ? 1.0f : -1.0f;
-    const auto&      me          = POwner->loc.p;
-    const auto&      p           = PPlayer->loc.p;
-    const auto       l           = cardian::formation::passingLane(p.x, p.z, me.x, me.z, point.x, point.z, lane, lane * 1.5f, kept, defaultSide);
-    if (!l.has_value())
+    // The field: the player's body, and their wake -- a lane along the way
+    // they move, long while they move, short while they stand. Built
+    // where the player is on their own screen when it shows her where
+    // the server has her now: the streamed position carried by the
+    // prediction (0.7 s, about the lag of her position on their screen),
+    // along the way they move; standing, the streamed position and the
+    // way they face. Two lags stack on the player's screen -- their own
+    // position is live there, hers is the server's last word -- and at
+    // run speed that is a few yalms along the line of motion, which a
+    // field built on the server's positions alone leaves out
+    const auto       a      = PlayerAnchor(PPlayer, 1.0f);
+    const bool       moving = a.moving;
+    const position_t p      = moving ? a.anchor : a.observed;
+    position_t       ahead  = nearPosition(p, 1.0f, 0.0f);
+    if (moving && a.ahead > 0.1f)
     {
-        if (kept != 0.0f)
-        {
-            ShowInfoFmt("pawn: {} centres out ahead of {} ({:.1f} s in the lane)", POwner->getName(), PPlayer->getName(), std::chrono::duration<float>(m_Tick - m_PassStart).count());
-        }
-        return std::nullopt;
+        ahead = position_t(p.x + (a.anchor.x - a.observed.x) / a.ahead, p.y, p.z + (a.anchor.z - a.observed.z) / a.ahead, 0, 0);
     }
-    if (kept == 0.0f)
+    const auto& me   = POwner->loc.p;
+    const float wake = settings::get<float>(moving ? "pawn.COURTESY_WAKE_RUN" : "pawn.COURTESY_WAKE_STANDING");
+
+    // The wake in two bands, wider and dearer the further ahead: a narrow
+    // one from a body's radius ahead of the player (so the seats beside
+    // and behind them lie outside it), and the full-width one from its
+    // own radius ahead. Where they overlap -- the player's own line ahead
+    // -- the cost is the sum: the dearest cells she can step on
+    const float body     = settings::get<float>("pawn.COURTESY_BODY_RADIUS");
+    const float width    = settings::get<float>("pawn.COURTESY_WAKE_RADIUS");
+    const float wakeCost = settings::get<float>("pawn.COURTESY_WAKE_COST");
+    const auto  alongWay = [&](const float yalms)
     {
-        m_PassSide  = l->side;
-        m_PassStart = m_Tick;
-        if (m_Tick - m_LastPassTime > 3s)
+        return std::pair{ p.x + (ahead.x - p.x) * yalms, p.z + (ahead.z - p.z) * yalms };
+    };
+    cardian::planner::Field field;
+    field.discs.push_back(cardian::planner::Disc{ p.x, p.z, body, bodyCost });
+    for (const auto [from, radius] : { std::pair{ body, body + 0.5f }, std::pair{ width, width } })
+    {
+        if (wake > from)
         {
-            ShowInfoFmt("pawn: {} passes {} in the lane to her point{}", POwner->getName(), PPlayer->getName(), l->rim ? " (round them first)" : "");
+            const auto [ax, az] = alongWay(from);
+            const auto [bx, bz] = alongWay(wake);
+            field.capsules.push_back(cardian::planner::Capsule{ ax, az, bx, bz, radius, wakeCost });
         }
     }
-    m_LastPassTime = m_Tick;
-    return PassLane{ position_t(l->x, l->rim ? p.y : point.y, l->z, 0, 0), l->rim };
+    // The local goal: the destination when it is within the window, else
+    // the mesh's own way to it, at the window's edge
+    constexpr int   kWindow = 12;
+    constexpr float kReach  = 6.0f; // this tick's step target, that far along the plan: a tick's run at catch-up speed, with the arrive distance to spare
+    const float     edge    = static_cast<float>(kWindow) - 1.0f;
+    position_t      goal    = point;
+    if (distance(me, point, true) > edge)
+    {
+        const float span = distance(me, point, true);
+        goal             = position_t(me.x + (point.x - me.x) * edge / span, point.y, me.z + (point.z - me.z) * edge / span, 0, 0);
+        if (const auto path = navMesh->findPath(me, point); path.has_value() && !path->points.empty())
+        {
+            float      walked = 0.0f;
+            position_t prev   = me;
+            for (const auto& pp : path->points)
+            {
+                const float seg = distance(prev, pp.position, true);
+                if (walked + seg >= edge)
+                {
+                    const float t = (edge - walked) / std::max(seg, 0.01f);
+                    goal          = position_t(prev.x + (pp.position.x - prev.x) * t, pp.position.y, prev.z + (pp.position.z - prev.z) * t, 0, 0);
+                    break;
+                }
+                walked += seg;
+                prev = pp.position;
+                goal = pp.position;
+            }
+        }
+    }
+
+    // Only a walk that would pass through the field is planned; the rest
+    // go straight, as they always did
+    if (!field.reaches(me.x, me.z, goal.x, goal.z))
+    {
+        m_CourtesySide = 0.0f;
+        return point;
+    }
+
+    cardian::planner::Query q;
+    q.sx       = me.x;
+    q.sz       = me.z;
+    q.gx       = goal.x;
+    q.gz       = goal.z;
+    q.window   = kWindow;
+    q.sideBias = m_Tick - m_LastCourtesyTime <= 1s ? m_CourtesySide : 0.0f;
+
+    const auto walkable = [&](const float x, const float z)
+    {
+        return navMesh->validPosition(position_t(x, me.y, z, 0, 0));
+    };
+    const auto plan = cardian::planner::plan(q, field, walkable);
+    if (!plan.has_value() || plan->points.size() < 2)
+    {
+        return point;
+    }
+
+    // Her side of the line, kept for next tick's tie
+    const auto& early = plan->points[std::min<std::size_t>(2, plan->points.size() - 1)];
+    const float cross = (goal.x - me.x) * (early.second - me.z) - (goal.z - me.z) * (early.first - me.x);
+    if (cross != 0.0f)
+    {
+        m_CourtesySide = cross > 0.0f ? 1.0f : -1.0f;
+    }
+    m_LastCourtesyTime = m_Tick;
+    if (plan->length > plan->straight + 0.5f && m_Tick - m_LastCourtesySaid > 3s)
+    {
+        m_LastCourtesySaid = m_Tick;
+        ShowInfoFmt("pawn: {} goes round {} ({:.1f}y further, {})", POwner->getName(), PPlayer->getName(), plan->length - plan->straight, moving ? "their wake" : "standing");
+    }
+
+    // The step target that far along the plan; a plan not much longer than
+    // that ends at the goal itself, so the arrive distance is measured
+    // from the goal and not from a point a yalm short of it
+    const auto [x, z] = cardian::planner::along(*plan, plan->length <= kReach + 1.5f ? plan->length : kReach);
+    return position_t(x, me.y, z, 0, 0);
 }
 
 void CPawnController::TravelTick()
@@ -3571,7 +3653,10 @@ auto CPawnController::PathToward(const position_t& point, const float closeTo) -
 {
     auto* PPathFind = POwner->PAI->PathFind.get();
 
-    if (PPathFind->PathAround(point, closeTo, PATHFLAG_RUN))
+    // The courtesy: where the walk would cut through the player, this
+    // tick's step is planned round them instead (CourtesyStep); the
+    // destination itself otherwise
+    if (PPathFind->PathAround(CourtesyStep(point), closeTo, PATHFLAG_RUN))
     {
         return true;
     }

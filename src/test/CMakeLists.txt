@@ -80,6 +80,7 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_danger_tests.cpp # CARDIAN: the danger map's radius rule
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_gambit_text_tests.cpp # CARDIAN: the gambit row grammar
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_rules_tests.cpp # CARDIAN: the rules a cardian fights by
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_planner_tests.cpp # CARDIAN: the local planner's grid and field
     ${resource})
 add_dependencies(xi_test data_schema_generate)
 

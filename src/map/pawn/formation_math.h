@@ -573,59 +573,6 @@ namespace cardian::formation
         return { c.x + std::cos(angle) * r, c.z + std::sin(angle) * r };
     }
 
-    // The lane past the player. Until she is in front of them -- `margin`
-    // yalms along the way from the player (p) to her point (b) -- a
-    // formation walk aims at the point's lane, b shifted `lane` yalms to
-    // her side of that way, and when even that line would cut through the
-    // courtesy circle round the player, at the detour's waypoint round it
-    // (detourAround: the tangent point from where she stands, a step along
-    // the rim from within its band). Past the margin, b itself. So a
-    // front-liner starting behind the player overtakes in a lane beside
-    // them and centres out only once in front, where a player running on
-    // cannot catch her in the merge; a seat that swung to the player's far
-    // side when they turned is reached round them. `keptSide` holds the
-    // side for the length of one pass; 0 takes her side now, or
-    // `defaultSide` when she is dead in line. nullopt: in front, b itself.
-    struct Lane
-    {
-        float x    = 0.0f;
-        float z    = 0.0f;
-        float side = 1.0f;  // her side of the way, +1 or -1 (the cross product's sign)
-        bool  rim  = false; // a waypoint on the circle's rim rather than the lane point
-    };
-
-    inline auto passingLane(const float px, const float pz, const float mx, const float mz, const float bx, const float bz,
-                            const float lane, const float margin, const float keptSide = 0.0f, const float defaultSide = 1.0f) -> std::optional<Lane>
-    {
-        const float dx  = bx - px;
-        const float dz  = bz - pz;
-        const float len = std::sqrt(dx * dx + dz * dz);
-        if (len < 0.1f)
-        {
-            return std::nullopt;
-        }
-        const float ux    = dx / len;
-        const float uz    = dz / len;
-        const float along = (mx - px) * ux + (mz - pz) * uz;
-        if (along > margin)
-        {
-            return std::nullopt;
-        }
-
-        const float lateral = ux * (mz - pz) - uz * (mx - px);
-        Lane        out;
-        out.side = keptSide != 0.0f ? keptSide : (std::fabs(lateral) > 0.3f ? (lateral > 0.0f ? 1.0f : -1.0f) : defaultSide);
-        out.x    = bx - uz * out.side * lane;
-        out.z    = bz + ux * out.side * lane;
-
-        const Circle player{ px, pz, lane };
-        if (segmentEnters(player, mx, mz, out.x, out.z))
-        {
-            std::tie(out.x, out.z) = detourAround(player, mx, mz, out.x, out.z, 0.0f, 3.0f, 1.0f);
-            out.rim                = true;
-        }
-        return out;
-    }
     // ------------------------------------------------------------------
     // The fight ring: every cardian on a mob but the one it is fighting
     // takes a seat around it -- the flanks, the rear quarters, behind --
