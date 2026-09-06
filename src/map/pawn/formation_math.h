@@ -621,6 +621,34 @@ namespace cardian::formation
         }
     }
 
+    // The seat that costs the least to reach: the walk's length by the
+    // navmesh, not the straight line, so a seat a cliff's edge away is
+    // priced by the walk round the cliff and loses to one she can step
+    // to. A cost of infinity is no seat (taken, off the mesh, no path, or
+    // a detour past what a seat is worth). nullopt when none is worth it.
+    using SeatCosts = std::array<float, RingSeats.size()>;
+
+    inline auto cheapestSeat(const SeatCosts& costs) -> std::optional<std::size_t>
+    {
+        std::optional<std::size_t> best;
+        for (std::size_t i = 0; i < costs.size(); ++i)
+        {
+            if (std::isfinite(costs[i]) && (!best.has_value() || costs[i] < costs[*best]))
+            {
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    // A walk is worth it when it is not a detour: within `factor` times
+    // the straight line plus `slack` yalms. Beyond that the seat is round
+    // something -- a cliff, a wall -- and not worth the walk.
+    inline auto worthTheWalk(const float pathLength, const float straight, const float factor = 1.5f, const float slack = 3.0f) -> bool
+    {
+        return std::isfinite(pathLength) && pathLength <= straight * factor + slack;
+    }
+
     inline auto nearestSeat(const SeatPoints& points, const SeatsTaken& taken, const float x, const float z) -> std::size_t
     {
         std::size_t best  = points.size();

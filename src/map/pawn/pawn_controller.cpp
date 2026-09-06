@@ -27,6 +27,7 @@
 #include "pawn_doors.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
+#include "pawn_rules.h"
 
 #include "common/settings.h"
 #include "common/utils.h"
@@ -38,6 +39,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <limits>
 #include <numbers>
 #include <tuple>
 #include <vector>
@@ -100,19 +102,129 @@ auto CPawnController::IsHunting() const -> bool
     return m_Hunting;
 }
 
-void CPawnController::SetWaiting(const bool on, const bool ordered)
+void CPawnController::SetWaiting(const bool on, const bool ordered, const std::string_view why)
 {
-    m_Waiting     = on;
-    m_WaitOrdered = on && ordered;
+    const bool was = m_Waiting;
+    m_Waiting      = on;
+    m_WaitOrdered  = on && ordered;
     if (on)
     {
-        m_HuntApproach.reset();
+        m_Approach.reset();
         m_HoldForPlayer = false;
         if (POwner->PAI->PathFind)
         {
             POwner->PAI->PathFind->Clear();
         }
+        // A wait never ends a fight: told to wait mid-fight, she finishes
+        // it and waits after (IdleMode at the fight's exit)
+        const bool fighting = m_Mode == Mode::Fight || m_Mode == Mode::Hold;
+        if ((!was || m_Mode != Mode::Wait) && !fighting)
+        {
+            Transition(Mode::Wait, why.empty() ? (ordered ? "told to wait here" : "waits where she stands") : why);
+        }
     }
+    else if (was && m_Mode == Mode::Wait)
+    {
+        Transition(IdleMode(), why.empty() ? "follows again" : why);
+    }
+}
+
+auto CPawnController::modeName(const Mode mode) -> const char*
+{
+    switch (mode)
+    {
+        case Mode::Follow:
+            return "Follow";
+        case Mode::Wait:
+            return "Wait";
+        case Mode::Travel:
+            return "Travel";
+        case Mode::Approach:
+            return "Approach";
+        case Mode::Hold:
+            return "Hold";
+        case Mode::Fight:
+            return "Fight";
+        case Mode::Retreat:
+            return "Retreat";
+        case Mode::Down:
+            return "Down";
+    }
+    return "?";
+}
+
+auto CPawnController::CurrentMode() const -> Mode
+{
+    return m_Mode;
+}
+
+auto CPawnController::IdleMode() const -> Mode
+{
+    if (m_Retreat)
+    {
+        return Mode::Retreat;
+    }
+    if (m_Waiting)
+    {
+        return Mode::Wait;
+    }
+    return Mode::Follow;
+}
+
+void CPawnController::Transition(const Mode to, const std::string_view why)
+{
+    const Mode from = m_Mode;
+
+    // The exits this writer owns. Leaving a fight (Hold counts: she drew)
+    // starts the draw cooldown against the mob she had, and clears the
+    // seat, the close beat and the hold; leaving a walk in drops its
+    // target and draw beat. A fight to a fight (a new target) leaves
+    // nothing.
+    const bool wasEngaged = from == Mode::Fight || from == Mode::Hold;
+    const bool nowEngaged = to == Mode::Fight || to == Mode::Hold;
+    if (wasEngaged && !nowEngaged)
+    {
+        m_LeftFightAt   = m_Tick;
+        m_FightSeat     = {};
+        m_SeatVia       = false;
+        m_HoldForPlayer = false;
+    }
+    if (from == Mode::Approach && to != Mode::Approach)
+    {
+        m_Approach.reset();
+    }
+    // A pending act belongs to the mode it was scheduled in; only the
+    // player's order outlives a change
+    if (from != to && m_Pending.has_value() && m_Pending->act != Pending::Act::Order)
+    {
+        m_Pending.reset();
+    }
+
+    m_Mode = to;
+    ShowInfoFmt("pawn: {} {} -> {}: {}", POwner->getName(), modeName(from), modeName(to), why);
+}
+
+auto CPawnController::ServerExitReason() -> std::string
+{
+    auto* PTarget = m_LastFought.has_value() ? m_LastFought->resolve<CBattleEntity>() : nullptr;
+    if (PTarget == nullptr)
+    {
+        return "the server ended it (the mob is gone)";
+    }
+    const auto verdict = cardian::rules::mayFight(EngageFactsFor(PTarget));
+    if (verdict.why == "dead")
+    {
+        return fmt::format("{} is dead", PTarget->getName());
+    }
+    if (verdict.why == "claimed by another party")
+    {
+        return fmt::format("the server ended it ({} is claimed by another party)", PTarget->getName());
+    }
+    if (verdict.why.ends_with(" y away"))
+    {
+        return fmt::format("the server ended it (lost sight of {}, {})", PTarget->getName(), verdict.why);
+    }
+    return fmt::format("the server ended it ({})", verdict.ok ? "no reason it knows" : verdict.why);
 }
 
 auto CPawnController::IsWaiting() const -> bool
@@ -168,9 +280,7 @@ void CPawnController::WaitTick(CCharEntity* PPlayer)
     // Her ground is hers to hold: a mob that has come for her is answered
     if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
     {
-        ShowInfoFmt("pawn: {} answers {} (waiting)", POwner->getName(), PMob->getName());
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        POwner->PAI->Internal_Engage(EntityId(PMob));
+        Draw(PMob, ApproachKind::Order, "on her, waiting");
         return;
     }
 
@@ -211,10 +321,19 @@ void CPawnController::SetRetreat(const bool on)
 {
     if (m_Retreat != on)
     {
-        ShowInfoFmt("pawn: {} retreat {}", POwner->getName(), on ? "on" : "off");
         if (on && POwner->PAI->IsEngaged())
         {
             POwner->PAI->Internal_Disengage();
+        }
+        m_Retreat = on;
+        if (on)
+        {
+            m_Approach.reset();
+            Transition(Mode::Retreat, "retreat called");
+        }
+        else if (m_Mode == Mode::Retreat)
+        {
+            Transition(IdleMode(), "retreat off");
         }
     }
     m_Retreat = on;
@@ -233,36 +352,53 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
     // The beat: the order is taken now, her draw comes a beat later -- the
     // front row first, so the party never draws on one tick
-    m_Order   = EntityId(PMob);
-    m_OrderAt = m_Tick + ReactionBeat();
+    Schedule(Pending::Act::Order, PMob, ReactionBeat());
+}
+
+void CPawnController::Schedule(const Pending::Act act, const CBattleEntity* PTarget, const timer::duration beat)
+{
+    m_Pending = Pending{ act, EntityId(PTarget), m_Tick + beat };
+}
+
+auto CPawnController::PendingIs(const Pending::Act act, const CBattleEntity* PTarget) const -> bool
+{
+    return m_Pending.has_value() && m_Pending->act == act && PTarget != nullptr && m_Pending->target.resolve<CBattleEntity>() == PTarget;
+}
+
+auto CPawnController::Due(const Pending::Act act, const CBattleEntity* PTarget) const -> bool
+{
+    return PendingIs(act, PTarget) && m_Tick >= m_Pending->due;
+}
+
+void CPawnController::HoldOff(const CBattleEntity* PTarget)
+{
+    constexpr auto kRefusalHoldOff = 3s;
+    m_HoldOffTarget                = PTarget->id;
+    m_HoldOffUntil                 = m_Tick + kRefusalHoldOff;
+}
+
+auto CPawnController::HoldingOff(const CBattleEntity* PTarget) const -> bool
+{
+    return PTarget != nullptr && m_HoldOffTarget == PTarget->id && m_Tick < m_HoldOffUntil;
 }
 
 void CPawnController::FireOrderedEngage()
 {
-    if (!m_Order.has_value() || m_Tick < m_OrderAt)
+    if (!m_Pending.has_value() || m_Pending->act != Pending::Act::Order || m_Tick < m_Pending->due)
     {
         return;
     }
-    auto* PMob = m_Order->resolve<CMobEntity>();
-    m_Order.reset();
+    auto* PMob = m_Pending->target.resolve<CMobEntity>();
+    m_Pending.reset();
     if (PMob == nullptr || PMob->isDead())
     {
         return;
     }
     // The order replaces whatever she had set off after, as the party's
-    // fight does
+    // fight does; farther than she may draw from, she walks in on it
     m_HoldForPlayer = false;
-    m_HuntApproach.reset();
-    POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-    if (POwner->PAI->IsEngaged())
-    {
-        POwner->PAI->Internal_ChangeTarget(EntityId(PMob));
-    }
-    else
-    {
-        POwner->PAI->Internal_Engage(EntityId(PMob));
-    }
-    ShowInfoFmt("pawn: {} draws on {} (ordered)", POwner->getName(), PMob->getName());
+    m_Approach.reset();
+    Draw(PMob, ApproachKind::Order, "ordered");
 }
 
 // A cardian cannot talk to the gate guard, so she takes Signet from the
@@ -453,6 +589,292 @@ auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool
     return m_LeftFightAt + wait < m_Tick;
 }
 
+auto CPawnController::EngageFactsFor(CBattleEntity* PTarget) -> cardian::rules::EngageFacts
+{
+    cardian::rules::EngageFacts f;
+    if (PTarget == nullptr)
+    {
+        return f;
+    }
+    f.exists     = true;
+    f.alive      = !PTarget->isDead();
+    f.retreating = m_Retreat;
+    const auto* PMob = dynamic_cast<const CMobEntity*>(PTarget);
+    f.underground = PMob != nullptr ? pawn::isUnderground(PMob) : PTarget->PAI->IsUntargetable();
+    f.hostile     = PTarget->objtype == TYPE_MOB && PTarget->allegiance == xi::Allegiance::Mob;
+    f.claimable   = static_cast<CCharEntity*>(POwner)->IsMobOwner(PTarget);
+    f.cooldown    = !CanDrawOn(PTarget);
+    f.distance    = distance(POwner->loc.p, PTarget->loc.p);
+    return f;
+}
+
+void CPawnController::SayRefusal(const CBattleEntity* PTarget, const std::string& why)
+{
+    if (m_RefusedTarget == PTarget->id && m_RefusedWhy == why)
+    {
+        return;
+    }
+    m_RefusedTarget = PTarget->id;
+    m_RefusedWhy    = why;
+    ShowInfoFmt("pawn: {} does not draw on {} ({})", POwner->getName(), PTarget->getName(), why);
+}
+
+auto CPawnController::Refusal(CBattleEntity* PTarget, const cardian::rules::EngageFacts& facts) const -> std::string
+{
+    const auto verdict = cardian::rules::mayFight(facts);
+    if (!verdict && !cardian::rules::worthWalkingIn(facts))
+    {
+        return verdict.why;
+    }
+    if (!PTarget->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+    {
+        if (const auto* PMob = dynamic_cast<const CMobEntity*>(PTarget); PMob != nullptr)
+        {
+            return PullBlocker(PMob);
+        }
+    }
+    return "";
+}
+
+auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, const std::string_view how, const bool hold) -> bool
+{
+    const auto facts = EngageFactsFor(PTarget);
+    if (const auto why = Refusal(PTarget, facts); !why.empty())
+    {
+        SayRefusal(PTarget, why);
+        return false;
+    }
+    const auto verdict = cardian::rules::mayFight(facts);
+    if (verdict)
+    {
+        m_RefusedTarget = 0;
+        m_Approach.reset();
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        if (POwner->PAI->IsEngaged())
+        {
+            POwner->PAI->Internal_ChangeTarget(EntityId(PTarget));
+        }
+        else
+        {
+            POwner->PAI->Internal_Engage(EntityId(PTarget));
+        }
+        m_HoldForPlayer = hold;
+        Transition(hold ? Mode::Hold : Mode::Fight, fmt::format("draws on {} ({})", PTarget->getName(), how));
+        return true;
+    }
+
+    // Only the distance, or the draw's own wait, in the way: she walks in
+    // with her weapon away and draws when the rules allow (the approach
+    // in DoRoamTick). The walk is said once; the door's beat was served,
+    // so it starts at once
+    if (cardian::rules::worthWalkingIn(facts))
+    {
+        if (!m_Approach.has_value() || m_Approach->target.resolve<CBattleEntity>() != PTarget)
+        {
+            m_Approach = Approach{ EntityId(PTarget), kind };
+            Transition(Mode::Approach, fmt::format("walks in on {} ({})", PTarget->getName(), verdict.why));
+        }
+        return false;
+    }
+
+    SayRefusal(PTarget, verdict.why);
+    return false;
+}
+
+auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
+{
+    // The party's own mob is no danger to the pull (exclude), and the
+    // circles are the pick's: every danger, worst case, padded
+    const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"),
+                                              pawn::danger::Profile::worstCase(), PMob);
+    cardian::rules::Circles circles;
+    circles.reserve(dangers.size());
+    for (const auto& d : dangers)
+    {
+        circles.push_back(d);
+    }
+    const auto block = cardian::rules::pullBlocked(cardian::rules::padded(circles), POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z);
+    if (!block.has_value())
+    {
+        return "";
+    }
+    const auto* guard = dangers[block->circle].mob;
+    return block->targetInside ? fmt::format("inside {}'s circle", guard->getName())
+                               : fmt::format("the way in crosses {}'s circle", guard->getName());
+}
+
+void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
+{
+    m_Dangers.clear();
+    m_Padded.clear();
+    if (!IsAvoidingAggro())
+    {
+        return;
+    }
+    // The party's own mob is never a danger to keep out of: a freshly
+    // pulled aggressive mob is not fighting anyone yet, and its circle
+    // would hold her at the rim of the very mob she is meant to hit, or
+    // walk up to
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    m_Dangers         = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
+    m_Padded.reserve(m_Dangers.size());
+    for (const auto& d : m_Dangers)
+    {
+        m_Padded.push_back(cardian::formation::Circle{ d.x, d.z, d.radius + cardian::rules::kClearance });
+    }
+}
+
+auto CPawnController::IsClear(const float x, const float z) const -> bool
+{
+    return !cardian::formation::insideAny(m_Padded, x, z);
+}
+
+auto CPawnController::InsideDanger() const -> bool
+{
+    return cardian::formation::insideAny(m_Dangers, POwner->loc.p.x, POwner->loc.p.z);
+}
+
+auto CPawnController::ApproachIntent(const CBattleEntity* PTarget) const -> Intent
+{
+    Intent intent;
+    intent.kind      = Intent::Kind::Path;
+    intent.point     = PTarget->loc.p;
+    intent.arrive    = RoamDistance;
+    intent.tolerance = RoamDistance;
+    intent.target    = PTarget;
+    intent.fighting  = true;
+    return intent;
+}
+
+auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
+{
+    auto*      PPathFind    = POwner->PAI->PathFind.get();
+    position_t point        = intent.point;
+    float      followMax    = intent.tolerance;
+    float      followTarget = intent.arrive;
+    float      declump      = intent.declump;
+
+    // The vet: the danger map over the proposal, the same for every mover.
+    // A proposal with no point of its own (stand, keep) is vetted only
+    // for the circle she may be standing in; one the party waved through
+    // (aggressive company allowed) is not vetted at all
+    const bool  proposes = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
+    AvoidAction action   = AvoidAction::None;
+    if (intent.vet && IsAvoidingAggro() && (proposes || InsideDanger()))
+    {
+        if (!proposes)
+        {
+            point = POwner->loc.p;
+        }
+        action = Avoid(point, followMax, followTarget, declump, intent.fighting);
+    }
+
+    // The step
+    if (action != AvoidAction::None)
+    {
+        // What the vet asked for: a short hop straight to its point, a path
+        // when it is far, a path dropped when she is there
+        if (IsShortHop(point, followMax))
+        {
+            PPathFind->Clear();
+            PPathFind->StepTo(point);
+        }
+        else if (const float away = distance(POwner->loc.p, point); away > followMax)
+        {
+            if (!PathToward(point, followTarget))
+            {
+                NotePathFailure(action, point, away);
+            }
+        }
+        else if (PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+    }
+    else
+    {
+        switch (intent.kind)
+        {
+            case Intent::Kind::Stand:
+                if (PPathFind->IsFollowingPath())
+                {
+                    PPathFind->Clear();
+                }
+                break;
+            case Intent::Kind::Keep:
+                break;
+            case Intent::Kind::Hop:
+                PPathFind->Clear();
+                PPathFind->StepTo(point);
+                break;
+            case Intent::Kind::Path:
+                if (distance(POwner->loc.p, point) > followMax)
+                {
+                    if (!PathToward(point, followTarget) && intent.seat)
+                    {
+                        m_FightSeat = {};
+                    }
+                }
+                else if (PPathFind->IsFollowingPath())
+                {
+                    PPathFind->Clear();
+                }
+                break;
+            case Intent::Kind::Formation:
+            {
+                const float currentDistance = distance(POwner->loc.p, point);
+                if (currentDistance > followMax)
+                {
+                    // Warp only when pathing genuinely fails; a pawn arriving
+                    // at a zone gate runs to its player like anyone else would
+                    if (!PathToward(point, followTarget) && intent.warpIfLost && currentDistance > WarpDistance)
+                    {
+                        PPathFind->WarpTo(point);
+                        return std::nullopt;
+                    }
+                }
+                else if (currentDistance < declump)
+                {
+                    if (!PPathFind->IsFollowingPath())
+                    {
+                        PathToward(point, followTarget + 0.5f);
+                    }
+                }
+                else if (PPathFind->IsFollowingPath())
+                {
+                    PPathFind->Clear();
+                }
+                break;
+            }
+        }
+    }
+
+    PPathFind->FollowPath(m_Tick);
+
+    // Lock-on: within melee reach of the mob, her heading goes back onto
+    // it after every step, the way a locked-on player strafes. A step
+    // points her down her path, and the swing asks that she face her
+    // target, so without this a cardian moving to her seat -- or stuck in
+    // a tight spot beside the mob -- never swings. (The client draws other
+    // characters facing their heading; the strafe itself is not animated
+    // for them, a quirk of the protocol. The swings are real.)
+    if (intent.target != nullptr && distance(POwner->loc.p, intent.target->loc.p) <= POwner->GetMeleeRange(intent.target) + LockOnSlack)
+    {
+        PPathFind->LookAt(intent.target->loc.p);
+    }
+    return action;
+}
+
+void CPawnController::WalkToward(CBattleEntity* PTarget)
+{
+    if (!POwner->PAI->CanFollowPath() || POwner->GetSpeed() <= 0)
+    {
+        return;
+    }
+    RefreshDangers(PTarget);
+    Move(ApproachIntent(PTarget));
+}
+
 void CPawnController::IdleEmote(const CCharEntity* PPlayer)
 {
     // The first idle moment only sets the clock: no fidget on arrival
@@ -565,23 +987,35 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     const bool engaged = POwner->PAI->IsEngaged();
 
-    // Leaving a fight starts the draw cooldown; who it was with decides
-    // how long (CanDrawOn)
-    if (m_WasEngaged && !engaged)
+    // The server's attack state, reconciled with the mode: a fight the
+    // server ended (the mob died, she lost sight of it, another party's
+    // claim) is her exit from Fight, said with the server's reason; a
+    // fight begun by a hand not hers (a script, a possession) is her
+    // entry, said as such. Neither is ever silent.
+    const bool thinksEngaged = m_Mode == Mode::Fight || m_Mode == Mode::Hold;
+    if (thinksEngaged && !engaged)
     {
-        m_LeftFightAt = tick;
-        m_FightSeat   = {};
-        m_SeatVia     = false;
-        m_CloseAt     = timer::time_point::min();
+        Transition(IdleMode(), ServerExitReason());
     }
-    m_WasEngaged = engaged;
+    else if (!thinksEngaged && engaged && m_Mode != Mode::Down && POwner->GetBattleTarget() != nullptr)
+    {
+        Transition(Mode::Fight, fmt::format("engaged on {} by a hand not hers", POwner->GetBattleTarget()->getName()));
+    }
 
     if (POwner->isDead())
     {
+        if (m_Mode != Mode::Down)
+        {
+            Transition(Mode::Down, "KO'd");
+        }
         WatchPlayerHomePoint();
     }
     else
     {
+        if (m_Mode == Mode::Down)
+        {
+            Transition(IdleMode(), "back on her feet");
+        }
         m_PlayerSeenDead = false;
         CheckBrain();
         FireQueuedOrder();
@@ -676,7 +1110,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // it does end a hold (below), which the party only drew for.
     if (PPlayer == nullptr && !m_Waiting)
     {
-        ShowInfoFmt("pawn: {} disengaging (player gone)", POwner->getName());
+        Transition(IdleMode(), "the player left the zone");
         POwner->PAI->Internal_Disengage();
         co_return;
     }
@@ -693,6 +1127,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     CBattleEntity* PTarget = POwner->GetBattleTarget();
     if (PTarget == nullptr || PTarget->isDead())
     {
+        Transition(IdleMode(), PTarget == nullptr ? std::string("no target") : fmt::format("{} is dead", PTarget->getName()));
         POwner->PAI->Internal_Disengage();
         co_return;
     }
@@ -700,14 +1135,16 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // A target gone underground with no fight on is let go, not waited on
     if (auto* PMobTarget = dynamic_cast<CMobEntity*>(PTarget); PMobTarget != nullptr && pawn::isUnderground(PMobTarget) && !PMobTarget->PAI->IsEngaged())
     {
-        ShowInfoFmt("pawn: {} lets {} go (underground)", POwner->getName(), PTarget->getName());
+        Transition(IdleMode(), fmt::format("lets {} go (underground)", PTarget->getName()));
         POwner->PAI->Internal_Disengage();
         co_return;
     }
 
     // Whoever she is fighting is the mob the draw cooldown will measure
-    // against once this fight ends
+    // against once this fight ends, and the one the server's exit reason
+    // is read from
     m_LastFoughtId = PTarget->id;
+    m_LastFought   = EntityId(PTarget);
 
     // The hold ends the moment the player has struck or the mob has come,
     // and says which: without it, a cardian closing on her own is a
@@ -720,19 +1157,19 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         {
             // The beat: the hold's end is seen now, the close comes a beat
             // later -- the lead first
-            if (m_CloseAt == timer::time_point::min())
+            if (!PendingIs(Pending::Act::Close, PTarget))
             {
-                m_CloseAt = m_Tick + ReactionBeat();
+                Schedule(Pending::Act::Close, PTarget, ReactionBeat());
             }
         }
-        if (m_CloseAt != timer::time_point::min() && m_Tick >= m_CloseAt)
+        if (Due(Pending::Act::Close, PTarget))
         {
+            m_Pending.reset();
             m_HoldForPlayer = false;
-            m_CloseAt       = timer::time_point::min();
-            ShowInfoFmt("pawn: {} closes on {} ({})", POwner->getName(), PTarget->getName(),
-                        struck ? fmt::format("{} has its attention", PPlayer->getName())
-                               : fmt::format("{} is fighting {}", PTarget->getName(),
-                                             PTarget->GetBattleTarget() != nullptr ? PTarget->GetBattleTarget()->getName() : "someone"));
+            Transition(Mode::Fight, fmt::format("closes on {} ({})", PTarget->getName(),
+                                                struck ? fmt::format("{} has its attention", PPlayer->getName())
+                                                       : fmt::format("{} is fighting {}", PTarget->getName(),
+                                                                     PTarget->GetBattleTarget() != nullptr ? PTarget->GetBattleTarget()->getName() : "someone")));
         }
     }
 
@@ -741,8 +1178,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // word alone -- so it stands down with them
     if (m_HoldForPlayer && PPlayer != nullptr && !PPlayer->PAI->IsEngaged())
     {
-        ShowInfoFmt("pawn: {} stands down ({} thought better of {})", POwner->getName(), PPlayer->getName(), PTarget->getName());
-        m_HoldForPlayer = false;
+        Transition(IdleMode(), fmt::format("stands down ({} thought better of {})", PPlayer->getName(), PTarget->getName()));
         POwner->PAI->Internal_Disengage();
         co_return;
     }
@@ -767,7 +1203,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         HeadLook(PTarget);
     }
 
-    auto avoidAction = AvoidAction::None;
+    std::optional<AvoidAction> moved;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
         if (!facing(POwner->loc.p, PTarget->loc.p, 64))
@@ -775,108 +1211,90 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             POwner->PAI->PathFind->LookAt(PTarget->loc.p);
         }
 
+        // The tick's danger map, once, for every mover and the vet
+        RefreshDangers(PTarget);
+
+        std::optional<Intent> intent;
         if (m_HoldForPlayer && PPlayer != nullptr)
         {
             // Walking in with the player, in formation, never within reach
             // of the mob: the strike is the player's, and the pounce after
-            // it is a few yalms from a slot
-            avoidAction = FollowFormation(PPlayer, PTarget).value_or(AvoidAction::None);
+            // it is a few yalms from a slot. No lock-on: she walks with
+            // them
+            intent = FormationIntent(PPlayer, PTarget);
         }
         else
         {
-            // The same avoidance pass as roaming, with the target as the
-            // point: inside a circle she steps out mid-fight, and a target
-            // parked inside another mob's circle is not approached -- she
-            // waits at the rim for the tank to bring it
             m_HasSlot = false;
             // Her place on the mob: a seat on the fight ring, or, as its
             // target, wherever she stands -- the front
-            const auto seat            = TakeFightSeat(PTarget);
-            position_t point           = seat.has_value() ? SeatPoint(PTarget, *seat) : PTarget->loc.p;
-            float      followMax       = RoamDistance;
-            float      followTarget    = RoamDistance;
-            float      declumpDistance = 0.0f;
-            if (IsAvoidingAggro())
-            {
-                avoidAction = Avoid(point, followMax, followTarget, declumpDistance, PTarget, true);
-            }
+            const auto       seat  = TakeFightSeat(PTarget);
+            const position_t point = HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
 
-            // Holding at the rim only makes sense for a target that is
-            // coming (fighting someone). An idle target parked in another
-            // mob's circle is fetched when the party allows aggressive
-            // company, and let go when it does not -- never waited on
-            if (avoidAction != AvoidAction::None && !PTarget->PAI->IsEngaged())
+            // An idle target is a pull on its way in, judged by the pull rule
+            // the pick used (PullBlocker), never by the shape of her own
+            // avoidance: a detour round a circle is a walk, not a reason.
+            // Unclean, it is let go when the party wants clean pulls and
+            // fetched -- the vet waived -- when it allows aggressive company
+            // (the door refused it by the same rule, so this catches only a
+            // guard that has roamed over since). A target that is fighting
+            // is held at the rim: the tank brings it
+            bool vet = true;
+            if (!PTarget->PAI->IsEngaged())
             {
                 if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
                 {
-                    avoidAction = AvoidAction::None;
+                    vet = false;
+                }
+                else if (auto* PMobTarget = dynamic_cast<CMobEntity*>(PTarget); PMobTarget != nullptr)
+                {
+                    if (const auto unclean = PullBlocker(PMobTarget); !unclean.empty())
+                    {
+                        Transition(IdleMode(), fmt::format("lets {} go ({})", PTarget->getName(), unclean));
+                        POwner->PAI->Internal_Disengage();
+                        co_return;
+                    }
+                }
+            }
+
+            // The movers propose, in precedence: the step back (the mob
+            // settled on her toes), then her seat or the front, then, at
+            // the front standing still, the declump. Reach is the distance
+            // alone -- the server's CanAttack would say it, but it
+            // disengages her as a side effect on a claimed or far target,
+            // and counts a walking cardian as out of reach
+            const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
+            intent             = StepBackIntent(PTarget);
+            if (!intent.has_value())
+            {
+                if (seat.has_value())
+                {
+                    intent = SeatIntent(PTarget, point, inReach);
                 }
                 else
                 {
-                    ShowInfoFmt("pawn: {} lets {} go (idle inside another mob's circle)", POwner->getName(), PTarget->getName());
-                    POwner->PAI->Internal_Disengage();
-                    co_return;
-                }
-            }
-
-            if (avoidAction != AvoidAction::None)
-            {
-                if (IsShortHop(point, followMax))
-                {
-                    POwner->PAI->PathFind->Clear();
-                    POwner->PAI->PathFind->StepTo(point);
-                }
-                else if (const float away = distance(POwner->loc.p, point); away > followMax)
-                {
-                    if (!PathToward(point, followTarget))
+                    intent = inReach ? Intent{} : ApproachIntent(PTarget);
+                    if (intent->kind == Intent::Kind::Stand)
                     {
-                        NotePathFailure(avoidAction, point, away);
+                        if (auto declump = DeclumpIntent(PTarget); declump.has_value())
+                        {
+                            intent = declump;
+                        }
                     }
                 }
-                else if (POwner->PAI->PathFind->IsFollowingPath())
-                {
-                    POwner->PAI->PathFind->Clear();
-                }
             }
-            else
-            {
-                // Melee archetype: to her seat on the ring, or, at the
-                // front, into reach. In reach, a path still under her feet
-                // is dropped: a path ends against the mob's position when
-                // it was planned, and a mob that has moved since would be
-                // walked past
-                std::unique_ptr<CBasicPacket> err;
-                const bool                    inReach = POwner->CanAttack(PTarget, err);
-                if (seat.has_value())
-                {
-                    WalkToSeat(PTarget, point, inReach);
-                }
-                else if (inReach)
-                {
-                    if (POwner->PAI->PathFind->IsFollowingPath())
-                    {
-                        POwner->PAI->PathFind->Clear();
-                    }
-                }
-                else if (distance(POwner->loc.p, PTarget->loc.p) > RoamDistance)
-                {
-                    PathToward(PTarget->loc.p, RoamDistance);
-                }
-
-                // The seat is her declump; the front has only the sidestep
-                if (!POwner->PAI->PathFind->IsFollowingPath() && !StepBack(PTarget) && !seat.has_value())
-                {
-                    Declump(PTarget);
-                }
-            }
+            intent->target   = PTarget;
+            intent->fighting = true;
+            intent->vet      = vet;
         }
 
-        POwner->PAI->PathFind->FollowPath(m_Tick);
+        moved = Move(*intent);
     }
 
     // Never a cast in a tick spent stepping to safety: it would root her
     // inside the circle. Holding, only what she would do between fights
     // -- cures and buffs -- since a nuke is a first hit too
+    const auto avoidAction = moved.value_or(AvoidAction::None);
     if (avoidAction != AvoidAction::Escape && avoidAction != AvoidAction::Detour)
     {
         m_Gambits->Tick(tick, !m_HoldForPlayer);
@@ -896,6 +1314,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     if (pawn::travelOrderOf(POwner->id).has_value())
     {
+        if (m_Mode != Mode::Travel)
+        {
+            Transition(Mode::Travel, "ordered to another zone");
+        }
         TravelTick();
         co_return;
     }
@@ -909,13 +1331,16 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         if (!m_Waiting && m_PlayerMagicSeen != timer::time_point::min() && m_Tick - m_PlayerMagicSeen < 5s)
         {
             m_PlayerMagicSeen = timer::time_point::min();
-            SetWaiting(true, false);
-            ShowInfoFmt("pawn: {} waits in {} (the player warped away)", POwner->getName(), POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?");
+            SetWaiting(true, false, fmt::format("waits in {} (the player warped away)", POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?"));
         }
         if (m_Waiting)
         {
             WaitTick(nullptr);
             co_return;
+        }
+        if (m_Mode != Mode::Travel)
+        {
+            Transition(Mode::Travel, "the player is in another zone");
         }
         TravelTick();
         co_return;
@@ -927,8 +1352,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // one holds until told otherwise
     if (m_Waiting && !m_WaitOrdered)
     {
-        SetWaiting(false, false);
-        ShowInfoFmt("pawn: {} follows again ({} is back)", POwner->getName(), PPlayer->getName());
+        SetWaiting(false, false, fmt::format("follows again ({} is back)", PPlayer->getName()));
+    }
+    if (m_Mode == Mode::Travel)
+    {
+        Transition(IdleMode(), fmt::format("with {} again", PPlayer->getName()));
     }
     if (m_Waiting)
     {
@@ -938,46 +1366,61 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     ShareSignet(PPlayer);
     TidyBag();
-    // Walking in on a hunt, her eye is on the mob (below), not the player
-    if (!Acting() && !m_HuntApproach.has_value())
+    // Walking in on a mob, her eye is on it (below), not the player
+    if (!Acting() && !m_Approach.has_value())
     {
         HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
     }
     m_Gambits->TickBehaviors();
 
-    if (auto* PTarget = PartyEngageTarget(PPlayer); PTarget != nullptr)
+    // The party's fight -- the player's target, a pawn's, or a mob on one
+    // of us -- through the one door (Draw): the rules, then the draw, or
+    // the walk in when it is farther than she may draw from. A walk in
+    // already under way passed the door once; the approach below draws.
+    const auto     party        = PartyEngageTarget(PPlayer);
+    CBattleEntity* PPartyTarget = party.target;
+    const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
+    if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget))
     {
-        // The beat: the party's fight is seen now, her draw comes a beat
-        // later, her eyes on it in the meantime
-        if (m_EngageBeatMob != PTarget->id)
+        const auto facts = EngageFactsFor(PPartyTarget);
+        if (const auto why = Refusal(PPartyTarget, facts); !why.empty())
         {
-            m_EngageBeatMob = PTarget->id;
-            m_EngageAt      = m_Tick + ReactionBeat();
+            // A refusal that stands (claimed by another party, an idle
+            // target the party would not pull) is said once, the target
+            // left alone for a while, and she keeps to the formation
+            SayRefusal(PPartyTarget, why);
+            HoldOff(PPartyTarget);
         }
-        if (m_Tick < m_EngageAt)
+        else
         {
-            HeadLook(PTarget);
+            // The beat: the party's fight is seen now, her draw comes a
+            // beat later, her eyes on it in the meantime. Due, the rules
+            // run again at the door (Draw): a refusal then is said and
+            // holds the target off
+            if (!PendingIs(Pending::Act::Join, PPartyTarget))
+            {
+                Schedule(Pending::Act::Join, PPartyTarget, ReactionBeat());
+            }
+            if (!Due(Pending::Act::Join, PPartyTarget))
+            {
+                HeadLook(PPartyTarget);
+                co_return;
+            }
+            m_Pending.reset();
+
+            // Drawn on the player's word alone: hold until they strike, or
+            // the mob comes to us. A pull, an answer to aggro, or an order
+            // closes.
+            const bool hold = PPlayer->PAI->IsEngaged() && PPartyTarget == PPlayer->GetBattleTarget() &&
+                              !playerHasEnmity(PPlayer, PPartyTarget) && !PPartyTarget->PAI->IsEngaged();
+            if (!Draw(PPartyTarget, ApproachKind::Join, hold ? fmt::format("holding for {}'s strike", PPlayer->getName()) : party.why, hold) &&
+                !m_Approach.has_value())
+            {
+                HoldOff(PPartyTarget);
+            }
             co_return;
         }
-        m_EngageBeatMob = 0;
-
-        // Drawn on the player's word alone: hold until they strike, or the
-        // mob comes to us. A pull, an answer to aggro, or an order closes.
-        m_HoldForPlayer = PPlayer->PAI->IsEngaged() && PTarget == PPlayer->GetBattleTarget() &&
-                          !playerHasEnmity(PPlayer, PTarget) && !PTarget->PAI->IsEngaged();
-        if (m_HoldForPlayer)
-        {
-            ShowInfoFmt("pawn: {} draws on {} (holding for {}'s strike)", POwner->getName(), PTarget->getName(), PPlayer->getName());
-        }
-        // The party's fight replaces whatever she had set off after: she
-        // chooses again when this one is over, rather than walking back to
-        // a mob picked before it started
-        m_HuntApproach.reset();
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        POwner->PAI->Internal_Engage(EntityId(PTarget));
-        co_return;
     }
-    m_EngageBeatMob = 0;
 
     // The player has drawn on a burrowed mob: the party waits for it to
     // surface, and says so now and then
@@ -991,63 +1434,98 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    // A hunter walking to the mob she chose: she committed the moment it
-    // was picked and closes with her weapon away, drawing only once the
-    // re-engage timer allows -- so the party moves on at once after a
-    // kill and the pause is at the draw, not before the choice. Every
-    // reason to let the mob go is judged here, ahead of the party's rest
-    if (m_HuntApproach.has_value())
+    // Walking in on a mob, weapon away -- her own pull, the party's fight
+    // farther than she may draw from, or the player's order: she committed
+    // the moment it was chosen and closes; only the draw waits, on the
+    // rules (pawn_rules.h) and the re-engage timer, so the party moves on
+    // at once after a kill and the pause is at the draw, not before the
+    // choice. Every reason to let the mob go is judged here, ahead of the
+    // party's rest
+    if (m_Approach.has_value())
     {
-        auto* PMob = m_HuntApproach->resolve<CMobEntity>();
-        if (PMob == nullptr || PMob->isDead() || PMob->PAI->IsEngaged() || !IsHunting() ||
-            distance(PPlayer->loc.p, PMob->loc.p) > settings::get<float>("pawn.HUNT_RADIUS"))
+        auto*      PMob = m_Approach->target.resolve<CMobEntity>();
+        const bool hunt = m_Approach->kind == ApproachKind::Hunt;
+        const bool join = m_Approach->kind == ApproachKind::Join;
+        if (PMob == nullptr || PMob->isDead())
         {
-            m_HuntApproach.reset();
+            Transition(IdleMode(), PMob == nullptr ? std::string("the mob is gone") : fmt::format("{} is dead", PMob->getName()));
         }
-        // The party is no longer paced for a pull -- the player sat, a
-        // member fell -- so the choice goes too, to be made afresh
-        else if (const auto blocker = PacingBlocker(PPlayer); !blocker.empty())
+        // Her own pull is judged as it was picked: idle, hunted, inside the
+        // radius, and the party paced for it -- the player sat, a member
+        // fell -- else the choice goes too, to be made afresh
+        else if (hunt && (PMob->PAI->IsEngaged() || !IsHunting() || distance(PPlayer->loc.p, PMob->loc.p) > settings::get<float>("pawn.HUNT_RADIUS")))
         {
-            ShowInfoFmt("pawn: {} lets {} go ({})", POwner->getName(), PMob->getName(), blocker);
-            m_HuntApproach.reset();
+            Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(),
+                                               PMob->PAI->IsEngaged() ? "it is fighting already" : !IsHunting() ? "the hunt is off" : "beyond the hunt radius"));
+        }
+        else if (const auto blocker = hunt ? PacingBlocker(PPlayer) : std::string(); !blocker.empty())
+        {
+            Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), blocker));
+        }
+        // The party's fight she was walking in on ended, or moved to
+        // another mob
+        else if (join && PPartyTarget != PMob)
+        {
+            Transition(IdleMode(), fmt::format("lets {} go (the party moved on)", PMob->getName()));
         }
         else
         {
             // her eye is on it the whole way in, and while she stands there
             // waiting to draw
             HeadLook(PMob);
-            if (m_Tick < m_SetOffAt)
+            // A hunt's walk starts a beat after the pick
+            if (PendingIs(Pending::Act::SetOff, PMob))
             {
-                co_return;
+                if (!Due(Pending::Act::SetOff, PMob))
+                {
+                    co_return;
+                }
+                m_Pending.reset();
             }
 
-            // The cooldown gates the DRAW, not the arrival: ready, she
-            // draws where she stands and charges in with her weapon out,
-            // as she always did; still waiting, she walks in with it away
-            // and draws the moment the wait is served, wherever that
-            // catches her
-            // The beat again at the draw: the wait is served for the whole
-            // party at once, and without it they would all draw on one tick
-            const bool ready = CanDrawOn(PMob);
-            if (ready && m_DrawAt == timer::time_point::min())
+            // The rules gate the DRAW, not the arrival: allowed, she draws
+            // where she stands and charges in with her weapon out; still
+            // too far, or the draw's wait unserved, she walks in with it
+            // away and draws the moment the rules allow, wherever that
+            // catches her. Anything else in the way (claimed, gone under)
+            // ends the walk.
+            // The beat again at a hunt's draw: the wait is served for the
+            // whole party at once, and without it they would all draw on
+            // one tick. A join's or an order's draw waits no beat: its
+            // beat was served at the door
+            const auto facts = EngageFactsFor(PMob);
+            const auto ready = cardian::rules::mayFight(facts);
+            if (ready)
             {
-                m_DrawAt = m_Tick + m_HuntBeat;
-            }
-            if (ready && m_Tick >= m_DrawAt)
-            {
-                ShowInfoFmt("pawn: {} draws on {} ({})", POwner->getName(), PMob->getName(),
-                            magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)));
-                m_HuntApproach.reset();
-                m_HoldForPlayer = false;
-                POwner->PAI->Internal_Engage(EntityId(PMob));
-            }
-            else if (distance(POwner->loc.p, PMob->loc.p) > RoamDistance)
-            {
-                if (PathToward(PMob->loc.p, RoamDistance))
+                if (!PendingIs(Pending::Act::Draw, PMob))
                 {
-                    POwner->PAI->PathFind->FollowPath(m_Tick);
+                    Schedule(Pending::Act::Draw, PMob, hunt ? m_HuntBeat : timer::duration{});
+                }
+                if (Due(Pending::Act::Draw, PMob))
+                {
+                    m_Pending.reset();
+                    m_HoldForPlayer = false;
+                    Draw(PMob, m_Approach->kind, hunt ? std::string(magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob))) : std::string("walked in"));
+                }
+                co_return;
+            }
+            if (!cardian::rules::worthWalkingIn(facts))
+            {
+                Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), ready.why));
+                co_return;
+            }
+            // A pull that has turned unclean on the way in (a guard roamed
+            // over it) is let go, as the fight lets it go -- whoever chose
+            // it, and said, so she never stands at a rim with no reason
+            if (!PMob->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+            {
+                if (const auto unclean = PullBlocker(PMob); !unclean.empty())
+                {
+                    Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), unclean));
+                    co_return;
                 }
             }
+            WalkToward(PMob);
             co_return;
         }
     }
@@ -1073,23 +1551,23 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // A hunter picks the party's next fight itself, the moment it is free
     // to: the choice is never throttled, only the draw
-    if (IsHunting() && !m_HuntApproach.has_value())
+    if (IsHunting() && !m_Approach.has_value())
     {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
         {
-            if (auto* PMob = PickHuntTarget(PPlayer); PMob != nullptr)
+            std::string skipped;
+            if (auto* PMob = PickHuntTarget(PPlayer, &skipped); PMob != nullptr)
             {
                 // The beat: the choice is made now, the walk starts a beat
                 // later, her eyes on it in the meantime
                 const auto beat = ReactionBeat();
                 m_HuntBeat      = beat;
-                m_SetOffAt      = m_Tick + beat;
-                m_DrawAt        = timer::time_point::min();
-                ShowInfoFmt("pawn: {} sets off after {} ({}{})", POwner->getName(), PMob->getName(),
-                            magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)),
-                            beat > 0s ? fmt::format(", in {:.1f}s", std::chrono::duration<float>(beat).count()) : "");
-                m_HuntApproach = EntityId(PMob);
+                m_Approach      = Approach{ EntityId(PMob), ApproachKind::Hunt };
+                Transition(Mode::Approach, fmt::format("sets off after {} ({}{})", PMob->getName(),
+                                                       magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob)),
+                                                       beat > 0s ? fmt::format(", in {:.1f}s", std::chrono::duration<float>(beat).count()) : ""));
+                Schedule(Pending::Act::SetOff, PMob, beat);
                 co_return;
             }
             // A quiet hunt says why, now and then: the band is judged
@@ -1098,10 +1576,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             {
                 m_LastHuntLogTime = m_Tick;
                 const auto rules = pawn::huntRulesOf(pawn::summonerOf(POwner->id));
-                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{}{})",
+                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{}{}){}",
                             POwner->getName(), settings::get<float>("pawn.HUNT_RADIUS"), PPlayer->getName(), PPlayer->GetMLevel(),
                             magic_enum::enum_name(static_cast<EMobDifficulty>(rules.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(rules.maxCheck)),
-                            rules.aggressive ? "" : ", aggressive company avoided", rules.links ? "" : ", links avoided");
+                            rules.aggressive ? "" : ", aggressive company avoided", rules.links ? "" : ", links avoided",
+                            skipped.empty() ? "" : "; skipped " + skipped);
             }
         }
         else if (m_Tick - m_LastHuntLogTime > 15s)
@@ -1111,17 +1590,16 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    const auto avoidAction = FollowFormation(PPlayer, nullptr);
+    // The tick's danger map, then the formation's proposal through the
+    // walker; nothing when the tick went on a warp
+    RefreshDangers(nullptr);
+    const auto avoidAction = Move(FormationIntent(PPlayer, nullptr));
     if (!avoidAction.has_value())
     {
         co_return;
     }
 
-    if (POwner->PAI->PathFind->IsFollowingPath())
-    {
-        POwner->PAI->PathFind->FollowPath(m_Tick);
-    }
-    else if (!POwner->PAI->IsCurrentState<CMagicState>() && *avoidAction != AvoidAction::Escape && *avoidAction != AvoidAction::Detour)
+    if (!POwner->PAI->PathFind->IsFollowingPath() && !POwner->PAI->IsCurrentState<CMagicState>() && *avoidAction != AvoidAction::Escape && *avoidAction != AvoidAction::Detour)
     {
         // Between fights, standing still: cures, raises, buffs -- but never
         // in a tick spent stepping to safety, since a cast would root the
@@ -1133,16 +1611,13 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     co_return;
 }
 
-auto CPawnController::FollowFormation(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> std::optional<AvoidAction>
+auto CPawnController::FormationIntent(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent
 {
     // Where this pawn belongs: the lead holds a point ahead of the player,
     // everyone else a seat on the ring around them. FormationPoint sets
     // m_HasSlot for the avoidance pass.
     m_HasSlot = false;
     position_t followPoint{};
-    float      declumpDistance = 0.0f;
-    float      followMax       = 2.0f;
-    float      followTarget    = 1.0f;
 
     // No point within reach of a mob the party is holding on: pushed out
     // to the ring, and round to the player's side from behind it
@@ -1183,46 +1658,13 @@ auto CPawnController::FollowFormation(CCharEntity* PPlayer, const CBattleEntity*
         FormationDebug(cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
     }
 
-    auto avoidAction = AvoidAction::None;
-    if (IsAvoidingAggro())
-    {
-        avoidAction = Avoid(followPoint, followMax, followTarget, declumpDistance, PStandOff, false);
-    }
-
-    const float currentDistance = distance(POwner->loc.p, followPoint);
-
-    if (avoidAction != AvoidAction::None && IsShortHop(followPoint, followMax))
-    {
-        POwner->PAI->PathFind->Clear();
-        POwner->PAI->PathFind->StepTo(followPoint);
-    }
-    else if (currentDistance > followMax)
-    {
-        // Warp only when pathing genuinely fails; a pawn arriving at a zone
-        // gate runs to its player like anyone else would
-        if (!PathToward(followPoint, followTarget))
-        {
-            if (currentDistance > WarpDistance)
-            {
-                POwner->PAI->PathFind->WarpTo(followPoint);
-                return std::nullopt;
-            }
-            NotePathFailure(avoidAction, followPoint, currentDistance);
-        }
-    }
-    else if (currentDistance < declumpDistance)
-    {
-        if (!POwner->PAI->PathFind->IsFollowingPath())
-        {
-            PathToward(followPoint, followTarget + 0.5f);
-        }
-    }
-    else if (POwner->PAI->PathFind->IsFollowingPath())
-    {
-        POwner->PAI->PathFind->Clear();
-    }
-
-    return avoidAction;
+    Intent intent;
+    intent.kind       = Intent::Kind::Formation;
+    intent.point      = followPoint;
+    intent.arrive     = 1.0f;
+    intent.tolerance  = 2.0f;
+    intent.warpIfLost = true;
+    return intent;
 }
 
 void CPawnController::TravelTick()
@@ -1475,12 +1917,12 @@ auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* P
     return redundant;
 }
 
-auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEntity*
+auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> PartyFight
 {
     // Retreat: the party's fight is nobody's, whoever swings or aggroes
     if (m_Retreat)
     {
-        return nullptr;
+        return {};
     }
 
     // The player's engagement comes first: a weapon drawn on a mob commits
@@ -1496,9 +1938,9 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
             // combat tick lets such a target go)
             if (pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged())
             {
-                return nullptr;
+                return {};
             }
-            return PMob;
+            return { PMob, fmt::format("{}'s target", PPlayer->getName()) };
         }
     }
 
@@ -1507,7 +1949,7 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
     const auto* PPawn = static_cast<CCharEntity*>(POwner);
     if (PPawn->PParty == nullptr)
     {
-        return nullptr;
+        return {};
     }
 
     for (auto* PMember : PPawn->PParty->members)
@@ -1521,18 +1963,18 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
 
         if (auto* PTarget = PChar->GetBattleTarget(); PTarget != nullptr && !PTarget->isDead())
         {
-            return PTarget;
+            return { PTarget, fmt::format("with {}", PChar->getName()) };
         }
     }
 
     // Self-defence: a mob that has chosen a member of this party is the
     // party's fight, whether or not anyone has swung yet -- aggro on a
     // cardian, or on the player, is answered
-    const float    leash    = settings::get<float>("pawn.HUNT_LEASH");
-    CBattleEntity* attacker = nullptr;
-    const auto     answers  = [&](CMobEntity* PMob)
+    const float leash = settings::get<float>("pawn.HUNT_LEASH");
+    PartyFight  answer;
+    const auto  answers = [&](CMobEntity* PMob)
     {
-        if (attacker != nullptr || !PMob->PAI->IsEngaged() || PMob->isDead() ||
+        if (answer.target != nullptr || !PMob->PAI->IsEngaged() || PMob->isDead() ||
             !isWithinDistance(POwner->loc.p, PMob->loc.p, leash))
         {
             return;
@@ -1540,12 +1982,11 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> CBattleEn
         auto* PVictim = PMob->GetBattleTarget();
         if (PVictim != nullptr && PVictim->PParty == PPawn->PParty)
         {
-            attacker = PMob;
-            ShowInfoFmt("pawn: {} answers {} (on {})", POwner->getName(), PMob->getName(), PVictim->getName());
+            answer = { PMob, fmt::format("answering it on {}", PVictim->getName()) };
         }
     };
     pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, leash, answers);
-    return attacker;
+    return answer;
 }
 
 auto CPawnController::HuntBlocker(const CCharEntity* PPlayer) const -> std::string
@@ -1586,12 +2027,34 @@ auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::st
         {
             return fmt::format("{} engaged", PMember->getName());
         }
+        // A cardian already walking in on her own pull: one pull at a time
+        if (const auto* PController = dynamic_cast<const CPawnController*>(PMember->PAI->GetController());
+            PController != nullptr && PController != this && PController->m_Approach.has_value() && PController->m_Approach->kind == ApproachKind::Hunt)
+        {
+            return fmt::format("{} pulling", PMember->getName());
+        }
     }
     return "";
 }
 
-auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEntity*
+auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped) const -> CMobEntity*
 {
+    // What was in the band but not pulled, and why: a few, for the log
+    int        skips = 0;
+    const auto skip  = [&](const CMobEntity* PWhom, const std::string& why)
+    {
+        if (skipped == nullptr || skips >= 3)
+        {
+            return;
+        }
+        if (!skipped->empty())
+        {
+            *skipped += ", ";
+        }
+        *skipped += fmt::format("{} ({})", PWhom->getName(), why);
+        ++skips;
+    };
+
     const auto  rules       = pawn::huntRulesOf(pawn::summonerOf(POwner->id));
     const auto  minCheck    = rules.minCheck;
     const auto  maxCheck    = rules.maxCheck;
@@ -1626,17 +2089,28 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEn
         return check >= minCheck && check <= maxCheck;
     };
 
-    // The aggressive mob whose detection circle a candidate stands in
-    const auto guardOf = [&](const CMobEntity* PMob) -> const pawn::danger::Danger*
+    // The pull rule's circles (pawn_rules.h): the dangers, padded as the
+    // fight pads them, so the fight never drops what the pick approved
+    cardian::rules::Circles circles;
+    circles.reserve(dangers.size());
+    for (const auto& d : dangers)
     {
-        for (const auto& d : dangers)
+        circles.push_back(d);
+    }
+    const auto paddedCircles = cardian::rules::padded(circles);
+
+    // A mob's own circle, when it is a danger itself: no reason against
+    // pulling it
+    const auto ownCircle = [&](const CMobEntity* PMob) -> std::size_t
+    {
+        for (std::size_t i = 0; i < dangers.size(); ++i)
         {
-            if (d.mob != PMob && isWithinDistance(d.mob->loc.p, PMob->loc.p, d.radius))
+            if (dangers[i].mob == PMob)
             {
-                return &d;
+                return i;
             }
         }
-        return nullptr;
+        return cardian::rules::npos;
     };
 
     // A linking family member (aggressive or not) within the clean radius
@@ -1682,35 +2156,36 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer) const -> CMobEn
             return;
         }
 
-        // Prey standing in an aggressive mob's circle is not the
-        // pull: the guard is, when the party allows aggressive
-        // company and the guard is itself fair game; otherwise the
-        // prey is skipped. The player can still sneak behind the
-        // guard and pull it to the party waiting outside its circle
+        // The pull rule (pawn_rules.h): prey standing in an aggressive
+        // mob's circle is not the pull -- the guard is, when the party
+        // allows aggressive company and the guard is itself fair game;
+        // otherwise the prey is skipped. With aggressive company avoided,
+        // a circle across the hunter's way in skips it too. The player
+        // can still sneak behind a guard and pull it to the party waiting
+        // outside its circle
         CMobEntity* pick = PMob;
-        if (const auto* guard = guardOf(PMob); guard != nullptr)
+        if (const auto block = cardian::rules::pullBlocked(paddedCircles, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z, ownCircle(PMob)); block.has_value())
         {
-            if (!rules.aggressive || !eligible(guard->mob))
+            CMobEntity* guard = dangers[block->circle].mob;
+            if (!rules.aggressive)
             {
+                skip(PMob, block->targetInside ? fmt::format("inside {}'s circle", guard->getName())
+                                               : fmt::format("the way in crosses {}'s circle", guard->getName()));
                 return;
             }
-            pick = guard->mob;
-        }
-
-        // Aggressive company avoided: no danger circle across the
-        // hunter's approach either
-        if (!rules.aggressive)
-        {
-            for (const auto& d : dangers)
+            if (block->targetInside)
             {
-                if (d.mob != pick && cardian::formation::segmentCrosses(d, POwner->loc.p.x, POwner->loc.p.z, pick->loc.p.x, pick->loc.p.z))
+                if (!eligible(guard))
                 {
+                    skip(PMob, fmt::format("its guard {} is no pull", guard->getName()));
                     return;
                 }
+                pick = guard;
             }
         }
         if (!rules.links && pick->m_Link != 0 && linked(pick))
         {
+            skip(pick, "kin nearby");
             return;
         }
 
@@ -1922,16 +2397,12 @@ void CPawnController::NotePathFailure(const AvoidAction action, const position_t
                 magic_enum::enum_name(action), away, point.x, point.y, point.z, POwner->PAI->PathFind->ValidPosition(point) ? "yes" : "no");
 }
 
-auto CPawnController::Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const CBattleEntity* PIgnore, const bool fighting) -> AvoidAction
+auto CPawnController::Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const bool fighting) -> AvoidAction
 {
     using namespace cardian::formation;
 
-    const auto* PPawn   = static_cast<const CCharEntity*>(POwner);
-    // The party's own mob is never a danger to keep out of: a freshly
-    // pulled aggressive mob is not fighting anyone yet, and its circle
-    // would hold her at the rim of the very mob she is meant to hit, or
-    // walk up to
-    const auto  dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
+    // The tick's danger map (RefreshDangers), the same the movers chose by
+    const auto& dangers = m_Dangers;
 
     // The margins that keep the boundary from being slippery: every point
     // she walks to is planned against the circles padded by kClearance, so
@@ -1940,7 +2411,7 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
     // escape test uses the true circle, and it pushes her a little further
     // out than the padding. A hold stands anywhere within kHoldBand of the
     // padded ring.
-    constexpr float kClearance   = 1.5f;
+    constexpr float kClearance   = cardian::rules::kClearance;
     constexpr float kEscapeExtra = 0.5f;
     constexpr float kHoldBand    = 1.0f;
     constexpr float kDetourArc   = 3.0f;
@@ -1949,14 +2420,9 @@ auto CPawnController::Avoid(position_t& point, float& followMax, float& followTa
     bool        perched = false; // this tick used or took a perch
     if (!dangers.empty())
     {
-        const auto&         circles = dangers; // the true circles: is she inside one
-        std::vector<Circle> padded;            // the planning circles: every point she walks to
-        padded.reserve(dangers.size());
-        for (const auto& d : dangers)
-        {
-            padded.push_back(Circle{ d.x, d.z, d.radius + kClearance });
-        }
-        const position_t me = POwner->loc.p;
+        const auto&      circles = dangers;  // the true circles: is she inside one
+        const auto&      padded  = m_Padded; // the planning circles: every point she walks to
+        const position_t me      = POwner->loc.p;
 
         // A point she is sent to must be on the mesh and clear: an off-mesh
         // point is snapped to the nearest walkable one, which counts only if
@@ -2424,20 +2890,42 @@ auto CPawnController::FightRadius(const CBattleEntity* PTarget) const -> float
     return std::min(RoamDistance, POwner->GetMeleeRange(PTarget) - settings::get<float>("pawn.MELEE_BACKOFF_MARGIN"));
 }
 
-auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat) const -> position_t
+auto CPawnController::LiveFrame(const CBattleEntity* PTarget) const -> uint8
+{
+    // The ring's frame: the mob facing its target; a mob with none faces
+    // where it faces
+    if (const auto* PFront = PTarget->GetBattleTarget(); PFront != nullptr)
+    {
+        return worldAngle(PTarget->loc.p, PFront->loc.p);
+    }
+    return PTarget->loc.p.rotation;
+}
+
+auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat, const uint8 frameRotation) const -> position_t
 {
     constexpr float kPi = std::numbers::pi_v<float>;
 
-    // The ring's frame: the mob facing its target; a mob with none faces
-    // where it faces
     position_t frame = PTarget->loc.p;
-    if (const auto* PFront = PTarget->GetBattleTarget(); PFront != nullptr)
-    {
-        frame.rotation = worldAngle(PTarget->loc.p, PFront->loc.p);
-    }
+    frame.rotation   = frameRotation;
     const float bearing = cardian::formation::seatBearing(seat, settings::get<float>("pawn.FIGHT_FLANK_DEG") * kPi / 180.0f,
                                                           settings::get<float>("pawn.FIGHT_REAR_DEG") * kPi / 180.0f);
     return nearPosition(frame, FightRadius(PTarget), bearing);
+}
+
+auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat) const -> position_t
+{
+    return SeatPoint(PTarget, seat, LiveFrame(PTarget));
+}
+
+auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>
+{
+    if (PTarget == nullptr || m_FightSeat.mob != PTarget->id)
+    {
+        return std::nullopt;
+    }
+    // Settled, the seat keeps the frame she settled by; on the way to it,
+    // it follows the live ring
+    return SeatPoint(PTarget, m_FightSeat.seat, m_FightSeat.settled ? m_FightSeat.frame : LiveFrame(PTarget));
 }
 
 auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>
@@ -2467,8 +2955,13 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         return m_FightSeat.seat;
     }
 
-    // The seats the party's other cardians hold on this mob
+    // The seats the party's other cardians hold on this mob, by name and
+    // by spot: a settled seat keeps its own frame, so the ring's live
+    // "left flank" can sit where another cardian's settled "right flank"
+    // is -- a seat within kSeatSpacing of a held spot is taken too
+    constexpr float                kSeatSpacing = 2.0f;
     cardian::formation::SeatsTaken taken{};
+    std::vector<position_t>        heldPoints;
     if (const auto* PPawn = static_cast<const CCharEntity*>(POwner); PPawn->PParty != nullptr)
     {
         for (const auto* PMember : PPawn->PParty->members)
@@ -2490,6 +2983,10 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
                     taken[static_cast<std::size_t>(it - RingSeats.begin())] = true;
                 }
             }
+            if (const auto spot = PController->HeldSeatPoint(PTarget); spot.has_value())
+            {
+                heldPoints.push_back(*spot);
+            }
         }
     }
 
@@ -2504,39 +3001,95 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
         {
             taken[i] = true;
         }
+        for (const auto& held : heldPoints)
+        {
+            if (cardian::formation::planarDistance(p.x, p.z, held.x, held.z) < kSeatSpacing)
+            {
+                taken[i] = true;
+            }
+        }
     }
     if (std::ranges::all_of(taken, [](const bool t) { return t; }))
     {
         return std::nullopt;
     }
-    const auto seat = RingSeats[cardian::formation::nearestSeat(points, taken, POwner->loc.p.x, POwner->loc.p.z)];
+
+    // The seat that costs the least walk (formation_math.h cheapestSeat):
+    // each free seat is priced by the navmesh's own path from where she
+    // stands, not the straight line, so a seat across a cliff's edge is
+    // priced by the walk round the cliff and loses to one she can step
+    // to; a detour past what a seat is worth (worthTheWalk), or no path
+    // at all, prices it out. Five queries at most, once per seat pick,
+    // never again for the fight
+    cardian::formation::SeatCosts costs{};
+    costs.fill(std::numeric_limits<float>::infinity());
+    auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    for (std::size_t i = 0; i < RingSeats.size(); ++i)
+    {
+        if (taken[i])
+        {
+            continue;
+        }
+        const position_t p(points[i].first, PTarget->loc.p.y, points[i].second, 0, 0);
+        const float      straight = distance(POwner->loc.p, p);
+        float            cost     = straight;
+        if (navMesh != nullptr)
+        {
+            const auto path = navMesh->findPath(POwner->loc.p, p);
+            if (!path.has_value() || path->isPartial)
+            {
+                continue;
+            }
+            cost            = 0.0f;
+            position_t prev = POwner->loc.p;
+            for (const auto& point : path->points)
+            {
+                cost += distance(prev, point.position);
+                prev = point.position;
+            }
+        }
+        if (cardian::formation::worthTheWalk(cost, straight))
+        {
+            costs[i] = cost;
+        }
+    }
+    const auto pick = cardian::formation::cheapestSeat(costs);
+    if (!pick.has_value())
+    {
+        return std::nullopt;
+    }
+    const auto seat = RingSeats[*pick];
     m_FightSeat     = { PTarget->id, seat };
     m_SeatVia       = false;
     ShowInfoFmt("pawn: {} takes {}'s {}", POwner->getName(), PTarget->getName(), seatName(seat));
     return seat;
 }
 
-void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t& seat, const bool inReach)
+auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach) -> Intent
 {
     using cardian::formation::Circle;
     using cardian::formation::seatName;
     using cardian::formation::segmentCrosses;
 
-    auto*       PPathFind = POwner->PAI->PathFind.get();
+    const auto* PPathFind = POwner->PAI->PathFind.get();
     const auto& me        = POwner->loc.p;
     const float off       = distance(me, seat);
+    Intent      intent;
 
-    // On her seat, or near enough while in reach: she stands, and a path
-    // still under her feet is dropped (it ends where the seat was)
+    // On her seat, or near enough while in reach: she stands. The first
+    // time, the seat settles: the ring's frame as it stands is hers for
+    // the fight, whatever the mob turns to face
     const float deadband = inReach ? settings::get<float>("pawn.FIGHT_SEAT_DEADBAND") : 0.5f;
     if (off <= deadband)
     {
-        if (PPathFind->IsFollowingPath())
-        {
-            PPathFind->Clear();
-        }
         m_SeatVia = false;
-        return;
+        if (m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
+        {
+            m_FightSeat.settled = true;
+            m_FightSeat.frame   = LiveFrame(PTarget);
+            ShowInfoFmt("pawn: {} settles on {}'s {}", POwner->getName(), PTarget->getName(), seatName(m_FightSeat.seat));
+        }
+        return intent;
     }
 
     // A hop under the planner's floor (IsShortHop): straight at it, on
@@ -2545,23 +3098,22 @@ void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t&
     {
         if (PPathFind->ValidPosition(seat))
         {
-            PPathFind->Clear();
-            PPathFind->StepTo(seat);
+            intent.kind  = Intent::Kind::Hop;
+            intent.point = seat;
+            return intent;
         }
-        else
-        {
-            // The seat has left the mesh (the mob against a wall): given
-            // up, and another is picked next tick
-            m_FightSeat = {};
-        }
-        return;
+        // The seat has left the mesh (the mob against a wall): given up,
+        // and another is picked next tick
+        m_FightSeat = {};
+        return intent;
     }
 
     // A path already on the way stands until the seat has drifted a yalm
     // from where it was planned against
     if (PPathFind->IsFollowingPath() && distance(seat, m_SeatDestination) <= 1.0f)
     {
-        return;
+        intent.kind = Intent::Kind::Keep;
+        return intent;
     }
 
     // A far seat is reached round the mob's side, never through it: a way
@@ -2586,10 +3138,12 @@ void CPawnController::WalkToSeat(const CBattleEntity* PTarget, const position_t&
     }
 
     m_SeatDestination = seat;
-    if (!PathToward(goal, 0.3f))
-    {
-        m_FightSeat = {};
-    }
+    intent.kind       = Intent::Kind::Path;
+    intent.point      = goal;
+    intent.arrive     = 0.3f;
+    intent.tolerance  = 0.0f;
+    intent.seat       = true;
+    return intent;
 }
 
 auto CPawnController::ReactionBeat() const -> timer::duration
@@ -2616,7 +3170,7 @@ auto CPawnController::ReactionBeat() const -> timer::duration
     return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.REACTION_BEAT") * static_cast<float>(beats)));
 }
 
-auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
+auto CPawnController::StepBackIntent(const CBattleEntity* PTarget) -> std::optional<Intent>
 {
     TracyZoneScoped;
 
@@ -2624,32 +3178,40 @@ auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
     // the same spot as last tick; any move restarts the clock
     const bool pathing = PTarget->PAI->PathFind != nullptr && PTarget->PAI->PathFind->IsFollowingPath();
     const bool settled = !pathing && PTarget->id == m_TargetRestId && isWithinDistance(PTarget->loc.p, m_TargetRestPos, 0.1f);
+    const auto seconds = [](const char* key)
+    {
+        return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>(key)));
+    };
     if (!settled)
     {
         m_TargetRestId    = PTarget->id;
         m_TargetRestPos   = PTarget->loc.p;
         m_TargetRestSince = m_Tick;
-        m_TargetRestBeat.reset();
-        return false;
+        if (PendingIs(Pending::Act::StepBack, PTarget))
+        {
+            m_Pending.reset(); // the rest restarted
+        }
+        return std::nullopt;
     }
-    if (!m_TargetRestBeat.has_value())
+    // The step back waits the rest delay and her beat; never over the
+    // player's order or the hold's close, which are about to act
+    if (m_Pending.has_value() && m_Pending->act != Pending::Act::StepBack)
     {
-        m_TargetRestBeat = ReactionBeat();
+        return std::nullopt;
     }
-
-    const auto seconds = [](const char* key)
+    if (!PendingIs(Pending::Act::StepBack, PTarget))
     {
-        return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>(key)));
-    };
-    if (m_Tick < m_TargetRestSince + seconds("pawn.MELEE_BACKOFF_DELAY") + *m_TargetRestBeat || m_Tick < m_LastStepBackAt + seconds("pawn.MELEE_BACKOFF_COOLDOWN"))
+        Schedule(Pending::Act::StepBack, PTarget, seconds("pawn.MELEE_BACKOFF_DELAY") + ReactionBeat());
+    }
+    if (!Due(Pending::Act::StepBack, PTarget) || m_Tick < m_LastStepBackAt + seconds("pawn.MELEE_BACKOFF_COOLDOWN"))
     {
-        return false;
+        return std::nullopt;
     }
 
     const float away = distance(POwner->loc.p, PTarget->loc.p);
     if (away >= settings::get<float>("pawn.MELEE_BACKOFF_TRIGGER"))
     {
-        return false;
+        return std::nullopt;
     }
 
     // Inside its reach, always (FightRadius): a target it cannot reach is
@@ -2657,7 +3219,7 @@ auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
     const float radius = FightRadius(PTarget);
     if (radius <= away)
     {
-        return false;
+        return std::nullopt;
     }
 
     const position_t& me  = POwner->loc.p;
@@ -2668,8 +3230,13 @@ auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
     const float facingRadians = 2.0f * std::numbers::pi_v<float> - rotationToRadian(me.rotation);
     auto [x, z]               = cardian::formation::backOff(mob.x, mob.z, me.x, me.z, radius, facingRadians + std::numbers::pi_v<float>);
 
-    // A wall at her back: round the mob a little, either side
-    if (!POwner->PAI->PathFind->ValidPosition(position_t(x, me.y, z, 0, 0)))
+    // A spot is a spot when it is on the mesh and clear of every circle.
+    // A wall or a circle at her back: round the mob a little, either side
+    const auto usable = [&](const float px, const float pz)
+    {
+        return POwner->PAI->PathFind->ValidPosition(position_t(px, me.y, pz, 0, 0)) && IsClear(px, pz);
+    };
+    if (!usable(x, z))
     {
         const float base  = std::atan2(z - mob.z, x - mob.x);
         bool        found = false;
@@ -2677,7 +3244,7 @@ auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
         {
             const float cx = mob.x + std::cos(base + turn) * radius;
             const float cz = mob.z + std::sin(base + turn) * radius;
-            if (POwner->PAI->PathFind->ValidPosition(position_t(cx, me.y, cz, 0, 0)))
+            if (usable(cx, cz))
             {
                 x     = cx;
                 z     = cz;
@@ -2688,29 +3255,30 @@ auto CPawnController::StepBack(const CBattleEntity* PTarget) -> bool
         if (!found)
         {
             m_LastStepBackAt = m_Tick;
-            ShowInfoFmt("pawn: {} has nowhere to step back from {} ({:.1f}y, off the mesh all round)", POwner->getName(), PTarget->getName(), away);
-            return false;
+            ShowInfoFmt("pawn: {} has nowhere to step back from {} ({:.1f}y; off the mesh or inside a circle all round)", POwner->getName(), PTarget->getName(), away);
+            return std::nullopt;
         }
     }
 
-    // A hop this short is under the planner's floor (IsShortHop): straight
-    // at the point, and her face back on the mob -- the step turned her
-    POwner->PAI->PathFind->Clear();
-    POwner->PAI->PathFind->StepTo(position_t(x, me.y, z, 0, me.rotation));
-    POwner->PAI->PathFind->LookAt(mob);
+    // A hop this short is under the planner's floor: straight at the
+    // point (the walker's lock-on turns her face back to the mob)
     m_LastStepBackAt = m_Tick;
-    ShowInfoFmt("pawn: {} steps back from {} ({:.1f}y -> {:.1f}y)", POwner->getName(), PTarget->getName(), away, distance(POwner->loc.p, mob));
-    return true;
+    m_Pending.reset();
+    Intent intent;
+    intent.kind  = Intent::Kind::Hop;
+    intent.point = position_t(x, me.y, z, 0, me.rotation);
+    ShowInfoFmt("pawn: {} steps back from {} ({:.1f}y -> {:.1f}y)", POwner->getName(), PTarget->getName(), away, distance(intent.point, mob));
+    return intent;
 }
 
-void CPawnController::Declump(const CBattleEntity* PTarget) const
+auto CPawnController::DeclumpIntent(const CBattleEntity* PTarget) const -> std::optional<Intent>
 {
     TracyZoneScoped;
 
     const auto* PPawn = static_cast<CCharEntity*>(POwner);
     if (PPawn->PParty == nullptr)
     {
-        return;
+        return std::nullopt;
     }
 
     const uint8 currentPartyPos = GetPawnPartyPosition();
@@ -2725,16 +3293,22 @@ void CPawnController::Declump(const CBattleEntity* PTarget) const
             continue;
         }
 
-        // Spread around the shared target rather than away from each other
+        // Spread around the shared target rather than away from each other,
+        // to a spot on the mesh and clear of every circle
         const float moveAmount = xirand::GetRandomNumber(0.0f, 1.5f) * ((currentPartyPos % 2) ? 1.0f : -1.0f);
         const auto  newPos     = sidestepPosition(POwner->loc.p, PTarget->loc.p, moveAmount);
-
-        if (POwner->PAI->PathFind->ValidPosition(newPos))
+        if (!POwner->PAI->PathFind->ValidPosition(newPos) || !IsClear(newPos.x, newPos.z))
         {
-            POwner->PAI->PathFind->PathTo(newPos, PATHFLAG_RUN);
+            return std::nullopt;
         }
-        break;
+        Intent intent;
+        intent.kind      = distance(POwner->loc.p, newPos) < 1.2f ? Intent::Kind::Hop : Intent::Kind::Path;
+        intent.point     = newPos;
+        intent.arrive    = 0.3f;
+        intent.tolerance = 0.0f;
+        return intent;
     }
+    return std::nullopt;
 }
 
 auto CPawnController::PathToward(const position_t& point, const float closeTo) -> bool

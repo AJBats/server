@@ -26,6 +26,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_loot.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_loot.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_rules.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_teach.cpp
