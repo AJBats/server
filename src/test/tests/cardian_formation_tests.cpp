@@ -540,3 +540,34 @@ TEST_CASE("worthTheWalk: a detour past the factor and slack is not", "[cardian][
     REQUIRE(worthTheWalk(30.0f, 28.0f));
     REQUIRE_FALSE(worthTheWalk(std::numeric_limits<float>::infinity(), 3.0f));
 }
+
+TEST_CASE("passingLane: behind, the lane beside the player and round them; not yet in front, the lane; in front, the point", "[cardian][formation]")
+{
+    // Player at the origin, her point 10 y ahead along +x, a 2 y lane, in
+    // front from 3 y on
+    const float lane   = 2.0f;
+    const float margin = 3.0f;
+
+    // Dead behind: the default side's lane, and round the player first,
+    // since the line to the lane point still cuts through them
+    const auto behind = passingLane(0.0f, 0.0f, -3.0f, 0.0f, 10.0f, 0.0f, lane, margin, 0.0f, 1.0f);
+    REQUIRE(behind.has_value());
+    REQUIRE(behind->rim);
+    REQUIRE_THAT(behind->side, WithinAbs(1.0f, 0.001f));
+    REQUIRE_THAT(planarDistance(0.0f, 0.0f, behind->x, behind->z), WithinAbs(lane, 0.01f));
+
+    // Beside them, not yet in front: the lane point on her side
+    const auto beside = passingLane(0.0f, 0.0f, 1.0f, 2.5f, 10.0f, 0.0f, lane, margin);
+    REQUIRE(beside.has_value());
+    REQUIRE_FALSE(beside->rim);
+    REQUIRE_THAT(beside->x, WithinAbs(10.0f, 0.01f));
+    REQUIRE_THAT(beside->z, WithinAbs(2.0f, 0.01f));
+
+    // The side is kept: a pass begun on the other side stays there
+    const auto kept = passingLane(0.0f, 0.0f, 1.0f, 2.5f, 10.0f, 0.0f, lane, margin, -1.0f);
+    REQUIRE(kept.has_value());
+    REQUIRE_THAT(kept->z, WithinAbs(-2.0f, 0.01f));
+
+    // In front by the margin: the point itself
+    REQUIRE_FALSE(passingLane(0.0f, 0.0f, 4.0f, 1.0f, 10.0f, 0.0f, lane, margin).has_value());
+}

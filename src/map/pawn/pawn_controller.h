@@ -337,6 +337,17 @@ private:
     // it comes round to the player's side).
     auto FormationIntent(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
 
+    // The lane past the player (formation_math passingLane): where a
+    // formation walk aims until she is in front of them -- the point's
+    // lane beside them, or a waypoint on the rim of the circle round them
+    // -- and nothing once she is. pawn.PASSING_LANE is the lane; 0 is off.
+    struct PassLane
+    {
+        position_t point{};
+        bool       rim = false;
+    };
+    auto PassBeside(const CCharEntity* PPlayer, const position_t& point) -> std::optional<PassLane>;
+
     // The walk in on a mob: to within RoamDistance of it
     auto ApproachIntent(const CBattleEntity* PTarget) const -> Intent;
 
@@ -627,6 +638,9 @@ private:
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;
+    float             m_PassSide = 0.0f; // her side of the pass in progress (PassBeside)
+    timer::time_point m_PassStart;
+    timer::time_point m_LastPassTime;
     timer::time_point m_LastFormationClipTime;
     timer::time_point m_LastLeadDebugTime;
 

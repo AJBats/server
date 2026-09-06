@@ -1792,7 +1792,59 @@ auto CPawnController::FormationIntent(CCharEntity* PPlayer, const CBattleEntity*
     intent.arrive     = 1.0f;
     intent.tolerance  = 2.0f;
     intent.warpIfLost = true;
+
+    // Never through the player: until she is in front of them she walks
+    // the point's lane beside them (PassBeside); a waypoint on the rim of
+    // the circle round them is walked precisely, since it is close and
+    // the formation tolerance would have her stand short of it
+    if (const auto lane = PassBeside(PPlayer, followPoint); lane.has_value())
+    {
+        intent.point = lane->point;
+        if (lane->rim)
+        {
+            intent.arrive    = 0.5f;
+            intent.tolerance = 0.5f;
+        }
+    }
     return intent;
+}
+
+auto CPawnController::PassBeside(const CCharEntity* PPlayer, const position_t& point) -> std::optional<PassLane>
+{
+    const float lane = settings::get<float>("pawn.PASSING_LANE");
+    if (lane <= 0.0f)
+    {
+        return std::nullopt;
+    }
+
+    // Her side is kept for the length of one pass, so a cardian dead
+    // behind the player does not change her mind each tick; a pass a
+    // second old is over. Dead in line, the party's even numbers take one
+    // side and the odd the other
+    const float      kept        = m_Tick - m_LastPassTime <= 1s ? m_PassSide : 0.0f;
+    const float      defaultSide = GetPawnPartyPosition() % 2 == 0 ? 1.0f : -1.0f;
+    const auto&      me          = POwner->loc.p;
+    const auto&      p           = PPlayer->loc.p;
+    const auto       l           = cardian::formation::passingLane(p.x, p.z, me.x, me.z, point.x, point.z, lane, lane * 1.5f, kept, defaultSide);
+    if (!l.has_value())
+    {
+        if (kept != 0.0f)
+        {
+            ShowInfoFmt("pawn: {} centres out ahead of {} ({:.1f} s in the lane)", POwner->getName(), PPlayer->getName(), std::chrono::duration<float>(m_Tick - m_PassStart).count());
+        }
+        return std::nullopt;
+    }
+    if (kept == 0.0f)
+    {
+        m_PassSide  = l->side;
+        m_PassStart = m_Tick;
+        if (m_Tick - m_LastPassTime > 3s)
+        {
+            ShowInfoFmt("pawn: {} passes {} in the lane to her point{}", POwner->getName(), PPlayer->getName(), l->rim ? " (round them first)" : "");
+        }
+    }
+    m_LastPassTime = m_Tick;
+    return PassLane{ position_t(l->x, l->rim ? p.y : point.y, l->z, 0, 0), l->rim };
 }
 
 void CPawnController::TravelTick()

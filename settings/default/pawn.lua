@@ -141,6 +141,17 @@ xi.settings.pawn =
     FORMATION_CATCHUP_DISTANCE = 3.0,
     FORMATION_CATCHUP_SPEED    = 118,
 
+    -- The lane past the player: until a cardian is in front of them (one
+    -- and a half lanes along the way to her point) a formation walk aims
+    -- at the point's lane, this many yalms to her side of that way -- and
+    -- round the circle of this radius about the player when even that
+    -- line would cut through them. So a front-liner starting behind
+    -- overtakes beside the player and centres out only once clear ahead,
+    -- where a player running on cannot catch her in the merge. Her side
+    -- is kept for the length of one pass. 0 = off (walk straight, through
+    -- them).
+    PASSING_LANE = 3.0,
+
     -- The step back: a mob walks onto its target's exact coordinates and
     -- stops there (upstream's approach since the 2026-06 pathfind
     -- refactor), so a cardian it targets ends up under its feet. Once it
