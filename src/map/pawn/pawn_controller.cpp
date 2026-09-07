@@ -296,6 +296,25 @@ auto CPawnController::SelfDefenceTarget() -> CMobEntity*
     return PAttacker;
 }
 
+namespace
+{
+    // The errand's cost of a mob from where she stands: the walk, plus the
+    // home pull -- a mob farther from her starting point than she is costs
+    // that extra distance again, one nearer earns it back, scaled by how far
+    // out she already is (pawn::HuntRules::roam). At home it is the plain walk
+    auto errandCost(const pawn::HuntRules& rules, const position_t& from, const position_t& mob) -> float
+    {
+        const float walk = distance(from, mob);
+        if (rules.roam <= 0.0f)
+        {
+            return walk;
+        }
+        const float out  = distance(rules.homeAt, from);
+        const float pull = out / rules.roam;
+        return walk + pull * (distance(rules.homeAt, mob) - out);
+    }
+} // namespace
+
 void CPawnController::RoamTick()
 {
     m_Gambits->TickBehaviors();
@@ -324,7 +343,13 @@ void CPawnController::RoamTick()
         }
         const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
         POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-        ShowInfoFmt("world: {} rests (hp {}%{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "");
+        // Damage over time knocks her out of the kneel every tick and she
+        // kneels again: one line every so often, not one a tick
+        if (m_Tick - m_WorldRestLogTime > 15s)
+        {
+            m_WorldRestLogTime = m_Tick;
+            ShowInfoFmt("world: {} rests (hp {}%{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "");
+        }
         return;
     }
 
@@ -362,6 +387,11 @@ void CPawnController::RoamTick()
     rules.pullFirst  = 1;
     rules.aggressive = false;
     rules.links      = false;
+    if (const auto home = pawn::world::homeOf(POwner->id); home.has_value())
+    {
+        rules.homeAt = home->first;
+        rules.roam   = home->second;
+    }
     if (!m_Approach.has_value() && m_Tick >= m_WorldNextHunt)
     {
         m_WorldNextHunt = m_Tick + std::chrono::seconds(xirand::GetRandomNumber<uint32>(settings::get<uint32>("pawn.HUNT_CHECK_MIN"), settings::get<uint32>("pawn.HUNT_CHECK_MAX") + 1));
@@ -485,7 +515,7 @@ auto CPawnController::NearestPreyInZone(const uint8 level, const pawn::HuntRules
         {
             return;
         }
-        const float away = distance(POwner->loc.p, PMob->loc.p);
+        const float away = errandCost(rules, POwner->loc.p, PMob->loc.p);
         if (away < bestDist)
         {
             best     = PMob;
@@ -501,14 +531,15 @@ auto CPawnController::NearestPreyInZone(const uint8 level, const pawn::HuntRules
 auto CPawnController::NearestPrey(const position_t& around, const float radius, const uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*
 {
     CMobEntity* best     = nullptr;
-    float       bestDist = radius;
+    float       bestDist = std::numeric_limits<float>::max();
     const auto  consider = [&](CMobEntity* PMob)
     {
-        if (!huntable(PMob, level, rules))
+        if (!huntable(PMob, level, rules) || distance(around, PMob->loc.p) > radius)
         {
             return;
         }
-        const float away = distance(around, PMob->loc.p);
+        // the cost, not the distance: from far out, prey back toward home wins
+        const float away = errandCost(rules, around, PMob->loc.p);
         if (away < bestDist)
         {
             best     = PMob;

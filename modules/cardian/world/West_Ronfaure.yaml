@@ -1,0 +1,47 @@
+# West_Ronfaure: the slot table (RESEARCH.md §11.5) -- what happens where, never who.
+# Authored by walking with the user, 2026-09-07 (first draft). The zone
+# re-reads this file within ten seconds of a change and refills from it.
+# Camps are recorded here and seated only once parties exist (D5).
+slots:
+  # a fresh character's first camp outside the gate: one solo farmer, level 1-2,
+  # who roams from here and lets the errand carry her
+  - activity: farm
+    band: [1, 2]
+    count: 1
+    at: [-120.4, -59.7, 226.6]
+    spread: 8
+  # second solo camp for a fresh character, the same idea
+  - activity: farm
+    band: [1, 2]
+    count: 1
+    at: [-214.6, -60.9, 344.5]
+    spread: 8
+  # the hare field by the west road: a party-of-two exp camp, EP and DC
+  # targets, orcs and funguars nearby for the avoid-aggro test; the home pull
+  # keeps them from drifting north past (-371, 222) for long
+  - activity: camp
+    party: 2
+    band: [3, 6]
+    count: 1
+    at: [-419.3, -39.8, 117.6]
+    spread: 12
+    roam: 200
+  # the pasture south-west, sheep 7-8 with orcs, goblins and a hound roaming:
+  # the second party-of-two exp camp
+  - activity: camp
+    party: 2
+    band: [6, 9]
+    count: 1
+    at: [-443.2, -19.7, -219.5]
+    spread: 12
+    roam: 200
+  # Lake Knightwell: hares and crabs 5-6 close in, beetles 6-7, sheep and
+  # goblins 7-8 a step out -- a party-of-three exp camp, decent challenge to
+  # even match
+  - activity: camp
+    party: 3
+    band: [5, 8]
+    count: 1
+    at: [-397.3, -9.9, -484.7]
+    spread: 12
+    roam: 200

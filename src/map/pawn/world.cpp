@@ -17,6 +17,7 @@
 
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
+#include "data/yaml/read.h"
 #include "entities/char_entity.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -34,8 +35,11 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <filesystem>
 #include <fstream>
+#include <magic_enum/magic_enum.hpp>
 #include <cmath>
 #include <numbers>
 #include <optional>
@@ -59,6 +63,11 @@ namespace
         bool        pinned  = false;
 
         bool farming = false;
+
+        // The zone slot she holds (index into the zone's table), -1 for none,
+        // and its roam: the home pull's scale for the errand (0 = roams anywhere)
+        int32 slot = -1;
+        float roam = 0.0f;
 
         // KO'd: when she fell, so she fades after WORLD_KO_FADE
         std::optional<std::chrono::steady_clock::time_point> downSince;
@@ -145,11 +154,14 @@ namespace
     // would stall the map past its watchdog
     struct Pending
     {
-        std::string               name;
-        uint16                    zone = 0;
-        position_t                point{};
-        bool                      pinned  = false;
-        bool                      farming = false;
+        std::string name;
+        uint16      zone = 0;
+        position_t  point{};
+        bool        pinned  = false;
+        bool        farming = false;
+        bool        presence = false; // a slot's occupant: presence now, her body when the zone is live
+        int32       slot     = -1;
+        float       roam     = 0.0f;
     };
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
@@ -556,6 +568,296 @@ namespace
     {
         return std::chrono::duration_cast<std::chrono::microseconds>(ns).count();
     }
+    // -- The slot tables (ROADMAP D3, RESEARCH §11.5) -----------------------------
+    // A Cardian-owned YAML per zone, modules/cardian/world/<Zone>.yaml, says
+    // what happens where, never who: an activity, a level band, a count, a
+    // point and a spread. Filling a slot is a query over the census.
+    struct SlotSpec
+    {
+        std::string          activity; // farm, stand, camp (a party; its members farm solo until D5 groups them)
+        std::array<int32, 2> band{};
+        uint32               count = 0;
+        std::array<float, 3> at{};
+        float                spread = 0.0f;
+        float                roam   = 0.0f; // optional: the home pull's scale -- the farther out, the more the errand favours prey back toward the point
+        uint32               party  = 1;    // camp: members per party; seats = count x party
+
+        // A camp is recorded, not seated, until parties exist (D5): watching
+        // its members farm solo says nothing, they only struggle and die (user)
+        auto seats() const -> uint32
+        {
+            return activity == "camp" ? 0 : count;
+        }
+        auto farms() const -> bool
+        {
+            return activity == "farm" || activity == "camp";
+        }
+        bool operator==(const SlotSpec&) const = default;
+    };
+    // Unknown keys are mistakes; a missing one takes the default (roam, party)
+    constexpr glz::opts kSlotYaml{ .error_on_unknown_keys = true, .error_on_missing_keys = false };
+    struct SlotFile
+    {
+        std::vector<SlotSpec> slots;
+    };
+    struct ZoneSlots
+    {
+        bool                                  loaded = false;
+        std::vector<SlotSpec>                 specs;
+        std::vector<std::vector<std::string>> occupants; // names, by slot
+        std::filesystem::file_time_type       written{}; // the file as read, so an edit is noticed
+    };
+    std::unordered_map<uint16, ZoneSlots> zoneSlots;
+    std::unordered_set<uint16>            filledAtBoot;
+    std::unordered_map<uint16, uint32>    slotPoll;
+    constexpr uint32                      kSlotPollTicks = 25; // ~10 s of zone ticks between looks at the file
+
+    auto slotPath(CZone* PZone) -> std::filesystem::path
+    {
+        return std::filesystem::path("modules/cardian/world") / fmt::format("{}.yaml", PZone->getName());
+    }
+
+    // The file as a table; nullopt when it does not parse (logged), so a
+    // typo mid-edit never empties a zone. A missing or blank file is an
+    // empty table
+    auto parseSlots(const std::filesystem::path& path) -> std::optional<std::vector<SlotSpec>>
+    {
+        if (!std::filesystem::exists(path))
+        {
+            return std::vector<SlotSpec>{};
+        }
+        std::ifstream     in(path);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (std::ranges::all_of(text, [](const unsigned char c) { return std::isspace(c) != 0; }))
+        {
+            return std::vector<SlotSpec>{};
+        }
+        SlotFile file{};
+        if (const auto error = glz::read_yaml<kSlotYaml>(file, text); error)
+        {
+            ShowErrorFmt("world: {}: {}", path.string(), glz::format_error(error, text));
+            return std::nullopt;
+        }
+        for (const auto& spec : file.slots)
+        {
+            if (spec.activity != "farm" && spec.activity != "stand" && spec.activity != "camp")
+            {
+                ShowErrorFmt("world: {}: activity {} is not farm, stand or camp", path.string(), spec.activity);
+                return std::nullopt;
+            }
+        }
+        return std::move(file.slots);
+    }
+
+    auto loadSlots(CZone* PZone) -> ZoneSlots&
+    {
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        auto&      table  = zoneSlots[zoneId];
+        if (table.loaded)
+        {
+            return table;
+        }
+        table.loaded = true;
+        const auto      path = slotPath(PZone);
+        std::error_code ec;
+        table.written = std::filesystem::exists(path, ec) ? std::filesystem::last_write_time(path, ec) : std::filesystem::file_time_type{};
+        table.specs   = parseSlots(path).value_or(std::vector<SlotSpec>{});
+        table.occupants.assign(table.specs.size(), {});
+        // Bodies already placed keep their slots across a re-read: a slot is
+        // appended to the file, never reordered
+        for (const auto& [charid, body] : bodies)
+        {
+            if (body.zone == zoneId && body.slot >= 0 && static_cast<size_t>(body.slot) < table.specs.size())
+            {
+                table.occupants[body.slot].push_back(body.name);
+            }
+        }
+        if (!table.specs.empty())
+        {
+            ShowInfoFmt("world: {} slot(s) for {} from {}", table.specs.size(), PZone->getName(), path.string());
+        }
+        return table;
+    }
+
+    auto nameHash(const std::string& name) -> uint32
+    {
+        uint32 h = 2166136261u;
+        for (const unsigned char c : name)
+        {
+            h ^= c;
+            h *= 16777619u;
+        }
+        return h;
+    }
+
+    // A slot's occupants: in the world, level in band, not recruited, not
+    // placed anywhere already; cohort rows first (the recruitment pool is
+    // who you should meet), then by a hash of zone, slot and seed, so a
+    // visit tends to show the same faces
+    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted) -> std::vector<std::string>
+    {
+        struct Candidate
+        {
+            std::string name;
+            bool        shared = false;
+            uint32      order  = 0;
+        };
+        std::vector<Candidate> candidates;
+        if (const auto rset = db::preparedStmt("SELECT name, cohort, seed FROM cardian_census WHERE anchor <> 'bank' AND recruited = 0 AND level BETWEEN ? AND ?",
+                                               spec.band[0], spec.band[1]);
+            rset)
+        {
+            while (rset->next())
+            {
+                auto name = rset->get<std::string>("name");
+                if (charidByName.contains(name) || std::ranges::any_of(pending, [&](const Pending& p) { return p.name == name; }))
+                {
+                    continue;
+                }
+                const uint32 seed  = rset->get<uint32>("seed");
+                const uint32 order = (seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u);
+                candidates.push_back(Candidate{ .name = std::move(name), .shared = rset->get<uint32>("cohort") == 0, .order = order });
+            }
+        }
+        std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b)
+        {
+            return std::tie(a.shared, a.order, a.name) < std::tie(b.shared, b.order, b.name);
+        });
+        std::vector<std::string> out;
+        for (auto& c : candidates)
+        {
+            if (out.size() >= wanted)
+            {
+                break;
+            }
+            out.push_back(std::move(c.name));
+        }
+        return out;
+    }
+
+    // Her spot in the slot's spread, from her name, so she stands in the
+    // same place each visit
+    auto slotPoint(const SlotSpec& spec, const std::string& name) -> position_t
+    {
+        const uint32 h      = nameHash(name);
+        const float  angle  = 2.0f * std::numbers::pi_v<float> * static_cast<float>(h % 1000) / 1000.0f;
+        const float  radius = spec.spread * std::sqrt(static_cast<float>((h / 1000) % 1000) / 1000.0f);
+        position_t   point{};
+        point.x        = spec.at[0] + radius * std::cos(angle);
+        point.y        = spec.at[1];
+        point.z        = spec.at[2] + radius * std::sin(angle);
+        point.rotation = static_cast<uint8>(h % 256);
+        return point;
+    }
+
+    // Presence queued for what a slot is short of
+    auto queueSlot(CZone* PZone, const uint32 slot) -> uint32
+    {
+        const auto  zoneId = static_cast<uint16>(PZone->GetID());
+        auto&       table  = zoneSlots[zoneId];
+        const auto& spec   = table.specs[slot];
+        const auto  have   = table.occupants[slot].size();
+        if (have >= spec.seats())
+        {
+            return 0;
+        }
+        uint32 queued = 0;
+        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have))
+        {
+            pending.push_back(Pending{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam });
+            ++queued;
+        }
+        return queued;
+    }
+
+    auto fillZone(CZone* PZone) -> uint32
+    {
+        auto&  table  = loadSlots(PZone);
+        uint32 queued = 0;
+        for (uint32 slot = 0; slot < table.specs.size(); ++slot)
+        {
+            queued += queueSlot(PZone, slot);
+        }
+        return queued;
+    }
+
+    // Presence for a queued occupant: minted if need be, recorded as a body
+    // of the zone, her session row and position written; her body at once
+    // if the zone is live, else when a player arrives (the rising edge)
+    bool placePresence(const Pending& item, CZone* PZone)
+    {
+        auto row = readCensus(item.name);
+        if (!row.has_value())
+        {
+            return false;
+        }
+        if (row->charid == 0)
+        {
+            if (const auto why = loginHelpers::validateCharacterName(item.name); why.has_value())
+            {
+                ShowWarningFmt("world: census name {} cannot be minted: {}", item.name, *why);
+                return false;
+            }
+        }
+        const uint32 charid = ensureMinted(item.name, *row);
+        if (charid == 0 || bodies.contains(charid))
+        {
+            return false;
+        }
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        Body&      body   = bodies[charid];
+        body.charid       = charid;
+        body.name         = item.name;
+        body.zone         = zoneId;
+        body.point        = item.point;
+        body.pinned       = false;
+        body.farming      = item.farming;
+        body.slot         = item.slot;
+        body.roam         = item.roam;
+        body.present      = false;
+        body.censusLevel  = row->level;
+        body.seed         = row->seed;
+        charidByName[item.name] = charid;
+        if (auto& table = zoneSlots[zoneId]; item.slot >= 0 && static_cast<size_t>(item.slot) < table.occupants.size())
+        {
+            table.occupants[item.slot].push_back(item.name);
+        }
+        pawn::markPresent(charid, zoneId, item.point, row->job, row->level);
+        ShowInfoFmt("world: {} ({} {}) holds slot {} in {}", item.name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, item.slot, PZone->getName());
+        if (wasLive[zoneId])
+        {
+            fadeIn(body);
+        }
+        return true;
+    }
+
+    // Everything the zone holds returns to the pool: bodies fade, presences
+    // go, the table is dropped for a fresh read; the ring's pinned bodies stay
+    auto clearZone(CZone* PZone) -> uint32
+    {
+        const auto zoneId  = static_cast<uint16>(PZone->GetID());
+        uint32     cleared = 0;
+        for (auto it = bodies.begin(); it != bodies.end();)
+        {
+            auto& body = it->second;
+            if (body.zone != zoneId || body.pinned)
+            {
+                ++it;
+                continue;
+            }
+            if (body.present)
+            {
+                fadeOut(body, "the zone refills");
+            }
+            pawn::markAbsent(body.charid);
+            charidByName.erase(body.name);
+            it = bodies.erase(it);
+            ++cleared;
+        }
+        std::erase_if(pending, [&](const Pending& p) { return p.zone == zoneId; });
+        zoneSlots.erase(zoneId);
+        return cleared;
+    }
 } // namespace
 
 namespace pawn::world
@@ -754,11 +1056,144 @@ namespace pawn::world
         return it != bodies.end() && it->second.farming;
     }
 
+    auto homeOf(const uint32 charid) -> std::optional<std::pair<position_t, float>>
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || it->second.roam <= 0.0f || it->second.slot < 0)
+        {
+            return std::nullopt;
+        }
+        // The slot's point, not her seat in its spread: home is the camp's
+        const auto& table = zoneSlots[it->second.zone];
+        if (static_cast<size_t>(it->second.slot) >= table.specs.size())
+        {
+            return std::nullopt;
+        }
+        const auto& at = table.specs[it->second.slot].at;
+        position_t  anchor{};
+        anchor.x = at[0];
+        anchor.y = at[1];
+        anchor.z = at[2];
+        return std::make_pair(anchor, it->second.roam);
+    }
+
+    auto slots(CZone* PZone) -> std::vector<std::string>
+    {
+        std::vector<std::string> lines;
+        if (!isEnabled() || PZone == nullptr)
+        {
+            return lines;
+        }
+        const auto& table = loadSlots(PZone);
+        if (table.specs.empty())
+        {
+            lines.push_back(fmt::format("no slots for {} ({})", PZone->getName(), slotPath(PZone).string()));
+            return lines;
+        }
+        for (size_t i = 0; i < table.specs.size(); ++i)
+        {
+            const auto& spec = table.specs[i];
+            std::string who;
+            for (const auto& name : table.occupants[i])
+            {
+                const auto it      = charidByName.find(name);
+                const auto bit     = it != charidByName.end() ? bodies.find(it->second) : bodies.end();
+                const bool present = bit != bodies.end() && bit->second.present;
+                who += fmt::format("{}{}{}", who.empty() ? "" : ", ", name, present ? "" : "~");
+            }
+            lines.push_back(fmt::format("#{} {}{} L{}-{} x{} at ({:.0f}, {:.0f}, {:.0f}) spread {:.0f}{}: {}", i, spec.activity,
+                                        spec.activity == "camp" ? fmt::format(" of {}", spec.party) : "", spec.band[0], spec.band[1],
+                                        spec.count, spec.at[0], spec.at[1], spec.at[2], spec.spread, spec.roam > 0 ? fmt::format(" roam {:.0f}", spec.roam) : "",
+                                        who.empty() ? (spec.activity == "camp" ? "unseated until parties (D5)" : "nobody yet") : who));
+        }
+        return lines;
+    }
+
+    auto fill(CZone* PZone) -> uint32
+    {
+        if (!isEnabled() || PZone == nullptr)
+        {
+            return 0;
+        }
+        clearZone(PZone);
+        return fillZone(PZone);
+    }
+
+    auto addSlot(CZone* PZone, const std::string& activity, const uint8 low, const uint8 high, const uint8 count, const float spread, const position_t& at) -> bool
+    {
+        if (!isEnabled() || PZone == nullptr || (activity != "farm" && activity != "stand" && activity != "camp") || low == 0 || high < low || count == 0)
+        {
+            return false;
+        }
+        const auto path = slotPath(PZone);
+        std::filesystem::create_directories(path.parent_path());
+        const bool fresh = !std::filesystem::exists(path) || std::filesystem::file_size(path) == 0;
+        std::ofstream out(path, std::ios::app);
+        if (!out)
+        {
+            ShowErrorFmt("world: cannot write {}", path.string());
+            return false;
+        }
+        if (fresh)
+        {
+            out << "# " << PZone->getName() << ": the slot table (RESEARCH.md §11.5) -- what happens where, never who.\n"
+                << "# Written by !pawnworld slot; edit by hand and !pawnworld fill to re-read.\n"
+                << "slots:\n";
+        }
+        out << fmt::format("  - activity: {}\n    band: [{}, {}]\n    count: {}\n    at: [{:.1f}, {:.1f}, {:.1f}]\n    spread: {:.0f}\n",
+                           activity, low, high, count, at.x, at.y, at.z, spread);
+        out.close();
+        // The re-read keeps placed bodies on their slots, so only the new one fills
+        zoneSlots.erase(static_cast<uint16>(PZone->GetID()));
+        fillZone(PZone);
+        return true;
+    }
+
     void onZoneTick(CZone* PZone)
     {
         if (!isEnabled() || PZone == nullptr)
         {
             return;
+        }
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+
+        // The slot tables: on a zone's first tick its occupants are chosen
+        // and given presence, a couple a tick; their bodies come with a
+        // player. An edited file is noticed within a few seconds and the
+        // zone refills from it, so a table is authored with the zone live
+        if (settings::get<bool>("pawn.WORLD_SLOTS"))
+        {
+            if (!filledAtBoot.contains(zoneId))
+            {
+                filledAtBoot.insert(zoneId);
+                if (const auto queued = fillZone(PZone); queued > 0)
+                {
+                    ShowInfoFmt("world: {} fills {} seat(s)", PZone->getName(), queued);
+                }
+            }
+            else if (++slotPoll[zoneId] % kSlotPollTicks == 0)
+            {
+                if (const auto it = zoneSlots.find(zoneId); it != zoneSlots.end())
+                {
+                    const auto path = slotPath(PZone);
+                    std::error_code ec;
+                    const auto written = std::filesystem::exists(path, ec) ? std::filesystem::last_write_time(path, ec) : std::filesystem::file_time_type{};
+                    if (!ec && written != it->second.written)
+                    {
+                        const auto parsed = parseSlots(path);
+                        if (!parsed.has_value() || *parsed == it->second.specs)
+                        {
+                            it->second.written = written; // a bad edit, or a comment: the zone stands as it is
+                        }
+                        else
+                        {
+                            const auto cleared = clearZone(PZone);
+                            const auto queued  = fillZone(PZone);
+                            ShowInfoFmt("world: {}'s slot table changed: {} returned to the pool, {} seat(s) to fill", PZone->getName(), cleared, queued);
+                        }
+                    }
+                }
+            }
         }
 
         // The debug ring: once, in its own zone, from the first tick of any
@@ -791,6 +1226,14 @@ namespace pawn::world
             }
             const Pending item = *it;
             it                 = pending.erase(it);
+            if (item.presence)
+            {
+                if (placePresence(item, PZone))
+                {
+                    ++stoodThisTick;
+                }
+                continue;
+            }
             if (spawnByName(item.name, PZone, item.point, item.pinned))
             {
                 ++stoodThisTick;
@@ -801,8 +1244,7 @@ namespace pawn::world
             }
         }
 
-        const auto   zoneId = static_cast<uint16>(PZone->GetID());
-        const uint32 real   = realPlayersIn(PZone);
+        const uint32 real           = realPlayersIn(PZone);
         realPlayersLastTick[zoneId] = real;
 
         const auto now  = std::chrono::steady_clock::now();

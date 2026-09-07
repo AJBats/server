@@ -406,7 +406,10 @@ target_link_libraries(xi_map
     PUBLIC
         xi_map_lib
         # CARDIAN: pawn genesis mints characters through login/login_helpers.h
-        xi_connect_lib)
+        xi_connect_lib
+    PRIVATE
+        # CARDIAN: the world's slot tables (pawn/world.cpp) read YAML through data/yaml/read.h
+        glaze::glaze)
 
 if (APPLE)
     disable_lto(xi_map)

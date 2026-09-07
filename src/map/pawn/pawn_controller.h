@@ -667,6 +667,7 @@ private:
     // not
     auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
     timer::time_point m_LastHuntLogTime;
+    timer::time_point m_WorldRestLogTime; // the farmer's rest line, throttled: damage over time re-kneels her every tick
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;

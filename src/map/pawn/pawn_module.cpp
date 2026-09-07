@@ -309,6 +309,37 @@ class PawnModule : public CPPModule
             return pawn::world::farm(name, on);
         };
 
+        // The slot tables (ROADMAP D3): the zone's slots, a refill, a slot authored where you stand
+        lua["CBaseEntity"]["worldSlots"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::vector<std::string>
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            {
+                return {};
+            }
+            return pawn::world::slots(PChar->loc.zone);
+        };
+
+        lua["CBaseEntity"]["worldFill"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            {
+                return 0;
+            }
+            return pawn::world::fill(PChar->loc.zone);
+        };
+
+        lua["CBaseEntity"]["worldSlot"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& activity, const uint8 low, const uint8 high, const uint8 count, const float spread) -> bool
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            {
+                return false;
+            }
+            return pawn::world::addSlot(PChar->loc.zone, activity, low, high, count, spread, PChar->loc.p);
+        };
+
         lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool
         {
             std::ignore = PLuaBaseEntity;

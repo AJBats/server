@@ -281,6 +281,17 @@ xi.settings.pawn =
     WORLD_DEBUG_Z    = 283.0,
     WORLD_DEBUG_FARM = false,  -- the ring's bodies farm
 
+    -- The slot tables (ROADMAP D3): with WORLD_SLOTS on, a zone with a
+    -- modules/cardian/world/<Zone>.yaml fills its slots from the census on
+    -- its first tick -- every occupant gets presence (a session row, so
+    -- search lists her) and a body when a player is near. !pawnworld slot
+    -- authors a slot where you stand, slots lists them, fill re-reads.
+    WORLD_SLOTS = true,
+    -- Authoring aid: with WORLD_WHERE_LOG > 0 the map log carries the
+    -- player's position from the addon's stream every that many seconds
+    -- (the database only learns it on a zone change). 0 is off.
+    WORLD_WHERE_LOG = 0,
+
     -- Liveness: a zone is live while a real player is in it or, with
     -- WORLD_LIVE_RADIUS 1, one zone line away (the neighbours come from the
     -- zone's own exits); -1 keeps every zone live, the switch for the

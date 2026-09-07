@@ -110,6 +110,15 @@ namespace pawn
     // no side effects if she is unknown, online or already a pawn.
     bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, uint8 level);
 
+    // Presence without a body: the session row (search, the lobby's
+    // already-online check) and a position in a zone, written for an
+    // offline character, with her census job and level where search reads
+    // them. The slot tables (world.cpp) give every occupant presence at
+    // boot; her body loads when a player arrives. markAbsent takes the
+    // row away again.
+    void markPresent(uint32 charid, uint16 zoneId, const position_t& point, uint8 job, uint8 level);
+    void markAbsent(uint32 charid);
+
     // Put a live character on a job at a level, skills capped for it (the
     // code behind !pawnjob and !pawncapskills; implemented in
     // pawn_module.cpp). 0 leaves that part as it is.
@@ -167,6 +176,12 @@ namespace pawn
         uint8 pullFirst  = 1;     // 0 nearest, 1 easiest, 2 toughest
         bool  aggressive = false; // prey inside an aggressive mob's circle: allowed = that mob (the guard) is the pull, avoided = skipped, and no circle across the approach
         bool  links      = false; // pull with a linking family member near the target
+        // A world body's home pull (ROADMAP D3, user): the farther she is from
+        // her starting point, the more the errand favours prey that leads back
+        // toward it. roam is the distance at which the pull weighs as much as
+        // the walk itself; 0 = none, she roams anywhere. Drift is allowed
+        position_t homeAt{};
+        float      roam = 0.0f;
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;

@@ -592,6 +592,21 @@ namespace
             stored.moving   = words[5] == "1";
             stored.at       = timer::now();
 
+            // Where the player is, in the map log every WORLD_WHERE_LOG
+            // seconds: the slot tables are authored by walking (ROADMAP D3)
+            // and the database only learns a position on a zone change
+            if (const auto every = settings::get<uint32>("pawn.WORLD_WHERE_LOG"); every > 0)
+            {
+                static std::unordered_map<uint32, timer::time_point> lastWhere;
+                auto&                                                 last = lastWhere[boundCharID_];
+                if (stored.at - last >= std::chrono::seconds(every))
+                {
+                    last = stored.at;
+                    ShowInfoFmt("link: {} is at ({:.1f}, {:.1f}, {:.1f}) rot {} in {}, {}", PChar->getName(), stored.x, stored.y, stored.z, stored.rotation,
+                                PChar->loc.zone != nullptr ? PChar->loc.zone->getName() : "no zone", stored.moving ? "moving" : "standing");
+                }
+            }
+
             if (const auto previous = g_freshPositions.find(boundCharID_); previous != g_freshPositions.end())
             {
                 const auto& p  = previous->second;

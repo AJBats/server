@@ -54,6 +54,7 @@
 #include <bcrypt/BCrypt.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -145,6 +146,10 @@ namespace
                          PPawn->loc.p.z,
                          PPawn->id);
     }
+
+    // char_jobs columns by job id, for a level written to an offline character
+    constexpr std::array<const char*, 23> kJobColumns = { "", "war", "mnk", "whm", "blm", "rdm", "thf", "pld", "drk", "bst", "brd", "rng",
+                                                          "sam", "nin", "drg", "smn", "blu", "cor", "pup", "dnc", "sch", "geo", "run" };
 
     // Everything that turns a character standing in a zone into a pawn:
     // its own mover and brain, pawn speed, and the session row that gives
@@ -496,6 +501,32 @@ namespace pawn
 
         registerPawn(std::move(PPawn), PSummoner->id);
         return true;
+    }
+
+    void markPresent(const uint32 charid, const uint16 zoneId, const position_t& point, const uint8 job, const uint8 level)
+    {
+        db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, 0, 0) "
+                         "ON DUPLICATE KEY UPDATE accid = VALUES(accid), client_addr = 0",
+                         kPawnAccidBase + charid, charid);
+        db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", charid);
+        db::preparedStmt("UPDATE chars SET pos_zone = ?, pos_prevzone = ?, pos_rot = ?, pos_x = ?, pos_y = ?, pos_z = ? WHERE charid = ?",
+                         zoneId, zoneId, point.rotation, point.x, point.y, point.z, charid);
+        // Search reads her level from char_stats and the load from char_jobs;
+        // a body never stood is still at the mint's, so the census's level
+        // goes where her first stand would put it anyway (applyJobAndLevel
+        // seeds the job's level). Her job is left to the stand: writing it
+        // here would hide a job change from spawnAt, which caps her skills
+        // and re-dresses her for it
+        if (job != 0 && job < kJobColumns.size() && level != 0)
+        {
+            db::preparedStmt("UPDATE char_stats SET mlvl = ? WHERE charid = ? AND mjob = ?", level, charid, job);
+            db::preparedStmt(fmt::format("UPDATE char_jobs SET {0} = GREATEST({0}, ?) WHERE charid = ?", kJobColumns[job]), level, charid);
+        }
+    }
+
+    void markAbsent(const uint32 charid)
+    {
+        db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ? AND client_addr = 0", charid);
     }
 
     bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job, const uint8 level)

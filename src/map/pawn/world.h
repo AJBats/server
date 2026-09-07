@@ -7,7 +7,9 @@
   live in cardian_census; a body is minted on first need and exists only
   while a real player is in her zone -- she fades out when the zone empties
   and back in at her point when someone arrives. D0: the bodies, the fade
-  and the measurement. The farm loop is D1, the slot tables D3.
+  and the measurement; D1 the farm loop; D3 the slot tables: a Cardian-owned
+  YAML per zone (modules/cardian/world/<Zone>.yaml) says what happens where,
+  a query fills it from the census, every occupant has presence from boot.
 
 ===========================================================================
 */
@@ -20,6 +22,7 @@
 #include <chrono>
 #include <optional>
 #include <string>
+#include <vector>
 
 class CZone;
 
@@ -48,6 +51,16 @@ namespace pawn::world
     // the name meant; "all" is a name too
     auto farm(const std::string& name, bool on) -> uint32;
     auto isFarming(uint32 charid) -> bool;
+    // Her slot's home pull, if it has one: her starting point and the roam
+    // distance at which the pull weighs as much as the walk (pawn::HuntRules)
+    auto homeOf(uint32 charid) -> std::optional<std::pair<position_t, float>>;
+
+    // The zone's slot table: one line per slot with its occupants; refill
+    // the zone from a fresh read of its file (its bodies fade and return to
+    // the pool first); append a slot at a point to the file and fill it
+    auto slots(CZone* PZone) -> std::vector<std::string>;
+    auto fill(CZone* PZone) -> uint32;
+    auto addSlot(CZone* PZone, const std::string& activity, uint8 low, uint8 high, uint8 count, float spread, const position_t& at) -> bool;
 
     // Once per zone tick: the debug ring, then fade with the zone's real
     // players
