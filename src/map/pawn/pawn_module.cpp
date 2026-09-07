@@ -180,7 +180,11 @@ namespace pawn
         const bool leveled = level != 0 && (changedJob || PChar->GetMLevel() != level);
         if (leveled)
         {
+            // setLevel parks her one point short of the next level (the GM
+            // verb's convention); a census level is the level's floor
             entity.setLevel(level);
+            PChar->jobs.exp[job != 0 ? job : static_cast<uint8>(PChar->GetMJob())] = 0;
+            charutils::SaveCharExp(PChar, PChar->GetMJob());
         }
         if (changedJob || leveled)
         {
@@ -296,17 +300,13 @@ class PawnModule : public CPPModule
             {
                 return 0;
             }
-            return pawn::world::ring(PChar->loc.zone, PChar->loc.p, count, std::nullopt);
+            return pawn::world::ring(PChar->loc.zone, PChar->loc.p, count, false);
         };
 
-        lua["CBaseEntity"]["worldWalk"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> uint32
+        lua["CBaseEntity"]["worldFarm"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> uint32
         {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return 0;
-            }
-            return pawn::world::walk(name, PChar->loc.p);
+            std::ignore = PLuaBaseEntity;
+            return pawn::world::farm(name, on);
         };
 
         lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool

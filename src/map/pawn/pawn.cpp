@@ -519,6 +519,16 @@ namespace pawn
         }
         PPawn->clearPacketList();
 
+        // A body that fell and faded stands whole again: the void takes her
+        // death as it takes her drops
+        if (PPawn->health.hp == 0)
+        {
+            PPawn->health.hp = PPawn->GetMaxHP();
+            PPawn->health.mp = PPawn->GetMaxMP();
+            PPawn->animation = xi::Animation::None;
+            ShowInfoFmt("pawn: {} ({}) stands up whole after a KO", PPawn->getName(), charid);
+        }
+
         // At the point, on the mesh
         PPawn->loc.p = point;
         if (const auto* navMesh = PZone->navMesh(); navMesh != nullptr)
@@ -566,7 +576,7 @@ namespace pawn
             PPawn->clearPacketList();
         }
 
-        if ((job > 0 && static_cast<uint8>(PPawn->GetMJob()) != job) || (level > 0 && PPawn->GetMLevel() != level))
+        if ((job > 0 && static_cast<uint8>(PPawn->GetMJob()) != job) || (level > 0 && (PPawn->GetMLevel() < level || PPawn->GetMLevel() > level + 1)))
         {
             applyJobAndLevel(PPawn.get(), job, level);
             PPawn->clearPacketList();

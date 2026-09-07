@@ -27,6 +27,9 @@ namespace pawn::world
 {
     bool isEnabled();
 
+    // Is this character one of the world's bodies, standing right now
+    auto isBody(uint32 charid) -> bool;
+
     // Stand the named census adventurer at the point in the zone, minted on
     // first use. A pinned body never fades. False if she is not in the
     // census, already present, or the world is off.
@@ -36,18 +39,15 @@ namespace pawn::world
     auto despawnByName(const std::string& name) -> uint32;
 
     // Queue count census bodies for a ring round the centre, pinned, a few
-    // standing per zone tick; each walks to walkTo when given. How many
-    // were queued
-    auto ring(CZone* PZone, const position_t& centre, uint32 count, const std::optional<position_t>& walkTo) -> uint32;
+    // standing per zone tick, farming if asked. How many were queued
+    auto ring(CZone* PZone, const position_t& centre, uint32 count, bool farming) -> uint32;
 
-    // The named present body, or every one for "all", walks between where
-    // she stands and `to`, back and forth; how many set off
-    auto walk(const std::string& name, const position_t& to) -> uint32;
-
-    // The controller's side of a walk: the point she heads for next, or
-    // nullptr when she has no walk; and her word that she got there
-    auto walkTargetOf(uint32 charid) -> const position_t*;
-    void walkArrived(uint32 charid);
+    // Farming (ROADMAP D1): on, she picks mobs in her band within the hunt
+    // radius, and with none in reach heads for the nearest farther off and
+    // fights what she meets (CPawnController::RoamTick). How many bodies
+    // the name meant; "all" is a name too
+    auto farm(const std::string& name, bool on) -> uint32;
+    auto isFarming(uint32 charid) -> bool;
 
     // Once per zone tick: the debug ring, then fade with the zone's real
     // players

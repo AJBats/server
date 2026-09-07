@@ -104,8 +104,10 @@ namespace pawn
     // (snapped to the navmesh), with no summoner and no party; her
     // controller runs as a world body (Mode::Roam). Her first spawn gives
     // her the starter kit (a basic job's: an advanced main is minted as a
-    // Warrior), then the job and level asked for, skills capped. False
-    // with no side effects if she is unknown, online or already a pawn.
+    // Warrior), then the job and level asked for, skills capped: raised to
+    // the level when below it, left alone at it or one past it (a farmer's
+    // sneaked ding stands), pulled down only from further past. False with
+    // no side effects if she is unknown, online or already a pawn.
     bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, uint8 level);
 
     // Put a live character on a job at a level, skills capped for it (the

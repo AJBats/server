@@ -17,8 +17,14 @@
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
 #include "entities/char_entity.h"
+#include "item_container.h"
+#include "items/item.h"
 #include "login/login_helpers.h"
+#include "utils/charutils.h"
+#include "utils/itemutils.h"
 #include "map_session.h"
+#include "navmesh/navmesh.h"
+#include "status_effect_container.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -37,6 +43,8 @@
 #include <unordered_set>
 #include <vector>
 
+using namespace std::chrono_literals;
+
 namespace
 {
     struct Body
@@ -48,11 +56,24 @@ namespace
         bool        present = false;
         bool        pinned  = false;
 
-        // The walk: between her spot and `to`; `leg` says which is next
-        bool       walking = false;
-        position_t from{};
-        position_t to{};
-        uint8      leg = 1;
+        bool farming = false;
+
+        // KO'd: when she fell, so she fades after WORLD_KO_FADE
+        std::optional<std::chrono::steady_clock::time_point> downSince;
+
+        // Her bag as she stood: slot -> item and quantity. Anything beyond
+        // it is a drop, and drops go to the void (sweepBag)
+        struct Kept
+        {
+            uint16 itemId   = 0;
+            uint32 quantity = 0;
+        };
+        std::unordered_map<uint8, Kept> kit;
+        uint32                          sweepTick = 0;
+
+        // Her census level and seed: the exp cap (sweepBag) is drawn from them
+        uint8  censusLevel = 1;
+        uint32 seed        = 0;
     };
 
     std::unordered_map<uint32, Body>        bodies; // by charid
@@ -125,8 +146,8 @@ namespace
         std::string               name;
         uint16                    zone = 0;
         position_t                point{};
-        bool                      pinned = false;
-        std::optional<position_t> walkTo;
+        bool                      pinned  = false;
+        bool                      farming = false;
     };
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
@@ -140,11 +161,12 @@ namespace
         uint8  nation = 0;
         uint8  job    = 1;
         uint8  level  = 1;
+        uint32 seed   = 0;
     };
 
     auto readCensus(const std::string& name) -> std::optional<CensusRow>
     {
-        const auto rset = db::preparedStmt("SELECT charid, race, face, size, nation, job, level FROM cardian_census WHERE name = ?", name);
+        const auto rset = db::preparedStmt("SELECT charid, race, face, size, nation, job, level, seed FROM cardian_census WHERE name = ?", name);
         if (!rset || !rset->next())
         {
             return std::nullopt;
@@ -157,6 +179,7 @@ namespace
             .nation = rset->get<uint8>("nation"),
             .job    = rset->get<uint8>("job"),
             .level  = rset->get<uint8>("level"),
+            .seed   = rset->get<uint32>("seed"),
         };
     }
 
@@ -234,6 +257,132 @@ namespace
         return name;
     }
 
+    void snapshotBag(Body& body)
+    {
+        body.kit.clear();
+        const auto* PPawn   = pawn::findPawn(body.charid);
+        const auto* storage = PPawn != nullptr ? PPawn->getStorage(LOC_INVENTORY) : nullptr;
+        if (storage == nullptr)
+        {
+            return;
+        }
+        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
+        {
+            if (const auto* PItem = storage->GetItem(slot); PItem != nullptr)
+            {
+                body.kit[slot] = Body::Kept{ .itemId = PItem->getID(), .quantity = PItem->getQuantity() };
+            }
+        }
+    }
+
+    // Skill-up notation for levels: 1.70 is level 1 at 70 % of the way to
+    // 2. Her world cap is her census level plus a fraction her seed draws
+    // between WORLD_EXP_CAP_MIN and WORLD_EXP_CAP_MAX, different per farmer
+    // so none ding in step; it moves when the census moves
+    auto capOf(const Body& body) -> float
+    {
+        const uint32 mix  = (body.seed * 2654435761u) ^ (static_cast<uint32>(body.censusLevel) * 40503u);
+        const float  low  = settings::get<float>("pawn.WORLD_EXP_CAP_MIN") / 100.0f;
+        const float  high = settings::get<float>("pawn.WORLD_EXP_CAP_MAX") / 100.0f;
+        return static_cast<float>(body.censusLevel) + low + (high - low) * static_cast<float>(mix % 1000u) / 1000.0f;
+    }
+
+    auto progressOf(const uint8 level, const uint32 exp) -> float
+    {
+        const auto tnl = charutils::GetExpNEXTLevel(level);
+        return static_cast<float>(level) + (tnl > 0 ? static_cast<float>(exp) / static_cast<float>(tnl) : 0.0f);
+    }
+
+    // The exp that puts a character of this level at the cap, or as near as
+    // her level allows: none if she is already past the cap's level
+    auto expAt(const float cap, const uint8 level) -> uint32
+    {
+        const float room = std::clamp(cap - static_cast<float>(level), 0.0f, 1.0f);
+        return static_cast<uint32>(room * static_cast<float>(charutils::GetExpNEXTLevel(level)));
+    }
+
+    // A world body's kills pay her no drops: a solo pool hands one over on
+    // arrival, so it is taken back here -- anything in her bag beyond what
+    // she stood with is dropped (charutils::DropItem, the player's own
+    // throw-away). Her exp is real, under her world cap (user 2026-09-07):
+    // one number for where she is, one for the cap, one check. A big kill
+    // at a low level can land her a level past the cap; that ding stands,
+    // and the check holds her at that level's floor. The census owns her
+    // level (RESEARCH §11.3); this is how it shows
+    void sweepBag(Body& body)
+    {
+        auto* PPawn = pawn::findPawn(body.charid);
+        if (PPawn == nullptr)
+        {
+            return;
+        }
+        // Her census level, re-read now and then so a raise reaches a
+        // standing body: the cap moves and her next kills carry her over
+        if (body.sweepTick % 75 == 0)
+        {
+            if (const auto rset = db::preparedStmt("SELECT level FROM cardian_census WHERE charid = ?", body.charid); rset && rset->next())
+            {
+                const auto now = rset->get<uint8>("level");
+                if (now != body.censusLevel)
+                {
+                    body.censusLevel = now;
+                    ShowInfoFmt("world: {}'s cap is {:.2f} now", body.name, capOf(body));
+                }
+            }
+            // Signet lapses after three hours; a body standing that long
+            // takes it again, as she does at every fade-in
+            if (settings::get<bool>("pawn.WORLD_SIGNET") && !PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Signet))
+            {
+                PPawn->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, std::chrono::hours(3));
+                PPawn->clearPacketList();
+            }
+        }
+        const auto  job   = PPawn->GetMJob();
+        const uint8 level = PPawn->GetMLevel();
+        auto&       exp   = PPawn->jobs.exp[static_cast<uint8>(job)];
+        const float cap   = capOf(body);
+        if (progressOf(level, exp) > cap)
+        {
+            exp = expAt(cap, level);
+            charutils::SaveCharExp(PPawn, job);
+        }
+        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+        if (storage == nullptr)
+        {
+            return;
+        }
+        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
+        {
+            const auto* PItem = storage->GetItem(slot);
+            if (PItem == nullptr)
+            {
+                continue;
+            }
+            const auto kept   = body.kit.find(slot);
+            uint32     excess = 0;
+            if (kept == body.kit.end() || kept->second.itemId != PItem->getID())
+            {
+                excess = PItem->getQuantity();
+            }
+            else if (PItem->getQuantity() > kept->second.quantity)
+            {
+                excess = PItem->getQuantity() - kept->second.quantity;
+            }
+            if (excess == 0)
+            {
+                continue;
+            }
+            const uint16 itemId = PItem->getID();
+            charutils::DropItem(PPawn, LOC_INVENTORY, slot, static_cast<int32>(excess), itemId);
+            PPawn->clearPacketList();
+            if (pawn::world::tickDebug())
+            {
+                const CItem* PKnown = xi::items::lookup(itemId);
+                ShowInfoFmt("world: {}'s {} x{} goes to the void", body.name, PKnown != nullptr ? PKnown->getName() : std::to_string(itemId), excess);
+            }
+        }
+    }
+
     bool fadeIn(Body& body)
     {
         auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(body.zone));
@@ -250,7 +399,30 @@ namespace
         {
             return false;
         }
-        body.present = true;
+        body.present     = true;
+        body.censusLevel = row->level;
+        body.seed        = row->seed;
+        snapshotBag(body);
+        if (pawn::world::tickDebug())
+        {
+            if (const auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
+            {
+                ShowInfoFmt("world: {} stands at {:.2f} under a cap of {:.2f}", body.name,
+                            progressOf(PPawn->GetMLevel(), PPawn->jobs.exp[static_cast<uint8>(PPawn->GetMJob())]), capOf(body));
+            }
+        }
+
+        // Her nation's Signet, as the gate guard would give it: her kills in
+        // a conquest region then count for her nation as any player's do,
+        // and the farmers round the player feed real influence (ROADMAP F)
+        if (settings::get<bool>("pawn.WORLD_SIGNET"))
+        {
+            if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr && !PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Signet))
+            {
+                PPawn->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, std::chrono::hours(3));
+                PPawn->clearPacketList();
+            }
+        }
         ShowInfoFmt("world: {} fades in at {} ({:.1f}, {:.1f}, {:.1f})", body.name, PZone->getName(), body.point.x, body.point.y, body.point.z);
         return true;
     }
@@ -265,7 +437,7 @@ namespace
         // still lists her where she stood, at her job and level
         pawn::despawnById(body.charid, true);
         body.present = false;
-        body.walking = false;
+        body.downSince.reset();
         ShowInfoFmt("world: {} fades out ({}), still online", body.name, why);
     }
 
@@ -292,6 +464,12 @@ namespace pawn::world
     bool isEnabled()
     {
         return pawn::isEnabled() && settings::get<bool>("pawn.WORLD_ENABLE");
+    }
+
+    auto isBody(const uint32 charid) -> bool
+    {
+        const auto it = bodies.find(charid);
+        return it != bodies.end() && it->second.present;
     }
 
     auto tickDebug() -> bool
@@ -329,7 +507,8 @@ namespace pawn::world
         body.zone          = static_cast<uint16>(PZone->GetID());
         body.point         = point;
         body.pinned        = pinned;
-        body.walking       = false;
+        body.farming       = false;
+        body.downSince.reset();
         charidByName[name] = charid;
         if (!fadeIn(body))
         {
@@ -375,7 +554,7 @@ namespace pawn::world
         return faded;
     }
 
-    auto ring(CZone* PZone, const position_t& centre, const uint32 count, const std::optional<position_t>& walkTo) -> uint32
+    auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
     {
         if (!isEnabled() || PZone == nullptr || count == 0)
         {
@@ -427,70 +606,52 @@ namespace pawn::world
             position_t  point = centre;
             point.x           = centre.x + radius * std::cos(angle);
             point.z           = centre.z + radius * std::sin(angle);
-            pending.push_back(Pending{ .name = name, .zone = static_cast<uint16>(PZone->GetID()), .point = point, .pinned = true, .walkTo = walkTo });
+            pending.push_back(Pending{ .name = name, .zone = static_cast<uint16>(PZone->GetID()), .point = point, .pinned = true, .farming = farming });
             ++queued;
         }
         return queued;
     }
 
-    auto walk(const std::string& rawName, const position_t& to) -> uint32
+    // Every present body the name means: one, or all of them
+    template <typename Fn>
+    auto forNamed(const std::string& rawName, Fn&& fn) -> uint32
     {
-        uint32     set   = 0;
-        const auto start = [&](Body& body)
-        {
-            auto* PPawn = pawn::findPawn(body.charid);
-            if (!body.present || PPawn == nullptr)
-            {
-                return;
-            }
-            body.walking = true;
-            body.from    = PPawn->loc.p;
-            body.to      = to;
-            body.leg     = 1;
-            ++set;
-        };
-
+        uint32 n = 0;
         if (rawName == "all")
         {
             for (auto& [charid, body] : bodies)
             {
-                start(body);
+                if (body.present && fn(body))
+                {
+                    ++n;
+                }
             }
-            return set;
+            return n;
         }
         if (const auto it = charidByName.find(properName(rawName)); it != charidByName.end())
         {
-            if (const auto bit = bodies.find(it->second); bit != bodies.end())
+            if (const auto bit = bodies.find(it->second); bit != bodies.end() && bit->second.present && fn(bit->second))
             {
-                start(bit->second);
+                ++n;
             }
         }
-        return set;
+        return n;
     }
 
-    auto walkTargetOf(const uint32 charid) -> const position_t*
+    auto farm(const std::string& rawName, const bool on) -> uint32
+    {
+        return forNamed(rawName, [&](Body& body)
+        {
+            body.farming = on;
+            ShowInfoFmt("world: {} farms {}", body.name, on ? "on" : "off");
+            return true;
+        });
+    }
+
+    auto isFarming(const uint32 charid) -> bool
     {
         const auto it = bodies.find(charid);
-        if (it == bodies.end() || !it->second.walking)
-        {
-            return nullptr;
-        }
-        return it->second.leg == 1 ? &it->second.to : &it->second.from;
-    }
-
-    void walkArrived(const uint32 charid)
-    {
-        if (const auto it = bodies.find(charid); it != bodies.end())
-        {
-            it->second.leg = it->second.leg == 1 ? 0 : 1;
-            if (tickDebug())
-            {
-                if (const auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
-                {
-                    ShowInfoFmt("world: {} turns round at ({:.1f}, {:.1f}, {:.1f})", it->second.name, PPawn->loc.p.x, PPawn->loc.p.y, PPawn->loc.p.z);
-                }
-            }
-        }
+        return it != bodies.end() && it->second.farming;
     }
 
     void onZoneTick(CZone* PZone)
@@ -512,9 +673,9 @@ namespace pawn::world
                     centre.x = settings::get<float>("pawn.WORLD_DEBUG_X");
                     centre.y = settings::get<float>("pawn.WORLD_DEBUG_Y");
                     centre.z = settings::get<float>("pawn.WORLD_DEBUG_Z");
-                    const std::optional<position_t> walkTo = settings::get<bool>("pawn.WORLD_DEBUG_WALK") ? std::optional{ centre } : std::nullopt;
-                    const auto                      queued = ring(PRingZone, centre, count, walkTo);
-                    ShowInfoFmt("world: debug ring of {} in {} ({} queued{})", count, PRingZone->getName(), queued, walkTo ? ", walking" : "");
+                    const bool farming = settings::get<bool>("pawn.WORLD_DEBUG_FARM");
+                    const auto queued  = ring(PRingZone, centre, count, farming);
+                    ShowInfoFmt("world: debug ring of {} in {} ({} queued{})", count, PRingZone->getName(), queued, farming ? ", farming" : "");
                 }
             }
         }
@@ -533,9 +694,9 @@ namespace pawn::world
             if (spawnByName(item.name, PZone, item.point, item.pinned))
             {
                 ++stoodThisTick;
-                if (item.walkTo.has_value())
+                if (item.farming)
                 {
-                    walk(item.name, *item.walkTo);
+                    farm(item.name, true);
                 }
             }
         }
@@ -545,6 +706,35 @@ namespace pawn::world
         realPlayersLastTick[zoneId] = real;
 
         const auto now  = std::chrono::steady_clock::now();
+
+        // KO'd: she lies there WORLD_KO_FADE seconds, then fades; the next
+        // fade-in stands her whole (spawnAt)
+        for (auto& [charid, body] : bodies)
+        {
+            if (body.zone != zoneId || !body.present)
+            {
+                continue;
+            }
+            if (++body.sweepTick % 5 == 0)
+            {
+                sweepBag(body);
+            }
+            const auto* PPawn = pawn::findPawn(charid);
+            if (PPawn == nullptr || !PPawn->isDead())
+            {
+                body.downSince.reset();
+                continue;
+            }
+            if (!body.downSince.has_value())
+            {
+                body.downSince = now;
+                ShowInfoFmt("world: {} is KO'd; fades in {} s", body.name, settings::get<uint32>("pawn.WORLD_KO_FADE"));
+            }
+            else if (now - *body.downSince >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_FADE")))
+            {
+                fadeOut(body, "KO'd");
+            }
+        }
         const bool live = isLive(PZone, real);
         auto&      seen = lastLive.try_emplace(zoneId, now).first->second;
         if (live)

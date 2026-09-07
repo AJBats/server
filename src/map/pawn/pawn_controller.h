@@ -35,6 +35,10 @@
 #include <string_view>
 #include <vector>
 
+namespace pawn
+{
+    struct HuntRules;
+}
 class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
@@ -428,9 +432,9 @@ private:
     // they are still here (NotePlayerMagic)
     void WaitTick(CCharEntity* PPlayer);
 
-    // A world body's idle tick: gambit behaviours and self-cures as on a
-    // wait, and a walk set by pawn::world, back and forth. The farm loop
-    // lands here (ROADMAP D1)
+    // A world body's idle tick (ROADMAP D1): rest when low, answer a mob on
+    // her, and farming, pick a mob in her band within reach or head toward
+    // the nearest farther off and fight what she meets
     void RoamTick();
     auto SelfDefenceTarget() -> CMobEntity*;
     void NotePlayerMagic(const CCharEntity* PPlayer);
@@ -449,6 +453,19 @@ private:
     // was in the band but not pulled, and why (a few at most), for the
     // quiet hunt's line
     auto PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped = nullptr) const -> CMobEntity*;
+    // The same pick round any point, for a level, under the rules given:
+    // the world's farmers (ROADMAP D1) measure from their route point
+    auto PickHuntTarget(const position_t& around, uint8 level, const pawn::HuntRules& rules, std::string* skipped = nullptr) const -> CMobEntity*;
+
+    // The walk in on a mob and the draw at the door, shared by party pawns
+    // and world bodies (see the definition). True when the tick was hers
+    auto ApproachTick(const position_t& anchor, uint8 level, const std::string& pacing, bool hunting, CBattleEntity* PPartyTarget) -> bool;
+
+    // The hunt's eligibility (idle, unclaimed, ordinary, in the band), and
+    // the nearest such mob within a radius of a point: the farmer's errand
+    static auto huntable(CMobEntity* PMob, uint8 level, const pawn::HuntRules& rules) -> bool;
+    auto        NearestPrey(const position_t& around, float radius, uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*;
+    auto        NearestPreyInZone(uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*;
 
     // Home point with the player: a KO'd cardian whose player has died and
     // come back at their home point goes there too
@@ -542,6 +559,13 @@ private:
 
     bool              m_Hunting    = false;
     bool              m_World      = false;
+    timer::time_point m_WorldNextHunt{}; // the farmer's next hunt check
+    // The farmer's errand: where she is heading when nothing is in reach,
+    // when she last moved toward it, and the beat's pause before the next
+    std::optional<position_t> m_WorldHeading;
+    timer::time_point         m_WorldPauseUntil{};
+    timer::time_point         m_RoamStillSince{};
+    position_t                m_RoamLastPos{};
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
     bool              m_WaitOrdered = false;

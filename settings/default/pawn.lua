@@ -271,15 +271,15 @@ xi.settings.pawn =
     WORLD_TICK_DEBUG = false,
 
     -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
-    -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade), and
-    -- with WORLD_DEBUG_WALK each walks between her spot and the centre.
-    -- The measurement runs with no client attached. 0 = no ring.
+    -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade),
+    -- farming if WORLD_DEBUG_FARM. The measurements run with no client
+    -- attached. 0 = no ring.
     WORLD_DEBUG_RING = 0,
     WORLD_DEBUG_ZONE = 100,    -- West Ronfaure
     WORLD_DEBUG_X    = -300.0, -- the rabbit field inside the gate
     WORLD_DEBUG_Y    = -51.0,
     WORLD_DEBUG_Z    = 283.0,
-    WORLD_DEBUG_WALK = false,
+    WORLD_DEBUG_FARM = false,  -- the ring's bodies farm
 
     -- Liveness: a zone is live while a real player is in it or, with
     -- WORLD_LIVE_RADIUS 1, one zone line away (the neighbours come from the
@@ -294,4 +294,43 @@ xi.settings.pawn =
     -- log says how many bodies stand in how many zones, what a body's
     -- tick costs, and the process's CPU and memory. 0 turns it off.
     WORLD_LOAD_REPORT = 300,
+
+    -- The farmer (ROADMAP D1). She rests when HP is under WORLD_REST_HP
+    -- percent, or MP under WORLD_REST_MP for a job with any, until both
+    -- are back to WORLD_REST_UNTIL. On the hunt's cadence she picks a mob
+    -- checked between WORLD_HUNT_MIN and WORLD_HUNT_MAX (0 too weak, 1
+    -- incredibly easy, 2 easy prey, 3 decent challenge, 4 even match,
+    -- 5 tough) within HUNT_RADIUS of herself, by the party's own pull
+    -- rules. Nothing in reach, she scans wider in 10-yalm steps from
+    -- WORLD_SCAN_MIN to WORLD_SCAN_MAX, takes the nearest in her band and
+    -- heads for a spot WORLD_HEADING_SLOP yalms off it, fighting what she
+    -- meets; there with nothing found, she pauses WORLD_HEADING_PAUSE
+    -- seconds and looks again. KO'd, she lies where she fell for
+    -- WORLD_KO_FADE seconds before she fades, to stand whole next time.
+    WORLD_REST_HP       = 60,
+    WORLD_REST_MP       = 30,
+    WORLD_REST_UNTIL    = 95,
+    WORLD_HUNT_MIN      = 2,
+    WORLD_HUNT_MAX      = 3,
+    WORLD_SCAN_MIN      = 20,
+    WORLD_SCAN_MAX      = 40,
+    WORLD_HEADING_SLOP  = 6,
+    WORLD_HEADING_PAUSE = 3,
+    WORLD_KO_FADE       = 30,
+
+    -- Her nation's Signet when she stands (three hours, renewed at each
+    -- fade-in): her kills in a conquest region count for her nation the
+    -- way a player's do, so the farmers round the player feed conquest
+    -- (ROADMAP F).
+    WORLD_SIGNET        = true,
+
+    -- Her world cap, in skill-up notation: her census level plus a
+    -- fraction her seed draws between these two percentages, so 1.70 is
+    -- level 1 at 70 % of the way to 2. Different per farmer, so none ding
+    -- in step. Her exp is real under it: free below the cap's level, held
+    -- at the fraction on it, held at zero past it (a big kill at a low
+    -- level can land her one level over; that ding stands, and nothing
+    -- carries her a second). The census moving moves the cap.
+    WORLD_EXP_CAP_MIN   = 50,
+    WORLD_EXP_CAP_MAX   = 95,
 }

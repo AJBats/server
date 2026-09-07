@@ -299,40 +299,224 @@ auto CPawnController::SelfDefenceTarget() -> CMobEntity*
 void CPawnController::RoamTick()
 {
     m_Gambits->TickBehaviors();
-    if (!POwner->PAI->IsCurrentState<CMagicState>())
+
+    // Rest when low, up when whole: the Healing status is the real thing,
+    // kneel and regen ticks, and a rest is never taken mid-walk
+    const bool  resting  = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    const bool  hasMana  = POwner->GetMaxMP() > 0;
+    const bool  low      = POwner->GetHPP() < settings::get<uint8>("pawn.WORLD_REST_HP") || (hasMana && POwner->GetMPP() < settings::get<uint8>("pawn.WORLD_REST_MP"));
+    const bool  whole    = POwner->GetHPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL") && (!hasMana || POwner->GetMPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL"));
+    auto*       PPathFind = POwner->PAI->PathFind.get();
+    if (resting)
     {
-        m_Gambits->Tick(m_Tick, false);
-        IdleEmote(nullptr);
+        if (!whole)
+        {
+            return;
+        }
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        ShowInfoFmt("world: {} is up again (hp {}%{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "");
+    }
+    else if (low && !POwner->PAI->IsCurrentState<CMagicState>())
+    {
+        if (PPathFind != nullptr && PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
+        ShowInfoFmt("world: {} rests (hp {}%{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "");
+        return;
     }
 
-    auto* PPathFind = POwner->PAI->PathFind.get();
+    // Her ground is hers to hold: a mob that has come for her is answered
+    if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
+    {
+        Draw(PMob, ApproachKind::Order, "on her, roaming");
+        return;
+    }
+
     if (PPathFind == nullptr || POwner->GetSpeed() <= 0)
     {
         return;
     }
-    if (const auto* target = pawn::world::walkTargetOf(POwner->id); target != nullptr)
+    RefreshDangers(nullptr);
+
+    if (!pawn::world::isFarming(POwner->id))
     {
-        if (distance(POwner->loc.p, *target) < 1.5f)
+        Move(Intent{});
+        if (!PPathFind->IsFollowingPath() && !POwner->PAI->IsCurrentState<CMagicState>())
         {
-            pawn::world::walkArrived(POwner->id);
+            m_Gambits->Tick(m_Tick, false);
+            IdleEmote(nullptr);
+        }
+        return;
+    }
+
+    // Farming: the party's own hunt, round herself. On the hunt's cadence
+    // a mob in her band within the hunt radius is the pick, judged by the
+    // pull rules as any hunter's, then the shared walk in (ApproachTick).
+    // No party paces her; her rest above is her pacing
+    pawn::HuntRules rules{};
+    rules.minCheck   = settings::get<uint8>("pawn.WORLD_HUNT_MIN");
+    rules.maxCheck   = settings::get<uint8>("pawn.WORLD_HUNT_MAX");
+    rules.pullFirst  = 1;
+    rules.aggressive = false;
+    rules.links      = false;
+    if (!m_Approach.has_value() && m_Tick >= m_WorldNextHunt)
+    {
+        m_WorldNextHunt = m_Tick + std::chrono::seconds(xirand::GetRandomNumber<uint32>(settings::get<uint32>("pawn.HUNT_CHECK_MIN"), settings::get<uint32>("pawn.HUNT_CHECK_MAX") + 1));
+        std::string skipped;
+        if (auto* PMob = PickHuntTarget(POwner->loc.p, POwner->GetMLevel(), rules, &skipped); PMob != nullptr)
+        {
+            const auto beat = ReactionBeat();
+            m_HuntBeat      = beat;
+            m_Approach      = Approach{ EntityId(PMob), ApproachKind::Hunt };
+            m_WorldHeading.reset();
+            PPathFind->Clear();
+            Transition(Mode::Approach, fmt::format("sets off after {} ({}{})", PMob->getName(),
+                                                   magic_enum::enum_name(charutils::CheckMob(POwner->GetMLevel(), PMob)),
+                                                   beat > 0s ? fmt::format(", in {:.1f}s", std::chrono::duration<float>(beat).count()) : ""));
+            Schedule(Pending::Act::SetOff, PMob, beat);
+            return;
+        }
+    }
+
+    // Nothing in reach: an errand. She looks wider in steps, WORLD_SCAN_MIN
+    // to WORLD_SCAN_MAX yalms, takes the nearest mob in her band and heads
+    // for a spot WORLD_HEADING_SLOP yalms off it -- not a pull, a direction;
+    // whatever she meets on the way is the fight, through the pick above.
+    // At the spot with nothing found, or stood still beside one the mesh
+    // would not let her reach, she pauses a beat and looks again
+    if (m_WorldHeading.has_value())
+    {
+        if (distance(POwner->loc.p, m_RoamLastPos) > 0.5f)
+        {
+            m_RoamLastPos    = POwner->loc.p;
+            m_RoamStillSince = m_Tick;
+        }
+        const bool stalled = !PPathFind->IsFollowingPath() && m_Tick - m_RoamStillSince > 3s;
+        if (distance(POwner->loc.p, *m_WorldHeading) < 2.0f || stalled)
+        {
+            if (pawn::world::tickDebug())
+            {
+                ShowInfoFmt("world: {} {} her heading with nothing found; a beat, then looks again", POwner->getName(), stalled ? "gets no nearer" : "reaches");
+            }
+            m_WorldHeading.reset();
+            m_WorldPauseUntil = m_Tick + std::chrono::seconds(settings::get<uint32>("pawn.WORLD_HEADING_PAUSE"));
             PPathFind->Clear();
             return;
         }
-        if (!PPathFind->IsFollowingPath() && !PPathFind->PathTo(*target, PATHFLAG_RUN))
+        Intent intent{};
+        intent.kind      = Intent::Kind::Path;
+        intent.point     = *m_WorldHeading;
+        intent.arrive    = 1.5f;
+        intent.tolerance = 2.0f;
+        Move(intent);
+        return;
+    }
+    m_RoamStillSince = m_Tick;
+    m_RoamLastPos    = POwner->loc.p;
+    if (m_Tick < m_WorldPauseUntil)
+    {
+        Move(Intent{});
+        if (!POwner->PAI->IsCurrentState<CMagicState>())
         {
-            // No path that way: turn round
+            m_Gambits->Tick(m_Tick, false);
+            IdleEmote(nullptr);
+        }
+        return;
+    }
+
+    const float scanMin = settings::get<float>("pawn.WORLD_SCAN_MIN");
+    const float scanMax = settings::get<float>("pawn.WORLD_SCAN_MAX");
+    for (float radius = scanMin; radius <= scanMax + 0.01f; radius += 10.0f)
+    {
+        if (auto* PMob = NearestPrey(POwner->loc.p, radius, POwner->GetMLevel(), rules); PMob != nullptr)
+        {
+            const float slop  = settings::get<float>("pawn.WORLD_HEADING_SLOP");
+            const float angle = xirand::GetRandomNumber(2.0f * std::numbers::pi_v<float>);
+            position_t  spot  = PMob->loc.p;
+            spot.x += slop * std::cos(angle);
+            spot.z += slop * std::sin(angle);
+            m_WorldHeading = spot;
             if (pawn::world::tickDebug())
             {
-                ShowInfoFmt("world: {} finds no path to ({:.1f}, {:.1f}, {:.1f})", POwner->getName(), target->x, target->y, target->z);
+                ShowInfoFmt("world: {} heads toward {} ({}, {:.0f} y away; scanned {:.0f} y)", POwner->getName(), PMob->getName(), magic_enum::enum_name(charutils::CheckMob(POwner->GetMLevel(), PMob)), distance(POwner->loc.p, PMob->loc.p), radius);
             }
-            pawn::world::walkArrived(POwner->id);
             return;
         }
     }
-    if (PPathFind->IsFollowingPath())
+    // One look across the whole zone for the nearest in her band: a long
+    // walk beats standing still (user, 2026-09-07). Nothing even then, and
+    // she waits ten beats before looking again
+    if (auto* PMob = NearestPreyInZone(POwner->GetMLevel(), rules); PMob != nullptr)
     {
-        PPathFind->FollowPath(m_Tick);
+        const float slop  = settings::get<float>("pawn.WORLD_HEADING_SLOP");
+        const float angle = xirand::GetRandomNumber(2.0f * std::numbers::pi_v<float>);
+        position_t  spot  = PMob->loc.p;
+        spot.x += slop * std::cos(angle);
+        spot.z += slop * std::sin(angle);
+        m_WorldHeading = spot;
+        ShowInfoFmt("world: {} finds nothing within {:.0f} y and heads across the zone toward {} ({}, {:.0f} y away)", POwner->getName(), scanMax,
+                    PMob->getName(), magic_enum::enum_name(charutils::CheckMob(POwner->GetMLevel(), PMob)), distance(POwner->loc.p, PMob->loc.p));
+        return;
     }
+    m_WorldPauseUntil = m_Tick + std::chrono::seconds(10 * settings::get<uint32>("pawn.WORLD_HEADING_PAUSE"));
+    if (m_Tick - m_LastHuntLogTime > 15s)
+    {
+        m_LastHuntLogTime = m_Tick;
+        ShowInfoFmt("world: {} finds nothing in her band in the whole zone (level {}; band {}..{})", POwner->getName(), POwner->GetMLevel(),
+                    magic_enum::enum_name(static_cast<EMobDifficulty>(rules.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(rules.maxCheck)));
+    }
+}
+
+// The whole zone's nearest mob in the band: the errand's last resort
+auto CPawnController::NearestPreyInZone(const uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*
+{
+    if (POwner->loc.zone == nullptr)
+    {
+        return nullptr;
+    }
+    CMobEntity* best     = nullptr;
+    float       bestDist = std::numeric_limits<float>::max();
+    POwner->loc.zone->ForEachMob([&](CMobEntity* PMob)
+    {
+        if (!huntable(PMob, level, rules))
+        {
+            return;
+        }
+        const float away = distance(POwner->loc.p, PMob->loc.p);
+        if (away < bestDist)
+        {
+            best     = PMob;
+            bestDist = away;
+        }
+    });
+    return best;
+}
+
+// The nearest idle, unclaimed, ordinary mob in the band within the radius of
+// the point: the farmer's errand. The pick proper (PickHuntTarget) adds the
+// pull rules; this only says which way to walk
+auto CPawnController::NearestPrey(const position_t& around, const float radius, const uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*
+{
+    CMobEntity* best     = nullptr;
+    float       bestDist = radius;
+    const auto  consider = [&](CMobEntity* PMob)
+    {
+        if (!huntable(PMob, level, rules))
+        {
+            return;
+        }
+        const float away = distance(around, PMob->loc.p);
+        if (away < bestDist)
+        {
+            best     = PMob;
+            bestDist = away;
+        }
+    };
+    pawn::forEachMobNear(pawn::entitiesAround(POwner), around, radius, consider);
+    return best;
 }
 
 void CPawnController::WaitTick(CCharEntity* PPlayer)
@@ -1311,7 +1495,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // Their weapon going down does not call the party off a fight that has
     // started -- it runs until the mob dies or drifts past the leash -- but
     // it does end a hold (below), which the party only drew for.
-    if (PPlayer == nullptr && !m_Waiting)
+    if (PPlayer == nullptr && !m_Waiting && !m_World)
     {
         Transition(IdleMode(), "the player left the zone");
         POwner->PAI->Internal_Disengage();
@@ -1506,6 +1690,112 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     co_return;
 }
 
+// The walk in on a mob, weapon away, and the draw at the door: shared by
+// the party's pawns (the anchor is the player, the pacing theirs) and the
+// world's bodies (the anchor her route point, no pacing but her own rest).
+// True when the tick was hers; false when the walk was dropped and the
+// tick goes on
+auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, const std::string& pacing, const bool hunting, CBattleEntity* PPartyTarget) -> bool
+{
+    // Walking in on a mob, weapon away -- her own pull, the party's fight
+    // farther than she may draw from, or the player's order: she committed
+    // the moment it was chosen and closes; only the draw waits, on the
+    // rules (pawn_rules.h) and the re-engage timer, so the party moves on
+    // at once after a kill and the pause is at the draw, not before the
+    // choice. Every reason to let the mob go is judged here, ahead of the
+    // party's rest
+    if (m_Approach.has_value())
+    {
+        auto*      PMob = m_Approach->target.resolve<CMobEntity>();
+        const bool hunt = m_Approach->kind == ApproachKind::Hunt;
+        const bool join = m_Approach->kind == ApproachKind::Join;
+        if (PMob == nullptr || PMob->isDead())
+        {
+            Transition(IdleMode(), PMob == nullptr ? std::string("the mob is gone") : fmt::format("{} is dead", PMob->getName()));
+        }
+        // Her own pull is judged as it was picked: idle, hunted, inside the
+        // radius, and the party paced for it -- the player sat, a member
+        // fell -- else the choice goes too, to be made afresh
+        else if (hunt && (PMob->PAI->IsEngaged() || !hunting || distance(anchor, PMob->loc.p) > settings::get<float>("pawn.HUNT_RADIUS")))
+        {
+            Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(),
+                                               PMob->PAI->IsEngaged() ? "it is fighting already" : !hunting ? "the hunt is off" : "beyond the hunt radius"));
+        }
+        else if (const auto blocker = hunt ? pacing : std::string(); !blocker.empty())
+        {
+            Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), blocker));
+        }
+        // The party's fight she was walking in on ended, or moved to
+        // another mob
+        else if (join && PPartyTarget != PMob)
+        {
+            Transition(IdleMode(), fmt::format("lets {} go (the party moved on)", PMob->getName()));
+        }
+        else
+        {
+            // her eye is on it the whole way in, and while she stands there
+            // waiting to draw
+            HeadLook(PMob);
+            // A hunt's walk starts a beat after the pick
+            if (PendingIs(Pending::Act::SetOff, PMob))
+            {
+                if (!Due(Pending::Act::SetOff, PMob))
+                {
+                    return true;
+                }
+                m_Pending.reset();
+            }
+
+            // The rules gate the DRAW, not the arrival: allowed, she draws
+            // where she stands and charges in with her weapon out; still
+            // too far, or the draw's wait unserved, she walks in with it
+            // away and draws the moment the rules allow, wherever that
+            // catches her. Anything else in the way (claimed, gone under)
+            // ends the walk.
+            // The beat again at a hunt's draw: the wait is served for the
+            // whole party at once, and without it they would all draw on
+            // one tick. A join's or an order's draw waits no beat: its
+            // beat was served at the door
+            const auto facts = EngageFactsFor(PMob);
+            const auto ready = cardian::rules::mayFight(facts);
+            if (ready)
+            {
+                if (!PendingIs(Pending::Act::Draw, PMob))
+                {
+                    Schedule(Pending::Act::Draw, PMob, hunt ? m_HuntBeat : timer::duration{});
+                }
+                if (Due(Pending::Act::Draw, PMob))
+                {
+                    m_Pending.reset();
+                    m_HoldForPlayer = false;
+                    Draw(PMob, m_Approach->kind, hunt ? std::string(magic_enum::enum_name(charutils::CheckMob(level, PMob))) : std::string("walked in"));
+                }
+                return true;
+            }
+            if (!cardian::rules::worthWalkingIn(facts))
+            {
+                Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), ready.why));
+                return true;
+            }
+            // A pull that has turned unclean on the way in (a guard roamed
+            // over it) is let go, as the fight lets it go -- whoever chose
+            // it, and said, so she never stands at a rim with no reason
+            if (!PMob->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+            {
+                if (const auto unclean = PullBlocker(PMob); !unclean.empty())
+                {
+                    Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), unclean));
+                    return true;
+                }
+            }
+            WalkToward(PMob);
+            return true;
+        }
+    }
+
+    return false;
+}
+
 auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 {
     TracyZoneScoped;
@@ -1525,10 +1815,15 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // A world body: nobody to follow. Her idle is Roam; a walk in on a mob
-    // or a fight runs through the shared modes and comes back to it
+    // A world body: nobody to follow. Her walk in on a mob is the shared
+    // one, anchored on her route point and paced by nothing but her own
+    // rest; the rest of her idle is Roam (RoamTick)
     if (m_World)
     {
+        if (m_Approach.has_value() && ApproachTick(POwner->loc.p, POwner->GetMLevel(), std::string(), pawn::world::isFarming(POwner->id), nullptr))
+        {
+            co_return;
+        }
         if (m_Mode == Mode::Follow || m_Mode == Mode::Wait || m_Mode == Mode::Travel)
         {
             Transition(Mode::Roam, "on her own");
@@ -1652,100 +1947,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    // Walking in on a mob, weapon away -- her own pull, the party's fight
-    // farther than she may draw from, or the player's order: she committed
-    // the moment it was chosen and closes; only the draw waits, on the
-    // rules (pawn_rules.h) and the re-engage timer, so the party moves on
-    // at once after a kill and the pause is at the draw, not before the
-    // choice. Every reason to let the mob go is judged here, ahead of the
-    // party's rest
-    if (m_Approach.has_value())
+    // Walking in on a mob (ApproachTick): the party's fight is the anchor
+    if (m_Approach.has_value() && ApproachTick(PPlayer->loc.p, PPlayer->GetMLevel(), PacingBlocker(PPlayer), IsHunting(), PPartyTarget))
     {
-        auto*      PMob = m_Approach->target.resolve<CMobEntity>();
-        const bool hunt = m_Approach->kind == ApproachKind::Hunt;
-        const bool join = m_Approach->kind == ApproachKind::Join;
-        if (PMob == nullptr || PMob->isDead())
-        {
-            Transition(IdleMode(), PMob == nullptr ? std::string("the mob is gone") : fmt::format("{} is dead", PMob->getName()));
-        }
-        // Her own pull is judged as it was picked: idle, hunted, inside the
-        // radius, and the party paced for it -- the player sat, a member
-        // fell -- else the choice goes too, to be made afresh
-        else if (hunt && (PMob->PAI->IsEngaged() || !IsHunting() || distance(PPlayer->loc.p, PMob->loc.p) > settings::get<float>("pawn.HUNT_RADIUS")))
-        {
-            Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(),
-                                               PMob->PAI->IsEngaged() ? "it is fighting already" : !IsHunting() ? "the hunt is off" : "beyond the hunt radius"));
-        }
-        else if (const auto blocker = hunt ? PacingBlocker(PPlayer) : std::string(); !blocker.empty())
-        {
-            Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), blocker));
-        }
-        // The party's fight she was walking in on ended, or moved to
-        // another mob
-        else if (join && PPartyTarget != PMob)
-        {
-            Transition(IdleMode(), fmt::format("lets {} go (the party moved on)", PMob->getName()));
-        }
-        else
-        {
-            // her eye is on it the whole way in, and while she stands there
-            // waiting to draw
-            HeadLook(PMob);
-            // A hunt's walk starts a beat after the pick
-            if (PendingIs(Pending::Act::SetOff, PMob))
-            {
-                if (!Due(Pending::Act::SetOff, PMob))
-                {
-                    co_return;
-                }
-                m_Pending.reset();
-            }
-
-            // The rules gate the DRAW, not the arrival: allowed, she draws
-            // where she stands and charges in with her weapon out; still
-            // too far, or the draw's wait unserved, she walks in with it
-            // away and draws the moment the rules allow, wherever that
-            // catches her. Anything else in the way (claimed, gone under)
-            // ends the walk.
-            // The beat again at a hunt's draw: the wait is served for the
-            // whole party at once, and without it they would all draw on
-            // one tick. A join's or an order's draw waits no beat: its
-            // beat was served at the door
-            const auto facts = EngageFactsFor(PMob);
-            const auto ready = cardian::rules::mayFight(facts);
-            if (ready)
-            {
-                if (!PendingIs(Pending::Act::Draw, PMob))
-                {
-                    Schedule(Pending::Act::Draw, PMob, hunt ? m_HuntBeat : timer::duration{});
-                }
-                if (Due(Pending::Act::Draw, PMob))
-                {
-                    m_Pending.reset();
-                    m_HoldForPlayer = false;
-                    Draw(PMob, m_Approach->kind, hunt ? std::string(magic_enum::enum_name(charutils::CheckMob(PPlayer->GetMLevel(), PMob))) : std::string("walked in"));
-                }
-                co_return;
-            }
-            if (!cardian::rules::worthWalkingIn(facts))
-            {
-                Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), ready.why));
-                co_return;
-            }
-            // A pull that has turned unclean on the way in (a guard roamed
-            // over it) is let go, as the fight lets it go -- whoever chose
-            // it, and said, so she never stands at a rim with no reason
-            if (!PMob->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
-            {
-                if (const auto unclean = PullBlocker(PMob); !unclean.empty())
-                {
-                    Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), unclean));
-                    co_return;
-                }
-            }
-            WalkToward(PMob);
-            co_return;
-        }
+        co_return;
     }
 
     // Rest with the player: the Healing status is the real thing -- kneel
@@ -2387,7 +2592,7 @@ auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::st
     return "";
 }
 
-auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped) const -> CMobEntity*
+auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level, const pawn::HuntRules& rules, std::string* skipped) const -> CMobEntity*
 {
     // What was in the band but not pulled, and why: a few, for the log
     int        skips = 0;
@@ -2405,9 +2610,6 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* sk
         ++skips;
     };
 
-    const auto  rules       = pawn::huntRulesOf(pawn::summonerOf(POwner->id));
-    const auto  minCheck    = rules.minCheck;
-    const auto  maxCheck    = rules.maxCheck;
     const auto  radius      = settings::get<float>("pawn.HUNT_RADIUS");
     const auto  cleanRadius = settings::get<float>("pawn.HUNT_CLEAN_RADIUS");
     auto*       entities    = pawn::entitiesAround(POwner);
@@ -2415,28 +2617,14 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* sk
     // One danger scan per hunt check, wide enough to cover every candidate's
     // circle and every approach from the hunter. Judged for the whole party
     // that will fight beside the target, not for the hunter's own buffs
-    const auto dangers = pawn::danger::around(entities, PPlayer->loc.p, radius + std::max(cleanRadius, distance(POwner->loc.p, PPlayer->loc.p)),
+    const auto dangers = pawn::danger::around(entities, around, radius + std::max(cleanRadius, distance(POwner->loc.p, around)),
                                               pawn::danger::Profile::worstCase());
 
     // An idle, unclaimed, ordinary field mob in the band, within the hunt
-    // radius of the player
+    // radius of the anchor
     const auto eligible = [&](CMobEntity* PMob) -> bool
     {
-        const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
-                             (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
-                             (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
-                             (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
-        if (special || PMob->PMaster != nullptr || !PMob->isAlive() || pawn::isUnderground(PMob) ||
-            PMob->PAI->IsEngaged() || PMob->allegiance != xi::Allegiance::Mob || !PMob->PEnmityContainer->GetEnmityList()->empty())
-        {
-            return false;
-        }
-        if (distance(PPlayer->loc.p, PMob->loc.p) > radius)
-        {
-            return false;
-        }
-        const auto check = static_cast<uint8>(charutils::CheckMob(PPlayer->GetMLevel(), PMob));
-        return check >= minCheck && check <= maxCheck;
+        return huntable(PMob, level, rules) && distance(around, PMob->loc.p) <= radius;
     };
 
     // The pull rule's circles (pawn_rules.h) for one candidate: the
@@ -2551,9 +2739,32 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* sk
         bestDist = toHunter;
         bestKey  = key;
     };
-    pawn::forEachMobNear(entities, PPlayer->loc.p, radius, consider);
+    pawn::forEachMobNear(entities, around, radius, consider);
 
     return best;
+}
+
+// An idle, unclaimed, ordinary field mob whose check against the level
+// falls in the rules' band: the hunt's eligibility, shared by the pick and
+// the farmer's errand
+auto CPawnController::huntable(CMobEntity* PMob, const uint8 level, const pawn::HuntRules& rules) -> bool
+{
+    const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
+                         (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
+                         (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
+                         (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
+    if (special || PMob->PMaster != nullptr || !PMob->isAlive() || pawn::isUnderground(PMob) ||
+        PMob->PAI->IsEngaged() || PMob->allegiance != xi::Allegiance::Mob || !PMob->PEnmityContainer->GetEnmityList()->empty())
+    {
+        return false;
+    }
+    const auto check = static_cast<uint8>(charutils::CheckMob(level, PMob));
+    return check >= rules.minCheck && check <= rules.maxCheck;
+}
+
+auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped) const -> CMobEntity*
+{
+    return PickHuntTarget(PPlayer->loc.p, PPlayer->GetMLevel(), pawn::huntRulesOf(pawn::summonerOf(POwner->id)), skipped);
 }
 
 auto CPawnController::GetTopEnmity() const -> CBattleEntity*

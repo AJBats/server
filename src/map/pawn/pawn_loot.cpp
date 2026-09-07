@@ -21,6 +21,7 @@
 
 #include "pawn_loot.h"
 #include "pawn.h"
+#include "world.h"
 
 #include "common/logging.h"
 #include "common/xirand.h"
@@ -34,6 +35,7 @@
 #include "utils/itemutils.h"
 #include "zone.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -89,6 +91,35 @@ namespace pawn::loot
         }
         if (staying.empty())
         {
+            return;
+        }
+
+        // A world body's drops go to the void: no bag fills and the economy
+        // never meets them (RESEARCH §11.1). Every staying body passes, and
+        // the pool resolves each slot as lost
+        if (std::ranges::all_of(staying, [](const CCharEntity* PCardian) { return world::isBody(PCardian->id); }))
+        {
+            const auto& pooled = PPool->getItems();
+            for (uint8 slot = 0; slot < pooled.size(); ++slot)
+            {
+                const uint16 itemID = pooled[slot].ID;
+                if (itemID == 0)
+                {
+                    continue;
+                }
+                for (auto* PCardian : staying)
+                {
+                    if (pooled[slot].ID != 0 && !PPool->hasLottedItem(PCardian, slot))
+                    {
+                        PPool->passItem(PCardian, slot);
+                    }
+                }
+                if (world::tickDebug())
+                {
+                    const CItem* PItem = xi::items::lookup(itemID);
+                    ShowInfoFmt("world: {}'s drop {} goes to the void", PPawn->getName(), PItem != nullptr ? PItem->getName() : std::to_string(itemID));
+                }
+            }
             return;
         }
 
