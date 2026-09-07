@@ -1,0 +1,310 @@
+# Southern_San_dOria: the slot table (RESEARCH.md §11.5, ROADMAP D4) -- what
+# happens where, never who. The town's first slice (2026-09-07): turnstile
+# seats on the streets, nothing indoors yet (the shops, the guild and the
+# tavern stand at their doors until the door work lands). Every `at` is a
+# guess from the NPC positions in tools/world/town/Southern_San_dOria.yaml;
+# the user fixes the taste spots by walking. Hours are the player's local
+# clock; the Tanners' Guild keeps Vana'diel's (vhours), shut Iceday.
+#
+# A stand slot with a dwell is a turnstile: she walks in from `enter`, holds
+# the seat dwell seconds facing `face`, walks out by `exit` and fades, and
+# the seat refills with another face. `nearest` and `any` are exits too.
+exits:
+  - name: west_gate
+    at: [-110.0, -0.2, -57.0]
+  - name: east_gate
+    at: [110.0, -0.2, -57.0]
+  - name: north_gate
+    at: [0.0, -2.2, 54.0]
+  - name: mog_house
+    at: [163.0, -2.2, 162.0]
+slots:
+  # -- The West Gate (F-10 / G-10) -------------------------------------
+  # Signet and out: in from the square, a beat square to the overseer,
+  # then out to Ronfaure
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [-102.0, 0.0, -50.0]
+    spread: 2
+    face: [-104.9, 0.0, -53.1]
+    dwell: [10, 25]
+    enter: north_gate
+    exit: west_gate
+    hours: [6, 22]
+  # Loitering at the west gate: standing about inside the arch, a long while
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [-96.7, 1.0, -56.2]
+    spread: 5
+    dwell: [120, 600]
+    enter: any
+    exit: west_gate
+    cliques: [1, 4]
+  # The east gate, the same, fewer
+  - activity: stand
+    band: [1, 75]
+    count: 2
+    at: [98.0, 0.0, -57.0]
+    spread: 5
+    dwell: [120, 600]
+    enter: any
+    exit: east_gate
+    cliques: [1, 2]
+  # Coming home: in from Ronfaure, a stop in the square, then to the Mog House
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [0.0, 1.7, -22.0]
+    spread: 4
+    dwell: [30, 120]
+    enter: west_gate
+    exit: mog_house
+  # -- The Auction House square (I-9 / J-9) ----------------------------
+  # The counter line, the player's own sellers first
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [9.3, 1.6, -30.1]
+    spread: 1.5
+    face: [8.9, 1.7, -31.0]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [-9.2, 1.6, -30.1]
+    spread: 1.5
+    face: [-8.9, 1.7, -31.0]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  # AFK: one kneeler here and there, never a crowd (user) -- at the home
+  # points and the square's edge; bazaars later, they kneel without a flag
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [18.0, 1.7, -24.0]
+    spread: 2
+    dwell: [600, 1800]
+    enter: any
+    exit: mog_house
+    pose: kneel
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [43.0, 2.0, -33.0]
+    spread: 2
+    dwell: [600, 1800]
+    enter: any
+    exit: any
+    pose: kneel
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-83.0, 1.0, -64.0]
+    spread: 2
+    dwell: [600, 1800]
+    enter: any
+    exit: west_gate
+    pose: kneel
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [138.0, -2.0, 120.0]
+    spread: 2
+    dwell: [600, 1800]
+    enter: mog_house
+    exit: any
+    pose: kneel
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-163.0, -1.0, 13.0]
+    spread: 2
+    dwell: [600, 1800]
+    enter: any
+    exit: any
+    pose: kneel
+  # Loitering in the square: the crowd that is just there, a long while
+  - activity: stand
+    band: [1, 75]
+    count: 6
+    at: [0.0, 1.7, -26.0]
+    spread: 9
+    dwell: [120, 900]
+    enter: any
+    exit: any
+    cliques: [1, 3]
+  # Seeking party: off to the side of the square, afternoons and evenings
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [0.0, 1.7, -18.0]
+    spread: 2
+    dwell: [300, 900]
+    enter: any
+    exit: west_gate
+    hours: [12, 2]
+  # -- The market street (H-9 / G-9): at the doors until the door work ----
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-64.0, 2.0, -11.0]
+    spread: 1
+    face: [-64.2, 2.0, -8.7]
+    dwell: [20, 60]
+    enter: any
+    exit: any
+    hours: [6, 20]
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-144.0, -2.7, 13.0]
+    spread: 1
+    face: [-144.0, -4.5, 10.4]
+    dwell: [20, 60]
+    enter: any
+    exit: any
+    hours: [6, 20]
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-145.0, -3.3, 28.5]
+    spread: 1
+    face: [-145.0, -4.5, 25.4]
+    dwell: [20, 60]
+    enter: any
+    exit: any
+    hours: [6, 20]
+  # -- The east shops (K-7 / K-8): fresh faces at the armorer's and the
+  #    swordsmith's doors, then out the west gate
+  - activity: stand
+    band: [1, 20]
+    count: 1
+    at: [87.0, 2.8, 38.0]
+    spread: 1
+    face: [90.4, 1.5, 38.0]
+    dwell: [30, 60]
+    enter: any
+    exit: west_gate
+    hours: [6, 22]
+  - activity: stand
+    band: [1, 20]
+    count: 1
+    at: [87.0, 2.7, 57.0]
+    spread: 1
+    face: [90.6, 1.5, 57.0]
+    dwell: [30, 60]
+    enter: any
+    exit: west_gate
+    hours: [6, 22]
+  # -- The Chocobo Stables (H-11 / I-11): the raiser's visit, twice a day
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-3.0, 0.0, -102.0]
+    spread: 1
+    face: [-2.7, -0.1, -105.3]
+    dwell: [60, 90]
+    enter: any
+    exit: any
+    hours: [7, 8]
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-3.0, 0.0, -102.0]
+    spread: 1
+    face: [-2.7, -0.1, -105.3]
+    dwell: [60, 90]
+    enter: any
+    exit: any
+    hours: [19, 20]
+  # -- The Tanners' Guild (D-8 / E-8): open Vana'diel 3:00 - 18:00, shut
+  #    Iceday. An open outer doorway on the north side, then an inner door
+  #    that opens for her (the user walked it, 2026-09-07). The mesh leaks
+  #    through the building's east wall, so both seats go round by the
+  #    doorway (via). The synth line stands in the workroom; one waits in
+  #    front of the inner door in the hour before it opens
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [-186.0, -1.0, 10.0]
+    spread: 3
+    cliques: [1, 2]
+    via: [[-182.9, -1.0, 29.4], [-188.5, -1.0, 18.9]]
+    dwell: [1200, 3600]
+    enter: any
+    exit: any
+    vhours: [3, 18]
+    holiday: iceday
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-188.5, -1.0, 18.9]
+    spread: 0.8
+    face: [-188.3, -2.5, 18.0]
+    via: [[-182.9, -1.0, 29.4]]
+    dwell: [300, 600]
+    enter: any
+    exit: any
+    vhours: [2, 3]
+  # The linkshell: three stand at Paunelie's and walk off together
+  - activity: stand
+    band: [5, 15]
+    count: 1
+    party: 3
+    at: [-144.7, -3.0, 4.5]
+    spread: 2
+    face: [-144.7, -3.0, 1.4]
+    dwell: [30, 60]
+    enter: any
+    exit: any
+    hours: [12, 24]
+  # -- Lion Springs (K-5 / K-6): the regulars, at the tavern's door ------
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [101.1, -6.0, 116.1]
+    spread: 3
+    face: [99.4, -7.3, 117.3]
+    dwell: [600, 1800]
+    enter: any
+    exit: mog_house
+    hours: [18, 2]
+    cliques: [2, 3]
+  # -- The Mog House door (M-5): people AFK outside their door a long
+  #    while before going anywhere (user)
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [158.0, -2.2, 156.0]
+    spread: 5
+    dwell: [300, 1500]
+    enter: mog_house
+    exit: any
+    cliques: [1, 3]
+  # -- The east residential (M-7): the first fame quest ----------------
+  - activity: stand
+    band: [1, 15]
+    count: 1
+    at: [167.0, -0.9, 45.0]
+    spread: 1
+    face: [169.6, -0.9, 45.0]
+    dwell: [20, 40]
+    enter: mog_house
+    exit: any
+  # -- The North Gate (I-7): through traffic, a pause in the square, on to
+  #    a gate
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [0.0, 2.0, -5.0]
+    spread: 3
+    dwell: [3, 10]
+    enter: north_gate
+    exit: any

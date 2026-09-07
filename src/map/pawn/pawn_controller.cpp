@@ -336,9 +336,157 @@ namespace
     }
 } // namespace
 
+// A town seat (ROADMAP D4). Three legs: in from her exit point to her seat,
+// the dwell at it (facing her point, kneeling if her pose says, an idle
+// emote now and then), out to the exit the world named, where she reports
+// and fades. A town body never fights, so this runs ahead of the roamer's
+// rest and self-defence. A walk that gets no nearer for WORLD_TOWN_STALL
+// seconds is given up where she stands, with a warning naming the leg and
+// both ends -- the route is what needs fixing, not her
+void CPawnController::TownTick(const pawn::world::TownOrder& order)
+{
+    auto*       PPathFind = POwner->PAI->PathFind.get();
+    const uint8 leg       = order.leaving ? 3 : order.atSeat ? 2 : 1;
+    const bool  newGoal   = leg != 2 && std::hypot(order.goal.x - m_TownGoal.x, order.goal.z - m_TownGoal.z) > 0.5f;
+    if (leg != m_TownLeg || newGoal)
+    {
+        m_TownLeg        = leg;
+        m_TownGoal       = order.goal;
+        m_TownStillSince = m_Tick;
+        m_TownLastPos    = POwner->loc.p;
+        if (PPathFind != nullptr && PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+        const bool kneeling = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+        if (leg == 2)
+        {
+            if (order.face.has_value())
+            {
+                POwner->loc.p.rotation = worldAngle(POwner->loc.p, *order.face);
+                POwner->updatemask |= UPDATE_POS;
+            }
+            if (order.kneel && !kneeling)
+            {
+                const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+                POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
+            }
+        }
+        else if (kneeling)
+        {
+            POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        }
+    }
+    if (leg == 2)
+    {
+        Move(Intent{});
+        if (!order.kneel && (PPathFind == nullptr || !PPathFind->IsFollowingPath()))
+        {
+            IdleEmote(nullptr);
+        }
+        return;
+    }
+    if (PPathFind == nullptr || POwner->GetSpeed() <= 0)
+    {
+        return;
+    }
+    // Arrival is judged on the ground: the point is on the mesh (the world
+    // snaps it), but a step's height between her and it is no distance
+    const position_t& goal = order.goal;
+    if (std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z) < 1.5f && std::abs(POwner->loc.p.y - goal.y) < 3.0f)
+    {
+        Move(Intent{});
+        pawn::world::noteReached(POwner->id);
+        return;
+    }
+    if (distance(POwner->loc.p, m_TownLastPos) > 0.5f)
+    {
+        m_TownLastPos    = POwner->loc.p;
+        m_TownStillSince = m_Tick;
+    }
+    else if (m_Tick - m_TownStillSince > std::chrono::seconds(settings::get<uint32>("pawn.WORLD_TOWN_STALL")))
+    {
+        ShowWarningFmt("world: {} gets no nearer {} ({:.0f}, {:.0f}, {:.0f}) from ({:.0f}, {:.0f}, {:.0f}) in {}; gives the walk up there",
+                       POwner->getName(), leg == 3 ? "her way out" : "her way in", goal.x, goal.y, goal.z, POwner->loc.p.x, POwner->loc.p.y, POwner->loc.p.z,
+                       POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?");
+        Move(Intent{});
+        pawn::world::noteReached(POwner->id);
+        return;
+    }
+    // Her lane: the mesh's route walked a step to one side, hers, laid
+    // once per leg and followed; the plain path when the mesh has none
+    if (PPathFind->IsFollowingPath())
+    {
+        Intent keep{};
+        keep.kind = Intent::Kind::Keep;
+        Move(keep);
+        return;
+    }
+    if (LanePath(goal))
+    {
+        return;
+    }
+    Intent intent{};
+    intent.kind      = Intent::Kind::Path;
+    intent.point     = goal;
+    intent.arrive    = 1.0f;
+    intent.tolerance = 1.2f;
+    Move(intent);
+}
+
+// The mesh's route to the point, its interior corners slid sideways by her
+// lane (pawn::world::laneOf) and snapped back onto the mesh, or left where
+// they were, when the slide lands in a wall -- a crowd sent down one street
+// walks it abreast, not in single file. False when the mesh has no route
+auto CPawnController::LanePath(const position_t& goal) -> bool
+{
+    auto* navMesh   = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    if (navMesh == nullptr || PPathFind == nullptr)
+    {
+        return false;
+    }
+    const auto found = navMesh->findPath(POwner->loc.p, goal);
+    if (!found.has_value() || found->points.size() < 2)
+    {
+        return false;
+    }
+    const float              lane   = pawn::world::laneOf(POwner->id);
+    std::vector<pathpoint_t> points = found->points;
+    for (size_t i = 1; i + 1 < points.size(); ++i)
+    {
+        const auto& prev = points[i - 1].position;
+        const auto& next = points[i + 1].position;
+        const float dx   = next.x - prev.x;
+        const float dz   = next.z - prev.z;
+        const float len  = std::hypot(dx, dz);
+        if (len < 0.01f)
+        {
+            continue;
+        }
+        position_t shifted = points[i].position;
+        shifted.x += -dz / len * lane;
+        shifted.z += dx / len * lane;
+        if (const auto snapped = navMesh->findClosestValidPoint(shifted); snapped.has_value() && std::hypot(snapped->x - shifted.x, snapped->z - shifted.z) < 0.6f)
+        {
+            points[i].position = *snapped;
+        }
+    }
+    PPathFind->PathThrough(std::move(points), PATHFLAG_RUN);
+    return PPathFind->IsFollowingPath();
+}
+
 void CPawnController::RoamTick()
 {
     m_Gambits->TickBehaviors();
+
+    // A town seat is walked, held and left; nothing else of the roamer's
+    // applies to her (ROADMAP D4: no fights in town)
+    if (const auto order = pawn::world::townOrder(POwner->id); order.has_value())
+    {
+        TownTick(*order);
+        return;
+    }
 
     // Rest when her Rest row says so (a gambit: HP or MP under its line),
     // up when whole: the Healing status is the real thing, kneel and regen

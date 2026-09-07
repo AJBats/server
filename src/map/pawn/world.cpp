@@ -12,8 +12,11 @@
 #include "pawn.h"
 
 #include "common/database.h"
+#include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/vana_time.h"
+#include "common/xirand.h"
 
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
@@ -75,6 +78,26 @@ namespace
 
         // A camp seat: the slot is a party (ROADMAP D5); party is its size
         uint32 party = 1;
+
+        // A town seat (ROADMAP D4) is a turnstile: she appears at an exit
+        // point and walks to her seat, faces a point there, holds the seat
+        // her dwell, then walks to an exit and fades, and the seat refills
+        // with another face. The controller walks her (TownTick) and
+        // reports the arrivals; the zone tick keeps the clock and unseats
+        std::optional<position_t>                            cameFrom;
+        std::optional<position_t>                            face;
+        std::optional<position_t>                            exitAt;
+        std::array<uint32, 2>                                dwell{};
+        std::optional<std::chrono::steady_clock::time_point> leaveAt;
+        std::string                                          pose;
+        int32                                                seat    = -1; // her laid-out seat in a clustered slot
+        std::vector<position_t>                              via;          // points walked in order on the way in, in reverse on the way out
+        size_t                                               viaNext = 0;  // the next via point on the way in
+        std::vector<position_t>                              wayOut;       // set when she leaves: the via points reversed, then the exit
+        size_t                                               outNext = 0;
+        bool                                                 atSeat  = false;
+        bool                                                 leaving = false;
+        bool                                                 gone    = false; // at the exit, or the walk given up
 
         // KO'd and faded: when she walks back to her seat (WORLD_KO_RETURN)
         std::optional<std::chrono::steady_clock::time_point> returnAt;
@@ -173,9 +196,21 @@ namespace
         int32       slot     = -1;
         float       roam     = 0.0f;
         uint32      party    = 1;
+
+        // a town seat: where she walks in from, what she faces, her dwell, her pose,
+        // and which laid-out seat of a clustered slot is hers (-1 = none)
+        std::optional<position_t> cameFrom;
+        std::optional<position_t> face;
+        std::array<uint32, 2>     dwell{};
+        std::string               pose;
+        int32                     seat = -1;
+        std::vector<position_t>   via;
     };
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
+
+    auto paceOf(const std::string& name) -> float;
+    auto laneOf(const std::string& name) -> float;
 
     auto isHealer(const uint8 job) -> bool
     {
@@ -914,9 +949,17 @@ namespace
         {
             return false;
         }
-        if (!pawn::spawnAt(row->charid, PZone, body.point, row->job, row->level))
+        // A town body not yet at her seat comes in at her exit point and walks
+        // (TownTick); anyone else stands where she stood
+        const bool        walksIn = body.cameFrom.has_value() && !body.atSeat && !body.leaving;
+        const position_t& at      = walksIn ? *body.cameFrom : body.point;
+        if (!pawn::spawnAt(row->charid, PZone, at, row->job, row->level))
         {
             return false;
+        }
+        if (walksIn)
+        {
+            body.viaNext = 0; // from the gate again: the whole way in, doorway included
         }
         body.present     = true;
         body.censusLevel = row->level;
@@ -928,6 +971,9 @@ namespace
             {
                 ShowInfoFmt("world: {} dresses in {} pieces", body.name, worn);
             }
+            // Her own pace (paceOf), so no two walk in step
+            PPawn->baseSpeed = static_cast<uint8>(std::lround(settings::get<float>("pawn.PAWN_SPEED") * paceOf(body.name)));
+            PPawn->UpdateSpeed();
         }
         snapshotBag(body);
         joinCampParty(body);
@@ -974,7 +1020,8 @@ namespace
                 ShowInfoFmt("world: {} learns {} spells", body.name, learned);
             }
         }
-        ShowInfoFmt("world: {} fades in at {} ({:.1f}, {:.1f}, {:.1f})", body.name, PZone->getName(), body.point.x, body.point.y, body.point.z);
+        ShowInfoFmt("world: {} fades in at {} ({:.1f}, {:.1f}, {:.1f}){}", body.name, PZone->getName(), at.x, at.y, at.z,
+                    walksIn ? fmt::format(" and walks to her seat ({:.1f}, {:.1f}, {:.1f})", body.point.x, body.point.y, body.point.z) : "");
         return true;
     }
 
@@ -1014,18 +1061,50 @@ namespace
     // point and a spread. Filling a slot is a query over the census.
     struct SlotSpec
     {
-        std::string          activity; // farm, stand, camp (a party; its members farm solo until D5 groups them)
+        std::string          activity; // farm, stand, camp (a party)
         std::array<int32, 2> band{};
         uint32               count = 0;
         std::array<float, 3> at{};
         float                spread = 0.0f;
         float                roam   = 0.0f; // optional: the home pull's scale -- the farther out, the more the errand favours prey back toward the point
-        uint32               party  = 1;    // camp: members per party; seats = count x party
+        uint32               party  = 1;    // members per party; seats = count x party (a camp, or a stand that comes and goes as a group)
 
-        // A camp seats a party per count (D5)
+        // A town seat (ROADMAP D4), stand only. She faces `face`. With a
+        // `dwell` (seconds, min and max) the seat is a turnstile: she holds
+        // it that long, walks to an exit and fades, and the seat refills
+        // with another face after a gap. `enter` and `exit` name the
+        // zone's exits she arrives from and leaves by -- "nearest" (the
+        // default) and "any" are words too. `hours` is the player's local
+        // clock, `vhours` Vana'diel's (the guilds keep it), `holiday` a
+        // Vana'diel weekday the seat stands empty. `prefer: sellers` fills
+        // the seat from the names in the player's own auction history.
+        // `pose: kneel` kneels her at her seat
+        std::optional<std::array<float, 3>> face;
+        std::array<uint32, 2>               dwell{};
+        std::string                         enter;
+        std::string                         exit;
+        std::optional<std::array<int32, 2>> hours;
+        std::optional<std::array<int32, 2>> vhours;
+        std::string                         holiday;
+        std::string                         prefer;
+        std::string                         pose;
+        // `cliques: [min, max]` lays the seats out as little groups of that
+        // many, each a circle its members face the middle of (the user:
+        // "little clusters of people facing each other"); a body alone
+        // faces a way of her own
+        std::array<uint32, 2>               cliques{};
+        // `via`: points walked in order on the way in and in reverse on the
+        // way out -- a doorway the mesh's shortest line would miss (the
+        // Tanners' Guild: the mesh leaks through a wall)
+        std::vector<std::array<float, 3>>   via;
+
         auto seats() const -> uint32
         {
-            return activity == "camp" ? count * std::max<uint32>(1, party) : count;
+            return count * std::max<uint32>(1, party);
+        }
+        auto clustered() const -> bool
+        {
+            return cliques[1] > 0;
         }
         auto isCamp() const -> bool
         {
@@ -1035,22 +1114,310 @@ namespace
         {
             return activity == "farm" || activity == "camp";
         }
+        auto turnstile() const -> bool
+        {
+            return dwell[1] > 0;
+        }
+        // On the town's clock: a dwell that runs out, or hours that close
+        auto timed() const -> bool
+        {
+            return turnstile() || hours.has_value() || vhours.has_value() || !holiday.empty();
+        }
+        // Anything the controller's town walk must know about
+        auto town() const -> bool
+        {
+            return turnstile() || face.has_value() || !pose.empty() || clustered() || !via.empty();
+        }
         bool operator==(const SlotSpec&) const = default;
+    };
+    // Where a town body appears and leaves: the gates, the Mog House door
+    struct ExitSpec
+    {
+        std::string          name;
+        std::array<float, 3> at{};
+        bool                 operator==(const ExitSpec&) const = default;
     };
     // Unknown keys are mistakes; a missing one takes the default (roam, party)
     constexpr glz::opts kSlotYaml{ .error_on_unknown_keys = true, .error_on_missing_keys = false };
     struct SlotFile
     {
+        std::vector<ExitSpec> exits;
         std::vector<SlotSpec> slots;
+        bool                  operator==(const SlotFile&) const = default;
+    };
+    // One seat of a clustered slot: where she stands and what she faces
+    struct Seat
+    {
+        position_t                at{};
+        std::optional<position_t> face;
     };
     struct ZoneSlots
     {
-        bool                                  loaded = false;
-        std::vector<SlotSpec>                 specs;
-        std::vector<std::vector<std::string>> occupants; // names, by slot
-        std::filesystem::file_time_type       written{}; // the file as read, so an edit is noticed
+        bool                                               loaded = false;
+        std::vector<ExitSpec>                              exits;      // as authored (the re-read compares against these)
+        std::vector<position_t>                            exitPoints; // the same, on the mesh: where bodies appear and fade
+        std::vector<SlotSpec>                              specs;
+        std::vector<std::vector<std::string>>              occupants; // names, by slot
+        std::vector<uint32>                                turns;     // a turnstile's departures so far: the next face differs
+        std::vector<std::chrono::steady_clock::time_point> refillAt;  // a turnstile refills no sooner than this
+        std::vector<std::vector<std::string>>              recent;    // the last few faces a turnstile showed
+        std::vector<std::vector<Seat>>                     layout;    // a clustered slot's seats, laid out once
+        std::vector<std::vector<std::string>>              holders;   // who holds each laid-out seat ("" = free)
+        std::filesystem::file_time_type                    written{}; // the file as read, so an edit is noticed
     };
     std::unordered_map<uint16, ZoneSlots> zoneSlots;
+
+    auto toPosition(const std::array<float, 3>& at) -> position_t;
+    auto flatDistance(const position_t& a, const position_t& b) -> float;
+
+    // A small seeded generator, so a layout is the same every visit
+    struct Dice
+    {
+        uint32 state;
+        auto   next() -> uint32
+        {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            return state;
+        }
+        auto unit() -> float
+        {
+            return static_cast<float>(next() % 100000u) / 100000.0f;
+        }
+        auto between(const uint32 lo, const uint32 hi) -> uint32
+        {
+            return hi <= lo ? lo : lo + next() % (hi - lo + 1);
+        }
+    };
+
+    // The seats of a clustered slot (`cliques`). Group sizes are drawn in
+    // the range until the seats are covered. Group centres are spread over
+    // the slot by best-candidate sampling -- each new centre the farthest of
+    // twenty random tries from the ones placed -- so the groups do not pile
+    // up. A group is a conversation circle: its members on a ring round
+    // the centre, a yalm out for a pair and wider as the group grows,
+    // evenly spaced with a little jitter, each facing the middle. A body
+    // alone faces a heading of her own. Drawn from the zone, the slot and
+    // a fixed seed, so the arrangement is the same every visit
+    auto layoutCliques(const uint16 zoneId, const uint32 slot, const SlotSpec& spec) -> std::vector<Seat>
+    {
+        Dice dice{ (static_cast<uint32>(zoneId) * 40503u) ^ ((slot + 1) * 2654435761u) ^ 0x5bd1e995u };
+        if (dice.state == 0)
+        {
+            dice.state = 1;
+        }
+        const uint32 wanted = spec.seats();
+        const uint32 lo     = std::max<uint32>(1, std::min(spec.cliques[0], spec.cliques[1]));
+        const uint32 hi     = std::max(lo, spec.cliques[1]);
+        std::vector<uint32> sizes;
+        for (uint32 covered = 0; covered < wanted;)
+        {
+            const uint32 n = std::min(dice.between(lo, hi), wanted - covered);
+            sizes.push_back(n);
+            covered += n;
+        }
+        const auto centre = toPosition(spec.at);
+        const auto inDisc = [&]() -> position_t
+        {
+            const float angle  = 2.0f * std::numbers::pi_v<float> * dice.unit();
+            const float radius = std::max(0.0f, spec.spread - 1.0f) * std::sqrt(dice.unit());
+            position_t  p      = centre;
+            p.x += radius * std::cos(angle);
+            p.z += radius * std::sin(angle);
+            return p;
+        };
+        std::vector<position_t> centres;
+        for (size_t g = 0; g < sizes.size(); ++g)
+        {
+            position_t best     = inDisc();
+            float      bestGap  = -1.0f;
+            for (int tries = 0; tries < 20; ++tries)
+            {
+                const position_t candidate = tries == 0 ? best : inDisc();
+                float            gap       = std::numeric_limits<float>::max();
+                for (const auto& c : centres)
+                {
+                    gap = std::min(gap, flatDistance(candidate, c));
+                }
+                if (centres.empty() || gap > bestGap)
+                {
+                    best    = candidate;
+                    bestGap = gap;
+                }
+                if (centres.empty())
+                {
+                    break;
+                }
+            }
+            centres.push_back(best);
+        }
+        std::vector<Seat> seats;
+        for (size_t g = 0; g < sizes.size(); ++g)
+        {
+            const uint32 n = sizes[g];
+            if (n == 1)
+            {
+                // alone: a heading of her own, held as a point to face
+                const float heading = 2.0f * std::numbers::pi_v<float> * dice.unit();
+                Seat        seat{};
+                seat.at   = centres[g];
+                seat.face = centres[g];
+                seat.face->x += 4.0f * std::cos(heading);
+                seat.face->z += 4.0f * std::sin(heading);
+                seats.push_back(seat);
+                continue;
+            }
+            const float ring = 0.9f + 0.3f * static_cast<float>(n - 2);
+            const float base = 2.0f * std::numbers::pi_v<float> * dice.unit();
+            for (uint32 i = 0; i < n; ++i)
+            {
+                const float angle = base + 2.0f * std::numbers::pi_v<float> * static_cast<float>(i) / static_cast<float>(n) + (dice.unit() - 0.5f) * 0.5f;
+                Seat        seat{};
+                seat.at = centres[g];
+                seat.at.x += ring * std::cos(angle);
+                seat.at.z += ring * std::sin(angle);
+                seat.face = centres[g];
+                seats.push_back(seat);
+            }
+        }
+        return seats;
+    }
+
+    auto weekdayByName(const std::string& name) -> std::optional<uint32>
+    {
+        static const std::array<std::string_view, 8> days{ "firesday", "earthsday", "watersday", "windsday", "iceday", "lightningday", "lightsday", "darksday" };
+        std::string key = name;
+        std::ranges::transform(key, key.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        for (uint32 i = 0; i < days.size(); ++i)
+        {
+            if (days[i] == key)
+            {
+                return i;
+            }
+        }
+        return std::nullopt;
+    }
+
+    // Is the hour inside [from, to)? Equal ends mean always; to before
+    // from wraps midnight (18 - 2)
+    auto inWindow(const int32 hour, const int32 from, const int32 to) -> bool
+    {
+        if (from == to)
+        {
+            return true;
+        }
+        return from < to ? (hour >= from && hour < to) : (hour >= from || hour < to);
+    }
+
+    // Is the seat held at this hour: the player's clock, Vana'diel's, the holiday
+    auto seatOpen(const SlotSpec& spec) -> bool
+    {
+        if (spec.hours.has_value() && !inWindow(static_cast<int32>(earth_time::local::get_hour()), (*spec.hours)[0], (*spec.hours)[1]))
+        {
+            return false;
+        }
+        if (spec.vhours.has_value() && !inWindow(static_cast<int32>(vanadiel_time::get_hour()), (*spec.vhours)[0], (*spec.vhours)[1]))
+        {
+            return false;
+        }
+        if (const auto day = weekdayByName(spec.holiday); day.has_value() && *day == vanadiel_time::get_weekday())
+        {
+            return false;
+        }
+        return true;
+    }
+
+    auto toPosition(const std::array<float, 3>& at) -> position_t
+    {
+        position_t p{};
+        p.x = at[0];
+        p.y = at[1];
+        p.z = at[2];
+        return p;
+    }
+
+    auto flatDistance(const position_t& a, const position_t& b) -> float
+    {
+        return std::hypot(a.x - b.x, a.z - b.z);
+    }
+
+    // The nearest walkable point to an authored one: a table is written by
+    // eye and by !pos, and a point a few yalms above or below the mesh
+    // (the lower level under the auction house, the gate arch) would never
+    // be reached. The point itself when there is no mesh or nothing near
+    auto snapToMesh(CZone* PZone, const position_t& point) -> position_t
+    {
+        const auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
+        if (navMesh == nullptr)
+        {
+            return point;
+        }
+        if (const auto snapped = navMesh->findClosestValidPoint(point); snapped.has_value())
+        {
+            position_t out = *snapped;
+            out.rotation   = point.rotation;
+            return out;
+        }
+        return point;
+    }
+
+    // The authoring aid: say once when a table's point moved to reach the
+    // mesh, so the user knows which spot to walk again
+    void reportSnap(CZone* PZone, const std::string& what, const position_t& authored, const position_t& snapped)
+    {
+        if (std::hypot(authored.x - snapped.x, authored.y - snapped.y, authored.z - snapped.z) > 1.0f)
+        {
+            ShowInfoFmt("world: {}: {} ({:.1f}, {:.1f}, {:.1f}) is off the mesh; bodies use ({:.1f}, {:.1f}, {:.1f}) -- walk it again",
+                        PZone->getName(), what, authored.x, authored.y, authored.z, snapped.x, snapped.y, snapped.z);
+        }
+    }
+
+    // The exit a word means from a point: a name, "any" (a random one, not
+    // `notThis` when there is another), else the nearest. Nothing when the
+    // zone has no exits
+    auto exitPoint(const ZoneSlots& table, const std::string& how, const position_t& from, const std::optional<position_t>& notThis) -> std::optional<position_t>
+    {
+        if (table.exits.empty() || table.exitPoints.size() != table.exits.size())
+        {
+            return std::nullopt;
+        }
+        if (!how.empty() && how != "nearest" && how != "any")
+        {
+            for (size_t i = 0; i < table.exits.size(); ++i)
+            {
+                if (table.exits[i].name == how)
+                {
+                    return table.exitPoints[i];
+                }
+            }
+        }
+        if (how == "any")
+        {
+            std::vector<const position_t*> others;
+            for (const auto& p : table.exitPoints)
+            {
+                if (!notThis.has_value() || flatDistance(p, *notThis) > 1.0f)
+                {
+                    others.push_back(&p);
+                }
+            }
+            if (others.empty())
+            {
+                others.push_back(&table.exitPoints.front());
+            }
+            return *others[xirand::GetRandomNumber(others.size())];
+        }
+        const position_t* best = nullptr;
+        for (const auto& p : table.exitPoints)
+        {
+            if (best == nullptr || flatDistance(p, from) < flatDistance(*best, from))
+            {
+                best = &p;
+            }
+        }
+        return *best;
+    }
     std::unordered_set<uint16>            filledAtBoot;
     std::unordered_map<uint16, uint32>    slotPoll;
     constexpr uint32                      kSlotPollTicks = 25; // ~10 s of zone ticks between looks at the file
@@ -1063,17 +1430,17 @@ namespace
     // The file as a table; nullopt when it does not parse (logged), so a
     // typo mid-edit never empties a zone. A missing or blank file is an
     // empty table
-    auto parseSlots(const std::filesystem::path& path) -> std::optional<std::vector<SlotSpec>>
+    auto parseSlots(const std::filesystem::path& path) -> std::optional<SlotFile>
     {
         if (!std::filesystem::exists(path))
         {
-            return std::vector<SlotSpec>{};
+            return SlotFile{};
         }
         std::ifstream     in(path);
         const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         if (std::ranges::all_of(text, [](const unsigned char c) { return std::isspace(c) != 0; }))
         {
-            return std::vector<SlotSpec>{};
+            return SlotFile{};
         }
         SlotFile file{};
         if (const auto error = glz::read_yaml<kSlotYaml>(file, text); error)
@@ -1081,15 +1448,70 @@ namespace
             ShowErrorFmt("world: {}: {}", path.string(), glz::format_error(error, text));
             return std::nullopt;
         }
+        const auto bad = [&](const std::string& why)
+        {
+            ShowErrorFmt("world: {}: {}", path.string(), why);
+            return std::nullopt;
+        };
+        for (const auto& e : file.exits)
+        {
+            if (e.name.empty() || e.name == "nearest" || e.name == "any" || std::ranges::count_if(file.exits, [&](const ExitSpec& o) { return o.name == e.name; }) > 1)
+            {
+                return bad(fmt::format("exit '{}' needs a name of its own (not nearest or any, not twice)", e.name));
+            }
+        }
+        const auto knownExit = [&](const std::string& how)
+        {
+            return how.empty() || how == "nearest" || how == "any" || std::ranges::any_of(file.exits, [&](const ExitSpec& e) { return e.name == how; });
+        };
+        const auto goodHours = [](const std::optional<std::array<int32, 2>>& h)
+        {
+            return !h.has_value() || ((*h)[0] >= 0 && (*h)[0] <= 23 && (*h)[1] >= 0 && (*h)[1] <= 24);
+        };
         for (const auto& spec : file.slots)
         {
             if (spec.activity != "farm" && spec.activity != "stand" && spec.activity != "camp")
             {
-                ShowErrorFmt("world: {}: activity {} is not farm, stand or camp", path.string(), spec.activity);
-                return std::nullopt;
+                return bad(fmt::format("activity {} is not farm, stand or camp", spec.activity));
+            }
+            if (spec.activity != "stand" && (spec.town() || !spec.enter.empty() || !spec.exit.empty() || spec.hours.has_value() || spec.vhours.has_value() || !spec.holiday.empty() || !spec.prefer.empty()))
+            {
+                return bad(fmt::format("a {} slot takes no town keys (face, dwell, enter, exit, hours, vhours, holiday, prefer, pose, cliques, via)", spec.activity));
+            }
+            if (spec.dwell[0] > spec.dwell[1])
+            {
+                return bad(fmt::format("dwell [{}, {}] is min then max", spec.dwell[0], spec.dwell[1]));
+            }
+            if (!knownExit(spec.enter) || !knownExit(spec.exit))
+            {
+                return bad(fmt::format("enter '{}' / exit '{}' is not an exit of this zone, nearest or any", spec.enter, spec.exit));
+            }
+            if (spec.turnstile() && file.exits.empty())
+            {
+                return bad("a turnstile (a dwell) needs the zone's exits: where she comes from and goes");
+            }
+            if (!goodHours(spec.hours) || !goodHours(spec.vhours))
+            {
+                return bad("hours are [from, to] on a 24-hour clock");
+            }
+            if (!spec.holiday.empty() && !weekdayByName(spec.holiday).has_value())
+            {
+                return bad(fmt::format("holiday '{}' is not a Vana'diel weekday", spec.holiday));
+            }
+            if (!spec.prefer.empty() && spec.prefer != "sellers")
+            {
+                return bad(fmt::format("prefer '{}' is not sellers", spec.prefer));
+            }
+            if (!spec.pose.empty() && spec.pose != "kneel")
+            {
+                return bad(fmt::format("pose '{}' is not kneel", spec.pose));
+            }
+            if (spec.cliques[0] > spec.cliques[1] || spec.cliques[1] > 8)
+            {
+                return bad(fmt::format("cliques [{}, {}] is min then max, up to 8", spec.cliques[0], spec.cliques[1]));
             }
         }
-        return std::move(file.slots);
+        return file;
     }
 
     auto loadSlots(CZone* PZone) -> ZoneSlots&
@@ -1104,8 +1526,44 @@ namespace
         const auto      path = slotPath(PZone);
         std::error_code ec;
         table.written = std::filesystem::exists(path, ec) ? std::filesystem::last_write_time(path, ec) : std::filesystem::file_time_type{};
-        table.specs   = parseSlots(path).value_or(std::vector<SlotSpec>{});
+        auto file     = parseSlots(path).value_or(SlotFile{});
+        table.exits   = std::move(file.exits);
+        table.specs   = std::move(file.slots);
         table.occupants.assign(table.specs.size(), {});
+        table.turns.assign(table.specs.size(), 0);
+        table.refillAt.assign(table.specs.size(), std::chrono::steady_clock::time_point{});
+        table.recent.assign(table.specs.size(), {});
+        table.layout.assign(table.specs.size(), {});
+        table.holders.assign(table.specs.size(), {});
+        for (size_t i = 0; i < table.specs.size(); ++i)
+        {
+            if (table.specs[i].clustered())
+            {
+                table.layout[i] = layoutCliques(zoneId, static_cast<uint32>(i), table.specs[i]);
+                for (auto& seat : table.layout[i])
+                {
+                    seat.at = snapToMesh(PZone, seat.at);
+                }
+                table.holders[i].assign(table.layout[i].size(), std::string());
+            }
+        }
+        // Exits and town points onto the mesh, said once when they moved
+        table.exitPoints.clear();
+        for (const auto& e : table.exits)
+        {
+            const auto authored = toPosition(e.at);
+            const auto snapped  = snapToMesh(PZone, authored);
+            reportSnap(PZone, fmt::format("exit {}", e.name), authored, snapped);
+            table.exitPoints.push_back(snapped);
+        }
+        for (size_t i = 0; i < table.specs.size(); ++i)
+        {
+            if (table.specs[i].town())
+            {
+                const auto authored = toPosition(table.specs[i].at);
+                reportSnap(PZone, fmt::format("slot #{}'s point", i), authored, snapToMesh(PZone, authored));
+            }
+        }
         // Bodies already placed keep their slots across a re-read: a slot is
         // appended to the file, never reordered
         for (const auto& [charid, body] : bodies)
@@ -1133,22 +1591,70 @@ namespace
         return h;
     }
 
+    // Every world body walked at the same speed and stepped on the same
+    // zone tick, so the client drew their run cycles in lockstep and the
+    // mesh sent them down a street in single file (the user, 2026-09-07).
+    // Her pace: a few percent off the norm, hers for good. Her lane: a
+    // sideways offset her town walks keep to
+    auto paceOf(const std::string& name) -> float
+    {
+        return 0.94f + 0.10f * static_cast<float>((nameHash(name) / 7u) % 1000u) / 1000.0f;
+    }
+
+    auto laneOf(const std::string& name) -> float
+    {
+        return -1.6f + 3.2f * static_cast<float>((nameHash(name) / 13u) % 1000u) / 1000.0f;
+    }
+
+    // The names in the player's own auction history, newest first: who they
+    // bought from (a crowd listing, seller 0, taken by a real buyer) and who
+    // bought from them (a real listing sold to the crowd, buyer 0). The
+    // market writes the crowd's names from the census, so these are people
+    // of the world
+    auto recentCounterparties() -> std::vector<std::string>
+    {
+        std::vector<std::string> names;
+        const auto               take = [&](const char* sql)
+        {
+            if (const auto rset = db::preparedStmt(sql); rset)
+            {
+                while (rset->next())
+                {
+                    auto who = rset->get<std::string>("who");
+                    if (!who.empty() && std::ranges::find(names, who) == names.end())
+                    {
+                        names.push_back(std::move(who));
+                    }
+                }
+            }
+        };
+        take("SELECT seller_name AS who FROM auction_house WHERE seller = 0 AND buyer <> 0 AND buyer_name IS NOT NULL ORDER BY sell_date DESC LIMIT 20");
+        take("SELECT buyer_name AS who FROM auction_house WHERE seller <> 0 AND buyer = 0 AND buyer_name IS NOT NULL ORDER BY sell_date DESC LIMIT 20");
+        return names;
+    }
+
     // A slot's occupants: in the world, level in band, not recruited, not
-    // placed anywhere already; cohort rows first (the recruitment pool is
-    // who you should meet), then by a hash of zone, slot and seed, so a
-    // visit tends to show the same faces
-    // A camp party is dealt healer first when the band has one, then the
-    // rest; a solo seat takes anyone
-    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted, const bool wantHealer) -> std::vector<std::string>
+    // placed anywhere already; the preferred names first (a town seat that
+    // prefers the player's sellers), then cohort rows (the recruitment pool
+    // is who you should meet), then by a hash of zone, slot and seed, so a
+    // visit tends to show the same faces. A turnstile mixes its turn into
+    // the hash and passes over the faces it showed last, so the next one
+    // differs. A camp party is dealt healer first when the band has one,
+    // then the rest; a solo seat takes anyone
+    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted, const bool wantHealer,
+                         const uint32 turn = 0, const std::vector<std::string>& recent = {}) -> std::vector<std::string>
     {
         struct Candidate
         {
             std::string name;
-            bool        shared = false;
-            bool        healer = false;
-            uint32      order  = 0;
+            bool        preferred = false;
+            bool        shared    = false;
+            bool        healer    = false;
+            uint32      order     = 0;
         };
-        std::vector<Candidate> candidates;
+        const std::vector<std::string> preferred = spec.prefer == "sellers" ? recentCounterparties() : std::vector<std::string>{};
+        std::vector<Candidate>         candidates;
+        std::vector<Candidate>         shown; // recent faces, taken only when nobody else fits
         if (const auto rset = db::preparedStmt("SELECT name, cohort, seed, job FROM cardian_census WHERE anchor <> 'bank' AND recruited = 0 AND level BETWEEN ? AND ?",
                                                spec.band[0], spec.band[1]);
             rset)
@@ -1160,14 +1666,21 @@ namespace
                 {
                     continue;
                 }
-                const uint32 seed  = rset->get<uint32>("seed");
-                const uint32 order = (seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u);
-                candidates.push_back(Candidate{ .name = std::move(name), .shared = rset->get<uint32>("cohort") == 0, .healer = isHealer(rset->get<uint8>("job")), .order = order });
+                const uint32 seed      = rset->get<uint32>("seed");
+                const uint32 order     = (seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u) ^ (turn * 0x9E3779B9u);
+                const bool   isPreferred = std::ranges::find(preferred, name) != preferred.end();
+                const bool   wasShown    = std::ranges::find(recent, name) != recent.end();
+                Candidate    c{ .name = std::move(name), .preferred = isPreferred, .shared = rset->get<uint32>("cohort") == 0, .healer = isHealer(rset->get<uint8>("job")), .order = order };
+                (wasShown ? shown : candidates).push_back(std::move(c));
             }
+        }
+        if (candidates.size() < wanted)
+        {
+            candidates.insert(candidates.end(), shown.begin(), shown.end());
         }
         std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b)
         {
-            return std::tie(a.shared, a.order, a.name) < std::tie(b.shared, b.order, b.name);
+            return std::make_tuple(!a.preferred, a.shared, a.order, a.name) < std::make_tuple(!b.preferred, b.shared, b.order, b.name);
         });
         std::vector<std::string> out;
         if (wantHealer && spec.isCamp())
@@ -1220,14 +1733,15 @@ namespace
         return point;
     }
 
-    // Presence queued for what a slot is short of
+    // Presence queued for what a slot is short of. A town seat fills only
+    // in its hours, and a turnstile no sooner than its refill time
     auto queueSlot(CZone* PZone, const uint32 slot) -> uint32
     {
         const auto  zoneId = static_cast<uint16>(PZone->GetID());
         auto&       table  = zoneSlots[zoneId];
         const auto& spec   = table.specs[slot];
         const auto  have   = table.occupants[slot].size();
-        if (have >= spec.seats())
+        if (have >= spec.seats() || !seatOpen(spec) || (spec.turnstile() && std::chrono::steady_clock::now() < table.refillAt[slot]))
         {
             return 0;
         }
@@ -1243,10 +1757,55 @@ namespace
                 }
             }
         }
-        uint32 queued = 0;
-        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer))
+        // A clustered slot deals its laid-out seats in order, skipping the
+        // held ones and the ones already promised to a pending body
+        std::vector<size_t> freeSeats;
+        if (spec.clustered())
         {
-            pending.push_back(Pending{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam, .party = spec.isCamp() ? std::max<uint32>(1, spec.party) : 1 });
+            for (size_t i = 0; i < table.layout[slot].size(); ++i)
+            {
+                const bool promised = std::ranges::any_of(pending, [&](const Pending& p) { return p.zone == zoneId && p.slot == static_cast<int32>(slot) && p.seat == static_cast<int32>(i); });
+                if (table.holders[slot][i].empty() && !promised)
+                {
+                    freeSeats.push_back(i);
+                }
+            }
+        }
+        uint32 queued = 0;
+        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer && spec.isCamp(), table.turns[slot], table.recent[slot]))
+        {
+            Pending item{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam, .party = std::max<uint32>(1, spec.party) };
+            if (spec.clustered())
+            {
+                if (queued >= freeSeats.size())
+                {
+                    break; // no laid-out seat left
+                }
+                const auto& seat = table.layout[slot][freeSeats[queued]];
+                item.seat        = static_cast<int32>(freeSeats[queued]);
+                item.point       = seat.at;
+                item.face        = seat.face;
+            }
+            else if (spec.town())
+            {
+                item.point = snapToMesh(PZone, item.point); // her seat, on the mesh, so the walk can end
+            }
+            if (spec.face.has_value() && !item.face.has_value())
+            {
+                item.face = toPosition(*spec.face);
+            }
+            for (const auto& v : spec.via)
+            {
+                item.via.push_back(snapToMesh(PZone, toPosition(v)));
+            }
+            if (spec.turnstile())
+            {
+                item.dwell    = spec.dwell;
+                // she comes in from the exit nearest her first via point, else her seat
+                item.cameFrom = exitPoint(table, spec.enter, item.via.empty() ? item.point : item.via.front(), std::nullopt);
+            }
+            item.pose = spec.pose;
+            pending.push_back(std::move(item));
             ++queued;
         }
         return queued;
@@ -1300,10 +1859,20 @@ namespace
         body.present      = false;
         body.censusLevel  = row->level;
         body.seed         = row->seed;
+        body.face         = item.face;
+        body.dwell        = item.dwell;
+        body.pose         = item.pose;
+        body.cameFrom     = item.cameFrom;
+        body.seat         = item.seat;
+        body.via          = item.via;
         charidByName[item.name] = charid;
         if (auto& table = zoneSlots[zoneId]; item.slot >= 0 && static_cast<size_t>(item.slot) < table.occupants.size())
         {
             table.occupants[item.slot].push_back(item.name);
+            if (item.seat >= 0 && static_cast<size_t>(item.seat) < table.holders[item.slot].size())
+            {
+                table.holders[item.slot][item.seat] = item.name;
+            }
         }
         pawn::markPresent(charid, zoneId, item.point, row->job, row->level);
         ShowInfoFmt("world: {} ({} {}) holds slot {} in {}", item.name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, item.slot, PZone->getName());
@@ -1311,11 +1880,20 @@ namespace
         {
             fadeIn(body);
         }
+        else if (item.dwell[1] > 0)
+        {
+            // Nobody to see her walk in: she is at her seat already, and the
+            // town's clock runs unseen -- she leaves it on time all the same
+            body.atSeat  = true;
+            body.viaNext = body.via.size();
+            body.leaveAt = std::chrono::steady_clock::now() + std::chrono::seconds(xirand::GetRandomNumber(item.dwell[0], item.dwell[1] + 1));
+        }
         return true;
     }
 
     // A seat's occupant returns to the pool: her body fades, her presence
-    // goes, the seat is free to fill again
+    // goes, the seat is free to fill again. A turnstile counts the turn,
+    // remembers the face and waits its gap before the next one
     void unseat(Body& body, const std::string_view why)
     {
         if (body.present)
@@ -1325,10 +1903,130 @@ namespace
         pawn::markAbsent(body.charid);
         if (auto tit = zoneSlots.find(body.zone); tit != zoneSlots.end() && body.slot >= 0 && static_cast<size_t>(body.slot) < tit->second.occupants.size())
         {
-            std::erase(tit->second.occupants[body.slot], body.name);
+            auto&      table = tit->second;
+            const auto slot  = static_cast<size_t>(body.slot);
+            std::erase(table.occupants[slot], body.name);
+            if (body.seat >= 0 && static_cast<size_t>(body.seat) < table.holders[slot].size() && table.holders[slot][body.seat] == body.name)
+            {
+                table.holders[slot][body.seat].clear();
+            }
+            if (table.specs[slot].turnstile())
+            {
+                ++table.turns[slot];
+                table.refillAt[slot] = std::chrono::steady_clock::now() + std::chrono::seconds(xirand::GetRandomNumber(settings::get<uint32>("pawn.WORLD_TOWN_GAP_MIN"), settings::get<uint32>("pawn.WORLD_TOWN_GAP_MAX") + 1));
+                auto& recent         = table.recent[slot];
+                std::erase(recent, body.name);
+                recent.push_back(body.name);
+                if (recent.size() > 6)
+                {
+                    recent.erase(recent.begin());
+                }
+            }
         }
         charidByName.erase(body.name);
         bodies.erase(body.charid);
+    }
+
+    // -- Town seats (ROADMAP D4): the turnstile's clock --------------------------
+    // She leaves when her dwell is up or her hours close: standing, she
+    // walks to her exit and fades there (the controller reports the
+    // arrival, `gone`); faded, she simply goes. A group leaves together.
+    // Then the seat waits its gap and refills with another face
+    // Her way out: the via points in reverse (those she has passed), then
+    // the exit -- the one nearest her last via point, else her seat
+    void setWayOut(Body& body, const ZoneSlots& table, const std::optional<position_t>& sharedExit)
+    {
+        const auto& spec = table.specs[body.slot];
+        body.wayOut.clear();
+        body.outNext = 0;
+        for (size_t i = std::min(body.viaNext, body.via.size()); i > 0; --i)
+        {
+            body.wayOut.push_back(body.via[i - 1]);
+        }
+        const position_t& from = body.via.empty() ? body.point : body.via.front();
+        body.exitAt            = sharedExit.has_value() ? sharedExit : exitPoint(table, spec.exit, from, body.cameFrom);
+        if (body.exitAt.has_value())
+        {
+            body.wayOut.push_back(*body.exitAt);
+        }
+    }
+
+    void leaveSeat(Body& body, ZoneSlots& table, const std::string_view why)
+    {
+        body.leaving = true;
+        body.leaveAt.reset();
+        setWayOut(body, table, std::nullopt);
+        if (body.present)
+        {
+            ShowInfoFmt("world: {} leaves her seat ({}){}", body.name, why,
+                        body.exitAt.has_value() ? fmt::format(", for ({:.0f}, {:.0f}, {:.0f}){}", body.exitAt->x, body.exitAt->y, body.exitAt->z, body.wayOut.size() > 1 ? " by way of the door" : "") : "");
+        }
+        else
+        {
+            body.gone = true;
+        }
+        for (Body* mate : campMates(body))
+        {
+            if (mate != &body && !mate->leaving)
+            {
+                mate->leaving = true;
+                mate->leaveAt.reset();
+                setWayOut(*mate, table, body.exitAt);
+                mate->gone = !mate->present;
+            }
+        }
+    }
+
+    void tickTown(CZone* PZone, const std::chrono::steady_clock::time_point now, const bool poll)
+    {
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        const auto tit    = zoneSlots.find(zoneId);
+        if (tit == zoneSlots.end() || tit->second.specs.empty())
+        {
+            return;
+        }
+        auto&               table = tit->second;
+        std::vector<uint32> gone;
+        std::vector<uint32> due;
+        for (auto& [charid, body] : bodies)
+        {
+            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= table.specs.size() || !table.specs[body.slot].timed())
+            {
+                continue;
+            }
+            if (body.gone || (body.leaving && !body.present))
+            {
+                gone.push_back(charid);
+            }
+            else if (!body.leaving && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))))
+            {
+                due.push_back(charid);
+            }
+        }
+        for (const auto charid : due)
+        {
+            if (const auto it = bodies.find(charid); it != bodies.end() && !it->second.leaving)
+            {
+                leaveSeat(it->second, table, seatOpen(table.specs[it->second.slot]) ? "her time is up" : "the hours are over");
+            }
+        }
+        for (const auto charid : gone)
+        {
+            if (const auto it = bodies.find(charid); it != bodies.end())
+            {
+                unseat(it->second, "gone her way");
+            }
+        }
+        if (poll)
+        {
+            for (uint32 slot = 0; slot < table.specs.size(); ++slot)
+            {
+                if (table.specs[slot].timed())
+                {
+                    queueSlot(PZone, slot);
+                }
+            }
+        }
     }
 
     // The census moves (a recut, the player levelled): a seated body whose
@@ -1676,6 +2374,80 @@ namespace pawn::world
         return std::make_pair(anchor, it->second.roam);
     }
 
+    auto townOrder(const uint32 charid) -> std::optional<TownOrder>
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || !it->second.present)
+        {
+            return std::nullopt;
+        }
+        const Body& body = it->second;
+        if (body.dwell[1] == 0 && !body.face.has_value() && body.pose.empty() && body.via.empty() && !body.leaving)
+        {
+            return std::nullopt; // a field seat: the farmer's own
+        }
+        TownOrder order{};
+        order.face    = body.face;
+        order.atSeat  = body.atSeat && !body.leaving;
+        order.leaving = body.leaving;
+        order.kneel   = body.pose == "kneel";
+        if (body.leaving)
+        {
+            order.goal = body.outNext < body.wayOut.size() ? body.wayOut[body.outNext] : body.point;
+        }
+        else
+        {
+            order.goal = body.viaNext < body.via.size() ? body.via[body.viaNext] : body.point;
+        }
+        return order;
+    }
+
+    auto laneOf(const uint32 charid) -> float
+    {
+        const auto it = bodies.find(charid);
+        return it != bodies.end() ? ::laneOf(it->second.name) : 0.0f;
+    }
+
+    // She reached the point she was walking to: the next via point, her
+    // seat (the dwell starts), or the last of her way out (gone)
+    void noteReached(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            return;
+        }
+        Body& body = it->second;
+        if (body.leaving)
+        {
+            if (body.outNext + 1 < body.wayOut.size())
+            {
+                ++body.outNext;
+            }
+            else
+            {
+                body.gone = true;
+            }
+            return;
+        }
+        if (body.viaNext < body.via.size())
+        {
+            ++body.viaNext;
+            return;
+        }
+        if (body.atSeat)
+        {
+            return;
+        }
+        body.atSeat = true;
+        if (body.dwell[1] > 0)
+        {
+            const auto seconds = xirand::GetRandomNumber(body.dwell[0], body.dwell[1] + 1);
+            body.leaveAt       = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            ShowInfoFmt("world: {} takes her seat for {} s", body.name, seconds);
+        }
+    }
+
     auto slots(CZone* PZone) -> std::vector<std::string>
     {
         std::vector<std::string> lines;
@@ -1700,10 +2472,27 @@ namespace pawn::world
                 const bool present = bit != bodies.end() && bit->second.present;
                 who += fmt::format("{}{}{}", who.empty() ? "" : ", ", name, present ? "" : "~");
             }
-            lines.push_back(fmt::format("#{} {}{} L{}-{} x{} at ({:.0f}, {:.0f}, {:.0f}) spread {:.0f}{}: {}", i, spec.activity,
-                                        spec.activity == "camp" ? fmt::format(" of {}", spec.party) : "", spec.band[0], spec.band[1],
-                                        spec.count, spec.at[0], spec.at[1], spec.at[2], spec.spread, spec.roam > 0 ? fmt::format(" roam {:.0f}", spec.roam) : "",
-                                        who.empty() ? (spec.activity == "camp" ? "unseated until parties (D5)" : "nobody yet") : who));
+            std::string town;
+            if (spec.turnstile())
+            {
+                town += fmt::format(" dwell {}-{}s turn {}", spec.dwell[0], spec.dwell[1], table.turns[i]);
+            }
+            if (spec.hours.has_value())
+            {
+                town += fmt::format(" hours {}-{}", (*spec.hours)[0], (*spec.hours)[1]);
+            }
+            if (spec.vhours.has_value())
+            {
+                town += fmt::format(" vhours {}-{}", (*spec.vhours)[0], (*spec.vhours)[1]);
+            }
+            if (!seatOpen(spec))
+            {
+                town += " (closed now)";
+            }
+            lines.push_back(fmt::format("#{} {}{} L{}-{} x{} at ({:.0f}, {:.0f}, {:.0f}) spread {:.0f}{}{}: {}", i, spec.activity,
+                                        spec.party > 1 ? fmt::format(" of {}", spec.party) : "", spec.band[0], spec.band[1],
+                                        spec.count, spec.at[0], spec.at[1], spec.at[2], spec.spread, spec.roam > 0 ? fmt::format(" roam {:.0f}", spec.roam) : "", town,
+                                        who.empty() ? "nobody now" : who));
         }
         return lines;
     }
@@ -1755,13 +2544,17 @@ namespace pawn::world
             return;
         }
         const auto zoneId = static_cast<uint16>(PZone->GetID());
+        const auto now    = std::chrono::steady_clock::now();
 
         // The slot tables: on a zone's first tick its occupants are chosen
         // and given presence, a couple a tick; their bodies come with a
         // player. An edited file is noticed within a few seconds and the
-        // zone refills from it, so a table is authored with the zone live
+        // zone refills from it, so a table is authored with the zone live.
+        // The town's turnstiles turn every tick; their refills come with
+        // the poll
         if (settings::get<bool>("pawn.WORLD_SLOTS"))
         {
+            bool poll = false;
             if (!filledAtBoot.contains(zoneId))
             {
                 filledAtBoot.insert(zoneId);
@@ -1772,6 +2565,7 @@ namespace pawn::world
             }
             else if (++slotPoll[zoneId] % kSlotPollTicks == 0)
             {
+                poll = true;
                 reseatOutgrown(PZone);
                 if (const auto it = zoneSlots.find(zoneId); it != zoneSlots.end())
                 {
@@ -1781,7 +2575,7 @@ namespace pawn::world
                     if (!ec && written != it->second.written)
                     {
                         const auto parsed = parseSlots(path);
-                        if (!parsed.has_value() || *parsed == it->second.specs)
+                        if (!parsed.has_value() || (parsed->slots == it->second.specs && parsed->exits == it->second.exits))
                         {
                             it->second.written = written; // a bad edit, or a comment: the zone stands as it is
                         }
@@ -1794,6 +2588,7 @@ namespace pawn::world
                     }
                 }
             }
+            tickTown(PZone, now, poll);
         }
 
         // The debug ring: once, in its own zone, from the first tick of any
@@ -1846,8 +2641,6 @@ namespace pawn::world
 
         const uint32 real           = realPlayersIn(PZone);
         realPlayersLastTick[zoneId] = real;
-
-        const auto now  = std::chrono::steady_clock::now();
 
         // KO'd: she lies there WORLD_KO_FADE seconds, then fades; the next
         // fade-in stands her whole (spawnAt)

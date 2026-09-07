@@ -292,6 +292,16 @@ xi.settings.pawn =
     -- (the database only learns it on a zone change). 0 is off.
     WORLD_WHERE_LOG = 0,
 
+    -- Town seats (ROADMAP D4): a stand slot with a dwell is a turnstile --
+    -- she walks in from one of the zone's exits, holds the seat her dwell,
+    -- walks to an exit and fades, and the seat refills with another face
+    -- WORLD_TOWN_GAP_MIN to WORLD_TOWN_GAP_MAX seconds later. A walk that
+    -- gets no nearer for WORLD_TOWN_STALL seconds is given up where she
+    -- stands, with a warning naming both ends: the route to fix.
+    WORLD_TOWN_GAP_MIN = 5,
+    WORLD_TOWN_GAP_MAX = 40,
+    WORLD_TOWN_STALL   = 8,
+
     -- Liveness: a zone is live while a real player is in it or, with
     -- WORLD_LIVE_RADIUS 1, one zone line away (the neighbours come from the
     -- zone's own exits); -1 keeps every zone live, the switch for the

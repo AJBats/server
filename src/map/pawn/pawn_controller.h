@@ -35,6 +35,11 @@
 #include <string_view>
 #include <vector>
 
+namespace pawn::world
+{
+    struct TownOrder;
+}
+
 namespace pawn
 {
     struct HuntRules;
@@ -439,6 +444,11 @@ private:
     // her, and farming, pick a mob in her band within reach or head toward
     // the nearest farther off and fight what she meets
     void RoamTick();
+    // A town seat's walk: in from her exit point, the dwell facing her point,
+    // out to an exit (pawn::world::TownOrder)
+    void TownTick(const pawn::world::TownOrder& order);
+    // The mesh's route to the point walked in her own lane (pawn::world::laneOf)
+    auto LanePath(const position_t& goal) -> bool;
     auto SelfDefenceTarget() -> CMobEntity*;
     void NotePlayerMagic(const CCharEntity* PPlayer);
 
@@ -573,6 +583,13 @@ private:
     timer::time_point         m_WorldPauseUntil{};
     timer::time_point         m_RoamStillSince{};
     position_t                m_RoamLastPos{};
+    // A town seat (ROADMAP D4): the leg she is on (to her seat, at it, to
+    // the exit) and how long she has stood still on a walk -- a stall gives
+    // the leg up where she is and says so, the route being the thing to fix
+    uint8             m_TownLeg = 0;
+    position_t        m_TownGoal{};
+    timer::time_point m_TownStillSince{};
+    position_t        m_TownLastPos{};
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
     bool              m_WaitOrdered = false;

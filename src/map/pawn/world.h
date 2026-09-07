@@ -9,7 +9,9 @@
   and back in at her point when someone arrives. D0: the bodies, the fade
   and the measurement; D1 the farm loop; D3 the slot tables: a Cardian-owned
   YAML per zone (modules/cardian/world/<Zone>.yaml) says what happens where,
-  a query fills it from the census, every occupant has presence from boot.
+  a query fills it from the census, every occupant has presence from boot;
+  D4 the town: a seat with a dwell is a turnstile, held a while and left by
+  a gate, so a town has few seats and many faces.
 
 ===========================================================================
 */
@@ -58,6 +60,30 @@ namespace pawn::world
     // Her slot's home pull, if it has one: her starting point and the roam
     // distance at which the pull weighs as much as the walk (pawn::HuntRules)
     auto homeOf(uint32 charid) -> std::optional<std::pair<position_t, float>>;
+
+    // Town seats (ROADMAP D4): a stand slot with a dwell is a turnstile.
+    // What her body should be doing -- walking to the next point of her
+    // way in (a via point, then her seat), holding the seat facing a point
+    // (kneeling if her pose says), or walking her way out (the via points
+    // in reverse, then an exit) to fade there; nullopt when she holds no
+    // town seat. The controller reports each point reached; the zone tick
+    // keeps the clock
+    struct TownOrder
+    {
+        position_t                goal{}; // the next point to reach (meaningless while atSeat)
+        std::optional<position_t> face;
+        bool                      atSeat  = false;
+        bool                      leaving = false;
+        bool                      kneel   = false;
+    };
+    auto townOrder(uint32 charid) -> std::optional<TownOrder>;
+    void noteReached(uint32 charid);
+
+    // Her lane: a sideways offset in yalms she walks the mesh's route at,
+    // drawn from her name, so a crowd sent down one street spreads across
+    // it instead of walking it in single file (the user, 2026-09-07). Her
+    // pace, a few percent off the norm, is set on her body as she stands
+    auto laneOf(uint32 charid) -> float;
 
     // Camps (ROADMAP D5): a camp slot's occupants are a party. Her camp's
     // present leader (the highest non-healer, else the highest; herself when

@@ -26,6 +26,69 @@ Editing the file is enough: a zone re-reads its table within ten seconds of
 a change, sends its people back to the pool and fills again. A file that
 does not parse, or a change that is only comments, leaves the zone as it is.
 
+## Town seats (ROADMAP D4)
+
+A field seat is a job, held for good. A town seat is a turnstile: a `stand`
+slot with a `dwell` is held that long, then she walks to one of the zone's
+exits and fades, and the seat refills with another face after a gap
+(`pawn.WORLD_TOWN_GAP_MIN/MAX`). The zone names its exits once, at the top:
+
+```yaml
+exits:
+  - name: west_gate
+    at: [-110.0, -4.0, -57.0]
+slots:
+  - activity: stand
+    band: [1, 75]
+    count: 2
+    at: [8.9, 1.7, -34.0]
+    spread: 1.5
+    face: [8.9, 1.7, -31.0]   # she faces this point at her seat
+    dwell: [20, 90]           # seconds, min and max; a dwell makes the seat a turnstile
+    enter: any                # the exit she walks in from: a name, nearest (default), any
+    exit: west_gate           # the exit she leaves by, the same words (any avoids the one she came in by)
+    hours: [12, 2]            # the player's local clock, [from, to); to before from wraps midnight
+    vhours: [3, 18]           # Vana'diel's clock (the guilds keep it)
+    holiday: iceday           # a Vana'diel weekday the seat stands empty
+    prefer: sellers           # the names in the player's own auction history first
+    pose: kneel               # she kneels at her seat
+    party: 3                  # three hold the seat and come and go together
+    cliques: [1, 4]           # the seats laid out as little groups of 1-4 facing each other
+    via: [[-182.9, -1.0, 29.4]]  # points walked in order on the way in, in reverse on the way out
+```
+
+Every world body walks at a pace of her own, a few percent off the norm,
+and a town walk keeps to a lane of her own -- the mesh's route slid a
+step to one side, snapped back where that lands in a wall -- so a crowd
+sent down one street neither runs in step nor in single file.
+
+`via` is for a doorway the mesh's shortest line would miss: the Tanners'
+Guild has an open outer doorway on its north side and an inner door that
+opens for her, but the mesh leaks through the building's east wall, so a
+seat inside names the doorway as its via and she goes round by it. She
+comes in from the exit nearest her first via point and leaves the same
+way back.
+
+`cliques` is for a crowd: group sizes are drawn in the range until the
+seats are covered, group centres are spread over the slot by
+best-candidate sampling (each new centre the farthest of twenty random
+tries from the ones placed), and a group is a conversation circle -- its
+members a yalm or so out from the middle, evenly spaced with a little
+jitter, each facing the middle; a body alone faces a heading of her own.
+The layout is drawn from the zone and the slot, so it is the same every
+visit, and the seats are dealt in order as bodies come and go.
+
+Placed while nobody is in the zone, she is at her seat already and the
+clock runs unseen; placed while someone is, she appears at her exit point
+and walks (`world: ... fades in at ... and walks to her seat`), and on
+arrival `takes her seat for N s`. A walk that gets no nearer for
+`pawn.WORLD_TOWN_STALL` seconds is given up where she stands, with a
+warning naming both ends: that is the route to fix, not her. A turnstile
+mixes its turn into the fill's hash and passes over the last six faces it
+showed, so the next one differs. Town keys are for `stand` only; a
+turnstile needs the zone's exits. `!pawnworld slots` shows each seat's
+dwell, hours, turn and whether it is closed now.
+
 Author by walking: stand where the slot is, `!pos`, and write the line (the
 user's way, 2026-09-07), or `!pawnworld slot farm 2-6 3 30` to append and
 fill it from in game. `!pawnworld slots` lists the table and who holds each
