@@ -732,7 +732,7 @@ namespace pawn
             case G_SELECT::HIGHEST:
                 return m_spellBook.GetBestAvailable(static_cast<SPELLFAMILY>(action.select_arg));
             case G_SELECT::RANDOM:
-                return m_spellBook.GetRandomDamageSpell();
+                return m_spellBook.GetRandomDamageSpell(PTarget);
             case G_SELECT::BEST_INDI:
                 return m_spellBook.GetBestIndiSpell(m_PController->GetLivePlayer());
             case G_SELECT::ENTRUSTED:
@@ -825,7 +825,7 @@ namespace pawn
 
     void CGambits::SetBehaviorRow(const pawn::Behavior behavior, const uint16 arg)
     {
-        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player" };
+        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "rest", "boost before weapon skills", "rest in battle" };
         const auto                                                         name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool                                                         sw   = pawn::isSwitch(behavior);
 

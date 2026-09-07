@@ -177,6 +177,25 @@ auto CPawnController::CurrentMode() const -> Mode
     return m_Mode;
 }
 
+auto CPawnController::GetAnchor() const -> CCharEntity*
+{
+    if (auto* PPlayer = GetLivePlayer(); PPlayer != nullptr)
+    {
+        return PPlayer;
+    }
+    if (!m_World)
+    {
+        return nullptr;
+    }
+    const auto leader = pawn::world::campLeaderOf(POwner->id);
+    if (leader == 0 || leader == POwner->id)
+    {
+        return nullptr;
+    }
+    auto* PLeader = pawn::findPawn(leader);
+    return PLeader != nullptr && PLeader->loc.zone == POwner->loc.zone && !PLeader->isDead() ? PLeader : nullptr;
+}
+
 auto CPawnController::IdleMode() const -> Mode
 {
     if (m_Retreat)
@@ -189,7 +208,9 @@ auto CPawnController::IdleMode() const -> Mode
     }
     if (m_World)
     {
-        return Mode::Roam;
+        // A camp member follows her leader as a cardian follows the player;
+        // the leader, and a body on her own, roam
+        return GetAnchor() != nullptr ? Mode::Follow : Mode::Roam;
     }
     return Mode::Follow;
 }
@@ -319,21 +340,31 @@ void CPawnController::RoamTick()
 {
     m_Gambits->TickBehaviors();
 
-    // Rest when low, up when whole: the Healing status is the real thing,
-    // kneel and regen ticks, and a rest is never taken mid-walk
+    // Rest when her Rest row says so (a gambit: HP or MP under its line),
+    // up when whole: the Healing status is the real thing, kneel and regen
+    // ticks, and a rest is never taken mid-walk
     const bool  resting  = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
     const bool  hasMana  = POwner->GetMaxMP() > 0;
-    const bool  low      = POwner->GetHPP() < settings::get<uint8>("pawn.WORLD_REST_HP") || (hasMana && POwner->GetMPP() < settings::get<uint8>("pawn.WORLD_REST_MP"));
+    const bool  ownLow   = Behavior(pawn::Behavior::Rest).value_or(0) != 0 || Behavior(pawn::Behavior::RestInBattle).value_or(0) != 0;
+    const bool  partyLow = PartyNeedsRest();
+    const bool  low      = ownLow || partyLow;
     const bool  whole    = POwner->GetHPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL") && (!hasMana || POwner->GetMPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL"));
     auto*       PPathFind = POwner->PAI->PathFind.get();
     if (resting)
     {
-        if (!whole)
+        // Aggro reaching her ends the rest early: up, and the avoid logic
+        // below walks her out of its circle, whole or not. Kneeling for the
+        // party (a member resting), she stays down until that member is up
+        RefreshDangers(nullptr);
+        const bool threatened = InsideDanger();
+        if ((!whole || (m_RestForParty && (PartyResting() || partyLow))) && !threatened)
         {
             return;
         }
         POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        ShowInfoFmt("world: {} is up again (hp {}%{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "");
+        m_RestForParty = false;
+        ShowInfoFmt("world: {} is up again (hp {}%{}{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "",
+                    threatened && !whole ? ", aggro coming" : "");
     }
     else if (low && !POwner->PAI->IsCurrentState<CMagicState>())
     {
@@ -343,12 +374,16 @@ void CPawnController::RoamTick()
         }
         const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
         POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
+        // A kneel for the party (a member low) holds while the party needs
+        // it, not until she herself is whole -- she usually is already
+        m_RestForParty = partyLow && !ownLow;
         // Damage over time knocks her out of the kneel every tick and she
         // kneels again: one line every so often, not one a tick
         if (m_Tick - m_WorldRestLogTime > 15s)
         {
             m_WorldRestLogTime = m_Tick;
-            ShowInfoFmt("world: {} rests (hp {}%{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "");
+            ShowInfoFmt("world: {} rests (hp {}%{}{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "",
+                        m_RestForParty ? ", for the party" : "");
         }
         return;
     }
@@ -358,6 +393,19 @@ void CPawnController::RoamTick()
     {
         Draw(PMob, ApproachKind::Order, "on her, roaming");
         return;
+    }
+    // Leading a camp, her party's fight is hers too: a member already
+    // fighting, or a mob that has come for one of them (D5)
+    if (pawn::world::campSizeOf(POwner->id) > 1 && !m_Approach.has_value())
+    {
+        if (const auto party = PartyEngageTarget(nullptr); party.target != nullptr && !HoldingOff(party.target))
+        {
+            if (!Draw(party.target, ApproachKind::Join, party.why, false) && !m_Approach.has_value())
+            {
+                HoldOff(party.target);
+            }
+            return;
+        }
     }
 
     if (PPathFind == nullptr || POwner->GetSpeed() <= 0)
@@ -380,13 +428,44 @@ void CPawnController::RoamTick()
     // Farming: the party's own hunt, round herself. On the hunt's cadence
     // a mob in her band within the hunt radius is the pick, judged by the
     // pull rules as any hunter's, then the shared walk in (ApproachTick).
-    // No party paces her; her rest above is her pacing
+    // Alone, her rest above is her pacing; leading a camp (D5) she picks
+    // by the party's band and sets off only when the party is ready
+    const auto      campSize = pawn::world::campSizeOf(POwner->id);
     pawn::HuntRules rules{};
-    rules.minCheck   = settings::get<uint8>("pawn.WORLD_HUNT_MIN");
-    rules.maxCheck   = settings::get<uint8>("pawn.WORLD_HUNT_MAX");
+    rules.minCheck   = settings::get<uint8>(campSize >= 3 ? "pawn.WORLD_TRIO_HUNT_MIN" : campSize == 2 ? "pawn.WORLD_DUO_HUNT_MIN" : "pawn.WORLD_HUNT_MIN");
+    rules.maxCheck   = settings::get<uint8>(campSize >= 3 ? "pawn.WORLD_TRIO_HUNT_MAX" : campSize == 2 ? "pawn.WORLD_DUO_HUNT_MAX" : "pawn.WORLD_HUNT_MAX");
     rules.pullFirst  = 1;
     rules.aggressive = false;
     rules.links      = false;
+    if (campSize > 1 && !m_Approach.has_value())
+    {
+        if (const auto why = CampBlocker(); !why.empty())
+        {
+            Move(Intent{});
+            // A member resting is the camp resting: the leader kneels with
+            // her (and the party kneels with the leader), up when she is
+            // (user: "call the party to stop and heal to full")
+            if (PartyResting() && !resting && !POwner->PAI->IsCurrentState<CMagicState>() && (PPathFind == nullptr || !PPathFind->IsFollowingPath()))
+            {
+                const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+                POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
+                m_RestForParty = true;
+                ShowInfoFmt("world: {} rests with her party ({})", POwner->getName(), why);
+                return;
+            }
+            if (!POwner->PAI->IsCurrentState<CMagicState>())
+            {
+                m_Gambits->Tick(m_Tick, false);
+                IdleEmote(nullptr);
+            }
+            if (m_Tick - m_LastHuntLogTime > 15s)
+            {
+                m_LastHuntLogTime = m_Tick;
+                ShowInfoFmt("world: {} waits for her party ({})", POwner->getName(), why);
+            }
+            return;
+        }
+    }
     if (const auto home = pawn::world::homeOf(POwner->id); home.has_value())
     {
         rules.homeAt = home->first;
@@ -1520,7 +1599,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 
     m_Gambits->TickBehaviors();
 
-    CCharEntity* PPlayer = GetLivePlayer();
+    CCharEntity* PPlayer = GetAnchor();
 
     // The player is the party's anchor: gone from the zone means stand down.
     // Their weapon going down does not call the party off a fight that has
@@ -1550,6 +1629,17 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // Rest in battle (D5, the user's resting pipeline): a mage whose MP row
+    // holds sits out of a fight that is not on her -- she neither closes nor
+    // casts, and the idle path kneels her next tick, down until whole. The
+    // melee carry on; the leader holds the next pull while she sits
+    if (m_World && Behavior(pawn::Behavior::RestInBattle).value_or(0) != 0 && PTarget->GetBattleTarget() != POwner)
+    {
+        Transition(IdleMode(), "sits out to rest");
+        POwner->PAI->Internal_Disengage();
+        co_return;
+    }
+
     // A target gone underground with no fight on is let go, not waited on
     if (auto* PMobTarget = dynamic_cast<CMobEntity*>(PTarget); PMobTarget != nullptr && pawn::isUnderground(PMobTarget) && !PMobTarget->PAI->IsEngaged())
     {
@@ -1563,6 +1653,23 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // is read from
     m_LastFoughtId = PTarget->id;
     m_LastFought   = EntityId(PTarget);
+
+    // The weapon skill held behind a Boost goes out now, before anything
+    // else can spend the Boost; given up after a few ticks
+    if (m_WsAfterBoost.has_value() && m_Tick > m_WsAfterBoost->at)
+    {
+        const auto held = *m_WsAfterBoost;
+        if (auto* PHeld = held.target.resolve<CBattleEntity>(); PHeld != nullptr && !PHeld->isDead() &&
+            (CPlayerController::WeaponSkill(held.target, held.wsid) || m_Tick - held.at > 2s))
+        {
+            m_WsAfterBoost.reset();
+            co_return;
+        }
+        if (m_Tick - held.at > 2s)
+        {
+            m_WsAfterBoost.reset();
+        }
+    }
 
     // The hold ends the moment the player has struck or the mob has come,
     // and says which: without it, a cardian closing on her own is a
@@ -1846,10 +1953,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // A world body: nobody to follow. Her walk in on a mob is the shared
-    // one, anchored on her route point and paced by nothing but her own
-    // rest; the rest of her idle is Roam (RoamTick)
-    if (m_World)
+    // A world body on her own, or leading her camp: nobody to follow. Her
+    // walk in on a mob is the shared one, anchored on herself and paced by
+    // nothing but her own rest; the rest of her idle is Roam (RoamTick). A
+    // camp member has a leader, and takes the party path below on her
+    if (m_World && GetAnchor() == nullptr)
     {
         if (m_Approach.has_value() && ApproachTick(POwner->loc.p, POwner->GetMLevel(), std::string(), pawn::world::isFarming(POwner->id), nullptr))
         {
@@ -1866,7 +1974,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    CCharEntity* PPlayer = GetLivePlayer();
+    CCharEntity* PPlayer = GetAnchor();
     if (PPlayer == nullptr)
     {
         // Gone by magic a moment ago -- a warp, a teleport -- she waits
@@ -1916,6 +2024,63 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
     }
     m_Gambits->TickBehaviors();
+
+    // Her rest comes before the party's fight: a body whose own row holds
+    // kneels, or stays kneeling, rather than drawing -- else a mage sitting
+    // out for MP draws, sits out, draws, sits out (user, D5 dogfood)
+    // Rest with the player: the Healing status is the real thing -- kneel
+    // animation and resting regen ticks -- so the party sits down together.
+    // Her own Rest row (HP or MP under its line) kneels her too, and that
+    // rest holds until she is whole (D5: how a camp rests)
+    // The leader's kneel and stand reach her a beat later (her seat's
+    // reaction, as her draw does), so a camp does not move as one
+    const bool leaderResting = RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
+    if (leaderResting != m_LeaderRestingSeen)
+    {
+        m_LeaderRestingSeen = leaderResting;
+        m_RestFollowDue     = m_Tick + ReactionBeat();
+    }
+    const bool playerResting = m_Tick >= m_RestFollowDue ? leaderResting : !leaderResting;
+    const bool ownRest       = Behavior(pawn::Behavior::Rest).value_or(0) != 0 || Behavior(pawn::Behavior::RestInBattle).value_or(0) != 0;
+    const bool resting       = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    const bool hasMana       = POwner->GetMaxMP() > 0;
+    const bool whole         = POwner->GetHPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL") && (!hasMana || POwner->GetMPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL"));
+    if (resting)
+    {
+        // Aggro reaching her ends the rest early: up, and the formation's
+        // avoid logic walks her out of its circle
+        RefreshDangers(nullptr);
+        const bool threatened = InsideDanger();
+        if ((playerResting || (m_RestUntilWhole && !whole)) && !threatened)
+        {
+            co_return;
+        }
+        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        const bool ownEnds = m_RestUntilWhole;
+        m_RestUntilWhole   = false;
+        if (ownEnds || threatened)
+        {
+            ShowInfoFmt("world: {} is up again (hp {}%{}{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "",
+                        threatened ? ", aggro coming" : "");
+        }
+    }
+    else if ((playerResting && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f) || (ownRest && !m_Approach.has_value()))
+    {
+        // Her own row's kneel is her own, whoever else is kneeling: she stays
+        // down until whole while the party goes on without her (user, D5
+        // dogfood: a Red Mage resting for MP stood up when the melee engaged)
+        if (ownRest && POwner->PAI->PathFind->IsFollowingPath())
+        {
+            POwner->PAI->PathFind->Clear();
+        }
+        if (!POwner->PAI->PathFind->IsFollowingPath())
+        {
+            const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+            POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
+            m_RestUntilWhole = ownRest;
+            co_return;
+        }
+    }
 
     // The party's fight -- the player's target, a pawn's, or a mob on one
     // of us -- through the one door (Draw): the rules, then the draw, or
@@ -1980,25 +2145,6 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // Walking in on a mob (ApproachTick): the party's fight is the anchor
     if (m_Approach.has_value() && ApproachTick(PPlayer->loc.p, PPlayer->GetMLevel(), PacingBlocker(PPlayer), IsHunting(), PPartyTarget))
-    {
-        co_return;
-    }
-
-    // Rest with the player: the Healing status is the real thing -- kneel
-    // animation and resting regen ticks -- so the party sits down together
-    const bool playerResting = RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
-    const bool resting       = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    if (playerResting && !resting && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f && !POwner->PAI->PathFind->IsFollowingPath())
-    {
-        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
-        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-        co_return;
-    }
-    if (!playerResting && resting)
-    {
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-    }
-    if (resting && playerResting)
     {
         co_return;
     }
@@ -2418,10 +2564,41 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
     return CPlayerController::Cast(castTarget, spellid);
 }
 
+namespace
+{
+    constexpr uint16 kBoostAbility = 39;
+} // namespace
+
+// Boost is spent by the next blow, so it is worth nothing unless the
+// weapon skill follows at once: ready, known, not already up
+auto CPawnController::BoostReady() const -> bool
+{
+    if (Behavior(pawn::Behavior::BoostBeforeWs).value_or(0) == 0)
+    {
+        return false;
+    }
+    const auto* PBoost = ability::GetAbility(kBoostAbility);
+    auto*       PChar  = static_cast<CCharEntity*>(POwner);
+    return PBoost != nullptr && charutils::hasAbility(PChar, kBoostAbility) && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Boost) &&
+           !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PBoost->getRecastId(), 0s);
+}
+
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
 {
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
+    // Boost first, the weapon skill on the very next tick (DoCombatTick) --
+    // only in reach of the mob, or the walk in spends it on a punch
+    auto*      PTarget = target.resolve<CBattleEntity>();
+    // (in reach and engaged is enough: a member repositions all fight long,
+    // and a standing-still gate never opened for her)
+    const bool inReach = PTarget != nullptr && POwner->PAI->IsEngaged() && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
+    if (inReach && BoostReady() && CPlayerController::Ability(POwner->entityId(), kBoostAbility))
+    {
+        m_WsAfterBoost = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
+        ShowInfoFmt("pawn: {} boosts; weapon skill {} follows next tick", POwner->getName(), wsid);
+        return true;
+    }
     return CPlayerController::WeaponSkill(target, wsid);
 }
 
@@ -2618,6 +2795,86 @@ auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::st
             PController != nullptr && PController != this && PController->m_Approach.has_value() && PController->m_Approach->kind == ApproachKind::Hunt)
         {
             return fmt::format("{} pulling", PMember->getName());
+        }
+    }
+    return "";
+}
+
+// A camp stops and rests together when any member is low (D5, user): the
+// leader kneels on this, the party kneels with her
+auto CPawnController::PartyNeedsRest() const -> bool
+{
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    if (PPawn->PParty == nullptr)
+    {
+        return false;
+    }
+    const auto line = settings::get<uint8>("pawn.WORLD_PARTY_REST_HP");
+    for (const auto* PMember : PPawn->PParty->members)
+    {
+        if (PMember->loc.zone == POwner->loc.zone && !PMember->isDead() && !PMember->PAI->IsEngaged() && PMember->GetHPP() < line)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto CPawnController::PartyResting() const -> bool
+{
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    if (PPawn->PParty == nullptr)
+    {
+        return false;
+    }
+    // A member kneeling because the leader kneels does not count, or the
+    // camp would never stand: only one still short of whole does
+    const auto until = settings::get<uint8>("pawn.WORLD_REST_UNTIL");
+    for (const auto* PMember : PPawn->PParty->members)
+    {
+        if (PMember == POwner || PMember->loc.zone != POwner->loc.zone || PMember->isDead() || !PMember->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+        {
+            continue;
+        }
+        if (PMember->GetHPP() < until || (PMember->GetMaxMP() > 0 && PMember->GetMPP() < until))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// The camp leader's pacing (D5): nobody sets off while a member of her
+// party is down, kneeling, fighting or already walking in on a pull
+auto CPawnController::CampBlocker() const -> std::string
+{
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    if (PPawn->PParty == nullptr)
+    {
+        return "";
+    }
+    for (auto* PMember : PPawn->PParty->members)
+    {
+        if (PMember == POwner || PMember->loc.zone != POwner->loc.zone)
+        {
+            continue;
+        }
+        if (PMember->isDead())
+        {
+            return fmt::format("{} down", PMember->getName());
+        }
+        if (PMember->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+        {
+            return fmt::format("{} resting", PMember->getName());
+        }
+        if (PMember->PAI->IsEngaged())
+        {
+            return fmt::format("{} engaged", PMember->getName());
+        }
+        if (const auto* PController = dynamic_cast<const CPawnController*>(PMember->PAI->GetController());
+            PController != nullptr && PController->m_Approach.has_value())
+        {
+            return fmt::format("{} walking in", PMember->getName());
         }
     }
     return "";

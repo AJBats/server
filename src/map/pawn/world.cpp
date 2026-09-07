@@ -18,6 +18,7 @@
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
 #include "data/yaml/read.h"
+#include "data/enums/status_effect.h"
 #include "entities/char_entity.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -27,6 +28,7 @@
 #include "utils/itemutils.h"
 #include "map_session.h"
 #include "navmesh/navmesh.h"
+#include "party.h"
 #include "status_effect_container.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -44,7 +46,9 @@
 #include <numbers>
 #include <optional>
 #include <string>
+#include <map>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -68,6 +72,12 @@ namespace
         // and its roam: the home pull's scale for the errand (0 = roams anywhere)
         int32 slot = -1;
         float roam = 0.0f;
+
+        // A camp seat: the slot is a party (ROADMAP D5); party is its size
+        uint32 party = 1;
+
+        // KO'd and faded: when she walks back to her seat (WORLD_KO_RETURN)
+        std::optional<std::chrono::steady_clock::time_point> returnAt;
 
         // KO'd: when she fell, so she fades after WORLD_KO_FADE
         std::optional<std::chrono::steady_clock::time_point> downSince;
@@ -162,9 +172,15 @@ namespace
         bool        presence = false; // a slot's occupant: presence now, her body when the zone is live
         int32       slot     = -1;
         float       roam     = 0.0f;
+        uint32      party    = 1;
     };
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
+
+    auto isHealer(const uint8 job) -> bool
+    {
+        return job == static_cast<uint8>(xi::Job::WHM) || job == static_cast<uint8>(xi::Job::RDM);
+    }
 
     struct CensusRow
     {
@@ -464,6 +480,428 @@ namespace
         return worn;
     }
 
+    // -- Brains (ROADMAP D5): modules/cardian/world/brains.yaml ------------------------
+    // Rows in the gambit grammar: common, then her job's, then her role's.
+    struct BrainFile
+    {
+        std::vector<std::string>                        common;
+        std::map<std::string, std::vector<std::string>> roles;
+        std::map<std::string, std::vector<std::string>> jobs;
+    };
+    constexpr glz::opts kBrainYaml{ .error_on_unknown_keys = true, .error_on_missing_keys = false };
+    const std::filesystem::path     kBrainPath = std::filesystem::path("modules/cardian/world") / "brains.yaml";
+    BrainFile                       brainFile;
+    std::filesystem::file_time_type brainWritten{};
+    bool                            brainLoaded = false;
+
+    // The readable row: "<who>: <condition> -> <action> [every <n>s]", compiled
+    // to the numeric grammar the gambit engine and the saved sets speak.
+    //   who        self | party | mob
+    //   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n |
+    //              has <status> | lacks <status> | top enmity | not top enmity
+    //   action     avoid aggro | rest with leader | rest | rest in battle | home point
+    //              with leader | boost before weapon skills | formation <lead|flank left|flank right|
+    //              rear left|rear right|behind> | cast best <spell> (the best of its
+    //              family) | cast <spell> | cast random damage | ability <name> |
+    //              best weapon skill | random weapon skill
+    // Names are the game's own (spell_list, abilities, the status enum), spaces
+    // for underscores. A row that will not compile is logged and left out.
+    auto lower(std::string text) -> std::string
+    {
+        std::ranges::transform(text, text.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    }
+
+    auto trim(const std::string_view text) -> std::string
+    {
+        const auto b = text.find_first_not_of(' ');
+        const auto e = text.find_last_not_of(' ');
+        return b == std::string_view::npos ? std::string() : std::string(text.substr(b, e - b + 1));
+    }
+
+    auto spellByName(const std::string& name) -> std::optional<std::pair<uint16, uint16>> // id, family
+    {
+        std::string key = lower(name);
+        std::ranges::replace(key, ' ', '_');
+        if (const auto rset = db::preparedStmt("SELECT spellid, family FROM spell_list WHERE name = ?", key); rset && rset->next())
+        {
+            return std::make_pair(rset->get<uint16>("spellid"), rset->get<uint16>("family"));
+        }
+        return std::nullopt;
+    }
+
+    auto abilityByName(const std::string& name) -> std::optional<uint16>
+    {
+        std::string key = lower(name);
+        std::ranges::replace(key, ' ', '_');
+        if (const auto rset = db::preparedStmt("SELECT abilityId FROM abilities WHERE name = ?", key); rset && rset->next())
+        {
+            return rset->get<uint16>("abilityId");
+        }
+        return std::nullopt;
+    }
+
+    auto statusByName(const std::string& name) -> std::optional<uint16>
+    {
+        // the table's names are snake_case ("sleep_i", "paralysis"); spaces and
+        // underscores are dropped on both sides so "sleep ii" finds "sleep_ii"
+        const auto squash = [](std::string text)
+        {
+            text = lower(std::move(text));
+            std::erase_if(text, [](const unsigned char c) { return c == ' ' || c == '_'; });
+            return text;
+        };
+        const std::string key = squash(name);
+        for (const auto& [entryName, value] : xi::data::EnumTraits<xi::StatusEffect>::kEntries)
+        {
+            if (squash(std::string(entryName)) == key)
+            {
+                return static_cast<uint16>(value);
+            }
+        }
+        if (key == "sleep") // the plain word means the first sleep
+        {
+            return statusByName("sleep i");
+        }
+        return std::nullopt;
+    }
+
+    auto compileRow(const std::string& text) -> std::optional<std::string>
+    {
+        const auto arrow = text.find("->");
+        const auto colon = text.find(':');
+        if (arrow == std::string::npos || colon == std::string::npos || colon > arrow)
+        {
+            ShowErrorFmt("world: brains: '{}' is not '<who>: <condition> -> <action>'", text);
+            return std::nullopt;
+        }
+        const auto who  = lower(trim(text.substr(0, colon)));
+        const auto cond = lower(trim(text.substr(colon + 1, arrow - colon - 1)));
+        auto       act  = lower(trim(text.substr(arrow + 2)));
+        uint32     retry = 0;
+        if (const auto every = act.rfind(" every "); every != std::string::npos && act.ends_with('s'))
+        {
+            retry = static_cast<uint32>(std::atoi(act.substr(every + 7).c_str()));
+            act   = trim(act.substr(0, every));
+        }
+        static const std::unordered_map<std::string, int> whoIds{ { "self", 0 }, { "party", 1 }, { "mob", 2 } };
+        const auto whoIt = whoIds.find(who);
+        if (whoIt == whoIds.end())
+        {
+            ShowErrorFmt("world: brains: '{}': who is self, party or mob", text);
+            return std::nullopt;
+        }
+
+        // the condition
+        std::string condSpec;
+        const auto  number = [&](const std::string& s) -> std::optional<int>
+        {
+            const auto t = trim(s);
+            return !t.empty() && std::ranges::all_of(t, [](const unsigned char c) { return std::isdigit(c) != 0; }) ? std::optional(std::atoi(t.c_str())) : std::nullopt;
+        };
+        static const std::vector<std::pair<std::string, int>> compare{ { "hp <", 1 }, { "hp >=", 2 }, { "mp <", 3 }, { "mp >=", 4 }, { "tp <", 5 }, { "tp >=", 6 } };
+        if (cond == "always")
+        {
+            condSpec = "0:0";
+        }
+        else if (cond == "top enmity")
+        {
+            condSpec = "12:0";
+        }
+        else if (cond == "not top enmity")
+        {
+            condSpec = "13:0";
+        }
+        else if (cond.starts_with("has ") || cond.starts_with("lacks "))
+        {
+            const bool has  = cond.starts_with("has ");
+            const auto name = trim(cond.substr(has ? 4 : 6));
+            const auto id   = statusByName(name);
+            if (!id.has_value())
+            {
+                ShowErrorFmt("world: brains: '{}': no status called '{}'", text, name);
+                return std::nullopt;
+            }
+            condSpec = fmt::format("{}:{}", has ? 9 : 10, *id);
+        }
+        else
+        {
+            for (const auto& [prefix, id] : compare)
+            {
+                if (cond.starts_with(prefix))
+                {
+                    if (const auto n = number(cond.substr(prefix.size())); n.has_value())
+                    {
+                        condSpec = fmt::format("{}:{}", id, *n);
+                    }
+                    break;
+                }
+            }
+            if (condSpec.empty())
+            {
+                ShowErrorFmt("world: brains: '{}': cannot read the condition '{}'", text, cond);
+                return std::nullopt;
+            }
+        }
+
+        // the action
+        std::string actSpec;
+        static const std::unordered_map<std::string, std::string> switches{
+            { "avoid aggro", "100:1:1" }, { "rest with leader", "100:6:1" }, { "home point with leader", "100:7:1" },
+            { "rest", "100:8:1" }, { "boost before weapon skills", "100:9:1" }, { "rest in battle", "100:10:1" }
+        };
+        static const std::unordered_map<std::string, int> seats{
+            { "lead", 1 }, { "flank left", 2 }, { "flank right", 3 }, { "rear left", 4 }, { "rear right", 5 }, { "behind", 6 }
+        };
+        if (const auto it = switches.find(act); it != switches.end())
+        {
+            actSpec = it->second;
+        }
+        else if (act.starts_with("formation "))
+        {
+            const auto seat = seats.find(trim(act.substr(10)));
+            if (seat == seats.end())
+            {
+                ShowErrorFmt("world: brains: '{}': no seat called '{}'", text, trim(act.substr(10)));
+                return std::nullopt;
+            }
+            actSpec = fmt::format("100:4:{}", seat->second);
+        }
+        else if (act == "cast random damage")
+        {
+            actSpec = "2:3:0";
+        }
+        else if (act.starts_with("cast best "))
+        {
+            const auto spell = spellByName(trim(act.substr(10)));
+            if (!spell.has_value())
+            {
+                ShowErrorFmt("world: brains: '{}': no spell called '{}'", text, trim(act.substr(10)));
+                return std::nullopt;
+            }
+            actSpec = fmt::format("2:0:{}", spell->second);
+        }
+        else if (act.starts_with("cast "))
+        {
+            const auto spell = spellByName(trim(act.substr(5)));
+            if (!spell.has_value())
+            {
+                ShowErrorFmt("world: brains: '{}': no spell called '{}'", text, trim(act.substr(5)));
+                return std::nullopt;
+            }
+            actSpec = fmt::format("2:2:{}", spell->first);
+        }
+        else if (act.starts_with("ability "))
+        {
+            const auto ability = abilityByName(trim(act.substr(8)));
+            if (!ability.has_value())
+            {
+                ShowErrorFmt("world: brains: '{}': no ability called '{}'", text, trim(act.substr(8)));
+                return std::nullopt;
+            }
+            actSpec = fmt::format("3:2:{}", *ability);
+        }
+        else if (act == "best weapon skill")
+        {
+            actSpec = "4:0:0";
+        }
+        else if (act == "random weapon skill")
+        {
+            actSpec = "4:3:0";
+        }
+        else
+        {
+            ShowErrorFmt("world: brains: '{}': cannot read the action '{}'", text, act);
+            return std::nullopt;
+        }
+        return fmt::format("{}|{}|{}|{}", whoIt->second, condSpec, actSpec, retry);
+    }
+
+    auto brains() -> const BrainFile&
+    {
+        std::error_code ec;
+        const auto      written = std::filesystem::exists(kBrainPath, ec) ? std::filesystem::last_write_time(kBrainPath, ec) : std::filesystem::file_time_type{};
+        if (brainLoaded && written == brainWritten)
+        {
+            return brainFile;
+        }
+        brainLoaded  = true;
+        brainWritten = written;
+        if (!std::filesystem::exists(kBrainPath))
+        {
+            ShowWarningFmt("world: {} missing; world bodies run the bare defaults", kBrainPath.string());
+            brainFile = {};
+            return brainFile;
+        }
+        std::ifstream     in(kBrainPath);
+        const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        BrainFile         parsed{};
+        if (const auto error = glz::read_yaml<kBrainYaml>(parsed, text); error)
+        {
+            ShowErrorFmt("world: {}: {} (the last good brains stand)", kBrainPath.string(), glz::format_error(error, text));
+            return brainFile;
+        }
+        // Compile every row once; a row that will not compile is left out
+        const auto compile = [](std::vector<std::string>& rows)
+        {
+            std::vector<std::string> out;
+            for (const auto& text : rows)
+            {
+                if (const auto spec = compileRow(text); spec.has_value())
+                {
+                    out.push_back(*spec);
+                }
+            }
+            rows = std::move(out);
+        };
+        compile(parsed.common);
+        for (auto& [role, rows] : parsed.roles)
+        {
+            compile(rows);
+        }
+        for (auto& [job, rows] : parsed.jobs)
+        {
+            compile(rows);
+        }
+        brainFile = std::move(parsed);
+        ShowInfoFmt("world: brains read from {} ({} common, {} roles, {} jobs)", kBrainPath.string(), brainFile.common.size(), brainFile.roles.size(), brainFile.jobs.size());
+        return brainFile;
+    }
+
+    // Her role: the tank is the highest Warrior of her party (ties by name),
+    // any other Warrior and the fighters are melee, the casters mages
+    auto isMage(const xi::Job job) -> bool
+    {
+        return job == xi::Job::WHM || job == xi::Job::BLM || job == xi::Job::RDM || job == xi::Job::SMN || job == xi::Job::BRD || job == xi::Job::SCH;
+    }
+
+    auto roleOf(const CCharEntity* PPawn) -> std::string
+    {
+        if (isMage(PPawn->GetMJob()))
+        {
+            return "mage";
+        }
+        if (PPawn->GetMJob() == xi::Job::WAR || PPawn->GetMJob() == xi::Job::PLD)
+        {
+            if (PPawn->PParty == nullptr)
+            {
+                return "tank";
+            }
+            for (const auto* PMember : PPawn->PParty->members)
+            {
+                const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
+                if (PChar == nullptr || PChar == PPawn || PChar->loc.zone != PPawn->loc.zone || (PChar->GetMJob() != xi::Job::WAR && PChar->GetMJob() != xi::Job::PLD))
+                {
+                    continue;
+                }
+                if (std::make_tuple(PChar->GetMLevel(), PChar->name) > std::make_tuple(PPawn->GetMLevel(), PPawn->name))
+                {
+                    return "melee"; // a higher Warrior holds the tank's place
+                }
+            }
+            return "tank";
+        }
+        return "melee";
+    }
+
+    // -- Camps (ROADMAP D5): a camp slot's occupants are a party ----------------------
+    auto campMates(const Body& body) -> std::vector<Body*>
+    {
+        std::vector<Body*> out;
+        if (body.party <= 1 || body.slot < 0)
+        {
+            return out;
+        }
+        for (auto& [charid, other] : bodies)
+        {
+            if (other.zone == body.zone && other.slot == body.slot && other.party > 1)
+            {
+                out.push_back(&other);
+            }
+        }
+        return out;
+    }
+
+    // The camp's leader among those standing: the tank (the highest Warrior)
+    // first, then the highest fighter, then the highest of all; ties by
+    // name. Nobody when nobody stands
+    auto campLeader(const Body& body) -> Body*
+    {
+        Body* best    = nullptr;
+        auto  keyOf   = [](const Body& b) -> std::tuple<int, int, std::string>
+        {
+            const auto* PPawn = pawn::findPawn(b.charid);
+            if (PPawn == nullptr || PPawn->isDead())
+            {
+                return { -1, 0, b.name };
+            }
+            // the tank, then a fighter, then a mage who is not the healer, then the healer
+            const auto role = roleOf(PPawn);
+            const int  rank = role == "tank" ? 3 : role == "melee" ? 2 : isHealer(static_cast<uint8>(PPawn->GetMJob())) ? 0 : 1;
+            return { rank, PPawn->GetMLevel(), b.name };
+        };
+        for (Body* mate : campMates(body))
+        {
+            if (!mate->present)
+            {
+                continue;
+            }
+            if (best == nullptr || keyOf(*mate) > keyOf(*best))
+            {
+                best = mate;
+            }
+        }
+        return best != nullptr && std::get<0>(keyOf(*best)) >= 0 ? best : nullptr;
+    }
+
+    // Standing in a camp, she joins its party: the one a standing mate is
+    // in, or a new one under that mate. Leaving it is despawnById's
+    void joinCampParty(Body& body)
+    {
+        if (body.party <= 1)
+        {
+            return;
+        }
+        auto* PPawn = pawn::findPawn(body.charid);
+        if (PPawn == nullptr || PPawn->PParty != nullptr)
+        {
+            return;
+        }
+        CCharEntity* PWith = nullptr;
+        for (Body* mate : campMates(body))
+        {
+            if (mate == &body || !mate->present)
+            {
+                continue;
+            }
+            if (auto* PMate = pawn::findPawn(mate->charid); PMate != nullptr && !PMate->isDead())
+            {
+                if (PMate->PParty != nullptr)
+                {
+                    PWith = PMate;
+                    break;
+                }
+                if (PWith == nullptr)
+                {
+                    PWith = PMate;
+                }
+            }
+        }
+        if (PWith == nullptr)
+        {
+            return; // first of her camp to stand: the next one forms the party under her
+        }
+        if (PWith->PParty == nullptr)
+        {
+            PWith->PParty = new CParty(PWith);
+            PWith->clearPacketList();
+        }
+        PWith->PParty->AddMember(PPawn);
+        PPawn->clearPacketList();
+        PWith->clearPacketList();
+        ShowInfoFmt("world: {} joins {}'s party ({} of {})", body.name, PWith->getName(), PWith->PParty->members.size(), body.party);
+    }
+
     bool fadeIn(Body& body)
     {
         auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(body.zone));
@@ -483,6 +921,7 @@ namespace
         body.present     = true;
         body.censusLevel = row->level;
         body.seed        = row->seed;
+        body.returnAt.reset();
         if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
         {
             if (const auto worn = dressFromWardrobe(body, PPawn); worn > 0)
@@ -491,6 +930,7 @@ namespace
             }
         }
         snapshotBag(body);
+        joinCampParty(body);
         if (pawn::world::tickDebug())
         {
             if (const auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
@@ -582,11 +1022,14 @@ namespace
         float                roam   = 0.0f; // optional: the home pull's scale -- the farther out, the more the errand favours prey back toward the point
         uint32               party  = 1;    // camp: members per party; seats = count x party
 
-        // A camp is recorded, not seated, until parties exist (D5): watching
-        // its members farm solo says nothing, they only struggle and die (user)
+        // A camp seats a party per count (D5)
         auto seats() const -> uint32
         {
-            return activity == "camp" ? 0 : count;
+            return activity == "camp" ? count * std::max<uint32>(1, party) : count;
+        }
+        auto isCamp() const -> bool
+        {
+            return activity == "camp";
         }
         auto farms() const -> bool
         {
@@ -694,16 +1137,19 @@ namespace
     // placed anywhere already; cohort rows first (the recruitment pool is
     // who you should meet), then by a hash of zone, slot and seed, so a
     // visit tends to show the same faces
-    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted) -> std::vector<std::string>
+    // A camp party is dealt healer first when the band has one, then the
+    // rest; a solo seat takes anyone
+    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted, const bool wantHealer) -> std::vector<std::string>
     {
         struct Candidate
         {
             std::string name;
             bool        shared = false;
+            bool        healer = false;
             uint32      order  = 0;
         };
         std::vector<Candidate> candidates;
-        if (const auto rset = db::preparedStmt("SELECT name, cohort, seed FROM cardian_census WHERE anchor <> 'bank' AND recruited = 0 AND level BETWEEN ? AND ?",
+        if (const auto rset = db::preparedStmt("SELECT name, cohort, seed, job FROM cardian_census WHERE anchor <> 'bank' AND recruited = 0 AND level BETWEEN ? AND ?",
                                                spec.band[0], spec.band[1]);
             rset)
         {
@@ -716,7 +1162,7 @@ namespace
                 }
                 const uint32 seed  = rset->get<uint32>("seed");
                 const uint32 order = (seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u);
-                candidates.push_back(Candidate{ .name = std::move(name), .shared = rset->get<uint32>("cohort") == 0, .order = order });
+                candidates.push_back(Candidate{ .name = std::move(name), .shared = rset->get<uint32>("cohort") == 0, .healer = isHealer(rset->get<uint8>("job")), .order = order });
             }
         }
         std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b)
@@ -724,13 +1170,37 @@ namespace
             return std::tie(a.shared, a.order, a.name) < std::tie(b.shared, b.order, b.name);
         });
         std::vector<std::string> out;
+        if (wantHealer && spec.isCamp())
+        {
+            if (const auto it = std::ranges::find_if(candidates, [](const Candidate& c) { return c.healer; }); it != candidates.end())
+            {
+                out.push_back(it->name);
+                candidates.erase(it);
+            }
+        }
         for (auto& c : candidates)
         {
             if (out.size() >= wanted)
             {
                 break;
             }
+            if (spec.isCamp() && c.healer && !out.empty())
+            {
+                continue; // one healer a camp; the rest fight
+            }
             out.push_back(std::move(c.name));
+        }
+        // a camp short of fighters takes whoever is left, healers included
+        for (auto& c : candidates)
+        {
+            if (out.size() >= wanted)
+            {
+                break;
+            }
+            if (std::ranges::find(out, c.name) == out.end())
+            {
+                out.push_back(std::move(c.name));
+            }
         }
         return out;
     }
@@ -761,10 +1231,22 @@ namespace
         {
             return 0;
         }
-        uint32 queued = 0;
-        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have))
+        // a camp wants a healer unless one already holds a seat
+        bool hasHealer = false;
+        for (const auto& name : table.occupants[slot])
         {
-            pending.push_back(Pending{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam });
+            if (const auto it = charidByName.find(name); it != charidByName.end())
+            {
+                if (const auto* PPawn = pawn::findPawn(it->second); PPawn != nullptr && isHealer(static_cast<uint8>(PPawn->GetMJob())))
+                {
+                    hasHealer = true;
+                }
+            }
+        }
+        uint32 queued = 0;
+        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer))
+        {
+            pending.push_back(Pending{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam, .party = spec.isCamp() ? std::max<uint32>(1, spec.party) : 1 });
             ++queued;
         }
         return queued;
@@ -814,6 +1296,7 @@ namespace
         body.farming      = item.farming;
         body.slot         = item.slot;
         body.roam         = item.roam;
+        body.party        = item.party;
         body.present      = false;
         body.censusLevel  = row->level;
         body.seed         = row->seed;
@@ -1114,10 +1597,62 @@ namespace pawn::world
         });
     }
 
+    auto hasBody(const uint32 charid) -> bool
+    {
+        return bodies.contains(charid);
+    }
+
     auto isFarming(const uint32 charid) -> bool
     {
         const auto it = bodies.find(charid);
         return it != bodies.end() && it->second.farming;
+    }
+
+    auto brainRows(const CCharEntity* PPawn) -> std::vector<std::pair<std::string, bool>>
+    {
+        const auto& file = brains();
+        std::vector<std::pair<std::string, bool>> rows;
+        const auto add = [&](const std::vector<std::string>& specs)
+        {
+            for (const auto& spec : specs)
+            {
+                rows.emplace_back(spec, true);
+            }
+        };
+        add(file.common);
+        if (const auto it = file.jobs.find(std::string(magic_enum::enum_name(PPawn->GetMJob()))); it != file.jobs.end())
+        {
+            add(it->second);
+        }
+        const auto role = roleOf(PPawn);
+        if (const auto it = file.roles.find(role); it != file.roles.end())
+        {
+            add(it->second);
+        }
+        return rows;
+    }
+
+    auto roleName(const uint32 charid) -> std::string
+    {
+        const auto* PPawn = pawn::findPawn(charid);
+        return PPawn != nullptr ? roleOf(PPawn) : std::string();
+    }
+
+    auto campLeaderOf(const uint32 charid) -> uint32
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || it->second.party <= 1)
+        {
+            return 0;
+        }
+        const Body* leader = campLeader(it->second);
+        return leader != nullptr ? leader->charid : 0;
+    }
+
+    auto campSizeOf(const uint32 charid) -> uint32
+    {
+        const auto it = bodies.find(charid);
+        return it != bodies.end() ? std::max<uint32>(1, it->second.party) : 1;
     }
 
     auto homeOf(const uint32 charid) -> std::optional<std::pair<position_t, float>>
@@ -1340,6 +1875,20 @@ namespace pawn::world
             else if (now - *body.downSince >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_FADE")))
             {
                 fadeOut(body, "KO'd");
+                if (body.slot >= 0)
+                {
+                    body.returnAt = now + std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_RETURN"));
+                }
+            }
+        }
+        // A KO'd seat-holder walks back to her seat once the return has
+        // passed, as long as somebody is there to see her
+        for (auto& [charid, body] : bodies)
+        {
+            if (body.zone == zoneId && !body.present && body.returnAt.has_value() && now >= *body.returnAt && wasLive[zoneId])
+            {
+                ShowInfoFmt("world: {} is back at her seat after her KO", body.name);
+                fadeIn(body);
             }
         }
         const bool live = isLive(PZone, real);

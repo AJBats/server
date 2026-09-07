@@ -11,7 +11,7 @@ in the zone or one zone line away, and fades when nobody is.
 # West_Ronfaure: the slot table -- what happens where, never who.
 slots:
   - activity: farm        # farm (the errand: hunts her band round the point), stand (idles there),
-    band: [2, 6]          #   or camp (a party; its members farm solo until D5 groups them)
+    band: [2, 6]          #   or camp (a party of `party`, a healer dealt first when the band has one)
     count: 3              # seats (camps: parties; seats = count x party)
     at: [-387.0, -52.0, 230.0]
     spread: 30            # yalms round the point the seats scatter over
@@ -38,6 +38,21 @@ recruited, not placed in another zone; cohort rows first, then by a hash of
 zone, slot and seed, so the same faces come back on the next visit. Each
 occupant stands at a spot in the spread drawn from her name, so she is in
 the same place each time.
+
+## The brains: `brains.yaml`
+
+What a world body does is data too. `brains.yaml` holds gambit rows you can
+read -- `party: hp < 60 -> cast best cure` -- compiled on load to the numeric
+form the addon saves for your own cardians (the file's header has the
+grammar): a `common` block every body runs (avoid aggro, rest with the
+leader, rest under 60 % HP), a block per `role` and a block per `job`. A body's rows are common, then her job's,
+then her role's, top to bottom; the first row whose conditions hold acts,
+and a row she cannot use (a spell she doesn't know, an ability on recast)
+is passed over. Roles: a Warrior is the **tank** when she is the highest
+Warrior of her party and leads the camp; other Warriors and the fighters
+are **melee**; White, Black and Red Mage are **mages**. The file is re-read
+when it changes; a body picks it up on `!pawnreloadbrain <name>` or her
+next stand. The header of the file explains the grammar's numbers.
 
 ## Candidate camps from the mob spawn data (2026-09-07)
 

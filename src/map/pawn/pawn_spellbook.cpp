@@ -428,15 +428,54 @@ namespace pawn
         return choice.has_value() ? GetAvailable(*choice) : std::nullopt;
     }
 
-    auto CSpellBook::GetRandomDamageSpell() const -> Maybe<SpellID>
+    namespace
+    {
+        // The status an enfeeble leaves on its target, by family where the
+        // family is its own (Dia, Paralyze) and by name where the family is
+        // generic (Silence and Bind are "status", the elemental DoTs one family)
+        auto effectOf(CSpell* spell) -> std::optional<xi::StatusEffect>
+        {
+            switch (spell->getSpellFamily())
+            {
+                case SPELLFAMILY_DIA:      return xi::StatusEffect::Dia;
+                case SPELLFAMILY_BIO:      return xi::StatusEffect::Bio;
+                case SPELLFAMILY_POISON:   return xi::StatusEffect::Poison;
+                case SPELLFAMILY_PARALYZE: return xi::StatusEffect::Paralysis;
+                case SPELLFAMILY_SLOW:     return xi::StatusEffect::Slow;
+                case SPELLFAMILY_GRAVITY:  return xi::StatusEffect::Weight;
+                case SPELLFAMILY_SLEEP:    return xi::StatusEffect::SleepI;
+                case SPELLFAMILY_BLIND:    return xi::StatusEffect::Blindness;
+                default:                   break;
+            }
+            static const std::unordered_map<std::string, xi::StatusEffect> byName{
+                { "silence", xi::StatusEffect::Silence }, { "bind", xi::StatusEffect::Bind },
+                { "burn", xi::StatusEffect::Burn },       { "frost", xi::StatusEffect::Frost },
+                { "choke", xi::StatusEffect::Choke },     { "rasp", xi::StatusEffect::Rasp },
+                { "shock", xi::StatusEffect::Shock },     { "drown", xi::StatusEffect::Drown },
+            };
+            const auto it = byName.find(spell->getName());
+            return it != byName.end() ? std::optional(it->second) : std::nullopt;
+        }
+    } // namespace
+
+    auto CSpellBook::GetRandomDamageSpell(const CBattleEntity* PTarget) const -> Maybe<SpellID>
     {
         std::vector<SpellID> usable;
         for (const auto id : m_damage)
         {
-            if (IsUsable(id))
+            if (!IsUsable(id))
             {
-                usable.emplace_back(id);
+                continue;
             }
+            if (PTarget != nullptr)
+            {
+                auto* spell = spell::GetSpell(id);
+                if (const auto effect = spell != nullptr ? effectOf(spell) : std::nullopt; effect.has_value() && PTarget->StatusEffectContainer->HasStatusEffect(*effect))
+                {
+                    continue; // already on it
+                }
+            }
+            usable.emplace_back(id);
         }
         if (usable.empty())
         {

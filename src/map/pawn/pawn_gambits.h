@@ -69,8 +69,11 @@ namespace pawn
         Formation           = 4, // a Slot
         RestWithPlayer      = 6, // switch: kneel when the player kneels
         HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
+        Rest                = 8, // switch: kneel when idle, and stay down until whole (a world body's rest; ROADMAP D5)
+        BoostBeforeWs       = 9, // switch: a Monk's Boost goes out right before her weapon skill, nothing between (D5)
+        RestInBattle        = 10, // switch: she sits out to rest even mid-fight, as long as the mob is not on her (a mage's MP; D5)
     };
-    constexpr uint16 BehaviorCount = 8; // one past the last value
+    constexpr uint16 BehaviorCount = 11; // one past the last value
 
     // A switch row carries the value 1 and its checkbox is the switch; a
     // parameter row (the formation slot) carries its value

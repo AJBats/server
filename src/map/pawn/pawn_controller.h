@@ -87,6 +87,9 @@ public:
     // mode is Roam, and the roam tick is hers alone (RoamTick)
     void SetWorld(bool on);
     auto IsWorld() const -> bool;
+    // The party's anchor: the live player, else (a world body in a camp) her
+    // camp's leader when she is not it; nobody for a solo body or the leader
+    auto GetAnchor() const -> CCharEntity*;
 
     // Action surface used by the gambit interpreter. Each faces the target
     // first (the player weapon-skill path refuses a target the character is
@@ -447,6 +450,10 @@ private:
     // down or fighting. Judged again on the walk in, where the hunter is
     // meant to be away from the player
     auto PacingBlocker(const CCharEntity* PPlayer) const -> std::string;
+    auto CampBlocker() const -> std::string;
+    auto PartyNeedsRest() const -> bool;
+    auto PartyResting() const -> bool;         // a member of her party kneels
+    bool m_RestForParty = false;               // the leader kneels while a member rests: the camp stops and rests together
 
     // The nearest idle, non-special mob in the difficulty band within
     // HUNT_RADIUS of the player. `skipped`, when given, collects what
@@ -668,6 +675,18 @@ private:
     auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
     timer::time_point m_LastHuntLogTime;
     timer::time_point m_WorldRestLogTime; // the farmer's rest line, throttled: damage over time re-kneels her every tick
+    bool              m_RestUntilWhole = false; // kneeling on her own Rest row: down until HP and MP are back
+    bool              m_LeaderRestingSeen = false; // the leader's kneel as last seen, and when she follows it
+    timer::time_point m_RestFollowDue;
+    // Boost before weapon skills: the weapon skill held one tick while Boost goes out first
+    struct HeldWs
+    {
+        EntityId          target;
+        uint16            wsid = 0;
+        timer::time_point at;
+    };
+    std::optional<HeldWs> m_WsAfterBoost;
+    auto                  BoostReady() const -> bool;
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;

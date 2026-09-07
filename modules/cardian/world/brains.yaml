@@ -1,0 +1,57 @@
+# The world's brains (ROADMAP D5): what a world body does, as gambit rows
+# you can read. Each row is
+#
+#     <who>: <condition> -> <action>
+#
+#   who        self, party (a party member), mob (the mob)
+#   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n
+#              | has <status> | lacks <status> | top enmity | not top enmity
+#   action     avoid aggro | rest with leader | rest | rest in battle (sit out
+#              even mid-fight, when the mob is not on her) | home point with
+#              leader | boost before weapon skills | formation <lead|flank left|flank
+#              right|rear left|rear right|behind> | cast best <spell> (the best
+#              tier of that spell's family she knows) | cast <spell> | cast
+#              random damage | ability <name> | best weapon skill | random
+#              weapon skill
+#
+# Names are the game's own: spells and abilities as in the database
+# (spaces for underscores: "cure ii", "sneak attack"), statuses as the
+# status enum ("poison", "paralysis", "sleep", "sleep ii"). A row that
+# does not read is logged and left out; the rest stand.
+#
+# A body's rows are common, then her job's, then her role's, top to
+# bottom: the first row whose condition holds acts, and a row she cannot
+# use (a spell she doesn't know, an ability on recast) is passed over.
+# Roles: a Warrior is the tank when she is the highest Warrior of her
+# party, and the tank leads the camp; other Warriors and the fighters
+# are melee; White, Black and Red Mage are mages. The file is re-read
+# when it changes; `!pawnreloadbrain <name>`, or her next stand, picks
+# it up. These rows are compiled to the same numeric form the addon
+# saves for your own cardians. `tools/world/check.py` compiles every row
+# against the same tables, so a typo fails a test before a restart
+# (./dev-servers.sh census runs it).
+
+common:
+  - "self: always -> avoid aggro"
+  - "self: always -> rest with leader"
+  - "self: hp < 60 -> rest"
+
+roles:
+  tank:
+    - "mob: not top enmity -> ability provoke"     # Jevyak's row
+    - "mob: hp >= 60 -> best weapon skill"
+  melee:
+    - "mob: hp >= 60 -> best weapon skill"
+  mage:
+    - "party: hp < 60 -> cast best cure"          # Zapp's row
+    - "party: has sleep -> cast cure"             # a Cure wakes her
+    - "party: has sleep ii -> cast cure"
+    - "mob: hp >= 50 -> cast random damage"       # never one the mob already carries
+    - "self: mp < 25 -> rest in battle"           # sits out for MP even mid-fight; the resting pipeline starts here
+
+jobs:
+  MNK:
+    - "self: always -> boost before weapon skills" # Boost, then the weapon skill on the next tick, nothing between
+  WHM:
+    - "party: has poison -> cast poisona"
+    - "party: has paralysis -> cast paralyna"

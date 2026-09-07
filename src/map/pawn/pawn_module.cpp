@@ -219,7 +219,9 @@ namespace pawn
         }
 
         std::size_t count = 0;
-        for (const auto& [spec, enabled] : pawn::defaultRows())
+        // A world body's brain is data: modules/cardian/world/brains.yaml
+        const auto  rows = pawn::world::hasBody(PPawn->id) ? pawn::world::brainRows(PPawn) : pawn::defaultRows();
+        for (const auto& [spec, enabled] : rows)
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
             {
@@ -231,7 +233,14 @@ namespace pawn
                 ShowErrorFmt("pawn: malformed default row '{}'", spec);
             }
         }
-        ShowInfoFmt("pawn: default gambits loaded for {} ({} rows)", PPawn->getName(), count);
+        if (pawn::world::hasBody(PPawn->id))
+        {
+            ShowInfoFmt("pawn: world brain loaded for {} ({} rows, {})", PPawn->getName(), count, pawn::world::roleName(PPawn->id));
+        }
+        else
+        {
+            ShowInfoFmt("pawn: default gambits loaded for {} ({} rows)", PPawn->getName(), count);
+        }
     }
 } // namespace pawn
 

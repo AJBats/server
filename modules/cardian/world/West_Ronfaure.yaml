@@ -1,7 +1,7 @@
 # West_Ronfaure: the slot table (RESEARCH.md §11.5) -- what happens where, never who.
 # Authored by walking with the user, 2026-09-07 (first draft). The zone
 # re-reads this file within ten seconds of a change and refills from it.
-# Camps are recorded here and seated only once parties exist (D5).
+# A camp seats a party (D5): a healer first, then fighters, under a leader.
 slots:
   # a fresh character's first camp outside the gate: one solo farmer, level 1-2,
   # who roams from here and lets the errand carry her

@@ -323,6 +323,22 @@ xi.settings.pawn =
     WORLD_REST_UNTIL    = 95,
     WORLD_HUNT_MIN      = 2,
     WORLD_HUNT_MAX      = 3,
+    -- A camp (ROADMAP D5): its leader picks by the party's band -- a duo
+    -- easy prey to decent challenge, a trio decent challenge to even match
+    -- -- and sets off only when nobody of the party is down, kneeling,
+    -- fighting or walking in. A healer kneels under WORLD_HEALER_MP percent
+    -- MP (her Rest row); a KO'd seat-holder walks back WORLD_KO_RETURN
+    -- seconds after she fades, while somebody is there to see her
+    WORLD_DUO_HUNT_MIN  = 2,
+    WORLD_DUO_HUNT_MAX  = 3,
+    WORLD_TRIO_HUNT_MIN = 3,
+    WORLD_TRIO_HUNT_MAX = 4,
+    WORLD_HEALER_MP     = 25,
+    WORLD_KO_RETURN     = 120,
+    -- The whole camp stops and rests when any member is under this many
+    -- percent HP: the leader kneels, the party kneels with her, and the
+    -- mages cure the low one while they sit (user, D5 dogfood)
+    WORLD_PARTY_REST_HP = 40,
     WORLD_SCAN_MIN      = 20,
     WORLD_SCAN_MAX      = 40,
     WORLD_HEADING_SLOP  = 6,
