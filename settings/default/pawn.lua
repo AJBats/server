@@ -15,13 +15,15 @@ xi.settings.pawn =
     -- pawn. M2 experiment feature.
     ENABLE_PAWNS = false,
 
-    -- Pawn movement speed (base entity speed; players are 50). Server-side
-    -- stepping moves speed/50 yalms per 400ms tick, while the client renders
-    -- a player's nominal 50 at roughly 5.3 yalms/sec -- pawns need ~105 to
-    -- hold formation with a running player. NOTE: PC-type entities are
+    -- Pawn movement speed (base entity speed). Server-side stepping moves
+    -- speed/50 yalms per 400ms tick. 100 matches the player's own run
+    -- (the user, 2026-09-07, watching the town's bodies outrun them at
+    -- 107: the earlier formation measurement that asked for ~105 was
+    -- wrong); the formation lead's catch-up sprint (FORMATION_CATCHUP_SPEED)
+    -- covers the gap behind a running player. NOTE: PC-type entities are
     -- clamped to map.SPEED_LIMIT (default 80) each step; raise that limit
-    -- above this value or the pawn runs at the limit instead.
-    PAWN_SPEED = 107,
+    -- above the catch-up speed or the pawn runs at the limit instead.
+    PAWN_SPEED = 100,
 
     -- Doors: a closed door within this many yalms ahead of a walking
     -- cardian opens as she approaches, the way the client opens one for a

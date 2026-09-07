@@ -57,10 +57,9 @@ slots:
     via: [[-182.9, -1.0, 29.4]]  # points walked in order on the way in, in reverse on the way out
 ```
 
-Every world body walks at a pace of her own, a few percent off the norm,
-and a town walk keeps to a lane of her own -- the mesh's route slid a
-step to one side, snapped back where that lands in a wall -- so a crowd
-sent down one street neither runs in step nor in single file.
+A town walk keeps to a lane of her own -- the mesh's route slid a step
+to one side, snapped back where that lands in a wall -- so a crowd sent
+down one street does not walk it in single file.
 
 `via` is for a doorway the mesh's shortest line would miss: the Tanners'
 Guild has an open outer doorway on its north side and an inner door that

@@ -81,8 +81,7 @@ namespace pawn::world
 
     // Her lane: a sideways offset in yalms she walks the mesh's route at,
     // drawn from her name, so a crowd sent down one street spreads across
-    // it instead of walking it in single file (the user, 2026-09-07). Her
-    // pace, a few percent off the norm, is set on her body as she stands
+    // it instead of walking it in single file (the user, 2026-09-07)
     auto laneOf(uint32 charid) -> float;
 
     // Camps (ROADMAP D5): a camp slot's occupants are a party. Her camp's

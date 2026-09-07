@@ -209,7 +209,6 @@ namespace
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
 
-    auto paceOf(const std::string& name) -> float;
     auto laneOf(const std::string& name) -> float;
 
     auto isHealer(const uint8 job) -> bool
@@ -971,9 +970,6 @@ namespace
             {
                 ShowInfoFmt("world: {} dresses in {} pieces", body.name, worn);
             }
-            // Her own pace (paceOf), so no two walk in step
-            PPawn->baseSpeed = static_cast<uint8>(std::lround(settings::get<float>("pawn.PAWN_SPEED") * paceOf(body.name)));
-            PPawn->UpdateSpeed();
         }
         snapshotBag(body);
         joinCampParty(body);
@@ -1591,16 +1587,11 @@ namespace
         return h;
     }
 
-    // Every world body walked at the same speed and stepped on the same
-    // zone tick, so the client drew their run cycles in lockstep and the
-    // mesh sent them down a street in single file (the user, 2026-09-07).
-    // Her pace: a few percent off the norm, hers for good. Her lane: a
-    // sideways offset her town walks keep to
-    auto paceOf(const std::string& name) -> float
-    {
-        return 0.94f + 0.10f * static_cast<float>((nameHash(name) / 7u) % 1000u) / 1000.0f;
-    }
-
+    // Every world body stepped on the same zone tick down the same
+    // corner-hugging line, so the mesh sent them down a street in single
+    // file (the user, 2026-09-07). Her lane: a sideways offset her town
+    // walks keep to. (Her run cycle's phase is the controller's business:
+    // the walk-step jitter, TownTick)
     auto laneOf(const std::string& name) -> float
     {
         return -1.6f + 3.2f * static_cast<float>((nameHash(name) / 13u) % 1000u) / 1000.0f;
