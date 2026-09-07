@@ -831,6 +831,70 @@ namespace
         return true;
     }
 
+    // A seat's occupant returns to the pool: her body fades, her presence
+    // goes, the seat is free to fill again
+    void unseat(Body& body, const std::string_view why)
+    {
+        if (body.present)
+        {
+            fadeOut(body, why);
+        }
+        pawn::markAbsent(body.charid);
+        if (auto tit = zoneSlots.find(body.zone); tit != zoneSlots.end() && body.slot >= 0 && static_cast<size_t>(body.slot) < tit->second.occupants.size())
+        {
+            std::erase(tit->second.occupants[body.slot], body.name);
+        }
+        charidByName.erase(body.name);
+        bodies.erase(body.charid);
+    }
+
+    // The census moves (a recut, the player levelled): a seated body whose
+    // level has left her slot's band gives the seat up, and the seat refills
+    auto reseatOutgrown(CZone* PZone) -> uint32
+    {
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        const auto tit    = zoneSlots.find(zoneId);
+        if (tit == zoneSlots.end() || tit->second.specs.empty())
+        {
+            return 0;
+        }
+        std::vector<uint32> outgrown;
+        for (const auto& [charid, body] : bodies)
+        {
+            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= tit->second.specs.size())
+            {
+                continue;
+            }
+            const auto rset = db::preparedStmt("SELECT level FROM cardian_census WHERE charid = ?", charid);
+            if (!rset || !rset->next())
+            {
+                continue;
+            }
+            const auto  level = rset->get<uint8>("level");
+            const auto& band  = tit->second.specs[body.slot].band;
+            if (level < band[0] || level > band[1])
+            {
+                ShowInfoFmt("world: {} is level {} now, outside slot {}'s band {}-{}; gives the seat up", body.name, level, body.slot, band[0], band[1]);
+                outgrown.push_back(charid);
+            }
+        }
+        std::unordered_set<uint32> seats;
+        for (const auto charid : outgrown)
+        {
+            if (const auto it = bodies.find(charid); it != bodies.end())
+            {
+                seats.insert(static_cast<uint32>(it->second.slot));
+                unseat(it->second, "she has outgrown the seat");
+            }
+        }
+        uint32 queued = 0;
+        for (const auto slot : seats)
+        {
+            queued += queueSlot(PZone, slot);
+        }
+        return queued;
+    }
+
     // Everything the zone holds returns to the pool: bodies fade, presences
     // go, the table is dropped for a fresh read; the ring's pinned bodies stay
     auto clearZone(CZone* PZone) -> uint32
@@ -1173,6 +1237,7 @@ namespace pawn::world
             }
             else if (++slotPoll[zoneId] % kSlotPollTicks == 0)
             {
+                reseatOutgrown(PZone);
                 if (const auto it = zoneSlots.find(zoneId); it != zoneSlots.end())
                 {
                     const auto path = slotPath(PZone);
