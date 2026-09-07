@@ -30,6 +30,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_rules.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/world.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/world.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_teach.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_teach.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_spellbook.cpp

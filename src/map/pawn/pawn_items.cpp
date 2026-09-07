@@ -567,6 +567,58 @@ namespace pawn::items
         return {};
     }
 
+    auto dressFromBag(CCharEntity* PPawn) -> uint32
+    {
+        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+        if (storage == nullptr)
+        {
+            return 0;
+        }
+        const uint8 job   = static_cast<uint8>(PPawn->GetMJob());
+        const uint8 level = PPawn->GetMLevel();
+        uint32      worn  = 0;
+        // A piece already worn in some slot is not free for another
+        const auto alreadyWorn = [&](const CItem* PItem) -> bool
+        {
+            for (uint8 s = 0; s < SLOT_LINK1; ++s)
+            {
+                if (PPawn->getEquip(static_cast<SLOTTYPE>(s)) == PItem)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (uint8 equipSlot = 0; equipSlot < SLOT_LINK1; ++equipSlot)
+        {
+            if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) != nullptr)
+            {
+                continue;
+            }
+            for (uint8 invSlot = 1; invSlot <= storage->GetSize(); ++invSlot)
+            {
+                const auto* PItem = dynamic_cast<CItemEquipment*>(storage->GetItem(invSlot));
+                if (PItem == nullptr || alreadyWorn(PItem) ||
+                    !(PItem->getEquipSlotId() & (1 << equipSlot)) ||
+                    !(PItem->getJobs() & (1 << (job - 1))) ||
+                    PItem->getReqLvl() > level)
+                {
+                    continue;
+                }
+                if (equip(PPawn, invSlot, equipSlot, LOC_INVENTORY).empty())
+                {
+                    ++worn;
+                    break;
+                }
+            }
+        }
+        if (worn > 0)
+        {
+            charutils::SaveCharEquip(PPawn);
+        }
+        return worn;
+    }
+
     auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> std::string
     {
         // Items are used from the inventory only; a bag's contents are worn

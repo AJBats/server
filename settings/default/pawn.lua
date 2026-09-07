@@ -258,4 +258,40 @@ xi.settings.pawn =
     -- two (packet lag in yalms), the prediction applied and its error, and
     -- the lead's distance from its point. Dev aid for the formation work.
     FORMATION_DEBUG = false,
+
+    -- The world's adventurers (ROADMAP D, RESEARCH §11): census bodies,
+    -- minted from cardian_census and stood in a zone with no summoner and
+    -- no party. WORLD_ENABLE gates the verbs and the world tick; the prod
+    -- profile keeps it off until the feature has held up on dev.
+    WORLD_ENABLE = true,
+
+    -- Log, every hundred zone ticks per zone with a body in it, the pawn
+    -- tick's average and worst microseconds and the counts behind them
+    -- (the D0 measurement).
+    WORLD_TICK_DEBUG = false,
+
+    -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
+    -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade), and
+    -- with WORLD_DEBUG_WALK each walks between her spot and the centre.
+    -- The measurement runs with no client attached. 0 = no ring.
+    WORLD_DEBUG_RING = 0,
+    WORLD_DEBUG_ZONE = 100,    -- West Ronfaure
+    WORLD_DEBUG_X    = -300.0, -- the rabbit field inside the gate
+    WORLD_DEBUG_Y    = -51.0,
+    WORLD_DEBUG_Z    = 283.0,
+    WORLD_DEBUG_WALK = false,
+
+    -- Liveness: a zone is live while a real player is in it or, with
+    -- WORLD_LIVE_RADIUS 1, one zone line away (the neighbours come from the
+    -- zone's own exits); -1 keeps every zone live, the switch for the
+    -- "simulate everything" experiment. A zone that stops being live keeps
+    -- its bodies WORLD_FADE_DELAY seconds more, so popping out to shed
+    -- aggro and straight back finds the zone as it was.
+    WORLD_LIVE_RADIUS = 1,
+    WORLD_FADE_DELAY  = 120,
+
+    -- The load line, always on: every WORLD_LOAD_REPORT seconds the map
+    -- log says how many bodies stand in how many zones, what a body's
+    -- tick costs, and the process's CPU and memory. 0 turns it off.
+    WORLD_LOAD_REPORT = 300,
 }

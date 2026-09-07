@@ -25,6 +25,7 @@
 #include "cardian_link.h"
 #include "formation_math.h"
 #include "pawn.h"
+#include "world.h"
 #include "pawn_danger.h"
 #include "pawn_doors.h"
 #include "pawn_gambits.h"
@@ -39,6 +40,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <limits>
@@ -107,6 +109,16 @@ auto CPawnController::IsHunting() const -> bool
     return m_Hunting;
 }
 
+void CPawnController::SetWorld(const bool on)
+{
+    m_World = on;
+}
+
+auto CPawnController::IsWorld() const -> bool
+{
+    return m_World;
+}
+
 void CPawnController::SetWaiting(const bool on, const bool ordered, const std::string_view why)
 {
     const bool was = m_Waiting;
@@ -144,6 +156,8 @@ auto CPawnController::modeName(const Mode mode) -> const char*
             return "Wait";
         case Mode::Travel:
             return "Travel";
+        case Mode::Roam:
+            return "Roam";
         case Mode::Approach:
             return "Approach";
         case Mode::Hold:
@@ -172,6 +186,10 @@ auto CPawnController::IdleMode() const -> Mode
     if (m_Waiting)
     {
         return Mode::Wait;
+    }
+    if (m_World)
+    {
+        return Mode::Roam;
     }
     return Mode::Follow;
 }
@@ -276,6 +294,45 @@ auto CPawnController::SelfDefenceTarget() -> CMobEntity*
     };
     pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 20.0f, answers);
     return PAttacker;
+}
+
+void CPawnController::RoamTick()
+{
+    m_Gambits->TickBehaviors();
+    if (!POwner->PAI->IsCurrentState<CMagicState>())
+    {
+        m_Gambits->Tick(m_Tick, false);
+        IdleEmote(nullptr);
+    }
+
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    if (PPathFind == nullptr || POwner->GetSpeed() <= 0)
+    {
+        return;
+    }
+    if (const auto* target = pawn::world::walkTargetOf(POwner->id); target != nullptr)
+    {
+        if (distance(POwner->loc.p, *target) < 1.5f)
+        {
+            pawn::world::walkArrived(POwner->id);
+            PPathFind->Clear();
+            return;
+        }
+        if (!PPathFind->IsFollowingPath() && !PPathFind->PathTo(*target, PATHFLAG_RUN))
+        {
+            // No path that way: turn round
+            if (pawn::world::tickDebug())
+            {
+                ShowInfoFmt("world: {} finds no path to ({:.1f}, {:.1f}, {:.1f})", POwner->getName(), target->x, target->y, target->z);
+            }
+            pawn::world::walkArrived(POwner->id);
+            return;
+        }
+    }
+    if (PPathFind->IsFollowingPath())
+    {
+        PPathFind->FollowPath(m_Tick);
+    }
 }
 
 void CPawnController::WaitTick(CCharEntity* PPlayer)
@@ -1108,6 +1165,22 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     m_Tick = tick;
 
+    // This tick's cost, for the world's load line (always) and the per-zone
+    // detail under pawn.WORLD_TICK_DEBUG
+    struct BrainClock
+    {
+        const CBattleEntity*                  owner;
+        std::chrono::steady_clock::time_point start;
+        ~BrainClock()
+        {
+            if (owner->loc.zone != nullptr)
+            {
+                pawn::world::noteBrainTick(static_cast<uint16>(owner->loc.zone->GetID()), std::chrono::steady_clock::now() - start);
+            }
+        }
+    } const brainClock{ POwner, std::chrono::steady_clock::now() };
+    std::ignore = brainClock;
+
     // A zone change meant for the client protocol -- a warp, a teleport --
     // is hers to carry by transfer, ahead of the zone's own check
     if (pawn::carryZoning(static_cast<CCharEntity*>(POwner)))
@@ -1449,6 +1522,21 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             Transition(Mode::Travel, "ordered to another zone");
         }
         TravelTick();
+        co_return;
+    }
+
+    // A world body: nobody to follow. Her idle is Roam; a walk in on a mob
+    // or a fight runs through the shared modes and comes back to it
+    if (m_World)
+    {
+        if (m_Mode == Mode::Follow || m_Mode == Mode::Wait || m_Mode == Mode::Travel)
+        {
+            Transition(Mode::Roam, "on her own");
+        }
+        if (m_Mode == Mode::Roam)
+        {
+            RoamTick();
+        }
         co_return;
     }
 

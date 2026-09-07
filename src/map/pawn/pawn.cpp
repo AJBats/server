@@ -22,6 +22,7 @@
 #include "pawn.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
+#include "world.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "gambit_text.h"
@@ -53,6 +54,7 @@
 #include <bcrypt/BCrypt.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
 #include <random>
@@ -221,17 +223,33 @@ namespace pawn
             return false;
         }
 
-        if (const auto invalidReason = loginHelpers::validateCharacterName(targetName); invalidReason.has_value())
+        const CharSpec spec{ .name = targetName };
+        const uint32   charid = createFromSpec(spec, ownerAccountOf(PSummoner));
+        if (charid != 0)
         {
-            ShowWarningFmt("pawn: cannot create {}: {}", targetName, *invalidReason);
-            return false;
+            ShowInfoFmt("pawn: {} ({}) minted for {}", targetName, charid, PSummoner->getName());
+        }
+        return charid != 0;
+    }
+
+    auto createFromSpec(const CharSpec& spec, const uint32 ownerAccid) -> uint32
+    {
+        if (!isEnabled() || ownerAccid == 0)
+        {
+            return 0;
         }
 
-        uint32     accid = 0;
+        if (const auto invalidReason = loginHelpers::validateCharacterName(spec.name); invalidReason.has_value())
+        {
+            ShowWarningFmt("pawn: cannot create {}: {}", spec.name, *invalidReason);
+            return 0;
+        }
+
+        uint32     accid   = 0;
         const auto accRset = db::preparedStmt("SELECT COALESCE(MAX(id), 0) AS max_id FROM accounts");
         if (!accRset || !accRset->next())
         {
-            return false;
+            return 0;
         }
         accid = std::max<uint32>(1000, accRset->get<uint32>("max_id") + 1);
 
@@ -243,30 +261,48 @@ namespace pawn
         if (!db::preparedStmt("INSERT INTO accounts (id, login, password, timecreate) VALUES (?, ?, ?, NOW())",
                               accid, fmt::format("pawn{}", accid), BCrypt::generateHash(password)))
         {
-            ShowErrorFmt("pawn: account creation failed for {}", targetName);
-            return false;
+            ShowErrorFmt("pawn: account creation failed for {}", spec.name);
+            return 0;
         }
 
-        uint32     charid = 0;
+        uint32     charid   = 0;
         const auto charRset = db::preparedStmt("SELECT COALESCE(MAX(charid), 0) AS max_id FROM chars");
         if (!charRset || !charRset->next())
         {
-            return false;
+            return 0;
         }
         charid = charRset->get<uint32>("max_id") + 1;
 
-        char_mini mini = {
-            .m_name   = {},
-            .m_mjob   = static_cast<uint8>(xi::Job::WAR),
-            .m_zone   = xi::ZoneId::BastokMines,
-            .m_nation = NATION_BASTOK,
+        // Her nation's starting city, and a spot in it the opening cutscene
+        // would have left a new character at
+        struct Start
+        {
+            xi::ZoneId zone;
+            uint8      rotation;
+            float      x, y, z;
+        };
+        static constexpr std::array<Start, 3> starts{ {
+            { xi::ZoneId::SouthernSanDoria, 128, 93.0f, 0.0f, -57.0f },
+            { xi::ZoneId::BastokMines, 192, -45.0f, 0.0f, 25.0f },
+            { xi::ZoneId::WindurstWoods, 0, 106.0f, -5.0f, -23.0f },
+        } };
+        const auto& start = starts[std::min<uint8>(spec.nation, 2)];
+
+        // The creation script kits the six starting jobs only; an advanced
+        // main starts as a Warrior and takes her job at her first spawn
+        constexpr uint8 kLastStartingJob = 6;
+        char_mini       mini             = {
+                          .m_name   = {},
+                          .m_mjob   = spec.mjob <= kLastStartingJob ? spec.mjob : static_cast<uint8>(xi::Job::WAR),
+            .m_zone   = start.zone,
+            .m_nation = spec.nation,
         };
 
-        mini.m_look.race = static_cast<uint8>(CharRace::HumeMale);
-        mini.m_look.size = static_cast<uint16>(CharSize::Small);
-        mini.m_look.face = static_cast<uint8>(CharFace::Face1A);
+        mini.m_look.race = spec.race;
+        mini.m_look.size = spec.size;
+        mini.m_look.face = spec.face;
 
-        std::strncpy(reinterpret_cast<char*>(mini.m_name), targetName.c_str(), sizeof(mini.m_name) - 1);
+        std::strncpy(reinterpret_cast<char*>(mini.m_name), spec.name.c_str(), sizeof(mini.m_name) - 1);
         mini.m_name[sizeof(mini.m_name) - 1] = '\0';
 
         loginHelpers::saveCharacter(accid, charid, &mini);
@@ -275,16 +311,48 @@ namespace pawn
         // position and home point that cutscene would have assigned
         db::preparedStmt("DELETE FROM char_vars WHERE charid = ? AND varname = 'HQuest[newCharacterCS]notSeen'", charid);
         db::preparedStmt("UPDATE chars "
-                         "SET pos_rot = 192, pos_x = -45, pos_y = 0, pos_z = 25,"
-                         "home_zone = ?, home_rot = 192, home_x = -45, home_y = 0, home_z = 25 "
+                         "SET pos_rot = ?, pos_x = ?, pos_y = ?, pos_z = ?,"
+                         "home_zone = ?, home_rot = ?, home_x = ?, home_y = ?, home_z = ? "
                          "WHERE charid = ?",
-                         static_cast<uint16>(xi::ZoneId::BastokMines), charid);
+                         start.rotation, start.x, start.y, start.z,
+                         static_cast<uint16>(start.zone), start.rotation, start.x, start.y, start.z, charid);
 
-        db::preparedStmt("INSERT INTO cardian_pawns (pawn_charid, owner_accid) VALUES (?, ?)",
-                         charid, ownerAccountOf(PSummoner));
+        db::preparedStmt("INSERT INTO cardian_pawns (pawn_charid, owner_accid) VALUES (?, ?)", charid, ownerAccid);
 
-        ShowInfoFmt("pawn: created {} ({}) on generated account {} for {}", targetName, charid, accid, PSummoner->getName());
-        return true;
+        ShowInfoFmt("pawn: created {} ({}) on generated account {} for account {}", spec.name, charid, accid, ownerAccid);
+        return charid;
+    }
+
+    auto worldAccountId() -> uint32
+    {
+        static uint32 cached = 0;
+        if (cached != 0)
+        {
+            return cached;
+        }
+        if (const auto rset = db::preparedStmt("SELECT id FROM accounts WHERE login = 'cardianworld'"); rset && rset->next())
+        {
+            cached = rset->get<uint32>("id");
+            return cached;
+        }
+
+        const auto accRset = db::preparedStmt("SELECT COALESCE(MAX(id), 0) AS max_id FROM accounts");
+        if (!accRset || !accRset->next())
+        {
+            return 0;
+        }
+        const uint32       accid = std::max<uint32>(1000, accRset->get<uint32>("max_id") + 1);
+        std::random_device rd;
+        const auto         password = fmt::format("{:08x}{:08x}{:08x}{:08x}", rd(), rd(), rd(), rd());
+        if (!db::preparedStmt("INSERT INTO accounts (id, login, password, timecreate) VALUES (?, 'cardianworld', ?, NOW())",
+                              accid, BCrypt::generateHash(password)))
+        {
+            ShowErrorFmt("pawn: the world account could not be created");
+            return 0;
+        }
+        ShowInfoFmt("pawn: the world account is {}", accid);
+        cached = accid;
+        return cached;
     }
 
     bool spawn(CCharEntity* PSummoner, const std::string& targetName)
@@ -427,6 +495,93 @@ namespace pawn
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
         registerPawn(std::move(PPawn), PSummoner->id);
+        return true;
+    }
+
+    bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job, const uint8 level)
+    {
+        if (!isEnabled() || PZone == nullptr || charid == 0 || pawns.contains(charid))
+        {
+            return false;
+        }
+
+        if (zoneutils::GetChar(charid) != nullptr)
+        {
+            ShowWarningFmt("pawn: character {} is online, refusing to stand her in the world", charid);
+            return false;
+        }
+
+        auto PPawn = charutils::LoadChar(charid);
+        if (PPawn == nullptr)
+        {
+            ShowErrorFmt("pawn: LoadChar failed for {}", charid);
+            return false;
+        }
+        PPawn->clearPacketList();
+
+        // At the point, on the mesh
+        PPawn->loc.p = point;
+        if (const auto* navMesh = PZone->navMesh(); navMesh != nullptr)
+        {
+            if (const auto snapped = navMesh->findClosestValidPoint(point); snapped.has_value())
+            {
+                PPawn->loc.p = *snapped;
+            }
+        }
+        PPawn->loc.p.rotation  = point.rotation;
+        PPawn->loc.destination = PZone->GetID();
+        PPawn->loc.prevzone    = PZone->GetID();
+        PPawn->m_moghouseID    = 0;
+        PPawn->status          = xi::Status::Normal;
+
+        charutils::loadDeathTimestamp(PPawn.get());
+
+        PZone->IncreaseZoneCounter(PPawn.get());
+        if (PPawn->loc.zone == nullptr)
+        {
+            ShowErrorFmt("pawn: zone insertion failed for {} ({})", PPawn->getName(), charid);
+            return false;
+        }
+        PPawn->clearPacketList();
+        PPawn->updatemask |= UPDATE_ALL_CHAR;
+
+        install(PPawn.get());
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->SetWorld(true);
+        }
+
+        const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", charid);
+        if (kitRset && kitRset->next())
+        {
+            // The kit is a starting job's, and level-1 gear needs a level 1
+            if (static_cast<uint8>(PPawn->GetMJob()) > 6)
+            {
+                applyJobAndLevel(PPawn.get(), static_cast<uint8>(xi::Job::WAR), 1);
+            }
+            applyStarterKit(PPawn.get());
+            charutils::SaveCharStats(PPawn.get());
+            charutils::SaveCharEquip(PPawn.get());
+            db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", charid);
+            PPawn->clearPacketList();
+        }
+
+        if ((job > 0 && static_cast<uint8>(PPawn->GetMJob()) != job) || (level > 0 && PPawn->GetMLevel() != level))
+        {
+            applyJobAndLevel(PPawn.get(), job, level);
+            PPawn->clearPacketList();
+        }
+
+        // Whatever her bag holds that her job and level can wear goes on
+        if (const auto worn = items::dressFromBag(PPawn.get()); worn > 0)
+        {
+            ShowInfoFmt("pawn: {} dresses from her bag ({} pieces)", PPawn->getName(), worn);
+            PPawn->clearPacketList();
+        }
+
+        const std::string name = PPawn->getName();
+        ShowInfoFmt("pawn: {} ({}) stands in {} on her own, {} {}", name, charid, PZone->getName(), magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel());
+        registerPawn(std::move(PPawn), 0);
         return true;
     }
 
@@ -905,8 +1060,11 @@ namespace pawn
 
     bool despawn(const std::string& targetName)
     {
-        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
+        return despawnById(charutils::getCharIdFromName(targetName));
+    }
 
+    bool despawnById(const uint32 targetCharID, const bool keepOnline)
+    {
         const auto it = pawns.find(targetCharID);
         if (it == pawns.end())
         {
@@ -934,9 +1092,12 @@ namespace pawn
             PPawn->loc.zone->DecreaseZoneCounter(PPawn);
         }
 
-        db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ?", targetCharID);
+        if (!keepOnline)
+        {
+            db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ?", targetCharID);
+        }
 
-        ShowInfoFmt("pawn: despawned {} ({})", targetName, targetCharID);
+        ShowInfoFmt("pawn: despawned {} ({}){}", PPawn->getName(), targetCharID, keepOnline ? ", still online" : "");
 
         summonerByPawn.erase(targetCharID);
         pendingTransfers.erase(targetCharID);
@@ -1235,12 +1396,15 @@ namespace pawn
 
     void onZoneTick(CZone* PZone)
     {
+        const auto started   = std::chrono::steady_clock::now();
+        uint32     pawnsHere = 0;
         for (const auto& [charid, PPawn] : pawns)
         {
             if (PPawn->loc.zone != PZone)
             {
                 continue;
             }
+            ++pawnsHere;
 
             loot::handOff(PPawn.get());
 
@@ -1275,5 +1439,8 @@ namespace pawn
             // this it grows without bound
             PPawn->clearPacketList();
         }
+
+        world::onZoneTick(PZone);
+        world::noteModuleTick(PZone, std::chrono::steady_clock::now() - started, pawnsHere);
     }
 } // namespace pawn

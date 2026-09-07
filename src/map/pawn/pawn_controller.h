@@ -69,6 +69,7 @@ public:
         Follow,
         Wait,
         Travel,
+        Roam,
         Approach,
         Hold,
         Fight,
@@ -77,6 +78,11 @@ public:
     };
     static auto modeName(Mode mode) -> const char*;
     auto        CurrentMode() const -> Mode;
+
+    // A world body (pawn::world): no party and nobody to follow. Her idle
+    // mode is Roam, and the roam tick is hers alone (RoamTick)
+    void SetWorld(bool on);
+    auto IsWorld() const -> bool;
 
     // Action surface used by the gambit interpreter. Each faces the target
     // first (the player weapon-skill path refuses a target the character is
@@ -421,6 +427,11 @@ private:
     // come for her (SelfDefenceTarget), and the player's magic noted while
     // they are still here (NotePlayerMagic)
     void WaitTick(CCharEntity* PPlayer);
+
+    // A world body's idle tick: gambit behaviours and self-cures as on a
+    // wait, and a walk set by pawn::world, back and forth. The farm loop
+    // lands here (ROADMAP D1)
+    void RoamTick();
     auto SelfDefenceTarget() -> CMobEntity*;
     void NotePlayerMagic(const CCharEntity* PPlayer);
 
@@ -530,6 +541,7 @@ private:
     xi::ZoneId                        m_TravelHopZone{};
 
     bool              m_Hunting    = false;
+    bool              m_World      = false;
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
     bool              m_WaitOrdered = false;

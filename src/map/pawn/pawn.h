@@ -76,6 +76,43 @@ namespace pawn
     // not owned.
     bool spawn(CCharEntity* PSummoner, const std::string& targetName);
 
+    // A character to mint: the client's race enum (race and sex in one),
+    // face 0-15, size 0-2, nation 0-2, main job and level. The census
+    // (RESEARCH §11.2) speaks this model.
+    struct CharSpec
+    {
+        std::string name;
+        uint8       race   = 1; // HumeMale
+        uint8       face   = 0;
+        uint8       size   = 0;
+        uint8       nation = 1; // Bastok
+        uint8       mjob   = 1; // WAR
+        uint8       level  = 1;
+    };
+
+    // Mint a character from a spec on its own generated account, owned by
+    // ownerAccid and registered in cardian_pawns; the charid, or 0. create()
+    // is this with the default spec and the summoner's account. The level
+    // is applied at her first spawn (spawnAt), where a live entity exists.
+    auto createFromSpec(const CharSpec& spec, uint32 ownerAccid) -> uint32;
+
+    // The account that owns the world's adventurers (login "cardianworld"),
+    // made on first use; 0 if it cannot be
+    auto worldAccountId() -> uint32;
+
+    // Load the offline character and insert her into the zone at the point
+    // (snapped to the navmesh), with no summoner and no party; her
+    // controller runs as a world body (Mode::Roam). Her first spawn gives
+    // her the starter kit (a basic job's: an advanced main is minted as a
+    // Warrior), then the job and level asked for, skills capped. False
+    // with no side effects if she is unknown, online or already a pawn.
+    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, uint8 level);
+
+    // Put a live character on a job at a level, skills capped for it (the
+    // code behind !pawnjob and !pawncapskills; implemented in
+    // pawn_module.cpp). 0 leaves that part as it is.
+    void applyJobAndLevel(CCharEntity* PChar, uint8 job, uint8 level);
+
     // Run xi.player.charCreate on a freshly minted pawn (implemented in
     // pawn_module.cpp so the sol2 cost stays out of pawn.cpp).
     void applyStarterKit(CCharEntity* PPawn);
@@ -176,6 +213,11 @@ namespace pawn
     // Remove a pawn from its zone and destroy it. No character state is
     // written back to the DB (the pawn visit leaves no trace).
     bool despawn(const std::string& targetName);
+    // Remove a live pawn from the world by charid (despawn() by name). With
+    // keepOnline her session row stays, so search and the friend list
+    // still find her in the zone she stood in: a world body that has
+    // faded is out of the zone, not offline (RESEARCH §11.1)
+    bool despawnById(uint32 charid, bool keepOnline = false);
 
     // True when the entity is a live pawn owned by this module.
     bool isPawn(const CCharEntity* PChar);

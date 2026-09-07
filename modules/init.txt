@@ -43,6 +43,7 @@ custom/lua/test_npcs_in_gm_home.lua
 cardian/sql/cardian_pawns.sql
 cardian/sql/cardian_gambits.sql
 cardian/sql/cardian_orders.sql
+cardian/sql/cardian_census.sql
 # CARDIAN: the party progresses together (quests, missions, battlefields)
 cardian/lua/party_progress.lua
 # CARDIAN: NM kills, battlefield wins and quests open the auction house crowd's gates

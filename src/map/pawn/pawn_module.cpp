@@ -21,6 +21,7 @@
 
 #include "cardian_link.h"
 #include "pawn.h"
+#include "world.h"
 #include "pawn_controller.h"
 #include "gambit_text.h"
 #include "pawn_gambits.h"
@@ -161,6 +162,32 @@ namespace
 
 namespace pawn
 {
+    void applyJobAndLevel(CCharEntity* PChar, const uint8 job, const uint8 level)
+    {
+        CLuaBaseEntity entity(PChar);
+        bool           changedJob = false;
+        if (job != 0 && static_cast<uint8>(PChar->GetMJob()) != job)
+        {
+            // A job change re-validates her gear against the new job's
+            // level; a job never levelled reads 0 and strips her
+            if (level != 0 && PChar->jobs.job[job] < level)
+            {
+                PChar->jobs.job[job] = level;
+            }
+            entity.changeJob(job);
+            changedJob = true;
+        }
+        const bool leveled = level != 0 && (changedJob || PChar->GetMLevel() != level);
+        if (leveled)
+        {
+            entity.setLevel(level);
+        }
+        if (changedJob || leveled)
+        {
+            entity.capAllSkills();
+        }
+    }
+
     void applyStarterKit(CCharEntity* PPawn)
     {
         const auto result = lua["xi"]["player"]["charCreate"](CLuaBaseEntity(PPawn));
@@ -243,6 +270,43 @@ class PawnModule : public CPPModule
         {
             std::ignore = PLuaBaseEntity;
             return pawn::despawn(targetName);
+        };
+
+        // The world's adventurers (ROADMAP D0): stand, fade, ring, walk
+        lua["CBaseEntity"]["worldSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            {
+                return false;
+            }
+            return pawn::world::spawnByName(name, PChar->loc.zone, PChar->loc.p, false);
+        };
+
+        lua["CBaseEntity"]["worldDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> uint32
+        {
+            std::ignore = PLuaBaseEntity;
+            return pawn::world::despawnByName(name);
+        };
+
+        lua["CBaseEntity"]["worldRing"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 count) -> uint32
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            {
+                return 0;
+            }
+            return pawn::world::ring(PChar->loc.zone, PChar->loc.p, count, std::nullopt);
+        };
+
+        lua["CBaseEntity"]["worldWalk"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> uint32
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return 0;
+            }
+            return pawn::world::walk(name, PChar->loc.p);
         };
 
         lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool

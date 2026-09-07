@@ -84,6 +84,11 @@ namespace pawn::items
     auto equip(CCharEntity* PPawn, uint8 invSlot, uint8 equipSlot, uint8 location = 0) -> std::string;
     auto unequip(CCharEntity* PPawn, uint8 equipSlot) -> std::string;
 
+    // Dress her from her bag: every empty slot takes the first piece in
+    // her inventory her job and level can wear. How many went on. A world
+    // body's first spawn (pawn::spawnAt) and the census wardrobe (D2) use it
+    auto dressFromBag(CCharEntity* PPawn) -> uint32;
+
     // Her storage bags, the ones a character reaches from the field: Mog
     // Case, the sized Mog Wardrobes, Satchel and Sack -- the item-move
     // handler's own list for a player, minus the Mog House containers
