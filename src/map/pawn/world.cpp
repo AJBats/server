@@ -7,6 +7,7 @@
 */
 
 #include "world.h"
+#include "pawn_items.h"
 
 #include "pawn.h"
 
@@ -19,6 +20,7 @@
 #include "entities/char_entity.h"
 #include "item_container.h"
 #include "items/item.h"
+#include "items/transactions/item_claim.h"
 #include "login/login_helpers.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
@@ -383,6 +385,73 @@ namespace
         }
     }
 
+    // Her wardrobe as the census wrote it (RESEARCH §11.4): each piece put
+    // in her bag if she lacks it, then worn. Read on every stand, so a census
+    // that re-dressed her hands her the new pieces; a piece she takes off is
+    // dropped (sold, as far as the world knows) so her bag never fills up
+    auto dressFromWardrobe(const Body& body, CCharEntity* PPawn) -> uint32
+    {
+        std::vector<std::pair<uint8, uint16>> wardrobe;
+        std::unordered_set<uint16>            wanted;
+        if (const auto rset = db::preparedStmt("SELECT slot, itemid FROM cardian_wardrobe WHERE name = ? ORDER BY slot", body.name); rset)
+        {
+            while (rset->next())
+            {
+                wardrobe.emplace_back(rset->get<uint8>("slot"), rset->get<uint16>("itemid"));
+                wanted.insert(wardrobe.back().second);
+            }
+        }
+        auto*  bag  = PPawn->getStorage(LOC_INVENTORY);
+        uint32 worn = 0;
+        for (const auto& [equipSlot, itemId] : wardrobe)
+        {
+            const CItem* PWorn = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot));
+            if (PWorn != nullptr && PWorn->getID() == itemId)
+            {
+                continue;
+            }
+            uint8 invSlot = bag != nullptr ? bag->SearchItem(itemId) : ERROR_SLOTID;
+            if (invSlot == ERROR_SLOTID)
+            {
+                auto transaction = ItemClaimTransaction::start(PPawn);
+                if (!transaction)
+                {
+                    break;
+                }
+                const uint32 quantity = equipSlot == SLOT_AMMO ? 99 : 1;
+                const auto   landed   = transaction->give(LOC_INVENTORY, itemId, quantity, Silence::Yes);
+                if (!landed.has_value() || !transaction->commit())
+                {
+                    ShowWarningFmt("world: {} cannot take item {} for slot {}", body.name, itemId, equipSlot);
+                    continue;
+                }
+                invSlot = *landed;
+            }
+            if (const auto why = pawn::items::equip(PPawn, invSlot, equipSlot, LOC_INVENTORY); !why.empty())
+            {
+                ShowWarningFmt("world: {} cannot wear item {} in slot {}: {}", body.name, itemId, equipSlot, why);
+                continue;
+            }
+            ++worn;
+            if (PWorn != nullptr && bag != nullptr && !wanted.contains(PWorn->getID()))
+            {
+                for (uint8 slot = 1; slot <= bag->GetSize(); ++slot)
+                {
+                    if (bag->GetItem(slot) == PWorn)
+                    {
+                        charutils::DropItem(PPawn, LOC_INVENTORY, slot, static_cast<int32>(PWorn->getQuantity()), PWorn->getID());
+                        break;
+                    }
+                }
+            }
+        }
+        if (worn > 0)
+        {
+            charutils::SaveCharEquip(PPawn);
+        }
+        return worn;
+    }
+
     bool fadeIn(Body& body)
     {
         auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(body.zone));
@@ -402,6 +471,13 @@ namespace
         body.present     = true;
         body.censusLevel = row->level;
         body.seed        = row->seed;
+        if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
+        {
+            if (const auto worn = dressFromWardrobe(body, PPawn); worn > 0)
+            {
+                ShowInfoFmt("world: {} dresses in {} pieces", body.name, worn);
+            }
+        }
         snapshotBag(body);
         if (pawn::world::tickDebug())
         {
@@ -421,6 +497,29 @@ namespace
             {
                 PPawn->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, std::chrono::hours(3));
                 PPawn->clearPacketList();
+            }
+        }
+        // Her spellbook as the census wrote it: every spell her job casts at
+        // her level whose scroll the book has opened (RESEARCH §11.4). Read
+        // on every stand, so a census that grew hands her the new ones
+        if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
+        {
+            uint32 learned = 0;
+            if (const auto rset = db::preparedStmt("SELECT spellid FROM cardian_spells WHERE name = ?", body.name); rset)
+            {
+                while (rset->next())
+                {
+                    const auto spellId = rset->get<uint16>("spellid");
+                    if (charutils::addSpell(PPawn, spellId) != 0)
+                    {
+                        charutils::SaveSpell(PPawn, spellId);
+                        ++learned;
+                    }
+                }
+            }
+            if (learned > 0)
+            {
+                ShowInfoFmt("world: {} learns {} spells", body.name, learned);
             }
         }
         ShowInfoFmt("world: {} fades in at {} ({:.1f}, {:.1f}, {:.1f})", body.name, PZone->getName(), body.point.x, body.point.y, body.point.z);
@@ -564,9 +663,10 @@ namespace pawn::world
         // Every name up front: standing one runs queries of its own. A name
         // not yet minted is put through the lobby's own checks here, so one
         // the retail filter refuses costs a log line, not a hole in the ring
-        // (the census tool cannot mirror the hashed filter yet: ROADMAP D2)
+        // (the census tool runs the same filter over its bank; this is the
+        // belt to its braces). Names in the bank are not in the world.
         std::vector<std::string> names;
-        if (const auto rset = db::preparedStmt("SELECT name, charid FROM cardian_census ORDER BY seed"); rset)
+        if (const auto rset = db::preparedStmt("SELECT name, charid FROM cardian_census WHERE anchor <> 'bank' ORDER BY seed"); rset)
         {
             while (rset->next())
             {
