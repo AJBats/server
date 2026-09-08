@@ -449,6 +449,9 @@ private:
     void TownTick(const pawn::world::TownOrder& order);
     // The mesh's route to the point walked in her own lane (pawn::world::laneOf)
     auto LanePath(const position_t& goal) -> bool;
+    // A town walk's step, its length varied on her own cycle (the walk-step
+    // jitter, pawn.WORLD_STEP_JITTER) so no two run cycles lock together
+    void TownStep(const Intent& intent);
     auto SelfDefenceTarget() -> CMobEntity*;
     void NotePlayerMagic(const CCharEntity* PPlayer);
 
@@ -590,6 +593,7 @@ private:
     position_t        m_TownGoal{};
     timer::time_point m_TownStillSince{};
     position_t        m_TownLastPos{};
+    uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
     bool              m_WaitOrdered = false;

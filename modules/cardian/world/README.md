@@ -59,7 +59,9 @@ slots:
 
 A town walk keeps to a lane of her own -- the mesh's route slid a step
 to one side, snapped back where that lands in a wall -- so a crowd sent
-down one street does not walk it in single file.
+down one street does not walk it in single file; and its steps vary on
+a cycle of her own (`pawn.WORLD_STEP_JITTER`), her speed the norm to
+the yalm, so the client does not draw every run cycle in lockstep.
 
 `via` is for a doorway the mesh's shortest line would miss: the Tanners'
 Guild has an open outer doorway on its north side and an inner door that
@@ -75,7 +77,13 @@ tries from the ones placed), and a group is a conversation circle -- its
 members a yalm or so out from the middle, evenly spaced with a little
 jitter, each facing the middle; a body alone faces a heading of her own.
 The layout is drawn from the zone and the slot, so it is the same every
-visit, and the seats are dealt in order as bodies come and go.
+visit, and the seats are dealt in order as bodies come and go; a loner's
+centre leans toward the slot's edge, a group's toward its middle. The
+boot log says each clustered slot's group sizes. A group talks: one
+member at a time emotes at another (`pawn.WORLD_CHAT_GAP_MIN/MAX`
+seconds apart, now and then answered), one emote in three turning to
+face the listener and back to the middle after; a loner keeps the
+plain fidgets.
 
 Placed while nobody is in the zone, she is at her seat already and the
 clock runs unseen; placed while someone is, she appears at her exit point

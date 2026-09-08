@@ -72,9 +72,11 @@ namespace pawn::world
     {
         position_t                goal{}; // the next point to reach (meaningless while atSeat)
         std::optional<position_t> face;
-        bool                      atSeat  = false;
-        bool                      leaving = false;
-        bool                      kneel   = false;
+        bool                      goalIsSeat = false; // the goal is her seat itself: the last step lands on it exactly
+        bool                      atSeat     = false;
+        bool                      leaving    = false;
+        bool                      kneel      = false;
+        bool                      chatty     = false; // in a group: the world runs her emotes, not the controller's fidgets
     };
     auto townOrder(uint32 charid) -> std::optional<TownOrder>;
     void noteReached(uint32 charid);

@@ -380,7 +380,7 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
     if (leg == 2)
     {
         Move(Intent{});
-        if (!order.kneel && (PPathFind == nullptr || !PPathFind->IsFollowingPath()))
+        if (!order.kneel && !order.chatty && (PPathFind == nullptr || !PPathFind->IsFollowingPath()))
         {
             IdleEmote(nullptr);
         }
@@ -391,12 +391,25 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
         return;
     }
     // Arrival is judged on the ground: the point is on the mesh (the world
-    // snaps it), but a step's height between her and it is no distance
+    // snaps it), but a step's height between her and it is no distance. A
+    // waypoint is passed within a yalm and a half; her seat she lands on
+    // exactly -- the last stretch is one straight step onto it, so a group's
+    // ring is a ring and no two of them overlap
     const position_t& goal = order.goal;
-    if (std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z) < 1.5f && std::abs(POwner->loc.p.y - goal.y) < 3.0f)
+    const float       flat = std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z);
+    const bool        near = flat < 1.6f && std::abs(POwner->loc.p.y - goal.y) < 3.0f;
+    if (near && (!order.goalIsSeat || flat < 0.35f))
     {
         Move(Intent{});
         pawn::world::noteReached(POwner->id);
+        return;
+    }
+    if (near)
+    {
+        Intent hop{};
+        hop.kind  = Intent::Kind::Hop;
+        hop.point = goal;
+        Move(hop);
         return;
     }
     if (distance(POwner->loc.p, m_TownLastPos) > 0.5f)
@@ -419,7 +432,7 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
     {
         Intent keep{};
         keep.kind = Intent::Kind::Keep;
-        Move(keep);
+        TownStep(keep);
         return;
     }
     if (LanePath(goal))
@@ -431,7 +444,34 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
     intent.point     = goal;
     intent.arrive    = 1.0f;
     intent.tolerance = 1.2f;
+    TownStep(intent);
+}
+
+// The walk-step jitter. Every body steps on the same zone tick, so the
+// client got the same delta for all of them in the same bundle every
+// time and drew their run cycles in lockstep; a real player's deltas
+// vary from bundle to bundle because her own client's clock drifts
+// against yours. So her step varies: a per-body sine over a few ticks,
+// WORLD_STEP_JITTER percent either way, whose mean over a period is
+// exactly one -- her speed is the norm to the yalm, only the phase is
+// hers. Applied through baseSpeed for the step alone; the packet built
+// at the end of the tick carries the norm
+void CPawnController::TownStep(const Intent& intent)
+{
+    const float amplitude = settings::get<float>("pawn.WORLD_STEP_JITTER") / 100.0f;
+    if (amplitude <= 0.0f)
+    {
+        Move(intent);
+        return;
+    }
+    const uint32 period = 3 + POwner->id % 4;                                // 3 to 6 ticks, hers
+    const float  phase  = static_cast<float>((POwner->id / 4) % 100) / 100.0f; // where in the cycle she started
+    const float  scale  = 1.0f + amplitude * std::sin(2.0f * std::numbers::pi_v<float> * (static_cast<float>(m_TownStepCount++ % period) / static_cast<float>(period) + phase));
+    const uint8  base   = POwner->baseSpeed;
+    POwner->baseSpeed   = static_cast<uint8>(std::clamp(std::lround(static_cast<float>(base) * scale), 1L, 255L));
     Move(intent);
+    POwner->baseSpeed = base;
+    POwner->UpdateSpeed();
 }
 
 // The mesh's route to the point, its interior corners slid sideways by her

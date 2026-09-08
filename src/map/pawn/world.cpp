@@ -15,8 +15,11 @@
 #include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/utils.h"
 #include "common/vana_time.h"
 #include "common/xirand.h"
+#include "enums/emote.h"
+#include "packets/s2c/0x05a_motionmes.h"
 
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
@@ -98,6 +101,7 @@ namespace
         bool                                                 atSeat  = false;
         bool                                                 leaving = false;
         bool                                                 gone    = false; // at the exit, or the walk given up
+        std::optional<std::chrono::steady_clock::time_point> faceBackAt;      // turned to a listener: when she faces the middle again
 
         // KO'd and faded: when she walks back to her seat (WORLD_KO_RETURN)
         std::optional<std::chrono::steady_clock::time_point> returnAt;
@@ -970,6 +974,13 @@ namespace
             {
                 ShowInfoFmt("world: {} dresses in {} pieces", body.name, worn);
             }
+            // She stands whole. Her row keeps the HP she was minted with, a
+            // level 1's, and dealt a seat at level 8 she would show a quarter
+            // of a bar -- and a group's followers, on the party path, knelt
+            // for it at the gate they arrived by (the user, 2026-09-07)
+            PPawn->health.hp = PPawn->GetMaxHP();
+            PPawn->health.mp = PPawn->GetMaxMP();
+            PPawn->updatemask |= UPDATE_HP;
         }
         snapshotBag(body);
         joinCampParty(body);
@@ -1141,11 +1152,14 @@ namespace
         std::vector<SlotSpec> slots;
         bool                  operator==(const SlotFile&) const = default;
     };
-    // One seat of a clustered slot: where she stands and what she faces
+    // One seat of a clustered slot: where she stands, what she faces, and
+    // which group of how many she belongs to
     struct Seat
     {
         position_t                at{};
         std::optional<position_t> face;
+        uint32                    group     = 0;
+        uint32                    groupSize = 1;
     };
     struct ZoneSlots
     {
@@ -1165,6 +1179,46 @@ namespace
 
     auto toPosition(const std::array<float, 3>& at) -> position_t;
     auto flatDistance(const position_t& a, const position_t& b) -> float;
+    auto snapToMesh(CZone* PZone, const position_t& point) -> position_t;
+
+    // A point to face from a seat with no face of its own: an open
+    // direction, not a wall (the user: two loners in the east gate's arch
+    // "both staring at the wall"). Eight directions are probed three yalms
+    // out against the mesh; a probe that lands on walkable ground is open.
+    // Of the open ones, one within a quarter turn of `toward` (the crowd's
+    // middle) when there is such, else any open one, else `toward` itself
+    auto openFacing(CZone* PZone, const position_t& at, const position_t& toward, const uint32 pick) -> position_t
+    {
+        const float                                     want = std::atan2(toward.z - at.z, toward.x - at.x);
+        std::vector<float>                              open;
+        std::vector<float>                              openToward;
+        for (uint32 k = 0; k < 8; ++k)
+        {
+            const float angle = 2.0f * std::numbers::pi_v<float> * (static_cast<float>(k) + 0.5f * static_cast<float>(pick % 2)) / 8.0f;
+            position_t  probe = at;
+            probe.x += 3.0f * std::cos(angle);
+            probe.z += 3.0f * std::sin(angle);
+            if (flatDistance(snapToMesh(PZone, probe), probe) < 0.5f)
+            {
+                open.push_back(angle);
+                float diff = std::fabs(std::remainder(angle - want, 2.0f * std::numbers::pi_v<float>));
+                if (diff <= std::numbers::pi_v<float> / 2.0f)
+                {
+                    openToward.push_back(angle);
+                }
+            }
+        }
+        const auto& choices = !openToward.empty() ? openToward : open;
+        if (choices.empty())
+        {
+            return toward;
+        }
+        const float angle = choices[pick % choices.size()];
+        position_t  face  = at;
+        face.x += 4.0f * std::cos(angle);
+        face.z += 4.0f * std::sin(angle);
+        return face;
+    }
 
     // A small seeded generator, so a layout is the same every visit
     struct Dice
@@ -1196,7 +1250,7 @@ namespace
     // evenly spaced with a little jitter, each facing the middle. A body
     // alone faces a heading of her own. Drawn from the zone, the slot and
     // a fixed seed, so the arrangement is the same every visit
-    auto layoutCliques(const uint16 zoneId, const uint32 slot, const SlotSpec& spec) -> std::vector<Seat>
+    auto layoutCliques(CZone* PZone, const uint16 zoneId, const uint32 slot, const SlotSpec& spec) -> std::vector<Seat>
     {
         Dice dice{ (static_cast<uint32>(zoneId) * 40503u) ^ ((slot + 1) * 2654435761u) ^ 0x5bd1e995u };
         if (dice.state == 0)
@@ -1214,36 +1268,37 @@ namespace
             covered += n;
         }
         const auto centre = toPosition(spec.at);
-        const auto inDisc = [&]() -> position_t
+        // A group's centre anywhere in the disc; a loner toward its edge (a
+        // crowd's singles hang back, its groups take the middle)
+        const auto inDisc = [&](const bool outward) -> position_t
         {
             const float angle  = 2.0f * std::numbers::pi_v<float> * dice.unit();
-            const float radius = std::max(0.0f, spec.spread - 1.0f) * std::sqrt(dice.unit());
+            const float radius = std::max(0.0f, spec.spread - 1.0f) * (outward ? std::pow(dice.unit(), 0.3f) : std::sqrt(dice.unit()));
             position_t  p      = centre;
             p.x += radius * std::cos(angle);
             p.z += radius * std::sin(angle);
             return p;
         };
+        // Best-candidate: of forty tries, the one farthest from the centres
+        // placed, so no two groups stand on each other
         std::vector<position_t> centres;
         for (size_t g = 0; g < sizes.size(); ++g)
         {
-            position_t best     = inDisc();
-            float      bestGap  = -1.0f;
-            for (int tries = 0; tries < 20; ++tries)
+            const bool outward = sizes[g] == 1;
+            position_t best    = inDisc(outward);
+            float      bestGap = -1.0f;
+            for (int tries = 0; tries < 40 && !centres.empty(); ++tries)
             {
-                const position_t candidate = tries == 0 ? best : inDisc();
+                const position_t candidate = tries == 0 ? best : inDisc(outward);
                 float            gap       = std::numeric_limits<float>::max();
                 for (const auto& c : centres)
                 {
                     gap = std::min(gap, flatDistance(candidate, c));
                 }
-                if (centres.empty() || gap > bestGap)
+                if (gap > bestGap)
                 {
                     best    = candidate;
                     bestGap = gap;
-                }
-                if (centres.empty())
-                {
-                    break;
                 }
             }
             centres.push_back(best);
@@ -1254,13 +1309,12 @@ namespace
             const uint32 n = sizes[g];
             if (n == 1)
             {
-                // alone: a heading of her own, held as a point to face
-                const float heading = 2.0f * std::numbers::pi_v<float> * dice.unit();
-                Seat        seat{};
-                seat.at   = centres[g];
-                seat.face = centres[g];
-                seat.face->x += 4.0f * std::cos(heading);
-                seat.face->z += 4.0f * std::sin(heading);
+                // alone: an open direction of her own, leaning toward the crowd's middle
+                Seat seat{};
+                seat.at        = snapToMesh(PZone, centres[g]);
+                seat.face      = openFacing(PZone, seat.at, centre, dice.next());
+                seat.group     = static_cast<uint32>(g);
+                seat.groupSize = 1;
                 seats.push_back(seat);
                 continue;
             }
@@ -1273,7 +1327,9 @@ namespace
                 seat.at = centres[g];
                 seat.at.x += ring * std::cos(angle);
                 seat.at.z += ring * std::sin(angle);
-                seat.face = centres[g];
+                seat.face      = centres[g];
+                seat.group     = static_cast<uint32>(g);
+                seat.groupSize = n;
                 seats.push_back(seat);
             }
         }
@@ -1535,12 +1591,18 @@ namespace
         {
             if (table.specs[i].clustered())
             {
-                table.layout[i] = layoutCliques(zoneId, static_cast<uint32>(i), table.specs[i]);
+                table.layout[i] = layoutCliques(PZone, zoneId, static_cast<uint32>(i), table.specs[i]);
+                std::string sizes;
                 for (auto& seat : table.layout[i])
                 {
                     seat.at = snapToMesh(PZone, seat.at);
+                    if (seat.group >= static_cast<uint32>(std::ranges::count(sizes, ',')) + (sizes.empty() ? 0u : 1u))
+                    {
+                        sizes += fmt::format("{}{}", sizes.empty() ? "" : ",", seat.groupSize);
+                    }
                 }
                 table.holders[i].assign(table.layout[i].size(), std::string());
+                ShowInfoFmt("world: {} slot #{}: {} seats in groups of {}", PZone->getName(), i, table.layout[i].size(), sizes);
             }
         }
         // Exits and town points onto the mesh, said once when they moved
@@ -1785,6 +1847,10 @@ namespace
             {
                 item.face = toPosition(*spec.face);
             }
+            else if (!item.face.has_value() && spec.town() && spec.pose.empty())
+            {
+                item.face = openFacing(PZone, item.point, toPosition(spec.at), nameHash(name)); // no face of her own: an open way, not a wall
+            }
             for (const auto& v : spec.via)
             {
                 item.via.push_back(snapToMesh(PZone, toPosition(v)));
@@ -1968,6 +2034,182 @@ namespace
         }
     }
 
+    // -- Conversation (D4): a group's members emote at each other -------------
+    // One speaker at a time per group, WORLD_CHAT_GAP_MIN to _MAX seconds
+    // apart, a listener picked among the others; now and then the listener
+    // answers a few seconds later; one emote in three is emphatic -- she
+    // turns to face the listener, and faces the middle again after. A body
+    // alone keeps the controller's fidgets (the user: "they look at each
+    // other in the same cluster, then they emote, staggered")
+    struct Chat
+    {
+        std::chrono::steady_clock::time_point    nextAt{};
+        uint32                                   lastSpeaker = 0;
+        uint64                                   roster = 0; // who was in the group last tick: a changed group settles before it talks
+        std::optional<std::pair<uint32, uint32>> reply;      // speaker, listener
+        std::chrono::steady_clock::time_point    replyAt{};
+    };
+    std::unordered_map<uint64, Chat> chats;
+
+    auto chatKey(const uint16 zoneId, const uint32 slot, const uint32 group) -> uint64
+    {
+        return (static_cast<uint64>(zoneId) << 48) | (static_cast<uint64>(slot) << 24) | group;
+    }
+
+    auto face(CCharEntity* PPawn, const position_t& at)
+    {
+        PPawn->loc.p.rotation = worldAngle(PPawn->loc.p, at);
+        PPawn->updatemask |= UPDATE_POS;
+    }
+
+    void emoteAt(Body& speaker, const Body& listener, const bool emphatic, const std::chrono::steady_clock::time_point now)
+    {
+        auto* PSpeaker  = pawn::findPawn(speaker.charid);
+        auto* PListener = pawn::findPawn(listener.charid);
+        if (PSpeaker == nullptr || PListener == nullptr || PSpeaker->loc.zone == nullptr)
+        {
+            return;
+        }
+        static constexpr std::array<Emote, 18> kTalk{ Emote::Wave, Emote::Bow, Emote::Salute, Emote::Laugh, Emote::No, Emote::Yes, Emote::Joy, Emote::Cheer, Emote::Clap,
+                                                     Emote::Praise, Emote::Smile, Emote::Sigh, Emote::Comfort, Emote::Surprised, Emote::Amazed, Emote::Grin, Emote::Doubt, Emote::Huh };
+        static constexpr std::array<Emote, 8>  kEmphatic{ Emote::Point, Emote::Laugh, Emote::Wave, Emote::Clap, Emote::Shocked, Emote::Cheer, Emote::Praise, Emote::Comfort };
+        const Emote emote = emphatic ? kEmphatic[static_cast<size_t>(xirand::GetRandomNumber(0, static_cast<int>(kEmphatic.size())))]
+                                     : kTalk[static_cast<size_t>(xirand::GetRandomNumber(0, static_cast<int>(kTalk.size())))];
+        if (emphatic)
+        {
+            face(PSpeaker, PListener->loc.p);
+            speaker.faceBackAt = now + std::chrono::seconds(xirand::GetRandomNumber(4, 9));
+        }
+        PSpeaker->loc.zone->PushPacket(PSpeaker, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(static_cast<const CCharEntity*>(PSpeaker), PListener->id, PListener->targid, emote, EmoteMode::Motion, 0));
+        if (pawn::world::tickDebug())
+        {
+            ShowInfoFmt("world: {} {}s at {}{}", speaker.name, lower(std::string(magic_enum::enum_name(emote))), listener.name, emphatic ? ", turning to her" : "");
+        }
+    }
+
+    void chatTick(CZone* PZone, ZoneSlots& table, const std::chrono::steady_clock::time_point now)
+    {
+        const auto gapMin = settings::get<uint32>("pawn.WORLD_CHAT_GAP_MIN");
+        const auto gapMax = settings::get<uint32>("pawn.WORLD_CHAT_GAP_MAX");
+        if (gapMax == 0)
+        {
+            return;
+        }
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        const auto gap    = [&]() { return std::chrono::seconds(xirand::GetRandomNumber(std::min(gapMin, gapMax), gapMax + 1)); };
+        // Turned to a listener a while ago: back to the middle
+        for (auto& [charid, body] : bodies)
+        {
+            if (body.zone == zoneId && body.faceBackAt.has_value() && now >= *body.faceBackAt)
+            {
+                body.faceBackAt.reset();
+                if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && body.face.has_value() && body.present && body.atSeat && !body.leaving)
+                {
+                    face(PPawn, *body.face);
+                }
+            }
+        }
+        for (uint32 slot = 0; slot < table.specs.size(); ++slot)
+        {
+            if (!table.specs[slot].clustered())
+            {
+                continue;
+            }
+            std::map<uint32, std::vector<Body*>> groups;
+            for (size_t i = 0; i < table.holders[slot].size() && i < table.layout[slot].size(); ++i)
+            {
+                const auto& name = table.holders[slot][i];
+                if (name.empty())
+                {
+                    continue;
+                }
+                const auto it = charidByName.find(name);
+                if (it == charidByName.end())
+                {
+                    continue;
+                }
+                const auto bit = bodies.find(it->second);
+                if (bit == bodies.end() || !bit->second.present || !bit->second.atSeat || bit->second.leaving)
+                {
+                    continue;
+                }
+                groups[table.layout[slot][i].group].push_back(&bit->second);
+            }
+            for (auto& [group, members] : groups)
+            {
+                if (members.size() < 2)
+                {
+                    continue;
+                }
+                Chat& chat   = chats[chatKey(zoneId, slot, group)];
+                uint64 roster = 0;
+                for (const Body* m : members)
+                {
+                    roster += static_cast<uint64>(m->charid) * 2654435761ull;
+                }
+                if (roster != chat.roster)
+                {
+                    chat.roster = roster;
+                    chat.nextAt = now + gap(); // a group that just formed, or changed, says nothing yet
+                    chat.reply.reset();
+                    continue;
+                }
+                if (chat.reply.has_value() && now >= chat.replyAt)
+                {
+                    const auto [speakerId, listenerId] = *chat.reply;
+                    chat.reply.reset();
+                    Body* speaker  = nullptr;
+                    Body* listener = nullptr;
+                    for (Body* m : members)
+                    {
+                        speaker  = m->charid == speakerId ? m : speaker;
+                        listener = m->charid == listenerId ? m : listener;
+                    }
+                    if (speaker != nullptr && listener != nullptr)
+                    {
+                        emoteAt(*speaker, *listener, false, now);
+                    }
+                    continue;
+                }
+                if (now < chat.nextAt)
+                {
+                    continue;
+                }
+                std::vector<Body*> speakers;
+                for (Body* m : members)
+                {
+                    if (m->charid != chat.lastSpeaker)
+                    {
+                        speakers.push_back(m);
+                    }
+                }
+                if (speakers.empty())
+                {
+                    speakers = members;
+                }
+                Body*              speaker = speakers[static_cast<size_t>(xirand::GetRandomNumber(0, static_cast<int>(speakers.size())))];
+                std::vector<Body*> others;
+                for (Body* m : members)
+                {
+                    if (m != speaker)
+                    {
+                        others.push_back(m);
+                    }
+                }
+                Body*      listener = others[static_cast<size_t>(xirand::GetRandomNumber(0, static_cast<int>(others.size())))];
+                const bool emphatic = xirand::GetRandomNumber(0, 100) < 30;
+                emoteAt(*speaker, *listener, emphatic, now);
+                chat.lastSpeaker = speaker->charid;
+                chat.nextAt      = now + gap();
+                if (xirand::GetRandomNumber(0, 100) < 40)
+                {
+                    chat.reply   = std::make_pair(listener->charid, speaker->charid);
+                    chat.replyAt = now + std::chrono::seconds(xirand::GetRandomNumber(3, 7));
+                }
+            }
+        }
+    }
+
     void tickTown(CZone* PZone, const std::chrono::steady_clock::time_point now, const bool poll)
     {
         const auto zoneId = static_cast<uint16>(PZone->GetID());
@@ -1977,6 +2219,7 @@ namespace
             return;
         }
         auto&               table = tit->second;
+        chatTick(PZone, table, now);
         std::vector<uint32> gone;
         std::vector<uint32> due;
         for (auto& [charid, body] : bodies)
@@ -2388,7 +2631,17 @@ namespace pawn::world
         }
         else
         {
-            order.goal = body.viaNext < body.via.size() ? body.via[body.viaNext] : body.point;
+            order.goalIsSeat = body.viaNext >= body.via.size();
+            order.goal       = order.goalIsSeat ? body.point : body.via[body.viaNext];
+        }
+        // In a group of two or more, the world runs her emotes (chatTick)
+        if (body.seat >= 0)
+        {
+            if (const auto tit = zoneSlots.find(body.zone); tit != zoneSlots.end() && body.slot >= 0 && static_cast<size_t>(body.slot) < tit->second.layout.size() &&
+                                                            static_cast<size_t>(body.seat) < tit->second.layout[body.slot].size())
+            {
+                order.chatty = tit->second.layout[body.slot][body.seat].groupSize >= 2;
+            }
         }
         return order;
     }

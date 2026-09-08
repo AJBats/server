@@ -303,6 +303,17 @@ xi.settings.pawn =
     WORLD_TOWN_GAP_MIN = 5,
     WORLD_TOWN_GAP_MAX = 40,
     WORLD_TOWN_STALL   = 8,
+    -- The walk-step jitter: every body steps on the same zone tick, so the
+    -- client drew their run cycles in lockstep; a town walk's step now
+    -- varies WORLD_STEP_JITTER percent either way on a cycle of her own
+    -- whose mean is exactly her speed. 0 turns it off.
+    WORLD_STEP_JITTER  = 30,
+    -- Conversation: in a cluster (a slot's `cliques`), one member at a time
+    -- emotes at another, WORLD_CHAT_GAP_MIN to _MAX seconds apart, now and
+    -- then answered; one in three turns to face the listener first. A
+    -- body alone keeps her fidgets. WORLD_CHAT_GAP_MAX 0 turns it off.
+    WORLD_CHAT_GAP_MIN = 8,
+    WORLD_CHAT_GAP_MAX = 20,
 
     -- Liveness: a zone is live while a real player is in it or, with
     -- WORLD_LIVE_RADIUS 1, one zone line away (the neighbours come from the

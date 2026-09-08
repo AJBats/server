@@ -46,8 +46,8 @@ slots:
   - activity: stand
     band: [1, 75]
     count: 2
-    at: [98.0, 0.0, -57.0]
-    spread: 5
+    at: [95.9, 1.0, -50.4]
+    spread: 3
     dwell: [120, 600]
     enter: any
     exit: east_gate
@@ -57,10 +57,11 @@ slots:
     band: [1, 75]
     count: 4
     at: [0.0, 1.7, -22.0]
-    spread: 4
+    spread: 7
     dwell: [30, 120]
     enter: west_gate
     exit: mog_house
+    cliques: [1, 2]
   # -- The Auction House square (I-9 / J-9) ----------------------------
   # The counter line, the player's own sellers first
   - activity: stand
@@ -130,26 +131,29 @@ slots:
     enter: any
     exit: any
     pose: kneel
-  # Loitering in the square: the crowd that is just there, a long while
+  # Loitering in the courtyard: the crowd that is just there, a long while,
+  # in little groups over the whole square (user: "make this whole
+  # courtyard a possible loiter location")
   - activity: stand
     band: [1, 75]
-    count: 6
-    at: [0.0, 1.7, -26.0]
-    spread: 9
+    count: 10
+    at: [0.0, 1.7, -22.0]
+    spread: 14
     dwell: [120, 900]
     enter: any
     exit: any
-    cliques: [1, 3]
+    cliques: [1, 4]
   # Seeking party: off to the side of the square, afternoons and evenings
   - activity: stand
     band: [1, 75]
     count: 3
     at: [0.0, 1.7, -18.0]
-    spread: 2
+    spread: 5
     dwell: [300, 900]
     enter: any
     exit: west_gate
     hours: [12, 2]
+    cliques: [1, 2]
   # -- The market street (H-9 / G-9): at the doors until the door work ----
   - activity: stand
     band: [1, 75]
