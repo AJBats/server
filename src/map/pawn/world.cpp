@@ -110,19 +110,11 @@ namespace
         // KO'd: when she fell, so she fades after WORLD_KO_FADE
         std::optional<std::chrono::steady_clock::time_point> downSince;
 
-        // Her bag as she stood: slot -> item and quantity. Anything beyond
-        // it is a drop, and drops go to the void (sweepBag)
-        struct Kept
-        {
-            uint16 itemId   = 0;
-            uint32 quantity = 0;
-        };
-        std::unordered_map<uint8, Kept> kit;
-        uint32                          sweepTick = 0;
+        uint32 sweepTick = 0; // the zone's count of her ticks, for the slow checks (sweepBody)
 
         // Her target (what her ladder says now, D6) and her seed: the exp
-        // cap (sweepBag) is drawn from them and her own level, which is her
-        // character's, never copied here
+        // cap (capOf) is drawn from them alone. Her level is her character's,
+        // never copied here
         uint8  target = 1;
         uint32 seed   = 0;
         uint8  levelSeen = 0; // her level at the last sweep, so a ding of hers is said once
@@ -321,34 +313,16 @@ namespace
         return name;
     }
 
-    void snapshotBag(Body& body)
-    {
-        body.kit.clear();
-        const auto* PPawn   = pawn::findPawn(body.charid);
-        const auto* storage = PPawn != nullptr ? PPawn->getStorage(LOC_INVENTORY) : nullptr;
-        if (storage == nullptr)
-        {
-            return;
-        }
-        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
-        {
-            if (const auto* PItem = storage->GetItem(slot); PItem != nullptr)
-            {
-                body.kit[slot] = Body::Kept{ .itemId = PItem->getID(), .quantity = PItem->getQuantity() };
-            }
-        }
-    }
-
     // Skill-up notation for levels: 1.70 is level 1 at 70 % of the way to
     // 2. Her world cap is her target -- what her ladder says she should be
     // now -- plus a fraction her seed draws between WORLD_EXP_CAP_MIN and
     // WORLD_EXP_CAP_MAX, different per farmer so none ding in step. A live
     // ding of the player's raises the target and so the cap, and she dings
-    // organically under it (D6). A kill that tips her a level past the cap
-    // stands (no demotions), and from there the cap holds her exp at that
-    // level's floor: the cap is the target's, never her own level's, or an
-    // over-ding would raise it and she would climb without end (a peer
-    // targeting 1 went 1, 2, 3 in three minutes, 2026-09-08)
+    // organically under it (D6): every grant is trimmed to the room under
+    // it (capExp), so no kill ever tips her past it. The cap is the
+    // target's, never her own level's, or a level of hers would raise it
+    // and she would climb without end (a peer targeting 1 went 1, 2, 3 in
+    // three minutes under an earlier cut, 2026-09-08)
     auto capOf(const Body& body) -> float
     {
         const uint8  top  = body.target;
@@ -364,23 +338,13 @@ namespace
         return static_cast<float>(level) + (tnl > 0 ? static_cast<float>(exp) / static_cast<float>(tnl) : 0.0f);
     }
 
-    // The exp that puts a character of this level at the cap, or as near as
-    // her level allows: none if she is already past the cap's level
-    auto expAt(const float cap, const uint8 level) -> uint32
-    {
-        const float room = std::clamp(cap - static_cast<float>(level), 0.0f, 1.0f);
-        return static_cast<uint32>(room * static_cast<float>(charutils::GetExpNEXTLevel(level)));
-    }
-
-    // A world body's kills pay her no drops: a solo pool hands one over on
-    // arrival, so it is taken back here -- anything in her bag beyond what
-    // she stood with is dropped (charutils::DropItem, the player's own
-    // throw-away). Her exp is real, under her world cap (user 2026-09-07):
-    // one number for where she is, one for the cap, one check. A big kill
-    // at a low level can land her a level past the cap; that ding stands,
-    // and the check holds her at that level's floor. The census owns her
-    // level (RESEARCH §11.3); this is how it shows
-    void sweepBag(Body& body)
+    // The slow checks on a standing body, every fifth zone tick: her census
+    // target re-read now and then, a ding of hers said once, her Signet kept
+    // up. Her exp and her drops are settled where the game grants them
+    // (capExp at AddExperiencePoints; a world body's kill pays no gil and no
+    // drops at the mob's death, CMobEntity::DistributeRewards): nothing here
+    // takes anything back
+    void sweepBody(Body& body)
     {
         auto* PPawn = pawn::findPawn(body.charid);
         if (PPawn == nullptr)
@@ -415,50 +379,6 @@ namespace
             {
                 PPawn->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, std::chrono::hours(3));
                 PPawn->clearPacketList();
-            }
-        }
-        const auto  job   = PPawn->GetMJob();
-        const uint8 level = PPawn->GetMLevel();
-        auto&       exp   = PPawn->jobs.exp[static_cast<uint8>(job)];
-        const float cap   = capOf(body);
-        if (progressOf(level, exp) > cap)
-        {
-            exp = expAt(cap, level);
-            charutils::SaveCharExp(PPawn, job);
-        }
-        const auto* storage = PPawn->getStorage(LOC_INVENTORY);
-        if (storage == nullptr)
-        {
-            return;
-        }
-        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
-        {
-            const auto* PItem = storage->GetItem(slot);
-            if (PItem == nullptr)
-            {
-                continue;
-            }
-            const auto kept   = body.kit.find(slot);
-            uint32     excess = 0;
-            if (kept == body.kit.end() || kept->second.itemId != PItem->getID())
-            {
-                excess = PItem->getQuantity();
-            }
-            else if (PItem->getQuantity() > kept->second.quantity)
-            {
-                excess = PItem->getQuantity() - kept->second.quantity;
-            }
-            if (excess == 0)
-            {
-                continue;
-            }
-            const uint16 itemId = PItem->getID();
-            charutils::DropItem(PPawn, LOC_INVENTORY, slot, static_cast<int32>(excess), itemId);
-            PPawn->clearPacketList();
-            if (pawn::world::tickDebug())
-            {
-                const CItem* PKnown = xi::items::lookup(itemId);
-                ShowInfoFmt("world: {}'s {} x{} goes to the void", body.name, PKnown != nullptr ? PKnown->getName() : std::to_string(itemId), excess);
             }
         }
     }
@@ -995,7 +915,6 @@ namespace
             PPawn->health.mp = PPawn->GetMaxMP();
             PPawn->updatemask |= UPDATE_HP;
         }
-        snapshotBag(body);
         joinCampParty(body);
         if (pawn::world::tickDebug())
         {
@@ -2676,6 +2595,35 @@ namespace pawn::world
         return it != bodies.end() ? ::laneOf(it->second.name) : 0.0f;
     }
 
+    auto capExp(const CCharEntity* PChar, const uint32 exp) -> uint32
+    {
+        if (PChar == nullptr || exp == 0)
+        {
+            return exp;
+        }
+        const auto it = bodies.find(PChar->id);
+        if (it == bodies.end() || !it->second.present)
+        {
+            return exp;
+        }
+        const Body&  body  = it->second;
+        const uint8  level = PChar->GetMLevel();
+        const uint32 have  = PChar->jobs.exp[static_cast<uint8>(PChar->GetMJob())];
+        const uint32 tnl   = charutils::GetExpNEXTLevel(level);
+        const float  cap   = capOf(body);
+        // The room under her cap in this level's exp: exact at her target's
+        // level, short of the truth below it (later levels ask more), so
+        // never over. The game dings her at most one level a grant and
+        // clamps the rest, so a whole grant passing here is safe
+        const float  room    = (cap - static_cast<float>(level)) * static_cast<float>(tnl) - static_cast<float>(have);
+        const uint32 allowed = room <= 0.0f ? 0u : std::min<uint32>(exp, static_cast<uint32>(room));
+        if (allowed < exp && tickDebug())
+        {
+            ShowInfoFmt("world: {}'s {} exp lands as {} (cap {:.2f}, level {} at {}/{})", body.name, exp, allowed, cap, level, have, tnl);
+        }
+        return allowed;
+    }
+
     // She reached the point she was walking to: the next via point, her
     // seat (the dwell starts), or the last of her way out (gone)
     void noteReached(const uint32 charid)
@@ -2920,7 +2868,7 @@ namespace pawn::world
             }
             if (++body.sweepTick % 5 == 0)
             {
-                sweepBag(body);
+                sweepBody(body);
             }
             const auto* PPawn = pawn::findPawn(charid);
             if (PPawn == nullptr || !PPawn->isDead())

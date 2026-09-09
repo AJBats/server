@@ -43,6 +43,7 @@
 #include "mobskill.h"
 #include "packets/pet_sync.h"
 #include "packets/s2c/0x029_battle_message.h"
+#include "pawn/world.h" // CARDIAN: a world body's kill pays no gil and no drops
 #include "recast_container.h"
 #include "roam_region.h"
 #include "roe.h"
@@ -899,6 +900,14 @@ void CMobEntity::DistributeRewards()
             {
                 charutils::DistributeExperiencePoints(PChar, this);
                 charutils::DistributeCapacityPoints(PChar, this);
+            }
+
+            // CARDIAN: a world body's kill pays her no gil and no drops -- nothing
+            // enters her pool, so no bag fills and the economy never meets them
+            // (RESEARCH §11.1); her exp is capped where it is granted
+            if (pawn::world::isBody(PChar->id))
+            {
+                return;
             }
 
             // check for gil (beastmen drop gil, some NMs drop gil)

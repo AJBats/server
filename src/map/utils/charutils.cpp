@@ -39,6 +39,7 @@
 #include <chrono>
 
 #include "map_constants.h"
+#include "pawn/world.h" // CARDIAN: the world's exp cap at the grant (AddExperiencePoints)
 #include "persist_batch.h"
 
 #include "lua/luautils.h"
@@ -5067,6 +5068,7 @@ void AddExperiencePoints(bool expFromRaise, bool awardRegionPoints, bool fromScr
     {
         exp = (uint32)(exp * settings::get<float>("map.EXP_RATE"));
     }
+    exp = pawn::world::capExp(PChar, exp); // CARDIAN: a world body takes only the room under her census cap; anyone else the whole grant
     uint16 currentExp  = PChar->jobs.exp[static_cast<uint8>(PChar->GetMJob())];
     bool   onLimitMode = false;
 

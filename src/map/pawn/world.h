@@ -81,6 +81,14 @@ namespace pawn::world
     auto townOrder(uint32 charid) -> std::optional<TownOrder>;
     void noteReached(uint32 charid);
 
+    // The exp cap at the grant (D6): the exp a world body may take of a
+    // grant, the room under her cap -- her census target plus her seeded
+    // fraction -- in her level's exp. Anyone who is not a world body takes
+    // the whole grant. Called from charutils::AddExperiencePoints, the one
+    // road exp arrives by, so she never crosses her target; nothing else
+    // touches her exp
+    auto capExp(const CCharEntity* PChar, uint32 exp) -> uint32;
+
     // Her lane: a sideways offset in yalms she walks the mesh's route at,
     // drawn from her name, so a crowd sent down one street spreads across
     // it instead of walking it in single file (the user, 2026-09-07)
