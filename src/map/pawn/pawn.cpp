@@ -47,6 +47,7 @@
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
 #include "party.h"
+#include "utils/battleutils.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -503,7 +504,22 @@ namespace pawn
         return true;
     }
 
-    void markPresent(const uint32 charid, const uint16 zoneId, const position_t& point, const uint8 job, const uint8 level)
+    // Is any skill her job has under its ceiling for her level? True for a
+    // body minted or caught up at a level her skills have not been capped for
+    auto skillsBelowCap(const CCharEntity* PChar) -> bool
+    {
+        for (uint8 i = static_cast<uint8>(xi::SkillType::HandToHand); i <= static_cast<uint8>(xi::SkillType::Handbell); ++i)
+        {
+            const uint16 max = 10 * battleutils::GetMaxSkill(static_cast<xi::SkillType>(i), PChar->GetMJob(), PChar->GetMLevel());
+            if (max > 0 && PChar->RealSkills.skill[i] < max)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void markPresent(const uint32 charid, const uint16 zoneId, const position_t& point)
     {
         db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, 0, 0) "
                          "ON DUPLICATE KEY UPDATE accid = VALUES(accid), client_addr = 0",
@@ -511,17 +527,8 @@ namespace pawn
         db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", charid);
         db::preparedStmt("UPDATE chars SET pos_zone = ?, pos_prevzone = ?, pos_rot = ?, pos_x = ?, pos_y = ?, pos_z = ? WHERE charid = ?",
                          zoneId, zoneId, point.rotation, point.x, point.y, point.z, charid);
-        // Search reads her level from char_stats and the load from char_jobs;
-        // a body never stood is still at the mint's, so the census's level
-        // goes where her first stand would put it anyway (applyJobAndLevel
-        // seeds the job's level). Her job is left to the stand: writing it
-        // here would hide a job change from spawnAt, which caps her skills
-        // and re-dresses her for it
-        if (job != 0 && job < kJobColumns.size() && level != 0)
-        {
-            db::preparedStmt("UPDATE char_stats SET mlvl = ? WHERE charid = ? AND mjob = ?", level, charid, job);
-            db::preparedStmt(fmt::format("UPDATE char_jobs SET {0} = GREATEST({0}, ?) WHERE charid = ?", kJobColumns[job]), level, charid);
-        }
+        // Search reads her job and level from char_stats, where the census
+        // tool's mint put them: nothing to write here
     }
 
     void markAbsent(const uint32 charid)
@@ -529,7 +536,7 @@ namespace pawn
         db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ? AND client_addr = 0", charid);
     }
 
-    bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job, const uint8 level)
+    bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job)
     {
         if (!isEnabled() || PZone == nullptr || charid == 0 || pawns.contains(charid))
         {
@@ -607,9 +614,22 @@ namespace pawn
             PPawn->clearPacketList();
         }
 
-        if ((job > 0 && static_cast<uint8>(PPawn->GetMJob()) != job) || (level > 0 && (PPawn->GetMLevel() < level || PPawn->GetMLevel() > level + 1)))
+        // Her job when it differs from the census's; her level is her own
+        // (her character row's, set by the census tool's mint and catch-up
+        // and by her own dings), never applied here. Her skills follow her
+        // level at every stand
+        if (job > 0 && static_cast<uint8>(PPawn->GetMJob()) != job)
         {
-            applyJobAndLevel(PPawn.get(), job, level);
+            applyJobAndLevel(PPawn.get(), job, PPawn->GetMLevel());
+            PPawn->clearPacketList();
+        }
+        // The cap is 48 writes; taken only when a skill of her job's sits
+        // under her level's ceiling (a body born or caught up at a level
+        // her skills have not seen). A town standing fifty bodies at once
+        // took the watchdog down when every stand paid it
+        else if (skillsBelowCap(PPawn.get()))
+        {
+            capSkills(PPawn.get());
             PPawn->clearPacketList();
         }
 

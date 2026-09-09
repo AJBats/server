@@ -45,6 +45,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <magic_enum/magic_enum.hpp>
@@ -119,9 +120,12 @@ namespace
         std::unordered_map<uint8, Kept> kit;
         uint32                          sweepTick = 0;
 
-        // Her census level and seed: the exp cap (sweepBag) is drawn from them
-        uint8  censusLevel = 1;
-        uint32 seed        = 0;
+        // Her target (what her ladder says now, D6) and her seed: the exp
+        // cap (sweepBag) is drawn from them and her own level, which is her
+        // character's, never copied here
+        uint8  target = 1;
+        uint32 seed   = 0;
+        uint8  levelSeen = 0; // her level at the last sweep, so a ding of hers is said once
     };
 
     std::unordered_map<uint32, Body>        bodies; // by charid
@@ -213,6 +217,10 @@ namespace
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
 
+    // Bodies waiting to fade in on a zone's rising edge, a few a tick
+    std::unordered_map<uint16, std::deque<uint32>> standQueue;
+    constexpr uint32                                kFadeInPerTick = 3;
+
     auto laneOf(const std::string& name) -> float;
 
     auto isHealer(const uint8 job) -> bool
@@ -228,13 +236,16 @@ namespace
         uint8  size   = 0;
         uint8  nation = 0;
         uint8  job    = 1;
-        uint8  level  = 1;
+        uint8  level  = 1; // what she is: her character row's (char_stats.mlvl) once minted, her target before -- the census keeps no copy
+        uint8  target = 1; // what her ladder says she should be now (D6): her cap while the player is online
         uint32 seed   = 0;
     };
 
     auto readCensus(const std::string& name) -> std::optional<CensusRow>
     {
-        const auto rset = db::preparedStmt("SELECT charid, race, face, size, nation, job, level, seed FROM cardian_census WHERE name = ?", name);
+        const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, c.target, c.seed "
+                                           "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid WHERE c.name = ?",
+                                           name);
         if (!rset || !rset->next())
         {
             return std::nullopt;
@@ -247,35 +258,20 @@ namespace
             .nation = rset->get<uint8>("nation"),
             .job    = rset->get<uint8>("job"),
             .level  = rset->get<uint8>("level"),
+            .target = rset->get<uint8>("target"),
             .seed   = rset->get<uint32>("seed"),
         };
     }
 
-    // Her charid, minting her on the world account the first time
+    // Her charid. Minting is the census tool's, offline (the user,
+    // 2026-09-07: never the map's, on demand or in the background): a name
+    // with no body is a data error here, said once
+    std::unordered_set<std::string> unmintedSaid;
     auto ensureMinted(const std::string& name, CensusRow& row) -> uint32
     {
-        if (row.charid != 0)
+        if (row.charid == 0 && unmintedSaid.insert(name).second)
         {
-            return row.charid;
-        }
-        const uint32 owner = pawn::worldAccountId();
-        if (owner == 0)
-        {
-            return 0;
-        }
-        const pawn::CharSpec spec{
-            .name   = name,
-            .race   = row.race,
-            .face   = row.face,
-            .size   = row.size,
-            .nation = row.nation,
-            .mjob   = row.job,
-            .level  = row.level,
-        };
-        row.charid = pawn::createFromSpec(spec, owner);
-        if (row.charid != 0)
-        {
-            db::preparedStmt("UPDATE cardian_census SET charid = ? WHERE name = ?", row.charid, name);
+            ShowWarningFmt("world: {} is in the census with no body; stop the servers and run census.py mint", name);
         }
         return row.charid;
     }
@@ -344,15 +340,22 @@ namespace
     }
 
     // Skill-up notation for levels: 1.70 is level 1 at 70 % of the way to
-    // 2. Her world cap is her census level plus a fraction her seed draws
-    // between WORLD_EXP_CAP_MIN and WORLD_EXP_CAP_MAX, different per farmer
-    // so none ding in step; it moves when the census moves
+    // 2. Her world cap is her target -- what her ladder says she should be
+    // now -- plus a fraction her seed draws between WORLD_EXP_CAP_MIN and
+    // WORLD_EXP_CAP_MAX, different per farmer so none ding in step. A live
+    // ding of the player's raises the target and so the cap, and she dings
+    // organically under it (D6). A kill that tips her a level past the cap
+    // stands (no demotions), and from there the cap holds her exp at that
+    // level's floor: the cap is the target's, never her own level's, or an
+    // over-ding would raise it and she would climb without end (a peer
+    // targeting 1 went 1, 2, 3 in three minutes, 2026-09-08)
     auto capOf(const Body& body) -> float
     {
-        const uint32 mix  = (body.seed * 2654435761u) ^ (static_cast<uint32>(body.censusLevel) * 40503u);
+        const uint8  top  = body.target;
+        const uint32 mix  = (body.seed * 2654435761u) ^ (static_cast<uint32>(top) * 40503u);
         const float  low  = settings::get<float>("pawn.WORLD_EXP_CAP_MIN") / 100.0f;
         const float  high = settings::get<float>("pawn.WORLD_EXP_CAP_MAX") / 100.0f;
-        return static_cast<float>(body.censusLevel) + low + (high - low) * static_cast<float>(mix % 1000u) / 1000.0f;
+        return static_cast<float>(top) + low + (high - low) * static_cast<float>(mix % 1000u) / 1000.0f;
     }
 
     auto progressOf(const uint8 level, const uint32 exp) -> float
@@ -384,18 +387,27 @@ namespace
         {
             return;
         }
-        // Her census level, re-read now and then so a raise reaches a
-        // standing body: the cap moves and her next kills carry her over
+        // Her census target, re-read now and then so a raise reaches a
+        // standing body: the cap moves and her next kills carry her over.
+        // Her level is her own (the game's, in her character row); a ding
+        // of hers is said here, nothing more (D6)
         if (body.sweepTick % 75 == 0)
         {
-            if (const auto rset = db::preparedStmt("SELECT level FROM cardian_census WHERE charid = ?", body.charid); rset && rset->next())
+            if (const auto rset = db::preparedStmt("SELECT target FROM cardian_census WHERE charid = ?", body.charid); rset && rset->next())
             {
-                const auto now = rset->get<uint8>("level");
-                if (now != body.censusLevel)
+                if (const auto target = rset->get<uint8>("target"); target != body.target)
                 {
-                    body.censusLevel = now;
-                    ShowInfoFmt("world: {}'s cap is {:.2f} now", body.name, capOf(body));
+                    body.target = target;
+                    ShowInfoFmt("world: {}'s cap is {:.2f} now (level {}, target {})", body.name, capOf(body), PPawn->GetMLevel(), target);
                 }
+            }
+            if (const auto actual = PPawn->GetMLevel(); actual != body.levelSeen)
+            {
+                if (body.levelSeen != 0)
+                {
+                    ShowInfoFmt("world: {} is level {} now, on her own (target {})", body.name, actual, body.target);
+                }
+                body.levelSeen = actual;
             }
             // Signet lapses after three hours; a body standing that long
             // takes it again, as she does at every fade-in
@@ -956,7 +968,7 @@ namespace
         // (TownTick); anyone else stands where she stood
         const bool        walksIn = body.cameFrom.has_value() && !body.atSeat && !body.leaving;
         const position_t& at      = walksIn ? *body.cameFrom : body.point;
-        if (!pawn::spawnAt(row->charid, PZone, at, row->job, row->level))
+        if (!pawn::spawnAt(row->charid, PZone, at, row->job))
         {
             return false;
         }
@@ -965,8 +977,9 @@ namespace
             body.viaNext = 0; // from the gate again: the whole way in, doorway included
         }
         body.present     = true;
-        body.censusLevel = row->level;
+        body.target      = row->target;
         body.seed        = row->seed;
+        body.levelSeen   = 0;
         body.returnAt.reset();
         if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
         {
@@ -1708,7 +1721,10 @@ namespace
         const std::vector<std::string> preferred = spec.prefer == "sellers" ? recentCounterparties() : std::vector<std::string>{};
         std::vector<Candidate>         candidates;
         std::vector<Candidate>         shown; // recent faces, taken only when nobody else fits
-        if (const auto rset = db::preparedStmt("SELECT name, cohort, seed, job FROM cardian_census WHERE anchor <> 'bank' AND recruited = 0 AND level BETWEEN ? AND ?",
+        // minted bodies only, at the level their character rows say: a name
+        // without a body waits for the census tool's mint
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.cohort, c.seed, c.job FROM cardian_census c JOIN char_stats s ON s.charid = c.charid "
+                                               "WHERE c.anchor <> 'bank' AND c.recruited = 0 AND s.mlvl BETWEEN ? AND ?",
                                                spec.band[0], spec.band[1]);
             rset)
         {
@@ -1914,7 +1930,7 @@ namespace
         body.roam         = item.roam;
         body.party        = item.party;
         body.present      = false;
-        body.censusLevel  = row->level;
+        body.target       = row->target;
         body.seed         = row->seed;
         body.face         = item.face;
         body.dwell        = item.dwell;
@@ -1931,7 +1947,7 @@ namespace
                 table.holders[item.slot][item.seat] = item.name;
             }
         }
-        pawn::markPresent(charid, zoneId, item.point, row->job, row->level);
+        pawn::markPresent(charid, zoneId, item.point);
         ShowInfoFmt("world: {} ({} {}) holds slot {} in {}", item.name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, item.slot, PZone->getName());
         if (wasLive[zoneId])
         {
@@ -2280,12 +2296,20 @@ namespace
             {
                 continue;
             }
-            const auto rset = db::preparedStmt("SELECT level FROM cardian_census WHERE charid = ?", charid);
-            if (!rset || !rset->next())
+            // her level: the body's own when she stands, her character row's when faded
+            uint8 level = 0;
+            if (const auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
+            {
+                level = PPawn->GetMLevel();
+            }
+            else if (const auto rset = db::preparedStmt("SELECT mlvl FROM char_stats WHERE charid = ?", charid); rset && rset->next())
+            {
+                level = rset->get<uint8>("mlvl");
+            }
+            if (level == 0)
             {
                 continue;
             }
-            const auto  level = rset->get<uint8>("level");
             const auto& band  = tit->second.specs[body.slot].band;
             if (level < band[0] || level > band[1])
             {
@@ -2937,18 +2961,37 @@ namespace pawn::world
         const bool before = wasLive[zoneId];
         wasLive[zoneId]   = live;
 
+        // The rising edge queues the zone's bodies and a few stand each
+        // tick: a town of fifty stood in one tick ran past the watchdog
         if (live && !before)
         {
+            auto& queue = standQueue[zoneId];
             for (auto& [charid, body] : bodies)
             {
                 if (body.zone == zoneId && !body.present)
                 {
-                    fadeIn(body);
+                    queue.push_back(charid);
                 }
             }
         }
-        else if (!live && now - seen >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY")))
+        if (live)
         {
+            auto&  queue = standQueue[zoneId];
+            uint32 stood = 0;
+            while (!queue.empty() && stood < kFadeInPerTick)
+            {
+                const auto charid = queue.front();
+                queue.pop_front();
+                if (const auto it = bodies.find(charid); it != bodies.end() && it->second.zone == zoneId && !it->second.present && !it->second.leaving)
+                {
+                    fadeIn(it->second);
+                    ++stood;
+                }
+            }
+        }
+        else if (now - seen >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY")))
+        {
+            standQueue[zoneId].clear();
             for (auto& [charid, body] : bodies)
             {
                 if (body.zone == zoneId && body.present && !body.pinned)

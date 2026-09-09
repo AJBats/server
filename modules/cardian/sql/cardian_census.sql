@@ -11,7 +11,8 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
   `size`      tinyint(3) unsigned NOT NULL DEFAULT '1',     -- 0 small, 1 medium, 2 large
   `nation`    tinyint(3) unsigned NOT NULL DEFAULT '0',     -- 0 San d'Oria, 1 Bastok, 2 Windurst
   `job`       tinyint(3) unsigned NOT NULL DEFAULT '1',     -- main job id
-  `level`     tinyint(3) unsigned NOT NULL DEFAULT '0',     -- the computed level, cached; 0 in the bank
+  `target`    tinyint(3) unsigned NOT NULL DEFAULT '0',     -- what the ladder says she should be now (D6): her cap while the player is online, her level after the offline
+                                                          --   catch-up. Her level itself is her character row's (char_stats.mlvl): the census never copies it (user, 2026-09-08)
   `sub`       tinyint(3) unsigned NOT NULL DEFAULT '0',     -- support job id, 0 for none
   `sublevel`  tinyint(3) unsigned NOT NULL DEFAULT '0',
   `anchor`    varchar(16)         NOT NULL DEFAULT 'bank',  -- newbie, peer, rival, veteran, settled, bank

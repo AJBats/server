@@ -108,7 +108,7 @@ namespace pawn
     // the level when below it, left alone at it or one past it (a farmer's
     // sneaked ding stands), pulled down only from further past. False with
     // no side effects if she is unknown, online or already a pawn.
-    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, uint8 level);
+    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job);
 
     // Presence without a body: the session row (search, the lobby's
     // already-online check) and a position in a zone, written for an
@@ -116,13 +116,17 @@ namespace pawn
     // them. The slot tables (world.cpp) give every occupant presence at
     // boot; her body loads when a player arrives. markAbsent takes the
     // row away again.
-    void markPresent(uint32 charid, uint16 zoneId, const position_t& point, uint8 job, uint8 level);
+    void markPresent(uint32 charid, uint16 zoneId, const position_t& point);
     void markAbsent(uint32 charid);
 
     // Put a live character on a job at a level, skills capped for it (the
     // code behind !pawnjob and !pawncapskills; implemented in
     // pawn_module.cpp). 0 leaves that part as it is.
     void applyJobAndLevel(CCharEntity* PChar, uint8 job, uint8 level);
+    // Cap every skill at her level's ceiling (implemented in pawn_module.cpp):
+    // a world body's level is her character row's, set by the census tool's
+    // mint and catch-up, and her skills follow it at every stand
+    void capSkills(CCharEntity* PChar);
 
     // Run xi.player.charCreate on a freshly minted pawn (implemented in
     // pawn_module.cpp so the sol2 cost stays out of pawn.cpp).

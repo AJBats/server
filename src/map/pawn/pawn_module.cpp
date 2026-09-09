@@ -192,6 +192,11 @@ namespace pawn
         }
     }
 
+    void capSkills(CCharEntity* PChar)
+    {
+        CLuaBaseEntity entity(PChar);
+        entity.capAllSkills();
+    }
     void applyStarterKit(CCharEntity* PPawn)
     {
         const auto result = lua["xi"]["player"]["charCreate"](CLuaBaseEntity(PPawn));
