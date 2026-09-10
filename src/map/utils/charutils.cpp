@@ -39,6 +39,7 @@
 #include <chrono>
 
 #include "map_constants.h"
+#include "pawn/pawn.h"  // CARDIAN: her club signs out with her (removeCharFromZone)
 #include "pawn/world.h" // CARDIAN: the world's exp cap at the grant (AddExperiencePoints)
 #include "persist_batch.h"
 
@@ -7579,6 +7580,11 @@ void removeCharFromZone(CCharEntity* PChar)
 
     if (PChar->status == xi::Status::Shutdown)
     {
+        // CARDIAN: her club signs out with her, each where she stands (ROADMAP H).
+        // Here and not in the module's OnCharZoneOut hook, which fires below at
+        // DecreaseZoneCounter: her pawns must leave the party before the unwind
+        // under this branch, or leadership passes to one of them on its way out
+        pawn::signOutClub(PChar);
         if (PChar->PParty != nullptr)
         {
             if (PChar->PParty->m_PAlliance != nullptr)

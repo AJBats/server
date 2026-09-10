@@ -38,6 +38,12 @@ xi.settings.pawn =
     -- party UI is being tested against that difference.
     INVITE_ACCEPT_DELAY = 0,
 
+    -- The club signs in with the player (ROADMAP H): at login every
+    -- character of the account and every cardian it owns stands where the
+    -- game last saved her, waiting to be invited, and signs out with the
+    -- player. Off: they stay offline until summoned from the roster
+    CLUB_SIGNIN = true,
+
     -- Log every gambit action a pawn takes (spell, ability, weapon skill,
     -- ranged attack) with its target. Dev aid for tuning brains.
     GAMBIT_DEBUG = false,

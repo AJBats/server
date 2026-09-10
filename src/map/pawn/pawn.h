@@ -76,6 +76,17 @@ namespace pawn
     // not owned.
     bool spawn(CCharEntity* PSummoner, const std::string& targetName);
 
+    // The club signs in with the player (ROADMAP H): every member of the
+    // account (accountPawnNames) not online stands where the game saved
+    // her, in an ordered wait until invited. The chat line, "Jevyak
+    // (Northern San d'Oria), Zapp (...)", empty when nobody stood. spawn
+    // stays the GM's tool
+    auto signInClub(CCharEntity* PPlayer) -> std::string;
+
+    // ...and signs out with her: every pawn under her name despawned where
+    // she stands, position saved (charutils, at logout). How many
+    auto signOutClub(const CCharEntity* PPlayer) -> uint32;
+
     // A character to mint: the client's race enum (race and sex in one),
     // face 0-15, size 0-2, nation 0-2, main job and level. The census
     // (RESEARCH §11.2) speaks this model.

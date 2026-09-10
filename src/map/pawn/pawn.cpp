@@ -58,7 +58,9 @@
 #include <array>
 #include <chrono>
 #include <magic_enum/magic_enum.hpp>
+#include <limits>
 #include <memory>
+#include <optional>
 #include <random>
 #include <unordered_map>
 #include <unordered_set>
@@ -184,6 +186,274 @@ namespace
         const uint32 charid    = PPawn->id;
         summonerByPawn[charid] = summonerCharID;
         pawns[charid]          = std::move(PPawn);
+    }
+
+    // Who the account holds besides the character being played: her own
+    // alts and the cardians the account owns, id and name in one read.
+    // The one place that eligibility is written -- spawn() and possess
+    // ask it of a single charid, the roster and the club sign-in as a list
+    auto accountMembers(const CCharEntity* PChar) -> std::vector<std::pair<uint32, std::string>>
+    {
+        std::vector<std::pair<uint32, std::string>> members;
+        if (PChar == nullptr)
+        {
+            return members;
+        }
+        const uint32 ownerAccid = pawn::ownerAccountOf(PChar);
+        const auto   rset       = db::preparedStmt("SELECT c.charid, c.charname FROM chars c "
+                                                   "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
+                                                   "WHERE c.charid <> ? AND (c.accid = ? OR p.owner_accid = ?) ORDER BY c.charname",
+                                                   PChar->id, ownerAccid, ownerAccid);
+        while (rset && rset->next())
+        {
+            members.emplace_back(rset->get<uint32>("charid"), rset->get<std::string>("charname"));
+        }
+        return members;
+    }
+
+    // How far a saved spot may have drifted off the mesh and still be hers:
+    // a character saved on a bridge or a stair the mesh models loosely
+    constexpr float kSavedSpotSnap = 30.0f;
+
+    // The nearest point of the zone's mesh to the one asked for, her
+    // rotation kept; the point unchanged when the zone has no mesh, and
+    // nothing when the mesh has none within the tolerance. Every stand sets
+    // its own: a slot's point is authored and trusted at any distance, a
+    // saved spot may have drifted, a spawn beside the player must be close
+    auto snapToMesh(const CZone* PZone, const position_t& point, const float tolerance) -> std::optional<position_t>
+    {
+        const auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
+        if (navMesh == nullptr)
+        {
+            return point;
+        }
+        const auto snapped = navMesh->findClosestValidPoint(point);
+        if (!snapped.has_value() || distance(*snapped, point) > tolerance)
+        {
+            return std::nullopt;
+        }
+        position_t landed = *snapped;
+        landed.rotation   = point.rotation;
+        return landed;
+    }
+
+    // The zone's own insert and what it leaves behind, for every way a pawn
+    // arrives -- stood from offline, or walked in over a zone line. The
+    // insert assigns a targid, puts her in the char list and the spatial
+    // grid (pushing ENTITY_SPAWN to everyone in range) and runs CharZoneIn;
+    // deliberately not the login ceremony (OnZoneIn/OnGameIn), which is
+    // cutscenes and zone locks for real clients. Then the packets that
+    // queued for a client nobody is holding, a full update mask, and every
+    // viewer made to forget it saw her: a viewer whose own login handshake
+    // is mid-flight has its queue cleared and would lose the spawn while
+    // the server believed it sent, so the per-tick sync re-delivers it.
+    // False when the zone refused her, and she never entered it
+    bool enterZone(CCharEntity* PPawn, CZone* PZone)
+    {
+        PZone->IncreaseZoneCounter(PPawn);
+        if (PPawn->loc.zone == nullptr)
+        {
+            ShowErrorFmt("pawn: zone insertion failed for {} ({}) into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(PZone->GetID()));
+            return false;
+        }
+        PPawn->clearPacketList();
+        PPawn->updatemask |= UPDATE_ALL_CHAR;
+        PZone->ForEachChar([&](CCharEntity* PViewer)
+        {
+            if (PViewer != PPawn)
+            {
+                PViewer->SpawnPCList.erase(PPawn->id);
+            }
+        });
+        return true;
+    }
+
+    // A freshly loaded character stood in a zone: out of any Mog House,
+    // visible from her first spawn packet, her death timer read, then the
+    // insert and her own mover, brain and session row (install). Where she
+    // lands and what shape she is in are the caller's business; this is the
+    // plumbing under all of them
+    bool placeInZone(CCharEntity* PPawn, CZone* PZone)
+    {
+        PPawn->loc.destination = PZone->GetID();
+        PPawn->loc.prevzone    = PZone->GetID();
+        PPawn->m_moghouseID    = 0;
+        PPawn->status          = xi::Status::Normal;
+        charutils::loadDeathTimestamp(PPawn);
+        if (!enterZone(PPawn, PZone))
+        {
+            return false;
+        }
+        install(PPawn);
+        return true;
+    }
+
+    // The offline character behind a stand: refused when she is already
+    // standing or online anywhere in this process, and stripped of the
+    // self-packets LoadChar queues for a client that is not there
+    auto loadForStand(const uint32 charid) -> std::unique_ptr<CCharEntity>
+    {
+        if (charid == 0 || pawns.contains(charid) || zoneutils::GetChar(charid) != nullptr)
+        {
+            return nullptr;
+        }
+        auto PPawn = charutils::LoadChar(charid);
+        if (PPawn == nullptr)
+        {
+            ShowErrorFmt("pawn: LoadChar failed for {}", charid);
+            return nullptr;
+        }
+        PPawn->clearPacketList();
+        return PPawn;
+    }
+
+    // Her first stand ever pays for the starter kit, once (cardian_pawns
+    // remembers). The kit is a starting job's gear, so an advanced main is
+    // stood down to Warrior 1 to take it -- which costs her her level, a
+    // known bug (ROADMAP D6 follow-ups) kept in one place so it is fixed in
+    // one place; today the census cuts basic jobs only, so it never fires
+    void applyKitOnce(CCharEntity* PPawn)
+    {
+        const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", PPawn->id);
+        if (!kitRset || !kitRset->next())
+        {
+            return;
+        }
+        if (static_cast<uint8>(PPawn->GetMJob()) > 6)
+        {
+            pawn::applyJobAndLevel(PPawn, static_cast<uint8>(xi::Job::WAR), 1);
+        }
+        pawn::applyStarterKit(PPawn);
+        charutils::SaveCharStats(PPawn);
+        charutils::SaveCharEquip(PPawn);
+        db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", PPawn->id);
+        PPawn->clearPacketList();
+    }
+
+    // ...and an owned pawn's bag is kept stacked, however she was last
+    // played. A world body's is not: fifty of them stand on one zone tick
+    void kitAndTidy(CCharEntity* PPawn)
+    {
+        applyKitOnce(PPawn);
+        if (const auto merges = pawn::items::tidyStacks(PPawn); merges > 0)
+        {
+            ShowInfoFmt("pawn: {} stacks her bag ({} merges)", PPawn->getName(), merges);
+            PPawn->clearPacketList();
+        }
+    }
+
+    // She stands where the game last saved her (ROADMAP H): her row's zone
+    // and position, snapped to the mesh; her home point when that zone is
+    // not here, she was in her Mog House, the mesh cannot place her, or she
+    // was saved KO'd. In an ordered wait: she moves for an invite or a
+    // gather, not for the player walking past. "Name (Zone)" for the chat
+    // line, empty when she did not stand (online already, or nowhere to)
+    auto standWhereLeft(const uint32 charid, const uint32 ownerCharID) -> std::string
+    {
+        auto PPawn = loadForStand(charid);
+        if (PPawn == nullptr)
+        {
+            return {};
+        }
+
+        const auto&      home  = PPawn->profile.home_point;
+        CZone*           PZone = zoneutils::GetZone(PPawn->loc.destination);
+        std::string_view why;
+        if (PZone == nullptr)
+        {
+            why = "her zone is not here";
+        }
+        else if (PPawn->m_moghouseID != 0)
+        {
+            why = "she was in her Mog House";
+        }
+        else if (PPawn->health.hp == 0)
+        {
+            why = "she was saved KO'd";
+        }
+        else if (const auto landed = snapToMesh(PZone, PPawn->loc.p, kSavedSpotSnap); landed.has_value())
+        {
+            PPawn->loc.p = *landed;
+        }
+        else
+        {
+            why = "the mesh has no place for her spot";
+        }
+        if (!why.empty())
+        {
+            PZone = zoneutils::GetZone(home.destination);
+            if (PZone == nullptr)
+            {
+                ShowWarningFmt("pawn: {} ({}) cannot sign in: {}, and her home zone {} is not here either", PPawn->getName(), charid, why, static_cast<uint16>(home.destination));
+                return {};
+            }
+            PPawn->loc.p     = home.p;
+            PPawn->health.hp = PPawn->GetMaxHP();
+            PPawn->health.mp = PPawn->GetMaxMP();
+            PPawn->animation = xi::Animation::None;
+        }
+        if (!placeInZone(PPawn.get(), PZone))
+        {
+            return {};
+        }
+        kitAndTidy(PPawn.get());
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->SetWaiting(true, true, "waits where she was left");
+        }
+        std::string zone = PZone->getName();
+        std::ranges::replace(zone, '_', ' ');
+        ShowInfoFmt("pawn: {} ({}) signs in at {} ({:.0f}, {:.0f}){}", PPawn->getName(), charid, zone, PPawn->loc.p.x, PPawn->loc.p.z,
+                    why.empty() ? "" : fmt::format(", at her home point: {}", why));
+        auto label = fmt::format("{} ({})", PPawn->getName(), zone);
+        registerPawn(std::move(PPawn), ownerCharID);
+        return label;
+    }
+
+    // One town: two city zones of one capital's region -- San d'Oria's,
+    // Bastok's, Windurst's, Jeuno's (regions 19 to 22, never one
+    // another's). Other towns sharing a region are not one street: Kazham
+    // and Norg both sit in the Elshimo Lowlands with a jungle and a grotto
+    // between them, so they hold. The same zone is settled before this
+    auto sameCity(CZone* a, CZone* b) -> bool
+    {
+        const auto region = a->GetRegionID();
+        if (region != b->GetRegionID() || region < REGION_TYPE::SANDORIA || region > REGION_TYPE::JEUNO)
+        {
+            return false;
+        }
+        return (a->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown &&
+               (b->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
+    }
+
+    // Invited (ROADMAP H): in the player's zone she simply follows; from her
+    // own city she runs to them (the wait ends, a travel order to their
+    // zone); from anywhere else she holds where she stands until gathered
+    // ("follow me", cardianWait off), a field route walking past aggro
+    void gatherOrHold(CCharEntity* PPawn)
+    {
+        auto*              PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+        const CCharEntity* PSummoner   = zoneutils::GetChar(pawn::summonerOf(PPawn->id));
+        if (PController == nullptr || PSummoner == nullptr || PSummoner->loc.zone == nullptr || PPawn->loc.zone == nullptr)
+        {
+            return;
+        }
+        if (PSummoner->loc.zone == PPawn->loc.zone)
+        {
+            PController->SetWaiting(false, false, "invited");
+        }
+        else if (sameCity(PPawn->loc.zone, PSummoner->loc.zone))
+        {
+            PController->SetWaiting(false, false, "invited from her own city");
+            travelOrders[PPawn->id] = PSummoner->getZone();
+            ShowInfoFmt("pawn: {} runs to {} in {} (her own city)", PPawn->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
+        }
+        else
+        {
+            PController->SetWaiting(true, true, "holds until gathered");
+            travelOrders.erase(PPawn->id);
+            ShowInfoFmt("pawn: {} holds in {} until {} gathers her ({} is not her city)", PPawn->getName(), PPawn->loc.zone->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
+        }
     }
 } // namespace
 
@@ -402,16 +672,11 @@ namespace pawn
             return false;
         }
 
-        auto PPawn = charutils::LoadChar(targetCharID);
+        auto PPawn = loadForStand(targetCharID);
         if (PPawn == nullptr)
         {
-            ShowErrorFmt("pawn: LoadChar failed for {} ({})", targetName, targetCharID);
             return false;
         }
-
-        // LoadChar queues self-packets (equip/status) that a real client would
-        // clear during its login handshake; nobody is listening here.
-        PPawn->clearPacketList();
 
         // Materialize behind the summoner, queued by spawn order the way
         // trusts do; a bad spot self-heals once follow AI exists
@@ -454,54 +719,69 @@ namespace pawn
             placed = tryPlace(nearPosition(PSummoner->loc.p, ringDistance, xirand::GetRandomNumber(2.0f * (float)M_PI)));
         }
 
-        PPawn->loc.destination = PSummoner->getZone();
-        PPawn->loc.prevzone    = PSummoner->getZone();
-        PPawn->m_moghouseID    = 0;
-
-        // Visible from the very first spawn packet
-        PPawn->status = xi::Status::Normal;
-
-        charutils::loadDeathTimestamp(PPawn.get());
-
-        // Assigns a real targid, inserts into the zone char list + spatial
-        // grid (pushing ENTITY_SPAWN to everyone in range), runs CharZoneIn.
-        // Deliberately no luautils::OnZoneIn/OnGameIn: those are login-
-        // ceremony (cutscenes, zone locks) for real clients.
-        PSummoner->loc.zone->IncreaseZoneCounter(PPawn.get());
-
-        if (PPawn->loc.zone == nullptr)
+        // PPawn destructs on a refusal here; she never entered the zone
+        if (!placeInZone(PPawn.get(), PSummoner->loc.zone))
         {
-            ShowErrorFmt("pawn: zone insertion failed for {} ({})", targetName, targetCharID);
-            return false; // PPawn destructs here; it never entered the zone
+            return false;
         }
-
-        // CharZoneIn queued more packets (party reload etc.) -- discard
-        PPawn->clearPacketList();
-        PPawn->updatemask |= UPDATE_ALL_CHAR;
-
-        install(PPawn.get());
-
-        const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", targetCharID);
-        if (kitRset && kitRset->next())
-        {
-            applyStarterKit(PPawn.get());
-            charutils::SaveCharStats(PPawn.get());
-            charutils::SaveCharEquip(PPawn.get());
-            db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", targetCharID);
-            PPawn->clearPacketList();
-        }
-
-        // Her bag is kept stacked, however she was last played
-        if (const auto merges = items::tidyStacks(PPawn.get()); merges > 0)
-        {
-            ShowInfoFmt("pawn: {} stacks her bag ({} merges)", targetName, merges);
-            PPawn->clearPacketList();
-        }
+        kitAndTidy(PPawn.get());
 
         ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
 
         registerPawn(std::move(PPawn), PSummoner->id);
         return true;
+    }
+
+    auto signInClub(CCharEntity* PPlayer) -> std::string
+    {
+        if (!isEnabled() || !settings::get<bool>("pawn.CLUB_SIGNIN") || PPlayer == nullptr)
+        {
+            return {};
+        }
+        std::vector<std::string> stood;
+        for (const auto& [charid, name] : accountMembers(PPlayer))
+        {
+            if (auto label = standWhereLeft(charid, PPlayer->id); !label.empty())
+            {
+                stood.push_back(std::move(label));
+            }
+        }
+        if (stood.empty())
+        {
+            return {};
+        }
+        auto line = fmt::format("{}", fmt::join(stood, ", "));
+        ShowInfoFmt("pawn: {}'s club signs in: {}", PPlayer->getName(), line);
+        return line;
+    }
+
+    auto signOutClub(const CCharEntity* PPlayer) -> uint32
+    {
+        if (PPlayer == nullptr)
+        {
+            return 0;
+        }
+        std::vector<uint32> hers;
+        for (const auto& [charid, PPawn] : pawns)
+        {
+            if (summonerOf(charid) == PPlayer->id)
+            {
+                hers.push_back(charid);
+            }
+        }
+        uint32 count = 0;
+        for (const uint32 charid : hers)
+        {
+            if (despawnById(charid, false))
+            {
+                ++count;
+            }
+        }
+        if (count > 0)
+        {
+            ShowInfoFmt("pawn: {}'s club signs out ({} despawned where they stood, positions saved)", PPlayer->getName(), count);
+        }
+        return count;
     }
 
     // Is any skill her job has under its ceiling for her level? True for a
@@ -549,13 +829,11 @@ namespace pawn
             return false;
         }
 
-        auto PPawn = charutils::LoadChar(charid);
+        auto PPawn = loadForStand(charid);
         if (PPawn == nullptr)
         {
-            ShowErrorFmt("pawn: LoadChar failed for {}", charid);
             return false;
         }
-        PPawn->clearPacketList();
 
         // A body that fell and faded stands whole again: the void takes her
         // death as it takes her drops
@@ -567,52 +845,20 @@ namespace pawn
             ShowInfoFmt("pawn: {} ({}) stands up whole after a KO", PPawn->getName(), charid);
         }
 
-        // At the point, on the mesh
-        PPawn->loc.p = point;
-        if (const auto* navMesh = PZone->navMesh(); navMesh != nullptr)
-        {
-            if (const auto snapped = navMesh->findClosestValidPoint(point); snapped.has_value())
-            {
-                PPawn->loc.p = *snapped;
-            }
-        }
-        PPawn->loc.p.rotation  = point.rotation;
-        PPawn->loc.destination = PZone->GetID();
-        PPawn->loc.prevzone    = PZone->GetID();
-        PPawn->m_moghouseID    = 0;
-        PPawn->status          = xi::Status::Normal;
+        // At the point, on the mesh: a slot's point is authored, so the
+        // nearest mesh to it is taken however far off it turns out to be
+        PPawn->loc.p = snapToMesh(PZone, point, std::numeric_limits<float>::max()).value_or(point);
 
-        charutils::loadDeathTimestamp(PPawn.get());
-
-        PZone->IncreaseZoneCounter(PPawn.get());
-        if (PPawn->loc.zone == nullptr)
+        if (!placeInZone(PPawn.get(), PZone))
         {
-            ShowErrorFmt("pawn: zone insertion failed for {} ({})", PPawn->getName(), charid);
             return false;
         }
-        PPawn->clearPacketList();
-        PPawn->updatemask |= UPDATE_ALL_CHAR;
-
-        install(PPawn.get());
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
         {
             PController->SetWorld(true);
         }
 
-        const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", charid);
-        if (kitRset && kitRset->next())
-        {
-            // The kit is a starting job's, and level-1 gear needs a level 1
-            if (static_cast<uint8>(PPawn->GetMJob()) > 6)
-            {
-                applyJobAndLevel(PPawn.get(), static_cast<uint8>(xi::Job::WAR), 1);
-            }
-            applyStarterKit(PPawn.get());
-            charutils::SaveCharStats(PPawn.get());
-            charutils::SaveCharEquip(PPawn.get());
-            db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", charid);
-            PPawn->clearPacketList();
-        }
+        applyKitOnce(PPawn.get());
 
         // Her job when it differs from the census's; her level is her own
         // (her character row's, set by the census tool's mint and catch-up
@@ -1241,21 +1487,9 @@ namespace pawn
     auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>
     {
         std::vector<std::string> names;
-        if (PChar == nullptr)
+        for (auto& [charid, name] : accountMembers(PChar))
         {
-            return names;
-        }
-        // The same eligibility spawn() applies: the player's own alts and the
-        // generated cardians their account owns, never the character they
-        // are playing
-        const uint32 ownerAccid = ownerAccountOf(PChar);
-        const auto   rset       = db::preparedStmt("SELECT c.charname FROM chars c "
-                                                   "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid "
-                                                   "WHERE c.charid <> ? AND (c.accid = ? OR p.owner_accid = ?) ORDER BY c.charname",
-                                                   PChar->id, ownerAccid, ownerAccid);
-        while (rset && rset->next())
-        {
-            names.emplace_back(rset->get<std::string>("charname"));
+            names.emplace_back(std::move(name));
         }
         return names;
     }
@@ -1422,32 +1656,14 @@ namespace pawn
         POldZone->DecreaseZoneCounter(PPawn);
 
         PPawn->loc.p = arriveAt;
-        PDestZone->IncreaseZoneCounter(PPawn);
-
-        if (PPawn->loc.zone == nullptr)
+        if (!enterZone(PPawn, PDestZone))
         {
-            ShowErrorFmt("pawn: transfer of {} ({}) into zone {} failed", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
             return;
         }
-
-        PPawn->clearPacketList();
-        PPawn->updatemask |= UPDATE_ALL_CHAR;
         if (PPawn->status == xi::Status::Disappear)
         {
             PPawn->status = xi::Status::Normal;
         }
-
-        // The insert marked nearby viewers as having seen the pawn, but a
-        // viewer whose login handshake is mid-flight has its packet queue
-        // cleared, losing the spawn while the server believes it was sent.
-        // Unmark everyone; the per-tick spawn sync re-delivers cleanly.
-        PDestZone->ForEachChar([&](CCharEntity* PViewer)
-        {
-            if (PViewer != PPawn)
-            {
-                PViewer->SpawnPCList.erase(PPawn->id);
-            }
-        });
 
         db::preparedStmt("UPDATE accounts_sessions SET targid = ? WHERE charid = ?", PPawn->targid, PPawn->id);
         savePawnPosition(PPawn);
@@ -1492,6 +1708,7 @@ namespace pawn
                     {
                         ShowInfoFmt("pawn: {} accepts the party invite", PPawn->getName());
                         answer.process(nullptr, PPawn.get());
+                        gatherOrHold(PPawn.get());
                     }
                 }
             }

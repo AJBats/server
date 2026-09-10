@@ -46,6 +46,8 @@ cardian/sql/cardian_orders.sql
 cardian/sql/cardian_census.sql
 # CARDIAN: the party progresses together (quests, missions, battlefields)
 cardian/lua/party_progress.lua
+# CARDIAN: the club signs in with the player (ROADMAP H)
+cardian/lua/linkshell.lua
 # CARDIAN: NM kills, battlefield wins and quests open the auction house crowd's gates
 cardian/lua/market_unlocks.lua
 # CARDIAN: era vendor stock the era module does not cover (active while WotG is off)

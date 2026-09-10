@@ -360,6 +360,14 @@ class PawnModule : public CPPModule
             return pawn::orderTravelByName(targetName, zoneId);
         };
 
+        // The club signs in with the player (ROADMAP H): the chat line,
+        // "Jevyak (Northern San d'Oria), Zapp (Southern San d'Oria)", or ""
+        lua["CBaseEntity"]["cardianSignIn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return PChar != nullptr ? pawn::signInClub(PChar) : std::string{};
+        };
+
         lua["CBaseEntity"]["pawnReloadBrain"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             std::ignore = PLuaBaseEntity;
