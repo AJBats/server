@@ -81,6 +81,7 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_gambit_text_tests.cpp # CARDIAN: the gambit row grammar
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_rules_tests.cpp # CARDIAN: the rules a cardian fights by
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_planner_tests.cpp # CARDIAN: the local planner's grid and field
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
     ${resource})
 add_dependencies(xi_test data_schema_generate)
 
