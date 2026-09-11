@@ -28,6 +28,7 @@
 #include "job_points.h"
 #include "latent_effect_container.h"
 #include "party.h"
+#include "pawn/pawn.h" // CARDIAN: a cardian out of the party ends her trek (RemoveMember, DisbandParty)
 #include "status_effect_container.h"
 #include "treasure_pool.h"
 #include "utils/blueutils.h"
@@ -131,6 +132,7 @@ void CParty::DisbandParty(bool playerInitiated)
             PChar->ClearTrusts();
 
             PChar->PParty = nullptr;
+            pawn::leftParty(PChar, this); // CARDIAN: out of the party, a cardian's trek ends
             PChar->PLatentEffectContainer->CheckLatentsPartyJobs();
             PChar->PLatentEffectContainer->CheckLatentsPartyMembers(members.size(), 0);
             PChar->PLatentEffectContainer->CheckLatentsPartyAvatar();
@@ -377,6 +379,7 @@ void CParty::RemoveMember(CBattleEntity* PEntity)
 
             members.erase(memberToDelete);
             PEntity->PParty = nullptr;
+            pawn::leftParty(PEntity, this); // CARDIAN: out of the party, a cardian's trek ends
         }
     }
 }

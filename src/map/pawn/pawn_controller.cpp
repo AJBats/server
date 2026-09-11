@@ -817,34 +817,6 @@ auto CPawnController::NearestPrey(const position_t& around, const float radius, 
     return best;
 }
 
-void CPawnController::WaitTick(CCharEntity* PPlayer)
-{
-    m_Gambits->TickBehaviors();
-
-    // Her ground is hers to hold: a mob that has come for her is answered
-    if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
-    {
-        Draw(PMob, ApproachKind::Order, "on her, waiting");
-        return;
-    }
-
-    if (PPlayer != nullptr)
-    {
-        ShareSignet(PPlayer);
-        TidyBag();
-        if (!Acting())
-        {
-            HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
-        }
-    }
-
-    if (!POwner->PAI->IsCurrentState<CMagicState>())
-    {
-        m_Gambits->Tick(m_Tick, false);
-        IdleEmote(PPlayer);
-    }
-}
-
 namespace
 {
     // The player has struck: an active enmity entry of theirs on the mob
@@ -2162,6 +2134,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // The player she is with, in her zone and her party; nobody otherwise.
+    // Idle is the floor: with nobody here and nothing sending her anywhere,
+    // the idle tick below runs where she stands, its parts about the player
+    // skipped -- just spawned, signed in, out of the party, or told to wait
     CCharEntity* PPlayer = GetAnchor();
     if (PPlayer == nullptr)
     {
@@ -2173,44 +2149,57 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             m_PlayerMagicSeen = timer::time_point::min();
             SetWaiting(true, false, fmt::format("waits in {} (the player warped away)", POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?"));
         }
-        if (m_Waiting)
+        // In the player's party with the player in another zone, she goes to
+        // them, unless told to wait. A player out of the world is loading
+        // between zones -- their character is gone from every zone and from
+        // the party's list until they land -- and she keeps to the trek
+        const auto* PSummoner = zoneutils::GetChar(pawn::summonerOf(POwner->id));
+        const auto* PParty    = static_cast<CCharEntity*>(POwner)->PParty;
+        const bool  loading   = PSummoner == nullptr || PSummoner->loc.zone == nullptr;
+        if (!m_Waiting && PParty != nullptr && (loading || (PSummoner->PParty == PParty && PSummoner->getZone() != POwner->getZone())))
         {
-            WaitTick(nullptr);
+            if (m_Mode != Mode::Travel)
+            {
+                Transition(Mode::Travel, "the player is in another zone");
+            }
+            TravelTick();
             co_return;
         }
-        if (m_Mode != Mode::Travel)
+        if (m_Mode == Mode::Travel)
         {
-            Transition(Mode::Travel, "the player is in another zone");
+            Transition(IdleMode(), "nowhere to go");
         }
-        TravelTick();
-        co_return;
+    }
+    else
+    {
+        NotePlayerMagic(PPlayer);
+
+        // An automatic wait ends with the player back in her zone; an
+        // ordered one holds until told otherwise
+        if (m_Waiting && !m_WaitOrdered)
+        {
+            SetWaiting(false, false, fmt::format("follows again ({} is back)", PPlayer->getName()));
+        }
+        if (m_Mode == Mode::Travel)
+        {
+            Transition(IdleMode(), fmt::format("with {} again", PPlayer->getName()));
+        }
+
+        ShareSignet(PPlayer);
+        // Walking in on a mob, her eye is on it (below), not the player
+        if (!Acting() && !m_Approach.has_value())
+        {
+            HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
+        }
     }
 
-    NotePlayerMagic(PPlayer);
+    // Somewhere to go: her place in formation round the player, and the
+    // hunt round them. Waiting, she has neither, whatever the party's
+    // strategy
+    const bool somewhereToGo = PPlayer != nullptr && !m_Waiting;
+    const bool hunting       = somewhereToGo && IsHunting();
 
-    // An automatic wait ends with the player back in her zone; an ordered
-    // one holds until told otherwise
-    if (m_Waiting && !m_WaitOrdered)
-    {
-        SetWaiting(false, false, fmt::format("follows again ({} is back)", PPlayer->getName()));
-    }
-    if (m_Mode == Mode::Travel)
-    {
-        Transition(IdleMode(), fmt::format("with {} again", PPlayer->getName()));
-    }
-    if (m_Waiting)
-    {
-        WaitTick(PPlayer);
-        co_return;
-    }
-
-    ShareSignet(PPlayer);
     TidyBag();
-    // Walking in on a mob, her eye is on it (below), not the player
-    if (!Acting() && !m_Approach.has_value())
-    {
-        HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
-    }
     m_Gambits->TickBehaviors();
 
     // Her rest comes before the party's fight: a body whose own row holds
@@ -2222,7 +2211,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // rest holds until she is whole (D5: how a camp rests)
     // The leader's kneel and stand reach her a beat later (her seat's
     // reaction, as her draw does), so a camp does not move as one
-    const bool leaderResting = RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
+    const bool leaderResting = PPlayer != nullptr && RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
     if (leaderResting != m_LeaderRestingSeen)
     {
         m_LeaderRestingSeen = leaderResting;
@@ -2235,8 +2224,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const bool whole         = POwner->GetHPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL") && (!hasMana || POwner->GetMPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL"));
     if (resting)
     {
-        // Aggro reaching her ends the rest early: up, and the formation's
-        // avoid logic walks her out of its circle
+        // Aggro reaching her ends the rest early: up, and the walker's vet
+        // below walks her out of its circle
         RefreshDangers(nullptr);
         const bool threatened = InsideDanger();
         if ((playerResting || (m_RestUntilWhole && !whole)) && !threatened)
@@ -2252,7 +2241,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                         threatened ? ", aggro coming" : "");
         }
     }
-    else if ((playerResting && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f) || (ownRest && !m_Approach.has_value()))
+    else if ((playerResting && PPlayer != nullptr && distance(POwner->loc.p, PPlayer->loc.p) < 10.0f) || (ownRest && !m_Approach.has_value()))
     {
         // Her own row's kneel is her own, whoever else is kneeling: she stays
         // down until whole while the party goes on without her (user, D5
@@ -2308,7 +2297,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             // Drawn on the player's word alone: hold until they strike, or
             // the mob comes to us. A pull, an answer to aggro, or an order
             // closes.
-            const bool hold = PPlayer->PAI->IsEngaged() && PPartyTarget == PPlayer->GetBattleTarget() &&
+            const bool hold = PPlayer != nullptr && PPlayer->PAI->IsEngaged() && PPartyTarget == PPlayer->GetBattleTarget() &&
                               !playerHasEnmity(PPlayer, PPartyTarget) && !PPartyTarget->PAI->IsEngaged();
             if (!Draw(PPartyTarget, ApproachKind::Join, hold ? fmt::format("holding for {}'s strike", PPlayer->getName()) : party.why, hold) &&
                 !m_Approach.has_value())
@@ -2321,7 +2310,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // The player has drawn on a burrowed mob: the party waits for it to
     // surface, and says so now and then
-    if (PPlayer->PAI->IsEngaged())
+    if (PPlayer != nullptr && PPlayer->PAI->IsEngaged())
     {
         if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget());
             PMob != nullptr && pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged() && m_Tick - m_LastSurfaceLogTime > 5s)
@@ -2331,15 +2320,20 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    // Walking in on a mob (ApproachTick): the party's fight is the anchor
-    if (m_Approach.has_value() && ApproachTick(PPlayer->loc.p, PPlayer->GetMLevel(), PacingBlocker(PPlayer), IsHunting(), PPartyTarget))
+    // Walking in on a mob (ApproachTick): the party's fight is the anchor --
+    // the player, or with nobody here, herself
+    if (m_Approach.has_value())
     {
-        co_return;
+        CBattleEntity* PAnchor = PPlayer != nullptr ? PPlayer : POwner;
+        if (ApproachTick(PAnchor->loc.p, PAnchor->GetMLevel(), PPlayer != nullptr ? PacingBlocker(PPlayer) : std::string(), hunting, PPartyTarget))
+        {
+            co_return;
+        }
     }
 
     // A hunter picks the party's next fight itself, the moment it is free
     // to: the choice is never throttled, only the draw
-    if (IsHunting() && !m_Approach.has_value())
+    if (hunting && !m_Approach.has_value())
     {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
@@ -2378,10 +2372,23 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    // The tick's danger map, then the formation's proposal through the
-    // walker; nothing when the tick went on a warp
+    // The tick's danger map, then her proposal through the walker: her place
+    // in formation, paced by the formation's catch-up; or with nowhere to
+    // go, where she stands at her normal speed -- vetted like any other, so
+    // a circle nudges her clear and she stays where it leaves her. Nothing
+    // when the tick went on a warp
     RefreshDangers(nullptr);
-    const auto avoidAction = Move(FormationIntent(PPlayer, nullptr));
+    Intent proposal;
+    if (somewhereToGo)
+    {
+        proposal = FormationIntent(PPlayer, nullptr);
+    }
+    else
+    {
+        RestoreNormalSpeed();
+        proposal.kind = Intent::Kind::Keep;
+    }
+    const auto avoidAction = Move(proposal);
     if (!avoidAction.has_value())
     {
         co_return;
@@ -2595,8 +2602,7 @@ void CPawnController::TravelTick()
         m_LastTravelDebugTime = m_Tick;
     }
 
-    const auto* PPawn = static_cast<CCharEntity*>(POwner);
-    const auto  order = pawn::travelOrderOf(POwner->id);
+    const auto order = pawn::travelOrderOf(POwner->id);
 
     xi::ZoneId targetZone{};
     if (order.has_value())
@@ -2611,15 +2617,8 @@ void CPawnController::TravelTick()
     }
     else
     {
-        if (PPawn->PParty == nullptr)
-        {
-            if (narrate)
-            {
-                ShowInfoFmt("pawn: travel {}: no party, idling", POwner->getName());
-            }
-            return;
-        }
-
+        // The player, in her party and another zone: DoRoamTick sends her
+        // only then, or while they load between zones
         CCharEntity* PSummoner = zoneutils::GetChar(pawn::summonerOf(POwner->id));
         if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
         {
@@ -2629,26 +2628,6 @@ void CPawnController::TravelTick()
             }
             return;
         }
-
-        // In their Mog House: the party waits at the door
-        if (PSummoner->loc.zone == POwner->loc.zone && PSummoner->inMogHouse())
-        {
-            if (narrate)
-            {
-                ShowInfoFmt("pawn: travel {}: {} is in their Mog House, waiting", POwner->getName(), PSummoner->getName());
-            }
-            return;
-        }
-
-        if (PSummoner->loc.zone == POwner->loc.zone)
-        {
-            if (narrate)
-            {
-                ShowInfoFmt("pawn: travel {}: summoner shares zone {} but no live player found by party scan", POwner->getName(), static_cast<uint16>(POwner->getZone()));
-            }
-            return;
-        }
-
         targetZone = PSummoner->getZone();
     }
 
@@ -2898,29 +2877,28 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> PartyFigh
     // A pawn already fighting pulls the rest of the party in -- how a
     // hunter's pull propagates without the player tagging anything
     const auto* PPawn = static_cast<CCharEntity*>(POwner);
-    if (PPawn->PParty == nullptr)
+    if (PPawn->PParty != nullptr)
     {
-        return {};
-    }
-
-    for (auto* PMember : PPawn->PParty->members)
-    {
-        auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-        if (PChar == nullptr || PChar == POwner || !pawn::isPawn(PChar) ||
-            PChar->loc.zone != POwner->loc.zone || !PChar->PAI->IsEngaged())
+        for (auto* PMember : PPawn->PParty->members)
         {
-            continue;
-        }
+            auto* PChar = dynamic_cast<CCharEntity*>(PMember);
+            if (PChar == nullptr || PChar == POwner || !pawn::isPawn(PChar) ||
+                PChar->loc.zone != POwner->loc.zone || !PChar->PAI->IsEngaged())
+            {
+                continue;
+            }
 
-        if (auto* PTarget = PChar->GetBattleTarget(); PTarget != nullptr && !PTarget->isDead())
-        {
-            return { PTarget, fmt::format("with {}", PChar->getName()) };
+            if (auto* PTarget = PChar->GetBattleTarget(); PTarget != nullptr && !PTarget->isDead())
+            {
+                return { PTarget, fmt::format("with {}", PChar->getName()) };
+            }
         }
     }
 
-    // Self-defence: a mob that has chosen a member of this party is the
-    // party's fight, whether or not anyone has swung yet -- aggro on a
-    // cardian, or on the player, is answered
+    // Self-defence: a mob that has chosen her, or a member of her party, is
+    // the party's fight, whether or not anyone has swung yet -- aggro on a
+    // cardian, or on the player, is answered. Out of a party she is a party
+    // of one
     const float leash = settings::get<float>("pawn.HUNT_LEASH");
     PartyFight  answer;
     const auto  answers = [&](CMobEntity* PMob)
@@ -2931,7 +2909,7 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer) const -> PartyFigh
             return;
         }
         auto* PVictim = PMob->GetBattleTarget();
-        if (PVictim != nullptr && PVictim->PParty == PPawn->PParty)
+        if (PVictim != nullptr && (PVictim == POwner || (PPawn->PParty != nullptr && PVictim->PParty == PPawn->PParty)))
         {
             answer = { PMob, fmt::format("answering it on {}", PVictim->getName()) };
         }

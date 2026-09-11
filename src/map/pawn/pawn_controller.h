@@ -124,11 +124,13 @@ public:
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
 
-    // Wait here / follow me. Waiting, she holds her ground: no following,
-    // hunting or travel, but she answers a mob that comes for her, keeps
-    // her gambits and fidgets. An ordered wait holds until told otherwise;
-    // an automatic one (left behind by a warp or a teleport, or carried
-    // off alone) ends when the player is back in her zone.
+    // Wait here / follow me. Waiting, she has nowhere to go by order: no
+    // following, hunting or travel, so she idles where she stands -- the
+    // floor every cardian falls to when nothing sends her anywhere (just
+    // spawned, signed in, out of the party). An ordered wait holds until
+    // told otherwise; an automatic one (left behind by a warp or a
+    // teleport, or carried off alone) ends when the player is back in her
+    // zone.
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
@@ -210,8 +212,8 @@ private:
     auto DoCombatTick(timer::time_point tick) -> Task<void>;
     auto DoRoamTick(timer::time_point tick) -> Task<void>;
 
-    // The summoner is in another zone: walk the zone graph toward them,
-    // requesting a transfer at each zone line.
+    // A travel order's zone, or the player in another zone and her party:
+    // walk the zone graph toward it, requesting a transfer at each zone line.
     void TravelTick();
 
     // The lead holds a point ahead of the player; everyone else holds a
@@ -427,18 +429,14 @@ private:
     // The mob this pawn should join on, and why: the player's engaged
     // target first (gated by the swing/TrustEngageType convention), else
     // any pawn party member's living target -- how a hunter's pull
-    // propagates -- else a mob that has chosen one of us
+    // propagates -- else a mob that has chosen her or one of her party.
+    // No player (nullptr): the party's own fights and self-defence alone
     struct PartyFight
     {
         CBattleEntity* target = nullptr;
         std::string    why;
     };
     auto PartyEngageTarget(CCharEntity* PPlayer) const -> PartyFight;
-
-    // Waiting: the tick that holds her ground (WaitTick), the mob that has
-    // come for her (SelfDefenceTarget), and the player's magic noted while
-    // they are still here (NotePlayerMagic)
-    void WaitTick(CCharEntity* PPlayer);
 
     // A world body's idle tick (ROADMAP D1): rest when low, answer a mob on
     // her, and farming, pick a mob in her band within reach or head toward
@@ -452,6 +450,8 @@ private:
     // A town walk's step, its length varied on her own cycle (the walk-step
     // jitter, pawn.WORLD_STEP_JITTER) so no two run cycles lock together
     void TownStep(const Intent& intent);
+    // The mob that has come for her (a world body's roam answers it), and
+    // the player's magic noted while they are still here
     auto SelfDefenceTarget() -> CMobEntity*;
     void NotePlayerMagic(const CCharEntity* PPlayer);
 

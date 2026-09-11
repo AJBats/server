@@ -345,9 +345,10 @@ namespace
     // She stands where the game last saved her (ROADMAP H): her row's zone
     // and position, snapped to the mesh; her home point when that zone is
     // not here, she was in her Mog House, the mesh cannot place her, or she
-    // was saved KO'd. In an ordered wait: she moves for an invite or a
-    // gather, not for the player walking past. "Name (Zone)" for the chat
-    // line, empty when she did not stand (online already, or nowhere to)
+    // was saved KO'd. Nothing sends her anywhere, so she idles there: she
+    // moves for an invite or a gather, not for the player walking past.
+    // "Name (Zone)" for the chat line, empty when she did not stand (online
+    // already, or nowhere to)
     auto standWhereLeft(const uint32 charid, const uint32 ownerCharID) -> std::string
     {
         auto PPawn = loadForStand(charid);
@@ -397,10 +398,6 @@ namespace
             return {};
         }
         kitAndTidy(PPawn.get());
-        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
-        {
-            PController->SetWaiting(true, true, "waits where she was left");
-        }
         std::string zone = PZone->getName();
         std::ranges::replace(zone, '_', ' ');
         ShowInfoFmt("pawn: {} ({}) signs in at {} ({:.0f}, {:.0f}){}", PPawn->getName(), charid, zone, PPawn->loc.p.x, PPawn->loc.p.z,
@@ -782,6 +779,33 @@ namespace pawn
             ShowInfoFmt("pawn: {}'s club signs out ({} despawned where they stood, positions saved)", PPlayer->getName(), count);
         }
         return count;
+    }
+
+    void leftParty(const CBattleEntity* PMember, const CParty* PParty)
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC)
+        {
+            return;
+        }
+        for (auto& [charid, PPawn] : pawns)
+        {
+            const bool herself = charid == PMember->id;
+            if (!herself && (summonerOf(charid) != PMember->id || PPawn->PParty != PParty))
+            {
+                continue;
+            }
+            const bool trekking = travelOrders.erase(charid) > 0;
+            const bool walking  = PPawn->PAI->PathFind != nullptr && PPawn->PAI->PathFind->IsFollowingPath();
+            if (walking)
+            {
+                PPawn->PAI->PathFind->Clear();
+            }
+            if (trekking || walking)
+            {
+                ShowInfoFmt("pawn: {} is out of the party{}: her {} ends where she stands", PPawn->getName(),
+                            herself ? "" : fmt::format(" ({} left it)", PMember->getName()), trekking ? "trek" : "walk");
+            }
+        }
     }
 
     // Is any skill her job has under its ceiling for her level? True for a

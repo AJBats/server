@@ -33,8 +33,10 @@
 #include <string>
 #include <vector>
 
+class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
+class CParty;
 class CZone;
 
 // Cardian pawns: session-less CCharEntity instances loaded from real DB
@@ -78,7 +80,7 @@ namespace pawn
 
     // The club signs in with the player (ROADMAP H): every member of the
     // account (accountPawnNames) not online stands where the game saved
-    // her, in an ordered wait until invited. The chat line, "Jevyak
+    // her, idling there until invited. The chat line, "Jevyak
     // (Northern San d'Oria), Zapp (...)", empty when nobody stood. spawn
     // stays the GM's tool
     auto signInClub(CCharEntity* PPlayer) -> std::string;
@@ -86,6 +88,13 @@ namespace pawn
     // ...and signs out with her: every pawn under her name despawned where
     // she stands, position saved (charutils, at logout). How many
     auto signOutClub(const CCharEntity* PPlayer) -> uint32;
+
+    // A party membership ended for good (CParty: a kick, a leave, a disband
+    // -- never a zoning). A cardian no longer in the player's party has no
+    // trek to make: hers ends when she is the one out, and every one of the
+    // player's cardians in that party's ends when the player is. Her travel
+    // order and her walk are dropped, and she idles where she stands
+    void leftParty(const CBattleEntity* PMember, const CParty* PParty);
 
     // A character to mint: the client's race enum (race and sex in one),
     // face 0-15, size 0-2, nation 0-2, main job and level. The census

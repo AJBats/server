@@ -23,7 +23,8 @@
 // xi_test links the map's libraries but not the module, whose sources are
 // APP_SOURCES and go into xi_map alone, so here each call gets what a
 // server with no cardians does: nobody is a world body, every exp grant
-// lands whole, and nobody signs out with the player.
+// lands whole, nobody signs out with the player, and nobody leaving a
+// party has a trek to end.
 
 #include "map/pawn/pawn.h"
 #include "map/pawn/world.h"
@@ -33,6 +34,10 @@ namespace pawn
     auto signOutClub(const CCharEntity* /* PPlayer */) -> uint32
     {
         return 0;
+    }
+
+    void leftParty(const CBattleEntity* /* PMember */, const CParty* /* PParty */)
+    {
     }
 } // namespace pawn
 
