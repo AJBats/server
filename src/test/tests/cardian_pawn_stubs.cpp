@@ -19,15 +19,18 @@
 ===========================================================================
 */
 
-// The pawn module's side of the marked calls upstream files make into it.
-// xi_test links the map's libraries but not the module, whose sources are
-// APP_SOURCES and go into xi_map alone, so here each call gets what a
-// server with no cardians does: nobody is a world body, every exp grant
-// lands whole, nobody signs out with the player, and nobody leaving a
-// party has a trek to end.
+// The pawn module's side of the marked calls upstream files make into it,
+// and of the Lua bindings Cardian's Lua modules call. xi_test links the
+// map's libraries but not the module, whose sources are APP_SOURCES and go
+// into xi_map alone, so here each gets what a server with no cardians
+// does: nobody is a world body, every exp grant lands whole, nobody signs
+// in or out with the player, nobody leaving a party has a trek to end,
+// and nobody is a cardian.
 
+#include "map/lua/lua_base_entity.h"
 #include "map/pawn/pawn.h"
 #include "map/pawn/world.h"
+#include "map/utils/moduleutils.h"
 
 namespace pawn
 {
@@ -53,3 +56,25 @@ namespace pawn::world
         return exp;
     }
 } // namespace pawn::world
+
+// The bindings modules/cardian/lua calls: isCardian on the players it sees
+// (a test that wants a cardian mocks one --
+// stub('CBaseEntity.isCardian', function (entity) return ... end)), and
+// cardianSignIn at login, the names of those who stood.
+class CardianTestStubs : public CPPModule
+{
+    void OnInit() override
+    {
+        lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> bool
+        {
+            return false;
+        };
+
+        lua["CBaseEntity"]["cardianSignIn"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> std::string
+        {
+            return "";
+        };
+    }
+};
+
+REGISTER_CPP_MODULE(CardianTestStubs);
