@@ -408,22 +408,6 @@ namespace
         return label;
     }
 
-    // One town: two city zones of one capital's region -- San d'Oria's,
-    // Bastok's, Windurst's, Jeuno's (regions 19 to 22, never one
-    // another's). Other towns sharing a region are not one street: Kazham
-    // and Norg both sit in the Elshimo Lowlands with a jungle and a grotto
-    // between them, so they hold. The same zone is settled before this
-    auto sameCity(CZone* a, CZone* b) -> bool
-    {
-        const auto region = a->GetRegionID();
-        if (region != b->GetRegionID() || region < REGION_TYPE::SANDORIA || region > REGION_TYPE::JEUNO)
-        {
-            return false;
-        }
-        return (a->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown &&
-               (b->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
-    }
-
     // The player an invite came from: the real session in her party, which
     // is how the controller finds her anchor too (CPawnController::
     // GetLivePlayer), falling back to whoever summoned her. A wild body has
@@ -454,7 +438,7 @@ namespace
         {
             PController->SetWaiting(false, false, "invited");
         }
-        else if (sameCity(PPawn->loc.zone, PSummoner->loc.zone))
+        else if (pawn::sameCity(PPawn->loc.zone, PSummoner->loc.zone))
         {
             PController->SetWaiting(false, false, "invited from her own city");
             travelOrders[PPawn->id] = PSummoner->getZone();
@@ -471,6 +455,22 @@ namespace
 
 namespace pawn
 {
+    // One town: two city zones of one capital's region -- San d'Oria's,
+    // Bastok's, Windurst's, Jeuno's (regions 19 to 22, never one
+    // another's). Other towns sharing a region are not one street: Kazham
+    // and Norg both sit in the Elshimo Lowlands with a jungle and a grotto
+    // between them, so they hold. The same zone is settled before this
+    auto sameCity(CZone* a, CZone* b) -> bool
+    {
+        const auto region = a->GetRegionID();
+        if (region != b->GetRegionID() || region < REGION_TYPE::SANDORIA || region > REGION_TYPE::JEUNO)
+        {
+            return false;
+        }
+        return (a->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown &&
+               (b->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
+    }
+
     bool isEnabled()
     {
         return settings::get<bool>("pawn.ENABLE_PAWNS");
@@ -947,6 +947,16 @@ namespace pawn
             {
                 ShowInfoFmt("pawn: {} is out of the party{}: her {} ends where she stands", PPawn->getName(),
                             herself ? "" : fmt::format(" ({} left it)", PMember->getName()), trekking ? "trek" : "walk");
+            }
+            // A wild body's orders end with the party: nobody can reach her
+            // to lift a wait or a hunt once she is out of it
+            if (herself && summonerOf(charid) == 0)
+            {
+                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+                {
+                    PController->SetWaiting(false, false, "out of the party");
+                    PController->SetHunting(false);
+                }
             }
         }
     }
@@ -1681,6 +1691,26 @@ namespace pawn
         return findPawn(targetCharID);
     }
 
+    namespace
+    {
+        bool commands(const CCharEntity* PPlayer, const CCharEntity* PPawn)
+        {
+            return summonerOf(PPawn->id) == PPlayer->id ||
+                   (PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty);
+        }
+    } // namespace
+
+    auto findCommandablePawn(const CCharEntity* PPlayer, const std::string& targetName) -> CCharEntity*
+    {
+        if (PPlayer == nullptr)
+        {
+            return nullptr;
+        }
+
+        auto* PPawn = findPawn(charutils::getCharIdFromName(targetName));
+        return PPawn != nullptr && commands(PPlayer, PPawn) ? PPawn : nullptr;
+    }
+
     auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>
     {
         std::vector<std::string> names;
@@ -1691,12 +1721,16 @@ namespace pawn
         return names;
     }
 
-    auto managedPawnNames(const uint32 summonerCharID) -> std::vector<std::string>
+    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>
     {
         std::vector<std::string> names;
+        if (PPlayer == nullptr)
+        {
+            return names;
+        }
         for (const auto& [charid, PPawn] : pawns)
         {
-            if (summonerOf(charid) == summonerCharID)
+            if (commands(PPlayer, PPawn.get()))
             {
                 names.emplace_back(PPawn->getName());
             }
@@ -1907,6 +1941,10 @@ namespace pawn
                         ShowInfoFmt("pawn: {} accepts the party invite", PPawn->getName());
                         answer.process(nullptr, PPawn.get());
                         gatherOrHold(PPawn.get());
+                    }
+                    else
+                    {
+                        PPawn->InvitePending.clean();
                     }
                 }
             }

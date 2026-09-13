@@ -340,7 +340,7 @@ end
 local function pawnLine(player, name, targ)
     local xp    = player:cardianExp(name)
     local guard = guardNear(player) ~= nil
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %s',
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
@@ -349,7 +349,8 @@ local function pawnLine(player, name, targ)
         targ:getTP(),
         xp and xp.exp or 0, xp and xp.tnl or 0,
         guard and 1 or 0,
-        player:cardianWaiting(name) and 1 or 0, targ:getZoneName())
+        player:cardianWaiting(name) and 1 or 0,
+        player:cardianOwns(name) and 1 or 0, targ:getZoneName())
 end
 
 local function sendPawnLine(player, name)
@@ -378,7 +379,7 @@ local function sendStatsLine(player, name)
         parts[#parts + 1] = string.format('%d:%d', targ:getStat(mod), targ:getMod(mod))
     end
     parts[#parts + 1] = string.format('%d:%d', combat and combat.att or 0, combat and combat.def or 0)
-    parts[#parts + 1] = tostring(targ:getGil())
+    parts[#parts + 1] = tostring(player:cardianOwns(name) and targ:getGil() or 0)
     reply(player, table.concat(parts, ' '))
 end
 
@@ -402,10 +403,8 @@ end
 -- sells to her out of her own conquest points. 'cps.b <name> <cp> <rank> <nation> <guard>', one
 -- 'cps <name> <option> <item> <price> <lvl> <rank>' per item, 'cps.e'.
 local function ownedCardian(player, name)
-    for _, owned in ipairs(player:cardianNames()) do
-        if owned == name then
-            return GetPlayerByName(name)
-        end
+    if player:cardianOwns(name) then
+        return GetPlayerByName(name)
     end
     return nil
 end
@@ -541,7 +540,8 @@ local function sendSkillList(player, name, verb, tag, skills)
             cap = math.max(cap, targ:getMaxSkillLevel(slvl, sjob, skill))
         end
         if cap > 0 then
-            parts[#parts + 1] = string.format('%d:%d:%d', skill, math.floor(targ:getCharSkillLevel(skill) / 10), cap)
+            local level = math.min(math.floor(targ:getCharSkillLevel(skill) / 10), cap)
+            parts[#parts + 1] = string.format('%d:%d:%d', skill, level, cap)
         end
     end
     reply(player, '#cd ' .. tag .. ' ' .. name .. ' ' .. table.concat(parts, ','))
@@ -792,14 +792,17 @@ commandObj.onTrigger = function(player, line)
     elseif verb == 'greset' and name then
         gambitEdit(player, name, verb, player:cardianGambitReset(name))
     elseif verb == 'sync' and name then
-        -- ownership gate: cardianGear returns nil for a pawn that isn't yours
+        -- cardianGear answers for any cardian you command; her bags only
+        -- when she is yours
         if player:cardianGear(name) == nil then
             reply(player, '#cd err sync no such cardian')
         else
             sendPawnLine(player, name)
             sendStatsLine(player, name)
             sendGear(player, name)
-            sendInv(player, name)
+            if player:cardianOwns(name) then
+                sendInv(player, name)
+            end
         end
     elseif verb == 'equipset' and name and args[3] then
         applyEquipSet(player, name, args[3])
@@ -823,6 +826,22 @@ commandObj.onTrigger = function(player, line)
         sendGear(player, name)
     elseif verb == 'recasts' and name then
         sendRecasts(player, name)
+    elseif verb == 'finder' then
+        -- The party finder: 'pf.b <n>', one 'pf <name> <job> <level> <state> <zone>'
+        -- per candidate, 'pf.e'
+        local rows = player:cardianFinder()
+        reply(player, '#cd pf.b ' .. #rows)
+        for _, r in ipairs(rows) do
+            reply(player, string.format('#cd pf %s %d %d %s %s', r.name, r.job, r.level, r.state, r.zone))
+        end
+        reply(player, '#cd pf.e')
+    elseif verb == 'invite' and name then
+        local err = player:cardianInvite(name)
+        if err ~= '' then
+            reply(player, '#cd err invite ' .. err)
+        else
+            reply(player, '#cd ok invite')
+        end
     elseif verb == 'cpshop' and name then
         sendCpShop(player, name)
     elseif verb == 'cpbuy' and name and args[3] then

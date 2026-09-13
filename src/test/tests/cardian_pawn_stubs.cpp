@@ -74,6 +74,12 @@ class CardianTestStubs : public CPPModule
         {
             return "";
         };
+
+        // A mocked cardian is the player's own: the mirror applies to her
+        lua["CBaseEntity"]["cardianOwns"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* name */) -> bool
+        {
+            return true;
+        };
     }
 };
 

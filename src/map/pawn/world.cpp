@@ -2223,7 +2223,7 @@ namespace
         std::vector<uint32> outgrown;
         for (const auto& [charid, body] : bodies)
         {
-            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= tit->second.specs.size())
+            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= tit->second.specs.size() || withPlayer(charid))
             {
                 continue;
             }

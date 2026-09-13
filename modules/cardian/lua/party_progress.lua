@@ -76,8 +76,11 @@ end
 
 -- The cardians in the player's party, split by whether they are in the
 -- player's zone. Nothing for a cardian's own completion (never mirror a
--- mirror)
-local function partyCardians(player)
+-- mirror). The player's own cardians unless wildToo: a wild cardian
+-- invited along fights beside the player and enters the battlefield with
+-- them, but her log is her own -- no mission, no quest, no reward (ROADMAP
+-- H: you manage nothing about her)
+local function partyCardians(player, wildToo)
     local here, away = {}, {}
     if not player:isPC() or player:isCardian() then
         return here, away
@@ -90,7 +93,7 @@ local function partyCardians(player)
 
     local zone = player:getZoneID()
     for _, member in pairs(party) do
-        if member:isCardian() then
+        if member:isCardian() and (wildToo or player:cardianOwns(member:getName())) then
             if member:getZoneID() == zone then
                 here[#here + 1] = member
             else
@@ -254,7 +257,7 @@ end)
 m:addOverride('Battlefield.onEntryEventUpdate', function(self, player, csid, option, npc)
     local result = super(self, player, csid, option, npc)
     if player:getBattlefield() ~= nil then
-        local here = partyCardians(player)
+        local here = partyCardians(player, true)
         local r    = newReport()
         for _, cardian in ipairs(here) do
             if cardian:getBattlefield() ~= nil then

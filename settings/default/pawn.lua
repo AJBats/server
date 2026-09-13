@@ -73,6 +73,10 @@ xi.settings.pawn =
     RESCUE_RANGE    = 15,
     RESCUE_COOLDOWN = 300,
 
+    -- The party finder lists wild cardians within this many levels of
+    -- the player, in the player's zone or elsewhere in their city
+    FINDER_BAND = 3,
+
     -- Trading with a cardian -- give, take, give and use -- reaches
     -- TRADE_RANGE yalms, in the same zone: no item teleportation.
     TRADE_RANGE = 20,

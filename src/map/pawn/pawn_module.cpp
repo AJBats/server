@@ -21,6 +21,7 @@
 
 #include "cardian_link.h"
 #include "pawn.h"
+#include "party_finder.h"
 #include "seats.h"
 #include "world.h"
 #include "pawn_controller.h"
@@ -489,13 +490,22 @@ class PawnModule : public CPPModule
         };
 
         // Cardian management surface (!cardian command / companion addon).
-        // Every call resolves the named pawn through findManagedPawn, so only
-        // the summoner can inspect or move a cardian's belongings. Mutators
-        // return "" on success, else a reason forwarded to the addon.
+        // Two gates (ROADMAP H: command yes, manage no). managedPair resolves
+        // the named pawn through findManagedPawn: only the summoner inspects
+        // or moves her belongings, edits her gambits or spends her money.
+        // commandPair resolves through findCommandablePawn: summoned or in
+        // the player's party, so a wild cardian invited along takes orders
+        // and shows what /check would show. Mutators return "" on success,
+        // else a reason forwarded to the addon.
         const auto managedPair = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::pair<CCharEntity*, CCharEntity*>
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return { PChar, pawn::findManagedPawn(PChar, name) };
+        };
+        const auto commandPair = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::pair<CCharEntity*, CCharEntity*>
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return { PChar, pawn::findCommandablePawn(PChar, name) };
         };
 
         // The !cardian command's replies, over the Cardian Link when this
@@ -522,18 +532,40 @@ class PawnModule : public CPPModule
             }
             return names;
         };
+        // The roster: every cardian this character commands
         lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
-            auto  names = ::lua.create_table();
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar != nullptr)
+            auto names = ::lua.create_table();
+            for (const auto& name : pawn::commandablePawnNames(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
             {
-                for (const auto& name : pawn::managedPawnNames(PChar->id))
-                {
-                    names.add(name);
-                }
+                names.add(name);
             }
             return names;
+        };
+        // The party finder: who fits and where she is, and the invite
+        lua["CBaseEntity"]["cardianFinder"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto rows = ::lua.create_table();
+            for (const auto& c : pawn::finder::candidates(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
+            {
+                auto row     = ::lua.create_table();
+                row["name"]  = c.name;
+                row["job"]   = c.job;
+                row["level"] = c.level;
+                row["zone"]  = c.zone;
+                row["state"] = c.state;
+                rows.add(row);
+            }
+            return rows;
+        };
+        lua["CBaseEntity"]["cardianInvite"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            return pawn::finder::invite(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
+        };
+        // Hers to manage, or only to command
+        lua["CBaseEntity"]["cardianOwns"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        {
+            return managedPair(PLuaBaseEntity, name).second != nullptr;
         };
 
         lua["CBaseEntity"]["cardianGive"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
@@ -619,9 +651,9 @@ class PawnModule : public CPPModule
             auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
             return PController != nullptr ? &PController->Gambits() : nullptr;
         };
-        lua["CBaseEntity"]["cardianGambits"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianGambits"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             auto* PGambits            = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -730,9 +762,9 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
-        lua["CBaseEntity"]["cardianGambitVocab"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianGambitVocab"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            auto* PPawn = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn = commandPair(PLuaBaseEntity, name).second;
             if (PPawn == nullptr)
             {
                 return sol::lua_nil;
@@ -782,9 +814,9 @@ class PawnModule : public CPPModule
             return pawn::reloadBrain(PPawn) ? "" : "no such cardian";
         };
 
-        lua["CBaseEntity"]["cardianHunt"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        lua["CBaseEntity"]["cardianHunt"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
@@ -844,9 +876,9 @@ class PawnModule : public CPPModule
         };
         // Wait here / follow me. Follow from another zone is a travel order
         // to the player's: she treks the world to meet them
-        lua["CBaseEntity"]["cardianWait"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        lua["CBaseEntity"]["cardianWait"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
@@ -874,9 +906,9 @@ class PawnModule : public CPPModule
             return "";
         };
 
-        lua["CBaseEntity"]["cardianWaiting"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        lua["CBaseEntity"]["cardianWaiting"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
             return PController != nullptr && PController->IsWaiting();
         };
@@ -930,9 +962,9 @@ class PawnModule : public CPPModule
         // every spell and ability still on recast, keyed the way the
         // vocabulary keys them so a command list can label its own rows.
         // Only what is actually waiting is sent; the rest are ready.
-        lua["CBaseEntity"]["cardianRecasts"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianRecasts"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return sol::lua_nil;
@@ -997,9 +1029,9 @@ class PawnModule : public CPPModule
         // Her experience on her main job, and what the next level costs:
         // the character's own screens show it, and there is no upstream
         // getter for either
-        lua["CBaseEntity"]["cardianExp"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianExp"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return sol::lua_nil;
@@ -1022,9 +1054,9 @@ class PawnModule : public CPPModule
 
         // The command window: one action now, on a target index in the
         // zone (0 = herself)
-        lua["CBaseEntity"]["cardianDo"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
+        lua["CBaseEntity"]["cardianDo"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
@@ -1052,9 +1084,9 @@ class PawnModule : public CPPModule
             return err;
         };
 
-        lua["CBaseEntity"]["cardianRescue"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             return PPawn != nullptr ? pawn::rescue(PChar, PPawn) : "no such cardian";
         };
 
@@ -1097,9 +1129,9 @@ class PawnModule : public CPPModule
 
         // Attack/defense for the companion equip screen; upstream exposes no
         // Lua accessor for the computed values
-        lua["CBaseEntity"]["cardianCombatStats"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianCombatStats"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return sol::lua_nil;
@@ -1113,9 +1145,9 @@ class PawnModule : public CPPModule
 
         // The Profile page: what the client's own Profile screen shows --
         // title, nation, race, home point, rank and rank points
-        lua["CBaseEntity"]["cardianProfile"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianProfile"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return sol::lua_nil;
@@ -1134,9 +1166,9 @@ class PawnModule : public CPPModule
             return table;
         };
 
-        lua["CBaseEntity"]["cardianGear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        lua["CBaseEntity"]["cardianGear"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return sol::lua_nil;

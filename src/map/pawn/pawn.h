@@ -291,12 +291,22 @@ namespace pawn
     // The live pawn with this charid, or nullptr.
     auto findPawn(uint32 pawnCharID) -> CCharEntity*;
 
-    // The named live pawn, but only if this character summoned it (the
-    // management surface: gear and inventory belong to the summoner).
-    auto findManagedPawn(const CCharEntity* PSummoner, const std::string& targetName) -> CCharEntity*;
+    // One city: two city zones of one capital's region (the invite rule,
+    // ROADMAP H; the party finder's reach). The same zone is the caller's.
+    auto sameCity(CZone* a, CZone* b) -> bool;
 
-    // Names of every live pawn this character summoned, sorted by name.
-    auto managedPawnNames(uint32 summonerCharID) -> std::vector<std::string>;
+    // Two gates on the management surface (ROADMAP H: command yes, manage
+    // no). Managed: the named live pawn, only if this character summoned
+    // her -- her belongings, her gambits and her money are the summoner's.
+    // Commandable: summoned, or in the player's party -- a wild cardian
+    // invited along takes orders and shows what /check would show, and
+    // nothing else.
+    auto findManagedPawn(const CCharEntity* PSummoner, const std::string& targetName) -> CCharEntity*;
+    auto findCommandablePawn(const CCharEntity* PPlayer, const std::string& targetName) -> CCharEntity*;
+
+    // Names of every live pawn this character commands, sorted by name: the
+    // roster the command window walks.
+    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>;
 
     // Possession support --------------------------------------------------
 

@@ -41,6 +41,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/seats.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/seats.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_finder.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_finder.h
 )
 
 set(MAP_CORE_SOURCES
