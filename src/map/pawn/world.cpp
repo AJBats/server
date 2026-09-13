@@ -10,6 +10,7 @@
 #include "pawn_items.h"
 
 #include "pawn.h"
+#include "seats.h"
 
 #include "common/database.h"
 #include "common/earth_time.h"
@@ -45,7 +46,6 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <magic_enum/magic_enum.hpp>
@@ -209,10 +209,6 @@ namespace
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
 
-    // Bodies waiting to fade in on a zone's rising edge, a few a tick
-    std::unordered_map<uint16, std::deque<uint32>> standQueue;
-    constexpr uint32                                kFadeInPerTick = 3;
-
     auto laneOf(const std::string& name) -> float;
 
     auto isHealer(const uint8 job) -> bool
@@ -279,6 +275,15 @@ namespace
             }
         });
         return count;
+    }
+
+    // A cardian in a real player's party is his until he lets her go: the
+    // world's clocks -- a town seat's dwell, the KO fade -- do not run on
+    // her while she is with him. When he dismisses her they resume where
+    // they stand
+    auto withPlayer(const uint32 charid) -> bool
+    {
+        return pawn::partyPlayer(pawn::findPawn(charid)) != nullptr;
     }
 
     auto isLive(CZone* PZone, const uint32 realHere) -> bool
@@ -1866,13 +1871,12 @@ namespace
                 table.holders[item.slot][item.seat] = item.name;
             }
         }
-        pawn::markPresent(charid, zoneId, item.point);
+        // Presence is the waterfall's to grant (ROADMAP H): she is offered
+        // to the ladder, which writes her session row and stands her when
+        // her index says so. Nothing here puts her online or on her feet
+        pawn::seats::offerWorld(charid, zoneId);
         ShowInfoFmt("world: {} ({} {}) holds slot {} in {}", item.name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, item.slot, PZone->getName());
-        if (wasLive[zoneId])
-        {
-            fadeIn(body);
-        }
-        else if (item.dwell[1] > 0)
+        if (!wasLive[zoneId] && item.dwell[1] > 0)
         {
             // Nobody to see her walk in: she is at her seat already, and the
             // town's clock runs unseen -- she leaves it on time all the same
@@ -1888,11 +1892,19 @@ namespace
     // remembers the face and waits its gap before the next one
     void unseat(Body& body, const std::string_view why)
     {
-        if (body.present)
+        // Out of the waterfall: the ladder takes her body and her row on the
+        // way (fadeBody, markAbsent); the seat is freed here. The ring's
+        // pinned bodies were never in it
+        ShowInfoFmt("world: {} leaves her seat ({})", body.name, why);
+        if (body.pinned)
         {
             fadeOut(body, why);
+            pawn::markAbsent(body.charid);
         }
-        pawn::markAbsent(body.charid);
+        else
+        {
+            pawn::seats::withdraw(body.charid);
+        }
         if (auto tit = zoneSlots.find(body.zone); tit != zoneSlots.end() && body.slot >= 0 && static_cast<size_t>(body.slot) < tit->second.occupants.size())
         {
             auto&      table = tit->second;
@@ -2167,7 +2179,7 @@ namespace
             {
                 gone.push_back(charid);
             }
-            else if (!body.leaving && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))))
+            else if (!body.leaving && !withPlayer(charid) && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))))
             {
                 due.push_back(charid);
             }
@@ -2267,11 +2279,7 @@ namespace
                 ++it;
                 continue;
             }
-            if (body.present)
-            {
-                fadeOut(body, "the zone refills");
-            }
-            pawn::markAbsent(body.charid);
+            pawn::seats::withdraw(body.charid);
             charidByName.erase(body.name);
             it = bodies.erase(it);
             ++cleared;
@@ -2333,13 +2341,24 @@ namespace pawn::world
         body.farming       = false;
         body.downSince.reset();
         charidByName[name] = charid;
-        if (!fadeIn(body))
+        if (pinned)
         {
-            bodies.erase(charid);
-            charidByName.erase(name);
-            return false;
+            // The debug ring stands outside the waterfall: never offered to
+            // the ladder, never faded by it
+            if (!fadeIn(body))
+            {
+                bodies.erase(charid);
+                charidByName.erase(name);
+                return false;
+            }
+            return true;
         }
-        return true;
+        // Offered at the front of her tier and run at once: she stands now
+        // if the caps allow, and stays offered if they do not
+        pawn::seats::offerWorld(charid, body.zone);
+        pawn::seats::touch(charid);
+        pawn::seats::run();
+        return pawn::seats::isStanding(charid);
     }
 
     auto despawnByName(const std::string& rawName) -> uint32
@@ -2349,10 +2368,14 @@ namespace pawn::world
         {
             for (auto& [charid, body] : bodies)
             {
-                if (body.present)
+                faded += body.present ? 1 : 0;
+                if (body.pinned)
                 {
                     fadeOut(body, "told to");
-                    ++faded;
+                }
+                else
+                {
+                    pawn::seats::withdraw(charid);
                 }
             }
             bodies.clear();
@@ -2365,16 +2388,80 @@ namespace pawn::world
         {
             if (const auto bit = bodies.find(it->second); bit != bodies.end())
             {
-                if (bit->second.present)
+                faded += bit->second.present ? 1 : 0;
+                if (bit->second.pinned)
                 {
                     fadeOut(bit->second, "told to");
-                    ++faded;
+                }
+                else
+                {
+                    pawn::seats::withdraw(it->second);
                 }
                 bodies.erase(bit);
             }
             charidByName.erase(it);
         }
         return faded;
+    }
+
+    auto zoneWarm(const uint16 zoneId) -> bool
+    {
+        if (const auto it = wasLive.find(zoneId); it != wasLive.end() && it->second)
+        {
+            return true;
+        }
+        const auto it = lastLive.find(zoneId);
+        return it != lastLive.end() && std::chrono::steady_clock::now() - it->second < std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY"));
+    }
+
+    auto playerIn(const uint16 zoneId) -> bool
+    {
+        const auto it = realPlayersLastTick.find(zoneId);
+        return it != realPlayersLastTick.end() && it->second > 0;
+    }
+
+    bool standBody(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || it->second.present || it->second.leaving)
+        {
+            return false;
+        }
+        return fadeIn(it->second);
+    }
+
+    bool fadeBody(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || !it->second.present)
+        {
+            return false;
+        }
+        fadeOut(it->second, "the ladder's call");
+        return true;
+    }
+
+    void signInBody(const uint32 charid)
+    {
+        if (const auto it = bodies.find(charid); it != bodies.end())
+        {
+            pawn::markPresent(charid, it->second.zone, it->second.point);
+        }
+    }
+
+    bool leaveWorld(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            return false;
+        }
+        // unseat erases the map element, so the name is read first and
+        // nothing touches it afterwards
+        const auto name = it->second.name;
+        unseat(it->second, "recruited");
+        ShowInfoFmt("world: {} is recruited and leaves the world's pool; her seat refills", name);
+        return true;
     }
 
     auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
@@ -2755,12 +2842,29 @@ namespace pawn::world
 
     void onZoneTick(CZone* PZone)
     {
-        if (!isEnabled() || PZone == nullptr)
+        if (PZone == nullptr)
         {
             return;
         }
         const auto zoneId = static_cast<uint16>(PZone->GetID());
         const auto now    = std::chrono::steady_clock::now();
+
+        // Where the players are, for the ladder's lookups (seats.cpp): a
+        // zone is live with a real player in it or next door, and stays warm
+        // WORLD_FADE_DELAY after, so a player popping out to shed aggro and
+        // straight back finds the zone as they left it
+        const uint32 real           = realPlayersIn(PZone);
+        realPlayersLastTick[zoneId] = real;
+        const bool live             = isLive(PZone, real);
+        wasLive[zoneId]             = live;
+        if (live)
+        {
+            lastLive[zoneId] = now;
+        }
+        if (!isEnabled())
+        {
+            return;
+        }
 
         // The slot tables: on a zone's first tick its occupants are chosen
         // and given presence, a couple a tick; their bodies come with a
@@ -2855,11 +2959,9 @@ namespace pawn::world
             }
         }
 
-        const uint32 real           = realPlayersIn(PZone);
-        realPlayersLastTick[zoneId] = real;
-
-        // KO'd: she lies there WORLD_KO_FADE seconds, then fades; the next
-        // fade-in stands her whole (spawnAt)
+        // KO'd: she lies there WORLD_KO_FADE seconds, then the ladder is
+        // told she is down and takes her body; up again, it stands her
+        // whole (spawnAt)
         for (auto& [charid, body] : bodies)
         {
             if (body.zone != zoneId || !body.present)
@@ -2871,7 +2973,7 @@ namespace pawn::world
                 sweepBody(body);
             }
             const auto* PPawn = pawn::findPawn(charid);
-            if (PPawn == nullptr || !PPawn->isDead())
+            if (PPawn == nullptr || !PPawn->isDead() || withPlayer(charid))
             {
                 body.downSince.reset();
                 continue;
@@ -2883,71 +2985,34 @@ namespace pawn::world
             }
             else if (now - *body.downSince >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_FADE")))
             {
-                fadeOut(body, "KO'd");
-                if (body.slot >= 0)
+                if (body.pinned)
+                {
+                    fadeOut(body, "KO'd");
+                }
+                else
+                {
+                    pawn::seats::setDown(charid, true);
+                }
+                if (body.slot >= 0 && !body.returnAt.has_value())
                 {
                     body.returnAt = now + std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_RETURN"));
                 }
             }
         }
-        // A KO'd seat-holder walks back to her seat once the return has
-        // passed, as long as somebody is there to see her
+        // A KO'd seat-holder is up again once the return has passed: the
+        // ladder stands her when someone is there to see her
         for (auto& [charid, body] : bodies)
         {
-            if (body.zone == zoneId && !body.present && body.returnAt.has_value() && now >= *body.returnAt && wasLive[zoneId])
+            if (body.zone == zoneId && !body.present && body.returnAt.has_value() && now >= *body.returnAt)
             {
-                ShowInfoFmt("world: {} is back at her seat after her KO", body.name);
-                fadeIn(body);
+                ShowInfoFmt("world: {} is due back at her seat after her KO", body.name);
+                body.returnAt.reset();
+                pawn::seats::setDown(charid, false);
             }
         }
-        const bool live = isLive(PZone, real);
-        auto&      seen = lastLive.try_emplace(zoneId, now).first->second;
-        if (live)
-        {
-            seen = now;
-        }
-        const bool before = wasLive[zoneId];
-        wasLive[zoneId]   = live;
 
-        // The rising edge queues the zone's bodies and a few stand each
-        // tick: a town of fifty stood in one tick ran past the watchdog
-        if (live && !before)
-        {
-            auto& queue = standQueue[zoneId];
-            for (auto& [charid, body] : bodies)
-            {
-                if (body.zone == zoneId && !body.present)
-                {
-                    queue.push_back(charid);
-                }
-            }
-        }
-        if (live)
-        {
-            auto&  queue = standQueue[zoneId];
-            uint32 stood = 0;
-            while (!queue.empty() && stood < kFadeInPerTick)
-            {
-                const auto charid = queue.front();
-                queue.pop_front();
-                if (const auto it = bodies.find(charid); it != bodies.end() && it->second.zone == zoneId && !it->second.present && !it->second.leaving)
-                {
-                    fadeIn(it->second);
-                    ++stood;
-                }
-            }
-        }
-        else if (now - seen >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY")))
-        {
-            standQueue[zoneId].clear();
-            for (auto& [charid, body] : bodies)
-            {
-                if (body.zone == zoneId && body.present && !body.pinned)
-                {
-                    fadeOut(body, "the zone emptied");
-                }
-            }
-        }
+        // Who stands is the ladder's to say, on its own clock (seats::tick):
+        // a zone that goes cold simply stops being live in its lookups
 
         reportLoad(now);
     }

@@ -880,6 +880,22 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd ok rescue')
         end
+    elseif verb == 'recall' and name then
+        -- A body that faded because her zone was full stands again where
+        -- the game saved her (ROADMAP H); the management page's verb
+        local err = player:cardianRecall(name)
+        if err ~= '' then
+            reply(player, '#cd err recall ' .. err)
+        else
+            reply(player, '#cd ok recall')
+        end
+    elseif verb == 'faded' then
+        local names = player:cardianFaded()
+        if #names == 0 then
+            reply(player, '#cd ok faded')
+        else
+            reply(player, '#cd ok faded ' .. table.concat(names, ','))
+        end
     elseif verb == 'homepoint' and name then
         local err = player:cardianHomePoint(name)
         if err ~= '' then
@@ -951,7 +967,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
     end
 end
 

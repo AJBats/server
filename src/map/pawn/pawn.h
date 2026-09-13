@@ -85,6 +85,21 @@ namespace pawn
     // stays the GM's tool
     auto signInClub(CCharEntity* PPlayer) -> std::string;
 
+    // Recruit and release (ROADMAP H), the debug verbs behind the real
+    // ones: recruiting a cardian is changing her owner -- the same
+    // cardian_pawns row, the world's account for the player's -- and
+    // taking her out of the census pool; releasing her puts both back.
+    // A standing body changes hands on the spot. These skip the linkshell
+    // and the pearl the real recruit verb will charge. "" on success,
+    // else why not
+    auto recruitCardian(CCharEntity* PPlayer, const std::string& targetName) -> std::string;
+    auto releaseCardian(CCharEntity* PPlayer, const std::string& targetName) -> std::string;
+
+    // The ladder's engine for an owned cardian (seats.cpp): stand her where
+    // the game saved her, or beside her player for a summon
+    bool standOwned(uint32 charid, uint32 ownerCharID);
+    bool standBeside(uint32 charid, CCharEntity* PPlayer);
+
     // ...and signs out with her: every pawn under her name despawned where
     // she stands, position saved (charutils, at logout). How many
     auto signOutClub(const CCharEntity* PPlayer) -> uint32;
@@ -138,6 +153,9 @@ namespace pawn
     // row away again.
     void markPresent(uint32 charid, uint16 zoneId, const position_t& point);
     void markAbsent(uint32 charid);
+    // A session row with no body and no position written: the faded step
+    // of the waterfall for an owned cardian, whose saved spot is her own
+    void markOnline(uint32 charid);
 
     // Put a live character on a job at a level, skills capped for it (the
     // code behind !pawnjob and !pawncapskills; implemented in
@@ -262,6 +280,13 @@ namespace pawn
 
     // True when the entity is a live pawn owned by this module.
     bool isPawn(const CCharEntity* PChar);
+
+    // The real player she is in a party with, or nullptr. The one answer to
+    // "whose is she", asked by the invite (which player invited her) and by
+    // the ladder (a party member sorts above every tier). Ownership is not
+    // consulted: a wild cardian invited into the party is as much with the
+    // player as an alt is -- the rule the controller's GetLivePlayer uses
+    auto partyPlayer(const CCharEntity* PPawn) -> CCharEntity*;
 
     // The live pawn with this charid, or nullptr.
     auto findPawn(uint32 pawnCharID) -> CCharEntity*;

@@ -22,6 +22,7 @@
 #include "pawn.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
+#include "seats.h"
 #include "world.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
@@ -423,6 +424,16 @@ namespace
                (b->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
     }
 
+    // The player an invite came from: the real session in her party, which
+    // is how the controller finds her anchor too (CPawnController::
+    // GetLivePlayer), falling back to whoever summoned her. A wild body has
+    // no summoner, so the party is the only answer for her
+    auto invitingPlayer(const CCharEntity* PPawn) -> CCharEntity*
+    {
+        auto* PPlayer = pawn::partyPlayer(PPawn);
+        return PPlayer != nullptr ? PPlayer : zoneutils::GetChar(pawn::summonerOf(PPawn->id));
+    }
+
     // Invited (ROADMAP H): in the player's zone she simply follows; from her
     // own city she runs to them (the wait ends, a travel order to their
     // zone); from anywhere else she holds where she stands until gathered
@@ -430,11 +441,15 @@ namespace
     void gatherOrHold(CCharEntity* PPawn)
     {
         auto*              PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-        const CCharEntity* PSummoner   = zoneutils::GetChar(pawn::summonerOf(PPawn->id));
+        const CCharEntity* PSummoner   = invitingPlayer(PPawn);
         if (PController == nullptr || PSummoner == nullptr || PSummoner->loc.zone == nullptr || PPawn->loc.zone == nullptr)
         {
             return;
         }
+        // The party memory (ROADMAP H): the two of you were in a party, most
+        // recently now. A wild cardian stays wild and the census still owns
+        // her, but she sorts above the crowd from here
+        pawn::seats::notePartied(PSummoner->id, PPawn->id);
         if (PSummoner->loc.zone == PPawn->loc.zone)
         {
             PController->SetWaiting(false, false, "invited");
@@ -669,7 +684,23 @@ namespace pawn
             return false;
         }
 
-        auto PPawn = loadForStand(targetCharID);
+        // Through the ladder (ROADMAP H): offered at the front of her tier
+        // with a summon note, so its next stand of her lands beside the
+        // player rather than where the game saved her, and run at once
+        seats::offerOwned(targetCharID, PSummoner->id, static_cast<uint16>(PSummoner->getZone()));
+        seats::summon(targetCharID, PSummoner->id);
+        seats::touch(targetCharID);
+        seats::run();
+        return seats::isStanding(targetCharID);
+    }
+
+    bool standBeside(const uint32 charid, CCharEntity* PSummoner)
+    {
+        if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
+        {
+            return false;
+        }
+        auto PPawn = loadForStand(charid);
         if (PPawn == nullptr)
         {
             return false;
@@ -723,10 +754,15 @@ namespace pawn
         }
         kitAndTidy(PPawn.get());
 
-        ShowInfoFmt("pawn: spawned {} ({}) in zone {} beside {}", targetName, targetCharID, PSummoner->getZone(), PSummoner->getName());
+        ShowInfoFmt("pawn: {} ({}) stands beside {} in zone {}", PPawn->getName(), charid, PSummoner->getName(), PSummoner->getZone());
 
         registerPawn(std::move(PPawn), PSummoner->id);
         return true;
+    }
+
+    bool standOwned(const uint32 charid, const uint32 ownerCharID)
+    {
+        return !standWhereLeft(charid, ownerCharID).empty();
     }
 
     auto signInClub(CCharEntity* PPlayer) -> std::string
@@ -735,19 +771,45 @@ namespace pawn
         {
             return {};
         }
-        std::vector<std::string> stood;
-        for (const auto& [charid, name] : accountMembers(PPlayer))
+        // Offered to the ladder under her player's name (ROADMAP H) and run
+        // at once: an owned cardian is live wherever she is, so the club
+        // stands through the ladder's ration, a few now and the rest on its
+        // next passes, each where the game saved her (standOwned)
+        const auto members = accountMembers(PPlayer);
+        for (const auto& [charid, name] : members)
         {
-            if (auto label = standWhereLeft(charid, PPlayer->id); !label.empty())
+            uint16 zone = 0;
+            if (const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid); rset && rset->next())
             {
-                stood.push_back(std::move(label));
+                zone = rset->get<uint16>("pos_zone");
             }
+            seats::offerOwned(charid, PPlayer->id, zone);
         }
-        if (stood.empty())
+        if (members.empty())
         {
             return {};
         }
+        seats::run();
+        std::vector<std::string> stood;
+        uint32                   queued = 0;
+        for (const auto& [charid, name] : members)
+        {
+            if (const auto* PPawn = findPawn(charid); PPawn != nullptr && PPawn->loc.zone != nullptr)
+            {
+                std::string zone = PPawn->loc.zone->getName();
+                std::ranges::replace(zone, '_', ' ');
+                stood.push_back(fmt::format("{} ({})", name, zone));
+            }
+            else
+            {
+                ++queued;
+            }
+        }
         auto line = fmt::format("{}", fmt::join(stood, ", "));
+        if (queued > 0)
+        {
+            line += fmt::format("{}{} on the way", line.empty() ? "" : "; ", queued);
+        }
         ShowInfoFmt("pawn: {}'s club signs in: {}", PPlayer->getName(), line);
         return line;
     }
@@ -758,27 +820,108 @@ namespace pawn
         {
             return 0;
         }
-        std::vector<uint32> hers;
-        for (const auto& [charid, PPawn] : pawns)
-        {
-            if (summonerOf(charid) == PPlayer->id)
-            {
-                hers.push_back(charid);
-            }
-        }
-        uint32 count = 0;
-        for (const uint32 charid : hers)
-        {
-            if (despawnById(charid, false))
-            {
-                ++count;
-            }
-        }
+        // Every entry under her name leaves the ladder, standing or faded:
+        // the body goes with its position saved, and the row goes with it
+        const auto count = seats::withdrawOwnedBy(PPlayer->id);
         if (count > 0)
         {
-            ShowInfoFmt("pawn: {}'s club signs out ({} despawned where they stood, positions saved)", PPlayer->getName(), count);
+            ShowInfoFmt("pawn: {}'s club signs out ({} withdrawn where they stood, positions saved)", PPlayer->getName(), count);
         }
         return count;
+    }
+
+    // Who owns this cardian: her cardian_pawns row, the world's account for
+    // one of the world's own. 0 when she is not a cardian at all
+    auto ownerOfCardian(const uint32 charid) -> uint32
+    {
+        const auto rset = db::preparedStmt("SELECT owner_accid FROM cardian_pawns WHERE pawn_charid = ?", charid);
+        return rset && rset->next() ? rset->get<uint32>("owner_accid") : 0;
+    }
+
+    auto recruitCardian(CCharEntity* PPlayer, const std::string& targetName) -> std::string
+    {
+        if (PPlayer == nullptr)
+        {
+            return "nobody is asking";
+        }
+        const uint32 charid = charutils::getCharIdFromName(targetName);
+        const uint32 owner  = charid != 0 ? ownerOfCardian(charid) : 0;
+        if (owner == 0)
+        {
+            return fmt::format("{} is not a cardian", targetName);
+        }
+        const uint32 mine = ownerAccountOf(PPlayer);
+        if (owner == mine)
+        {
+            return fmt::format("{} is already yours", targetName);
+        }
+        if (owner != worldAccountId())
+        {
+            return fmt::format("{} belongs to another account", targetName);
+        }
+        // Recruiting is changing the owner -- the same row, a different
+        // account -- and taking her out of the census's pool so no slot
+        // picks her again (ROADMAP H). The debug verb skips the linkshell
+        // and the pearl the real one will charge
+        db::preparedStmt("UPDATE cardian_pawns SET owner_accid = ? WHERE pawn_charid = ?", mine, charid);
+        db::preparedStmt("UPDATE cardian_census SET recruited = 1 WHERE charid = ?", charid);
+
+        // Out of the world's books if she is in them (her seat refills), then
+        // offered under the player's name at the front of her tier and run:
+        // she stands again where she stood if the caps allow
+        world::leaveWorld(charid);
+        uint16 zone = 0;
+        if (const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid); rset && rset->next())
+        {
+            zone = rset->get<uint16>("pos_zone");
+        }
+        seats::offerOwned(charid, PPlayer->id, zone);
+        seats::touch(charid);
+        seats::run();
+        ShowInfoFmt("pawn: {} recruits {} ({}){}", PPlayer->getName(), targetName, charid,
+                    seats::isStanding(charid) ? ", standing under her name now" : ", offered; she stands when the caps allow");
+        return {};
+    }
+
+    auto releaseCardian(CCharEntity* PPlayer, const std::string& targetName) -> std::string
+    {
+        if (PPlayer == nullptr)
+        {
+            return "nobody is asking";
+        }
+        const uint32 charid = charutils::getCharIdFromName(targetName);
+        const uint32 owner  = charid != 0 ? ownerOfCardian(charid) : 0;
+        if (owner == 0)
+        {
+            return fmt::format("{} is not a cardian", targetName);
+        }
+        if (owner != ownerAccountOf(PPlayer))
+        {
+            return fmt::format("{} is not yours to release", targetName);
+        }
+        db::preparedStmt("UPDATE cardian_pawns SET owner_accid = ? WHERE pawn_charid = ?", worldAccountId(), charid);
+        db::preparedStmt("UPDATE cardian_census SET recruited = 0 WHERE charid = ?", charid);
+
+        // Standing under your name? Handed straight back to the world where
+        // she stands: out of the ladder as yours, offered again as the
+        // world's. She leaves your party with her body
+        CZone*      PZone = nullptr;
+        position_t  at{};
+        std::string name = targetName;
+        if (const auto* PPawn = findPawn(charid); PPawn != nullptr)
+        {
+            PZone = PPawn->loc.zone;
+            at    = PPawn->loc.p;
+            name  = PPawn->getName();
+        }
+        seats::withdraw(charid);
+        if (PZone != nullptr)
+        {
+            world::spawnByName(name, PZone, at, false);
+        }
+        ShowInfoFmt("pawn: {} releases {} ({}) back to the world{}", PPlayer->getName(), name, charid,
+                    PZone != nullptr ? ", where she stood" : "");
+        return {};
     }
 
     void leftParty(const CBattleEntity* PMember, const CParty* PParty)
@@ -838,6 +981,14 @@ namespace pawn
     void markAbsent(const uint32 charid)
     {
         db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ? AND client_addr = 0", charid);
+    }
+
+    void markOnline(const uint32 charid)
+    {
+        db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, 0, 0) "
+                         "ON DUPLICATE KEY UPDATE accid = VALUES(accid), client_addr = 0",
+                         kPawnAccidBase + charid, charid);
+        db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", charid);
     }
 
     bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job)
@@ -1391,7 +1542,13 @@ namespace pawn
 
     bool despawn(const std::string& targetName)
     {
-        return despawnById(charutils::getCharIdFromName(targetName));
+        const uint32 charid = charutils::getCharIdFromName(targetName);
+        if (!seats::has(charid))
+        {
+            return despawnById(charid); // a body outside the waterfall: the debug ring's
+        }
+        seats::withdraw(charid);
+        return true;
     }
 
     bool despawnById(const uint32 targetCharID, const bool keepOnline)
@@ -1480,6 +1637,22 @@ namespace pawn
         {
             pendingTransfers.insert_or_assign(pawnCharID, std::move(hop));
         }
+    }
+
+    auto partyPlayer(const CCharEntity* PPawn) -> CCharEntity*
+    {
+        if (PPawn == nullptr || PPawn->PParty == nullptr)
+        {
+            return nullptr;
+        }
+        for (auto* PMember : PPawn->PParty->members)
+        {
+            if (auto* PChar = dynamic_cast<CCharEntity*>(PMember); PChar != nullptr && PChar->PSession != nullptr)
+            {
+                return PChar;
+            }
+        }
+        return nullptr;
     }
 
     bool isPawn(const CCharEntity* PChar)
@@ -1691,6 +1864,7 @@ namespace pawn
 
         db::preparedStmt("UPDATE accounts_sessions SET targid = ? WHERE charid = ?", PPawn->targid, PPawn->id);
         savePawnPosition(PPawn);
+        seats::moved(PPawn->id, static_cast<uint16>(destZoneId));
 
         ShowInfoFmt("pawn: {} ({}) crossed into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
     }
@@ -1743,6 +1917,7 @@ namespace pawn
         }
 
         world::onZoneTick(PZone);
+        seats::tick();
         world::noteModuleTick(PZone, std::chrono::steady_clock::now() - started, pawnsHere);
     }
 } // namespace pawn

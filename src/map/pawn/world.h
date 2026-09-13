@@ -47,6 +47,22 @@ namespace pawn::world
     // Fade the named body, or every body for "all"; how many faded
     auto despawnByName(const std::string& name) -> uint32;
 
+    // The seat waterfall's side of the world (ROADMAP H, seats.cpp). The
+    // ladder's lookups: a zone is warm with a real player in it or next
+    // door, or within WORLD_FADE_DELAY of one; and a player in the zone
+    // itself. Its engine for one of the world's own: stand her at her seat
+    // (false when she is not the world's, standing, or on her way out),
+    // take her body keeping her row, write her row with no body. And a
+    // recruit: she stops being one of the world's -- her seat is released
+    // and refills, her Body erased -- for the caller to offer under the
+    // player's name
+    auto zoneWarm(uint16 zoneId) -> bool;
+    auto playerIn(uint16 zoneId) -> bool;
+    bool standBody(uint32 charid);
+    bool fadeBody(uint32 charid);
+    void signInBody(uint32 charid);
+    bool leaveWorld(uint32 charid);
+
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued
     auto ring(CZone* PZone, const position_t& centre, uint32 count, bool farming) -> uint32;
@@ -114,8 +130,8 @@ namespace pawn::world
     auto fill(CZone* PZone) -> uint32;
     auto addSlot(CZone* PZone, const std::string& activity, uint8 low, uint8 high, uint8 count, float spread, const position_t& at) -> bool;
 
-    // Once per zone tick: the debug ring, then fade with the zone's real
-    // players
+    // Once per zone tick: where the players are (for the ladder), the slot
+    // tables and the town clock, the debug ring, the KO sweep
     void onZoneTick(CZone* PZone);
 
     // The D0 measurement, on under pawn.WORLD_TICK_DEBUG: the pawn module's

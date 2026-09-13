@@ -21,6 +21,7 @@
 
 #include "cardian_link.h"
 #include "pawn.h"
+#include "seats.h"
 #include "world.h"
 #include "pawn_controller.h"
 #include "gambit_text.h"
@@ -256,6 +257,8 @@ class PawnModule : public CPPModule
     void OnInit() override
     {
         pawn::cleanupStaleRows();
+        // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
+        pawn::seats::init();
 
         // The Cardian-only gambit vocabulary, published once from the C++
         // definitions so the brains cannot drift from the interpreter
@@ -324,14 +327,18 @@ class PawnModule : public CPPModule
         };
 
         // The slot tables (ROADMAP D3): the zone's slots, a refill, a slot authored where you stand
-        lua["CBaseEntity"]["worldSlots"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::vector<std::string>
+        lua["CBaseEntity"]["worldSlots"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            auto  lines = ::lua.create_table();
+            if (PChar != nullptr && PChar->loc.zone != nullptr)
             {
-                return {};
+                for (const auto& line : pawn::world::slots(PChar->loc.zone))
+                {
+                    lines.add(line);
+                }
             }
-            return pawn::world::slots(PChar->loc.zone);
+            return lines;
         };
 
         lua["CBaseEntity"]["worldFill"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
@@ -366,6 +373,54 @@ class PawnModule : public CPPModule
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return PChar != nullptr ? pawn::signInClub(PChar) : std::string{};
+        };
+
+        // Recruit and release (ROADMAP H): the debug verbs behind the real ones
+        lua["CBaseEntity"]["cardianRecruit"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            return pawn::recruitCardian(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
+        };
+
+        lua["CBaseEntity"]["cardianRelease"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            return pawn::releaseCardian(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
+        };
+
+        // The waterfall's caps, live -- standing is server-wide, faded is
+        // per zone. 0 and 0 puts the settings back
+        lua["CBaseEntity"]["worldCap"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 standing, const uint32 faded) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            pawn::seats::setCaps(standing, faded);
+            return pawn::seats::capsLine(PChar != nullptr ? static_cast<uint16>(PChar->getZone()) : 0);
+        };
+
+        lua["CBaseEntity"]["worldCaps"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return pawn::seats::capsLine(PChar != nullptr ? static_cast<uint16>(PChar->getZone()) : 0);
+        };
+
+        // A cardian of yours without a body stands again: to the front of
+        // her tier and a run. Not a managedPair: she has no body to find
+        lua["CBaseEntity"]["cardianRecall"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return PChar != nullptr ? pawn::seats::recall(PChar->id, name) : "nobody is asking";
+        };
+
+        lua["CBaseEntity"]["cardianFaded"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            auto  names = ::lua.create_table();
+            if (PChar != nullptr)
+            {
+                for (const auto& name : pawn::seats::fadedNames(PChar->id))
+                {
+                    names.add(name);
+                }
+            }
+            return names;
         };
 
         lua["CBaseEntity"]["pawnReloadBrain"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool

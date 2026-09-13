@@ -1,10 +1,12 @@
 -----------------------------------
--- func: pawnworld <stand|ring|fade|farm|idle|slots|fill|slot> ...
+-- func: pawnworld <stand|ring|fade|farm|idle|slots|fill|slot|cap|faded> ...
 -- desc: Cardian world (ROADMAP D0-D3) - the developer's hands on the world's
 --       adventurers. Players never need it: a zone fills itself from its
 --       slot table (modules/cardian/world/<Zone>.yaml).
 --         stand <census name>   she stands where you are, minted on first use
---         ring <count>          count of them in a ring round you, a couple a tick, pinned
+--         ring <count>          count of them in a ring round you, a couple a tick, pinned:
+--                               outside the waterfall and its caps (deprecated; the
+--                               ladder never hears of them)
 --         fade <name|all>       fades her, or all of them, out
 --         farm <name|all>       she farms: mobs in her band within reach, else she
 --                               heads for the nearest farther off and fights what she meets
@@ -25,14 +27,14 @@ commandObj.cmdprops =
     parameters = 'sssss',
 }
 
-local usage = 'Usage: !pawnworld <stand|ring|fade|farm|idle|slots|fill> [name|count], or slot <farm|stand> <lo>-<hi> [count] [spread]'
+local usage = 'Usage: !pawnworld <stand|ring|fade|farm|idle|slots|fill|faded> [name|count], cap [standing] [faded], or slot <farm|stand> <lo>-<hi> [count] [spread]'
 
 commandObj.onTrigger = function(player, verb, arg, arg2, arg3, arg4)
     if verb == 'stand' and arg ~= nil and arg ~= '' then
         if player:worldSpawn(arg) then
             player:printToPlayer(string.format('%s stands here.', arg))
         else
-            player:printToPlayer(string.format('Cannot stand %s here (not in the census, already present, or the world is off).', arg))
+            player:printToPlayer(string.format('%s does not stand yet: not in the census, already present, the world is off, or the caps have no room (!pawnworld cap).', arg))
         end
     elseif verb == 'ring' and tonumber(arg) ~= nil and tonumber(arg) >= 1 then
         local n = player:worldRing(math.floor(tonumber(arg)))
@@ -46,6 +48,22 @@ commandObj.onTrigger = function(player, verb, arg, arg2, arg3, arg4)
     elseif verb == 'slots' then
         for _, line in ipairs(player:worldSlots()) do
             player:printToPlayer(line)
+        end
+    elseif verb == 'faded' then
+        -- Your cardians without a body, in chat: the !cardian verb of the
+        -- same name answers the addon, which is silent about it
+        local names = player:cardianFaded()
+        player:printToPlayer(#names == 0 and 'None of yours is faded.' or ('Faded: ' .. table.concat(names, ', ')))
+    elseif verb == 'cap' then
+        -- The seat waterfall's two caps, live (ROADMAP H). Standing is
+        -- server-wide, faded is per zone; no argument reports both plus
+        -- where the standing budget has gone. 0 0 puts the settings back
+        local standing = tonumber(arg) or 0
+        local faded    = tonumber(arg2) or 0
+        if arg == nil then
+            player:printToPlayer(player:worldCaps())
+        else
+            player:printToPlayer(player:worldCap(math.floor(standing), math.floor(faded)))
         end
     elseif verb == 'fill' then
         player:printToPlayer(string.format('%d seat(s) queued; the zone refills a couple a tick.', player:worldFill()))

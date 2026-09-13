@@ -28,6 +28,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_loot.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_module.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_rules.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/seat_ladder.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/possess.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/world.cpp
@@ -38,6 +39,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_spellbook.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_travel.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/seats.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/seats.h
 )
 
 set(MAP_CORE_SOURCES

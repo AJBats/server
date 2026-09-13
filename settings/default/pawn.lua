@@ -330,6 +330,19 @@ xi.settings.pawn =
     WORLD_LIVE_RADIUS = 1,
     WORLD_FADE_DELAY  = 120,
 
+    -- The seat waterfall (ROADMAP H). Two caps, and their SCOPES DIFFER:
+    --   WORLD_STANDING_CAP  SERVER-WIDE. Cardians holding a body: a targid,
+    --                       drawn by the client, costing a map tick. LSB's
+    --                       ~100 concurrent is a whole-server budget.
+    --   WORLD_FADED_CAP     PER ZONE. Cardians online in one zone, standing
+    --                       and faded together: a session row search finds,
+    --                       no body. The number the player reads is per area.
+    -- Neither counts real players. Who stands is one sorted order (seat_ladder.h):
+    -- in a player's party, then alt > owned > partied > crowd, then a player
+    -- in her own zone. !pawnworld cap moves both live; 0 puts a setting back.
+    WORLD_STANDING_CAP = 100,
+    WORLD_FADED_CAP    = 700,
+
     -- The load line, always on: every WORLD_LOAD_REPORT seconds the map
     -- log says how many bodies stand in how many zones, what a body's
     -- tick costs, and the process's CPU and memory. 0 turns it off.
