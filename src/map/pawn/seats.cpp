@@ -34,6 +34,30 @@ namespace
     // A summon: the player to stand her beside, consumed by the next stand
     std::unordered_map<uint32, uint32> summonBeside;
 
+    // An invite on its way to her: for kInviteHold she ranks as a party
+    // member, so the stand the invite needs is not refused for bodies that
+    // outrank her tier -- and, newest, she outranks an older party mate of
+    // her tier when the cap is full of them. Cleared when she joins (the
+    // party carries her from there), when the stand is refused, and when
+    // she leaves the ladder; a declined or lapsed invite runs it out
+    std::unordered_map<uint32, std::chrono::steady_clock::time_point> invited;
+    constexpr auto                                                    kInviteHold = std::chrono::seconds(60);
+
+    auto invitedNow(const uint32 charid) -> bool
+    {
+        const auto it = invited.find(charid);
+        if (it == invited.end())
+        {
+            return false;
+        }
+        if (std::chrono::steady_clock::now() - it->second >= kInviteHold)
+        {
+            invited.erase(it);
+            return false;
+        }
+        return true;
+    }
+
     // Live overrides for the two caps, 0 = the setting (debug: !pawnworld cap)
     uint32 standingOverride = 0;
     uint32 fadedOverride    = 0;
@@ -142,10 +166,11 @@ namespace pawn::seats
                        Lookup{
                            [](const uint16 zone) { return pawn::world::zoneWarm(zone); },
                            [](const uint16 zone) { return pawn::world::playerIn(zone); },
-                           [](const uint32 charid) { return pawn::partyPlayer(pawn::findPawn(charid)) != nullptr; },
+                           [](const uint32 charid) { return invitedNow(charid) || pawn::partyPlayer(pawn::findPawn(charid)) != nullptr; },
                        },
                        Engine{ stand, fade, signIn, signOut });
         summonBeside.clear();
+        invited.clear();
         lastRun = {};
     }
 
@@ -196,6 +221,7 @@ namespace pawn::seats
         if (ladder)
         {
             summonBeside.erase(charid);
+            invited.erase(charid);
             ladder->withdraw(charid);
         }
     }
@@ -228,6 +254,7 @@ namespace pawn::seats
         db::preparedStmt("INSERT INTO cardian_party_memory (player_charid, pawn_charid, last_partied) VALUES (?, ?, NOW()) "
                          "ON DUPLICATE KEY UPDATE last_partied = NOW()",
                          playerCharID, pawnCharID);
+        invited.erase(pawnCharID);
         if (auto facts = factsOf(pawnCharID); facts.has_value())
         {
             if (facts->owner == 0 && facts->tier < Tier::Partied)
@@ -254,7 +281,6 @@ namespace pawn::seats
         {
             return;
         }
-        lastRun = now;
         run();
     }
 
@@ -264,6 +290,7 @@ namespace pawn::seats
         {
             return;
         }
+        lastRun = std::chrono::steady_clock::now();
         ladder->setCaps(standingCap(), fadedCap());
         ladder->run(std::chrono::steady_clock::now());
     }
@@ -335,5 +362,37 @@ namespace pawn::seats
         ladder->touch(charid);
         run();
         return isStanding(charid) ? std::string{} : fmt::format("{} is at the front of her tier, but the caps have no room yet", name);
+    }
+
+    auto nameOf(const uint32 charid) -> std::string
+    {
+        return ::nameOf(charid);
+    }
+
+    bool heldFor(const uint32 charid, const uint32 playerCharID)
+    {
+        const auto facts = factsOf(charid);
+        return facts.has_value() && (facts->owner == 0 || facts->owner == playerCharID);
+    }
+
+    bool inviteStand(const uint32 charid)
+    {
+        if (!has(charid))
+        {
+            return false;
+        }
+        if (isStanding(charid))
+        {
+            return true;
+        }
+        invited[charid] = std::chrono::steady_clock::now();
+        ladder->touch(charid);
+        run();
+        if (!isStanding(charid))
+        {
+            invited.erase(charid);
+            return false;
+        }
+        return true;
     }
 } // namespace pawn::seats

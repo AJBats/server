@@ -32,7 +32,9 @@
 #include "packets/s2c/0x0dc_group_solicit_req.h"
 #include "party.h"
 #include "utils/charutils.h"
+#include "utils/jailutils.h"
 #include "utils/zoneutils.h"
+#include "world.h"
 #include "zone.h"
 
 #include <algorithm>
@@ -70,7 +72,11 @@ namespace pawn::finder
             {
                 return PPawn->PParty != nullptr ? "busy" : (PHere == PPlayer->loc.zone ? "here" : "standing");
             }
-            return pawn::seats::has(charid) ? "faded" : "away";
+            if (!pawn::seats::has(charid))
+            {
+                return "away";
+            }
+            return pawn::world::campLeaderOf(charid) != 0 ? "busy" : "faded";
         }
     } // namespace
 
@@ -132,32 +138,6 @@ namespace pawn::finder
         {
             return "no such player";
         }
-        auto* PPawn = pawn::findPawn(charutils::getCharIdFromName(name));
-        if (PPawn == nullptr)
-        {
-            return "she is not standing anywhere";
-        }
-
-        // The same gate the list applies: an unrecruited census body, in
-        // band, in the player's zone or city
-        const auto rset = db::preparedStmt("SELECT recruited FROM cardian_census WHERE charid = ?", PPawn->id);
-        if (!rset || !rset->next())
-        {
-            return "she is not one of the world's adventurers";
-        }
-        if (rset->get<uint8>("recruited") != 0)
-        {
-            return "she is spoken for";
-        }
-        if (!inReach(PPlayer, PPawn->loc.zone))
-        {
-            return "she is not in your city";
-        }
-        if (!inBand(PPlayer, PPawn->GetMLevel()))
-        {
-            return "she is not of your level";
-        }
-
         if (PPlayer->PParty != nullptr && PPlayer->PParty->GetLeader() != PPlayer)
         {
             return "you are not the party leader";
@@ -166,6 +146,45 @@ namespace pawn::finder
         {
             return "your party is full";
         }
+
+        // The same gate the list applies: an unrecruited census body, in
+        // band, in the player's zone or city. Her zone and level are her
+        // body's when she stands and her rows' when she is faded
+        const uint32 charid = charutils::getCharIdFromName(name);
+        if (charid == 0)
+        {
+            return "she is not one of the world's adventurers";
+        }
+        const auto row = db::preparedStmt("SELECT x.recruited, c.pos_zone, s.mlvl FROM cardian_census x "
+                                          "JOIN chars c ON c.charid = x.charid JOIN char_stats s ON s.charid = x.charid "
+                                          "WHERE x.charid = ?",
+                                          charid);
+        if (!row || !row->next())
+        {
+            return "she is not one of the world's adventurers";
+        }
+        if (row->get<uint8>("recruited") != 0)
+        {
+            return "she is spoken for";
+        }
+        auto* PPawn = pawn::findPawn(charid);
+        if (!inReach(PPlayer, zoneOf(PPawn, row->get<uint16>("pos_zone"))))
+        {
+            return "she is not in your city";
+        }
+        if (!inBand(PPlayer, levelOf(PPawn, row->get<uint8>("mlvl"))))
+        {
+            return "she is not of your level";
+        }
+        if (PPawn == nullptr)
+        {
+            if (const auto* why = standFaded(PPlayer, charid); why != nullptr)
+            {
+                return why;
+            }
+            PPawn = pawn::findPawn(charid);
+        }
+
         if (PPawn->isDead())
         {
             return "she is KO'd";
@@ -184,5 +203,48 @@ namespace pawn::finder
         PPawn->pushPacket<GP_SERV_COMMAND_GROUP_SOLICIT_REQ>(PPawn->id, PPawn->targid, PPlayer->getName(), PartyKind::Party);
         ShowInfoFmt("pawn: {} invites {} from the party finder", PPlayer->getName(), PPawn->getName());
         return "";
+    }
+
+    auto standFaded(const CCharEntity* PPlayer, const uint32 charid) -> const char*
+    {
+        if (PPlayer == nullptr || charid == 0 || pawn::findPawn(charid) != nullptr)
+        {
+            return nullptr;
+        }
+        if (!pawn::seats::heldFor(charid, PPlayer->id))
+        {
+            return "she is away";
+        }
+        if (pawn::world::campLeaderOf(charid) != 0)
+        {
+            return "she is in a party already";
+        }
+        if (!pawn::seats::inviteStand(charid))
+        {
+            ShowInfoFmt("pawn: {} invites {}; she is faded and cannot stand now (nobody near her zone, the cap full of party members, or her stand waits on a retry)",
+                        PPlayer->getName(), pawn::seats::nameOf(charid));
+            return "she cannot stand just now";
+        }
+        const auto* PPawn = pawn::findPawn(charid);
+        ShowInfoFmt("pawn: {} invites {}; she was faded and stands for it", PPlayer->getName(), PPawn != nullptr ? PPawn->getName() : pawn::seats::nameOf(charid));
+        return PPawn != nullptr ? nullptr : "she cannot stand just now";
+    }
+
+    void standForInvite(CCharEntity* PPlayer, const uint32 charid)
+    {
+        if (PPlayer == nullptr || charid == 0 || pawn::findPawn(charid) != nullptr || !pawn::seats::has(charid))
+        {
+            return;
+        }
+        // The handler's own refusals that cost nothing to ask first: a
+        // stand for an invite it will not send is a body for nothing
+        if (jailutils::InPrison(PPlayer) || (PPlayer->PParty != nullptr && (PPlayer->PParty->GetLeader() != PPlayer || PPlayer->PParty->IsFull())))
+        {
+            return;
+        }
+        if (const auto* why = standFaded(PPlayer, charid); why != nullptr && pawn::findPawn(charid) == nullptr)
+        {
+            ShowInfoFmt("pawn: {} invites {} by name; {}, so the game drops the invite", PPlayer->getName(), pawn::seats::nameOf(charid), why);
+        }
     }
 } // namespace pawn::finder

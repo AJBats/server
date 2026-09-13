@@ -43,7 +43,7 @@ namespace pawn::finder
         uint8       job   = 0;
         uint8       level = 0;
         std::string zone;  // the underscore name, as the roster line carries it
-        std::string state; // here (standing in the player's zone), standing (elsewhere in the city), busy (standing, in a party), faded (online, no body), away
+        std::string state; // here (standing in the player's zone), standing (elsewhere in the city), busy (in a party, standing or camping faded), faded (online, no body), away
         int         rank  = 2; // sort order: here 0, standing 1, the rest 2
     };
 
@@ -55,7 +55,27 @@ namespace pawn::finder
     // player's zone or city -- the act does not trust the screen), then
     // the packet handler's checks (a leader or unpartied inviter, room in
     // the party, an invitee alive, unpartied and not already asked), then
-    // the solicit packet the pawn answers by herself. "" on success, else
+    // the solicit packet the pawn answers by herself. A faded candidate
+    // is recalled first: a touch and a run of the ladder, and she stands
+    // where the game saved her, or the caps say no. "" on success, else
     // the reason
     auto invite(CCharEntity* PPlayer, const std::string& name) -> std::string;
+
+    // A faded invitee's stand, shared by the verb and the hook below: the
+    // ladder must hold her as the world's or this player's own, she must
+    // not camp with others (her stand would seat her in their party), and
+    // the ladder must stand her when asked (seats::inviteStand). nullptr
+    // when she stands, else the reason, logged
+    auto standFaded(const CCharEntity* PPlayer, uint32 charid) -> const char*;
+
+    // The game's own invite (/invite, the party menu) typed at a name out
+    // of the player's zone: the client resolves the name to her charid,
+    // and the handler looks her up by it. A faded cardian has no body to
+    // find, so the invite would drop in the cross-zone path unheard. Called
+    // from the module's incoming-packet hook ahead of the handler, for a
+    // party invite only: the handler's own inviter checks first (jail, a
+    // leader with room), then the stand above, and the handler finds her.
+    // Not the list's gate (band, city): a typed invite is the player's
+    // act, and the pawn's answer is hers (H slice 3)
+    void standForInvite(CCharEntity* PPlayer, uint32 charid);
 } // namespace pawn::finder

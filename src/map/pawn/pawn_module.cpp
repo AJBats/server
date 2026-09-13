@@ -37,6 +37,7 @@
 #include "enums/packet_s2c.h"
 #include "item_container.h"
 #include "enums/party_kind.h"
+#include "packets/c2s/0x06e_group_solicit_req.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
 #include "packets/basic.h"
@@ -1190,13 +1191,27 @@ class PawnModule : public CPPModule
 
     // Formation latency instrumentation: when did the client's own position
     // packet last arrive for this character (compared against the link's
-    // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG)
+    // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG).
+    // And the game's own party invite at a name out of the zone (ActIndex
+    // 0, the charid the client resolved): a faded cardian stands for it
+    // before the handler looks her up
     auto OnIncomingPacket(MapSession* PSession, CCharEntity* PChar, CBasicPacket& packet) -> bool override
     {
         std::ignore = PSession;
-        if (PChar != nullptr && packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
+        if (PChar == nullptr)
+        {
+            return false;
+        }
+        if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
         {
             pawn::notePositionPacket(PChar);
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_SOLICIT_REQ))
+        {
+            if (const auto* solicit = packet.as<GP_CLI_COMMAND_GROUP_SOLICIT_REQ>(); solicit->ActIndex == 0 && solicit->Kind == PartyKind::Party)
+            {
+                pawn::finder::standForInvite(PChar, solicit->UniqueNo);
+            }
         }
         return false;
     }

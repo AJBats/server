@@ -79,7 +79,7 @@ namespace pawn::seats
         // looked up on every run
         bool live    = false; // she may hold a body now: not down, no stand of hers waiting on a retry, and a player in her zone or next door -- or she is owned, and her player's wherever she is
         bool near    = false; // a player in her zone itself
-        bool inParty = false; // in a real player's party
+        bool inParty = false; // in a real player's party, or invited into one and not yet answered
 
         // owned by run()
         Step                                  step = Step::Absent;
@@ -93,7 +93,7 @@ namespace pawn::seats
     {
         std::function<bool(uint16 zone)>   playerNear; // a real player in this zone or one next door
         std::function<bool(uint16 zone)>   playerIn;   // a real player in this zone
-        std::function<bool(uint32 charid)> inParty;    // she is in a real player's party
+        std::function<bool(uint32 charid)> inParty;    // she is in a real player's party, or on her way in on an invite
     };
 
     // The four things the ladder can do to a cardian, and the only place
@@ -112,8 +112,12 @@ namespace pawn::seats
     {
     public:
         // The order the user settled 2026-09-12: live first (nobody stands
-        // where no one can see her), then in the party, then tier, then
-        // whether a player is in her own zone, then seq
+        // where no one can see her), then in the party (an invitee counts,
+        // and being the newest she outranks an older party mate of her
+        // tier: with the cap full of party members the oldest fades for
+        // her -- the user's call, 2026-09-13, an edge the shallow dev caps
+        // exist to exercise), then tier, then whether a player is in her
+        // own zone, then seq
         static bool defaultOrder(const Entry& a, const Entry& b)
         {
             return std::tuple(a.live, a.inParty, a.facts.tier, a.near, a.seq) >

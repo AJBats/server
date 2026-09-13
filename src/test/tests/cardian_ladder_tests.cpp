@@ -125,6 +125,38 @@ TEST_CASE("Ladder: a party member outranks every tier", "[cardian][ladder]")
     CHECK_FALSE(rig.stood(1));
 }
 
+TEST_CASE("Ladder: an invitee ranks as a party member, and newest fades the oldest mate", "[cardian][ladder]")
+{
+    // Cap 2: the player's alt and a Partied world body stand; a Crowd body
+    // next door does not. Invited (the adapter reports her as in the
+    // party and touches her), she takes the Partied body's seat. A second
+    // invitee with the cap full of party members takes the oldest mate's:
+    // the user's call, an edge the shallow dev caps are there to exercise
+    Rig rig(2, 10);
+    rig.owned(1, Tier::Alt);
+    rig.owned(2, Tier::Partied, 0);
+    rig.crowd(3, 2);
+    rig.party.insert(1);
+    rig.run();
+    REQUIRE(rig.stood(1));
+    REQUIRE(rig.stood(2));
+    REQUIRE_FALSE(rig.stood(3));
+
+    rig.party.insert(3);
+    rig.ladder.touch(3);
+    CHECK(rig.run() == std::vector<std::string>{ "fade 2", "stand 3" });
+    CHECK(rig.stood(1));
+    CHECK(rig.stood(3));
+
+    rig.crowd(4, 2);
+    rig.party.insert(4);
+    rig.ladder.touch(4);
+    CHECK(rig.run() == std::vector<std::string>{ "fade 3", "stand 4" });
+    CHECK(rig.stood(1));
+    CHECK(rig.stood(4));
+    CHECK_FALSE(rig.stood(3));
+}
+
 TEST_CASE("Ladder: tier outranks proximity", "[cardian][ladder]")
 {
     // an owned cardian next door against a stranger beside the player

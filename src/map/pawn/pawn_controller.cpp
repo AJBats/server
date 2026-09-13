@@ -2116,8 +2116,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // A world body on her own, or leading her camp: nobody to follow. Her
     // walk in on a mob is the shared one, anchored on herself and paced by
     // nothing but her own rest; the rest of her idle is Roam (RoamTick). A
-    // camp member has a leader, and takes the party path below on her
-    if (m_World && GetAnchor() == nullptr)
+    // camp member has a leader, and takes the party path below on her; so
+    // does a body in a real player's party (any party of hers that is not
+    // her camp's -- the member list empties while the player crosses a
+    // zone line, the party does not), whether or not they are in her zone:
+    // invited from another city she holds where she stands until gathered,
+    // and roams for nobody
+    const bool playersParty = static_cast<CCharEntity*>(POwner)->PParty != nullptr && pawn::world::campLeaderOf(POwner->id) == 0;
+    if (m_World && GetAnchor() == nullptr && !playersParty)
     {
         if (m_Approach.has_value() && ApproachTick(POwner->loc.p, POwner->GetMLevel(), std::string(), pawn::world::isFarming(POwner->id), nullptr))
         {
@@ -2152,11 +2158,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         // In the player's party with the player in another zone, she goes to
         // them, unless told to wait. A player out of the world is loading
         // between zones -- their character is gone from every zone and from
-        // the party's list until they land -- and she keeps to the trek
+        // the party's list until they land -- and she keeps to the trek.
+        // Her summoner's trek: a wild body has none, and with her player
+        // gone from her zone she idles where she stands until gathered
+        // (the party-wide channels are H slice 3)
         const auto* PSummoner = zoneutils::GetChar(pawn::summonerOf(POwner->id));
         const auto* PParty    = static_cast<CCharEntity*>(POwner)->PParty;
         const bool  loading   = PSummoner == nullptr || PSummoner->loc.zone == nullptr;
-        if (!m_Waiting && PParty != nullptr && (loading || (PSummoner->PParty == PParty && PSummoner->getZone() != POwner->getZone())))
+        if (!m_Waiting && !m_World && PParty != nullptr && (loading || (PSummoner->PParty == PParty && PSummoner->getZone() != POwner->getZone())))
         {
             if (m_Mode != Mode::Travel)
             {

@@ -61,4 +61,19 @@ namespace pawn::seats
     // why not
     auto fadedNames(uint32 ownerCharID) -> std::vector<std::string>;
     auto recall(uint32 ownerCharID, const std::string& name) -> std::string;
+
+    // An invite's stand, for anyone the ladder holds: for a minute she
+    // ranks as a party member (the invite is on its way to making her
+    // one; newest, she can fade an older party mate of her tier when the
+    // cap is full of them), then a run. Whether she stands when the run
+    // returns; if not, the mark is taken back. No when the ladder does not
+    // hold her, when nobody is near her zone, or when her stand failed and
+    // waits on its retry
+    bool inviteStand(uint32 charid);
+
+    // The ladder holds her and she is the world's or this player's own
+    bool heldFor(uint32 charid, uint32 playerCharID);
+
+    // Her name, by charid (the chars row)
+    auto nameOf(uint32 charid) -> std::string;
 } // namespace pawn::seats
