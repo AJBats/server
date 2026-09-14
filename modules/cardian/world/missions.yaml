@@ -1,0 +1,292 @@
+# The rank-6 fight (the Shadow Lord) is level 50 here: this server caps it at
+# 75, era players fought it at 50 (ROADMAP: cap the fight to 50 on our side).
+# Era story missions (ToAU era, 2007) with the level a player would
+# realistically be when attempting each, so a simulation can place an AI
+# character on a mission by her level.
+#
+# `level`      the level a typical era player attempted it at (a single int)
+# `solo`       the page's solo level, where it gives a party level and a solo one
+# `cap`        the fight's (or, in CoP, the chapter's) era level cap
+# `rank_after` the nation rank granted on completion -- nation logs only, and
+#              only where a mission script actually grants it
+# `guess`      the level is interpolated, not read off a source page
+# `placeholder` the enum id has no mission script of its own (a chapter marker,
+#              a sub-mission handled inside its parent's script, or a log's
+#              completion marker)
+# `requires`   a hard gate to start the log's first mission, read from the scripts
+# `sentinel`   the enum's no-mission value; not a mission, listed so the file
+#              accounts for every id in the enum
+#
+# Authority, in order: the ids and keys are parsed from
+# scripts/globals/missions.lua and must never disagree with it; `rank_after`
+# and `cap` come from the mission and battlefield scripts under scripts/;
+# `level` comes from the FFXI wiki (ffxiclopedia.fandom.com), read per mission
+# page, falling back to the fight's cap and then to interpolation.
+#
+# Levels are non-decreasing within a log: where a page gave a lower level than
+# an earlier mission, the running maximum is used (called out per log below).
+
+logs:
+  # Sources: ffxiclopedia San d'Oria Missions and each mission's own page
+  # (Smash the Orcish Scouts .. The Heir to the Light). Caps and rank grants from
+  # scripts/missions/sandoria/* and scripts/battlefields/{Horlais_Peak,Waughroon_Shrine,
+  # Balgas_Dais,QuBia_Arena,Throne_Room,Ghelsba_Outpost}. The full wiki ladder exists
+  # for this nation, so it is the model the other two nations' gaps are filled from.
+  # Magicite has no wiki level: interpolated between Appointment to Jeuno (40) and the
+  # rank-5 battlefield (cap 50).
+  # The Ruins of Fei'Yin reads 'Uncapped' on the modern page; the era cap is the
+  # rank_5_mission battlefield's 50, so the level is taken from that.
+  sandoria:
+    log_id: 0
+    requires: {}  # no gate beyond San d'Oria allegiance
+    sentinel: {key: NONE, id: 65535}
+    missions:
+      - {key: SMASH_THE_ORCISH_SCOUTS, id: 0, title: "Smash the Orcish Scouts", level: 1}
+      - {key: BAT_HUNT, id: 1, title: "Bat Hunt", level: 8}
+      - {key: SAVE_THE_CHILDREN, id: 2, title: "Save the Children", level: 10, rank_after: 2}
+      - {key: THE_RESCUE_DRILL, id: 3, title: "The Rescue Drill", level: 15}
+      - {key: THE_DAVOI_REPORT, id: 4, title: "The Davoi Report", level: 20, solo: 25}
+      - {key: JOURNEY_ABROAD, id: 5, title: "Journey Abroad", level: 25, rank_after: 3}
+      - {key: JOURNEY_TO_BASTOK, id: 6, title: "Journey to Bastok", level: 25}
+      - {key: JOURNEY_TO_WINDURST, id: 7, title: "Journey to Windurst", level: 25}
+      - {key: JOURNEY_TO_BASTOK2, id: 8, title: "Journey to Bastok (II)", level: 25, cap: 25}
+      - {key: JOURNEY_TO_WINDURST2, id: 9, title: "Journey to Windurst (II)", level: 25, cap: 25}
+      - {key: INFILTRATE_DAVOI, id: 10, title: "Infiltrate Davoi", level: 35}
+      - {key: THE_CRYSTAL_SPRING, id: 11, title: "The Crystal Spring", level: 35}
+      - {key: APPOINTMENT_TO_JEUNO, id: 12, title: "Appointment to Jeuno", level: 40, rank_after: 4}
+      - {key: MAGICITE, id: 13, title: "Magicite", level: 42, rank_after: 5, guess: true}
+      - {key: THE_RUINS_OF_FEI_YIN, id: 14, title: "The Ruins of Fei'Yin", level: 50, cap: 50}
+      - {key: THE_SHADOW_LORD, id: 15, title: "The Shadow Lord", level: 50, cap: 50, rank_after: 6}
+      - {key: LEAUTES_LAST_WISHES, id: 16, title: "Leaute's Last Wishes", level: 60}
+      - {key: RANPERRES_FINAL_REST, id: 17, title: "Ranperre's Final Rest", level: 60, rank_after: 7}
+      - {key: PRESTIGE_OF_THE_PAPSQUE, id: 18, title: "Prestige of the Papsque", level: 60}
+      - {key: THE_SECRET_WEAPON, id: 19, title: "The Secret Weapon", level: 60, cap: 75, rank_after: 8}
+      - {key: COMING_OF_AGE, id: 20, title: "Coming of Age", level: 65}
+      - {key: LIGHTBRINGER, id: 21, title: "Lightbringer", level: 65, rank_after: 9}
+      - {key: BREAKING_BARRIERS, id: 22, title: "Breaking Barriers", level: 65}
+      - {key: THE_HEIR_TO_THE_LIGHT, id: 23, title: "The Heir to the Light", level: 70, cap: 75, rank_after: 10}
+
+  # Sources: ffxiclopedia Bastok Missions and each mission's own page. Missions 1-1
+  # through 2-2 and 3-2, Magicite, Darkness Rising, Xarcabard and Enter the Talekeeper
+  # have no level on the wiki; they take San d'Oria's level for the same rank step.
+  # The Final Image reads '55+' on the wiki, below The Pirate's Cove's '60+' before it:
+  # the running maximum (60) is used.
+  # Where Two Paths Converge reads '70-75'; the low end is used.
+  bastok:
+    log_id: 1
+    requires: {}  # no gate beyond Bastok allegiance
+    sentinel: {key: NONE, id: 65535}
+    missions:
+      - {key: THE_ZERUHN_REPORT, id: 0, title: "The Zeruhn Report", level: 1, guess: true}
+      - {key: GEOLOGICAL_SURVEY, id: 1, title: "A Geological Survey", level: 8, guess: true}
+      - {key: FETICHISM, id: 2, title: "Fetichism", level: 10, rank_after: 2, guess: true}
+      - {key: THE_CRYSTAL_LINE, id: 3, title: "The Crystal Line", level: 15, guess: true}
+      - {key: WADING_BEASTS, id: 4, title: "Wading Beasts", level: 20, guess: true}
+      - {key: THE_EMISSARY, id: 5, title: "The Emissary", level: 25, rank_after: 3}
+      - {key: THE_EMISSARY_SANDORIA, id: 6, title: "The Emissary (San d'Oria)", level: 25}
+      - {key: THE_EMISSARY_WINDURST, id: 7, title: "The Emissary (Windurst)", level: 25}
+      - {key: THE_EMISSARY_SANDORIA2, id: 8, title: "The Emissary (San d'Oria II)", level: 25, cap: 25}
+      - {key: THE_EMISSARY_WINDURST2, id: 9, title: "The Emissary (Windurst II)", level: 25, cap: 25}
+      - {key: THE_FOUR_MUSKETEERS, id: 10, title: "The Four Musketeers", level: 30}
+      - {key: TO_THE_FORSAKEN_MINES, id: 11, title: "To the Forsaken Mines", level: 35, guess: true}
+      - {key: JEUNO, id: 12, title: "Jeuno", level: 40, rank_after: 4}
+      - {key: MAGICITE, id: 13, title: "Magicite", level: 42, rank_after: 5, guess: true}
+      - {key: DARKNESS_RISING, id: 14, title: "Darkness Rising", level: 50, cap: 50}
+      - {key: XARCABARD_LAND_OF_TRUTHS, id: 15, title: "Xarcabard, Land of Truths", level: 50, cap: 50, rank_after: 6}
+      - {key: RETURN_OF_THE_TALEKEEPER, id: 16, title: "Return of the Talekeeper", level: 55}
+      - {key: THE_PIRATES_COVE, id: 17, title: "The Pirate's Cove", level: 60, rank_after: 7}
+      - {key: THE_FINAL_IMAGE, id: 18, title: "The Final Image", level: 60}
+      - {key: ON_MY_WAY, id: 19, title: "On My Way", level: 65, cap: 75, rank_after: 8}
+      - {key: THE_CHAINS_THAT_BIND_US, id: 20, title: "The Chains That Bind Us", level: 70}
+      - {key: ENTER_THE_TALEKEEPER, id: 21, title: "Enter the Talekeeper", level: 70, rank_after: 9, guess: true}
+      - {key: THE_SALT_OF_THE_EARTH, id: 22, title: "The Salt of the Earth", level: 70}
+      - {key: WHERE_TWO_PATHS_CONVERGE, id: 23, title: "Where Two Paths Converge", level: 70, cap: 75, rank_after: 10}
+
+  # Sources: ffxiclopedia Windurst Missions and each mission's own page. Only The Three
+  # Kingdoms (25), A New Journey (40) and The Final Seal ('Uncapped') carry a level there,
+  # so the rest take San d'Oria's level for the same rank step -- the three nation lines
+  # are the same content rank for rank. The Final Seal's era cap is the rank_5_mission
+  # battlefield's 50.
+  windurst:
+    log_id: 2
+    requires: {}  # no gate beyond Windurst allegiance
+    sentinel: {key: NONE, id: 65535}
+    missions:
+      - {key: THE_HORUTOTO_RUINS_EXPERIMENT, id: 0, title: "The Horutoto Ruins Experiment", level: 1, guess: true}
+      - {key: THE_HEART_OF_THE_MATTER, id: 1, title: "The Heart of the Matter", level: 8, guess: true}
+      - {key: THE_PRICE_OF_PEACE, id: 2, title: "The Price of Peace", level: 10, rank_after: 2, guess: true}
+      - {key: LOST_FOR_WORDS, id: 3, title: "Lost for Words", level: 15, guess: true}
+      - {key: A_TESTING_TIME, id: 4, title: "A Testing Time", level: 20, guess: true}
+      - {key: THE_THREE_KINGDOMS, id: 5, title: "The Three Kingdoms", level: 25, rank_after: 3}
+      - {key: THE_THREE_KINGDOMS_SANDORIA, id: 6, title: "The Three Kingdoms (San d'Oria)", level: 25}
+      - {key: THE_THREE_KINGDOMS_BASTOK, id: 7, title: "The Three Kingdoms (Bastok)", level: 25}
+      - {key: THE_THREE_KINGDOMS_SANDORIA2, id: 8, title: "The Three Kingdoms (San d'Oria II)", level: 25, cap: 25}
+      - {key: THE_THREE_KINGDOMS_BASTOK2, id: 9, title: "The Three Kingdoms (Bastok II)", level: 25, cap: 25}
+      - {key: TO_EACH_HIS_OWN_RIGHT, id: 10, title: "To Each His Own Right", level: 30, guess: true}
+      - {key: WRITTEN_IN_THE_STARS, id: 11, title: "Written in the Stars", level: 35, guess: true}
+      - {key: A_NEW_JOURNEY, id: 12, title: "A New Journey", level: 40, rank_after: 4}
+      - {key: MAGICITE, id: 13, title: "Magicite", level: 42, rank_after: 5, guess: true}
+      - {key: THE_FINAL_SEAL, id: 14, title: "The Final Seal", level: 50, cap: 50}
+      - {key: THE_SHADOW_AWAITS, id: 15, title: "The Shadow Awaits", level: 50, cap: 50, rank_after: 6}
+      - {key: FULL_MOON_FOUNTAIN, id: 16, title: "Full Moon Fountain", level: 60, guess: true}
+      - {key: SAINTLY_INVITATION, id: 17, title: "Saintly Invitation", level: 60, cap: 75, rank_after: 7}
+      - {key: THE_SIXTH_MINISTRY, id: 18, title: "The Sixth Ministry", level: 60, guess: true}
+      - {key: AWAKENING_OF_THE_GODS, id: 19, title: "Awakening of the Gods", level: 60, rank_after: 8, guess: true}
+      - {key: VAIN, id: 20, title: "Vain", level: 65, guess: true}
+      - {key: THE_JESTER_WHOD_BE_KING, id: 21, title: "The Jester Who'd be King", level: 65, rank_after: 9, guess: true}
+      - {key: DOLL_OF_THE_DEAD, id: 22, title: "Doll of the Dead", level: 65, guess: true}
+      - {key: MOON_READING, id: 23, title: "Moon Reading", level: 70, cap: 75, rank_after: 10}
+
+  # Sources: ffxiclopedia Rise of the Zilart Missions and each mission's own page
+  # (The Temple of Uggalepih 60+, Headstone Pilgrimage 60+, Through the Quicksand Caves
+  # 65+, Return to Delkfutt's Tower 65+, Ark Angels 70+). The rest are interpolated
+  # between those, from rank 6 (~50, straight out of the nation's 5-2) up to 75 at
+  # the finale. Caps from scripts/battlefields/{Sacrificial_Chamber,Chamber_of_Oracles,
+  # Stellar_Fulcrum,LaLoff_Amphitheater,The_Celestial_Nexus}.
+  zilart:
+    log_id: 3
+    requires: {rank: 6}  # rotz/01_The_New_Frontier.lua: getRank(nation) >= 6
+    sentinel: {key: NONE, id: 65535}
+    missions:
+      - {key: THE_NEW_FRONTIER, id: 0, title: "The New Frontier", level: 50, guess: true}
+      - {key: WELCOME_TNORG, id: 4, title: "Welcome t'Norg", level: 50, guess: true}
+      - {key: KAZHAMS_CHIEFTAINESS, id: 6, title: "Kazham's Chieftainess", level: 55, guess: true}
+      - {key: THE_TEMPLE_OF_UGGALEPIH, id: 8, title: "The Temple of Uggalepih", level: 60, cap: 75}
+      - {key: HEADSTONE_PILGRIMAGE, id: 10, title: "Headstone Pilgrimage", level: 60}
+      - {key: THROUGH_THE_QUICKSAND_CAVES, id: 12, title: "Through the Quicksand Caves", level: 65, cap: 75}
+      - {key: THE_CHAMBER_OF_ORACLES, id: 14, title: "The Chamber of Oracles", level: 65, guess: true}
+      - {key: RETURN_TO_DELKFUTTS_TOWER, id: 16, title: "Return to Delkfutt's Tower", level: 65, cap: 75}
+      - {key: ROMAEVE, id: 18, title: "Ro'Maeve", level: 65, guess: true}
+      - {key: THE_TEMPLE_OF_DESOLATION, id: 20, title: "The Temple of Desolation", level: 65, guess: true}
+      - {key: THE_HALL_OF_THE_GODS, id: 22, title: "The Hall of the Gods", level: 65, guess: true}
+      - {key: THE_MITHRA_AND_THE_CRYSTAL, id: 23, title: "The Mithra and the Crystal", level: 70, guess: true}
+      - {key: THE_GATE_OF_THE_GODS, id: 24, title: "The Gate of the Gods", level: 70, guess: true}
+      - {key: ARK_ANGELS, id: 26, title: "Ark Angels", level: 70, cap: 75}
+      - {key: THE_SEALED_SHRINE, id: 27, title: "The Sealed Shrine", level: 70, guess: true}
+      - {key: THE_CELESTIAL_NEXUS, id: 28, title: "The Celestial Nexus", level: 70, cap: 75}
+      - {key: AWAKENING, id: 30, title: "Awakening", level: 75, guess: true}
+      - {key: THE_LAST_VERSE, id: 31, title: "The Last Verse", level: 75, guess: true, placeholder: true}
+
+  # Sources: ffxiclopedia Chains of Promathia Missions and each mission's own page;
+  # the modern pages are written for the uncapped game, so the era chapter caps decide
+  # the levels here. In era every chapter was level capped and the fights were done AT
+  # the cap: Promyvion 30, the Tavnazia/Riverne chapters 40, Sacrarium/Vahzl 50, Three
+  # Paths 60, and the last chapters uncapped (75).
+  # Caps read off scripts/battlefields: ancient_flames_beckon 30, ancient_vows 40,
+  # darkness_named 40, savage 50, desires_of_emptiness 50, century_of_hardship 60
+  # (Three Paths; head_wind is 50 and flames_for_the_dead uncapped), one_to_be_feared,
+  # warriors_path, when_angels_fall and dawn 75. Missions in the uncapped stretch take
+  # the last cap as a floor until a battlefield cap raises it.
+  # The Road Forks' page gives only a solo level ('70+ to solo'), recorded as `solo`.
+  # CoP grants no nation rank, so no rank_after anywhere in this log.
+  cop:
+    log_id: 6
+    requires: {}  # cop/1_1: settings ENABLE_COP only, then zone into Lower Delkfutt's
+    missions:
+      - {key: ANCIENT_FLAMES_BECKON, id: 101, title: "Ancient Flames Beckon (chapter 1)", level: 30, cap: 30, guess: true, placeholder: true}
+      - {key: THE_RITES_OF_LIFE, id: 110, title: "The Rites of Life", level: 30, cap: 30}
+      - {key: BELOW_THE_ARKS, id: 118, title: "Below the Arks", level: 30, cap: 30}
+      - {key: THE_MOTHERCRYSTALS, id: 128, title: "The Mothercrystals", level: 30, cap: 30}
+      - {key: AN_INVITATION_WEST, id: 138, title: "An Invitation West", level: 40, cap: 40}
+      - {key: THE_LOST_CITY, id: 218, title: "The Lost City", level: 40, cap: 40}
+      - {key: DISTANT_BELIEFS, id: 228, title: "Distant Beliefs", level: 40, cap: 40}
+      - {key: AN_ETERNAL_MELODY, id: 238, title: "An Eternal Melody", level: 40, cap: 40}
+      - {key: ANCIENT_VOWS, id: 248, title: "Ancient Vows", level: 40, cap: 40}
+      - {key: A_TRANSIENT_DREAM, id: 257, title: "A Transient Dream (chapter 3)", level: 40, cap: 40, guess: true, placeholder: true}
+      - {key: THE_CALL_OF_THE_WYRMKING, id: 258, title: "The Call of the Wyrmking", level: 40, cap: 40}
+      - {key: A_VESSEL_WITHOUT_A_CAPTAIN, id: 318, title: "A Vessel Without a Captain", level: 40, cap: 40}
+      - {key: THE_ROAD_FORKS, id: 325, title: "The Road Forks", level: 40, solo: 70, cap: 40}
+      - {key: DESCENDANTS_OF_A_LINE_LOST, id: 335, title: "Descendants of a Line Lost", level: 40, cap: 40, guess: true, placeholder: true}
+      - {key: COMEDY_OF_ERRORS_ACT_I, id: 341, title: "Comedy of Errors, Act I", level: 40, cap: 40, guess: true, placeholder: true}
+      - {key: TENDING_AGED_WOUNDS, id: 350, title: "Tending Aged Wounds", level: 40, cap: 40}
+      - {key: DARKNESS_NAMED, id: 358, title: "Darkness Named", level: 40, cap: 40}
+      - {key: SHELTERING_DOUBT, id: 368, title: "Sheltering Doubt", level: 50, cap: 50}
+      - {key: THE_SAVAGE, id: 418, title: "The Savage", level: 50, cap: 50}
+      - {key: THE_SECRETS_OF_WORSHIP, id: 428, title: "The Secrets of Worship", level: 50, cap: 50}
+      - {key: SLANDEROUS_UTTERINGS, id: 438, title: "Slanderous Utterings", level: 50, cap: 50}
+      - {key: THE_ENDURING_TUMULT_OF_WAR, id: 448, title: "The Enduring Tumult of War", level: 50, cap: 50}
+      - {key: DESIRES_OF_EMPTINESS, id: 518, title: "Desires of Emptiness", level: 50, cap: 50}
+      - {key: THREE_PATHS, id: 530, title: "Three Paths", level: 60, cap: 60}
+      - {key: PARTNERS_WITHOUT_FAME, id: 543, title: "Partners Without Fame (Louverance's Path)", level: 60, cap: 60, guess: true, placeholder: true}
+      - {key: SPIRAL, id: 552, title: "Spiral (Tenzen's Path)", level: 60, cap: 60, guess: true, placeholder: true}
+      - {key: WHERE_MESSENGERS_GATHER, id: 560, title: "Where Messengers Gather (Ulmia's Path)", level: 60, cap: 60, guess: true, placeholder: true}
+      - {key: FLAMES_FOR_THE_DEAD, id: 568, title: "Flames for the Dead (Ulmia's Path)", level: 60, guess: true, placeholder: true}
+      - {key: FOR_WHOM_THE_VERSE_IS_SUNG, id: 578, title: "For Whom the Verse is Sung", level: 60, guess: true}
+      - {key: A_PLACE_TO_RETURN, id: 618, title: "A Place to Return", level: 60, guess: true}
+      - {key: MORE_QUESTIONS_THAN_ANSWERS, id: 628, title: "More Questions Than Answers", level: 60, guess: true}
+      - {key: ONE_TO_BE_FEARED, id: 638, title: "One to be Feared", level: 75, cap: 75}
+      - {key: CHAINS_AND_BONDS, id: 648, title: "Chains and Bonds", level: 75, guess: true}
+      - {key: FLAMES_IN_THE_DARKNESS, id: 718, title: "Flames in the Darkness", level: 75, guess: true}
+      - {key: FIRE_IN_THE_EYES_OF_MEN, id: 728, title: "Fire in the Eyes of Men", level: 75, guess: true}
+      - {key: CALM_BEFORE_THE_STORM, id: 738, title: "Calm Before the Storm", level: 75, guess: true}
+      - {key: THE_WARRIORS_PATH, id: 748, title: "The Warrior's Path", level: 75, cap: 75}
+      - {key: EMPTINESS_BLEEDS, id: 758, title: "Emptiness Bleeds (chapter 8)", level: 75, guess: true, placeholder: true}
+      - {key: GARDEN_OF_ANTIQUITY, id: 800, title: "The Garden of Antiquity", level: 75, guess: true}
+      - {key: A_FATE_DECIDED, id: 818, title: "A Fate Decided", level: 75, guess: true}
+      - {key: WHEN_ANGELS_FALL, id: 828, title: "When Angels Fall", level: 75, cap: 75}
+      - {key: DAWN, id: 840, title: "Dawn", level: 75, cap: 75}
+      - {key: THE_LAST_VERSE, id: 850, title: "The Last Verse", level: 75, guess: true, placeholder: true}
+
+  # Sources: ffxiclopedia Treasures of Aht Urhgan Missions and each mission's own page
+  # (Undersea Scouting, Astral Waves, Royal Puppeteer, The Dolphin Crest, Ghosts of the
+  # Past, Guests of the Empire, Passing Glory 50+; Lost Kingdom, The Black Coffin,
+  # Puppet in Peril 70+; Shades of Vengeance 65+; Light of Judgment 75).
+  # Missions 1-8 carry no usable level: the expansion's content starts around 30 and
+  # they are Whitegate cutscenes and errands, so 30 is used.
+  # Immortal Sentries' page says 'Level: 75, or have Sneak / Invis' -- a travel-safety
+  # note, not a difficulty level; it is not used.
+  # From Lost Kingdom (70+) on, the later 50+/65+ pages fall below the running maximum,
+  # so those missions read 70. Every ToAU battlefield in the scripts is uncapped (99),
+  # so no `cap` is recorded for this log.
+  toau:
+    log_id: 4
+    requires: {key_item: BOARDING_PERMIT}  # toau/01: hasKeyItem(BOARDING_PERMIT), from the quest The Road to Aht Urhgan, which itself has no level requirement
+    missions:
+      - {key: LAND_OF_SACRED_SERPENTS, id: 0, title: "Land of Sacred Serpents", level: 30, guess: true}
+      - {key: IMMORTAL_SENTRIES, id: 1, title: "Immortal Sentries", level: 30, guess: true}
+      - {key: PRESIDENT_SALAHEEM, id: 2, title: "President Salaheem", level: 30, guess: true}
+      - {key: KNIGHT_OF_GOLD, id: 3, title: "Knight of Gold", level: 30, guess: true}
+      - {key: CONFESSIONS_OF_ROYALTY, id: 4, title: "Confessions of Royalty", level: 30, guess: true}
+      - {key: EASTERLY_WINDS, id: 5, title: "Easterly Winds", level: 30, guess: true}
+      - {key: WESTERLY_WINDS, id: 6, title: "Westerly Winds", level: 30, guess: true}
+      - {key: A_MERCENARY_LIFE, id: 7, title: "A Mercenary Life", level: 30, guess: true}
+      - {key: UNDERSEA_SCOUTING, id: 8, title: "Undersea Scouting", level: 50}
+      - {key: ASTRAL_WAVES, id: 9, title: "Astral Waves", level: 50}
+      - {key: IMPERIAL_SCHEMES, id: 10, title: "Imperial Schemes", level: 50, guess: true}
+      - {key: ROYAL_PUPPETEER, id: 11, title: "Royal Puppeteer", level: 50}
+      - {key: LOST_KINGDOM, id: 12, title: "Lost Kingdom", level: 70}
+      - {key: THE_DOLPHIN_CREST, id: 13, title: "The Dolphin Crest", level: 70}
+      - {key: THE_BLACK_COFFIN, id: 14, title: "The Black Coffin", level: 70}
+      - {key: GHOSTS_OF_THE_PAST, id: 15, title: "Ghosts of the Past", level: 70}
+      - {key: GUESTS_OF_THE_EMPIRE, id: 16, title: "Guests of the Empire", level: 70}
+      - {key: PASSING_GLORY, id: 17, title: "Passing Glory", level: 70}
+      - {key: SWEETS_FOR_THE_SOUL, id: 18, title: "Sweets for the Soul", level: 70, guess: true}
+      - {key: TEAHOUSE_TUMULT, id: 19, title: "Teahouse Tumult", level: 70, guess: true}
+      - {key: FINDERS_KEEPERS, id: 20, title: "Finders Keepers", level: 70, guess: true}
+      - {key: SHIELD_OF_DIPLOMACY, id: 21, title: "Shield of Diplomacy", level: 70, guess: true}
+      - {key: SOCIAL_GRACES, id: 22, title: "Social Graces", level: 70, guess: true}
+      - {key: FOILED_AMBITION, id: 23, title: "Foiled Ambition", level: 70, guess: true}
+      - {key: PLAYING_THE_PART, id: 24, title: "Playing the Part", level: 70, guess: true}
+      - {key: SEAL_OF_THE_SERPENT, id: 25, title: "Seal of the Serpent", level: 70, guess: true}
+      - {key: MISPLACED_NOBILITY, id: 26, title: "Misplaced Nobility", level: 70, guess: true}
+      - {key: BASTION_OF_KNOWLEDGE, id: 27, title: "Bastion of Knowledge", level: 70, guess: true}
+      - {key: PUPPET_IN_PERIL, id: 28, title: "Puppet in Peril", level: 70}
+      - {key: PREVALENCE_OF_PIRATES, id: 29, title: "Prevalence of Pirates", level: 70, guess: true}
+      - {key: SHADES_OF_VENGEANCE, id: 30, title: "Shades of Vengeance", level: 70}
+      - {key: IN_THE_BLOOD, id: 31, title: "In the Blood", level: 70, guess: true}
+      - {key: SENTINELS_HONOR, id: 32, title: "Sentinels' Honor", level: 70, guess: true}
+      - {key: TESTING_THE_WATERS, id: 33, title: "Testing the Waters", level: 70, guess: true}
+      - {key: LEGACY_OF_THE_LOST, id: 34, title: "Legacy of the Lost", level: 70, guess: true}
+      - {key: GAZE_OF_THE_SABOTEUR, id: 35, title: "Gaze of the Saboteur", level: 70, guess: true}
+      - {key: PATH_OF_BLOOD, id: 36, title: "Path of Blood", level: 70, guess: true}
+      - {key: STIRRINGS_OF_WAR, id: 37, title: "Stirrings of War", level: 70, guess: true}
+      - {key: ALLIED_RUMBLINGS, id: 38, title: "Allied Rumblings", level: 70, guess: true}
+      - {key: UNRAVELING_REASON, id: 39, title: "Unraveling Reason", level: 70, guess: true}
+      - {key: LIGHT_OF_JUDGMENT, id: 40, title: "Light of Judgment", level: 75}
+      - {key: PATH_OF_DARKNESS, id: 41, title: "Path of Darkness", level: 75, guess: true}
+      - {key: FANGS_OF_THE_LION, id: 42, title: "Fangs of the Lion", level: 75, guess: true}
+      - {key: NASHMEIRAS_PLEA, id: 43, title: "Nashmeira's Plea", level: 75, guess: true}
+      - {key: RAGNAROK, id: 44, title: "Ragnarok", level: 75, guess: true}
+      - {key: IMPERIAL_CORONATION, id: 45, title: "Imperial Coronation", level: 75, guess: true}
+      - {key: THE_EMPRESS_CROWNED, id: 46, title: "The Empress Crowned", level: 75, guess: true}
+      - {key: ETERNAL_MERCENARY, id: 47, title: "Eternal Mercenary", level: 75, guess: true}

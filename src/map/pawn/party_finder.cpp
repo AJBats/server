@@ -32,6 +32,7 @@
 #include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "enums/chat_message_type.h"
+#include "enums/mission_log.h"
 #include "enums/msg_std.h"
 #include "enums/party_kind.h"
 #include "lua/lua_base_entity.h"
@@ -48,6 +49,7 @@
 #include <algorithm>
 #include <chrono>
 #include <initializer_list>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -55,6 +57,15 @@ namespace pawn::finder
 {
     namespace
     {
+        // The game's own value for a log with no mission on it (CCharEntity's
+        // constructor; the census tool writes the same): the nation logs and
+        // Zilart 0xFFFF, Aht Urhgan and Wings 0, Promathia its chapter-1
+        // marker 101
+        auto noMission(const uint8 log) -> uint16
+        {
+            return log <= 3 ? 0xFFFF : log == static_cast<uint8>(MissionLog::CoP) ? 101 : 0;
+        }
+
         // Her rows, joined once: the census, her character, and the party
         // memory between her and this player
         struct Facts
@@ -69,9 +80,12 @@ namespace pawn::finder
             uint8       rank[3]  = { 1, 1, 1 };
             bool        partied  = false;
             uint32      affinity = 0;
+            // Her mission log as the census placed it (chars.missions); a
+            // nation log with nothing on it reads 0xFFFF, the game's own "none"
+            missionlog_t missions[MAX_MISSIONAREA]{};
         };
 
-        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, s.mjob, s.mlvl, x.seed, x.nation, "
+        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, c.missions, s.mjob, s.mlvl, x.seed, x.nation, "
                                      "p.rank_sandoria, p.rank_bastok, p.rank_windurst, "
                                      "CAST(m.last_partied IS NOT NULL AS UNSIGNED) AS partied, "
                                      "CAST(COALESCE(m.affinity, 0) AS UNSIGNED) AS affinity "
@@ -97,6 +111,14 @@ namespace pawn::finder
             f.rank[2]  = rset->template get<uint8>("rank_windurst");
             f.partied  = rset->template get<uint32>("partied") != 0;
             f.affinity = rset->template get<uint32>("affinity");
+            for (uint8 log = 0; log < MAX_MISSIONAREA; ++log)
+            {
+                f.missions[log].current = noMission(log);
+            }
+            if (!rset->isNull("missions"))
+            {
+                db::extractFromBlob(rset, "missions", f.missions);
+            }
             return f;
         }
 
@@ -177,28 +199,61 @@ namespace pawn::finder
             return fame;
         }
 
+        // Where her log stands against the mission the player is on in that
+        // log (the goal): done (a nation log's completion flag; Promathia's
+        // "every id below current"), on it, free to take it (the one before
+        // done, or the log's first), or behind. A standing body's log is
+        // hers in memory; a faded one's is her row's
+        auto missionFitOf(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal) -> MissionFit
+        {
+            if (goal.log >= MAX_MISSIONAREA)
+            {
+                return MissionFit::Free;
+            }
+            const auto&  hers   = PPawn != nullptr ? PPawn->m_missionLog[goal.log] : f.missions[goal.log];
+            const uint16 wanted = PPlayer->m_missionLog[goal.log].current;
+            const uint16 none   = noMission(goal.log);
+            if (wanted == none)
+            {
+                return MissionFit::Free;
+            }
+            // Complete as the game reads it (CLuaBaseEntity::hasCompletedMission):
+            // Promathia and ids past the flags by "below her current", the rest by flag
+            const bool cop  = goal.log == static_cast<uint8>(MissionLog::CoP);
+            const auto done = [&](const uint16 id) { return (cop || id >= 64) ? id < hers.current : hers.complete[id]; };
+            if (done(wanted))
+            {
+                return MissionFit::Done;
+            }
+            if (hers.current != none && hers.current == wanted)
+            {
+                return MissionFit::On;
+            }
+            return wanted == 0 || done(wanted - 1) ? MissionFit::Free : MissionFit::Behind;
+        }
+
         // What stops her whatever her mood: a party, a fight, a camp, the
         // level band, a mission she has not reached. nullopt when nothing does
-        auto hardNo(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal) -> std::optional<Answer>
+        auto hardNo(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const MissionFit fit) -> std::optional<Answer>
         {
             if (PPawn != nullptr)
             {
                 if (PPawn->PParty != nullptr)
                 {
-                    return Answer{ false, false, "I'm with a party already." };
+                    return Answer{ false, fit, "I'm with a party already." };
                 }
                 if (PPawn->PAI != nullptr && PPawn->PAI->IsEngaged())
                 {
-                    return Answer{ false, false, "I'm in the middle of something!" };
+                    return Answer{ false, fit, "I'm in the middle of something!" };
                 }
             }
             else if (!pawn::seats::has(f.charid))
             {
-                return Answer{ false, false, "She's nowhere to be found." };
+                return Answer{ false, fit, "She's nowhere to be found." };
             }
             else if (pawn::world::campLeaderOf(f.charid) != 0)
             {
-                return Answer{ false, false, "I'm out camping with friends." };
+                return Answer{ false, fit, "I'm out camping with friends." };
             }
 
             const int band  = settings::get<uint8>("pawn.FINDER_BAND");
@@ -206,19 +261,15 @@ namespace pawn::finder
             const int level = levelOf(PPawn, f.level);
             if (level < mine - band)
             {
-                return Answer{ false, false, pick(f.seed, { "I'd only slow you down.", "I'm not ready for what you're doing." }) };
+                return Answer{ false, fit, pick(f.seed, { "I'd only slow you down.", "I'm not ready for what you're doing." }) };
             }
             if (level > mine + band)
             {
-                return Answer{ false, false, pick(f.seed, { "Come back when you've grown a little.", "You'd be a liability out there." }) };
+                return Answer{ false, fit, pick(f.seed, { "Come back when you've grown a little.", "You'd be a liability out there." }) };
             }
-            if (goal.kind == Goal::Kind::Mission && goal.log <= 2)
+            if (fit == MissionFit::Behind)
             {
-                const uint8 hers = PPawn != nullptr ? PPawn->profile.rank[goal.log] : f.rank[goal.log];
-                if (hers < PPlayer->profile.rank[goal.log])
-                {
-                    return Answer{ false, true, pick(f.seed, { "I'd like to help, but I'm not on that mission yet!", "I haven't gotten that far. Sorry!" }) };
-                }
+                return Answer{ false, fit, pick(f.seed, { "I'd like to help, but I'm not on that mission yet!", "I haven't gotten that far. Sorry!" }) };
             }
             return std::nullopt;
         }
@@ -227,61 +278,70 @@ namespace pawn::finder
         // hers), who you are to her (partied before, affinity), against her
         // seeded threshold; a quest asks more of it than exp, a mission more
         // still; `mood` is a shout's roll on it
-        auto softAnswer(const CCharEntity* PPlayer, const Facts& f, const Goal& goal, const Fame& fame, const int mood) -> Answer
+        auto softAnswer(const CCharEntity* PPlayer, const Facts& f, const Goal& goal, const Fame& fame, const int mood, const MissionFit fit) -> Answer
         {
             const uint8 level     = fame.byNation[f.nation];
             const int   rankDiff  = static_cast<int>(PPlayer->profile.rank[f.nation]) - static_cast<int>(f.rank[f.nation]);
-            const int   score     = 30 + mood + level * 5 + std::clamp(rankDiff * 5, -10, 15) + (f.partied ? 15 : 0) + static_cast<int>(std::min<uint32>(f.affinity, 6)) * 5;
+            const int   onIt      = fit == MissionFit::On ? 25 : fit == MissionFit::Done ? 5 : 0;
+            const int   score     = 30 + mood + level * 5 + std::clamp(rankDiff * 5, -10, 15) + (f.partied ? 15 : 0) + static_cast<int>(std::min<uint32>(f.affinity, 6)) * 5 + onIt;
             const int   asking    = goal.kind == Goal::Kind::Mission ? 20 : goal.kind == Goal::Kind::Quest ? 10 : 0;
             const int   threshold = 25 + asking + static_cast<int>(f.seed % 40);
             if (score < threshold)
             {
                 if (level <= 1 && !f.partied)
                 {
-                    return { false, false, pick(f.seed, { "Do I know you?", "I don't party with strangers.", "Maybe when I've heard of you." }) };
+                    return { false, fit, pick(f.seed, { "Do I know you?", "I don't party with strangers.", "Maybe when I've heard of you." }) };
                 }
                 if (asking > 0 && !f.partied)
                 {
-                    return { false, false, pick(f.seed, { "That's a big ask from someone I've never partied with.", "Let's do some exp first, then we'll talk." }) };
+                    return { false, fit, pick(f.seed, { "That's a big ask from someone I've never partied with.", "Let's do some exp first, then we'll talk." }) };
                 }
-                return { false, false, pick(f.seed, { "Not today.", "I'll pass, thanks.", "Some other time." }) };
+                return { false, fit, pick(f.seed, { "Not today.", "I'll pass, thanks.", "Some other time." }) };
+            }
+            if (fit == MissionFit::On)
+            {
+                return { true, fit, pick(f.seed, { "I'm on that one too. Let's do it.", "I could use a hand with that one myself.", "Same mission? Then we're partners." }) };
             }
             if (f.affinity >= 3)
             {
-                return { true, false, pick(f.seed, { "Always, for you.", "You know I'm in." }) };
+                return { true, fit, pick(f.seed, { "Always, for you.", "You know I'm in." }) };
             }
             if (f.partied)
             {
-                return { true, false, pick(f.seed, { "We've adventured together before. Count me in.", "You again? Gladly." }) };
+                return { true, fit, pick(f.seed, { "We've adventured together before. Count me in.", "You again? Gladly." }) };
+            }
+            if (fit == MissionFit::Done)
+            {
+                return { true, fit, pick(f.seed, { "I've done that one. I know the way.", "Been there. I'll show you." }) };
             }
             if (level >= 4)
             {
-                return { true, false, fmt::format("I've heard your name around {}. Let's go.", kNationNames[f.nation]) };
+                return { true, fit, fmt::format("I've heard your name around {}. Let's go.", kNationNames[f.nation]) };
             }
             if (rankDiff > 0)
             {
-                return { true, false, "Someone of your rank asks? Of course." };
+                return { true, fit, "Someone of your rank asks? Of course." };
             }
-            return { true, false, pick(f.seed, { "Sure, why not.", "I could use the company.", "Lead the way." }) };
+            return { true, fit, pick(f.seed, { "Sure, why not.", "I could use the company.", "Lead the way." }) };
         }
 
         auto judge(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const Fame& fame, const int mood = 0) -> Answer
         {
-            if (const auto hard = hardNo(PPlayer, f, PPawn, goal); hard.has_value())
+            const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, f, PPawn, goal) : MissionFit::Free;
+            if (const auto hard = hardNo(PPlayer, f, PPawn, goal, fit); hard.has_value())
             {
                 return *hard;
             }
-            return softAnswer(PPlayer, f, goal, fame, mood);
+            return softAnswer(PPlayer, f, goal, fame, mood, fit);
         }
 
         // Is the goal one the player's own log holds
         auto goalHeld(const CCharEntity* PPlayer, const Goal& goal, std::string& why) -> bool
         {
-            constexpr uint16 kNone = 65535;
             switch (goal.kind)
             {
                 case Goal::Kind::Mission:
-                    if ((goal.log > 4 && goal.log != 6) || PPlayer->m_missionLog[goal.log].current == kNone)
+                    if ((goal.log > 4 && goal.log != 6) || PPlayer->m_missionLog[goal.log].current == noMission(goal.log))
                     {
                         why = "you are not on a mission there";
                         return false;
@@ -554,7 +614,7 @@ namespace pawn::finder
             c.zone     = PHere->getName();
             c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
             c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(-10, 11));
-            (c.answer.yes ? willing : c.answer.notYet ? notYet : unwilling).push_back(std::move(c));
+            (c.answer.yes ? willing : c.answer.fit == MissionFit::Behind ? notYet : unwilling).push_back(std::move(c));
         }
 
         // Enough yeses to fill the party when the crowd has them (the user,
@@ -714,6 +774,27 @@ namespace pawn::finder
         return p;
     }
 
+    // Only a yes is spoken for: a no cannot be invited. A shout that has
+    // lapsed, or whose player has left the world, holds nobody and is dropped
+    auto shoutedFor(const std::string& name) -> bool
+    {
+        const auto now = std::chrono::steady_clock::now();
+        for (auto it = shouts.begin(); it != shouts.end();)
+        {
+            if (now - it->second.madeAt > kShoutLifetime || zoneutils::GetChar(it->first) == nullptr)
+            {
+                it = shouts.erase(it);
+                continue;
+            }
+            if (std::ranges::any_of(it->second.shout.rows, [&](const Responder& r) { return r.c.answer.yes && r.c.name == name; }))
+            {
+                return true;
+            }
+            ++it;
+        }
+        return false;
+    }
+
     auto invite(CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> std::string
     {
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
@@ -738,6 +819,10 @@ namespace pawn::finder
         {
             return "she is not one of the world's adventurers";
         }
+        if (currentShout(PPlayer->id) == nullptr)
+        {
+            return "your shout has faded (a shout lives ten minutes); shout again";
+        }
         if (shoutedYes(PPlayer, facts->name, goal) == nullptr)
         {
             return "she did not answer your shout for that";
@@ -747,7 +832,8 @@ namespace pawn::finder
         {
             return "she is not in your city";
         }
-        if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal); hard.has_value())
+        const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, *facts, PPawn, goal) : MissionFit::Free;
+        if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal, fit); hard.has_value())
         {
             return hard->line;
         }

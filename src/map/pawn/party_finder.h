@@ -65,11 +65,22 @@ namespace pawn::finder
     auto goalFrom(const std::string& kind, int log) -> Goal;
     auto kindName(const Goal& goal) -> const char*; // "exp", "quest", "mission"
 
+    // Where her mission log stands against the player's current mission in
+    // the goal's log: not that far (a no), on that very mission (a big yes),
+    // past it (she knows the way), or between missions and free to take it
+    enum class MissionFit : uint8
+    {
+        Free,
+        Behind,
+        On,
+        Done,
+    };
+
     struct Answer
     {
-        bool        yes    = false;
-        bool        notYet = false; // a no because she has not reached the mission (her rank behind the player's)
-        std::string line;           // hers: why she comes, or why not
+        bool        yes = false;
+        MissionFit  fit = MissionFit::Free; // Behind is a no of its own kind: she has not reached the mission
+        std::string line;                   // hers: why she comes, or why not
     };
 
     struct Candidate
@@ -167,6 +178,10 @@ namespace pawn::finder
     // herself. A faded candidate stands first. "" on success, else the
     // reason
     auto invite(CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> std::string;
+
+    // She answered a shout that has not lapsed: the invite may still come,
+    // so the world's clocks (a town seat's dwell) leave her where she is
+    auto shoutedFor(const std::string& name) -> bool;
 
     // The pawn's answer to the solicit stamped on her: yes for an owned
     // cardian; for the world's, yes only when the finder asked her (invite

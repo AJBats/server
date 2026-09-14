@@ -925,7 +925,7 @@ commandObj.onTrigger = function(player, line)
             local rows = made.rows or {}
             reply(player, string.format('#cd sh.b %d %d %d %s %d', made.id or 0, #rows, made.wait or 0, made.kind or 'exp', made.log or 0))
             for _, r in ipairs(rows) do
-                reply(player, string.format('#cd sh %s %d %d %s %s %d %d %d a=%d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.reveal, r.decide, r.affinity or 0, r.line))
+                reply(player, string.format('#cd sh %s %d %d %s %s %d %d %d a=%d m=%d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.reveal, r.decide, r.affinity or 0, r.mission or 0, r.line))
             end
             reply(player, '#cd sh.e')
         end
