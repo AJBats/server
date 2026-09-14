@@ -43,6 +43,12 @@ class state;
 }
 extern sol::state lua;
 
+// The link's protocol number, sent in welcome. The addon (link.lua's
+// kProtocol) unloads itself when its own differs: both are bumped together
+// whenever a line either side sends changes shape, and no line is kept
+// compatible (the user, 2026-09-14)
+constexpr uint32 kLinkProtocol = 1;
+
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>
 #include <asio/steady_timer.hpp>
@@ -437,7 +443,7 @@ namespace
                 }
                 greeted_ = true;
                 ShowInfoFmt("link: {} hello (addon v{})", peer_, printable(words.size() > 1 ? words[1] : "?"));
-                enqueue(fmt::format("welcome {} 0", version::GetGitSha()));
+                enqueue(fmt::format("welcome {} 0 {}", version::GetGitSha(), kLinkProtocol));
                 return true;
             }
 

@@ -40,7 +40,7 @@ class Scheduler;
 //   addon -> server   hello <addon version> | bind <charid> | whoami
 //                     | pos <x> <y> <z> <yaw> <moving> | cd <cardian command...>
 //                     | ping <n> | pong <n> | stats | bye
-//   server -> addon   welcome <server build> <charid> | bound <charid> <name>
+//   server -> addon   welcome <server build> <charid> <protocol> | bound <charid> <name>
 //                     | you <charid> <name> <zone> | cd <tag> ... | ping <n>
 //                     | pong <n> | stats k=v ... | err <text>
 //
