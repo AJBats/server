@@ -49,7 +49,8 @@
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
 #include "party.h"
-#include "utils/battleutils.h"
+#include "enums/char_persist.h"
+#include "persist_batch.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -152,9 +153,25 @@ namespace
                          PPawn->id);
     }
 
-    // char_jobs columns by job id, for a level written to an offline character
-    constexpr std::array<const char*, 23> kJobColumns = { "", "war", "mnk", "whm", "blm", "rdm", "thf", "pld", "drk", "bst", "brd", "rng",
-                                                          "sam", "nin", "drg", "smn", "blu", "cor", "pup", "dnc", "sch", "geo", "run" };
+    // What the game writes for a character leaving a zone for good
+    // (charutils::removeCharFromZone), for a body with no session: her
+    // playtime, HP and MP, exp and position, and at her despawn the persist
+    // batch (effects, equipment, look, char vars). persist::flush is the end
+    // of her life to the sweep -- the next sweep discards what it collects
+    // for her -- so a zone crossing, where she stays live, leaves that to
+    // the sweep. The position is written once, here, not by the batch too
+    void savePawn(CCharEntity* PPawn, const bool despawning)
+    {
+        charutils::SavePlayTime(PPawn);
+        charutils::SaveCharStats(PPawn);
+        charutils::SaveCharExp(PPawn, PPawn->GetMJob());
+        PPawn->clearPersist(CharPersist::Position);
+        savePawnPosition(PPawn);
+        if (despawning)
+        {
+            persist::flush(PPawn, IsLogout::Yes);
+        }
+    }
 
     // Everything that turns a character standing in a zone into a pawn:
     // its own mover and brain, pawn speed, and the session row that gives
@@ -290,6 +307,20 @@ namespace
         return true;
     }
 
+    // An owned cardian whose creation kit never landed (cardian_pawns.kitted
+    // = 0; an alt has no row) does not stand: said each time, never fixed
+    // on the way in
+    auto unkitted(const uint32 charid) -> bool
+    {
+        const auto rset = db::preparedStmt("SELECT kitted FROM cardian_pawns WHERE pawn_charid = ?", charid);
+        if (rset && rset->next() && rset->get<uint8>("kitted") == 0)
+        {
+            ShowErrorFmt("pawn: cardian {} was created but never kitted; she cannot stand (recreate her)", charid);
+            return true;
+        }
+        return false;
+    }
+
     // The offline character behind a stand: refused when she is already
     // standing or online anywhere in this process, and stripped of the
     // self-packets LoadChar queues for a client that is not there
@@ -309,34 +340,10 @@ namespace
         return PPawn;
     }
 
-    // Her first stand ever pays for the starter kit, once (cardian_pawns
-    // remembers). The kit is a starting job's gear, so an advanced main is
-    // stood down to Warrior 1 to take it -- which costs her her level, a
-    // known bug (ROADMAP D6 follow-ups) kept in one place so it is fixed in
-    // one place; today the census cuts basic jobs only, so it never fires
-    void applyKitOnce(CCharEntity* PPawn)
+    // An owned pawn's bag is kept stacked, however she was last played. A
+    // world body's is not: fifty of them stand on one zone tick
+    void tidyBag(CCharEntity* PPawn)
     {
-        const auto kitRset = db::preparedStmt("SELECT pawn_charid FROM cardian_pawns WHERE pawn_charid = ? AND kitted = 0", PPawn->id);
-        if (!kitRset || !kitRset->next())
-        {
-            return;
-        }
-        if (static_cast<uint8>(PPawn->GetMJob()) > 6)
-        {
-            pawn::applyJobAndLevel(PPawn, static_cast<uint8>(xi::Job::WAR), 1);
-        }
-        pawn::applyStarterKit(PPawn);
-        charutils::SaveCharStats(PPawn);
-        charutils::SaveCharEquip(PPawn);
-        db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", PPawn->id);
-        PPawn->clearPacketList();
-    }
-
-    // ...and an owned pawn's bag is kept stacked, however she was last
-    // played. A world body's is not: fifty of them stand on one zone tick
-    void kitAndTidy(CCharEntity* PPawn)
-    {
-        applyKitOnce(PPawn);
         if (const auto merges = pawn::items::tidyStacks(PPawn); merges > 0)
         {
             ShowInfoFmt("pawn: {} stacks her bag ({} merges)", PPawn->getName(), merges);
@@ -353,6 +360,10 @@ namespace
     // already, or nowhere to)
     auto standWhereLeft(const uint32 charid, const uint32 ownerCharID) -> std::string
     {
+        if (unkitted(charid))
+        {
+            return {};
+        }
         auto PPawn = loadForStand(charid);
         if (PPawn == nullptr)
         {
@@ -399,7 +410,7 @@ namespace
         {
             return {};
         }
-        kitAndTidy(PPawn.get());
+        tidyBag(PPawn.get());
         std::string zone = PZone->getName();
         std::ranges::replace(zone, '_', ' ');
         ShowInfoFmt("pawn: {} ({}) signs in at {} ({:.0f}, {:.0f}){}", PPawn->getName(), charid, zone, PPawn->loc.p.x, PPawn->loc.p.z,
@@ -409,14 +420,11 @@ namespace
         return label;
     }
 
-    // The player an invite came from: the real session in her party, which
-    // is how the controller finds her anchor too (CPawnController::
-    // GetLivePlayer), falling back to whoever summoned her. A wild body has
-    // no summoner, so the party is the only answer for her
+    // The player she is with: the one whose orders she follows
+    // (pawn::ordersOwnerOf -- the real player in her party, else her summoner)
     auto invitingPlayer(const CCharEntity* PPawn) -> CCharEntity*
     {
-        auto* PPlayer = pawn::partyPlayer(PPawn);
-        return PPlayer != nullptr ? PPlayer : zoneutils::GetChar(pawn::summonerOf(PPawn->id));
+        return zoneutils::GetChar(pawn::ordersOwnerOf(PPawn));
     }
 
     // Invited (ROADMAP H): in the player's zone she simply follows; from her
@@ -435,13 +443,17 @@ namespace
         // recently now. A wild cardian stays wild and the census still owns
         // her, but she sorts above the crowd from here
         pawn::seats::notePartied(PSummoner->id, PPawn->id);
+        // The player's standing orders reach her once she is with him; a hold
+        // in a far zone keeps her own aggro avoidance for the walk to come
         if (PSummoner->loc.zone == PPawn->loc.zone)
         {
             PController->SetWaiting(false, false, "invited");
+            pawn::applyOrdersTo(PPawn);
         }
         else if (pawn::sameCity(PPawn->loc.zone, PSummoner->loc.zone))
         {
             PController->SetWaiting(false, false, "invited from her own city");
+            pawn::applyOrdersTo(PPawn);
             travelOrders[PPawn->id] = PSummoner->getZone();
             ShowInfoFmt("pawn: {} runs to {} in {} (her own city)", PPawn->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
         }
@@ -578,7 +590,7 @@ namespace pawn
         const auto& start = starts[std::min<uint8>(spec.nation, 2)];
 
         // The creation script kits the six starting jobs only; an advanced
-        // main starts as a Warrior and takes her job at her first spawn
+        // main starts as a Warrior (a job change is the Mog House's)
         constexpr uint8 kLastStartingJob = 6;
         char_mini       mini             = {
                           .m_name   = {},
@@ -607,6 +619,20 @@ namespace pawn
                          static_cast<uint16>(start.zone), start.rotation, start.x, start.y, start.z, charid);
 
         db::preparedStmt("INSERT INTO cardian_pawns (pawn_charid, owner_accid) VALUES (?, ?)", charid, ownerAccid);
+
+        // Her creation kit, on the loaded character: a stand loads her and
+        // nothing more, and refuses her until she has it
+        if (auto PPawn = loadForStand(charid); PPawn != nullptr)
+        {
+            applyStarterKit(PPawn.get());
+            charutils::SaveCharStats(PPawn.get());
+            charutils::SaveCharEquip(PPawn.get());
+            db::preparedStmt("UPDATE cardian_pawns SET kitted = 1 WHERE pawn_charid = ?", charid);
+        }
+        else
+        {
+            ShowErrorFmt("pawn: created {} ({}) but her kit could not be applied (the character did not load); she cannot stand until it is", spec.name, charid);
+        }
 
         ShowInfoFmt("pawn: created {} ({}) on generated account {} for account {}", spec.name, charid, accid, ownerAccid);
         return charid;
@@ -697,7 +723,7 @@ namespace pawn
 
     bool standBeside(const uint32 charid, CCharEntity* PSummoner)
     {
-        if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
+        if (PSummoner == nullptr || PSummoner->loc.zone == nullptr || unkitted(charid))
         {
             return false;
         }
@@ -753,7 +779,7 @@ namespace pawn
         {
             return false;
         }
-        kitAndTidy(PPawn.get());
+        tidyBag(PPawn.get());
 
         ShowInfoFmt("pawn: {} ({}) stands beside {} in zone {}", PPawn->getName(), charid, PSummoner->getName(), PSummoner->getZone());
 
@@ -931,10 +957,13 @@ namespace pawn
         {
             return;
         }
+        // A real player out of the party takes every cardian of it with him:
+        // the orders and the trek were his
+        const bool playerLeft = !pawns.contains(PMember->id);
         for (auto& [charid, PPawn] : pawns)
         {
             const bool herself = charid == PMember->id;
-            if (!herself && (summonerOf(charid) != PMember->id || PPawn->PParty != PParty))
+            if (!herself && (!playerLeft || PPawn->PParty != PParty))
             {
                 continue;
             }
@@ -955,31 +984,18 @@ namespace pawn
                 finder::noteLeft(charid, PLeader != nullptr ? PLeader->id : 0);
             }
             // A wild body's orders end with the party: nobody can reach her
-            // to lift a wait or a hunt once she is out of it
-            if (herself && summonerOf(charid) == 0)
+            // to lift a wait, a hunt or a retreat once she is out of it, or
+            // once her player is
+            if (summonerOf(charid) == 0 && (herself || playerLeft))
             {
                 if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
                 {
                     PController->SetWaiting(false, false, "out of the party");
                     PController->SetHunting(false);
+                    PController->SetRetreat(false);
                 }
             }
         }
-    }
-
-    // Is any skill her job has under its ceiling for her level? True for a
-    // body minted or caught up at a level her skills have not been capped for
-    auto skillsBelowCap(const CCharEntity* PChar) -> bool
-    {
-        for (uint8 i = static_cast<uint8>(xi::SkillType::HandToHand); i <= static_cast<uint8>(xi::SkillType::Handbell); ++i)
-        {
-            const uint16 max = 10 * battleutils::GetMaxSkill(static_cast<xi::SkillType>(i), PChar->GetMJob(), PChar->GetMLevel());
-            if (max > 0 && PChar->RealSkills.skill[i] < max)
-            {
-                return true;
-            }
-        }
-        return false;
     }
 
     void markPresent(const uint32 charid, const uint16 zoneId, const position_t& point)
@@ -1049,34 +1065,6 @@ namespace pawn
             PController->SetWorld(true);
         }
 
-        applyKitOnce(PPawn.get());
-
-        // Her job when it differs from the census's; her level is her own
-        // (her character row's, set by the census tool's mint and catch-up
-        // and by her own dings), never applied here. Her skills follow her
-        // level at every stand
-        if (job > 0 && static_cast<uint8>(PPawn->GetMJob()) != job)
-        {
-            applyJobAndLevel(PPawn.get(), job, PPawn->GetMLevel());
-            PPawn->clearPacketList();
-        }
-        // The cap is 48 writes; taken only when a skill of her job's sits
-        // under her level's ceiling (a body born or caught up at a level
-        // her skills have not seen). A town standing fifty bodies at once
-        // took the watchdog down when every stand paid it
-        else if (skillsBelowCap(PPawn.get()))
-        {
-            capSkills(PPawn.get());
-            PPawn->clearPacketList();
-        }
-
-        // Whatever her bag holds that her job and level can wear goes on
-        if (const auto worn = items::dressFromBag(PPawn.get()); worn > 0)
-        {
-            ShowInfoFmt("pawn: {} dresses from her bag ({} pieces)", PPawn->getName(), worn);
-            PPawn->clearPacketList();
-        }
-
         const std::string name = PPawn->getName();
         ShowInfoFmt("pawn: {} ({}) stands in {} on her own, {} {}", name, charid, PZone->getName(), magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel());
         registerPawn(std::move(PPawn), 0);
@@ -1114,7 +1102,20 @@ namespace pawn
 
     auto partyStrategy(const CCharEntity* PPawn) -> uint16
     {
-        return PPawn != nullptr ? strategyOf(summonerOf(PPawn->id)) : 0;
+        return PPawn != nullptr ? strategyOf(ordersOwnerOf(PPawn)) : 0;
+    }
+
+    auto ordersOwnerOf(const CCharEntity* PPawn) -> uint32
+    {
+        if (PPawn == nullptr)
+        {
+            return 0;
+        }
+        if (const auto* PPlayer = partyPlayer(PPawn); PPlayer != nullptr)
+        {
+            return PPlayer->id;
+        }
+        return summonerOf(PPawn->id);
     }
 
     auto strategyName(const uint16 strategy) -> std::string_view
@@ -1135,25 +1136,33 @@ namespace pawn
         return it != ordersByOwner.end() && it->second.retreat;
     }
 
+    // Orders are the other channel: they set controller flags and never
+    // touch a gambit row -- who leads, who avoids, stays the list's call
+    void applyOrdersTo(CCharEntity* PPawn)
+    {
+        const auto owner = ordersOwnerOf(PPawn);
+        if (owner == 0)
+        {
+            return;
+        }
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+        {
+            const auto& orders = ordersFor(owner);
+            PController->SetRetreat(orders.retreat);
+            PController->SetHunting(orders.strategy == 1 && !orders.retreat);
+        }
+    }
+
     namespace
     {
-        // The owner's orders reach every cardian of theirs that is out.
-        // Orders are the other channel: they set controller flags and never
-        // touch a gambit row -- who leads, who avoids, stays the list's call
+        // The owner's orders reach every cardian who follows them
         void applyOrders(const uint32 ownerCharID)
         {
-            const auto orders = ordersByOwner[ownerCharID];
-            const bool hunt   = orders.strategy == 1 && !orders.retreat;
             for (auto& [charid, PPawn] : pawns)
             {
-                if (summonerOf(charid) != ownerCharID)
+                if (ordersOwnerOf(PPawn.get()) == ownerCharID)
                 {
-                    continue;
-                }
-                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
-                {
-                    PController->SetRetreat(orders.retreat);
-                    PController->SetHunting(hunt);
+                    applyOrdersTo(PPawn.get());
                 }
             }
         }
@@ -1286,7 +1295,7 @@ namespace pawn
         uint32 sent = 0;
         for (auto& [charid, PPawn] : pawns)
         {
-            if (summonerOf(charid) != POwner->id || PPawn->loc.zone != POwner->loc.zone || PPawn->isDead())
+            if (ordersOwnerOf(PPawn.get()) != POwner->id || PPawn->loc.zone != POwner->loc.zone || PPawn->isDead())
             {
                 continue;
             }
@@ -1577,17 +1586,19 @@ namespace pawn
 
         CCharEntity* PPawn = it->second.get();
 
-        savePawnPosition(PPawn);
-
         if (PPawn->PAI->IsEngaged())
         {
             PPawn->PAI->Internal_Disengage();
         }
 
+        // Out of the party before the save, so a level sync's HP is not the
+        // HP written for her
         if (PPawn->PParty != nullptr)
         {
             PPawn->PParty->RemoveMember(PPawn);
         }
+
+        savePawn(PPawn, true);
 
         if (PPawn->loc.zone != nullptr)
         {
@@ -1903,7 +1914,7 @@ namespace pawn
         }
 
         db::preparedStmt("UPDATE accounts_sessions SET targid = ? WHERE charid = ?", PPawn->targid, PPawn->id);
-        savePawnPosition(PPawn);
+        savePawn(PPawn, false);
         seats::moved(PPawn->id, static_cast<uint16>(destZoneId));
 
         ShowInfoFmt("pawn: {} ({}) crossed into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
@@ -1921,6 +1932,10 @@ namespace pawn
             }
             ++pawnsHere;
 
+            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+            {
+                PController->NoteForSaving();
+            }
             loot::handOff(PPawn.get());
 
             if (const auto transferIt = pendingTransfers.find(charid); transferIt != pendingTransfers.end())

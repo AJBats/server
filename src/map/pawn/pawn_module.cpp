@@ -165,41 +165,6 @@ namespace
 
 namespace pawn
 {
-    void applyJobAndLevel(CCharEntity* PChar, const uint8 job, const uint8 level)
-    {
-        CLuaBaseEntity entity(PChar);
-        bool           changedJob = false;
-        if (job != 0 && static_cast<uint8>(PChar->GetMJob()) != job)
-        {
-            // A job change re-validates her gear against the new job's
-            // level; a job never levelled reads 0 and strips her
-            if (level != 0 && PChar->jobs.job[job] < level)
-            {
-                PChar->jobs.job[job] = level;
-            }
-            entity.changeJob(job);
-            changedJob = true;
-        }
-        const bool leveled = level != 0 && (changedJob || PChar->GetMLevel() != level);
-        if (leveled)
-        {
-            // setLevel parks her one point short of the next level (the GM
-            // verb's convention); a census level is the level's floor
-            entity.setLevel(level);
-            PChar->jobs.exp[job != 0 ? job : static_cast<uint8>(PChar->GetMJob())] = 0;
-            charutils::SaveCharExp(PChar, PChar->GetMJob());
-        }
-        if (changedJob || leveled)
-        {
-            entity.capAllSkills();
-        }
-    }
-
-    void capSkills(CCharEntity* PChar)
-    {
-        CLuaBaseEntity entity(PChar);
-        entity.capAllSkills();
-    }
     void applyStarterKit(CCharEntity* PPawn)
     {
         const auto result = lua["xi"]["player"]["charCreate"](CLuaBaseEntity(PPawn));
@@ -557,6 +522,7 @@ class PawnModule : public CPPModule
             row["willing"]  = c.answer.yes;
             row["line"]     = c.answer.line;
             row["affinity"] = c.affinity;
+            row["mission"]  = static_cast<uint8>(c.answer.fit); // 0 free, 1 behind, 2 on it, 3 done it
             return row;
         };
         lua["CBaseEntity"]["cardianFinder"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log) -> sol::table
@@ -915,7 +881,7 @@ class PawnModule : public CPPModule
         };
 
         // The party strategy channel: orders live on the player and every
-        // cardian of theirs follows them
+        // cardian of theirs, and every wild cardian in their party, follows them
         lua["CBaseEntity"]["cardianOrders"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());

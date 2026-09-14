@@ -67,8 +67,8 @@ namespace pawn
 
     // Mint a generated pawn: a real character (male Hume Warrior, defaults)
     // on its own generated account, registered in cardian_pawns and owned by
-    // the summoner's account. The character has never seen a lobby; spawn()
-    // gives it the standard first-login starter kit on first spawn.
+    // the summoner's account, kitted as a first login would be. The
+    // character has never seen a lobby.
     bool create(CCharEntity* PSummoner, const std::string& targetName);
 
     // Load the named offline character (the summoner's own alt, or a
@@ -126,9 +126,11 @@ namespace pawn
     };
 
     // Mint a character from a spec on its own generated account, owned by
-    // ownerAccid and registered in cardian_pawns; the charid, or 0. create()
-    // is this with the default spec and the summoner's account. The level
-    // is applied at her first spawn (spawnAt), where a live entity exists.
+    // ownerAccid and registered in cardian_pawns, and kit her (the creation
+    // script, run on the loaded character); the charid, or 0. create() is
+    // this with the default spec and the summoner's account. The world's
+    // bodies are not made here: the census tool mints and finishes them
+    // offline, and a stand is a load.
     auto createFromSpec(const CharSpec& spec, uint32 ownerAccid) -> uint32;
 
     // The account that owns the world's adventurers (login "cardianworld"),
@@ -137,12 +139,10 @@ namespace pawn
 
     // Load the offline character and insert her into the zone at the point
     // (snapped to the navmesh), with no summoner and no party; her
-    // controller runs as a world body (Mode::Roam). Her first spawn gives
-    // her the starter kit (a basic job's: an advanced main is minted as a
-    // Warrior), then the job and level asked for, skills capped: raised to
-    // the level when below it, left alone at it or one past it (a farmer's
-    // sneaked ding stands), pulled down only from further past. False with
-    // no side effects if she is unknown, online or already a pawn.
+    // controller runs as a world body (Mode::Roam). A load and nothing
+    // else: her job, level, skills, gear and spells are what the census
+    // tool wrote (world::ensureReady refuses a body it never finished).
+    // False with no side effects if she is unknown, online or already a pawn.
     bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job);
 
     // Presence without a body: the session row (search, the lobby's
@@ -156,15 +156,6 @@ namespace pawn
     // A session row with no body and no position written: the faded step
     // of the waterfall for an owned cardian, whose saved spot is her own
     void markOnline(uint32 charid);
-
-    // Put a live character on a job at a level, skills capped for it (the
-    // code behind !pawnjob and !pawncapskills; implemented in
-    // pawn_module.cpp). 0 leaves that part as it is.
-    void applyJobAndLevel(CCharEntity* PChar, uint8 job, uint8 level);
-    // Cap every skill at her level's ceiling (implemented in pawn_module.cpp):
-    // a world body's level is her character row's, set by the census tool's
-    // mint and catch-up, and her skills follow it at every stand
-    void capSkills(CCharEntity* PChar);
 
     // Run xi.player.charCreate on a freshly minted pawn (implemented in
     // pawn_module.cpp so the sol2 cost stays out of pawn.cpp).
@@ -186,11 +177,17 @@ namespace pawn
     auto partyStrategy(const CCharEntity* PPawn) -> uint16;
 
     // The party strategy channel (M3.9): one set of orders per player, read
-    // by every cardian of theirs. Strategy 0 = Off, 1 = Roam (the hunters
-    // pull). Retreat is the "on me" switch over it: nobody engages, nobody
-    // avoids aggro, hunting pauses, until it clears. Orders live in memory;
-    // a map restart starts everyone at Off.
+    // by every cardian of theirs and every wild cardian in their party.
+    // Strategy 0 = Off, 1 = Roam (the hunters pull). Retreat is the "on me"
+    // switch over it: nobody engages, nobody avoids aggro, hunting pauses,
+    // until it clears. Orders live in memory; a map restart starts everyone
+    // at Off.
     constexpr uint16 kStrategyCount = 2;
+    // Whose orders she follows: her summoner, or for a wild cardian the real
+    // player in her party; 0 for nobody's
+    auto ordersOwnerOf(const CCharEntity* PPawn) -> uint32;
+    // Her retreat and hunt flags from the orders she follows, as she joins
+    void applyOrdersTo(CCharEntity* PPawn);
     auto strategyName(uint16 strategy) -> std::string_view;
     auto strategyOf(uint32 ownerCharID) -> uint16;
     auto isRetreating(uint32 ownerCharID) -> bool;

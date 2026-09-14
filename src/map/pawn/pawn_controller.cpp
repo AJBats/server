@@ -33,6 +33,7 @@
 #include "pawn_rules.h"
 
 #include "common/settings.h"
+#include "enums/char_persist.h"
 #include "common/utils.h"
 #include "common/xirand.h"
 
@@ -1072,9 +1073,9 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
 
 void CPawnController::Note(const std::string& text) const
 {
-    if (const auto summoner = pawn::summonerOf(POwner->id); summoner != 0)
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
-        cardian::link::sendToCharacter(summoner, "cd note " + text);
+        cardian::link::sendToCharacter(owner, "cd note " + text);
     }
 }
 
@@ -1238,7 +1239,7 @@ auto CPawnController::Refusal(CBattleEntity* PTarget, const cardian::rules::Enga
     {
         return verdict.why;
     }
-    if (!PTarget->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+    if (!PTarget->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))).aggressive)
     {
         if (const auto* PMob = dynamic_cast<const CMobEntity*>(PTarget); PMob != nullptr)
         {
@@ -1927,7 +1928,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             bool vet = true;
             if (!PTarget->PAI->IsEngaged())
             {
-                if (pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+                if (pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))).aggressive)
                 {
                     vet = false;
                 }
@@ -2078,7 +2079,7 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
             // A pull that has turned unclean on the way in (a guard roamed
             // over it) is let go, as the fight lets it go -- whoever chose
             // it, and said, so she never stands at a rim with no reason
-            if (!PMob->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::summonerOf(POwner->id)).aggressive)
+            if (!PMob->PAI->IsEngaged() && !pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))).aggressive)
             {
                 if (const auto unclean = PullBlocker(PMob); !unclean.empty())
                 {
@@ -2159,13 +2160,23 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         // them, unless told to wait. A player out of the world is loading
         // between zones -- their character is gone from every zone and from
         // the party's list until they land -- and she keeps to the trek.
-        // Her summoner's trek: a wild body has none, and with her player
-        // gone from her zone she idles where she stands until gathered
-        // (the party-wide channels are H slice 3)
-        const auto* PSummoner = zoneutils::GetChar(pawn::summonerOf(POwner->id));
+        // The one she follows is the real player in her party, wherever he
+        // is: in another zone she goes to him, owned or wild alike. While he
+        // loads between zones the party's list has nobody real in it for a
+        // moment, and a trek already under way keeps to it
         const auto* PParty    = static_cast<CCharEntity*>(POwner)->PParty;
-        const bool  loading   = PSummoner == nullptr || PSummoner->loc.zone == nullptr;
-        if (!m_Waiting && !m_World && PParty != nullptr && (loading || (PSummoner->PParty == PParty && PSummoner->getZone() != POwner->getZone())))
+        const auto* PPlayer   = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
+        const bool  elsewhere = PPlayer != nullptr && PPlayer->loc.zone != nullptr && PPlayer->getZone() != POwner->getZone();
+        if (PPlayer != nullptr)
+        {
+            m_NoPlayerSince = {};
+        }
+        else if (m_NoPlayerSince == timer::time_point{})
+        {
+            m_NoPlayerSince = tick;
+        }
+        const bool loading = PPlayer == nullptr && m_Mode == Mode::Travel && tick - m_NoPlayerSince < 20s;
+        if (!m_Waiting && PParty != nullptr && (elsewhere || loading))
         {
             if (m_Mode != Mode::Travel)
             {
@@ -2366,7 +2377,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             if (m_Tick - m_LastHuntLogTime > 15s)
             {
                 m_LastHuntLogTime = m_Tick;
-                const auto rules = pawn::huntRulesOf(pawn::summonerOf(POwner->id));
+                const auto rules = pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)));
                 ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{}{}){}",
                             POwner->getName(), settings::get<float>("pawn.HUNT_RADIUS"), PPlayer->getName(), PPlayer->GetMLevel(),
                             magic_enum::enum_name(static_cast<EMobDifficulty>(rules.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(rules.maxCheck)),
@@ -2628,16 +2639,16 @@ void CPawnController::TravelTick()
     {
         // The player, in her party and another zone: DoRoamTick sends her
         // only then, or while they load between zones
-        CCharEntity* PSummoner = zoneutils::GetChar(pawn::summonerOf(POwner->id));
-        if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
+        const CCharEntity* PPlayer = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
+        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
         {
             if (narrate)
             {
-                ShowInfoFmt("pawn: travel {}: summoner not in world (loading?), idling", POwner->getName());
+                ShowInfoFmt("pawn: travel {}: the player is not in the world (loading?), idling", POwner->getName());
             }
             return;
         }
-        targetZone = PSummoner->getZone();
+        targetZone = PPlayer->getZone();
     }
 
     const auto hop = pawn::travel::nextHop(POwner->getZone(), targetZone);
@@ -3227,7 +3238,7 @@ auto CPawnController::huntable(CMobEntity* PMob, const uint8 level, const pawn::
 
 auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped) const -> CMobEntity*
 {
-    return PickHuntTarget(PPlayer->loc.p, PPlayer->GetMLevel(), pawn::huntRulesOf(pawn::summonerOf(POwner->id)), skipped);
+    return PickHuntTarget(PPlayer->loc.p, PPlayer->GetMLevel(), pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))), skipped);
 }
 
 auto CPawnController::GetTopEnmity() const -> CBattleEntity*
@@ -3237,6 +3248,39 @@ auto CPawnController::GetTopEnmity() const -> CBattleEntity*
         return PMob->PEnmityContainer->GetHighestEnmity();
     }
     return nullptr;
+}
+
+namespace
+{
+    constexpr auto kHealthSaveEvery = 30s;
+} // namespace
+
+void CPawnController::NoteForSaving()
+{
+    auto*      PPawn = static_cast<CCharEntity*>(POwner);
+    const auto now   = timer::now();
+    if (!m_SaveSeeded)
+    {
+        // What she loaded with is what the row holds: nothing to write yet
+        m_SavedHp       = PPawn->health.hp;
+        m_SavedMp       = PPawn->health.mp;
+        m_SavedAt       = PPawn->loc.p;
+        m_HealthSavedAt = now;
+        m_SaveSeeded    = true;
+        return;
+    }
+    if (PPawn->loc.p.x != m_SavedAt.x || PPawn->loc.p.y != m_SavedAt.y || PPawn->loc.p.z != m_SavedAt.z || PPawn->loc.p.rotation != m_SavedAt.rotation)
+    {
+        PPawn->setPersist(CharPersist::Position);
+        m_SavedAt = PPawn->loc.p;
+    }
+    if ((m_SavedHp != PPawn->health.hp || m_SavedMp != PPawn->health.mp) && now - m_HealthSavedAt >= kHealthSaveEvery)
+    {
+        charutils::SaveCharStats(PPawn);
+        m_SavedHp       = PPawn->health.hp;
+        m_SavedMp       = PPawn->health.mp;
+        m_HealthSavedAt = now;
+    }
 }
 
 auto CPawnController::GetLivePlayer() const -> CCharEntity*

@@ -120,6 +120,10 @@ public:
     // party's strategy, not a gambit -- set by !pawnhunt until the strategy
     // channel exists (RESEARCH §8)
     void SetHunting(bool on);
+    // What the game never writes for a body with no client, between her
+    // despawns: her position, flagged for the persist sweep when she moved;
+    // her HP and MP, every kHealthSaveEvery while they changed
+    void NoteForSaving();
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
@@ -596,6 +600,15 @@ private:
     uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
+
+    // NoteForSaving's book: what she last had written, and when
+    bool              m_SaveSeeded    = false;
+    int32             m_SavedHp       = -1;
+    int32             m_SavedMp       = -1;
+    position_t        m_SavedAt{};
+    timer::time_point m_HealthSavedAt{};
+    // Nobody real in her party since: a load lasts seconds, a party he left lasts
+    timer::time_point m_NoPlayerSince{};
     bool              m_WaitOrdered = false;
     timer::time_point m_PlayerMagicSeen{ timer::time_point::min() }; // the player seen mid-warp or mid-teleport, so their vanishing reads as magic
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike

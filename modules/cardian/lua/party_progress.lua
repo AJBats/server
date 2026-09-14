@@ -610,6 +610,33 @@ m:addOverride('CBaseEntity.completeQuest', function(player, area, questId)
     end
 end)
 
+-- Fame a script hands the player outside a completion -- a repeatable
+-- quest's second hand-in pays addFame directly, the quest already being
+-- complete -- reaches the cardians a completion would have: the player's
+-- own and the quest and mission recruits in the zone. Inside the helper
+-- the completion mirror has already paid them from the reward table
+m:addOverride('CBaseEntity.addFame', function(player, area, fame)
+    super(player, area, fame)
+    if inHelper or not player:isPC() or player:isCardian() then
+        return
+    end
+    local here, away = partyCardians(player, kQuestCrew)
+    local names = {}
+    for _, cardian in ipairs(here) do
+        cardian:addFame(area, fame)
+        names[#names + 1] = cardian:getName()
+    end
+    if #names > 0 then
+        say(player, joinNames(names) .. ' shared in your good name.')
+        local behind = {}
+        for _, cardian in ipairs(away) do
+            behind[#behind + 1] = cardian:getName()
+        end
+        trace(player, string.format('%s: fame +%d in area %d, shared with %s%s', player:getName(), fame, area, table.concat(names, ', '),
+            #behind > 0 and ('; not in the zone: ' .. table.concat(behind, ', ')) or ''))
+    end
+end)
+
 -- Into the battlefield right behind the player: registered with them by
 -- the registration itself, entered here since she cannot touch the circle
 m:addOverride('Battlefield.onEntryEventUpdate', function(self, player, csid, option, npc)

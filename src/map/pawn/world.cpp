@@ -228,12 +228,15 @@ namespace
         uint8  level  = 1; // what she is: her character row's (char_stats.mlvl) once minted, her target before -- the census keeps no copy
         uint8  target = 1; // what her ladder says she should be now (D6): her cap while the player is online
         uint32 seed   = 0;
+        bool   finished = false; // the census tool wrote her kit, skills, gear and spells (cardian_pawns.kitted)
     };
 
     auto readCensus(const std::string& name) -> std::optional<CensusRow>
     {
-        const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, c.target, c.seed "
-                                           "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid WHERE c.name = ?",
+        const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, c.target, c.seed, "
+                                           "COALESCE(p.kitted, 0) AS finished "
+                                           "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid "
+                                           "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.name = ?",
                                            name);
         if (!rset || !rset->next())
         {
@@ -249,18 +252,26 @@ namespace
             .level  = rset->get<uint8>("level"),
             .target = rset->get<uint8>("target"),
             .seed   = rset->get<uint32>("seed"),
+            .finished = rset->get<uint8>("finished") != 0,
         };
     }
 
-    // Her charid. Minting is the census tool's, offline (the user,
-    // 2026-09-07: never the map's, on demand or in the background): a name
-    // with no body is a data error here, said once
-    std::unordered_set<std::string> unmintedSaid;
-    auto ensureMinted(const std::string& name, CensusRow& row) -> uint32
+    // Her charid, when she is ready to stand: minted and finished (her rows,
+    // kit, skills, gear and spells) by the census tool, offline. A stand is
+    // a load and nothing else; a name with no body, or a body never
+    // finished, is refused and said each time, since the pool should never
+    // offer one
+    auto ensureReady(const std::string& name, const CensusRow& row) -> uint32
     {
-        if (row.charid == 0 && unmintedSaid.insert(name).second)
+        if (row.charid == 0)
         {
-            ShowWarningFmt("world: {} is in the census with no body; stop the servers and run census.py mint", name);
+            ShowErrorFmt("world: {} is in the census with no body; stop the servers and run census.py mint", name);
+            return 0;
+        }
+        if (!row.finished)
+        {
+            ShowErrorFmt("world: {} ({}) was minted but never finished (no kit, skills, gear or spells); stop the servers and run census.py finish", name, row.charid);
+            return 0;
         }
         return row.charid;
     }
@@ -387,73 +398,6 @@ namespace
                 PPawn->clearPacketList();
             }
         }
-    }
-
-    // Her wardrobe as the census wrote it (RESEARCH §11.4): each piece put
-    // in her bag if she lacks it, then worn. Read on every stand, so a census
-    // that re-dressed her hands her the new pieces; a piece she takes off is
-    // dropped (sold, as far as the world knows) so her bag never fills up
-    auto dressFromWardrobe(const Body& body, CCharEntity* PPawn) -> uint32
-    {
-        std::vector<std::pair<uint8, uint16>> wardrobe;
-        std::unordered_set<uint16>            wanted;
-        if (const auto rset = db::preparedStmt("SELECT slot, itemid FROM cardian_wardrobe WHERE name = ? ORDER BY slot", body.name); rset)
-        {
-            while (rset->next())
-            {
-                wardrobe.emplace_back(rset->get<uint8>("slot"), rset->get<uint16>("itemid"));
-                wanted.insert(wardrobe.back().second);
-            }
-        }
-        auto*  bag  = PPawn->getStorage(LOC_INVENTORY);
-        uint32 worn = 0;
-        for (const auto& [equipSlot, itemId] : wardrobe)
-        {
-            const CItem* PWorn = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot));
-            if (PWorn != nullptr && PWorn->getID() == itemId)
-            {
-                continue;
-            }
-            uint8 invSlot = bag != nullptr ? bag->SearchItem(itemId) : ERROR_SLOTID;
-            if (invSlot == ERROR_SLOTID)
-            {
-                auto transaction = ItemClaimTransaction::start(PPawn);
-                if (!transaction)
-                {
-                    break;
-                }
-                const uint32 quantity = equipSlot == SLOT_AMMO ? 99 : 1;
-                const auto   landed   = transaction->give(LOC_INVENTORY, itemId, quantity, Silence::Yes);
-                if (!landed.has_value() || !transaction->commit())
-                {
-                    ShowWarningFmt("world: {} cannot take item {} for slot {}", body.name, itemId, equipSlot);
-                    continue;
-                }
-                invSlot = *landed;
-            }
-            if (const auto why = pawn::items::equip(PPawn, invSlot, equipSlot, LOC_INVENTORY); !why.empty())
-            {
-                ShowWarningFmt("world: {} cannot wear item {} in slot {}: {}", body.name, itemId, equipSlot, why);
-                continue;
-            }
-            ++worn;
-            if (PWorn != nullptr && bag != nullptr && !wanted.contains(PWorn->getID()))
-            {
-                for (uint8 slot = 1; slot <= bag->GetSize(); ++slot)
-                {
-                    if (bag->GetItem(slot) == PWorn)
-                    {
-                        charutils::DropItem(PPawn, LOC_INVENTORY, slot, static_cast<int32>(PWorn->getQuantity()), PWorn->getID());
-                        break;
-                    }
-                }
-            }
-        }
-        if (worn > 0)
-        {
-            charutils::SaveCharEquip(PPawn);
-        }
-        return worn;
     }
 
     // -- Brains (ROADMAP D5): modules/cardian/world/brains.yaml ------------------------
@@ -909,10 +853,6 @@ namespace
         body.returnAt.reset();
         if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
         {
-            if (const auto worn = dressFromWardrobe(body, PPawn); worn > 0)
-            {
-                ShowInfoFmt("world: {} dresses in {} pieces", body.name, worn);
-            }
             // She stands whole. Her row keeps the HP she was minted with, a
             // level 1's, and dealt a seat at level 8 she would show a quarter
             // of a bar -- and a group's followers, on the party path, knelt
@@ -940,29 +880,6 @@ namespace
             {
                 PPawn->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, std::chrono::hours(3));
                 PPawn->clearPacketList();
-            }
-        }
-        // Her spellbook as the census wrote it: every spell her job casts at
-        // her level whose scroll the book has opened (RESEARCH §11.4). Read
-        // on every stand, so a census that grew hands her the new ones
-        if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
-        {
-            uint32 learned = 0;
-            if (const auto rset = db::preparedStmt("SELECT spellid FROM cardian_spells WHERE name = ?", body.name); rset)
-            {
-                while (rset->next())
-                {
-                    const auto spellId = rset->get<uint16>("spellid");
-                    if (charutils::addSpell(PPawn, spellId) != 0)
-                    {
-                        charutils::SaveSpell(PPawn, spellId);
-                        ++learned;
-                    }
-                }
-            }
-            if (learned > 0)
-            {
-                ShowInfoFmt("world: {} learns {} spells", body.name, learned);
             }
         }
         ShowInfoFmt("world: {} fades in at {} ({:.1f}, {:.1f}, {:.1f}){}", body.name, PZone->getName(), at.x, at.y, at.z,
@@ -1832,15 +1749,7 @@ namespace
         {
             return false;
         }
-        if (row->charid == 0)
-        {
-            if (const auto why = loginHelpers::validateCharacterName(item.name); why.has_value())
-            {
-                ShowWarningFmt("world: census name {} cannot be minted: {}", item.name, *why);
-                return false;
-            }
-        }
-        const uint32 charid = ensureMinted(item.name, *row);
+        const uint32 charid = ensureReady(item.name, *row);
         if (charid == 0 || bodies.contains(charid))
         {
             return false;
@@ -2182,7 +2091,7 @@ namespace
             {
                 gone.push_back(charid);
             }
-            else if (!body.leaving && !withPlayer(charid) && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))))
+            else if (!body.leaving && !withPlayer(charid) && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))) && !pawn::finder::shoutedFor(body.name))
             {
                 due.push_back(charid);
             }
@@ -2325,7 +2234,7 @@ namespace pawn::world
             ShowWarningFmt("world: {} is not in the census", name);
             return false;
         }
-        const uint32 charid = ensureMinted(name, *row);
+        const uint32 charid = ensureReady(name, *row);
         if (charid == 0)
         {
             return false;
@@ -2475,23 +2384,26 @@ namespace pawn::world
         }
 
         // Every name up front: standing one runs queries of its own. A name
-        // not yet minted is put through the lobby's own checks here, so one
-        // the retail filter refuses costs a log line, not a hole in the ring
-        // (the census tool runs the same filter over its bank; this is the
-        // belt to its braces). Names in the bank are not in the world.
+        // the census tool has not minted and finished cannot stand and is
+        // left out of the pool, said once here. Names in the bank are not in
+        // the world.
         std::vector<std::string> names;
-        if (const auto rset = db::preparedStmt("SELECT name, charid FROM cardian_census WHERE anchor <> 'bank' ORDER BY seed"); rset)
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, COALESCE(p.kitted, 0) AS finished FROM cardian_census c "
+                                               "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.anchor <> 'bank' ORDER BY c.seed");
+            rset)
         {
             while (rset->next())
             {
                 const auto name = rset->get<std::string>("name");
                 if (rset->get<uint32>("charid") == 0)
                 {
-                    if (const auto why = loginHelpers::validateCharacterName(name); why.has_value())
-                    {
-                        ShowWarningFmt("world: census name {} cannot be minted: {}", name, *why);
-                        continue;
-                    }
+                    ShowErrorFmt("world: {} is in the census with no body; stop the servers and run census.py mint", name);
+                    continue;
+                }
+                if (rset->get<uint8>("finished") == 0)
+                {
+                    ShowErrorFmt("world: {} was minted but never finished; stop the servers and run census.py finish", name);
+                    continue;
                 }
                 names.push_back(name);
             }
