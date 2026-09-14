@@ -915,7 +915,8 @@ commandObj.onTrigger = function(player, line)
     elseif verb == 'shout' then
         -- The shout: 'shout <exp|mission|quest> <log> [again]' -> 'sh.b <id> <n>
         -- <waitMs> <kind> <log>', one 'sh <name> <job> <level> <state> <zone>
-        -- <willing> <revealMs> <decideMs> a=<affinity> <her line>' per responder,
+        -- <willing> <revealMs> <decideMs> a=<affinity> m=<mission> r=<race>
+        -- n=<nation> k=<rank> z=<zone id> <her line>' per responder,
         -- 'sh.e'; or 'err shout <why>'. The same shout again without 'again':
         -- the screen replays it
         local made = player:cardianShout(args[2] or 'exp', tonumber(args[3]) or 0, args[4] == 'again')
@@ -925,7 +926,8 @@ commandObj.onTrigger = function(player, line)
             local rows = made.rows or {}
             reply(player, string.format('#cd sh.b %d %d %d %s %d', made.id or 0, #rows, made.wait or 0, made.kind or 'exp', made.log or 0))
             for _, r in ipairs(rows) do
-                reply(player, string.format('#cd sh %s %d %d %s %s %d %d %d a=%d m=%d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.reveal, r.decide, r.affinity or 0, r.mission or 0, r.line))
+                reply(player, string.format('#cd sh %s %d %d %s %s %d %d %d a=%d m=%d r=%d n=%d k=%d z=%d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.reveal, r.decide,
+                    r.affinity or 0, r.mission or 0, r.race or 0, r.nation or 0, r.rank or 0, r.zoneid or 0, r.line))
             end
             reply(player, '#cd sh.e')
         end

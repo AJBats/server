@@ -527,6 +527,10 @@ class PawnModule : public CPPModule
             row["line"]     = c.answer.line;
             row["affinity"] = c.affinity;
             row["mission"]  = static_cast<uint8>(c.answer.fit); // 0 free, 1 behind, 2 on it, 3 done it
+            row["race"]     = c.race;
+            row["nation"]   = c.nation;
+            row["rank"]     = c.rank;
+            row["zoneid"]   = c.zoneId;
             return row;
         };
         lua["CBaseEntity"]["cardianFinder"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log) -> sol::table

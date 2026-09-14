@@ -38,6 +38,8 @@ namespace pawn::world
     auto isBody(uint32 charid) -> bool;
     // A world body standing or faded: a seat, a stand, the ring
     auto hasBody(uint32 charid) -> bool;
+    // A world body who has left her seat and is on her way out of town
+    auto isLeaving(uint32 charid) -> bool;
 
     // Stand the named census adventurer at the point in the zone, minted on
     // first use. A pinned body never fades. False if she is not in the

@@ -76,6 +76,7 @@ namespace pawn::finder
             uint8       job      = 0;
             uint8       level    = 0;
             uint32      seed     = 0;
+            uint8       race     = 0;
             uint8       nation   = 0;
             uint8       rank[3]  = { 1, 1, 1 };
             bool        partied  = false;
@@ -85,7 +86,7 @@ namespace pawn::finder
             missionlog_t missions[MAX_MISSIONAREA]{};
         };
 
-        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, c.missions, s.mjob, s.mlvl, x.seed, x.nation, "
+        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, c.missions, s.mjob, s.mlvl, x.seed, x.nation, l.race, "
                                      "p.rank_sandoria, p.rank_bastok, p.rank_windurst, "
                                      "CAST(m.last_partied IS NOT NULL AS UNSIGNED) AS partied, "
                                      "CAST(COALESCE(m.affinity, 0) AS UNSIGNED) AS affinity "
@@ -93,6 +94,7 @@ namespace pawn::finder
                                      "JOIN chars c ON c.charid = x.charid "
                                      "JOIN char_stats s ON s.charid = x.charid "
                                      "JOIN char_profile p ON p.charid = x.charid "
+                                     "JOIN char_look l ON l.charid = x.charid "
                                      "LEFT JOIN cardian_party_memory m ON m.pawn_charid = x.charid AND m.player_charid = ? "
                                      "WHERE x.recruited = 0 AND x.charid <> 0";
 
@@ -105,6 +107,7 @@ namespace pawn::finder
             f.job      = rset->template get<uint8>("mjob");
             f.level    = rset->template get<uint8>("mlvl");
             f.seed     = rset->template get<uint32>("seed");
+            f.race     = rset->template get<uint8>("race");
             f.nation   = std::min<uint8>(rset->template get<uint8>("nation"), 2);
             f.rank[0]  = rset->template get<uint8>("rank_sandoria");
             f.rank[1]  = rset->template get<uint8>("rank_bastok");
@@ -157,6 +160,21 @@ namespace pawn::finder
         auto inReach(const CCharEntity* PPlayer, CZone* PHere) -> bool
         {
             return PHere != nullptr && (PHere == PPlayer->loc.zone || pawn::sameCity(PHere, PPlayer->loc.zone));
+        }
+
+        // A nation's own missions are for its own people: nobody from
+        // another nation hears a shout for them
+        auto hears(const Facts& f, const Goal& goal) -> bool
+        {
+            return goal.kind != Goal::Kind::Mission || goal.log > static_cast<uint8>(MissionLog::Windurst) || f.nation == goal.log;
+        }
+
+        // Nobody already in the player's party hears the player's shout, nor
+        // a body on her way out of town: she would be gone before the invite
+        auto available(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn) -> bool
+        {
+            const bool partyMate = PPawn != nullptr && PPlayer->PParty != nullptr && PPawn->PParty == PPlayer->PParty;
+            return !partyMate && !pawn::world::isLeaving(f.charid);
         }
 
         auto stateOf(const CCharEntity* PPlayer, const CCharEntity* PPawn, const uint32 charid, CZone* PHere) -> std::string
@@ -386,6 +404,9 @@ namespace pawn::finder
         std::unordered_map<uint32, Held>                                  shouts; // by the player's charid
         std::unordered_map<uint32, std::chrono::steady_clock::time_point> shoutedAt;
         uint32                                                            lastShoutId = 0;
+        // When each body last heard a player's shout, by player: the friend
+        // seat goes to the friend longest unheard
+        std::unordered_map<uint32, std::unordered_map<uint32, std::chrono::steady_clock::time_point>> lastHeard;
 
         constexpr auto kShoutLifetime = std::chrono::minutes(10);
 
@@ -519,7 +540,7 @@ namespace pawn::finder
         {
             const auto* PPawn = pawn::findPawn(f.charid);
             auto*       PHere = zoneOf(PPawn, f.posZone);
-            if (!inReach(PPlayer, PHere))
+            if (!inReach(PPlayer, PHere) || !hears(f, goal) || !available(PPlayer, f, PPawn))
             {
                 continue;
             }
@@ -529,9 +550,15 @@ namespace pawn::finder
             c.job      = f.job;
             c.level    = levelOf(PPawn, f.level);
             c.affinity = f.affinity;
+            c.race     = f.race;
+            c.nation   = f.nation;
+            c.rank     = f.rank[f.nation];
             c.zone     = PHere->getName();
+            c.zoneId   = static_cast<uint16>(PHere->GetID());
             c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
             c.answer   = judge(PPlayer, f, PPawn, goal, fame);
+            c.charid   = f.charid;
+            c.friendly = f.partied || f.affinity > 0;
             out.push_back(std::move(c));
         }
 
@@ -602,7 +629,7 @@ namespace pawn::finder
         {
             const auto* PPawn = pawn::findPawn(f.charid);
             auto*       PHere = zoneOf(PPawn, f.posZone);
-            if (!inReach(PPlayer, PHere) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
+            if (!inReach(PPlayer, PHere) || !hears(f, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
             {
                 continue;
             }
@@ -611,9 +638,15 @@ namespace pawn::finder
             c.job      = f.job;
             c.level    = levelOf(PPawn, f.level);
             c.affinity = f.affinity;
+            c.race     = f.race;
+            c.nation   = f.nation;
+            c.rank     = f.rank[f.nation];
             c.zone     = PHere->getName();
+            c.zoneId   = static_cast<uint16>(PHere->GetID());
             c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
             c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(-10, 11));
+            c.charid   = f.charid;
+            c.friendly = f.partied || f.affinity > 0;
             (c.answer.yes ? willing : c.answer.fit == MissionFit::Behind ? notYet : unwilling).push_back(std::move(c));
         }
 
@@ -628,8 +661,40 @@ namespace pawn::finder
         std::ranges::shuffle(unwilling, xirand::rng());
         std::ranges::shuffle(notYet, xirand::rng());
 
+        // The friend seat (the user, 2026-09-14): one of the eight goes to a
+        // friend in reach, the one longest unheard, so friendship shows on
+        // every shout without crowding out new faces. She answers as she
+        // would anyway, and a yes counts toward the party; empty when no
+        // friend is in reach
         std::vector<Candidate> picked;
-        const size_t           sure = std::min(need, willing.size());
+        auto&                  heard = lastHeard[PPlayer->id];
+        std::vector<std::pair<std::vector<Candidate>*, size_t>> friends;
+        for (auto* list : { &willing, &unwilling, &notYet })
+        {
+            for (size_t i = 0; i < list->size(); ++i)
+            {
+                if ((*list)[i].friendly)
+                {
+                    friends.emplace_back(list, i);
+                }
+            }
+        }
+        std::ranges::shuffle(friends, xirand::rng());
+        const auto heardAt = [&](const std::pair<std::vector<Candidate>*, size_t>& ref)
+        {
+            const auto it = heard.find((*ref.first)[ref.second].charid);
+            return it != heard.end() ? it->second : std::chrono::steady_clock::time_point::min();
+        };
+        std::string seat = "empty";
+        if (const auto oldest = std::ranges::min_element(friends, {}, heardAt); oldest != friends.end())
+        {
+            auto& [list, index] = *oldest;
+            seat                = (*list)[index].name;
+            picked.push_back(std::move((*list)[index]));
+            list->erase(list->begin() + static_cast<std::ptrdiff_t>(index));
+        }
+        const size_t seatYes = !picked.empty() && picked.front().answer.yes ? 1 : 0;
+        const size_t sure    = std::min(need - std::min(need, seatYes), willing.size());
         picked.insert(picked.end(), std::make_move_iterator(willing.begin()), std::make_move_iterator(willing.begin() + sure));
         std::vector<Candidate> rest;
         rest.insert(rest.end(), std::make_move_iterator(willing.begin() + sure), std::make_move_iterator(willing.end()));
@@ -650,6 +715,7 @@ namespace pawn::finder
         uint32 at       = xirand::GetRandomNumber(700, 2200);
         for (auto& c : picked)
         {
+            heard[c.charid] = made.madeAt;
             Responder r;
             r.c        = std::move(c);
             r.revealMs = at;
@@ -659,8 +725,8 @@ namespace pawn::finder
             made.shout.rows.push_back(std::move(r));
         }
         const auto yes = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.answer.yes; });
-        ShowInfoFmt("pawn: {} shouts ({}, log {}): {} hear it, {} would come, {} needed to fill the party",
-                    PPlayer->getName(), kindName(goal), goal.log, made.shout.rows.size(), yes, need);
+        ShowInfoFmt("pawn: {} shouts ({}, log {}): {} hear it, {} would come, {} needed to fill the party, friend seat: {}",
+                    PPlayer->getName(), kindName(goal), goal.log, made.shout.rows.size(), yes, need, seat);
         if (!made.shout.rows.empty())
         {
             shoutedAt[PPlayer->id] = made.madeAt;

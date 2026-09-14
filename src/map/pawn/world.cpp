@@ -2215,6 +2215,12 @@ namespace pawn::world
         return it != bodies.end() && it->second.present;
     }
 
+    auto isLeaving(const uint32 charid) -> bool
+    {
+        const auto it = bodies.find(charid);
+        return it != bodies.end() && it->second.leaving;
+    }
+
     auto tickDebug() -> bool
     {
         static const bool on = settings::get<bool>("pawn.WORLD_TICK_DEBUG");

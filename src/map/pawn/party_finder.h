@@ -85,11 +85,17 @@ namespace pawn::finder
 
     struct Candidate
     {
+        uint32      charid   = 0;
+        bool        friendly = false; // she has partied with this player, or has affinity for them
         std::string name;
         uint8       job      = 0;
         uint8       level    = 0;
+        uint8       race     = 0;
+        uint8       nation   = 0;
+        uint8       rank     = 1; // in her own nation
         uint32      affinity = 0; // hers toward this player, from the memory row
         std::string zone;         // the underscore name, as the roster line carries it
+        uint16      zoneId   = 0; // for the client's own short name of it
         std::string state;        // here (standing in the player's zone), standing (elsewhere in the city), busy (in a party, standing or camping faded), faded (online, no body), away
         Answer      answer;
     };
