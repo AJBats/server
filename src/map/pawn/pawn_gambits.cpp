@@ -419,6 +419,23 @@ namespace pawn
         return nullptr;
     }
 
+    namespace
+    {
+        // "Sleep" is asleep: Sleep II and Lullaby answer the same row -- the
+        // three a wake-up removes together (CLuaBaseEntity::wakeUp, which a
+        // Cure calls) -- so a brain needs one row for all (the user,
+        // 2026-09-14). Nightmare is Sleep itself, a tier above
+        auto hasStatus(CBattleEntity* PEntity, const uint32 arg) -> bool
+        {
+            const auto effect = static_cast<xi::StatusEffect>(arg);
+            if (effect == xi::StatusEffect::SleepI)
+            {
+                return PEntity->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::SleepI, xi::StatusEffect::SleepIi, xi::StatusEffect::Lullaby });
+            }
+            return PEntity->StatusEffectContainer->HasStatusEffect(effect);
+        }
+    } // namespace
+
     auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex) -> bool
     {
         TracyZoneScoped;
@@ -462,10 +479,10 @@ namespace pawn
                     results.push_back(PTrigger->GetMLevel() >= arg);
                     break;
                 case G_CONDITION::STATUS:
-                    results.push_back(PTrigger->StatusEffectContainer->HasStatusEffect(static_cast<xi::StatusEffect>(arg)));
+                    results.push_back(hasStatus(PTrigger, arg));
                     break;
                 case G_CONDITION::NOT_STATUS:
-                    results.push_back(!PTrigger->StatusEffectContainer->HasStatusEffect(static_cast<xi::StatusEffect>(arg)));
+                    results.push_back(!hasStatus(PTrigger, arg));
                     break;
                 case G_CONDITION::STATUS_FLAG:
                     results.push_back(PTrigger->StatusEffectContainer->HasStatusEffectByFlag(static_cast<xi::StatusEffectFlag>(arg)));

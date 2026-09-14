@@ -44,8 +44,7 @@ roles:
     - "mob: hp >= 60 -> best weapon skill"
   mage:
     - "party: hp < 60 -> cast best cure"          # Zapp's row
-    - "party: has sleep -> cast cure"             # a Cure wakes her
-    - "party: has sleep ii -> cast cure"
+    - "party: has sleep -> cast cure"             # a Cure wakes her; "sleep" answers Sleep II and Lullaby too
     - "mob: hp >= 50 -> cast random damage"       # never one the mob already carries
     - "self: mp < 25 -> rest in battle"           # sits out for MP even mid-fight; the resting pipeline starts here
 
