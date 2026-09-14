@@ -173,6 +173,10 @@ namespace pawn
             const sol::error err = result;
             ShowErrorFmt("pawn: starter kit failed for {}: {}", PPawn->getName(), err.what());
         }
+
+        // charCreate marks a new adventurer; a cardian is none
+        PPawn->playerConfig.NewAdventurerOffFlg = true;
+        charutils::SavePlayerSettings(PPawn);
     }
 
     void loadBrain(CCharEntity* PPawn)
