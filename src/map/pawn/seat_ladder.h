@@ -77,7 +77,7 @@ namespace pawn::seats
         int64  seq = 0; // offers count down from 0, touches count up: a total order, equals resolved the same way every run
 
         // looked up on every run
-        bool live    = false; // she may hold a body now: not down, no stand of hers waiting on a retry, and a player in her zone or next door -- or she is owned, and her player's wherever she is
+        bool live    = false; // she may hold a body now: not down, no stand of hers waiting on a retry, and a player in her zone or next door -- or she is owned, and her player's wherever she is, or in a real player's party, and theirs wherever she waits (the user, 2026-09-14)
         bool near    = false; // a player in her zone itself
         bool inParty = false; // in a real player's party, or invited into one and not yet answered
 
@@ -374,8 +374,8 @@ namespace pawn::seats
                     it->second = { lookup.playerNear(e.facts.zone), lookup.playerIn(e.facts.zone) };
                 }
                 e.near    = it->second.second;
-                e.live    = !e.facts.down && now >= e.retryAfter && (e.facts.owner != 0 || it->second.first);
                 e.inParty = lookup.inParty(e.charid);
+                e.live    = !e.facts.down && now >= e.retryAfter && (e.facts.owner != 0 || e.inParty || it->second.first);
             }
         }
 

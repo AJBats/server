@@ -292,6 +292,22 @@ TEST_CASE("Ladder: an owned cardian is live wherever she is", "[cardian][ladder]
     CHECK(rig.run() == std::vector<std::string>{ "stand 1", "signIn 2" });
 }
 
+TEST_CASE("Ladder: a wild cardian in the party is live wherever she waits", "[cardian][ladder]")
+{
+    // the tomb case: the player warps away and her wild party members wait
+    // in a zone nobody is near; in the party they keep their bodies, and
+    // out of it they fade with the rest of the crowd
+    Rig rig(10, 10);
+    rig.crowd(1, 9);
+    rig.crowd(2, 9);
+    rig.party.insert(1);
+
+    CHECK(rig.run() == std::vector<std::string>{ "stand 1", "signIn 2" });
+
+    rig.party.erase(1);
+    CHECK(rig.run() == std::vector<std::string>{ "fade 1" });
+}
+
 TEST_CASE("Ladder: stands are rationed, fades are not", "[cardian][ladder]")
 {
     Rig rig(6, 20, 2);
