@@ -81,6 +81,9 @@ set(MAP_CORE_SOURCES
     # CARDIAN: addon link listener, core because map_engine starts it
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link.h
+    # CARDIAN: the map's real players as the pawn code asks after them, core because map_engine hands it the sessions
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.h
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/conquest_data.cpp

@@ -20,6 +20,7 @@
 */
 
 #include "pawn.h"
+#include "players.h"
 #include "party_finder.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
@@ -96,6 +97,13 @@ namespace
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
+
+    // pawn charid -> her player: the last real player seen live in her
+    // party. Written on the tick and never by the blink -- LSB destroys
+    // his body at a zone line and pops it from the party for seconds --
+    // and erased when the party ends for one of them (leftParty) or her
+    // body goes (despawn, a possession's release)
+    std::unordered_map<uint32, uint32> playerByPawn;
 
     // player charid -> the party's orders (the strategy channel). The hunt
     // rules load from cardian_orders on first use; strategy and retreat
@@ -970,6 +978,23 @@ namespace pawn
             {
                 continue;
             }
+            if (herself)
+            {
+                playerByPawn.erase(charid);
+            }
+            else if (const auto pit = playerByPawn.find(charid); pit != playerByPawn.end() && pit->second == PMember->id)
+            {
+                // Her player is out of the party: another real player still
+                // in it is hers now, or nobody is
+                if (const auto* PPlayer = partyPlayer(PPawn.get()); PPlayer != nullptr)
+                {
+                    pit->second = PPlayer->id;
+                }
+                else
+                {
+                    playerByPawn.erase(pit);
+                }
+            }
             const bool trekking = travelOrders.erase(charid) > 0;
             const bool walking  = PPawn->PAI->PathFind != nullptr && PPawn->PAI->PathFind->IsFollowingPath();
             if (walking)
@@ -1633,6 +1658,7 @@ namespace pawn
         ShowInfoFmt("pawn: despawned {} ({}){}", PPawn->getName(), targetCharID, keepOnline ? ", still online" : "");
 
         summonerByPawn.erase(targetCharID);
+        playerByPawn.erase(targetCharID);
         pendingTransfers.erase(targetCharID);
         travelOrders.erase(targetCharID);
         pawns.erase(it);
@@ -1698,6 +1724,12 @@ namespace pawn
             }
         }
         return nullptr;
+    }
+
+    auto withRealPlayer(const uint32 charid) -> bool
+    {
+        const auto it = playerByPawn.find(charid);
+        return it != playerByPawn.end() && players::online(it->second);
     }
 
     bool isPawn(const CCharEntity* PChar)
@@ -1785,6 +1817,7 @@ namespace pawn
         auto PChar = std::move(it->second);
         pawns.erase(it);
         summonerByPawn.erase(pawnCharID);
+        playerByPawn.erase(pawnCharID);
         pendingInvites.erase(pawnCharID);
         pendingTransfers.erase(pawnCharID);
         travelOrders.erase(pawnCharID);
@@ -1990,6 +2023,11 @@ namespace pawn
                         PPawn->InvitePending.clean();
                     }
                 }
+            }
+
+            if (const auto* PPlayer = partyPlayer(PPawn.get()); PPlayer != nullptr)
+            {
+                playerByPawn[charid] = PPlayer->id;
             }
 
             // Nobody drains a session-less char's outbound queue; without

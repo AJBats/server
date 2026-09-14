@@ -49,6 +49,7 @@
 #include "zone_entities.h"
 
 #include "pawn/cardian_link.h" // CARDIAN
+#include "pawn/players.h"      // CARDIAN
 
 #include "ai/controllers/automaton_controller.h"
 
@@ -259,6 +260,8 @@ auto MapEngine::init() -> Task<void>
     db::preparedStmt("DELETE FROM server_variables WHERE expiry > 0 AND expiry <= ?", currentTimestamp);
 
     moduleutils::OnInit();
+
+    pawn::players::attach(networking_->sessions()); // CARDIAN: "is this player online" is the session's word, which outlives the body at a zone line
 
     if (!config_.isTestServer) // CARDIAN: the addon link listener needs the scheduler; modules are handed none
     {

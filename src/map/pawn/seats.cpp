@@ -166,7 +166,7 @@ namespace pawn::seats
                        Lookup{
                            [](const uint16 zone) { return pawn::world::zoneWarm(zone); },
                            [](const uint16 zone) { return pawn::world::playerIn(zone); },
-                           [](const uint32 charid) { return invitedNow(charid) || pawn::partyPlayer(pawn::findPawn(charid)) != nullptr; },
+                           [](const uint32 charid) { return invitedNow(charid) || pawn::withRealPlayer(charid); },
                        },
                        Engine{ stand, fade, signIn, signOut });
         summonBeside.clear();

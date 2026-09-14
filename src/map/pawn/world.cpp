@@ -292,10 +292,11 @@ namespace
     // A cardian in a real player's party is his until he lets her go: the
     // world's clocks -- a town seat's dwell, the KO fade -- do not run on
     // her while she is with him. When he dismisses her they resume where
-    // they stand
+    // they stand. "With him" is his session's word, not his body's: a zone
+    // line destroys the body for seconds, and the clocks must not notice
     auto withPlayer(const uint32 charid) -> bool
     {
-        return pawn::partyPlayer(pawn::findPawn(charid)) != nullptr;
+        return pawn::withRealPlayer(charid);
     }
 
     auto isLive(CZone* PZone, const uint32 realHere) -> bool

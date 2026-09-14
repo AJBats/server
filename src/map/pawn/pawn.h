@@ -278,12 +278,21 @@ namespace pawn
     // True when the entity is a live pawn owned by this module.
     bool isPawn(const CCharEntity* PChar);
 
-    // The real player she is in a party with, or nullptr. The one answer to
-    // "whose is she", asked by the invite (which player invited her) and by
-    // the ladder (a party member sorts above every tier). Ownership is not
-    // consulted: a wild cardian invited into the party is as much with the
-    // player as an alt is -- the rule the controller's GetLivePlayer uses
+    // The real player she is in a party with, or nullptr: the one with a
+    // live body, for whoever needs it -- the invite (which player invited
+    // her), following, orders. Ownership is not consulted: a wild cardian
+    // invited into the party is as much with the player as an alt is --
+    // the rule the controller's GetLivePlayer uses. Blinks with his body:
+    // for seconds at every zone line there is no such member. Ask
+    // withRealPlayer when the question is whether she is his at all
     auto partyPlayer(const CCharEntity* PPawn) -> CCharEntity*;
+
+    // She is a real player's, right now: the last real player seen live
+    // in her party is still online (players::online -- his session, which
+    // a zone line does not end). The ladder's inParty and the world's
+    // clocks ask this, and neither blinks while he zones. Written on the
+    // tick, erased only when the party ends for her or for him (leftParty)
+    auto withRealPlayer(uint32 charid) -> bool;
 
     // The live pawn with this charid, or nullptr.
     auto findPawn(uint32 pawnCharID) -> CCharEntity*;
