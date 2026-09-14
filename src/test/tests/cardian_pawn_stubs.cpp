@@ -80,6 +80,16 @@ class CardianTestStubs : public CPPModule
         {
             return true;
         };
+
+        // The party memory's affinity, grown by the mirror at a completion,
+        // and her contract: a mocked cardian is the player's own, under none
+        lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* name */, const std::string& /* why */, sol::optional<bool> /* mission */)
+        {
+        };
+        lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const uint32 /* playerCharID */) -> std::string
+        {
+            return "";
+        };
     }
 };
 

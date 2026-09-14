@@ -543,25 +543,113 @@ class PawnModule : public CPPModule
             }
             return names;
         };
-        // The party finder: who fits and where she is, and the invite
-        lua["CBaseEntity"]["cardianFinder"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        // The party finder: who is in reach and what she says to the goal
+        // (exp, or a mission log or quest area), the shout, a look at a
+        // responder, the invite, and the contracts
+        const auto candidateRow = [](const pawn::finder::Candidate& c) -> sol::table
+        {
+            auto row        = ::lua.create_table();
+            row["name"]     = c.name;
+            row["job"]      = c.job;
+            row["level"]    = c.level;
+            row["zone"]     = c.zone;
+            row["state"]    = c.state;
+            row["willing"]  = c.answer.yes;
+            row["line"]     = c.answer.line;
+            row["affinity"] = c.affinity;
+            return row;
+        };
+        lua["CBaseEntity"]["cardianFinder"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log) -> sol::table
         {
             auto rows = ::lua.create_table();
-            for (const auto& c : pawn::finder::candidates(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
+            for (const auto& c : pawn::finder::candidates(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), pawn::finder::goalFrom(kind, log)))
             {
-                auto row     = ::lua.create_table();
-                row["name"]  = c.name;
-                row["job"]   = c.job;
-                row["level"] = c.level;
-                row["zone"]  = c.zone;
-                row["state"] = c.state;
-                rows.add(row);
+                rows.add(candidateRow(c));
             }
             return rows;
         };
-        lua["CBaseEntity"]["cardianInvite"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        lua["CBaseEntity"]["cardianShout"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log, const bool again) -> sol::table
         {
-            return pawn::finder::invite(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
+            auto        out = ::lua.create_table();
+            std::string why;
+            const auto* made = pawn::finder::shout(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), pawn::finder::goalFrom(kind, log), again, why);
+            if (made == nullptr)
+            {
+                out["err"] = why;
+                return out;
+            }
+            out["id"]   = made->id;
+            out["wait"] = made->waitMs;
+            out["kind"] = pawn::finder::kindName(made->goal);
+            out["log"]  = made->goal.log;
+            auto rows   = ::lua.create_table();
+            for (const auto& r : made->rows)
+            {
+                auto row      = candidateRow(r.c);
+                row["reveal"] = r.revealMs;
+                row["decide"] = r.decideMs;
+                rows.add(row);
+            }
+            out["rows"] = rows;
+            return out;
+        };
+        lua["CBaseEntity"]["cardianPeek"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto p = pawn::finder::peek(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
+            if (!p.has_value())
+            {
+                return sol::lua_nil;
+            }
+            auto t        = ::lua.create_table();
+            t["name"]     = p->name;
+            t["job"]      = p->job;
+            t["level"]    = p->level;
+            t["sjob"]     = p->sjob;
+            t["slvl"]     = p->slvl;
+            t["nation"]   = p->nation;
+            t["rank"]     = p->rank;
+            t["standing"] = p->standing;
+            t["affinity"] = p->affinity;
+            t["hp"]       = p->hp;
+            t["maxhp"]    = p->maxhp;
+            t["mp"]       = p->mp;
+            t["maxmp"]    = p->maxmp;
+            t["stats"]    = p->stats;
+            auto gear     = ::lua.create_table();
+            for (const auto& chunk : p->gear)
+            {
+                gear.add(chunk);
+            }
+            t["gear"] = gear;
+            return t;
+        };
+        lua["CBaseEntity"]["cardianInvite"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& kind, const int log) -> std::string
+        {
+            return pawn::finder::invite(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name, pawn::finder::goalFrom(kind, log));
+        };
+        lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& why, sol::optional<bool> mission)
+        {
+            const auto* PPlayer = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PPlayer != nullptr)
+            {
+                pawn::finder::bond(PPlayer->id, charutils::getCharIdFromName(name), why.c_str(), mission.value_or(false));
+            }
+        };
+        // Her contract with the given player (the cardian's own entity asks)
+        lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 playerCharID) -> std::string
+        {
+            const auto* PMember = PLuaBaseEntity != nullptr ? PLuaBaseEntity->GetBaseEntity() : nullptr;
+            return PMember != nullptr ? pawn::finder::contractWith(PMember->id, playerCharID) : "";
+        };
+        // The stats line's tokens for a cardian the player commands
+        lua["CBaseEntity"]["cardianStatsLine"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return sol::lua_nil;
+            }
+            return sol::make_object(::lua, pawn::finder::statsLine(PPawn));
         };
         // Hers to manage, or only to command
         lua["CBaseEntity"]["cardianOwns"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
@@ -1192,9 +1280,10 @@ class PawnModule : public CPPModule
     // Formation latency instrumentation: when did the client's own position
     // packet last arrive for this character (compared against the link's
     // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG).
-    // And the game's own party invite at a name out of the zone (ActIndex
-    // 0, the charid the client resolved): a faded cardian stands for it
-    // before the handler looks her up
+    // And the game's own party invite (UniqueNo is the invitee's charid
+    // whether she was targeted or named): one of the world's adventurers
+    // is refused and the packet dropped, a faded cardian of the player's
+    // own is stood so the handler finds her
     auto OnIncomingPacket(MapSession* PSession, CCharEntity* PChar, CBasicPacket& packet) -> bool override
     {
         std::ignore = PSession;
@@ -1208,9 +1297,9 @@ class PawnModule : public CPPModule
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_SOLICIT_REQ))
         {
-            if (const auto* solicit = packet.as<GP_CLI_COMMAND_GROUP_SOLICIT_REQ>(); solicit->ActIndex == 0 && solicit->Kind == PartyKind::Party)
+            if (const auto* solicit = packet.as<GP_CLI_COMMAND_GROUP_SOLICIT_REQ>(); solicit->Kind == PartyKind::Party)
             {
-                pawn::finder::standForInvite(PChar, solicit->UniqueNo);
+                return pawn::finder::interceptInvite(PChar, solicit->UniqueNo);
             }
         }
         return false;

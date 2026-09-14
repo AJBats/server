@@ -10,6 +10,7 @@
 #include "pawn_items.h"
 
 #include "pawn.h"
+#include "party_finder.h"
 #include "seats.h"
 
 #include "common/database.h"
@@ -976,7 +977,9 @@ namespace
             return;
         }
         // Out of the zone, not offline: her session row stays, so search
-        // still lists her where she stood, at her job and level
+        // still lists her where she stood, at her job and level; her numbers
+        // as she stood are kept for the finder's look at her
+        pawn::finder::snapshot(pawn::findPawn(body.charid));
         pawn::despawnById(body.charid, true);
         body.present = false;
         body.downSince.reset();
@@ -2691,6 +2694,14 @@ namespace pawn::world
         const auto it = bodies.find(PChar->id);
         if (it == bodies.end() || !it->second.present)
         {
+            return exp;
+        }
+        // In a real player's party she levels as the party does: the
+        // game's own caps only, and her exp counts toward her affinity
+        // (the user, 2026-09-13)
+        if (pawn::partyPlayer(PChar) != nullptr)
+        {
+            pawn::finder::noteExp(PChar, exp);
             return exp;
         }
         const Body&  body  = it->second;

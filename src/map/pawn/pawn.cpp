@@ -20,6 +20,7 @@
 */
 
 #include "pawn.h"
+#include "party_finder.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
 #include "seats.h"
@@ -947,6 +948,11 @@ namespace pawn
             {
                 ShowInfoFmt("pawn: {} is out of the party{}: her {} ends where she stands", PPawn->getName(),
                             herself ? "" : fmt::format(" ({} left it)", PMember->getName()), trekking ? "trek" : "walk");
+            }
+            if (herself)
+            {
+                const auto* PLeader = PParty != nullptr ? const_cast<CParty*>(PParty)->GetLeader() : nullptr;
+                finder::noteLeft(charid, PLeader != nullptr ? PLeader->id : 0);
             }
             // A wild body's orders end with the party: nobody can reach her
             // to lift a wait or a hunt once she is out of it
@@ -1933,14 +1939,18 @@ namespace pawn
 
                 if (PPawn->InvitePending.UniqueNo != 0)
                 {
+                    const bool                       yes = finder::accepts(PPawn.get());
                     GP_CLI_COMMAND_GROUP_SOLICIT_RES answer{};
-                    answer.Res = std::to_underlying(GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Accept);
+                    answer.Res = std::to_underlying(yes ? GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Accept : GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Decline);
 
                     if (answer.validate(nullptr, PPawn.get()).valid())
                     {
-                        ShowInfoFmt("pawn: {} accepts the party invite", PPawn->getName());
+                        ShowInfoFmt("pawn: {} {} the party invite", PPawn->getName(), yes ? "accepts" : "declines");
                         answer.process(nullptr, PPawn.get());
-                        gatherOrHold(PPawn.get());
+                        if (yes)
+                        {
+                            gatherOrHold(PPawn.get());
+                        }
                     }
                     else
                     {

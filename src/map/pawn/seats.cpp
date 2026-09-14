@@ -85,7 +85,7 @@ namespace
     // The world's own: a memory row says the player has partied with her
     auto worldTier(const uint32 charid) -> Tier
     {
-        const auto rset = db::preparedStmt("SELECT pawn_charid FROM cardian_party_memory WHERE pawn_charid = ?", charid);
+        const auto rset = db::preparedStmt("SELECT pawn_charid FROM cardian_party_memory WHERE pawn_charid = ? AND last_partied IS NOT NULL", charid);
         return rset && rset->next() ? Tier::Partied : Tier::Crowd;
     }
 
@@ -373,6 +373,12 @@ namespace pawn::seats
     {
         const auto facts = factsOf(charid);
         return facts.has_value() && (facts->owner == 0 || facts->owner == playerCharID);
+    }
+
+    bool isWorlds(const uint32 charid)
+    {
+        const auto facts = factsOf(charid);
+        return facts.has_value() && facts->owner == 0;
     }
 
     bool inviteStand(const uint32 charid)

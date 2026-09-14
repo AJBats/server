@@ -22,13 +22,21 @@
 #include "party_finder.h"
 
 #include "pawn.h"
+#include "pawn_items.h"
 #include "seats.h"
 
+#include "ai/ai_container.h"
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/xirand.h"
 #include "entities/char_entity.h"
+#include "enums/chat_message_type.h"
+#include "enums/msg_std.h"
 #include "enums/party_kind.h"
+#include "lua/lua_base_entity.h"
+#include "packets/s2c/0x009_message.h"
+#include "packets/s2c/0x017_chat_std.h"
 #include "packets/s2c/0x0dc_group_solicit_req.h"
 #include "party.h"
 #include "utils/charutils.h"
@@ -38,11 +46,81 @@
 #include "zone.h"
 
 #include <algorithm>
+#include <chrono>
+#include <initializer_list>
+#include <unordered_map>
+#include <unordered_set>
 
 namespace pawn::finder
 {
     namespace
     {
+        // Her rows, joined once: the census, her character, and the party
+        // memory between her and this player
+        struct Facts
+        {
+            uint32      charid   = 0;
+            std::string name;
+            uint16      posZone  = 0;
+            uint8       job      = 0;
+            uint8       level    = 0;
+            uint32      seed     = 0;
+            uint8       nation   = 0;
+            uint8       rank[3]  = { 1, 1, 1 };
+            bool        partied  = false;
+            uint32      affinity = 0;
+        };
+
+        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, s.mjob, s.mlvl, x.seed, x.nation, "
+                                     "p.rank_sandoria, p.rank_bastok, p.rank_windurst, "
+                                     "CAST(m.last_partied IS NOT NULL AS UNSIGNED) AS partied, "
+                                     "CAST(COALESCE(m.affinity, 0) AS UNSIGNED) AS affinity "
+                                     "FROM cardian_census x "
+                                     "JOIN chars c ON c.charid = x.charid "
+                                     "JOIN char_stats s ON s.charid = x.charid "
+                                     "JOIN char_profile p ON p.charid = x.charid "
+                                     "LEFT JOIN cardian_party_memory m ON m.pawn_charid = x.charid AND m.player_charid = ? "
+                                     "WHERE x.recruited = 0 AND x.charid <> 0";
+
+        auto readFacts(const auto& rset) -> Facts
+        {
+            Facts f;
+            f.charid   = rset->template get<uint32>("charid");
+            f.name     = rset->template get<std::string>("charname");
+            f.posZone  = rset->template get<uint16>("pos_zone");
+            f.job      = rset->template get<uint8>("mjob");
+            f.level    = rset->template get<uint8>("mlvl");
+            f.seed     = rset->template get<uint32>("seed");
+            f.nation   = std::min<uint8>(rset->template get<uint8>("nation"), 2);
+            f.rank[0]  = rset->template get<uint8>("rank_sandoria");
+            f.rank[1]  = rset->template get<uint8>("rank_bastok");
+            f.rank[2]  = rset->template get<uint8>("rank_windurst");
+            f.partied  = rset->template get<uint32>("partied") != 0;
+            f.affinity = rset->template get<uint32>("affinity");
+            return f;
+        }
+
+        auto factsOf(const uint32 playerCharID, const uint32 charid) -> std::optional<Facts>
+        {
+            const auto rset = db::preparedStmt(std::string(kFactsQuery) + " AND x.charid = ?", playerCharID, charid);
+            if (!rset || !rset->next())
+            {
+                return std::nullopt;
+            }
+            return readFacts(rset);
+        }
+
+        auto allFacts(const uint32 playerCharID) -> std::vector<Facts>
+        {
+            std::vector<Facts> out;
+            const auto         rset = db::preparedStmt(kFactsQuery, playerCharID);
+            while (rset && rset->next())
+            {
+                out.push_back(readFacts(rset));
+            }
+            return out;
+        }
+
         // Her zone now: her body's when she stands, her row's otherwise
         auto zoneOf(const CCharEntity* PPawn, const uint16 rowZone) -> CZone*
         {
@@ -52,13 +130,6 @@ namespace pawn::finder
         auto levelOf(const CCharEntity* PPawn, const uint8 rowLevel) -> uint8
         {
             return PPawn != nullptr ? PPawn->GetMLevel() : rowLevel;
-        }
-
-        auto inBand(const CCharEntity* PPlayer, const uint8 level) -> bool
-        {
-            const int band = settings::get<uint8>("pawn.FINDER_BAND");
-            const int mine = PPlayer->GetMLevel();
-            return level >= mine - band && level <= mine + band;
         }
 
         auto inReach(const CCharEntity* PPlayer, CZone* PHere) -> bool
@@ -78,9 +149,304 @@ namespace pawn::finder
             }
             return pawn::world::campLeaderOf(charid) != 0 ? "busy" : "faded";
         }
+
+        constexpr const char* kNationNames[] = { "San d'Oria", "Bastok", "Windurst" };
+
+        // One of her lines, by her seed: the same ask gets the same words
+        auto pick(const uint32 seed, std::initializer_list<const char*> lines) -> std::string
+        {
+            return *(lines.begin() + seed % lines.size());
+        }
+
+        // The player's fame level in each nation, the game's own reckoning,
+        // read once per ask
+        struct Fame
+        {
+            uint8 byNation[3] = { 1, 1, 1 };
+        };
+
+        auto fameOf(const CCharEntity* PPlayer) -> Fame
+        {
+            Fame            fame;
+            CLuaBaseEntity  lua(const_cast<CCharEntity*>(PPlayer));
+            const xi::FameArea areas[3] = { xi::FameArea::Sandoria, xi::FameArea::Bastok, xi::FameArea::Windurst };
+            for (size_t i = 0; i < 3; ++i)
+            {
+                fame.byNation[i] = std::max<uint8>(lua.getFameLevel(areas[i]), 1);
+            }
+            return fame;
+        }
+
+        // What stops her whatever her mood: a party, a fight, a camp, the
+        // level band, a mission she has not reached. nullopt when nothing does
+        auto hardNo(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal) -> std::optional<Answer>
+        {
+            if (PPawn != nullptr)
+            {
+                if (PPawn->PParty != nullptr)
+                {
+                    return Answer{ false, false, "I'm with a party already." };
+                }
+                if (PPawn->PAI != nullptr && PPawn->PAI->IsEngaged())
+                {
+                    return Answer{ false, false, "I'm in the middle of something!" };
+                }
+            }
+            else if (!pawn::seats::has(f.charid))
+            {
+                return Answer{ false, false, "She's nowhere to be found." };
+            }
+            else if (pawn::world::campLeaderOf(f.charid) != 0)
+            {
+                return Answer{ false, false, "I'm out camping with friends." };
+            }
+
+            const int band  = settings::get<uint8>("pawn.FINDER_BAND");
+            const int mine  = PPlayer->GetMLevel();
+            const int level = levelOf(PPawn, f.level);
+            if (level < mine - band)
+            {
+                return Answer{ false, false, pick(f.seed, { "I'd only slow you down.", "I'm not ready for what you're doing." }) };
+            }
+            if (level > mine + band)
+            {
+                return Answer{ false, false, pick(f.seed, { "Come back when you've grown a little.", "You'd be a liability out there." }) };
+            }
+            if (goal.kind == Goal::Kind::Mission && goal.log <= 2)
+            {
+                const uint8 hers = PPawn != nullptr ? PPawn->profile.rank[goal.log] : f.rank[goal.log];
+                if (hers < PPlayer->profile.rank[goal.log])
+                {
+                    return Answer{ false, true, pick(f.seed, { "I'd like to help, but I'm not on that mission yet!", "I haven't gotten that far. Sorry!" }) };
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Her disposition: who you are (fame in her nation, rank against
+        // hers), who you are to her (partied before, affinity), against her
+        // seeded threshold; a quest asks more of it than exp, a mission more
+        // still; `mood` is a shout's roll on it
+        auto softAnswer(const CCharEntity* PPlayer, const Facts& f, const Goal& goal, const Fame& fame, const int mood) -> Answer
+        {
+            const uint8 level     = fame.byNation[f.nation];
+            const int   rankDiff  = static_cast<int>(PPlayer->profile.rank[f.nation]) - static_cast<int>(f.rank[f.nation]);
+            const int   score     = 30 + mood + level * 5 + std::clamp(rankDiff * 5, -10, 15) + (f.partied ? 15 : 0) + static_cast<int>(std::min<uint32>(f.affinity, 6)) * 5;
+            const int   asking    = goal.kind == Goal::Kind::Mission ? 20 : goal.kind == Goal::Kind::Quest ? 10 : 0;
+            const int   threshold = 25 + asking + static_cast<int>(f.seed % 40);
+            if (score < threshold)
+            {
+                if (level <= 1 && !f.partied)
+                {
+                    return { false, false, pick(f.seed, { "Do I know you?", "I don't party with strangers.", "Maybe when I've heard of you." }) };
+                }
+                if (asking > 0 && !f.partied)
+                {
+                    return { false, false, pick(f.seed, { "That's a big ask from someone I've never partied with.", "Let's do some exp first, then we'll talk." }) };
+                }
+                return { false, false, pick(f.seed, { "Not today.", "I'll pass, thanks.", "Some other time." }) };
+            }
+            if (f.affinity >= 3)
+            {
+                return { true, false, pick(f.seed, { "Always, for you.", "You know I'm in." }) };
+            }
+            if (f.partied)
+            {
+                return { true, false, pick(f.seed, { "We've adventured together before. Count me in.", "You again? Gladly." }) };
+            }
+            if (level >= 4)
+            {
+                return { true, false, fmt::format("I've heard your name around {}. Let's go.", kNationNames[f.nation]) };
+            }
+            if (rankDiff > 0)
+            {
+                return { true, false, "Someone of your rank asks? Of course." };
+            }
+            return { true, false, pick(f.seed, { "Sure, why not.", "I could use the company.", "Lead the way." }) };
+        }
+
+        auto judge(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const Fame& fame, const int mood = 0) -> Answer
+        {
+            if (const auto hard = hardNo(PPlayer, f, PPawn, goal); hard.has_value())
+            {
+                return *hard;
+            }
+            return softAnswer(PPlayer, f, goal, fame, mood);
+        }
+
+        // Is the goal one the player's own log holds
+        auto goalHeld(const CCharEntity* PPlayer, const Goal& goal, std::string& why) -> bool
+        {
+            constexpr uint16 kNone = 65535;
+            switch (goal.kind)
+            {
+                case Goal::Kind::Mission:
+                    if ((goal.log > 4 && goal.log != 6) || PPlayer->m_missionLog[goal.log].current == kNone)
+                    {
+                        why = "you are not on a mission there";
+                        return false;
+                    }
+                    return true;
+                case Goal::Kind::Quest:
+                    if (goal.log > 10)
+                    {
+                        why = "no such quest log";
+                        return false;
+                    }
+                    return true;
+                default:
+                    return true;
+            }
+        }
+
+        // A yes the finder took from the shout: the solicit that follows is
+        // hers to accept without a second ask, and her contract starts on
+        // that yes (pawn charid -> the inviter and the goal)
+        struct Consent
+        {
+            uint32                                playerCharID = 0;
+            Goal                                  goal;
+            std::chrono::steady_clock::time_point at; // a consent not answered within kConsentLifetime lapses
+        };
+        std::unordered_map<uint32, Consent> consented;
+        constexpr auto                      kConsentLifetime = std::chrono::minutes(2);
+
+        // Her contract while she is in the party (pawn charid -> the player
+        // and the goal), and the pawns known to hold none, so a miss is not
+        // re-read from the database on every exp grant
+        std::unordered_map<uint32, Consent> contracts;
+        std::unordered_set<uint32>          noContract;
+        std::unordered_map<uint32, uint32>  expBank; // exp toward her next point of affinity
+
+        struct Held
+        {
+            Shout                                 shout;
+            std::chrono::steady_clock::time_point madeAt;
+        };
+        std::unordered_map<uint32, Held>                                  shouts; // by the player's charid
+        std::unordered_map<uint32, std::chrono::steady_clock::time_point> shoutedAt;
+        uint32                                                            lastShoutId = 0;
+
+        constexpr auto kShoutLifetime = std::chrono::minutes(10);
+
+        auto currentShout(const uint32 playerCharID) -> Held*
+        {
+            const auto it = shouts.find(playerCharID);
+            if (it == shouts.end())
+            {
+                return nullptr;
+            }
+            if (std::chrono::steady_clock::now() - it->second.madeAt > kShoutLifetime)
+            {
+                shouts.erase(it);
+                return nullptr;
+            }
+            return &it->second;
+        }
+
+        auto shoutWaitMs(const uint32 playerCharID) -> uint32
+        {
+            const auto it = shoutedAt.find(playerCharID);
+            if (it == shoutedAt.end())
+            {
+                return 0;
+            }
+            const auto ready = it->second + std::chrono::seconds(settings::get<uint32>("pawn.SHOUT_COOLDOWN"));
+            const auto now   = std::chrono::steady_clock::now();
+            return now >= ready ? 0 : static_cast<uint32>(std::chrono::duration_cast<std::chrono::milliseconds>(ready - now).count());
+        }
+
+        auto partySize(const CCharEntity* PPlayer) -> size_t
+        {
+            return PPlayer->PParty != nullptr ? std::max<size_t>(1, PPlayer->PParty->GetMemberCountAcrossAllProcesses()) : 1;
+        }
+
+        auto partyFull(const CCharEntity* PPlayer) -> bool
+        {
+            return PPlayer->PParty != nullptr && PPlayer->PParty->IsFull();
+        }
+
+        // Her yes in the player's current shout, for this same goal
+        auto shoutedYes(const CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> const Responder*
+        {
+            const auto* held = currentShout(PPlayer->id);
+            if (held == nullptr || !(held->shout.goal == goal))
+            {
+                return nullptr;
+            }
+            const auto it = std::ranges::find_if(held->shout.rows, [&](const Responder& r)
+            {
+                return r.c.answer.yes && r.c.name == name;
+            });
+            return it != held->shout.rows.end() ? &*it : nullptr;
+        }
+
+        // Payload fragments sized for one GP_SERV_COMMAND_CHAT_STD each: the
+        // gear line's packing
+        constexpr size_t kChunkLimit = 110;
+
+        void packEntry(std::vector<std::string>& chunks, const std::string& entry)
+        {
+            if (chunks.empty() || chunks.back().size() + 1 + entry.size() > kChunkLimit)
+            {
+                chunks.push_back(entry);
+            }
+            else
+            {
+                chunks.back() += "," + entry;
+            }
+        }
+
+        // A recruit under contract with this player, or nullptr
+        auto contractFor(const uint32 charid, const uint32 playerCharID) -> const Consent*
+        {
+            if (noContract.contains(charid))
+            {
+                return nullptr;
+            }
+            auto it = contracts.find(charid);
+            if (it == contracts.end())
+            {
+                // After a restart: her memory row with the player she is partied with
+                const auto* PPawn   = pawn::findPawn(charid);
+                const auto* PPlayer = PPawn != nullptr ? pawn::partyPlayer(PPawn) : nullptr;
+                if (PPlayer == nullptr)
+                {
+                    return nullptr;
+                }
+                const auto rset = db::preparedStmt("SELECT contract FROM cardian_party_memory WHERE player_charid = ? AND pawn_charid = ? AND contract <> ''", PPlayer->id, charid);
+                if (!rset || !rset->next())
+                {
+                    noContract.insert(charid);
+                    return nullptr;
+                }
+                it = contracts.insert_or_assign(charid, Consent{ PPlayer->id, goalFrom(rset->get<std::string>("contract"), 0) }).first;
+            }
+            return it->second.playerCharID == playerCharID ? &it->second : nullptr;
+        }
     } // namespace
 
-    auto candidates(const CCharEntity* PPlayer) -> std::vector<Candidate>
+    auto goalFrom(const std::string& kind, const int log) -> Goal
+    {
+        Goal goal;
+        if (kind == "mission")
+        {
+            goal.kind = Goal::Kind::Mission;
+        }
+        else if (kind == "quest")
+        {
+            goal.kind = Goal::Kind::Quest;
+        }
+        goal.log = static_cast<uint8>(std::clamp(log, 0, 255));
+        return goal;
+    }
+
+    auto kindName(const Goal& goal) -> const char*
+    {
+        return goal.kind == Goal::Kind::Mission ? "mission" : goal.kind == Goal::Kind::Quest ? "quest" : "exp";
+    }
+
+    auto candidates(const CCharEntity* PPlayer, const Goal& goal) -> std::vector<Candidate>
     {
         std::vector<Candidate> out;
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
@@ -88,40 +454,40 @@ namespace pawn::finder
             return out;
         }
 
-        const int  band = settings::get<uint8>("pawn.FINDER_BAND");
-        const int  mine = PPlayer->GetMLevel();
-        const auto rset = db::preparedStmt("SELECT c.charid, c.charname, c.pos_zone, s.mjob, s.mlvl "
-                                           "FROM cardian_census x "
-                                           "JOIN chars c ON c.charid = x.charid "
-                                           "JOIN char_stats s ON s.charid = c.charid "
-                                           "WHERE x.recruited = 0 AND x.charid <> 0 AND s.mlvl BETWEEN ? AND ?",
-                                           std::max(1, mine - band), mine + band);
-        while (rset && rset->next())
+        const auto fame = fameOf(PPlayer);
+        for (const auto& f : allFacts(PPlayer->id))
         {
-            const uint32 charid = rset->get<uint32>("charid");
-            const auto*  PPawn  = pawn::findPawn(charid);
-            auto*        PHere  = zoneOf(PPawn, rset->get<uint16>("pos_zone"));
-            const uint8  level  = levelOf(PPawn, rset->get<uint8>("mlvl"));
-            if (!inReach(PPlayer, PHere) || !inBand(PPlayer, level))
+            const auto* PPawn = pawn::findPawn(f.charid);
+            auto*       PHere = zoneOf(PPawn, f.posZone);
+            if (!inReach(PPlayer, PHere))
             {
                 continue;
             }
 
             Candidate c;
-            c.name  = rset->get<std::string>("charname");
-            c.job   = rset->get<uint8>("mjob");
-            c.level = level;
-            c.zone  = PHere->getName();
-            c.state = stateOf(PPlayer, PPawn, charid, PHere);
-            c.rank  = c.state == "here" ? 0 : c.state == "standing" ? 1 : 2;
+            c.name     = f.name;
+            c.job      = f.job;
+            c.level    = levelOf(PPawn, f.level);
+            c.affinity = f.affinity;
+            c.zone     = PHere->getName();
+            c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
+            c.answer   = judge(PPlayer, f, PPawn, goal, fame);
             out.push_back(std::move(c));
         }
 
-        std::ranges::sort(out, [](const Candidate& a, const Candidate& b)
+        const auto rankOf = [](const Candidate& c)
         {
-            if (a.rank != b.rank)
+            return c.state == "here" ? 0 : c.state == "standing" ? 1 : c.state == "faded" ? 2 : 3;
+        };
+        std::ranges::sort(out, [&](const Candidate& a, const Candidate& b)
+        {
+            if (a.answer.yes != b.answer.yes)
             {
-                return a.rank < b.rank;
+                return a.answer.yes;
+            }
+            if (rankOf(a) != rankOf(b))
+            {
+                return rankOf(a) < rankOf(b);
             }
             if (a.level != b.level)
             {
@@ -132,7 +498,223 @@ namespace pawn::finder
         return out;
     }
 
-    auto invite(CCharEntity* PPlayer, const std::string& name) -> std::string
+    auto shout(const CCharEntity* PPlayer, const Goal& goal, const bool again, std::string& why) -> const Shout*
+    {
+        why.clear();
+        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
+        {
+            why = "no such player";
+            return nullptr;
+        }
+        auto* current = currentShout(PPlayer->id);
+        if (!again && current != nullptr && current->shout.goal == goal)
+        {
+            current->shout.waitMs = shoutWaitMs(PPlayer->id);
+            return &current->shout;
+        }
+        if (partyFull(PPlayer))
+        {
+            why = "your party is full";
+            return nullptr;
+        }
+        if (!goalHeld(PPlayer, goal, why))
+        {
+            return nullptr;
+        }
+        if (const auto wait = shoutWaitMs(PPlayer->id); wait > 0)
+        {
+            ShowInfoFmt("pawn: {} shouts again too soon ({} s left)", PPlayer->getName(), (wait + 999) / 1000);
+            if (current != nullptr)
+            {
+                current->shout.waitMs = wait;
+                return &current->shout;
+            }
+            why = fmt::format("you can shout again in {} seconds", (wait + 999) / 1000);
+            return nullptr;
+        }
+
+        // Everyone in reach the world holds, each with a mood for this shout
+        std::vector<Candidate> willing;
+        std::vector<Candidate> unwilling;
+        std::vector<Candidate> notYet; // a mission she has not reached: the extra nos
+        const auto             fame = fameOf(PPlayer);
+        for (const auto& f : allFacts(PPlayer->id))
+        {
+            const auto* PPawn = pawn::findPawn(f.charid);
+            auto*       PHere = zoneOf(PPawn, f.posZone);
+            if (!inReach(PPlayer, PHere) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
+            {
+                continue;
+            }
+            Candidate c;
+            c.name     = f.name;
+            c.job      = f.job;
+            c.level    = levelOf(PPawn, f.level);
+            c.affinity = f.affinity;
+            c.zone     = PHere->getName();
+            c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
+            c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(-10, 11));
+            (c.answer.yes ? willing : c.answer.notYet ? notYet : unwilling).push_back(std::move(c));
+        }
+
+        // Enough yeses to fill the party when the crowd has them (the user,
+        // 2026-09-13: one shout should be able to form a party; a re-shout
+        // is for the picky), the rest of the eight a mix, then up to three
+        // who have not reached the mission, all in one shuffled order
+        constexpr size_t kResponders = 8;
+        constexpr size_t kNotYet     = 3;
+        const size_t     need        = std::min<size_t>(kResponders, 6 - std::min<size_t>(6, partySize(PPlayer)));
+        std::ranges::shuffle(willing, xirand::rng());
+        std::ranges::shuffle(unwilling, xirand::rng());
+        std::ranges::shuffle(notYet, xirand::rng());
+
+        std::vector<Candidate> picked;
+        const size_t           sure = std::min(need, willing.size());
+        picked.insert(picked.end(), std::make_move_iterator(willing.begin()), std::make_move_iterator(willing.begin() + sure));
+        std::vector<Candidate> rest;
+        rest.insert(rest.end(), std::make_move_iterator(willing.begin() + sure), std::make_move_iterator(willing.end()));
+        rest.insert(rest.end(), std::make_move_iterator(unwilling.begin()), std::make_move_iterator(unwilling.end()));
+        std::ranges::shuffle(rest, xirand::rng());
+        const size_t fill = std::min(kResponders - picked.size(), rest.size());
+        picked.insert(picked.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.begin() + fill));
+        const size_t extra = std::min(kNotYet, notYet.size());
+        picked.insert(picked.end(), std::make_move_iterator(notYet.begin()), std::make_move_iterator(notYet.begin() + extra));
+        std::ranges::shuffle(picked, xirand::rng());
+
+        // Her timing: the first voice after a beat, then uneven gaps -- most
+        // short, now and then a lull -- and each deliberates a while
+        Held made;
+        made.madeAt     = std::chrono::steady_clock::now();
+        made.shout.id   = ++lastShoutId;
+        made.shout.goal = goal;
+        uint32 at       = xirand::GetRandomNumber(700, 2200);
+        for (auto& c : picked)
+        {
+            Responder r;
+            r.c        = std::move(c);
+            r.revealMs = at;
+            r.decideMs = xirand::GetRandomNumber(1500, 5200);
+            const bool lull = xirand::GetRandomNumber(0, 5) == 0;
+            at += lull ? xirand::GetRandomNumber(2500, 5000) : xirand::GetRandomNumber(400, 2400);
+            made.shout.rows.push_back(std::move(r));
+        }
+        const auto yes = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.answer.yes; });
+        ShowInfoFmt("pawn: {} shouts ({}, log {}): {} hear it, {} would come, {} needed to fill the party",
+                    PPlayer->getName(), kindName(goal), goal.log, made.shout.rows.size(), yes, need);
+        if (!made.shout.rows.empty())
+        {
+            shoutedAt[PPlayer->id] = made.madeAt;
+        }
+        made.shout.waitMs = shoutWaitMs(PPlayer->id);
+        auto [it, inserted] = shouts.insert_or_assign(PPlayer->id, std::move(made));
+        return &it->second.shout;
+    }
+
+    auto statsLine(CCharEntity* PPawn) -> std::string
+    {
+        return fmt::format("{}:{} {}:{} {}:{} {}:{} {}:{} {}:{} {}:{} {}:{}",
+                           PPawn->STR(), PPawn->getMod(xi::Mod::STR), PPawn->DEX(), PPawn->getMod(xi::Mod::DEX),
+                           PPawn->VIT(), PPawn->getMod(xi::Mod::VIT), PPawn->AGI(), PPawn->getMod(xi::Mod::AGI),
+                           PPawn->INT(), PPawn->getMod(xi::Mod::INT), PPawn->MND(), PPawn->getMod(xi::Mod::MND),
+                           PPawn->CHR(), PPawn->getMod(xi::Mod::CHR), PPawn->ATT(SLOT_MAIN), PPawn->DEF());
+    }
+
+    void snapshot(CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr)
+        {
+            return;
+        }
+        db::preparedStmt("INSERT INTO cardian_snapshot (charid, level, hp, maxhp, mp, maxmp, str_t, dex_t, vit_t, agi_t, int_t, mnd_t, chr_t, "
+                         "str_b, dex_b, vit_b, agi_b, int_b, mnd_b, chr_b, att, def, taken_at) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()) "
+                         "ON DUPLICATE KEY UPDATE level = VALUES(level), hp = VALUES(hp), maxhp = VALUES(maxhp), mp = VALUES(mp), maxmp = VALUES(maxmp), "
+                         "str_t = VALUES(str_t), dex_t = VALUES(dex_t), vit_t = VALUES(vit_t), agi_t = VALUES(agi_t), int_t = VALUES(int_t), mnd_t = VALUES(mnd_t), chr_t = VALUES(chr_t), "
+                         "str_b = VALUES(str_b), dex_b = VALUES(dex_b), vit_b = VALUES(vit_b), agi_b = VALUES(agi_b), int_b = VALUES(int_b), mnd_b = VALUES(mnd_b), chr_b = VALUES(chr_b), "
+                         "att = VALUES(att), def = VALUES(def), taken_at = NOW()",
+                         PPawn->id, PPawn->GetMLevel(),
+                         static_cast<uint32>(std::max(0, PPawn->health.hp)), static_cast<uint32>(std::max(0, PPawn->GetMaxHP())),
+                         static_cast<uint32>(std::max(0, PPawn->health.mp)), static_cast<uint32>(std::max(0, PPawn->GetMaxMP())),
+                         static_cast<int16>(PPawn->STR()), static_cast<int16>(PPawn->DEX()), static_cast<int16>(PPawn->VIT()), static_cast<int16>(PPawn->AGI()),
+                         static_cast<int16>(PPawn->INT()), static_cast<int16>(PPawn->MND()), static_cast<int16>(PPawn->CHR()),
+                         PPawn->getMod(xi::Mod::STR), PPawn->getMod(xi::Mod::DEX), PPawn->getMod(xi::Mod::VIT), PPawn->getMod(xi::Mod::AGI),
+                         PPawn->getMod(xi::Mod::INT), PPawn->getMod(xi::Mod::MND), PPawn->getMod(xi::Mod::CHR),
+                         PPawn->ATT(SLOT_MAIN), PPawn->DEF());
+    }
+
+    auto peek(const CCharEntity* PPlayer, const std::string& name) -> std::optional<Peek>
+    {
+        if (PPlayer == nullptr)
+        {
+            return std::nullopt;
+        }
+        const uint32 charid = charutils::getCharIdFromName(name);
+        const auto   facts  = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
+        if (!facts.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto* held = currentShout(PPlayer->id);
+        if (held == nullptr || !std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.name == facts->name; }))
+        {
+            return std::nullopt;
+        }
+        Peek p;
+        p.name     = facts->name;
+        p.nation   = facts->nation;
+        p.rank     = facts->rank[facts->nation];
+        p.affinity = facts->affinity;
+        if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
+        {
+            p.standing = true;
+            p.job      = static_cast<uint8>(PPawn->GetMJob());
+            p.level    = PPawn->GetMLevel();
+            p.sjob     = static_cast<uint8>(PPawn->GetSJob());
+            p.slvl     = PPawn->GetSLevel();
+            p.rank     = PPawn->profile.rank[facts->nation];
+            p.gear     = pawn::items::equipChunks(PPawn);
+            p.hp       = static_cast<uint32>(std::max(0, PPawn->health.hp));
+            p.maxhp    = static_cast<uint32>(std::max(0, PPawn->GetMaxHP()));
+            p.mp       = static_cast<uint32>(std::max(0, PPawn->health.mp));
+            p.maxmp    = static_cast<uint32>(std::max(0, PPawn->GetMaxMP()));
+            p.stats    = statsLine(PPawn);
+            return p;
+        }
+        p.job   = facts->job;
+        p.level = facts->level;
+        if (const auto rset = db::preparedStmt("SELECT sjob, slvl FROM char_stats WHERE charid = ?", charid); rset && rset->next())
+        {
+            p.sjob = rset->get<uint8>("sjob");
+            p.slvl = rset->get<uint8>("slvl");
+        }
+        // Her last stand's numbers, at her level today: a ding since makes
+        // them another woman's
+        if (const auto rset = db::preparedStmt("SELECT hp, maxhp, mp, maxmp, str_t, dex_t, vit_t, agi_t, int_t, mnd_t, chr_t, "
+                                               "str_b, dex_b, vit_b, agi_b, int_b, mnd_b, chr_b, att, def FROM cardian_snapshot WHERE charid = ? AND level = ?",
+                                               charid, p.level);
+            rset && rset->next())
+        {
+            p.hp    = rset->get<uint32>("hp");
+            p.maxhp = rset->get<uint32>("maxhp");
+            p.mp    = rset->get<uint32>("mp");
+            p.maxmp = rset->get<uint32>("maxmp");
+            std::string line;
+            for (const auto* stat : { "str", "dex", "vit", "agi", "int", "mnd", "chr" })
+            {
+                line += fmt::format("{}:{} ", rset->get<int16>(fmt::format("{}_t", stat)), rset->get<int16>(fmt::format("{}_b", stat)));
+            }
+            line += fmt::format("{}:{}", rset->get<uint16>("att"), rset->get<uint16>("def"));
+            p.stats = line;
+        }
+        const auto rset = db::preparedStmt("SELECT slot, itemid FROM cardian_wardrobe WHERE name = ? ORDER BY slot", facts->name);
+        while (rset && rset->next())
+        {
+            packEntry(p.gear, fmt::format("{}:{}:0", rset->get<uint8>("slot"), rset->get<uint16>("itemid")));
+        }
+        return p;
+    }
+
+    auto invite(CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> std::string
     {
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
         {
@@ -142,39 +724,32 @@ namespace pawn::finder
         {
             return "you are not the party leader";
         }
-        if (PPlayer->PParty != nullptr && PPlayer->PParty->IsFull())
+        if (partyFull(PPlayer))
         {
             return "your party is full";
         }
-
-        // The same gate the list applies: an unrecruited census body, in
-        // band, in the player's zone or city. Her zone and level are her
-        // body's when she stands and her rows' when she is faded
+        // The list's own gate: an unrecruited census body, a yes in the
+        // player's current shout for this goal, in the player's zone or
+        // city, then what stops her whatever she said before. Her zone is
+        // her body's when she stands and her row's when she is faded
         const uint32 charid = charutils::getCharIdFromName(name);
-        if (charid == 0)
+        const auto   facts  = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
+        if (!facts.has_value())
         {
             return "she is not one of the world's adventurers";
         }
-        const auto row = db::preparedStmt("SELECT x.recruited, c.pos_zone, s.mlvl FROM cardian_census x "
-                                          "JOIN chars c ON c.charid = x.charid JOIN char_stats s ON s.charid = x.charid "
-                                          "WHERE x.charid = ?",
-                                          charid);
-        if (!row || !row->next())
+        if (shoutedYes(PPlayer, facts->name, goal) == nullptr)
         {
-            return "she is not one of the world's adventurers";
-        }
-        if (row->get<uint8>("recruited") != 0)
-        {
-            return "she is spoken for";
+            return "she did not answer your shout for that";
         }
         auto* PPawn = pawn::findPawn(charid);
-        if (!inReach(PPlayer, zoneOf(PPawn, row->get<uint16>("pos_zone"))))
+        if (!inReach(PPlayer, zoneOf(PPawn, facts->posZone)))
         {
             return "she is not in your city";
         }
-        if (!inBand(PPlayer, levelOf(PPawn, row->get<uint8>("mlvl"))))
+        if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal); hard.has_value())
         {
-            return "she is not of your level";
+            return hard->line;
         }
         if (PPawn == nullptr)
         {
@@ -183,6 +758,10 @@ namespace pawn::finder
                 return why;
             }
             PPawn = pawn::findPawn(charid);
+        }
+        if (PPawn == nullptr)
+        {
+            return "she cannot stand just now";
         }
 
         if (PPawn->isDead())
@@ -198,11 +777,107 @@ namespace pawn::finder
             return "she already has an invite";
         }
 
+        consented[charid] = Consent{ PPlayer->id, goal, std::chrono::steady_clock::now() };
         PPawn->InvitePending.UniqueNo = PPlayer->id;
         PPawn->InvitePending.ActIndex = PPlayer->targid;
         PPawn->pushPacket<GP_SERV_COMMAND_GROUP_SOLICIT_REQ>(PPawn->id, PPawn->targid, PPlayer->getName(), PartyKind::Party);
-        ShowInfoFmt("pawn: {} invites {} from the party finder", PPlayer->getName(), PPawn->getName());
+        ShowInfoFmt("pawn: {} invites {} from the party finder, for {}", PPlayer->getName(), PPawn->getName(), kindName(goal));
         return "";
+    }
+
+    auto accepts(CCharEntity* PPawn) -> bool
+    {
+        if (PPawn == nullptr)
+        {
+            return false;
+        }
+        const auto* PInviter = zoneutils::GetCharFromWorld(PPawn->InvitePending.UniqueNo, PPawn->InvitePending.ActIndex);
+        const auto  it       = consented.find(PPawn->id);
+        const bool  wild     = pawn::seats::isWorlds(PPawn->id);
+        if (it == consented.end())
+        {
+            if (!wild)
+            {
+                return true; // hers to accept: an alt or a recruit
+            }
+            ShowInfoFmt("pawn: {} declines {}'s invite: nobody shouted for her", PPawn->getName(), PInviter != nullptr ? PInviter->getName() : "someone");
+            return false;
+        }
+        const Consent consent = it->second;
+        consented.erase(it);
+        if (PInviter == nullptr || PInviter->id != consent.playerCharID || std::chrono::steady_clock::now() - consent.at > kConsentLifetime)
+        {
+            return !wild;
+        }
+        // Her contract starts on the yes, and the two of you have partied
+        contracts[PPawn->id] = consent;
+        noContract.erase(PPawn->id);
+        db::preparedStmt("INSERT INTO cardian_party_memory (player_charid, pawn_charid, last_partied, contract) VALUES (?, ?, NOW(), ?) "
+                         "ON DUPLICATE KEY UPDATE contract = VALUES(contract), last_partied = NOW()",
+                         consent.playerCharID, PPawn->id, kindName(consent.goal));
+        ShowInfoFmt("pawn: {} joins {} under the {} contract", PPawn->getName(), PInviter->getName(), kindName(consent.goal));
+        return true;
+    }
+
+    auto contractWith(const uint32 charid, const uint32 playerCharID) -> const char*
+    {
+        const auto* c = contractFor(charid, playerCharID);
+        return c != nullptr ? kindName(c->goal) : "";
+    }
+
+    void noteLeft(const uint32 charid, const uint32 leaderCharID)
+    {
+        contracts.erase(charid);
+        noContract.erase(charid);
+        expBank.erase(charid);
+        if (leaderCharID != 0)
+        {
+            db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND player_charid = ?", charid, leaderCharID);
+        }
+        else
+        {
+            db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ?", charid);
+        }
+    }
+
+    void noteExp(const CCharEntity* PPawn, const uint32 exp)
+    {
+        if (PPawn == nullptr || exp == 0 || PPawn->PParty == nullptr)
+        {
+            return;
+        }
+        auto* PPlayer = pawn::partyPlayer(PPawn);
+        if (PPlayer == nullptr)
+        {
+            return;
+        }
+        const auto* c = contractFor(PPawn->id, PPlayer->id);
+        if (c == nullptr || c->goal.kind != Goal::Kind::Experience)
+        {
+            return;
+        }
+        const uint32 per  = std::max<uint32>(1, settings::get<uint32>("pawn.AFFINITY_EXP"));
+        auto&        bank = expBank[PPawn->id];
+        bank += exp;
+        while (bank >= per)
+        {
+            bank -= per;
+            bond(PPlayer->id, PPawn->id, "exp gained in the party");
+            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} thinks a little more of you.", PPawn->getName()));
+        }
+    }
+
+    void bond(const uint32 playerCharID, const uint32 pawnCharID, const char* why, const bool mission)
+    {
+        if (playerCharID == 0 || pawnCharID == 0)
+        {
+            return;
+        }
+        const uint32 missions = mission ? 1 : 0;
+        db::preparedStmt("INSERT INTO cardian_party_memory (player_charid, pawn_charid, last_partied, affinity, missions) VALUES (?, ?, NOW(), 1, ?) "
+                         "ON DUPLICATE KEY UPDATE affinity = affinity + 1, missions = missions + ?, last_partied = NOW()",
+                         playerCharID, pawnCharID, missions, missions);
+        ShowInfoFmt("pawn: {}'s affinity with {} grows: {}{}", pawn::seats::nameOf(pawnCharID), pawn::seats::nameOf(playerCharID), why, mission ? " (a mission together)" : "");
     }
 
     auto standFaded(const CCharEntity* PPlayer, const uint32 charid) -> const char*
@@ -230,21 +905,32 @@ namespace pawn::finder
         return PPawn != nullptr ? nullptr : "she cannot stand just now";
     }
 
-    void standForInvite(CCharEntity* PPlayer, const uint32 charid)
+    auto interceptInvite(CCharEntity* PPlayer, const uint32 charid) -> bool
     {
-        if (PPlayer == nullptr || charid == 0 || pawn::findPawn(charid) != nullptr || !pawn::seats::has(charid))
+        if (PPlayer == nullptr || charid == 0 || !pawn::seats::has(charid))
         {
-            return;
+            return false;
         }
-        // The handler's own refusals that cost nothing to ask first: a
-        // stand for an invite it will not send is a body for nothing
         if (jailutils::InPrison(PPlayer) || (PPlayer->PParty != nullptr && (PPlayer->PParty->GetLeader() != PPlayer || PPlayer->PParty->IsFull())))
         {
-            return;
+            return false;
         }
-        if (const auto* why = standFaded(PPlayer, charid); why != nullptr && pawn::findPawn(charid) == nullptr)
+        if (pawn::seats::isWorlds(charid))
         {
-            ShowInfoFmt("pawn: {} invites {} by name; {}, so the game drops the invite", PPlayer->getName(), pawn::seats::nameOf(charid), why);
+            const auto name = pawn::seats::nameOf(charid);
+            PPlayer->pushPacket<GP_SERV_COMMAND_MESSAGE>(PPlayer, 0, 0, MsgStd::InvitationDeclined);
+            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is one of the world's adventurers. Recruit her through the Party Finder.", name));
+            ShowInfoFmt("pawn: {} invites {} by name; refused, she is the world's (the Party Finder recruits her)", PPlayer->getName(), name);
+            return true;
         }
+        // The player's own, faded: stood so the handler finds her
+        if (pawn::findPawn(charid) == nullptr)
+        {
+            if (const auto* why = standFaded(PPlayer, charid); why != nullptr && pawn::findPawn(charid) == nullptr)
+            {
+                ShowInfoFmt("pawn: {} invites {} by name; {}, so the game drops the invite", PPlayer->getName(), pawn::seats::nameOf(charid), why);
+            }
+        }
+        return false;
     }
 } // namespace pawn::finder

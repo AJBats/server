@@ -74,6 +74,9 @@ namespace pawn::seats
     // The ladder holds her and she is the world's or this player's own
     bool heldFor(uint32 charid, uint32 playerCharID);
 
+    // The ladder holds her as the world's own (no owner): a wild cardian
+    bool isWorlds(uint32 charid);
+
     // Her name, by charid (the chars row)
     auto nameOf(uint32 charid) -> std::string;
 } // namespace pawn::seats

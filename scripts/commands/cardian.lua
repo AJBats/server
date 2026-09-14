@@ -36,6 +36,11 @@
 --       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
 --       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
 --                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
+--       finder [exp|mission <log>|quest <area>]  the party finder: who is in reach and what each says to the goal
+--       goals                            what the player could recruit for: current missions, quests under way
+--       shout <kind> <log> [again]       the shout: up to eight adventurers in reach and their answers, timed
+--       peek <name>                      one of the shout's responders: jobs, nation, rank, affinity, gear
+--       invite <name> [kind] [log]       the party invite, sent for you; she answers it herself
 --       orders                           the party's orders: st <strategy> <retreat> <min> <max> <pull>
 --                                        <aggressive> <links> <name;name>
 --       hunt <rule> <n>                  a hunt rule: min|max (check 0 Too Weak .. 7 Incredibly Tough),
@@ -373,14 +378,11 @@ local function sendStatsLine(player, name)
         return
     end
 
-    local combat = player:cardianCombatStats(name)
-    local parts  = { '#cd s', name }
-    for _, mod in ipairs(statMods) do
-        parts[#parts + 1] = string.format('%d:%d', targ:getStat(mod), targ:getMod(mod))
+    local line = player:cardianStatsLine(name)
+    if line == nil then
+        return
     end
-    parts[#parts + 1] = string.format('%d:%d', combat and combat.att or 0, combat and combat.def or 0)
-    parts[#parts + 1] = tostring(player:cardianOwns(name) and targ:getGil() or 0)
-    reply(player, table.concat(parts, ' '))
+    reply(player, string.format('#cd s %s %s %d', name, line, player:cardianOwns(name) and targ:getGil() or 0))
 end
 
 -- What she cannot do yet: 'rc <name> key=seconds;...' for every spell
@@ -496,7 +498,81 @@ local function sendProfile(player, name)
         reply(player, '#cd err profile no such cardian')
         return
     end
-    reply(player, string.format('#cd pf %s %d %d %d %d %d %s', name, p.title, p.nation, p.race, p.rank, p.rankpoints, p.home))
+    reply(player, string.format('#cd pr %s %d %d %d %d %d %s', name, p.title, p.nation, p.race, p.rank, p.rankpoints, p.home))
+end
+
+-- The enum key as a title, the party progress module's own caser
+local function titleFromKey(key)
+    return xi.cardian and xi.cardian.titleFromKey and xi.cardian.titleFromKey(key) or key
+end
+
+local function keyOf(ids, id)
+    if ids ~= nil then
+        for key, value in pairs(ids) do
+            if value == id then
+                return key
+            end
+        end
+    end
+    return nil
+end
+
+-- What the player could be recruiting for (the party finder's ring): the
+-- current mission on each log that has one, and every quest under way.
+-- 'gl.b', 'gl mission <log> <id> <title>' / 'gl quest <area> <id> <title>',
+-- 'gl.e'. Logs the era plays: the three nations, Zilart, Promathia, Aht
+-- Urhgan; the nation logs rest on NONE, the later ones on 0
+-- The nation logs rest on NONE; the later ones the game resets to 0 at
+-- a completion, so 0 reads as none there too (Zilart's and Aht Urhgan's
+-- first missions carry id 0 and cannot be told from an empty log) --
+-- and Promathia's rests on a category
+local goalLogs =
+{
+    { log = xi.mission.log_id.SANDORIA, none = { [xi.mission.id.nation.NONE] = true } },
+    { log = xi.mission.log_id.BASTOK,   none = { [xi.mission.id.nation.NONE] = true } },
+    { log = xi.mission.log_id.WINDURST, none = { [xi.mission.id.nation.NONE] = true } },
+    { log = xi.mission.log_id.ZILART,   none = { [xi.mission.id.nation.NONE] = true, [0] = true } },
+    { log = xi.mission.log_id.COP,      none = { [xi.mission.id.nation.NONE] = true, [0] = true, [xi.mission.id.cop.ANCIENT_FLAMES_BECKON] = true } },
+    { log = xi.mission.log_id.TOAU,     none = { [xi.mission.id.nation.NONE] = true, [0] = true } },
+}
+
+-- ... and 'gl.c <log> <n>', how many missions on each log are complete,
+-- for the panel's Completed line
+local function sendGoals(player)
+    reply(player, '#cd gl.b')
+    for _, entry in ipairs(goalLogs) do
+        local ids     = xi.mission.id[xi.mission.area[entry.log]]
+        local current = player:getCurrentMission(entry.log)
+        if not entry.none[current] then
+            local key = keyOf(ids, current)
+            reply(player, string.format('#cd gl mission %d %d %s', entry.log, current, key and titleFromKey(key) or ('#' .. current)))
+        end
+        local done = 0
+        if ids ~= nil then
+            for _, id in pairs(ids) do
+                if id ~= xi.mission.id.nation.NONE and player:hasCompletedMission(entry.log, id) then
+                    done = done + 1
+                end
+            end
+        end
+        reply(player, string.format('#cd gl.c %d %d', entry.log, done))
+    end
+    for area = 0, xi.questLog.COALITION do
+        local ids = xi.quest.id[xi.quest.area[area]]
+        if ids ~= nil then
+            local keys = {}
+            for key in pairs(ids) do
+                keys[#keys + 1] = key
+            end
+            table.sort(keys)
+            for _, key in ipairs(keys) do
+                if player:getQuestStatus(area, ids[key]) == xi.questStatus.QUEST_ACCEPTED then
+                    reply(player, string.format('#cd gl quest %d %d %s', area, ids[key], titleFromKey(key)))
+                end
+            end
+        end
+    end
+    reply(player, '#cd gl.e')
 end
 
 -- Every job she has a level in, as job:level
@@ -827,16 +903,56 @@ commandObj.onTrigger = function(player, line)
     elseif verb == 'recasts' and name then
         sendRecasts(player, name)
     elseif verb == 'finder' then
-        -- The party finder: 'pf.b <n>', one 'pf <name> <job> <level> <state> <zone>'
-        -- per candidate, 'pf.e'
-        local rows = player:cardianFinder()
+        -- The party finder: 'finder [adv|mission <log>|quest <area>]' -> 'pf.b <n>',
+        -- one 'pf <name> <job> <level> <state> <zone> <willing> <her line>' per
+        -- adventurer in reach, 'pf.e'
+        local rows = player:cardianFinder(args[2] or 'exp', tonumber(args[3]) or 0)
         reply(player, '#cd pf.b ' .. #rows)
         for _, r in ipairs(rows) do
-            reply(player, string.format('#cd pf %s %d %d %s %s', r.name, r.job, r.level, r.state, r.zone))
+            reply(player, string.format('#cd pf %s %d %d %s %s %d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.line))
         end
         reply(player, '#cd pf.e')
+    elseif verb == 'shout' then
+        -- The shout: 'shout <exp|mission|quest> <log> [again]' -> 'sh.b <id> <n>
+        -- <waitMs> <kind> <log>', one 'sh <name> <job> <level> <state> <zone>
+        -- <willing> <revealMs> <decideMs> a=<affinity> <her line>' per responder,
+        -- 'sh.e'; or 'err shout <why>'. The same shout again without 'again':
+        -- the screen replays it
+        local made = player:cardianShout(args[2] or 'exp', tonumber(args[3]) or 0, args[4] == 'again')
+        if made.err ~= nil then
+            reply(player, '#cd err shout ' .. made.err)
+        else
+            local rows = made.rows or {}
+            reply(player, string.format('#cd sh.b %d %d %d %s %d', made.id or 0, #rows, made.wait or 0, made.kind or 'exp', made.log or 0))
+            for _, r in ipairs(rows) do
+                reply(player, string.format('#cd sh %s %d %d %s %s %d %d %d a=%d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.reveal, r.decide, r.affinity or 0, r.line))
+            end
+            reply(player, '#cd sh.e')
+        end
+    elseif verb == 'goals' then
+        sendGoals(player)
+    elseif verb == 'peek' and name then
+        -- A look at one of the shout's responders: 'pk <name> <job> <level> <sjob>
+        -- <slvl> <nation> <rank> <standing> <affinity> <hp> <maxhp> <mp> <maxmp> <tp>'
+        -- (her numbers as she stands, or as she last stood at this level; zeros
+        -- when unknown), one 'pkg <name> <gear chunk>' per chunk, 'pks <name> <the
+        -- stats line's tokens> 0' when her numbers are known, 'pk.e <name>'
+        local p = player:cardianPeek(name)
+        if p == nil then
+            reply(player, '#cd err peek she is not in your shout')
+        else
+            reply(player, string.format('#cd pk %s %d %d %d %d %d %d %d %d %d %d %d %d %d', p.name, p.job, p.level, p.sjob, p.slvl, p.nation, p.rank, p.standing and 1 or 0, p.affinity,
+                p.hp or 0, p.maxhp or 0, p.mp or 0, p.maxmp or 0, 0))
+            for _, chunk in ipairs(p.gear) do
+                reply(player, '#cd pkg ' .. p.name .. ' ' .. chunk)
+            end
+            if p.stats ~= nil and p.stats ~= '' then
+                reply(player, '#cd pks ' .. p.name .. ' ' .. p.stats .. ' 0')
+            end
+            reply(player, '#cd pk.e ' .. p.name)
+        end
     elseif verb == 'invite' and name then
-        local err = player:cardianInvite(name)
+        local err = player:cardianInvite(name, args[3] or 'exp', tonumber(args[4]) or 0)
         if err ~= '' then
             reply(player, '#cd err invite ' .. err)
         else
