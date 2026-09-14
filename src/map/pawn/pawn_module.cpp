@@ -462,11 +462,12 @@ class PawnModule : public CPPModule
         // Cardian management surface (!cardian command / companion addon).
         // Two gates (ROADMAP H: command yes, manage no). managedPair resolves
         // the named pawn through findManagedPawn: only the summoner inspects
-        // or moves her belongings, edits her gambits or spends her money.
-        // commandPair resolves through findCommandablePawn: summoned or in
-        // the player's party, so a wild cardian invited along takes orders
-        // and shows what /check would show. Mutators return "" on success,
-        // else a reason forwarded to the addon.
+        // or moves her belongings or spends her money. commandPair resolves
+        // through findCommandablePawn: summoned or in the player's party, so
+        // a wild cardian invited along takes orders, shows what /check would
+        // show, is sent home when KO'd, and has her gambits edited as a
+        // guest's -- cleared when she leaves the party (pawn::leftParty).
+        // Mutators return "" on success, else a reason forwarded to the addon.
         const auto managedPair = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::pair<CCharEntity*, CCharEntity*>
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -740,9 +741,9 @@ class PawnModule : public CPPModule
             return result;
         };
         // Every edit saves the set (cardian_gambits)
-        lua["CBaseEntity"]["cardianGambitToggle"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const bool on) -> std::string
+        lua["CBaseEntity"]["cardianGambitToggle"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const bool on) -> std::string
         {
-            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
             auto* PGambits = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -755,9 +756,9 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
-        lua["CBaseEntity"]["cardianGambitMove"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 from, const uint32 to) -> std::string
+        lua["CBaseEntity"]["cardianGambitMove"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 from, const uint32 to) -> std::string
         {
-            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
             auto* PGambits = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -770,9 +771,9 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
-        lua["CBaseEntity"]["cardianGambitDelete"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index) -> std::string
+        lua["CBaseEntity"]["cardianGambitDelete"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index) -> std::string
         {
-            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
             auto* PGambits = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -785,9 +786,9 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
-        lua["CBaseEntity"]["cardianGambitInsert"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
+        lua["CBaseEntity"]["cardianGambitInsert"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
         {
-            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
             auto* PGambits = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -805,9 +806,9 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
-        lua["CBaseEntity"]["cardianGambitReplace"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
+        lua["CBaseEntity"]["cardianGambitReplace"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
         {
-            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
             auto* PGambits = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -854,9 +855,9 @@ class PawnModule : public CPPModule
             result["actions"]    = pack(vocab.actions);
             return result;
         };
-        lua["CBaseEntity"]["cardianGambitMaster"] = [managedPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        lua["CBaseEntity"]["cardianGambitMaster"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
-            auto* PPawn    = managedPair(PLuaBaseEntity, name).second;
+            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
             auto* PGambits = gambitsOf(PPawn);
             if (PGambits == nullptr)
             {
@@ -866,9 +867,9 @@ class PawnModule : public CPPModule
             pawn::saveGambits(PPawn);
             return "";
         };
-        lua["CBaseEntity"]["cardianGambitReset"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        lua["CBaseEntity"]["cardianGambitReset"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
@@ -996,9 +997,9 @@ class PawnModule : public CPPModule
             return pawn::partyEngage(PChar, targid);
         };
 
-        lua["CBaseEntity"]["cardianAvoid"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        lua["CBaseEntity"]["cardianAvoid"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
@@ -1011,14 +1012,24 @@ class PawnModule : public CPPModule
             return "";
         };
 
-        lua["CBaseEntity"]["cardianHomePoint"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        // Sent home alone, to the ordering player's home point, she waits
+        // there as a warp leaves her (the user, 2026-09-14)
+        lua["CBaseEntity"]["cardianHomePoint"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
             }
-            return pawn::homePoint(PPawn) ? "" : "not KO'd";
+            if (!pawn::homePoint(PPawn, PChar))
+            {
+                return "not KO'd";
+            }
+            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+            {
+                PController->SetWaiting(true, true, "waits at her home point");
+            }
+            return "";
         };
 
         // What she cannot do yet and for how long: the seconds left on

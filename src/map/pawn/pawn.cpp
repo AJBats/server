@@ -515,6 +515,9 @@ namespace pawn
     {
         // Pawn session rows are marked by client_addr = 0; a crash can orphan them
         db::preparedStmt("DELETE FROM accounts_sessions WHERE client_addr = 0");
+        // A wild cardian's saved gambits are a guest's, and a restart ends
+        // every party she was in
+        db::preparedStmt("DELETE g FROM cardian_gambits g JOIN cardian_census x ON x.charid = g.pawn_charid WHERE x.recruited = 0");
     }
 
     bool create(CCharEntity* PSummoner, const std::string& targetName)
@@ -994,6 +997,15 @@ namespace pawn
                     PController->SetHunting(false);
                     PController->SetRetreat(false);
                 }
+                // A wild cardian's saved gambits are only ever a guest's --
+                // the player's edits while she was in the party (the user,
+                // 2026-09-14) -- so they end with it: her own brain again
+                if (const auto rset = db::preparedStmt("SELECT 1 FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", charid); rset && rset->next())
+                {
+                    forgetGambits(PPawn.get());
+                    reloadBrain(PPawn.get());
+                    ShowInfoFmt("pawn: {} leaves the party's gambits behind", PPawn->getName());
+                }
             }
         }
     }
@@ -1352,21 +1364,27 @@ namespace pawn
         return "";
     }
 
-    bool homePoint(CCharEntity* PPawn)
+    bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer)
     {
         if (PPawn == nullptr || !pawns.contains(PPawn->id) || !PPawn->isDead())
         {
             return false;
         }
 
-        CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
-        if (PSummoner == nullptr)
+        // Cardians share their player's home point: the player who sent her,
+        // else her summoner, else the real player in her party (a wild
+        // cardian has no summoner)
+        const CCharEntity* PHome = PPlayer != nullptr ? PPlayer : zoneutils::GetChar(summonerOf(PPawn->id));
+        if (PHome == nullptr)
+        {
+            PHome = partyPlayer(PPawn);
+        }
+        if (PHome == nullptr)
         {
             return false;
         }
 
-        // Cardians share their player's home point
-        PPawn->profile.home_point = PSummoner->profile.home_point;
+        PPawn->profile.home_point = PHome->profile.home_point;
         const auto& home          = PPawn->profile.home_point;
         db::preparedStmt("UPDATE chars SET home_zone = ?, home_rot = ?, home_x = ?, home_y = ?, home_z = ? WHERE charid = ?",
                          static_cast<uint16>(home.destination), home.p.rotation, home.p.x, home.p.y, home.p.z, PPawn->id);

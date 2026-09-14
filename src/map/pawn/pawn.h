@@ -230,12 +230,12 @@ namespace pawn
 
 
     // A dead pawn home points: revived the way a home point revives a
-    // player (full HP/MP, no weakness) and moved to its home point -- which
-    // is always its summoner's, copied at this moment -- from where the
-    // travel system walks it back to the party. Party membership is
-    // untouched. false unless the pawn is dead and the summoner is in the
-    // world.
-    bool homePoint(CCharEntity* PPawn);
+    // player (full HP/MP, no weakness) and moved to its home point -- the
+    // player's, copied at this moment: PPlayer's when given, else her
+    // summoner's, else the real player in her party's. Party membership is
+    // untouched. false unless the pawn is dead and one of those players is
+    // in the world.
+    bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer = nullptr);
 
     // A zone change the server meant to carry through the client protocol
     // -- a warp of her own (a scroll, Warp, Warp II on her) or a party
