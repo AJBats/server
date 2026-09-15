@@ -111,6 +111,15 @@ namespace pawn
     // order and her walk are dropped, and she idles where she stands
     void leftParty(const CBattleEntity* PMember, const CParty* PParty);
 
+    // Her player is leaving his zone (charutils::SendToZone, the one gate
+    // every client zone change passes): each cardian following him there
+    // sets out for his destination now, not when he lands three or four
+    // seconds later. The rule is the roam tick's own for a player in
+    // another zone -- in his party, not waiting -- plus no trek of her own
+    // under way, and only where a zone line leads there from where she
+    // stands; a warp's followers keep today's path
+    void playerZoning(const CCharEntity* PPlayer, xi::ZoneId destination);
+
     // A character to mint: the client's race enum (race and sex in one),
     // face 0-15, size 0-2, nation 0-2, main job and level. The census
     // (RESEARCH §11.2) speaks this model.

@@ -6826,6 +6826,8 @@ auto SendToZone(CCharEntity* PChar, const xi::ZoneId zoneId) -> bool
         return false;
     }
 
+    pawn::playerZoning(PChar, zoneId); // CARDIAN: his followers set out for his destination now, not when he lands
+
     db::preparedStmt("UPDATE chars "
                      "SET pos_zone = ?, pos_prevzone = ?, pos_rot = ?,"
                      "pos_x = ?, pos_y = ?, pos_z = ?,"

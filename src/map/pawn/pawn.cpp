@@ -27,6 +27,7 @@
 #include "seats.h"
 #include "world.h"
 #include "pawn_controller.h"
+#include "pawn_travel.h"
 #include "pawn_gambits.h"
 #include "gambit_text.h"
 
@@ -1694,6 +1695,32 @@ namespace pawn
     void clearTravelOrder(const uint32 pawnCharID)
     {
         travelOrders.erase(pawnCharID);
+    }
+
+    void playerZoning(const CCharEntity* PPlayer, const xi::ZoneId destination)
+    {
+        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
+        {
+            return;
+        }
+        for (auto& [charid, PPawn] : pawns)
+        {
+            if (PPawn->loc.zone != PPlayer->loc.zone || travelOrders.contains(charid))
+            {
+                continue;
+            }
+            const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
+            if (PController == nullptr || PController->IsWaiting() || PController->GetLivePlayer() != PPlayer)
+            {
+                continue;
+            }
+            if (!travel::nextHop(PPawn->getZone(), destination).has_value())
+            {
+                continue;
+            }
+            travelOrders[charid] = destination;
+            ShowInfoFmt("pawn: {} sets out for zone {} on {}'s heels", PPawn->getName(), static_cast<uint16>(destination), PPlayer->getName());
+        }
     }
 
     auto summonerOf(const uint32 pawnCharID) -> uint32
