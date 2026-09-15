@@ -28,6 +28,7 @@
 #include "gambit_text.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
+#include "tactics.h"
 
 #include "common/logging.h"
 
@@ -615,6 +616,17 @@ class PawnModule : public CPPModule
         {
             const auto* PMember = PLuaBaseEntity != nullptr ? PLuaBaseEntity->GetBaseEntity() : nullptr;
             return PMember != nullptr ? pawn::finder::contractWith(PMember->id, playerCharID) : "";
+        };
+        // The fight log as it stands (!tactics, RESEARCH §12.5)
+        lua["CBaseEntity"]["cardianTactics"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            sol::table out = ::lua.create_table();
+            auto*      PChar = PLuaBaseEntity != nullptr ? dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()) : nullptr;
+            for (const auto& line : pawn::tactics::lines(PChar))
+            {
+                out.add(line);
+            }
+            return out;
         };
         // The stats line's tokens for a cardian the player commands
         lua["CBaseEntity"]["cardianStatsLine"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
@@ -1255,6 +1267,13 @@ class PawnModule : public CPPModule
             }
             return chunkTable;
         };
+    }
+
+    // A character entering a zone -- a login, a zone change, a cardian's
+    // stand -- is a body the fight log's hitch must be on if she is routed
+    void OnCharZoneIn(CCharEntity* PChar) override
+    {
+        pawn::tactics::zoneIn(PChar);
     }
 
     void OnZoneTick(CZone* PZone) override

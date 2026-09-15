@@ -43,6 +43,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/seats.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_finder.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_finder.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/fight_log.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/tactics.cpp
 )
 
 set(MAP_CORE_SOURCES

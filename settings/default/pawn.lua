@@ -296,6 +296,13 @@ xi.settings.pawn =
     -- (the D0 measurement).
     WORLD_TICK_DEBUG = false,
 
+    -- Party tactics (RESEARCH §12): the fight log's one summary line per
+    -- fight is always logged. TACTICS_DEBUG adds a line per hit, cast and
+    -- switch; TACTICS_WORLD watches the world's own fights too (a camp with
+    -- no real player in it), which is a line per rabbit.
+    TACTICS_DEBUG = false,
+    TACTICS_WORLD = false,
+
     -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
     -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade),
     -- farming if WORLD_DEBUG_FARM. The measurements run with no client

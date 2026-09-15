@@ -59,6 +59,7 @@
 #include "entities/char_entity.h"
 #include "status_effect_container.h"
 #include "entities/mob_entity.h"
+#include "tactics.h"
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
 #include "party.h"
@@ -1644,6 +1645,10 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     }
 
     const bool engaged = POwner->PAI->IsEngaged();
+
+    // Her party's fight log, advanced once a tick by whoever asks first --
+    // a KO'd cardian included, or a wipe would never close
+    pawn::tactics::tick(static_cast<CCharEntity*>(POwner), tick);
 
     // The server's attack state, reconciled with the mode: a fight the
     // server ended (the mob died, she lost sight of it, another party's
