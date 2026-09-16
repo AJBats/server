@@ -34,6 +34,7 @@
 #include <deque>
 #include <iterator>
 #include <map>
+#include <set>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -141,6 +142,17 @@ namespace cardian::tactics
         double hpStopped = 0.0;
     };
 
+    // What a debuff on the mob dealt for us, the exact number for Dia
+    // (RESEARCH §12.13), booked by the bank: its share of the extra our
+    // physical hits dealt for the defence it took, and its share of the
+    // ticks the mob lost to damage over time
+    struct EffectCredit
+    {
+        std::string effect;
+        double      hp    = 0.0; // from the defence it took
+        double      ticks = 0.0; // from its damage over time
+    };
+
     struct MemberFigures
     {
         uint32      id = 0;
@@ -159,6 +171,7 @@ namespace cardian::tactics
         int32       overcure     = 0; // estimated: the raw cure past the target's missing HP
         uint32      targeted     = 0; // the mob turned onto her this many times
         uint32      deaths       = 0;
+        uint32      paralysed    = 0; // her swings and casts a paralysis proc stopped
 
         auto meanHit() const -> double
         {
@@ -205,6 +218,27 @@ namespace cardian::tactics
 
         std::vector<std::pair<std::string, int32>> tpMoveNames; // each TP move by name, with what it dealt us
 
+        // What the debuffs on the mob dealt for us, per effect: the exact
+        // number, what our physical hits dealt past what they would have at
+        // the mob's base defence, and the ticks
+        std::vector<EffectCredit> credits;
+        double                    defDownExtra = 0.0;
+        uint32                    defDownHits  = 0;
+        double                    dotDealt     = 0.0;
+
+        auto creditFor(const std::string_view effect) -> EffectCredit&
+        {
+            for (auto& c : credits)
+            {
+                if (c.effect == effect)
+                {
+                    return c;
+                }
+            }
+            credits.push_back(EffectCredit{ .effect = std::string(effect) });
+            return credits.back();
+        }
+
         auto settling() const -> bool
         {
             return settlingSince > 0.0;
@@ -212,6 +246,18 @@ namespace cardian::tactics
 
         std::deque<MemberFigures>  members; // a deque: a member's figures stay put while others are added
         std::vector<CastNote>      casts;
+
+        // The bank's own state for the fight (spell_bank.cpp): the land
+        // chances it sampled, the price list it printed, and the members
+        // it has priced
+        struct LandChance
+        {
+            double chance = 0.0; // of landing
+            double rate   = 0.0; // the mean resist rate when it lands: the duration's factor
+        };
+        std::map<std::pair<uint32, uint16>, LandChance> landCache; // caster, spell
+        std::vector<std::string>                        priceList;
+        std::set<uint32>                                priced;
 
         auto member(const uint32 id, const std::string_view name) -> MemberFigures&
         {
@@ -241,6 +287,20 @@ namespace cardian::tactics
         auto seconds(const double now) const -> double
         {
             return std::max(0.0, (closedAt > 0.0 ? closedAt : now) - openedAt);
+        }
+
+        // The fight's own rates, the spot's averages and the bank's live
+        // figures alike
+        auto dealtPerSecond(const double now) const -> double
+        {
+            const double secs = seconds(now);
+            return secs > 0.0 ? dealt() / secs : 0.0;
+        }
+
+        auto takenPerSecond(const double now) const -> double
+        {
+            const double secs = seconds(now);
+            return secs > 0.0 ? taken() / secs : 0.0;
         }
 
         auto taken() const -> int32
@@ -411,6 +471,39 @@ namespace cardian::tactics
         {
             line += fmt::format("; the mob switched {} time{}", r.switches, r.switches == 1 ? "" : "s");
         }
+        std::string dealt;
+        for (const auto& c : r.credits)
+        {
+            if (c.hp < 0.5 && c.ticks < 0.5)
+            {
+                continue;
+            }
+            dealt += fmt::format("{} {}", dealt.empty() ? "" : ",", c.effect);
+            if (c.hp >= 0.5)
+            {
+                dealt += fmt::format(" +{:.0f} by defence over {} hit{}", c.hp, r.defDownHits, r.defDownHits == 1 ? "" : "s");
+            }
+            if (c.ticks >= 0.5)
+            {
+                dealt += fmt::format("{} +{:.0f} by ticks", c.hp >= 0.5 ? "," : "", c.ticks);
+            }
+        }
+        if (!dealt.empty())
+        {
+            line += "; debuffs dealt:" + dealt;
+        }
+        std::string paralysed;
+        for (const auto& m : r.members)
+        {
+            if (m.paralysed > 0)
+            {
+                paralysed += fmt::format("{}{} {}", paralysed.empty() ? "" : ", ", m.name, m.paralysed);
+            }
+        }
+        if (!paralysed.empty())
+        {
+            line += "; paralysed: " + paralysed;
+        }
         return line;
     }
 
@@ -432,8 +525,8 @@ namespace cardian::tactics
             cureMp.fold(r.cureMp());
             const auto* top = r.biggest();
             biggestHit.fold(top != nullptr ? top->biggestHit : 0);
-            takenPerSecond.fold(secs > 0.0 ? r.taken() / secs : 0.0);
-            dealtPerSecond.fold(secs > 0.0 ? r.dealt() / secs : 0.0);
+            takenPerSecond.fold(r.takenPerSecond(r.closedAt));
+            dealtPerSecond.fold(r.dealtPerSecond(r.closedAt));
         }
 
         auto line(const std::string_view mob) const -> std::string

@@ -21,10 +21,13 @@
 
 #pragma once
 
+#include "bank_math.h"
 #include "fight_math.h"
+#include "spell_bank.h"
 
 #include "common/cbasetypes.h"
 #include "common/timer.h"
+#include "data/enums/attack_type.h"
 
 #include <deque>
 #include <string>
@@ -37,6 +40,7 @@ class CBattleEntity;
 class CMobEntity;
 class CLuaSpell;
 class CLuaAction;
+class CSpell;
 
 namespace pawn::tactics
 {
@@ -102,15 +106,24 @@ namespace pawn::tactics
         void onAttacked(CBattleEntity* PMember, CBattleEntity* PAttacker);
         void onEngage(CBattleEntity* PMember, CBattleEntity* PTarget);
         void onMemberDeath(CBattleEntity* PMember, CBattleEntity* PKiller);
-        void onMobDamaged(CMobEntity* PMob, int32 amount, CBattleEntity* PAttacker);
+        void onMobDamaged(CMobEntity* PMob, int32 amount, CBattleEntity* PAttacker, xi::AttackType attackType);
         void onMobDeath(CMobEntity* PMob);
         void onMobTpMove(CMobEntity* PMob, uint16 skillId);
         void onMobParalyzed(CMobEntity* PMob);
+        void onMemberParalyzed(CBattleEntity* PMember);
+
+        // The bank's price list for each open fight, as printed at its open
+        auto priceLists() const -> std::vector<std::string>;
+
+        // The scope's exchange rate (RESEARCH §12.13): HP landed per MP spent
+        // over the cures this log has seen, Cure II's floor until three exist
+        auto exchange() const -> cardian::tactics::Exchange;
 
     private:
         auto recordFor(CMobEntity* PMob, bool hitchIt) -> FightRecord&;
         auto openIndex(uint32 mobId) const -> std::size_t; // m_open.size() when none
         auto recordForTarget(uint32 targetId) -> FightRecord*; // the fight whose mob is on the target: live first, then settling, then any
+        void bankLine(FightRecord* r, CBattleEntity* PCaster, CBattleEntity* PTarget, CSpell* PSpell, int32 missing);
         void close(std::size_t index, std::string why, timer::time_point now);
 
         std::unordered_set<uint32> m_members;
@@ -118,8 +131,22 @@ namespace pawn::tactics
         std::deque<FightRecord>    m_recent; // the last few, newest first
         uint32                     m_closed = 0;
 
-        std::unordered_map<uint32, uint32> m_pending; // caster -> the target of the cast under way
+        // A cast under way: its target, and the target's HP as the caster
+        // decided (the gap a cure faced, RESEARCH §12.13)
+        struct Pending
+        {
+            uint32 target = 0;
+            int32  hp     = 0;
+            int32  maxHp  = 0;
+        };
+        std::unordered_map<uint32, Pending> m_pending; // by caster
+
+        // The cures this log has seen, for the exchange rate
+        int32  m_cureHp    = 0;
+        int32  m_cureMp    = 0;
+        uint32 m_cureCasts = 0;
     };
+
 
     // A battle entity as the mob it is, or null
     auto asMob(CBattleEntity* PEntity) -> CMobEntity*;
@@ -141,7 +168,8 @@ namespace pawn::tactics
 
     auto spotAverages(uint16 zone, const std::string& mob) -> SpotAverages&;
     auto spotLines(uint16 zone) -> std::vector<std::string>;
-    auto cureMemory(uint32 caster, uint16 spell, std::string_view name, int32 minimumCure) -> CureMemory&;
+    auto cureMemory(uint32 caster, CSpell* PSpell) -> CureMemory&; // created at the tier's minimum cure as its floor
+    auto cureEstimate(uint32 caster, CSpell* PSpell) -> std::pair<int32, bool>; // what she heals for, and whether that is exact; the floor when she has never cast it
     auto cureLines(uint32 caster, std::string_view name) -> std::vector<std::string>;
     auto debuffMemory(uint16 zone, const std::string& mob, uint16 spell, std::string_view name) -> DebuffMemory&;
     auto procValue(uint16 zone, const std::string& mob) -> ProcValue&;

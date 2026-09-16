@@ -28,6 +28,7 @@
 #include "gambit_text.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
+#include "spell_bank.h"
 #include "tactics.h"
 
 #include "common/logging.h"
@@ -231,6 +232,8 @@ class PawnModule : public CPPModule
         pawn::cleanupStaleRows();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
+        // The MP bank's samplers, a Lua library (RESEARCH §12.13)
+        pawn::tactics::bank::load();
 
         // The Cardian-only gambit vocabulary, published once from the C++
         // definitions so the brains cannot drift from the interpreter

@@ -984,16 +984,6 @@ namespace pawn
             return out;
         }
 
-        auto familyName(const uint32 family) -> std::string
-        {
-            auto name = std::string(magic_enum::enum_name(static_cast<SPELLFAMILY>(family)));
-            if (name.rfind("SPELLFAMILY_", 0) == 0)
-            {
-                name.erase(0, 12);
-            }
-            return name.empty() ? fmt::format("family {}", family) : titleCase(name);
-        }
-
         // The target names, by G_TARGET; the vocabulary and the row labels
         // read from the same table so a picker never renames a row.
         auto targetName(const std::size_t target) -> std::string_view
@@ -1159,6 +1149,16 @@ namespace pawn
             }
         }
     } // namespace
+
+    auto familyName(const uint32 family) -> std::string
+    {
+        auto name = std::string(magic_enum::enum_name(static_cast<SPELLFAMILY>(family)));
+        if (name.rfind("SPELLFAMILY_", 0) == 0)
+        {
+            name.erase(0, 12);
+        }
+        return name.empty() ? fmt::format("family {}", family) : titleCase(name);
+    }
 
     auto labelGambit(const Gambit_t& g) -> std::string
     {

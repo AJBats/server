@@ -105,6 +105,9 @@ namespace pawn
     // The row as the player reads it: "Party: HP < 50% -> Cure (best)"
     auto labelGambit(const gambits::Gambit_t& gambit) -> std::string;
 
+    // A spell family as a label: "Cure", or "family 37" when unnamed
+    auto familyName(uint32 family) -> std::string;
+
     // The catalogue the editor's pickers offer for one cardian: targets,
     // conditions (thresholds pre-expanded, FFXII-style: "HP < 50%" and
     // "HP < 60%" are two entries), statuses (for "has X" / "no X"), and

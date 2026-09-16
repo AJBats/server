@@ -3075,7 +3075,13 @@ uint8 CheckMultiHits(CBattleEntity* PEntity, CItemWeapon* PWeapon)
 
 bool IsParalyzed(CBattleEntity* PAttacker)
 {
-    return (xirand::GetRandomNumber(100) < PAttacker->getMod(xi::Mod::PARALYZE));
+    // CARDIAN: a proc fires PARALYZED on the paralysed entity, so the fight log can count what paralysis stopped (pawn/tactics.cpp hitches it; RESEARCH §12.13)
+    const bool paralyzed = xirand::GetRandomNumber(100) < PAttacker->getMod(xi::Mod::PARALYZE); // CARDIAN
+    if (paralyzed && PAttacker->PAI != nullptr)                                                 // CARDIAN
+    {
+        PAttacker->PAI->EventHandler.triggerListener("PARALYZED", PAttacker); // CARDIAN
+    }
+    return paralyzed; // CARDIAN
 }
 
 /************************************************************************

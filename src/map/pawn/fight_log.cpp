@@ -44,6 +44,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <optional>
 #include <tuple>
 #include <utility>
 
@@ -262,6 +263,21 @@ namespace pawn::tactics
             }
             else
             {
+                // The bank's price list, one member a tick as the fight
+                // opens: every debuff she could cast on this mob
+                for (auto* PMember : members)
+                {
+                    if (PMember != nullptr && PMember->objtype == TYPE_PC && !r.priced.contains(PMember->id))
+                    {
+                        r.priced.insert(PMember->id);
+                        for (const auto& line : bank::priceMember(r, spotAverages(r.zone, r.mobName), exchange(), members, PMember, PMob))
+                        {
+                            r.priceList.push_back(line);
+                            ShowInfoFmt("tactics: {}", line);
+                        }
+                        break;
+                    }
+                }
                 const bool onUs = std::any_of(members.begin(), members.end(), [&](CBattleEntity* PMember)
                                               {
                                                   return PMember->GetBattleTarget() == PMob || PMob->GetBattleTarget() == PMember;
@@ -325,7 +341,7 @@ namespace pawn::tactics
     {
         if (PCaster != nullptr)
         {
-            m_pending[PCaster->id] = PTarget != nullptr ? PTarget->id : 0;
+            m_pending[PCaster->id] = Pending{ .target = PTarget != nullptr ? PTarget->id : 0, .hp = PTarget != nullptr ? PTarget->health.hp : 0, .maxHp = PTarget != nullptr ? PTarget->GetMaxHP() : 0 };
         }
     }
 
@@ -338,7 +354,7 @@ namespace pawn::tactics
         uint32 target = PCaster->id;
         if (const auto it = m_pending.find(PCaster->id); it != m_pending.end())
         {
-            target = it->second != 0 ? it->second : target;
+            target = it->second.target != 0 ? it->second.target : target;
             m_pending.erase(it);
         }
         if (auto* r = recordForTarget(target); r != nullptr)
@@ -358,11 +374,19 @@ namespace pawn::tactics
         {
             return;
         }
-        m_pending.erase(PCaster->id);
+        // The gap a cure faced, as the caster decided: the target's HP when
+        // the cast started, else rebuilt from what landed
+        std::optional<Pending> started;
+        if (const auto it = m_pending.find(PCaster->id); it != m_pending.end())
+        {
+            started = it->second;
+            m_pending.erase(it);
+        }
         const int32 mp = battleutils::CalculateSpellCost(PCaster, PSpell);
 
         CastNote     note{ .caster = PCaster->id, .target = PTarget != nullptr ? PTarget->id : 0, .spell = static_cast<uint16>(PSpell->getID()), .spellName = PSpell->getName(), .mp = mp };
         int32        overcure = 0;
+        int32        missing  = 0;
         FightRecord* r        = nullptr;
 
         if (PSpell->isCure() && PTarget != nullptr)
@@ -371,6 +395,7 @@ namespace pawn::tactics
             // party); the primary target alone is the estimate's sample
             const int32 primary = PLuaAction != nullptr ? PLuaAction->getParam(PTarget->id) : 0;
             note.cure           = true;
+            missing             = started && started->target == PTarget->id ? started->maxHp - started->hp : PTarget->GetMaxHP() - std::max(0, PTarget->health.hp - primary);
             note.landed         = 0;
             if (PLuaAction != nullptr && PLuaAction->GetAction() != nullptr)
             {
@@ -383,7 +408,7 @@ namespace pawn::tactics
                 }
             }
             note.toppedUp = PTarget->health.hp >= PTarget->GetMaxHP();
-            auto& memory  = cureMemory(PCaster->id, note.spell, note.spellName, minimumCure(PSpell));
+            auto& memory  = cureMemory(PCaster->id, PSpell);
             ++memory.tally.casts;
             memory.tally.mpSpent += mp;
             memory.tally.hpLanded += note.landed;
@@ -394,6 +419,9 @@ namespace pawn::tactics
             memory.estimate.note(primary, note.toppedUp);
             overcure = note.toppedUp ? std::max<int32>(0, memory.estimate.predict() - primary) : 0;
             r        = recordForTarget(PTarget->id);
+            m_cureHp += note.landed;
+            m_cureMp += mp;
+            ++m_cureCasts;
         }
         else if (auto* PMob = asMob(PTarget); PMob != nullptr)
         {
@@ -418,6 +446,7 @@ namespace pawn::tactics
         }
         if (r == nullptr)
         {
+            bankLine(nullptr, PCaster, PTarget, PSpell, missing);
             return;
         }
         auto& m = r->member(PCaster->id, PCaster->getName());
@@ -429,6 +458,23 @@ namespace pawn::tactics
             m.overcure += overcure;
         }
         r->casts.push_back(std::move(note));
+        bankLine(r, PCaster, PTarget, PSpell, missing);
+    }
+
+    // What the bank makes of a cast: the cure's tier table and its pick
+    // (a cure between fights included), a debuff's price, or unpriced with
+    // its family
+    void FightLog::bankLine(FightRecord* r, CBattleEntity* PCaster, CBattleEntity* PTarget, CSpell* PSpell, const int32 missing)
+    {
+        if (const auto line = bank::castLine(r, exchange(), PCaster, PTarget, PSpell, missing); !line.empty())
+        {
+            ShowInfoFmt("tactics: {}", line);
+        }
+    }
+
+    auto FightLog::exchange() const -> cardian::tactics::Exchange
+    {
+        return cardian::tactics::exchange(m_cureHp, m_cureMp, m_cureCasts);
     }
 
     void FightLog::onAttacked(CBattleEntity* PMember, CBattleEntity* PAttacker)
@@ -489,7 +535,7 @@ namespace pawn::tactics
 
     // --- mob events -----------------------------------------------------
 
-    void FightLog::onMobDamaged(CMobEntity* PMob, const int32 amount, CBattleEntity* PAttacker)
+    void FightLog::onMobDamaged(CMobEntity* PMob, const int32 amount, CBattleEntity* PAttacker, const xi::AttackType attackType)
     {
         if (PMob == nullptr || amount <= 0)
         {
@@ -498,16 +544,36 @@ namespace pawn::tactics
         auto&       r      = recordFor(PMob, false);
         const int32 landed = std::min(amount, std::max<int32>(PMob->health.hp, 0));
         r.mobDamage += landed;
-        if (PAttacker == nullptr || !isMember(PAttacker->id))
+        if (PAttacker == nullptr)
         {
-            return; // a damage-over-time tick, or somebody not ours
+            // A regen tick is one damage call from nobody for the regen the
+            // mob is losing, or less under stoneskin: the debuffs' own. A
+            // weapon's added effect arrives from nobody too, and is not
+            // theirs
+            if (attackType == xi::AttackType::None && amount <= PMob->getMod(xi::Mod::REGEN_DOWN))
+            {
+                bank::dotSplit(r, PMob, landed);
+            }
+            return;
         }
-        auto& m = r.member(PAttacker->id, PAttacker->getName());
+        if (!isMember(PAttacker->id))
+        {
+            return; // somebody not ours
+        }
+        auto&      m          = r.member(PAttacker->id, PAttacker->getName());
+        const bool weaponSkill = PAttacker->PAI->IsCurrentState<CWeaponSkillState>();
         m.damageDealt += landed;
-        if (PAttacker->PAI->IsCurrentState<CWeaponSkillState>())
+        if (weaponSkill)
         {
             m.wsDamage += landed;
             ++m.wsCount;
+        }
+        if (attackType == xi::AttackType::Physical && !weaponSkill)
+        {
+            // A melee swing met the mob's defence; magic, ranged, skillchains
+            // and weapon skills (their own attack and defence terms) are not
+            // priced on it
+            bank::defenceSplit(r, PAttacker, PMob, landed);
         }
         if (debug())
         {
@@ -587,6 +653,34 @@ namespace pawn::tactics
         }
     }
 
+    void FightLog::onMemberParalyzed(CBattleEntity* PMember)
+    {
+        if (PMember == nullptr)
+        {
+            return;
+        }
+        // Hers only if she is in that fight already; a proc between fights
+        // belongs to nobody's record
+        if (auto* r = recordForTarget(PMember->id); r != nullptr && r->find(PMember->id) != nullptr)
+        {
+            ++r->member(PMember->id, PMember->getName()).paralysed;
+        }
+        if (debug())
+        {
+            ShowInfoFmt("tactics: {} is paralysed", PMember->getName());
+        }
+    }
+
+    auto FightLog::priceLists() const -> std::vector<std::string>
+    {
+        std::vector<std::string> out;
+        for (const auto& r : m_open)
+        {
+            out.insert(out.end(), r.priceList.begin(), r.priceList.end());
+        }
+        return out;
+    }
+
     // --- the memories ---------------------------------------------------
 
     auto spotAverages(const uint16 zone, const std::string& mob) -> SpotAverages&
@@ -607,15 +701,24 @@ namespace pawn::tactics
         return out;
     }
 
-    auto cureMemory(const uint32 caster, const uint16 spell, const std::string_view name, const int32 minimumCure) -> CureMemory&
+    auto cureMemory(const uint32 caster, CSpell* PSpell) -> CureMemory&
     {
-        auto& memory = cures[{ caster, spell }];
+        auto& memory = cures[{ caster, static_cast<uint16>(PSpell->getID()) }];
         if (memory.spell.empty())
         {
-            memory.spell          = std::string(name);
-            memory.estimate.floor = minimumCure;
+            memory.spell          = PSpell->getName();
+            memory.estimate.floor = minimumCure(PSpell);
         }
         return memory;
+    }
+
+    auto cureEstimate(const uint32 caster, CSpell* PSpell) -> std::pair<int32, bool>
+    {
+        if (const auto it = cures.find({ caster, static_cast<uint16>(PSpell->getID()) }); it != cures.end())
+        {
+            return { it->second.estimate.predict(), it->second.estimate.known() };
+        }
+        return { minimumCure(PSpell), false };
     }
 
     auto cureLines(const uint32 caster, const std::string_view name) -> std::vector<std::string>
@@ -623,7 +726,7 @@ namespace pawn::tactics
         std::vector<std::string> out;
         for (const auto& [key, memory] : cures)
         {
-            if (key.first != caster)
+            if (key.first != caster || memory.tally.casts == 0)
             {
                 continue;
             }

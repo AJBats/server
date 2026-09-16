@@ -311,7 +311,7 @@ namespace pawn::tactics
             ++(any ? state.routed : state.dropped);
         }
 
-        void damaged(CBattleEntity* PTarget, const int32 amount, CBattleEntity* PAttacker)
+        void damaged(CBattleEntity* PTarget, const int32 amount, CBattleEntity* PAttacker, const xi::AttackType attackType)
         {
             if (auto* PMob = asMob(PTarget); PMob != nullptr)
             {
@@ -319,13 +319,13 @@ namespace pawn::tactics
                 // open counts what the mob lost (a damage-over-time tick)
                 if (auto* PTactician = routedMember(PAttacker); PTactician != nullptr)
                 {
-                    counted(PTactician)->log().onMobDamaged(PMob, amount, PAttacker);
+                    counted(PTactician)->log().onMobDamaged(PMob, amount, PAttacker, attackType);
                 }
                 else
                 {
                     forEachRoutedMob(PMob, [&](Tactician& tactician)
                                      {
-                                         tactician.log().onMobDamaged(PMob, amount, PAttacker);
+                                         tactician.log().onMobDamaged(PMob, amount, PAttacker, attackType);
                                      });
                 }
             }
@@ -401,11 +401,17 @@ namespace pawn::tactics
 
         void paralyzed(CBattleEntity* PEntity)
         {
-            auto* PMob = asMob(PEntity);
-            forEachRoutedMob(PMob, [&](Tactician& tactician)
-                             {
-                                 tactician.log().onMobParalyzed(PMob);
-                             });
+            if (auto* PMob = asMob(PEntity); PMob != nullptr)
+            {
+                forEachRoutedMob(PMob, [&](Tactician& tactician)
+                                 {
+                                     tactician.log().onMobParalyzed(PMob);
+                                 });
+            }
+            else if (auto* PTactician = counted(routedMember(PEntity)); PTactician != nullptr)
+            {
+                PTactician->log().onMemberParalyzed(PEntity);
+            }
         }
 
         // --- sol plumbing for the hitch ---------------------------------------
@@ -448,9 +454,9 @@ namespace pawn::tactics
         }
         // Each lambda takes only the leading arguments it reads; sol ignores
         // the rest. Built once, shared by every hitched entity.
-        static const sol::function onDamage = asFunction([](CLuaBaseEntity* PTarget, const int32 amount, const sol::optional<CLuaBaseEntity*> attacker)
+        static const sol::function onDamage = asFunction([](CLuaBaseEntity* PTarget, const int32 amount, const sol::optional<CLuaBaseEntity*> attacker, const sol::optional<uint16> attackType)
                                                          {
-                                                             damaged(entityOf(PTarget), amount, entityOf(attacker));
+                                                             damaged(entityOf(PTarget), amount, entityOf(attacker), static_cast<xi::AttackType>(attackType.value_or(0)));
                                                          });
         static const sol::function onDeath = asFunction([](CLuaBaseEntity* PDead, const sol::optional<CLuaBaseEntity*> killer)
                                                         {
@@ -460,10 +466,11 @@ namespace pawn::tactics
                                                          {
                                                              tpMove(entityOf(PMob), skillId.value_or(0));
                                                          });
-        // A paralysis proc, when the server reports one (RESEARCH §12.12 item 10)
-        static const sol::function onParalyzed = asFunction([](CLuaBaseEntity* PMob)
+        // A paralysis proc: the marked line in battleutils::IsParalyzed fires
+        // it on whoever was stopped, a mob or one of ours (RESEARCH §12.13)
+        static const sol::function onParalyzed = asFunction([](CLuaBaseEntity* PEntity)
                                                             {
-                                                                paralyzed(entityOf(PMob));
+                                                                paralyzed(entityOf(PEntity));
                                                             });
         static const sol::function onMagicStart = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target)
                                                              {
@@ -492,10 +499,10 @@ namespace pawn::tactics
 
         handler.addListener("TAKE_DAMAGE", onDamage, "cardian_tactics:TAKE_DAMAGE");
         handler.addListener("DEATH", onDeath, "cardian_tactics:DEATH");
+        handler.addListener("PARALYZED", onParalyzed, "cardian_tactics:PARALYZED");
         if (mob)
         {
             handler.addListener("WEAPONSKILL_STATE_ENTER", onTpMove, "cardian_tactics:WEAPONSKILL_STATE_ENTER");
-            handler.addListener("PARALYZED", onParalyzed, "cardian_tactics:PARALYZED");
         }
         else
         {
@@ -588,6 +595,10 @@ namespace pawn::tactics
             {
                 out.push_back(fmt::format("open: {} for {:.0f} s, took {}, dealt {}, cures {} MP{}", r.mobName, r.seconds(now), r.taken(), r.dealt(), r.cureMp(), r.overlapping ? ", linked" : ""));
             }
+            for (const auto& line : log.priceLists())
+            {
+                out.push_back(line);
+            }
             std::size_t shown = 0;
             for (const auto& r : log.recent())
             {
@@ -628,7 +639,7 @@ namespace pawn::tactics
                                   state.hitchedMembers.size(), state.hitchedMobs.size(), state.routes.size(), state.tacticians.size(), state.tacticians.size() == 1 ? "" : "s", state.routed, state.dropped));
 
         // The chat cuts a long line; a summary is wrapped at a clause, the
-        // continuation indented. Under debug the map log gets the same lines,
+        // continuation indented. The map log gets the same lines unwrapped,
         // so the command's answer is readable without the client
         std::vector<std::string> wrapped;
         for (const auto& line : out)
@@ -654,12 +665,9 @@ namespace pawn::tactics
             }
             wrapped.push_back(rest);
         }
-        if (debug())
+        for (const auto& line : out)
         {
-            for (const auto& line : out)
-            {
-                ShowInfoFmt("tactics: !tactics: {}", line);
-            }
+            ShowInfoFmt("tactics: !tactics: {}", line);
         }
         return wrapped;
     }
