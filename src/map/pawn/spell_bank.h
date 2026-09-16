@@ -38,6 +38,8 @@ class CMobEntity;
 
 namespace pawn::tactics
 {
+    using cardian::tactics::CureOption;
+    using cardian::tactics::DebuffPrice;
     using cardian::tactics::Exchange;
     using cardian::tactics::FightRecord;
     using cardian::tactics::SpotAverages;
@@ -88,7 +90,39 @@ namespace pawn::tactics
         // is nothing to say
         auto castLine(FightRecord* r, const Exchange& x, CBattleEntity* PCaster, CBattleEntity* PTarget, CSpell* PSpell, int32 missing) -> std::string;
 
-        // Every priced debuff one member could cast on the mob, as the fight opens
+        // A spell she knows, can use, can afford now and is not on recast
+        auto usable(CBattleEntity* PCaster, SpellID id) -> bool;
+
+        // What a Cure tier heals before the target's missing HP caps it:
+        // the server's own cure formula run on her (the sampler in
+        // tactics_bank.lua), the day's roll taken at its expectation, the
+        // target's own cure bonus when one is named. Nothing while she has
+        // Rapture, which the formula's last step would consume
+        auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget = nullptr) -> std::optional<int32>;
+
+        // Her cure tiers with what each heals: every tier she can use, or
+        // only the ones she can afford this moment
+        struct CureTier
+        {
+            SpellID    id{};
+            CureOption option;
+        };
+        auto cureTiers(CBattleEntity* PCaster, bool affordable) -> std::vector<CureTier>;
+
+        // The tier for a target's gap among hers: the cheapest that covers
+        // it, else the biggest heal; 0 when nothing is missing or no tier fits
+        auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget) -> SpellID;
+
+        // What one entity's ordinary melee does to another, by the formulas:
+        // cached on the record per pair, a miss too. The pDIF sampler's 300
+        // rolls are spent only when allowed: a caller pricing a whole party
+        // spends one a call and gets the rest as they come
+        auto melee(FightRecord& r, CBattleEntity* PActor, CBattleEntity* PTarget, bool allowSample) -> std::optional<FightRecord::MeleeGuess>;
+
+        // Every priced debuff one member could cast on the mob, priced now
+        auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<DebuffPrice>;
+
+        // The same, as the lines printed when the fight opens
         auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>;
 
         // A member's melee hit on the mob: what it would have been at the

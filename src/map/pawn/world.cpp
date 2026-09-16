@@ -422,9 +422,9 @@ namespace
     //              has <status> | lacks <status> | top enmity | not top enmity
     //   action     avoid aggro | rest with leader | rest | rest in battle | home point
     //              with leader | boost before weapon skills | formation <lead|flank left|flank right|
-    //              rear left|rear right|behind> | cast best <spell> (the best of its
-    //              family) | cast <spell> | cast random damage | ability <name> |
-    //              best weapon skill | random weapon skill
+    //              rear left|rear right|behind> | role <support mage> | cast best <spell>
+    //              (the best of its family) | cast <spell> | cast random damage |
+    //              ability <name> | best weapon skill | random weapon skill
     // Names are the game's own (spell_list, abilities, the status enum), spaces
     // for underscores. A row that will not compile is logged and left out.
     auto lower(std::string text) -> std::string
@@ -587,6 +587,17 @@ namespace
                 return std::nullopt;
             }
             actSpec = fmt::format("100:4:{}", seat->second);
+        }
+        else if (act.starts_with("role "))
+        {
+            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 } };
+            const auto                                        role = roles.find(trim(act.substr(5)));
+            if (role == roles.end())
+            {
+                ShowErrorFmt("world: brains: '{}': no role called '{}'", text, trim(act.substr(5)));
+                return std::nullopt;
+            }
+            actSpec = fmt::format("100:11:{}", role->second);
         }
         else if (act == "cast random damage")
         {

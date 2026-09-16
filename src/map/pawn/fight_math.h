@@ -34,6 +34,7 @@
 #include <deque>
 #include <iterator>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <string_view>
@@ -256,6 +257,17 @@ namespace cardian::tactics
             double rate   = 0.0; // the mean resist rate when it lands: the duration's factor
         };
         std::map<std::pair<uint32, uint16>, LandChance> landCache; // caster, spell
+        // What the formulas say one entity's melee does to another, before
+        // a fight has measured it (RESEARCH §12.2 item 5, perfect knowledge)
+        struct MeleeGuess
+        {
+            double perRound  = 0.0; // expected damage a round: swings x hit rate x base x mean pDIF
+            double perSecond = 0.0;
+            double biggest   = 0.0; // one swing at the biggest pDIF sampled
+        };
+        std::map<std::pair<uint32, uint32>, std::optional<MeleeGuess>> meleeCache; // actor, target; a miss is remembered too
+        double priorTaken = -1.0; // the formulas' taken/s and dealt/s, as the bank first priced the fight
+        double priorDealt = -1.0;
         std::vector<std::string>                        priceList;
         std::set<uint32>                                priced;
 
@@ -470,6 +482,18 @@ namespace cardian::tactics
         if (r.switches > 0)
         {
             line += fmt::format("; the mob switched {} time{}", r.switches, r.switches == 1 ? "" : "s");
+        }
+        if (r.priorTaken >= 0.0 || r.priorDealt >= 0.0)
+        {
+            line += "; the formulas said";
+            if (r.priorTaken >= 0.0)
+            {
+                line += fmt::format(" {:.1f} taken/s", r.priorTaken);
+            }
+            if (r.priorDealt >= 0.0)
+            {
+                line += fmt::format("{} {:.1f} dealt/s", r.priorTaken >= 0.0 ? " and" : "", r.priorDealt);
+            }
         }
         std::string dealt;
         for (const auto& c : r.credits)

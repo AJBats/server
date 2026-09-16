@@ -101,6 +101,11 @@ public:
     // not facing), then runs the stock player validation: known spell or
     // ability, recasts, TP, ammo, facing.
     auto Cast(EntityId target, SpellID spellid) -> bool override;
+
+    // A cast the tactician's conveyor assigned her (RESEARCH §12.12 item
+    // 2): the conveyor's lock stands in for the party-already-casting rule,
+    // so this goes straight to the player controller's cast
+    auto CastAssigned(EntityId target, SpellID spellid) -> bool;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -181,6 +186,10 @@ public:
     // pressed twice mid-cast), and a held order the grace runs out on is
     // let go with a note to the addon. A newer order replaces it.
     void FireQueuedOrder();
+    auto HasQueuedOrder() const -> bool
+    {
+        return m_QueuedOrder.has_value();
+    }
 
     // The attack order, fired once her beat is served: the front row draws
     // first, the back line a touch later

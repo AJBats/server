@@ -303,6 +303,11 @@ xi.settings.pawn =
     TACTICS_DEBUG = false,
     TACTICS_WORLD = false,
 
+    -- A request a row or the role feeds the conveyor lives this many
+    -- seconds unless re-fed (rows are read on her think, every 2-3 s); a
+    -- playtest variable (RESEARCH §12.12 item 2).
+    TACTICS_REQUEST_LIFE = 4,
+
     -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
     -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade),
     -- farming if WORLD_DEBUG_FARM. The measurements run with no client

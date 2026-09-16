@@ -21,8 +21,12 @@
 
 #include "tactics.h"
 
+#include "conveyor.h"
 #include "fight_log.h"
 #include "pawn.h"
+#include "pawn_controller.h"
+#include "pawn_gambits.h"
+#include "role_support.h"
 
 #include "common/logging.h"
 #include "common/settings.h"
@@ -57,6 +61,33 @@ namespace pawn::tactics
 
         constexpr std::size_t kChatWidth = 110; // what one chat line holds before the client cuts it
         constexpr auto        kGrace     = 30s; // a member missing from the party list this long is gone (zoning pops her for a moment)
+
+        // pawn.TACTICS_REQUEST_LIFE: a request not re-fed this long is withdrawn
+        auto requestLife() -> double
+        {
+            static const double life = settings::get<float>("pawn.TACTICS_REQUEST_LIFE");
+            return life;
+        }
+
+        // Her scope as the game holds it this instant: the alliance's
+        // characters, and which of them hold the role. Built fresh for
+        // every call; nothing keeps an entity pointer across ticks
+        auto scopeOf(CCharEntity* PChar) -> Conveyor::Scope
+        {
+            Conveyor::Scope scope;
+            PChar->ForAlliance([&](CBattleEntity* PMember)
+                               {
+                                   if (PMember != nullptr && PMember->objtype == TYPE_PC)
+                                   {
+                                       scope.members.push_back(PMember);
+                                       if (supportMage(PMember))
+                                       {
+                                           scope.holders.insert(PMember->id);
+                                       }
+                                   }
+                               });
+            return scope;
+        }
 
         struct RosterEntry
         {
@@ -120,6 +151,10 @@ namespace pawn::tactics
             {
                 return m_roster;
             }
+            auto conveyor() -> Conveyor&
+            {
+                return m_conveyor;
+            }
 
             // The guess before the pull is weak until a few fights have
             // closed since the roster, a job or a level last changed
@@ -137,6 +172,9 @@ namespace pawn::tactics
                 m_lastTick = now;
                 refreshScope(now, PAsker);
                 m_log.tick(now, state.scratch);
+                const auto scope = scopeOf(PAsker);
+                m_conveyor.tick(seconds(now), requestLife(), scope);
+                pace(scope);
             }
 
             // Out of the scope now: her route and her place on the roster
@@ -153,6 +191,7 @@ namespace pawn::tactics
                     state.routes.erase(route);
                 }
                 m_roster.erase(it);
+                m_pace.erase(id);
                 changed(now());
             }
 
@@ -236,11 +275,65 @@ namespace pawn::tactics
                 }
             }
 
+            // The role holders' pace at the spot (role_support.h): one cycle
+            // per stretch of fighting, from the first record opening to the
+            // last closing; what each holder spent over the cycle against
+            // her MP's net change since the last. Said once each way it turns
+            void pace(const Conveyor::Scope& scope)
+            {
+                const auto closed = m_log.closedCount();
+                if (closed > m_closedSeen)
+                {
+                    const auto newly = std::min<std::size_t>(closed - m_closedSeen, m_log.recent().size());
+                    m_closedSeen     = closed;
+                    for (std::size_t i = 0; i < newly; ++i)
+                    {
+                        for (const auto& m : m_log.recent()[i].members)
+                        {
+                            m_cycleSpent[m.id] += m.mpSpent;
+                        }
+                    }
+                }
+                const bool fighting = !m_log.open().empty();
+                if (fighting == m_cycleOpen)
+                {
+                    return;
+                }
+                m_cycleOpen = fighting;
+                for (auto* PMember : scope.members)
+                {
+                    if (!scope.holders.contains(PMember->id))
+                    {
+                        continue;
+                    }
+                    auto* PChar = static_cast<CCharEntity*>(PMember);
+                    auto& pace  = m_pace[PChar->id];
+                    if (fighting)
+                    {
+                        role::cycleOpened(PChar, pace);
+                    }
+                    else
+                    {
+                        role::cycleClosed(PChar, m_cycleSpent[PChar->id], pace);
+                        role::speakPace(PChar, pace);
+                    }
+                }
+                if (!fighting)
+                {
+                    m_cycleSpent.clear();
+                }
+            }
+
             uint32                                  m_scopeId;
             timer::time_point                       m_lastTick{};
             std::unordered_map<uint32, RosterEntry> m_roster;
             uint32                                  m_weakFrom = 0;
             FightLog                                m_log;
+            Conveyor                                m_conveyor;
+            std::unordered_map<uint32, cardian::tactics::Pace> m_pace;       // by role holder
+            std::unordered_map<uint32, int32>                  m_cycleSpent; // by member, over the cycle under way
+            bool                                    m_cycleOpen  = false;
+            uint32                                  m_closedSeen = 0;
         };
 
         // Her scope: the alliance, else the party, else herself
@@ -335,11 +428,16 @@ namespace pawn::tactics
             }
         }
 
-        void magicStart(CBattleEntity* PCaster, CBattleEntity* PTarget)
+        void magicStart(CBattleEntity* PCaster, CBattleEntity* PTarget, CLuaSpell* PLuaSpell)
         {
             if (auto* PTactician = counted(routedMember(PCaster)); PTactician != nullptr)
             {
-                PTactician->log().onMagicStart(PCaster, PTarget);
+                CSpell* PSpell = PLuaSpell != nullptr ? PLuaSpell->GetSpell() : nullptr;
+                PTactician->log().onMagicStart(PCaster, PTarget, PSpell);
+                if (PCaster->objtype == TYPE_PC)
+                {
+                    PTactician->conveyor().castStarted(static_cast<CCharEntity*>(PCaster), PSpell, PTarget != nullptr ? PTarget->id : 0);
+                }
             }
         }
 
@@ -348,6 +446,12 @@ namespace pawn::tactics
             if (auto* PTactician = counted(routedMember(PCaster)); PTactician != nullptr)
             {
                 PTactician->log().onMagicUse(PCaster, PTarget, PSpell, PAction);
+                if (PCaster->objtype == TYPE_PC)
+                {
+                    CSpell*    PCast  = PSpell != nullptr ? PSpell->GetSpell() : nullptr;
+                    const bool landed = PCast == nullptr || !PCast->isDebuff() || PCast->tookEffect();
+                    PTactician->conveyor().castEnded(static_cast<CCharEntity*>(PCaster), PCast, PTarget != nullptr ? PTarget->id : 0, landed);
+                }
             }
         }
 
@@ -356,6 +460,10 @@ namespace pawn::tactics
             if (auto* PTactician = counted(routedMember(PCaster)); PTactician != nullptr)
             {
                 PTactician->log().onMagicInterrupted(PCaster);
+                if (PCaster->objtype == TYPE_PC)
+                {
+                    PTactician->conveyor().castEnded(static_cast<CCharEntity*>(PCaster), nullptr, 0, false);
+                }
             }
         }
 
@@ -472,9 +580,11 @@ namespace pawn::tactics
                                                             {
                                                                 paralyzed(entityOf(PEntity));
                                                             });
-        static const sol::function onMagicStart = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target)
+        // MAGIC_START fires from the magic state's init, before that state
+        // is current: the spell comes from the event's own argument
+        static const sol::function onMagicStart = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target, CLuaSpell* PSpell)
                                                              {
-                                                                 magicStart(entityOf(PCaster), entityOf(target));
+                                                                 magicStart(entityOf(PCaster), entityOf(target), PSpell);
                                                              });
         static const sol::function onMagicUse = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target, CLuaSpell* PSpell, CLuaAction* PAction)
                                                            {
@@ -571,6 +681,83 @@ namespace pawn::tactics
         }
     }
 
+    auto entity(CCharEntity* PPawn, const uint32 id) -> CBattleEntity*
+    {
+        return PPawn != nullptr ? Conveyor::resolve(scopeOf(PPawn), id) : nullptr;
+    }
+
+    auto supportMage(CBattleEntity* PMember) -> bool
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
+        {
+            return false;
+        }
+        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
+        return PController != nullptr && PController->Behavior(pawn::Behavior::Role).value_or(0) == static_cast<uint16>(pawn::Role::SupportMage);
+    }
+
+    auto has(const CCharEntity* PPawn) -> bool
+    {
+        return PPawn != nullptr && find(PPawn) != nullptr;
+    }
+
+    auto feed(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget, const uint32 row, const std::string& rowId) -> std::optional<Fed>
+    {
+        auto* PTactician = PPawn != nullptr && PTarget != nullptr ? find(PPawn) : nullptr;
+        if (PTactician == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto& n = PTactician->conveyor().feed(Conveyor::keyFor(PSpell, PTarget->id, PPawn->id),
+                                                    Request{ .source = Source::Row,
+                                                             .caster = PPawn->id,
+                                                             .row    = row,
+                                                             .rowId  = rowId,
+                                                             .spell  = PSpell != nullptr ? static_cast<uint16>(PSpell->getID()) : uint16(0),
+                                                             .fedAt  = seconds(timer::now()) },
+                                                    scopeOf(PPawn));
+        Fed fed;
+        fed.mine = n.assigned == PPawn->id && n.lockedBy == 0;
+        if (fed.mine)
+        {
+            fed.spell  = static_cast<SpellID>(n.spell);
+            fed.target = n.key.target;
+            fed.why    = fmt::format("her row {}", row);
+        }
+        return fed;
+    }
+
+    auto assignment(CCharEntity* PPawn, const bool engaged) -> std::optional<Assignment>
+    {
+        auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        if (PTactician == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto a = PTactician->conveyor().assignment(PPawn->id, engaged, scopeOf(PPawn));
+        if (!a.has_value())
+        {
+            return std::nullopt;
+        }
+        return Assignment{ a->spell, a->target, a->why };
+    }
+
+    void roleReflex(CCharEntity* PPawn)
+    {
+        if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
+        {
+            role::reflex(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), seconds(timer::now()));
+        }
+    }
+
+    void roleThink(CCharEntity* PPawn, const bool engaged)
+    {
+        if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
+        {
+            role::think(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), engaged, seconds(timer::now()));
+        }
+    }
+
     auto lines(CCharEntity* PChar) -> std::vector<std::string>
     {
         std::vector<std::string> out;
@@ -596,6 +783,20 @@ namespace pawn::tactics
                 out.push_back(fmt::format("open: {} for {:.0f} s, took {}, dealt {}, cures {} MP{}", r.mobName, r.seconds(now), r.taken(), r.dealt(), r.cureMp(), r.overlapping ? ", linked" : ""));
             }
             for (const auto& line : log.priceLists())
+            {
+                out.push_back(line);
+            }
+            const auto  scope = scopeOf(PChar);
+            std::string holders;
+            for (auto* PMember : scope.members)
+            {
+                if (scope.holders.contains(PMember->id))
+                {
+                    holders += (holders.empty() ? "" : ", ") + PMember->getName();
+                }
+            }
+            out.push_back(fmt::format("conveyor: {} need{}, Support Mage held by {}", PTactician->conveyor().needs().size(), PTactician->conveyor().needs().size() == 1 ? "" : "s", holders.empty() ? "nobody" : holders));
+            for (const auto& line : PTactician->conveyor().lines(scope))
             {
                 out.push_back(line);
             }

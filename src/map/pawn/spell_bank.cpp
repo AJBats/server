@@ -32,6 +32,7 @@
 #include "enmity_container.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "recast_container.h"
 #include "items/item_weapon.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
@@ -104,7 +105,12 @@ namespace pawn::tactics
 
             auto operator<=>(const PdifKey&) const = default;
         };
-        std::map<PdifKey, double> pdifCache;
+        struct PdifSample
+        {
+            double mean    = 0.0;
+            double biggest = 0.0;
+        };
+        std::map<PdifKey, PdifSample> pdifCache;
 
         // The self-check, once per member for the process: the sampler is
         // asked the same question twice and must agree with itself
@@ -174,45 +180,58 @@ namespace pawn::tactics
             return effects::GetEffectName(static_cast<uint16>(effect));
         }
 
-        auto weaponType(CCharEntity* PChar) -> xi::SkillType
+        auto weaponType(CBattleEntity* PActor) -> xi::SkillType
         {
-            auto* PWeapon = dynamic_cast<CItemWeapon*>(PChar->m_Weapons[SLOT_MAIN]);
+            auto* PWeapon = dynamic_cast<CItemWeapon*>(PActor->m_Weapons[SLOT_MAIN]);
             return PWeapon != nullptr ? PWeapon->getSkillType() : xi::SkillType::HandToHand;
         }
 
-        auto samplePdif(CCharEntity* PMember, CMobEntity* PMob, const int32 defence, const xi::SkillType type) -> std::optional<double>
+        // The pDIF expectation of one actor against a target of the given
+        // level and defence: the mean, and the biggest roll seen
+        auto samplePdif(CBattleEntity* PActor, const uint8 targetLevel, const int32 defence, const xi::SkillType type) -> std::optional<PdifSample>
         {
             auto fn = bankFunction("expectedPdif");
             if (!fn)
             {
                 return std::nullopt;
             }
-            auto res = (*fn)(CLuaBaseEntity(PMember), defence, PMob->GetMLevel(), static_cast<uint8>(type), kPdifRolls);
+            auto res = (*fn)(CLuaBaseEntity(PActor), defence, targetLevel, static_cast<uint8>(type), kPdifRolls);
             if (failed("expectedPdif", res))
             {
                 return std::nullopt;
             }
-            return res.get<double>(0);
+            return PdifSample{ res.get<double>(0), res.get<double>(1) };
         }
 
-        auto pdif(CCharEntity* PMember, CMobEntity* PMob, const int32 defence) -> std::optional<double>
+        // The cached expectation, or a fresh sample when allowed; nothing
+        // when the answer would cost 300 rolls the caller has not budgeted
+        auto pdifOf(CBattleEntity* PActor, const uint8 targetLevel, const int32 defence, const xi::SkillType type, const bool allowSample = true) -> std::optional<PdifSample>
         {
-            const auto    type = weaponType(PMember);
-            const PdifKey key{ .member = PMember->id, .weapon = static_cast<uint8>(type), .defence = defence, .mobLevel = PMob->GetMLevel(), .attack = PMember->ATT(SLOT_MAIN), .level = PMember->GetMLevel(), .zone = PMember->loc.zone != nullptr ? static_cast<uint16>(PMember->loc.zone->GetID()) : 0 };
+            const PdifKey key{ .member = PActor->id, .weapon = static_cast<uint8>(type), .defence = defence, .mobLevel = targetLevel, .attack = PActor->ATT(SLOT_MAIN), .level = PActor->GetMLevel(), .zone = PActor->loc.zone != nullptr ? static_cast<uint16>(PActor->loc.zone->GetID()) : 0 };
             if (const auto it = pdifCache.find(key); it != pdifCache.end())
             {
                 return it->second;
             }
-            const auto mean = samplePdif(PMember, PMob, defence, type);
-            if (mean)
+            if (!allowSample)
+            {
+                return std::nullopt;
+            }
+            const auto sample = samplePdif(PActor, targetLevel, defence, type);
+            if (sample)
             {
                 if (pdifCache.size() >= kPdifCacheCap)
                 {
                     pdifCache.clear();
                 }
-                pdifCache[key] = *mean;
+                pdifCache[key] = *sample;
             }
-            return mean;
+            return sample;
+        }
+
+        auto pdif(CCharEntity* PMember, CMobEntity* PMob, const int32 defence) -> std::optional<double>
+        {
+            const auto sample = pdifOf(PMember, PMob->GetMLevel(), defence, weaponType(PMember));
+            return sample ? std::optional<double>(sample->mean) : std::nullopt;
         }
 
         // Two independent batches at one defence, their ratio: the
@@ -220,13 +239,13 @@ namespace pawn::tactics
         auto selfCheck(CCharEntity* PMember, CMobEntity* PMob, const int32 defence) -> std::optional<double>
         {
             const auto type = weaponType(PMember);
-            const auto a    = samplePdif(PMember, PMob, defence, type);
-            const auto b    = samplePdif(PMember, PMob, defence, type);
-            if (!a || !b || *b <= 0.0)
+            const auto a    = samplePdif(PMember, PMob->GetMLevel(), defence, type);
+            const auto b    = samplePdif(PMember, PMob->GetMLevel(), defence, type);
+            if (!a || !b || b->mean <= 0.0)
             {
                 return std::nullopt;
             }
-            return *a / *b;
+            return a->mean / b->mean;
         }
 
         // The land chance, sampled once per caster and spell for the fight;
@@ -315,9 +334,83 @@ namespace pawn::tactics
             double roundDelay     = 0.0;
             double remaining      = -1.0;
             bool   guessed        = true;
+            bool   formula        = false; // the formulas' word: nothing measured, nothing on record
         };
 
-        auto ratesOf(const FightRecord& r, const SpotAverages& spot, CMobEntity* PMob, const double now) -> Rates
+        // The mob's melee on its target and the party's melee on it, by the
+        // formulas (RESEARCH §12.2 item 5): the prior before the fight or
+        // the spot has a number. The mob's target is whoever it is on, else
+        // the sturdiest member; the party is every member in the zone
+        void priorRates(Rates& x, FightRecord& r, CMobEntity* PMob, const std::vector<CBattleEntity*>* members, const bool wantTaken, const bool wantDealt)
+        {
+            // One fresh pDIF sample a call: the first think at a new spot
+            // gets the party's rate as the samples come in, never all at once
+            bool           sampled = false;
+            CBattleEntity* PTarget = PMob->GetBattleTarget();
+            if (PTarget == nullptr && members != nullptr)
+            {
+                for (auto* PMember : *members)
+                {
+                    if (PMember != nullptr && !PMember->isDead() && PMember->loc.zone == PMob->loc.zone && (PTarget == nullptr || PMember->GetMaxHP() > PTarget->GetMaxHP()))
+                    {
+                        PTarget = PMember;
+                    }
+                }
+            }
+            if (wantTaken && PTarget != nullptr)
+            {
+                const bool before = r.meleeCache.contains({ PMob->id, PTarget->id });
+                if (const auto g = bank::melee(r, PMob, PTarget, !sampled); g.has_value())
+                {
+                    x.takenPerSecond = g->perSecond;
+                    x.meleePerRound  = g->perRound;
+                    x.formula        = true;
+                    if (r.priorTaken < 0.0)
+                    {
+                        r.priorTaken = g->perSecond;
+                    }
+                }
+                sampled = sampled || (!before && r.meleeCache.contains({ PMob->id, PTarget->id }));
+            }
+            // The party's melee: whoever is not a support mage, who stands
+            // back by design; the measured rate replaces the guess at ten
+            // seconds either way
+            if (wantDealt && members != nullptr)
+            {
+                double dealt    = 0.0;
+                bool   complete = true;
+                for (auto* PMember : *members)
+                {
+                    if (PMember == nullptr || PMember->isDead() || PMember->loc.zone != PMob->loc.zone || supportMage(PMember))
+                    {
+                        continue;
+                    }
+                    const bool before = r.meleeCache.contains({ PMember->id, PMob->id });
+                    const auto g      = bank::melee(r, PMember, PMob, !sampled);
+                    sampled           = sampled || (!before && r.meleeCache.contains({ PMember->id, PMob->id }));
+                    if (g.has_value())
+                    {
+                        dealt += g->perSecond;
+                    }
+                    else if (!r.meleeCache.contains({ PMember->id, PMob->id }))
+                    {
+                        complete = false;
+                    }
+                }
+                if (dealt > 0.0)
+                {
+                    x.dealtPerSecond = dealt;
+                    x.remaining      = PMob->health.hp / dealt;
+                    x.formula        = true;
+                    if (complete && r.priorDealt < 0.0)
+                    {
+                        r.priorDealt = dealt;
+                    }
+                }
+            }
+        }
+
+        auto ratesOf(FightRecord& r, const SpotAverages& spot, CMobEntity* PMob, const double now, const std::vector<CBattleEntity*>* members) -> Rates
         {
             Rates        x;
             const double secs      = r.seconds(now);
@@ -338,6 +431,13 @@ namespace pawn::tactics
             x.meleePerRound             = meleePerSecond * x.roundDelay;
             x.remaining                 = remainingLife(PMob->health.hp, liveDealt, secs, spot.dealtPerSecond.mean);
             x.guessed                   = !(live && liveDealt > 0.0);
+
+            const bool haveTaken = (live && liveTaken > 0.0) || spot.fights > 0;
+            const bool haveDealt = (live && liveDealt > 0.0) || spot.fights > 0;
+            if (!haveTaken || !haveDealt)
+            {
+                priorRates(x, r, PMob, members, !haveTaken, !haveDealt);
+            }
             return x;
         }
 
@@ -466,6 +566,7 @@ namespace pawn::tactics
         auto priceDebuff(FightRecord& r, const SpotAverages& spot, const Exchange& x, CBattleEntity* PCaster, CMobEntity* PMob, CSpell* PSpell, const Priced& p, const bool justCast, const std::vector<CBattleEntity*>* members) -> DebuffPrice
         {
             DebuffPrice price;
+            price.id     = static_cast<uint16>(PSpell->getID());
             price.spell  = PSpell->getName();
             price.target = PMob->getName();
             price.mp     = battleutils::CalculateSpellCost(PCaster, PSpell);
@@ -487,9 +588,10 @@ namespace pawn::tactics
                     return price;
                 }
             }
-            const auto   rt       = ratesOf(r, spot, PMob, seconds(timer::now()));
+            const auto   rt       = ratesOf(r, spot, PMob, seconds(timer::now()), members);
             const double castTime = std::chrono::duration<double>(PSpell->getCastTime()).count();
             price.lifeGuessed     = rt.guessed;
+            price.formula         = rt.formula;
             if (rt.remaining >= 0.0 && rt.remaining < castTime + 2.0)
             {
                 price.moot = rt.remaining;
@@ -601,15 +703,9 @@ namespace pawn::tactics
             if (PSpell->isCure() && PTarget != nullptr && asMob(PTarget) == nullptr) // a cure on undead is an attack
             {
                 std::vector<CureOption> options;
-                for (const auto id : { SpellID::Cure, SpellID::Cure_II, SpellID::Cure_III, SpellID::Cure_IV, SpellID::Cure_V, SpellID::Cure_VI })
+                for (const auto& tier : cureTiers(PCaster, false))
                 {
-                    CSpell* PTier = spell::GetSpell(id);
-                    if (PTier == nullptr || !spell::CanUseSpell(PCaster, id))
-                    {
-                        continue;
-                    }
-                    const auto [heals, known] = cureEstimate(PCaster->id, PTier);
-                    options.push_back(CureOption{ .spell = PTier->getName(), .mp = battleutils::CalculateSpellCost(PCaster, PTier), .heals = heals, .known = known });
+                    options.push_back(tier.option);
                 }
                 const auto  pick = pickCure(options, missing);
                 std::string line = cureLine(PCaster->getName(), PTarget->getName(), missing, options, pick);
@@ -637,9 +733,163 @@ namespace pawn::tactics
             return unpricedLine(PCaster->getName(), PSpell->getName(), PTarget != nullptr ? PTarget->getName() : "nobody", familyOf(PSpell));
         }
 
-        auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>
+        auto usable(CBattleEntity* PCaster, const SpellID id) -> bool
         {
-            std::vector<std::string> out;
+            CSpell* PSpell = spell::GetSpell(id);
+            if (PSpell == nullptr || !spell::CanUseSpell(PCaster, id))
+            {
+                return false;
+            }
+            if (auto* PChar = dynamic_cast<CCharEntity*>(PCaster); PChar != nullptr && PChar->PRecastContainer->Has(RECAST_MAGIC, static_cast<Recast>(id)))
+            {
+                return false;
+            }
+            return battleutils::CalculateSpellCost(PCaster, PSpell) <= PCaster->health.mp;
+        }
+
+        auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<int32>
+        {
+            if (PCaster == nullptr || PSpell == nullptr)
+            {
+                return std::nullopt;
+            }
+            auto fn = bankFunction("expectedCure");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            auto res = PTarget != nullptr ? (*fn)(CLuaBaseEntity(PCaster), static_cast<uint16>(PSpell->getID()), static_cast<uint8>(PSpell->getElement()), CLuaBaseEntity(PTarget))
+                                          : (*fn)(CLuaBaseEntity(PCaster), static_cast<uint16>(PSpell->getID()), static_cast<uint8>(PSpell->getElement()), sol::nil);
+            if (failed("expectedCure", res) || res.get_type(0) != sol::type::number)
+            {
+                return std::nullopt;
+            }
+            return static_cast<int32>(res.get<double>(0));
+        }
+
+        // The formula's number when it answers, known; the learned estimate
+        // when it does not (Rapture up, or the sampler failed), a floor
+        // until an uncapped cure has taught it
+        auto cureTiers(CBattleEntity* PCaster, const bool affordable) -> std::vector<CureTier>
+        {
+            std::vector<CureTier> out;
+            for (const auto id : { SpellID::Cure, SpellID::Cure_II, SpellID::Cure_III, SpellID::Cure_IV, SpellID::Cure_V, SpellID::Cure_VI })
+            {
+                CSpell* PTier = spell::GetSpell(id);
+                if (PTier == nullptr || !spell::CanUseSpell(PCaster, id) || (affordable && !usable(PCaster, id)))
+                {
+                    continue;
+                }
+                // The formula's number, known; else the learned floor, and
+                // never "known" from a cast that landed under other buffs
+                auto [heals, known] = cureEstimate(PCaster->id, PTier);
+                if (const auto computed = expectedCure(PCaster, PTier); computed.has_value())
+                {
+                    heals = *computed;
+                    known = true;
+                }
+                else
+                {
+                    known = false;
+                }
+                out.push_back(CureTier{ id, CureOption{ .spell = PTier->getName(), .mp = battleutils::CalculateSpellCost(PCaster, PTier), .heals = heals, .known = known } });
+            }
+            return out;
+        }
+
+        auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget) -> SpellID
+        {
+            if (PTarget == nullptr || PTarget->isDead())
+            {
+                return static_cast<SpellID>(0);
+            }
+            std::vector<CureOption> options;
+            for (const auto& tier : tiers)
+            {
+                options.push_back(tier.option);
+            }
+            const auto pick = pickCure(options, PTarget->GetMaxHP() - PTarget->health.hp);
+            return pick == kNoPick ? static_cast<SpellID>(0) : tiers[pick].id;
+        }
+
+        auto melee(FightRecord& r, CBattleEntity* PActor, CBattleEntity* PTarget, const bool allowSample) -> std::optional<FightRecord::MeleeGuess>
+        {
+            if (PActor == nullptr || PTarget == nullptr)
+            {
+                return std::nullopt;
+            }
+            const auto key = std::make_pair(PActor->id, PTarget->id);
+            if (const auto it = r.meleeCache.find(key); it != r.meleeCache.end())
+            {
+                return it->second;
+            }
+            // No main weapon, no swings: the game builds none either
+            auto* PMain = dynamic_cast<CItemWeapon*>(PActor->m_Weapons[SLOT_MAIN]);
+            if (PMain == nullptr)
+            {
+                r.meleeCache[key] = std::nullopt;
+                return std::nullopt;
+            }
+            const auto type = PMain->getSkillType();
+            const bool h2h  = type == xi::SkillType::HandToHand;
+            auto       fn   = bankFunction("swingBase");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            auto res = (*fn)(CLuaBaseEntity(PActor), CLuaBaseEntity(PTarget), h2h);
+            if (failed("swingBase", res) || res.get_type(0) != sol::type::number)
+            {
+                r.meleeCache[key] = std::nullopt; // declined (Consume Mana up): not asked again this fight
+                return std::nullopt;
+            }
+            const double base   = res.get<double>(0);
+            const auto   sample = pdifOf(PActor, PTarget->GetMLevel(), PTarget->DEF(), type, allowSample);
+            if (!sample.has_value())
+            {
+                return std::nullopt; // over budget this call: asked again next time
+            }
+            // Swings a round as the game builds them: the weapon's own hit
+            // count (two bare-handed unless the mob swings once, a mob's
+            // multi-hit as its mean), the offhand when dual wielding, then
+            // the quadruple, triple and double attack rolls taken in that
+            // order, one of them at most, and a monk's kicks on top
+            auto*  PMob   = asMob(PActor);
+            double swings = h2h ? (PMob != nullptr && PMob->getMobMod(xi::MobMod::H2hSingleSwing) > 0 ? 1.0 : 2.0) : std::max<double>(1.0, PMain->getHitCount());
+            if (PMob != nullptr)
+            {
+                if (const auto multi = PMob->getMobMod(xi::MobMod::MultiHit); multi > 0)
+                {
+                    swings = 1.0 + (1.0 + multi) / 2.0;
+                }
+            }
+            if (PActor->IsDualWielding())
+            {
+                swings += 1.0;
+            }
+            const double qa    = std::clamp(PActor->getMod(xi::Mod::QUAD_ATTACK) / 100.0, 0.0, 1.0);
+            const double ta    = std::clamp(PActor->getMod(xi::Mod::TRIPLE_ATTACK) / 100.0, 0.0, 1.0);
+            const double da    = std::clamp(PActor->getMod(xi::Mod::DOUBLE_ATTACK) / 100.0, 0.0, 1.0);
+            const double extra = qa * 3.0 + (1.0 - qa) * (ta * 2.0 + (1.0 - ta) * da);
+            swings += extra;
+            if (h2h)
+            {
+                swings += std::clamp(PActor->getMod(xi::Mod::KICK_ATTACK_RATE) / 100.0, 0.0, 1.0);
+            }
+            const double hitRate = battleutils::GetHitRate(PActor, PTarget) / 100.0;
+            const double delay   = PActor->GetWeaponDelay(false) / 1000.0;
+
+            FightRecord::MeleeGuess g;
+            g.perRound        = swings * hitRate * base * sample->mean;
+            g.perSecond       = delay > 0.0 ? g.perRound / delay : 0.0;
+            g.biggest         = base * sample->biggest; // a critical swing at the biggest ratio sampled
+            r.meleeCache[key] = g;
+            return g;
+        }
+
+        auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<DebuffPrice>
+        {
+            std::vector<DebuffPrice> out;
             for (const auto& p : kPriced)
             {
                 CSpell* PSpell = spell::GetSpell(p.id);
@@ -647,7 +897,17 @@ namespace pawn::tactics
                 {
                     continue;
                 }
-                out.push_back(priceDebuff(r, spot, x, PMember, PMob, PSpell, p, false, &members).line(fmt::format("bank: {} could cast ", PMember->getName())));
+                out.push_back(priceDebuff(r, spot, x, PMember, PMob, PSpell, p, false, &members));
+            }
+            return out;
+        }
+
+        auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>
+        {
+            std::vector<std::string> out;
+            for (const auto& p : pricesFor(r, spot, x, members, PMember, PMob))
+            {
+                out.push_back(p.line(fmt::format("bank: {} could cast ", PMember->getName())));
             }
             return out;
         }

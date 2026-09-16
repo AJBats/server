@@ -166,6 +166,7 @@ namespace cardian::tactics
 
     struct DebuffPrice
     {
+        uint16      id = 0; // the spell
         std::string spell;
         std::string target;
         int32       mp          = 0;
@@ -176,12 +177,21 @@ namespace cardian::tactics
         double      mpWorth     = 0.0;
         std::string detail;             // the working, for the log
         bool        lifeGuessed = false; // the mob's life came from the spot, or is unknown
-        bool        noData      = false; // no damage rate on record: the prior is "cast it"
+        bool        formula     = false; // the rates came from the formulas: nothing measured yet
+        bool        noData      = false; // no damage rate yet, measured or from the formulas: not priced, so not cast
         double      onFor       = -1.0;  // the effect is on the mob already, this long to go
         bool        blocked     = false; // an effect on the mob nullifies this one (a Bio under a Dia)
         double      moot        = -1.0;  // the mob dies before it lands: its seconds left
         bool        priced      = true;
         std::string family;              // when unpriced: what it is
+
+        // The verdict as the role reads it: cast, or not. Nothing is cast
+        // blind: with the formulas pricing a fight from its first second,
+        // "no data" only ever means the samples are still coming in
+        auto go() const -> bool
+        {
+            return priced && onFor < 0.0 && !blocked && moot < 0.0 && !noData && mpWorth > mp;
+        }
 
         auto verdict() const -> std::string
         {
@@ -203,7 +213,7 @@ namespace cardian::tactics
             }
             if (noData)
             {
-                return "cast, no data yet";
+                return "not priced yet";
             }
             return mpWorth > mp ? "cast" : "skip";
         }
@@ -231,7 +241,11 @@ namespace cardian::tactics
                 line += ", " + detail;
             }
             line += fmt::format(", saves ~{:.0f} HP = {:.0f} MP, costs {} -> {}", hpSaved, mpWorth, mp, verdict());
-            if (lifeGuessed)
+            if (formula)
+            {
+                line += " (from the formulas, nothing measured yet)";
+            }
+            else if (lifeGuessed)
             {
                 line += " (the mob's life is a guess)";
             }

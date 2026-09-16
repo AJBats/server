@@ -24,12 +24,15 @@
 #include "common/cbasetypes.h"
 #include "common/timer.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
 class CBattleEntity;
 class CCharEntity;
 class CParty;
+class CSpell;
+enum class SpellID : uint16;
 
 namespace pawn::tactics
 {
@@ -63,6 +66,45 @@ namespace pawn::tactics
 
     // pawn.TACTICS_DEBUG, read once
     auto debug() -> bool;
+
+    // A member or a mob by id, as her scope sees it: the alliance's
+    // characters first, the zone-coded mob lookup for the rest
+    auto entity(CCharEntity* PPawn, uint32 id) -> CBattleEntity*;
+
+    // Her Role row says Support Mage (a real player never does)
+    auto supportMage(CBattleEntity* PMember) -> bool;
+
+    // The conveyor's doors (RESEARCH §12.12 item 2; conveyor.h), for the
+    // gambit engine. A scope no tactician watches has no conveyor, and its
+    // rows cast as they always have
+    auto has(const CCharEntity* PPawn) -> bool;
+
+    // A spell row whose condition holds, fed to her scope's conveyor: a
+    // null spell is "best cure", the tier the bank's. Whether the cast came
+    // straight back as hers, and what to cast
+    struct Fed
+    {
+        bool        mine = false;
+        SpellID     spell{};
+        uint32      target = 0;
+        std::string why;
+    };
+    auto feed(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget, uint32 row, const std::string& rowId) -> std::optional<Fed>;
+
+    // Her standing assignment: the first need in her slot's order that is
+    // hers; nothing offensive while she is not engaged
+    struct Assignment
+    {
+        SpellID     spell{};
+        uint32      target = 0;
+        std::string why;
+    };
+    auto assignment(CCharEntity* PPawn, bool engaged) -> std::optional<Assignment>;
+
+    // The Support Mage role (role_support.h): its reflex every tick, its
+    // own needs on her think
+    void roleReflex(CCharEntity* PPawn);
+    void roleThink(CCharEntity* PPawn, bool engaged);
 
     // The !tactics command: the caller's scope, its open and recent fights,
     // this zone's spot averages, the members' cure figures, this zone's

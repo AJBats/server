@@ -2756,6 +2756,19 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
     return CPlayerController::Cast(castTarget, spellid);
 }
 
+auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid) -> bool
+{
+    CSpell* PSpell = spell::GetSpell(spellid);
+    if (PSpell == nullptr)
+    {
+        return false;
+    }
+    const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
+    FaceTarget(castTarget);
+    HeadLook(castTarget.resolve<CBattleEntity>());
+    return CPlayerController::Cast(castTarget, spellid);
+}
+
 namespace
 {
     constexpr uint16 kBoostAbility = 39;

@@ -294,7 +294,8 @@ TEST_CASE("priceRounds: Paralyze as the rounds it stops", "[cardian][tactics][ba
     DebuffPrice blank = p;
     priceRounds(blank, 4.0, 0.22, 0.0, "rounds stopped");
     CHECK(blank.noData);
-    CHECK(blank.verdict() == "cast, no data yet");
+    CHECK(blank.verdict() == "not priced yet");
+    CHECK_FALSE(blank.go());
 
     DebuffPrice dear = p;
     dear.mp         = 60;

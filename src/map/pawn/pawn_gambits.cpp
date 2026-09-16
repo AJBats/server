@@ -22,6 +22,7 @@
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "tactics.h"
 
 #include "utils/battleutils.h"
 #include "spell.h"
@@ -206,13 +207,6 @@ namespace pawn
     {
         TracyZoneScoped;
 
-        // Stagger pawns so a party doesn't think in lockstep
-        const auto positionOffset = std::chrono::milliseconds(m_PController->GetPawnPartyPosition() * 100);
-        if (tick + positionOffset < m_lastAction)
-        {
-            return;
-        }
-
         if (POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>() ||
             POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CWeaponSkillState>() ||
             POwner->PAI->IsCurrentState<CMobSkillState>() || POwner->PAI->IsCurrentState<CPetSkillState>())
@@ -220,10 +214,12 @@ namespace pawn
             return;
         }
 
-        m_spellBook.Refresh();
-        RefreshWeaponSkills();
-
-        m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
+        // The player's order from the command window is her next action:
+        // nothing of the engine's goes ahead of it
+        if (m_PController->HasQueuedOrder())
+        {
+            return;
+        }
 
         // The master switch: nothing of her own. A weapon skill, like
         // everything else, is a row's doing -- there is no TP trigger
@@ -233,8 +229,39 @@ namespace pawn
             return;
         }
 
+        // Her scope's conveyor (RESEARCH §12.12 item 2): where a tactician
+        // watches, spell rows feed it and it says who casts; where none
+        // does, rows cast as they always have
+        const bool conveyor    = pawn::tactics::has(POwner);
+        const bool supportMage = conveyor && pawn::tactics::supportMage(POwner);
+
+        // Every tick, ahead of the think: the role's reflex, and whatever
+        // the conveyor has assigned her
+        if (supportMage)
+        {
+            pawn::tactics::roleReflex(POwner);
+        }
+        if (conveyor && CastAssignment(engaged))
+        {
+            return;
+        }
+
+        // Stagger pawns so a party doesn't think in lockstep
+        const auto positionOffset = std::chrono::milliseconds(m_PController->GetPawnPartyPosition() * 100);
+        if (tick + positionOffset < m_lastAction)
+        {
+            return;
+        }
+
+        m_spellBook.Refresh();
+        RefreshWeaponSkills();
+
+        m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
+
+        std::size_t index = 0;
         for (auto& row : m_gambits)
         {
+            ++index;
             auto& gambit = row.gambit;
             if (!row.enabled || IsBehavior(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
             {
@@ -252,13 +279,48 @@ namespace pawn
                 continue;
             }
 
-            if (Execute(gambit, PTarget, engaged))
+            if (Execute(gambit, PTarget, engaged, index))
             {
                 if (gambit.retry_delay != 0)
                 {
                     gambit.last_used = tick;
                 }
                 break;
+            }
+        }
+
+        // The role's own needs, on her think
+        if (supportMage)
+        {
+            pawn::tactics::roleThink(POwner, engaged);
+        }
+    }
+
+    auto CGambits::CastAssignment(const bool engaged) -> bool
+    {
+        const auto a = pawn::tactics::assignment(POwner, engaged);
+        return a.has_value() && CastAssigned(a->spell, a->target, a->why);
+    }
+
+    auto CGambits::CastAssigned(const SpellID spellId, const uint32 target, const std::string& why) -> bool
+    {
+        auto* PTarget = pawn::tactics::entity(POwner, target);
+        if (PTarget == nullptr || !m_PController->CastAssigned(PTarget->entityId(), spellId))
+        {
+            return false;
+        }
+        auto* PSpell = spell::GetSpell(spellId);
+        ShowInfoFmt("tactics: {} casts {} on {} ({})", POwner->getName(), PSpell != nullptr ? PSpell->getName() : "?", PTarget->getName(), why);
+        return true;
+    }
+
+    void CGambits::StampRetry(const std::string& id, const timer::time_point at)
+    {
+        for (auto& row : m_gambits)
+        {
+            if (row.gambit.identifier == id && row.gambit.retry_delay != 0)
+            {
+                row.gambit.last_used = at;
             }
         }
     }
@@ -842,7 +904,7 @@ namespace pawn
 
     void CGambits::SetBehaviorRow(const pawn::Behavior behavior, const uint16 arg)
     {
-        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "rest", "boost before weapon skills", "rest in battle" };
+        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "rest", "boost before weapon skills", "rest in battle", "role" };
         const auto                                                         name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool                                                         sw   = pawn::isSwitch(behavior);
 
@@ -1082,6 +1144,8 @@ namespace pawn
                     return fmt::format("Rest with the player{}", off);
                 case pawn::Behavior::HomePointWithPlayer:
                     return fmt::format("Home point with the player{}", off);
+                case pawn::Behavior::Role:
+                    return fmt::format("Role: {}", pawn::roleName(static_cast<pawn::Role>(a.select_arg)));
                 default:
                     return fmt::format("behaviour {} = {}", static_cast<uint16>(a.select), a.select_arg);
             }
@@ -1195,7 +1259,7 @@ namespace pawn
         return out;
     }
 
-    auto CGambits::Execute(const Gambit_t& gambit, CBattleEntity* PTarget, const bool engaged) -> bool
+    auto CGambits::Execute(const Gambit_t& gambit, CBattleEntity* PTarget, const bool engaged, const std::size_t index) -> bool
     {
         bool spellSeen = false;
 
@@ -1223,17 +1287,46 @@ namespace pawn
                     }
                     spellSeen = true;
 
+                    // Entrust goes on the player; every other cast target is
+                    // the gambit's (self-target spells are redirected by the
+                    // controller)
+                    CBattleEntity* PCastTarget = action.select == G_SELECT::ENTRUSTED ? m_PController->GetLivePlayer() : PTarget;
+                    if (PCastTarget == nullptr)
+                    {
+                        break;
+                    }
+
+                    // Where a tactician watches, the row feeds the conveyor
+                    // instead of casting (a "best cure" leaves the tier to
+                    // the bank); when the cast comes straight back as hers
+                    // it is her action this think, as it always was, and
+                    // when it does not the row's next action gets its turn
+                    if (pawn::tactics::has(POwner))
+                    {
+                        CSpell* PSpell = nullptr;
+                        if (!(action.select == G_SELECT::HIGHEST && action.select_arg == SPELLFAMILY_CURE))
+                        {
+                            const auto spellId = ResolveSpell(action, PTarget);
+                            PSpell             = spellId.has_value() ? spell::GetSpell(*spellId) : nullptr;
+                            if (PSpell == nullptr)
+                            {
+                                break;
+                            }
+                        }
+                        const auto fed = pawn::tactics::feed(POwner, PSpell, PCastTarget, static_cast<uint32>(index), gambit.identifier);
+                        if (fed.has_value() && fed->mine)
+                        {
+                            executed = CastAssigned(fed->spell, fed->target, fed->why);
+                        }
+                        break;
+                    }
+
                     const auto spellId = ResolveSpell(action, PTarget);
                     if (!spellId.has_value())
                     {
                         break;
                     }
-
-                    // Entrust goes on the player; every other cast target is
-                    // the gambit's (self-target spells are redirected by the
-                    // controller)
-                    CBattleEntity* PCastTarget = action.select == G_SELECT::ENTRUSTED ? m_PController->GetLivePlayer() : PTarget;
-                    if (PCastTarget != nullptr && m_PController->Cast(PCastTarget->entityId(), *spellId))
+                    if (m_PController->Cast(PCastTarget->entityId(), *spellId))
                     {
                         Debug("cast", static_cast<uint32>(*spellId), PCastTarget);
                         executed = true;
@@ -1579,6 +1672,9 @@ namespace pawn
         {
             v.actions.push_back({ fmt::format("100:4:{}", static_cast<uint16>(slot)), fmt::format("Formation: {}", cardian::formation::slotName(slot)), "Behaviours" });
         }
+
+        // The role she plays: one row switches the whole role (RESEARCH §12.2 item 2)
+        v.actions.push_back({ fmt::format("100:{}:{}", static_cast<uint16>(pawn::Behavior::Role), static_cast<uint16>(pawn::Role::SupportMage)), fmt::format("Role: {}", pawn::roleName(pawn::Role::SupportMage)), "Behaviours" });
 
         // Magic she knows and can cast now, plus "best of the family" for
         // every family she has a spell in

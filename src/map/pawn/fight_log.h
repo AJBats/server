@@ -84,6 +84,10 @@ namespace pawn::tactics
         {
             return m_open;
         }
+        auto open() -> std::vector<FightRecord>& // the bank prices on a record: its caches live there
+        {
+            return m_open;
+        }
         auto recent() const -> const std::deque<FightRecord>&
         {
             return m_recent;
@@ -100,7 +104,7 @@ namespace pawn::tactics
         // a listener from inside its own trigger mutates the vector LSB is
         // walking
         void onMemberDamaged(CBattleEntity* PMember, int32 amount, CBattleEntity* PAttacker);
-        void onMagicStart(CBattleEntity* PCaster, CBattleEntity* PTarget);
+        void onMagicStart(CBattleEntity* PCaster, CBattleEntity* PTarget, CSpell* PSpell); // the spell from the event: the state is not current yet
         void onMagicUse(CBattleEntity* PCaster, CBattleEntity* PTarget, CLuaSpell* PLuaSpell, CLuaAction* PLuaAction);
         void onMagicInterrupted(CBattleEntity* PCaster);
         void onAttacked(CBattleEntity* PMember, CBattleEntity* PAttacker);
@@ -135,9 +139,10 @@ namespace pawn::tactics
         // decided (the gap a cure faced, RESEARCH §12.13)
         struct Pending
         {
-            uint32 target = 0;
-            int32  hp     = 0;
-            int32  maxHp  = 0;
+            uint32 target   = 0;
+            int32  hp       = 0;
+            int32  maxHp    = 0;
+            int32  expected = -1; // a cure: what the formula said it would heal, read before the cast spends Divine Seal
         };
         std::unordered_map<uint32, Pending> m_pending; // by caster
 

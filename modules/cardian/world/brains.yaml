@@ -9,10 +9,10 @@
 #   action     avoid aggro | rest with leader | rest | rest in battle (sit out
 #              even mid-fight, when the mob is not on her) | home point with
 #              leader | boost before weapon skills | formation <lead|flank left|flank
-#              right|rear left|rear right|behind> | cast best <spell> (the best
-#              tier of that spell's family she knows) | cast <spell> | cast
-#              random damage | ability <name> | best weapon skill | random
-#              weapon skill
+#              right|rear left|rear right|behind> | role <support mage> | cast
+#              best <spell> (the best tier of that spell's family she knows) |
+#              cast <spell> | cast random damage | ability <name> | best weapon
+#              skill | random weapon skill
 #
 # Names are the game's own: spells and abilities as in the database
 # (spaces for underscores: "cure ii", "sneak attack"), statuses as the

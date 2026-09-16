@@ -46,6 +46,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/fight_log.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/tactics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/spell_bank.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/conveyor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/role_support.cpp
 )
 
 set(MAP_CORE_SOURCES

@@ -42,6 +42,7 @@
 #include "zone.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <chrono>
 #include <map>
 #include <optional>
@@ -337,11 +338,16 @@ namespace pawn::tactics
         }
     }
 
-    void FightLog::onMagicStart(CBattleEntity* PCaster, CBattleEntity* PTarget)
+    void FightLog::onMagicStart(CBattleEntity* PCaster, CBattleEntity* PTarget, CSpell* PSpell)
     {
         if (PCaster != nullptr)
         {
-            m_pending[PCaster->id] = Pending{ .target = PTarget != nullptr ? PTarget->id : 0, .hp = PTarget != nullptr ? PTarget->health.hp : 0, .maxHp = PTarget != nullptr ? PTarget->GetMaxHP() : 0 };
+            auto pending = Pending{ .target = PTarget != nullptr ? PTarget->id : 0, .hp = PTarget != nullptr ? PTarget->health.hp : 0, .maxHp = PTarget != nullptr ? PTarget->GetMaxHP() : 0 };
+            if (PSpell != nullptr && PSpell->isCure())
+            {
+                pending.expected = bank::expectedCure(PCaster, PSpell, PTarget).value_or(-1);
+            }
+            m_pending[PCaster->id] = pending;
         }
     }
 
@@ -417,6 +423,20 @@ namespace pawn::tactics
                 ++memory.tally.toppedUp;
             }
             memory.estimate.note(primary, note.toppedUp);
+            // The formula against the cast (the user's acceptance test):
+            // an uncapped cure lands what the sampler said, give or take
+            // the day and weather roll, ten percent either way
+            if (!note.toppedUp && started && started->expected >= 0)
+            {
+                if (std::abs(started->expected - primary) > started->expected / 10 + 1)
+                {
+                    ShowInfoFmt("tactics: bank: cure drift: {}'s {} landed {}, the formula said {}", PCaster->getName(), PSpell->getName(), primary, started->expected);
+                }
+                else if (tactics::debug())
+                {
+                    ShowInfoFmt("tactics: bank: {}'s {} landed {}, as the formula said", PCaster->getName(), PSpell->getName(), primary);
+                }
+            }
             overcure = note.toppedUp ? std::max<int32>(0, memory.estimate.predict() - primary) : 0;
             r        = recordForTarget(PTarget->id);
             m_cureHp += note.landed;
