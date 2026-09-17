@@ -733,6 +733,35 @@ namespace pawn::tactics
             return unpricedLine(PCaster->getName(), PSpell->getName(), PTarget != nullptr ? PTarget->getName() : "nobody", familyOf(PSpell));
         }
 
+        auto onAlready(CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<double>
+        {
+            const auto* p = PSpell != nullptr ? priced(PSpell->getID()) : nullptr;
+            if (p == nullptr || PTarget == nullptr)
+            {
+                return std::nullopt;
+            }
+            const auto* PEffect = PTarget->StatusEffectContainer->GetStatusEffect(p->effect);
+            // A higher tier overwrites what is on; a tier the effect does not
+            // carry is taken as on already
+            if (PEffect == nullptr || (PEffect->GetTier() > 0 && p->tier > PEffect->GetTier()))
+            {
+                return std::nullopt;
+            }
+            return secondsLeft(PEffect);
+        }
+
+        auto blockedOn(CSpell* PSpell, CBattleEntity* PTarget) -> bool
+        {
+            const auto* p = PSpell != nullptr ? priced(PSpell->getID()) : nullptr;
+            if (p == nullptr || PTarget == nullptr || PTarget->StatusEffectContainer->GetStatusEffect(p->effect) != nullptr)
+            {
+                return false;
+            }
+            sol::protected_function nullified = ::lua["xi"]["data"]["statusEffect"]["isEffectNullified"];
+            auto                    res       = nullified(CLuaBaseEntity(PTarget), static_cast<uint16>(p->effect), p->tier);
+            return !failed("isEffectNullified", res) && res.get<bool>(0);
+        }
+
         auto usable(CBattleEntity* PCaster, const SpellID id) -> bool
         {
             CSpell* PSpell = spell::GetSpell(id);

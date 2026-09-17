@@ -102,23 +102,23 @@ namespace pawn::tactics::role
         {
             return PMember != nullptr && PMember->objtype == TYPE_PC && !PMember->isDead() && PMember->loc.zone == PHolder->loc.zone;
         }
-
-        void sayParty(CCharEntity* PChar, const std::string& text)
-        {
-            if (PChar->PParty == nullptr)
-            {
-                return;
-            }
-            message::send(ipc::ChatMessageParty{
-                .partyId    = PChar->PParty->GetPartyID(),
-                .senderId   = PChar->id,
-                .senderName = PChar->getName(),
-                .message    = text,
-                .zoneId     = PChar->getZone(),
-                .gmLevel    = PChar->m_GMlevel,
-            });
-        }
     } // namespace
+
+    void sayParty(CCharEntity* PChar, const std::string& text)
+    {
+        if (PChar->PParty == nullptr)
+        {
+            return;
+        }
+        message::send(ipc::ChatMessageParty{
+            .partyId    = PChar->PParty->GetPartyID(),
+            .senderId   = PChar->id,
+            .senderName = PChar->getName(),
+            .message    = text,
+            .zoneId     = PChar->getZone(),
+            .gmLevel    = PChar->m_GMlevel,
+        });
+    }
 
     void reflex(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, const double now)
     {

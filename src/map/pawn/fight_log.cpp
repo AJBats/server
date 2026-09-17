@@ -220,14 +220,109 @@ namespace pawn::tactics
         ++m_closed;
     }
 
+    void FightLog::vanished(const uint32 casterId, const Pending& p, CBattleEntity* PCaster)
+    {
+        // Booked on the fight the cast began in, which may be settling by
+        // now, else the fight on its target
+        FightRecord* r = nullptr;
+        if (const auto i = p.record != 0 ? openIndex(p.record) : m_open.size(); i < m_open.size())
+        {
+            r = &m_open[i];
+        }
+        if (r == nullptr)
+        {
+            r = recordForTarget(p.target != 0 ? p.target : casterId);
+        }
+        if (r != nullptr)
+        {
+            ++r->member(casterId, PCaster->getName()).interrupted;
+        }
+        if (!debug())
+        {
+            return;
+        }
+        auto*          PSpell  = spell::GetSpell(static_cast<SpellID>(p.spell));
+        CBattleEntity* PTarget = nullptr;
+        if (p.target != 0)
+        {
+            auto* PEntity = zoneutils::GetEntity(p.target);
+            PTarget       = PEntity != nullptr && PEntity->id == p.target ? dynamic_cast<CBattleEntity*>(PEntity) : nullptr;
+        }
+        // What the log can tell now, said as now: the server keeps the reason
+        std::string why;
+        if (PCaster->isDead())
+        {
+            why = "she is down";
+        }
+        else if (p.target != 0 && (PTarget == nullptr || PTarget->isDead()))
+        {
+            why = "the target is gone";
+        }
+        else if (PTarget != nullptr && PSpell != nullptr && PTarget != PCaster)
+        {
+            const float reach = PSpell->getRange() + PCaster->modelHitboxSize + PTarget->modelHitboxSize;
+            const float away  = distance(PCaster->loc.p, PTarget->loc.p);
+            if (away > reach)
+            {
+                why = fmt::format("{} is {:.1f} y away now, the reach {:.1f}", PTarget->getName(), away, reach);
+            }
+        }
+        if (why.empty())
+        {
+            const float moved = distance(p.at, PCaster->loc.p, true);
+            why               = moved > 0.3f ? fmt::format("she is {:.1f} y from where the cast began", moved) : std::string("no reason the server gave (paralysed, or refused as it began)");
+        }
+        ShowInfoFmt("tactics: {}'s {} on {} ended without landing: {}", PCaster->getName(), PSpell != nullptr ? PSpell->getName() : "cast",
+                    PTarget != nullptr ? PTarget->getName() : "?", why);
+    }
+
     void FightLog::tick(const timer::time_point now, const std::vector<CBattleEntity*>& members)
     {
         const double nowSecs = seconds(now);
         const bool   anyone  = !members.empty();
-        const bool   anyUp   = std::any_of(members.begin(), members.end(), [](const CBattleEntity* PMember)
-                                           {
-                                               return !PMember->isDead();
-                                           });
+
+        // A cast the log saw start that vanished without landing and without
+        // an interruption event: the server fires MAGIC_INTERRUPTED only for
+        // a caster slept or stunned at the end of the cast; out of range,
+        // moved, paralysed and a lost target end a cast in silence. Booked
+        // once the cast should have ended (a younger one is suspended under
+        // a stun, not over). A caster no longer in the scope is forgotten
+        for (auto it = m_pending.begin(); it != m_pending.end();)
+        {
+            CBattleEntity* PCaster = nullptr;
+            for (auto* PMember : members)
+            {
+                if (PMember != nullptr && PMember->id == it->first)
+                {
+                    PCaster = PMember;
+                    break;
+                }
+            }
+            if (PCaster == nullptr)
+            {
+                it = m_pending.erase(it);
+                continue;
+            }
+            if (PCaster->PAI->IsCurrentState<CMagicState>())
+            {
+                ++it;
+                continue;
+            }
+            const auto*  PSpell   = spell::GetSpell(static_cast<SpellID>(it->second.spell));
+            const double castTime = PSpell != nullptr ? std::chrono::duration<double>(PSpell->getCastTime()).count() : 0.0;
+            if (nowSecs - it->second.startedAt < castTime)
+            {
+                ++it;
+                continue;
+            }
+            vanished(it->first, it->second, PCaster);
+            it = m_pending.erase(it);
+        }
+
+        const bool anyUp = std::any_of(members.begin(), members.end(), [](const CBattleEntity* PMember)
+                                       {
+                                           return !PMember->isDead();
+                                       });
         for (std::size_t i = 0; i < m_open.size();)
         {
             auto&       r    = m_open[i];
@@ -346,6 +441,24 @@ namespace pawn::tactics
             if (PSpell != nullptr && PSpell->isCure())
             {
                 pending.expected = bank::expectedCure(PCaster, PSpell, PTarget).value_or(-1);
+            }
+            pending.spell     = PSpell != nullptr ? static_cast<uint16>(PSpell->getID()) : 0;
+            pending.at        = PCaster->loc.p;
+            pending.startedAt = seconds(timer::now());
+            if (pending.target != 0 && openIndex(pending.target) < m_open.size())
+            {
+                pending.record = pending.target;
+            }
+            else if (const auto* r = recordForTarget(pending.target != 0 ? pending.target : PCaster->id); r != nullptr)
+            {
+                pending.record = r->mobId;
+            }
+            // A cast still pending as the next begins ended without a word:
+            // booked before it is forgotten
+            if (const auto it = m_pending.find(PCaster->id); it != m_pending.end())
+            {
+                vanished(it->first, it->second, PCaster);
+                m_pending.erase(it);
             }
             m_pending[PCaster->id] = pending;
         }

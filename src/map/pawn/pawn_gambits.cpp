@@ -362,7 +362,7 @@ namespace pawn
             case G_TARGET::TARGET:
             case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
             {
-                if (auto* PMob = POwner->GetBattleTarget())
+                if (auto* PMob = FightTarget())
                 {
                     out.push_back(PMob);
                 }
@@ -471,7 +471,7 @@ namespace pawn
             switch (gambit.target_selector)
             {
                 case G_TARGET::TRIGGER_SELF_ACTION_TARGET:
-                    return POwner->GetBattleTarget();
+                    return FightTarget();
                 case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
                     return POwner;
                 default:
@@ -479,6 +479,20 @@ namespace pawn
             }
         }
         return nullptr;
+    }
+
+    void CGambits::Prompt()
+    {
+        m_lastAction = timer::time_point::min();
+    }
+
+    auto CGambits::FightTarget() -> CBattleEntity*
+    {
+        if (auto* PMob = POwner->GetBattleTarget(); PMob != nullptr)
+        {
+            return PMob;
+        }
+        return m_PController != nullptr ? m_PController->PartyFightTarget() : nullptr;
     }
 
     namespace
@@ -904,7 +918,7 @@ namespace pawn
 
     void CGambits::SetBehaviorRow(const pawn::Behavior behavior, const uint16 arg)
     {
-        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "rest", "boost before weapon skills", "rest in battle", "role" };
+        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "rest", "boost before weapon skills", "rest in battle", "role", "melee mage" };
         const auto                                                         name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool                                                         sw   = pawn::isSwitch(behavior);
 
@@ -1146,6 +1160,8 @@ namespace pawn
                     return fmt::format("Home point with the player{}", off);
                 case pawn::Behavior::Role:
                     return fmt::format("Role: {}", pawn::roleName(static_cast<pawn::Role>(a.select_arg)));
+                case pawn::Behavior::MeleeMage:
+                    return fmt::format("Melee mage{}", off);
                 default:
                     return fmt::format("behaviour {} = {}", static_cast<uint16>(a.select), a.select_arg);
             }
@@ -1292,6 +1308,15 @@ namespace pawn
                     // controller)
                     CBattleEntity* PCastTarget = action.select == G_SELECT::ENTRUSTED ? m_PController->GetLivePlayer() : PTarget;
                     if (PCastTarget == nullptr)
+                    {
+                        break;
+                    }
+
+                    // A spell on a mob is the fight's: nothing offensive while
+                    // she is not in it -- drawn, or attending a mob that is
+                    // engaged -- the conveyor's own hand-out rule (a first
+                    // cast on a mob nobody has struck is a pull)
+                    if (!engaged && PCastTarget->objtype == TYPE_MOB)
                     {
                         break;
                     }
@@ -1481,7 +1506,11 @@ namespace pawn
             {
                 return false;
             }
-            PJATarget = POwner->GetBattleTarget();
+            PJATarget = FightTarget();
+            if (PJATarget == nullptr)
+            {
+                return false;
+            }
         }
         else if ((valid & (TARGET_PLAYER_PARTY | TARGET_PLAYER)) && PTarget->allegiance == POwner->allegiance)
         {
@@ -1675,6 +1704,8 @@ namespace pawn
 
         // The role she plays: one row switches the whole role (RESEARCH §12.2 item 2)
         v.actions.push_back({ fmt::format("100:{}:{}", static_cast<uint16>(pawn::Behavior::Role), static_cast<uint16>(pawn::Role::SupportMage)), fmt::format("Role: {}", pawn::roleName(pawn::Role::SupportMage)), "Behaviours" });
+        // A support mage on the fight ring rather than the perimeter (RESEARCH §12.15)
+        v.actions.push_back({ fmt::format("100:{}:1", static_cast<uint16>(pawn::Behavior::MeleeMage)), "Melee mage", "Behaviours" });
 
         // Magic she knows and can cast now, plus "best of the family" for
         // every family she has a spell in

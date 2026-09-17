@@ -27,6 +27,7 @@
 
 #include "common/cbasetypes.h"
 #include "common/timer.h"
+#include "common/types/position.h"
 #include "data/enums/attack_type.h"
 
 #include <deque>
@@ -139,11 +140,19 @@ namespace pawn::tactics
         // decided (the gap a cure faced, RESEARCH §12.13)
         struct Pending
         {
-            uint32 target   = 0;
-            int32  hp       = 0;
-            int32  maxHp    = 0;
-            int32  expected = -1; // a cure: what the formula said it would heal, read before the cast spends Divine Seal
+            uint32     target   = 0;
+            int32      hp       = 0;
+            int32      maxHp    = 0;
+            int32      expected = -1; // a cure: what the formula said it would heal, read before the cast spends Divine Seal
+            uint16     spell     = 0;
+            position_t at{};             // where she stood as the cast began: a cast that vanished says how far she is from there
+            double     startedAt = 0.0;  // seconds; a cast younger than its own cast time is under way, not vanished
+            uint32     record    = 0;    // the fight it began in, by mob, which may be settling by the time it is booked
         };
+        // A cast the log saw start that ended without landing and without an
+        // interruption event: booked as interrupted, said with what the log
+        // can tell now
+        void vanished(uint32 casterId, const Pending& p, CBattleEntity* PCaster);
         std::unordered_map<uint32, Pending> m_pending; // by caster
 
         // The cures this log has seen, for the exchange rate

@@ -93,6 +93,15 @@ namespace pawn::tactics
         // A spell she knows, can use, can afford now and is not on recast
         auto usable(CBattleEntity* PCaster, SpellID id) -> bool;
 
+        // The effect a priced spell writes is on the target already, at its
+        // tier or better: the seconds it has to go (infinite, for good).
+        // Nothing when it is not on, a higher tier would overwrite it, or
+        // the spell is not one the bank prices
+        auto onAlready(CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<double>;
+        // What is on the target nullifies a priced spell's effect (a Bio
+        // under a Dia): the game's own rule, asked when the effect is not on
+        auto blockedOn(CSpell* PSpell, CBattleEntity* PTarget) -> bool;
+
         // What a Cure tier heals before the target's missing HP caps it:
         // the server's own cure formula run on her (the sampler in
         // tactics_bank.lua), the day's roll taken at its expectation, the

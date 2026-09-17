@@ -49,6 +49,7 @@
 
 #include <chrono>
 #include <memory>
+#include <cmath>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -706,6 +707,29 @@ namespace pawn::tactics
         auto* PTactician = PPawn != nullptr && PTarget != nullptr ? find(PPawn) : nullptr;
         if (PTactician == nullptr)
         {
+            return std::nullopt;
+        }
+        // Met already, or blocked by what is on the target: not fed. Said
+        // once per caster, row and target under debug, since the row asks
+        // every think
+        const auto on      = bank::onAlready(PSpell, PTarget);
+        const bool blocked = !on.has_value() && bank::blockedOn(PSpell, PTarget);
+        if (on.has_value() || blocked)
+        {
+            if (debug())
+            {
+                static std::unordered_set<std::string> said;
+                if (said.size() > 4096)
+                {
+                    said.clear();
+                }
+                if (said.insert(fmt::format("{}:{}:{}", PPawn->id, rowId, PTarget->id)).second)
+                {
+                    ShowInfoFmt("tactics: {}'s row {}: {} is {} {}{}, not fed", PPawn->getName(), row, PSpell->getName(),
+                                blocked ? "blocked by what is on" : "on", PTarget->getName(),
+                                blocked ? std::string("") : (std::isinf(*on) ? std::string(" already, for good") : fmt::format(" already, {:.0f} s to go", *on)));
+                }
+            }
             return std::nullopt;
         }
         const auto& n = PTactician->conveyor().feed(Conveyor::keyFor(PSpell, PTarget->id, PPawn->id),

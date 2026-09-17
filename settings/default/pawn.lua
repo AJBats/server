@@ -308,6 +308,11 @@ xi.settings.pawn =
     -- playtest variable (RESEARCH §12.12 item 2).
     TACTICS_REQUEST_LIFE = 4,
 
+    -- The perimeter (RESEARCH §12.15): a support mage attends the party's
+    -- fight from outside the mob's TP reach, read off its own skill list,
+    -- plus this many yalms.
+    PERIMETER_MARGIN = 2,
+
     -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
     -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade),
     -- farming if WORLD_DEBUG_FARM. The measurements run with no client

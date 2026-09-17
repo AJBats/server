@@ -59,4 +59,7 @@ namespace pawn::tactics::role
     void cycleOpened(CCharEntity* PHolder, Pace& pace);
     void cycleClosed(CCharEntity* PHolder, int32 spent, Pace& pace);
     void speakPace(CCharEntity* PHolder, Pace& pace);
+
+    // A line in her party's chat, as the game sends one
+    void sayParty(CCharEntity* PChar, const std::string& text);
 } // namespace pawn::tactics::role

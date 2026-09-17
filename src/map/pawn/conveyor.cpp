@@ -314,8 +314,12 @@ namespace pawn::tactics
             }
             cardian::tactics::Candidate c{ .id = PChar->id };
             c.spell = static_cast<uint16>(spellFor(n, PChar, PTarget));
-            c.open  = c.spell != 0 && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone &&
-                     distance(PChar->loc.p, PTarget->loc.p) <= CPawnController::CastingDistance &&
+            // In range as the magic state will judge the cast: the spell's
+            // own range plus both hitboxes
+            const auto* PSpell = c.spell != 0 ? spell::GetSpell(static_cast<SpellID>(c.spell)) : nullptr;
+            const float reach  = PSpell != nullptr ? PSpell->getRange() + PChar->modelHitboxSize + PTarget->modelHitboxSize : 0.0f;
+            c.open             = PSpell != nullptr && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone &&
+                     distance(PChar->loc.p, PTarget->loc.p) <= reach &&
                      !PController->Acting() && !PController->HasQueuedOrder() && PController->canAct();
             c.kneeling = PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
             for (const auto& r : n.requests)

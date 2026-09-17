@@ -73,8 +73,9 @@ namespace pawn
         BoostBeforeWs       = 9, // switch: a Monk's Boost goes out right before her weapon skill, nothing between (D5)
         RestInBattle        = 10, // switch: she sits out to rest even mid-fight, as long as the mob is not on her (a mage's MP; D5)
         Role                = 11, // a parameter: the role she plays (pawn::Role); the tactician's conveyor assigns her casts (RESEARCH §12.12 item 2)
+        MeleeMage           = 12, // switch: a support mage draws and takes the fight ring as any cardian does, instead of attending from the perimeter (RESEARCH §12.15)
     };
-    constexpr uint16 BehaviorCount = 12; // one past the last value
+    constexpr uint16 BehaviorCount = 13; // one past the last value
 
     // A switch row carries the value 1 and its checkbox is the switch; a
     // parameter row (the formation slot, the role) carries its value
@@ -181,6 +182,8 @@ namespace pawn
         // A row's need was met, by her or by another (the conveyor's word):
         // its retry clock starts now
         void StampRetry(const std::string& id, timer::time_point at);
+        // Her next think is the next tick: a new fight is a new think
+        void Prompt();
 
         // The behaviour pass alone, every tick, pathing or not: switches are
         // asserted only while their rows' conditions hold
@@ -221,6 +224,9 @@ namespace pawn
     private:
         auto Candidates(gambits::G_TARGET selector) -> std::vector<CBattleEntity*>;
         auto SelectTarget(const gambits::Gambit_t& gambit) -> CBattleEntity*;
+        // What her rows call "the mob": her battle target, else the party's
+        // fight she attends or walks in on (RESEARCH §12.15)
+        auto FightTarget() -> CBattleEntity*;
         auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex) -> bool;
         auto ResolveSpell(const gambits::Action_t& action, CBattleEntity* PTarget) -> Maybe<SpellID>;
         // Behaviour rows (G_REACTION_BEHAVIOR only) flip controller switches

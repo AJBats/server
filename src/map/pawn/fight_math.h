@@ -528,6 +528,18 @@ namespace cardian::tactics
         {
             line += "; paralysed: " + paralysed;
         }
+        std::string interrupted;
+        for (const auto& m : r.members)
+        {
+            if (m.interrupted > 0)
+            {
+                interrupted += fmt::format("{}{} {}", interrupted.empty() ? "" : ", ", m.name, m.interrupted);
+            }
+        }
+        if (!interrupted.empty())
+        {
+            line += "; interrupted: " + interrupted;
+        }
         return line;
     }
 

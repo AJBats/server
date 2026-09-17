@@ -24,6 +24,7 @@
 #include "pawn_danger.h"
 #include "pawn_gambits.h"
 #include "pawn_rules.h"
+#include "perimeter_math.h"
 
 #include "ai/controllers/player_controller.h"
 
@@ -69,7 +70,9 @@ public:
     // writer (Transition) and every change said with its reason. Follow is
     // the rest state; Wait, Travel and Retreat are the player's; Approach
     // is a walk in with her weapon away; Hold is drawn on the player's
-    // word, waiting for their strike; Fight is a fight; Down is KO'd. The
+    // word, waiting for their strike; Fight is a fight; Attend is a support
+    // mage at the party's fight from the perimeter, weapon away (RESEARCH
+    // §12.15); Down is KO'd. The
     // server's attack state is an input, not the mode: every tick the two
     // are reconciled, and a fight the server ended is a transition out of
     // Fight with the server's reason -- never a silent one.
@@ -82,6 +85,7 @@ public:
         Approach,
         Hold,
         Fight,
+        Attend,
         Retreat,
         Down
     };
@@ -96,6 +100,23 @@ public:
     // camp's leader when she is not it; nobody for a solo body or the leader
     auto GetAnchor() const -> CCharEntity*;
 
+    // The perimeter (RESEARCH §12.15). A perimeter mage holds the Support
+    // Mage role and no Melee mage row: she attends the party's fight instead
+    // of drawing, from the nearest safe spot outside the mob's TP reach and
+    // inside cure range of the tank (AttendIntent). She may act offensively
+    // once the mob is engaged
+    auto IsPerimeterMage() const -> bool;
+    // The beat before she takes the party's fight: the reaction beat for a
+    // draw or a walk in, none for a perimeter mage, who is not walking in
+    auto JoinBeat() const -> timer::duration;
+    auto AttendedTarget() const -> CBattleEntity*;
+    auto Attending(const CBattleEntity* PTarget) const -> bool;
+    auto AttendedEngaged() const -> bool;
+    // What her rows call "the mob" while she has no battle target: the mob
+    // she attends, or the one she walks in on for the party (a hunt's walk
+    // in is her own pull, not the party's fight yet)
+    auto PartyFightTarget() const -> CBattleEntity*;
+
     // Action surface used by the gambit interpreter. Each faces the target
     // first (the player weapon-skill path refuses a target the character is
     // not facing), then runs the stock player validation: known spell or
@@ -106,6 +127,8 @@ public:
     // 2): the conveyor's lock stands in for the party-already-casting rule,
     // so this goes straight to the player controller's cast
     auto CastAssigned(EntityId target, SpellID spellid) -> bool;
+    // The cast itself, for both: a cast that begins drops the walk she was on
+    auto CastAndStop(EntityId target, SpellID spellid) -> bool;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -216,7 +239,6 @@ public:
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float LockOnSlack      = 2.0f; // lock-on holds this far beyond melee reach, so a step out of reach does not drop it
-    static constexpr float CastingDistance  = 15.0f;
     static constexpr float WarpDistance     = 30.0f;
     static constexpr float TransferDistance = 3.0f;
     static constexpr float CrossingSlack    = 40.0f;
@@ -358,6 +380,21 @@ private:
     void RefreshDangers(const CBattleEntity* PIgnore);
     auto IsClear(float x, float z) const -> bool; // the walk to the spot ends outside every padded circle that matters to it
     auto InsideDanger() const -> bool;      // she stands inside a true circle whose mob sees her (or an ambusher's)
+
+    // The perimeter's movers (RESEARCH §12.15): a mob's TP reach off its
+    // live skill list, every hostile move, read once per list per mob
+    // (ReachOf); her mover while she attends -- the crescent outside the
+    // ring the reach makes and inside cure range of the tank: out of it she
+    // walks to its nearest point, in it she holds where she stands, and
+    // when it is empty she stays in at cure range and says so once per
+    // fight (AttendIntent); the cure's range from the spell table
+    // (CastRange). Attend is the door's exit for her (Attend), left with
+    // what became of the mob (AttendExitReason).
+    auto ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach;
+    auto AttendIntent(CMobEntity* PMob) -> Intent;
+    auto CastRange() const -> float;
+    void Attend(CBattleEntity* PTarget, std::string_view how);
+    auto AttendExitReason() -> std::string;
 
     // The walker. Returns the vet's action, or nothing when the tick was
     // spent on a warp.
@@ -639,6 +676,20 @@ private:
     timer::time_point       m_LeftFightAt{ timer::time_point::min() };
     uint32                  m_LastFoughtId = 0;
     std::optional<EntityId> m_LastFought;
+
+    // The perimeter: the mob she attends, and the fight she has said "no
+    // safe spot" for
+    std::optional<EntityId> m_Attended;
+    uint32                  m_SaidNoSpotFor   = 0;
+    bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
+    // The attended mob's reach, read once per mob and skill list
+    struct ReachMemo
+    {
+        uint32                    mob  = 0;
+        uint16                    list = 0;
+        cardian::perimeter::Reach reach;
+    };
+    ReachMemo m_Reach;
 
     // The step back's rest clock: the target's id and spot as of the tick
     // it was last seen moving, and when she last stepped

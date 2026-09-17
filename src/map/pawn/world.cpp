@@ -420,7 +420,7 @@ namespace
     //   who        self | party | mob
     //   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n |
     //              has <status> | lacks <status> | top enmity | not top enmity
-    //   action     avoid aggro | rest with leader | rest | rest in battle | home point
+    //   action     avoid aggro | rest with leader | rest | rest in battle | melee mage | home point
     //              with leader | boost before weapon skills | formation <lead|flank left|flank right|
     //              rear left|rear right|behind> | role <support mage> | cast best <spell>
     //              (the best of its family) | cast <spell> | cast random damage |
@@ -569,7 +569,8 @@ namespace
         std::string actSpec;
         static const std::unordered_map<std::string, std::string> switches{
             { "avoid aggro", "100:1:1" }, { "rest with leader", "100:6:1" }, { "home point with leader", "100:7:1" },
-            { "rest", "100:8:1" }, { "boost before weapon skills", "100:9:1" }, { "rest in battle", "100:10:1" }
+            { "rest", "100:8:1" }, { "boost before weapon skills", "100:9:1" }, { "rest in battle", "100:10:1" },
+            { "melee mage", "100:12:1" }
         };
         static const std::unordered_map<std::string, int> seats{
             { "lead", 1 }, { "flank left", 2 }, { "flank right", 3 }, { "rear left", 4 }, { "rear right", 5 }, { "behind", 6 }

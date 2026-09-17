@@ -28,6 +28,8 @@
 #include "world.h"
 #include "pawn_danger.h"
 #include "pawn_doors.h"
+#include "role_support.h"
+#include "spell_bank.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 #include "pawn_rules.h"
@@ -41,11 +43,13 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <limits>
 #include <numbers>
+#include <string>
 #include <tuple>
 #include <vector>
 
@@ -66,6 +70,7 @@
 #include "recast_container.h"
 #include "packets/s2c/0x05a_motionmes.h"
 #include "ability.h"
+#include "mobskill.h"
 #include "spell.h"
 #include "utils/battleutils.h"
 #include "weapon_skill.h"
@@ -136,7 +141,7 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
         }
         // A wait never ends a fight: told to wait mid-fight, she finishes
         // it and waits after (IdleMode at the fight's exit)
-        const bool fighting = m_Mode == Mode::Fight || m_Mode == Mode::Hold;
+        const bool fighting = m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Attend;
         if ((!was || m_Mode != Mode::Wait) && !fighting)
         {
             Transition(Mode::Wait, why.empty() ? (ordered ? "told to wait here" : "waits where she stands") : why);
@@ -166,6 +171,8 @@ auto CPawnController::modeName(const Mode mode) -> const char*
             return "Hold";
         case Mode::Fight:
             return "Fight";
+        case Mode::Attend:
+            return "Attend";
         case Mode::Retreat:
             return "Retreat";
         case Mode::Down:
@@ -196,6 +203,72 @@ auto CPawnController::GetAnchor() const -> CCharEntity*
     }
     auto* PLeader = pawn::findPawn(leader);
     return PLeader != nullptr && PLeader->loc.zone == POwner->loc.zone && !PLeader->isDead() ? PLeader : nullptr;
+}
+
+auto CPawnController::IsPerimeterMage() const -> bool
+{
+    return pawn::tactics::supportMage(POwner) && Behavior(pawn::Behavior::MeleeMage).value_or(0) == 0;
+}
+
+auto CPawnController::JoinBeat() const -> timer::duration
+{
+    return IsPerimeterMage() ? timer::duration::zero() : ReactionBeat();
+}
+
+auto CPawnController::AttendedTarget() const -> CBattleEntity*
+{
+    return m_Mode == Mode::Attend && m_Attended.has_value() ? m_Attended->resolve<CBattleEntity>() : nullptr;
+}
+
+auto CPawnController::Attending(const CBattleEntity* PTarget) const -> bool
+{
+    return PTarget != nullptr && AttendedTarget() == PTarget;
+}
+
+auto CPawnController::AttendedEngaged() const -> bool
+{
+    auto* PTarget = AttendedTarget();
+    return PTarget != nullptr && PTarget->PAI->IsEngaged();
+}
+
+auto CPawnController::PartyFightTarget() const -> CBattleEntity*
+{
+    if (auto* PAttended = AttendedTarget(); PAttended != nullptr)
+    {
+        return PAttended;
+    }
+    if (m_Approach.has_value() && m_Approach->kind != ApproachKind::Hunt)
+    {
+        return m_Approach->target.resolve<CBattleEntity>();
+    }
+    return nullptr;
+}
+
+void CPawnController::Attend(CBattleEntity* PTarget, const std::string_view how)
+{
+    if (Attending(PTarget))
+    {
+        return;
+    }
+    m_Attended        = EntityId(PTarget);
+    m_AttendedEngaged = false;
+    POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+    m_Gambits->Prompt();
+    Transition(Mode::Attend, fmt::format("attends the fight on {} from the perimeter ({})", PTarget->getName(), how));
+}
+
+auto CPawnController::AttendExitReason() -> std::string
+{
+    auto* PTarget = m_Attended.has_value() ? m_Attended->resolve<CBattleEntity>() : nullptr;
+    if (PTarget == nullptr)
+    {
+        return "the fight is over (the mob is gone)";
+    }
+    if (PTarget->isDead())
+    {
+        return fmt::format("{} is dead", PTarget->getName());
+    }
+    return fmt::format("the fight is over (nobody of ours is on {})", PTarget->getName());
 }
 
 auto CPawnController::IdleMode() const -> Mode
@@ -238,6 +311,11 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     if (from == Mode::Approach && to != Mode::Approach)
     {
         m_Approach.reset();
+    }
+    if (from == Mode::Attend && to != Mode::Attend)
+    {
+        m_Attended.reset();
+        m_SaidNoSpotFor = 0;
     }
     // A pending act belongs to the mode it was scheduled in; only the
     // player's order outlives a change
@@ -870,7 +948,7 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
     // The beat: the order is taken now, her draw comes a beat later -- the
     // front row first, so the party never draws on one tick
-    Schedule(Pending::Act::Order, PMob, ReactionBeat());
+    Schedule(Pending::Act::Order, PMob, JoinBeat());
 }
 
 void CPawnController::Schedule(const Pending::Act act, const CBattleEntity* PTarget, const timer::duration beat)
@@ -1258,6 +1336,24 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         SayRefusal(PTarget, why);
         return false;
     }
+    // A perimeter mage takes the party's fight the way her role says,
+    // attending, whatever brought her to the door: distance and the draw
+    // cooldown are the fight ring's business, not hers. Attending needs an
+    // anchor to keep cure range to; alone, or leading a camp, she draws like
+    // anyone. Already drawn, she sheathes first
+    if (IsPerimeterMage() && GetAnchor() != nullptr)
+    {
+        m_RefusedTarget = 0;
+        m_Approach.reset();
+        m_HoldForPlayer = false;
+        if (POwner->PAI->IsEngaged())
+        {
+            POwner->PAI->Internal_Disengage();
+        }
+        Attend(PTarget, how);
+        return true;
+    }
+
     const auto verdict = cardian::rules::mayFight(facts);
     if (verdict)
     {
@@ -1330,6 +1426,131 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     m_Dangers         = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
 }
 
+auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
+{
+    // The live skill list -- a family script swaps it mid-fight -- read
+    // once per list per mob
+    const auto listId = static_cast<uint16>(PMob->getMobMod(xi::MobMod::SkillList));
+    if (m_Reach.mob == PMob->id && m_Reach.list == listId)
+    {
+        return m_Reach.reach;
+    }
+    const auto&                           ids = battleutils::GetMobSkillList(listId);
+    std::vector<cardian::perimeter::Move> moves;
+    moves.reserve(ids.size());
+    for (const auto id : ids)
+    {
+        if (auto* PSkill = battleutils::GetMobSkill(id); PSkill != nullptr)
+        {
+            moves.push_back({ .aoe      = PSkill->getAoe(),
+                              .distance = PSkill->getDistance(),
+                              .radius   = PSkill->getRadius(),
+                              .hostile  = (PSkill->getValidTargets() & TARGET_ENEMY) != 0,
+                              .name     = PSkill->getName() });
+        }
+    }
+    m_Reach = { PMob->id, listId, cardian::perimeter::reachOf(moves, PMob->GetMeleeRange(POwner), settings::get<float>("pawn.PERIMETER_MARGIN")) };
+    return m_Reach.reach;
+}
+
+auto CPawnController::CastRange() const -> float
+{
+    // The cure's range from the spell table, which every tier shares; read
+    // once
+    static const float range = []
+    {
+        const auto* PSpell = spell::GetSpell(SpellID::Cure);
+        return PSpell != nullptr ? PSpell->getRange() : 20.0f;
+    }();
+    return range;
+}
+
+auto CPawnController::AttendIntent(CMobEntity* PMob) -> Intent
+{
+    // Out of the mob's reach, in cure range of the tank: a crescent of safe
+    // spots. Out of it she walks to its nearest point; in it she holds
+    // where she stands, so the tank's small moves never drag her round the
+    // fight (the user, 2026-09-17). The mob on her lifts the ring: running
+    // with a mob on her is kiting, and the reflex covers her HP
+    RestoreNormalSpeed();
+    m_HasSlot = false; // a crescent point is no formation slot for the vet to re-seat
+    Intent intent;
+    intent.kind = Intent::Kind::Stand;
+
+    const CBattleEntity* PTank = PMob->GetBattleTarget();
+    if (PTank == POwner)
+    {
+        return intent;
+    }
+    // Whoever the mob is on, else the player: her cure target and the side
+    // she keeps to
+    if (PTank == nullptr)
+    {
+        PTank = GetLivePlayer();
+    }
+    if (PTank == nullptr || PTank == POwner)
+    {
+        return intent;
+    }
+
+    // The spell's own range to the tank, stretched: the hitboxes are the
+    // slack, and a landing check that fails is on the log's record (the
+    // user, 2026-09-17). Distances planar, as the spot finder's are
+    const position_t& me        = POwner->loc.p;
+    const position_t& mob       = PMob->loc.p;
+    const position_t& tank      = PTank->loc.p;
+    const float       range     = CastRange();
+    const auto        reach     = ReachOf(PMob);
+    const float       mobToTank = distance(mob, tank, true);
+    const float       ring      = cardian::perimeter::ringOf(reach, mobToTank);
+    const float       toMob     = distance(me, mob, true);
+    const float       toTank    = distance(me, tank, true);
+    // The aim sits this far inside the crescent's edge, past the walker's
+    // stop distance, so arriving short never asks again
+    constexpr float kInset = 2.5f;
+
+    if (toMob >= ring && toTank <= range)
+    {
+        return intent;
+    }
+    if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + kInset, range - kInset, me.x, me.z); spot.has_value())
+    {
+        intent.kind  = Intent::Kind::Path;
+        intent.point = position_t(spot->first, me.y, spot->second, 0, me.rotation);
+        return intent;
+    }
+
+    // The crescent is empty: no spot clears the reach and keeps cure range.
+    // She stays in, as close to the tank as the range asks and no closer,
+    // said once per fight naming the move that binds; only cure range moves
+    // her from here, so the tank's shuffle never does
+    if (m_SaidNoSpotFor != PMob->id)
+    {
+        m_SaidNoSpotFor      = PMob->id;
+        const bool  byTank   = reach.target > 0.0f && mobToTank + reach.target > reach.mob;
+        const auto  named    = byTank ? reach.targetBy : reach.mobBy;
+        std::string move     = named.empty() ? std::string("its melee") : std::string(named);
+        std::replace(move.begin(), move.end(), '_', ' ');
+        if (!named.empty())
+        {
+            move[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(move[0])));
+        }
+        const float moveRange = (byTank ? reach.target : reach.mob) - settings::get<float>("pawn.PERIMETER_MARGIN");
+        ShowInfoFmt("pawn: {}: {} reaches {:.0f} y round {}; no spot clears it within her cure range ({:.0f} y): she stays in", POwner->getName(), move, moveRange,
+                    byTank ? PTank->getName() : PMob->getName(), range);
+        pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), fmt::format("{} reaches {:.0f} yalms; no spot clears it that I can still cure from, so I'm staying in.", move, moveRange));
+    }
+    if (toTank > range)
+    {
+        // Straight back the way she faces the mob when the tank stands on it
+        const float fallback = 2.0f * std::numbers::pi_v<float> - rotationToRadian(me.rotation) + std::numbers::pi_v<float>;
+        const auto [x, z]    = cardian::perimeter::atRange(mob.x, mob.z, tank.x, tank.z, mobToTank + range - kInset, fallback);
+        intent.kind          = Intent::Kind::Path;
+        intent.point         = position_t(x, me.y, z, 0, me.rotation);
+    }
+    return intent;
+}
+
 auto CPawnController::Sees(const pawn::danger::Danger& danger, const position_t& point) const -> bool
 {
     // Memoised per tick, to the yalm: the mob's own line-of-sight cache is
@@ -1388,6 +1609,14 @@ auto CPawnController::ApproachIntent(const CBattleEntity* PTarget) const -> Inte
 
 auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
 {
+    // A cast or a shot in flight is never walked: the server interrupts
+    // either once she moves a third of a yalm, so whatever the movers want
+    // waits
+    if (POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CRangeState>())
+    {
+        return AvoidAction::None;
+    }
+
     auto*      PPathFind    = POwner->PAI->PathFind.get();
     position_t point        = intent.point;
     float      followMax    = intent.tolerance;
@@ -1795,6 +2024,27 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // Holding for the player's strike, she drew on their word alone: their
+    // target switched, the hold follows it when the rules let her draw on
+    // it outright, and holds on the new one until they strike or it comes.
+    // A fight that has begun is not called off by a switch -- it runs until
+    // the mob dies or drifts past the leash, and only the chord's engage
+    // moves the party (M3.9; the user, 2026-09-17)
+    if (m_HoldForPlayer && PPlayer != nullptr && PPlayer->PAI->IsEngaged())
+    {
+        if (auto* PSwitched = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget());
+            PSwitched != nullptr && PSwitched != PTarget && !PSwitched->isDead() && !pawn::isUnderground(PSwitched))
+        {
+            const auto facts = EngageFactsFor(PSwitched);
+            const bool hold  = !playerHasEnmity(PPlayer, PSwitched) && !PSwitched->PAI->IsEngaged();
+            if (cardian::rules::mayFight(facts) && Refusal(PSwitched, facts).empty() &&
+                Draw(PSwitched, ApproachKind::Join, fmt::format("{} switched to it", PPlayer->getName()), hold))
+            {
+                co_return;
+            }
+        }
+    }
+
     // Rest in battle (D5, the user's resting pipeline): a mage whose MP row
     // holds sits out of a fight that is not on her -- she neither closes nor
     // casts, and the idle path kneels her next tick, down until whole. The
@@ -1982,11 +2232,11 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         moved = Move(*intent);
     }
 
-    // Never a cast in a tick spent stepping to safety: it would root her
-    // inside the circle. Holding, only what she would do between fights
-    // -- cures and buffs -- since a nuke is a first hit too
-    const auto avoidAction = moved.value_or(AvoidAction::None);
-    if (avoidAction != AvoidAction::Escape && avoidAction != AvoidAction::Detour)
+    // Her think runs whether she stands or walks: a cast she wants stops
+    // the walk (CastAndStop) -- except the step out of an aggro circle,
+    // which a cast would undo. Holding, only what she would do between
+    // fights -- cures and buffs -- since a nuke is a first hit too
+    if (moved.value_or(AvoidAction::None) != AvoidAction::Escape)
     {
         m_Gambits->Tick(tick, !m_HoldForPlayer);
     }
@@ -2220,9 +2470,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // Somewhere to go: her place in formation round the player, and the
     // hunt round them. Waiting, she has neither, whatever the party's
-    // strategy
+    // strategy. A perimeter mage never pulls (RESEARCH §12.15)
     const bool somewhereToGo = PPlayer != nullptr && !m_Waiting;
-    const bool hunting       = somewhereToGo && IsHunting();
+    const bool hunting       = somewhereToGo && IsHunting() && !IsPerimeterMage();
 
     TidyBag();
     m_Gambits->TickBehaviors();
@@ -2291,7 +2541,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const auto     party        = PartyEngageTarget(PPlayer);
     CBattleEntity* PPartyTarget = party.target;
     const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
-    if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget))
+    if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget) && !(Attending(PPartyTarget) && IsPerimeterMage()))
     {
         const auto facts = EngageFactsFor(PPartyTarget);
         if (const auto why = Refusal(PPartyTarget, facts); !why.empty())
@@ -2310,7 +2560,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             // holds the target off
             if (!PendingIs(Pending::Act::Join, PPartyTarget))
             {
-                Schedule(Pending::Act::Join, PPartyTarget, ReactionBeat());
+                Schedule(Pending::Act::Join, PPartyTarget, JoinBeat());
             }
             if (!Due(Pending::Act::Join, PPartyTarget))
             {
@@ -2333,6 +2583,17 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
+    // Attending, her exit is her mob's end -- dead or gone -- or the party
+    // having no fight at all, said with what became of the mob
+    if (m_Mode == Mode::Attend)
+    {
+        auto* PAttended = m_Attended.has_value() ? m_Attended->resolve<CBattleEntity>() : nullptr;
+        if (PPartyTarget == nullptr || PAttended == nullptr || PAttended->isDead())
+        {
+            Transition(IdleMode(), AttendExitReason());
+        }
+    }
+
     // The player has drawn on a burrowed mob: the party waits for it to
     // surface, and says so now and then
     if (PPlayer != nullptr && PPlayer->PAI->IsEngaged())
@@ -2352,6 +2613,16 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         CBattleEntity* PAnchor = PPlayer != nullptr ? PPlayer : POwner;
         if (ApproachTick(PAnchor->loc.p, PAnchor->GetMLevel(), PPlayer != nullptr ? PacingBlocker(PPlayer) : std::string(), hunting, PPartyTarget))
         {
+            // Walking in on the party's fight, she thinks on the way: a
+            // Provoke or a spell goes out as she comes, once the mob is on
+            // us. A hunt's walk in is the pull itself, and thinks nothing
+            if (m_Approach.has_value() && m_Approach->kind != ApproachKind::Hunt && !Acting())
+            {
+                if (auto* PMob = m_Approach->target.resolve<CBattleEntity>(); PMob != nullptr && PMob->PAI->IsEngaged())
+                {
+                    m_Gambits->Tick(tick, true);
+                }
+            }
             co_return;
         }
     }
@@ -2402,9 +2673,22 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // go, where she stands at her normal speed -- vetted like any other, so
     // a circle nudges her clear and she stays where it leaves her. Nothing
     // when the tick went on a warp
-    RefreshDangers(nullptr);
+    // The fight turning on -- the first strike -- is a new think: her rows
+    // are read that tick, not on the cadence
+    const bool attendedEngaged = AttendedEngaged();
+    if (attendedEngaged && !m_AttendedEngaged)
+    {
+        m_Gambits->Prompt();
+    }
+    m_AttendedEngaged = attendedEngaged;
+
+    RefreshDangers(AttendedTarget());
     Intent proposal;
-    if (somewhereToGo)
+    if (auto* PAttended = dynamic_cast<CMobEntity*>(AttendedTarget()); PAttended != nullptr)
+    {
+        proposal = AttendIntent(PAttended);
+    }
+    else if (somewhereToGo)
     {
         proposal = FormationIntent(PPlayer, nullptr);
     }
@@ -2419,13 +2703,18 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    if (!POwner->PAI->PathFind->IsFollowingPath() && !POwner->PAI->IsCurrentState<CMagicState>() && *avoidAction != AvoidAction::Escape && *avoidAction != AvoidAction::Detour)
+    // Her think runs whether she stands or walks: a cast she wants stops
+    // the walk (CastAndStop), never the other way round (the user,
+    // 2026-09-17) -- except the step out of an aggro circle, the one walk
+    // a cast would undo by rooting her inside it. Attending an engaged mob,
+    // the fight's spells too. The emote, standing still only
+    if (!POwner->PAI->IsCurrentState<CMagicState>() && *avoidAction != AvoidAction::Escape)
     {
-        // Between fights, standing still: cures, raises, buffs -- but never
-        // in a tick spent stepping to safety, since a cast would root the
-        // pawn inside the circle
-        m_Gambits->Tick(tick, false);
-        IdleEmote(PPlayer);
+        m_Gambits->Tick(tick, attendedEngaged);
+        if (!POwner->PAI->PathFind->IsFollowingPath() && *avoidAction != AvoidAction::Detour)
+        {
+            IdleEmote(PPlayer);
+        }
     }
 
     co_return;
@@ -2753,7 +3042,19 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
 
     FaceTarget(castTarget);
     HeadLook(castTarget.resolve<CBattleEntity>());
-    return CPlayerController::Cast(castTarget, spellid);
+    return CastAndStop(castTarget, spellid);
+}
+
+auto CPawnController::CastAndStop(const EntityId target, const SpellID spellid) -> bool
+{
+    // A cast she wants stops whatever walk she is on: the path is dropped
+    // as the cast begins, or the pathfinder's next step would interrupt it
+    const bool cast = CPlayerController::Cast(target, spellid);
+    if (cast && POwner->PAI->PathFind != nullptr)
+    {
+        POwner->PAI->PathFind->Clear();
+    }
+    return cast;
 }
 
 auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid) -> bool
@@ -2766,7 +3067,7 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
     const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
     FaceTarget(castTarget);
     HeadLook(castTarget.resolve<CBattleEntity>());
-    return CPlayerController::Cast(castTarget, spellid);
+    return CastAndStop(castTarget, spellid);
 }
 
 namespace
@@ -2833,6 +3134,11 @@ auto CPawnController::RangedAttack(const EntityId target) -> bool
         return false;
     }
 
+    // A shot that begins drops the walk she was on, as a cast does
+    if (POwner->PAI->PathFind != nullptr)
+    {
+        POwner->PAI->PathFind->Clear();
+    }
     m_LastRangedAttackTime = m_Tick;
     return true;
 }
@@ -2966,6 +3272,17 @@ auto CPawnController::HuntBlocker(const CCharEntity* PPlayer) const -> std::stri
     return PacingBlocker(PPlayer);
 }
 
+namespace
+{
+    // A member attending the fight from the perimeter is in it, weapon or
+    // no weapon: the blockers that wait for a fight to end wait for her too
+    auto isAttending(const CBattleEntity* PMember) -> bool
+    {
+        const auto* PController = PMember != nullptr && PMember->PAI != nullptr ? dynamic_cast<const CPawnController*>(PMember->PAI->GetController()) : nullptr;
+        return PController != nullptr && PController->CurrentMode() == CPawnController::Mode::Attend;
+    }
+} // namespace
+
 auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::string
 {
     if (PPlayer->animation == xi::Animation::Healing)
@@ -2990,7 +3307,7 @@ auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::st
         {
             return fmt::format("{} down", PMember->getName());
         }
-        if (PMember->PAI->IsEngaged())
+        if (PMember->PAI->IsEngaged() || isAttending(PMember))
         {
             return fmt::format("{} engaged", PMember->getName());
         }
@@ -3071,7 +3388,7 @@ auto CPawnController::CampBlocker() const -> std::string
         {
             return fmt::format("{} resting", PMember->getName());
         }
-        if (PMember->PAI->IsEngaged())
+        if (PMember->PAI->IsEngaged() || isAttending(PMember))
         {
             return fmt::format("{} engaged", PMember->getName());
         }

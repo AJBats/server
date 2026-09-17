@@ -80,8 +80,10 @@ namespace pawn::tactics
     auto has(const CCharEntity* PPawn) -> bool;
 
     // A spell row whose condition holds, fed to her scope's conveyor: a
-    // null spell is "best cure", the tier the bank's. Whether the cast came
-    // straight back as hers, and what to cast
+    // null spell is "best cure", the tier the bank's. A debuff the bank
+    // prices whose effect is on the target already, or nullified by what is
+    // on it, is not fed -- the bank's own verdicts, so no row recasts what
+    // is on. Whether the cast came straight back as hers, and what to cast
     struct Fed
     {
         bool        mine = false;
@@ -92,7 +94,8 @@ namespace pawn::tactics
     auto feed(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget, uint32 row, const std::string& rowId) -> std::optional<Fed>;
 
     // Her standing assignment: the first need in her slot's order that is
-    // hers; nothing offensive while she is not engaged
+    // hers; nothing offensive while she is not in the fight -- drawn, or
+    // attending a mob that is engaged (RESEARCH §12.15)
     struct Assignment
     {
         SpellID     spell{};
