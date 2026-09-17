@@ -203,6 +203,24 @@ namespace pawn
     void setStrategy(CCharEntity* POwner, uint16 strategy);
     void setRetreat(CCharEntity* POwner, bool on);
 
+    // The stake (RESEARCH §12.16): a place with a heading, one per player,
+    // set where he stands and facing his way, held until dissolved. With
+    // the plan on (strategy 1) the party keeps to it instead of to him,
+    // and the hunters do not pull; with the plan off they follow him as if
+    // there were none. Dissolving it turns the plan off, so a Roam left on
+    // never sends the hunters off by surprise. It dissolves by command,
+    // when the whole party has left its zone (stakeSweep, from the zone
+    // tick) and at his sign-out. In memory, like the strategy.
+    struct Stake
+    {
+        xi::ZoneId zone{};
+        position_t at{}; // where, and facing: rotation is the heading
+    };
+    auto stakeOf(uint32 ownerCharID) -> std::optional<Stake>;
+    auto setStake(CCharEntity* POwner) -> std::string; // "" when set or moved; otherwise why not
+    auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
+    void stakeSweep();
+
     // Every cardian of the owner's in the zone fights the entity with this
     // targid. "" when they go; otherwise why not, as the player reads it.
     auto partyEngage(CCharEntity* POwner, uint16 targid) -> std::string;

@@ -48,6 +48,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/spell_bank.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/conveyor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/role_support.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/stake_flag.cpp
 )
 
 set(MAP_CORE_SOURCES

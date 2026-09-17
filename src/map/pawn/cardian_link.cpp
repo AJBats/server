@@ -47,7 +47,7 @@ extern sol::state lua;
 // kProtocol) unloads itself when its own differs: both are bumped together
 // whenever a line either side sends changes shape, and no line is kept
 // compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 1;
+constexpr uint32 kLinkProtocol = 2; // 2: the orders line carries the stake (RESEARCH §12.16)
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>

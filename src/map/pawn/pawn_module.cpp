@@ -922,6 +922,12 @@ class PawnModule : public CPPModule
             result["pull_first"] = rules.pullFirst;
             result["aggressive"] = rules.aggressive;
             result["links"]      = rules.links;
+            // The stake (RESEARCH §12.16): set or not, and where
+            const auto stake     = pawn::stakeOf(PChar->id);
+            result["staked"]     = stake.has_value();
+            result["stake_zone"] = stake.has_value() ? static_cast<uint16>(stake->zone) : 0;
+            result["stake_x"]    = stake.has_value() ? stake->at.x : 0.0f;
+            result["stake_z"]    = stake.has_value() ? stake->at.z : 0.0f;
             auto names           = ::lua.create_table();
             for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
             {
@@ -1001,6 +1007,26 @@ class PawnModule : public CPPModule
             }
             pawn::setRetreat(PChar, on);
             return "";
+        };
+        // The stake (RESEARCH §12.16): set or move it here, facing his way;
+        // clear it. The chord's left arm and !cardian stake are this path
+        lua["CBaseEntity"]["cardianStake"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            return pawn::setStake(PChar);
+        };
+        lua["CBaseEntity"]["cardianStakeClear"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            return pawn::clearStake(PChar->id, "cleared") ? "" : "no stake";
         };
         lua["CBaseEntity"]["cardianEngage"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 targid) -> std::string
         {

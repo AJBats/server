@@ -1652,7 +1652,10 @@ namespace pawn
     {
         if (settings::get<bool>("pawn.GAMBIT_DEBUG"))
         {
-            ShowInfoFmt("pawn: {} {} {} -> {}", POwner->getName(), what, id, PTarget != nullptr ? PTarget->getName() : "-");
+            // The distance too: the server refuses an ability past its range
+            // inside the state, after this line, and says nothing to us
+            ShowInfoFmt("pawn: {} {} {} -> {}{}", POwner->getName(), what, id, PTarget != nullptr ? PTarget->getName() : "-",
+                        PTarget != nullptr && PTarget != POwner ? fmt::format(" ({:.1f} y)", distance(POwner->loc.p, PTarget->loc.p)) : "");
         }
     }
     auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary
@@ -1703,7 +1706,10 @@ namespace pawn
         }
 
         // The role she plays: one row switches the whole role (RESEARCH §12.2 item 2)
-        v.actions.push_back({ fmt::format("100:{}:{}", static_cast<uint16>(pawn::Behavior::Role), static_cast<uint16>(pawn::Role::SupportMage)), fmt::format("Role: {}", pawn::roleName(pawn::Role::SupportMage)), "Behaviours" });
+        for (const auto role : pawn::kRoles)
+        {
+            v.actions.push_back({ fmt::format("100:{}:{}", static_cast<uint16>(pawn::Behavior::Role), static_cast<uint16>(role)), fmt::format("Role: {}", pawn::roleName(role)), "Behaviours" });
+        }
         // A support mage on the fight ring rather than the perimeter (RESEARCH §12.15)
         v.actions.push_back({ fmt::format("100:{}:1", static_cast<uint16>(pawn::Behavior::MeleeMage)), "Melee mage", "Behaviours" });
 

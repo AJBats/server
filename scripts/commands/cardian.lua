@@ -756,15 +756,17 @@ local function sendVocab(player, name)
     reply(player, '#cd gv.e ' .. name)
 end
 
--- The party's orders, one line: 'st <strategy> <retreat> <name;name...>'
+-- The party's orders, one line (Link protocol 2):
+-- 'st <strategy> <retreat> <min> <max> <pull> <aggressive> <links> <staked> <stake zone> <name;name...>'
 local function sendOrders(player)
     local o = player:cardianOrders()
     if o == nil then
         reply(player, '#cd err orders no character')
         return
     end
-    reply(player, string.format('#cd st %d %d %d %d %d %d %d %s', o.strategy, o.retreat and 1 or 0,
-                                o.hunt_min, o.hunt_max, o.pull_first, o.aggressive and 1 or 0, o.links and 1 or 0, table.concat(o.names, ';')))
+    reply(player, string.format('#cd st %d %d %d %d %d %d %d %d %d %s', o.strategy, o.retreat and 1 or 0,
+                                o.hunt_min, o.hunt_max, o.pull_first, o.aggressive and 1 or 0, o.links and 1 or 0,
+                                o.staked and 1 or 0, o.stake_zone, table.concat(o.names, ';')))
 end
 
 -- A gambit edit: the reply is ok or err, then the authoritative rows either way
@@ -854,6 +856,15 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok retreat')
         else
             reply(player, '#cd err retreat ' .. err)
+        end
+        sendOrders(player)
+    elseif verb == 'stake' then
+        -- 'stake' sets or moves it here, facing his way; 'stake clear' dissolves it
+        local err = args[2] == 'clear' and player:cardianStakeClear() or player:cardianStake()
+        if err == '' then
+            reply(player, '#cd ok stake')
+        else
+            reply(player, '#cd err stake ' .. err)
         end
         sendOrders(player)
     elseif verb == 'engage' and args[2] then

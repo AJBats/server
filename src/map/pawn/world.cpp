@@ -422,7 +422,7 @@ namespace
     //              has <status> | lacks <status> | top enmity | not top enmity
     //   action     avoid aggro | rest with leader | rest | rest in battle | melee mage | home point
     //              with leader | boost before weapon skills | formation <lead|flank left|flank right|
-    //              rear left|rear right|behind> | role <support mage> | cast best <spell>
+    //              rear left|rear right|behind> | role <support mage|tank|melee damage> | cast best <spell>
     //              (the best of its family) | cast <spell> | cast random damage |
     //              ability <name> | best weapon skill | random weapon skill
     // Names are the game's own (spell_list, abilities, the status enum), spaces
@@ -591,7 +591,7 @@ namespace
         }
         else if (act.starts_with("role "))
         {
-            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 } };
+            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 }, { "tank", 2 }, { "melee damage", 3 } };
             const auto                                        role = roles.find(trim(act.substr(5)));
             if (role == roles.end())
             {

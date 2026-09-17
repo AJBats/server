@@ -34,6 +34,7 @@
 
 #include <optional>
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -90,6 +91,8 @@ namespace pawn
     {
         None        = 0,
         SupportMage = 1,
+        Tank        = 2, // stands in (RESEARCH §12.16): at a stake she tows the mob to it and holds its 3 o'clock; the rest of the role comes later
+        MeleeDamage = 3, // stands in: a name and an editor entry; the rear seat, sneak attack and trick attack come later
     };
     constexpr auto roleName(const Role role) -> std::string_view
     {
@@ -97,10 +100,15 @@ namespace pawn
         {
             case Role::SupportMage:
                 return "Support Mage";
+            case Role::Tank:
+                return "Tank";
+            case Role::MeleeDamage:
+                return "Melee damage";
             default:
                 return "none";
         }
     }
+    constexpr std::array<Role, 3> kRoles{ Role::SupportMage, Role::Tank, Role::MeleeDamage };
 
     // Every cardian starts with these rows (the row grammar, gambit_text.h):
     // avoid aggro on, rest with the player on. Profiles, when they come, are

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "pawn.h"
 #include "pawn_danger.h"
 #include "pawn_gambits.h"
 #include "pawn_rules.h"
@@ -155,6 +156,15 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
+    // The stake (RESEARCH §12.16): the party's place while the plan is on,
+    // pushed by the orders (pawn::applyOrdersTo); hers while she stands in
+    // its zone and no retreat is called (Staked). Staked, she keeps to it:
+    // no trek after the player, no stand-down when he leaves the zone, the
+    // party's fight what comes within the leash of the stake
+    void SetStake(std::optional<pawn::Stake> stake);
+    auto Staked() const -> bool;
+    // She follows the player through zone lines: not waiting, not staked
+    auto Treks() const -> bool;
 
     // Wait here / follow me. Waiting, she has nowhere to go by order: no
     // following, hunting or travel, so she idles where she stands -- the
@@ -256,7 +266,8 @@ private:
     // the silent one by job over the party's cardians in this zone
     // (formation_math.h assignSlots); SeatOf places it from the
     // FORMATION_FLANK_* / FOLLOW_* / REAR_DISTANCE settings.
-    auto LeadPoint(const CCharEntity* PPlayer) -> position_t;
+    struct Place;
+    auto LeadPoint(const Place& place, const CCharEntity* PPlayer) -> position_t;
     auto RingSlot() const -> pawn::Slot;
     struct SeatGeometry
     {
@@ -278,7 +289,48 @@ private:
         float                     ahead    = 0.0f; // yalms of prediction applied
         std::chrono::milliseconds streamAge{};
     };
-    auto PlayerAnchor(const CCharEntity* PPlayer, float predictScale) -> Anchor;
+    static auto PlayerAnchor(const CCharEntity* PPlayer, float predictScale) -> Anchor;
+
+    // The place (RESEARCH §12.16): where the party is -- the origin of the
+    // formation, the leash, the stand-down and the warp. Two things stand
+    // behind it: the player, streamed and predicted as above, and a stake,
+    // fixed with its heading. The readers take the interface and never
+    // learn which; the person she is with (GetAnchor) stays the player.
+    struct Place
+    {
+        virtual ~Place()                                        = default;
+        virtual auto anchor(float predictScale) const -> Anchor = 0; // where the formation aims
+        virtual auto position() const -> position_t             = 0; // where it is now
+        virtual auto name() const -> std::string                = 0;
+        virtual auto fixed() const -> bool                      = 0; // never moves: a seat left after a fight is kept
+        // The backline: the point `radius` behind the place's heading (its
+        // 6 o'clock), where the mages belong at a fixed place; nothing at
+        // a place that moves, where the nearest spot serves
+        virtual auto behind(float radius) const -> std::optional<position_t> = 0;
+    };
+    struct PlayerPlace final : Place
+    {
+        const CCharEntity* PPlayer = nullptr;
+        auto               anchor(float predictScale) const -> Anchor override;
+        auto               position() const -> position_t override;
+        auto               name() const -> std::string override;
+        auto               fixed() const -> bool override;
+        auto               behind(float radius) const -> std::optional<position_t> override;
+    };
+    struct StakePlace final : Place
+    {
+        pawn::Stake stake;
+        auto        anchor(float predictScale) const -> Anchor override;
+        auto        position() const -> position_t override;
+        auto        name() const -> std::string override;
+        auto        fixed() const -> bool override;
+        auto        behind(float radius) const -> std::optional<position_t> override;
+    };
+    PlayerPlace m_PlayerPlace;
+    StakePlace  m_StakePlace;
+    // The tick's place: the stake while she is staked (which retreat
+    // lifts), else the player; nobody's when there is neither
+    auto CurrentPlace(const CCharEntity* PPlayer) -> const Place*;
 
     // A formation slot: `distance` yalms from the anchor at `angle` radians
     // off the player's facing (0 = ahead, pi = behind), held across the
@@ -391,7 +443,7 @@ private:
     // (CastRange). Attend is the door's exit for her (Attend), left with
     // what became of the mob (AttendExitReason).
     auto ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach;
-    auto AttendIntent(CMobEntity* PMob) -> Intent;
+    auto AttendIntent(CMobEntity* PMob, const Place* place) -> Intent;
     auto CastRange() const -> float;
     void Attend(CBattleEntity* PTarget, std::string_view how);
     auto AttendExitReason() -> std::string;
@@ -401,11 +453,22 @@ private:
     auto Move(Intent intent) -> std::optional<AvoidAction>;
 
     // The formation mover, roaming or holding for the player's strike:
-    // where this pawn belongs (the lead's point ahead of the player, or a
+    // where this pawn belongs (the lead's point ahead of the place, or a
     // chain slot). PStandOff is a mob the party is holding on: no point is
     // placed within its reach plus FORMATION_STANDOFF (a point aimed past
-    // it comes round to the player's side).
-    auto FormationIntent(CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
+    // it comes round to the place's side). PPlayer, when here, is the
+    // formation debug's subject only.
+    auto FormationIntent(const Place& place, const CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
+
+    // The tank's tow at a stake (RESEARCH §12.16): a cardian with the Tank
+    // role, staked, never closes on the party's mob -- her rows Provoke it
+    // from where she waits. Waiting, she stands one mob's reach past the
+    // stake on the line from the mob through it (stake_math.h towPoint),
+    // so the mob chasing her stops on the stake; once it is there she
+    // takes the stake's 3 o'clock on the mob, at her reach, and it turns
+    // to face her without moving. Both through the seat mover.
+    auto TowsAtStake() const -> bool;
+    auto TowIntent(const CBattleEntity* PTarget) -> Intent;
 
     // The courtesy (local_planner.h): this tick's step toward `point`,
     // planned over a one-yalm grid round her against the player's body
@@ -480,13 +543,16 @@ private:
     // target first (gated by the swing/TrustEngageType convention), else
     // any pawn party member's living target -- how a hunter's pull
     // propagates -- else a mob that has chosen her or one of her party.
-    // No player (nullptr): the party's own fights and self-defence alone
+    // Every one of them within the leash (pawn.HUNT_LEASH) of `from`, the
+    // party's place: a pull is not the party's fight until it is dragged
+    // inside. No player (nullptr): the party's own fights and self-defence
+    // alone
     struct PartyFight
     {
         CBattleEntity* target = nullptr;
         std::string    why;
     };
-    auto PartyEngageTarget(CCharEntity* PPlayer) const -> PartyFight;
+    auto PartyEngageTarget(CCharEntity* PPlayer, const position_t& from) const -> PartyFight;
 
     // A world body's idle tick (ROADMAP D1): rest when low, answer a mob on
     // her, and farming, pick a mob in her band within reach or head toward
@@ -646,6 +712,12 @@ private:
     uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
+    // The stake the orders pushed (the plan on), and the tank's tow: she is
+    // towing the mob to it until it is within a reach and kStakeTolerance
+    // of it, and tows again once it has drifted twice that far
+    std::optional<pawn::Stake> m_Stake;
+    bool                       m_Towing = false;
+    static constexpr float     kStakeTolerance = 1.5f;
 
     // NoteForSaving's book: what she last had written, and when
     bool              m_SaveSeeded    = false;
@@ -682,6 +754,7 @@ private:
     std::optional<EntityId> m_Attended;
     uint32                  m_SaidNoSpotFor   = 0;
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
+    uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change
     // The attended mob's reach, read once per mob and skill list
     struct ReachMemo
     {

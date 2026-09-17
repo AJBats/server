@@ -20,7 +20,10 @@
 */
 
 #include "pawn.h"
+#include "cardian_link.h"
 #include "players.h"
+#include "stake_math.h"
+#include "stake_flag.h" // CARDIAN TRIAL: the stake's flag
 #include "party_finder.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
@@ -112,10 +115,11 @@ namespace
     // are the session's
     struct PartyOrders
     {
-        uint16          strategy = 0;
-        bool            retreat  = false;
-        pawn::HuntRules rules;
-        bool            loaded = false;
+        uint16               strategy = 0;
+        bool                 retreat  = false;
+        std::optional<pawn::Stake> stake;
+        pawn::HuntRules            rules;
+        bool                       loaded = false;
     };
     std::unordered_map<uint32, PartyOrders> ordersByOwner;
 
@@ -860,6 +864,9 @@ namespace pawn
         {
             return 0;
         }
+        // His stake goes with him: party state is not kept across a
+        // logout until the relog pass (RESEARCH §12.11)
+        clearStake(PPlayer->id, "signed out");
         // Every entry under her name leaves the ladder, standing or faded:
         // the body goes with its position saved, and the row goes with it
         const auto count = seats::withdrawOwnedBy(PPlayer->id);
@@ -1024,6 +1031,7 @@ namespace pawn
                     PController->SetWaiting(false, false, "out of the party");
                     PController->SetHunting(false);
                     PController->SetRetreat(false);
+                    PController->SetStake(std::nullopt);
                 }
                 // A wild cardian's saved gambits are only ever a guest's --
                 // the player's edits while she was in the party (the user,
@@ -1160,7 +1168,10 @@ namespace pawn
 
     auto strategyName(const uint16 strategy) -> std::string_view
     {
-        static constexpr std::array<std::string_view, kStrategyCount> names{ "Off", "Roam" };
+        // One word each: the orders line is whitespace-split on the wire, so a
+        // two-word name would slide every field after it (the names go last,
+        // joined by ';', and are split out of args[10] by the addon)
+        static constexpr std::array<std::string_view, kStrategyCount> names{ "Hold", "Pull" };
         return strategy < names.size() ? names[strategy] : std::string_view("?");
     }
 
@@ -1187,9 +1198,18 @@ namespace pawn
         }
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
         {
+            // Two orders, one switch each, so neither changes meaning with
+            // the other (the user, 2026-09-17): the stake says where they
+            // work from -- his side, or a place that does not move -- and
+            // strategy 1 says they may start fights. Retreat beats both.
             const auto& orders = ordersFor(owner);
+            const bool  starts = orders.strategy == 1 && !orders.retreat;
             PController->SetRetreat(orders.retreat);
-            PController->SetHunting(orders.strategy == 1 && !orders.retreat);
+            PController->SetStake(orders.retreat ? std::nullopt : orders.stake);
+            // Starting a fight from a place is the puller's job, and the
+            // puller is its own design, deliberately last. Until it lands
+            // the order is held and only the roam obeys it
+            PController->SetHunting(starts && !orders.stake.has_value());
         }
     }
 
@@ -1236,6 +1256,119 @@ namespace pawn
         }
         orders.retreat = on;
         applyOrders(POwner->id);
+    }
+
+    auto stakeOf(const uint32 ownerCharID) -> std::optional<Stake>
+    {
+        const auto it = ordersByOwner.find(ownerCharID);
+        return it != ordersByOwner.end() ? it->second.stake : std::nullopt;
+    }
+
+    namespace
+    {
+        auto zoneNameOf(const xi::ZoneId zone) -> std::string
+        {
+            auto* PZone = zoneutils::GetZone(zone);
+            return PZone != nullptr ? std::string(PZone->getName()) : fmt::format("zone {}", static_cast<uint16>(zone));
+        }
+
+        auto ownerNameOf(const uint32 ownerCharID) -> std::string
+        {
+            const auto* PChar = zoneutils::GetChar(ownerCharID);
+            return PChar != nullptr ? std::string(PChar->getName()) : fmt::format("character {}", ownerCharID);
+        }
+    } // namespace
+
+    auto setStake(CCharEntity* POwner) -> std::string
+    {
+        if (POwner == nullptr || POwner->loc.zone == nullptr)
+        {
+            return "no character";
+        }
+        // Where he stands, facing his way: the Link's streamed position
+        // when it has one (fresher than the last position packet), the
+        // server's otherwise
+        position_t at = POwner->loc.p;
+        if (const auto fresh = cardian::link::freshPositionOf(POwner->id); fresh.has_value())
+        {
+            at = position_t(fresh->x, fresh->y, fresh->z, 0, fresh->rotation);
+        }
+        auto&      orders = ordersFor(POwner->id);
+        const bool moved  = orders.stake.has_value();
+        orders.stake      = Stake{ POwner->getZone(), at };
+        // Every change of place leaves them holding: nothing the player does
+        // to the camp ever starts him a fight he did not ask for (the user,
+        // 2026-09-17). clearStake does the same when the camp comes down
+        orders.strategy = 0;
+        ShowInfoFmt("pawn: {} {} the stake {} {} at ({:.1f}, {:.1f}, {:.1f}), facing {} deg; they hold", POwner->getName(), moved ? "moves" : "sets", moved ? "to" : "in",
+                    zoneNameOf(orders.stake->zone), at.x, at.y, at.z, at.rotation * 360 / 256);
+
+        // CARDIAN TRIAL (stake_flag.h): stand his national banner on the spot,
+        // facing the same way. Nothing above this line knows or cares.
+        cardian::stakeflag::plant(POwner, at);
+
+        applyOrders(POwner->id);
+        return "";
+    }
+
+    auto clearStake(const uint32 ownerCharID, const std::string_view why) -> bool
+    {
+        const auto it = ordersByOwner.find(ownerCharID);
+        if (it == ordersByOwner.end() || !it->second.stake.has_value())
+        {
+            return false;
+        }
+        const auto zone = it->second.stake->zone;
+        it->second.stake.reset();
+        it->second.strategy = 0;
+
+        // CARDIAN TRIAL (stake_flag.h): every path that dissolves a stake --
+        // command, sweep, sign-out -- comes through here, so the banner comes
+        // down here and nowhere else.
+        cardian::stakeflag::dissolve(ownerCharID);
+
+        ShowInfoFmt("pawn: {}'s stake in {} dissolves ({}); the plan is off", ownerNameOf(ownerCharID), zoneNameOf(zone), why);
+        applyOrders(ownerCharID);
+        return true;
+    }
+
+    void stakeSweep()
+    {
+        static timer::time_point lastSweep{};
+        if (timer::now() - lastSweep < std::chrono::seconds(1))
+        {
+            return;
+        }
+        lastSweep = timer::now();
+        for (auto& [owner, orders] : ordersByOwner)
+        {
+            if (!orders.stake.has_value())
+            {
+                continue;
+            }
+            uint32     inZone    = 0;
+            uint32     elsewhere = 0;
+            const auto count     = [&](const CCharEntity* PChar)
+            {
+                if (PChar == nullptr || PChar->loc.zone == nullptr)
+                {
+                    return;
+                }
+                (PChar->getZone() == orders.stake->zone ? inZone : elsewhere)++;
+            };
+            count(zoneutils::GetChar(owner));
+            for (const auto& [charid, PPawn] : pawns)
+            {
+                if (ordersOwnerOf(PPawn.get()) == owner)
+                {
+                    count(PPawn.get());
+                }
+            }
+            if (cardian::stake::dissolves(inZone, elsewhere))
+            {
+                clearStake(owner, "the party has left it");
+            }
+        }
     }
 
     auto huntRulesOf(const uint32 ownerCharID) -> HuntRules
@@ -1711,8 +1844,9 @@ namespace pawn
             {
                 continue;
             }
+            // A cardian who treks after him: not waiting, not keeping to a stake
             const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr || PController->IsWaiting() || PController->GetLivePlayer() != PPlayer)
+            if (PController == nullptr || !PController->Treks() || PController->GetLivePlayer() != PPlayer)
             {
                 continue;
             }
@@ -2002,6 +2136,7 @@ namespace pawn
 
     void onZoneTick(CZone* PZone)
     {
+        stakeSweep();
         const auto started   = std::chrono::steady_clock::now();
         uint32     pawnsHere = 0;
         for (const auto& [charid, PPawn] : pawns)
