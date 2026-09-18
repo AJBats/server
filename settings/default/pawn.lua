@@ -221,6 +221,15 @@ xi.settings.pawn =
     FIGHT_REAR_DEG      = 140,
     FIGHT_SEAT_DEADBAND = 1.2,
 
+    -- Camp receive: distance to the ideal mob spot, not the moving tank.
+    -- A stalled/flyby pull gets half a second per extra yalm (max 8 s).
+    -- Provoke's gambit keeps running throughout; gaining hate ends the wait.
+    CAMP_RECEIVE_IMMEDIATE       = 3.0,
+    CAMP_RECEIVE_SECONDS_PER_YALM = 0.5,
+    CAMP_RECEIVE_MAX_WAIT        = 8.0,
+    CAMP_RECEIVE_PROGRESS        = 0.5,
+    CAMP_RECEIVE_WINDOW          = 1.0,
+
     -- The beat: how long a cardian takes to act on a decision -- to set
     -- off on a hunt and again to draw once the re-engage wait is served,
     -- to draw on the player's order or with the party, to close when the

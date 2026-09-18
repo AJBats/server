@@ -27,13 +27,106 @@
 // the orders read the entities and call in.
 
 #include "common/cbasetypes.h"
+#include "formation_math.h"
 
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <utility>
 
 namespace cardian::stake
 {
+    // The flag's 9-to-3 line divides front (positive) from back (negative).
+    inline auto forwardOf(const float stakeX, const float stakeZ, const uint8 rotation, const float x, const float z) -> float
+    {
+        const float radians = rotation * (2.0f * std::numbers::pi_v<float> / 256.0f);
+        return (x - stakeX) * std::cos(radians) - (z - stakeZ) * std::sin(radians);
+    }
+
+    constexpr float kSettle   = 1.5f;
+    constexpr float kMobAhead = 2.0f; // settle allowance remains entirely ahead of the flag
+
+    struct ReceiveConfig
+    {
+        float  immediate = 3.0f;
+        double secondsPerYalm = 0.5;
+        double maxWait = 8.0;
+        float  progress = 0.5f;
+        double window = 1.0;
+    };
+
+    enum class ReceiveAction { Wait, Join, Outside };
+
+    // One initial receive, independent of weapon draw and Provoke's recast.
+    // The controller supplies distance to the fixed landing point and owns
+    // the monster's identity. Once joined, hate changes never restart it.
+    struct Receive
+    {
+        bool joined = false;
+        bool sampled = false;
+        float sampleDistance = 0.0f;
+        double sampleAt = 0.0;
+        std::optional<double> deadline;
+
+        auto update(const double now, const float distance, const bool inCamp,
+                    const bool hasHate, const bool fighting, const ReceiveConfig& config) -> ReceiveAction
+        {
+            if (joined)
+            {
+                return ReceiveAction::Join;
+            }
+            if (!inCamp)
+            {
+                *this = {};
+                return ReceiveAction::Outside;
+            }
+            if (!fighting)
+            {
+                *this = {}; // drawing on an idle monster is not a pull
+                return ReceiveAction::Wait;
+            }
+            if (hasHate || distance <= config.immediate)
+            {
+                joined = true;
+                return ReceiveAction::Join;
+            }
+            const auto delay = [&](const float d)
+            {
+                return std::clamp((d - config.immediate) * config.secondsPerYalm, 0.0, config.maxWait);
+            };
+            if (!sampled)
+            {
+                sampled = true;
+                sampleAt = now;
+                sampleDistance = distance;
+                // Observe whether it is approaching before deciding it
+                // stopped. The eventual deadline still starts here.
+            }
+            else if (sampleDistance - distance >= config.progress)
+            {
+                sampleDistance = distance;
+                sampleAt = now;
+                deadline.reset(); // genuine resumed approach gets its time
+            }
+            else if (distance - sampleDistance >= config.progress || now - sampleAt >= config.window)
+            {
+                if (!deadline.has_value())
+                {
+                    // Last inward progress is when the grace starts. A
+                    // flyby cannot lengthen it by travelling farther away.
+                    deadline = sampleAt + delay(sampleDistance);
+                }
+                sampleDistance = distance;
+                sampleAt = now;
+            }
+            if (deadline.has_value() && now >= *deadline)
+            {
+                joined = true;
+            }
+            return joined ? ReceiveAction::Join : ReceiveAction::Wait;
+        }
+    };
+
     // The tow point: one mob's reach past the stake, on the line from the
     // mob through the stake. A mob chasing her there stops when it is a
     // reach from her -- on the stake. A mob already on the stake has no
@@ -56,6 +149,35 @@ namespace cardian::stake
     inline auto towing(const bool newMob, const bool wasTowing, const float distance, const float tolerance) -> bool
     {
         return distance > ((newMob || wasTowing) ? tolerance : 2.0f * tolerance);
+    }
+
+    inline auto frontlineTowing(const bool newMob, const bool wasTowing, const float distance, const float forward) -> bool
+    {
+        return forward < 0.0f || towing(newMob, wasTowing, distance, kSettle);
+    }
+
+    // Detour toward a world-space goal, not a flank that turns with the
+    // tank. Keep the chosen side until the direct route is clear.
+    inline auto routePoint(const float mobX, const float mobZ, const float bodyRadius,
+                           const float x, const float z, const float goalX, const float goalZ,
+                           float& direction) -> std::pair<float, float>
+    {
+        // A fighting seat can sit inside the usual padding. Leave room to
+        // reach it instead of orbiting an unreachable padded ring.
+        const float radius = std::min(bodyRadius, std::hypot(goalX - mobX, goalZ - mobZ) - 0.4f);
+        const formation::Circle body{ mobX, mobZ, radius };
+        if (radius <= 0.1f || !formation::segmentCrosses(body, x, z, goalX, goalZ))
+        {
+            direction = 0.0f;
+            return { goalX, goalZ };
+        }
+        const auto point = formation::detourAround(body, x, z, goalX, goalZ, 0.2f, std::min(1.0f, radius * 0.5f), 0.3f, direction);
+        if (direction == 0.0f)
+        {
+            const float cross = (x - mobX) * (point.second - mobZ) - (z - mobZ) * (point.first - mobX);
+            direction = cross >= 0.0f ? 1.0f : -1.0f;
+        }
+        return point;
     }
 
     // The stake dissolves once the whole party has left its zone: nobody

@@ -282,17 +282,22 @@ namespace cardian::tactics
     struct Candidate
     {
         uint32 id         = 0;
-        bool   open       = false; // free to cast it now: alive, not acting, past her last cast, no order queued, in range, the spell usable
+        bool   open       = false; // free to cast it now: alive, not acting, past her last cast, no order queued, the spell usable
         bool   kneeling   = false; // open, but after anyone standing (slice 5 owns the kneel; until then she casts from it as she always has)
         double landChance = 1.0;   // her chance to land it
         uint32 load       = 0;     // needs already assigned to her
         uint16 spell      = 0;     // what she would cast
+        bool   inRange    = true;  // an available cast beats a row's walk into range
     };
 
     // Among two who could: standing before kneeling, the preferred before
     // the rest, the better land chance, the lighter load, the lower id
     inline auto better(const Candidate& a, const Candidate& b, const uint32 preferred) -> bool
     {
+        if (a.inRange != b.inRange)
+        {
+            return a.inRange;
+        }
         if (a.kneeling != b.kneeling)
         {
             return !a.kneeling;

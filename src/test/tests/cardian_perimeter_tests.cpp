@@ -191,3 +191,33 @@ TEST_CASE("Perimeter: thin crescents never take the external-circle chase branch
         }
     }
 }
+
+TEST_CASE("Perimeter: camp favors a comfortable rear area without correcting every shuffle", "[cardian][perimeter]")
+{
+    // Camp faces +x, mob lands at +2, tank at (+2, 3). The rear is -x.
+    const auto score = [](const float x, const float z, const float depth)
+    {
+        return campCost(x, z, depth, std::hypot(x - 2, z), 17, std::hypot(x - 2, z - 3), 20);
+    };
+    const float rear = score(-16, 0, 16);
+    CHECK(worthwhileCampMove(score(-16, 10, 16), rear, 10));
+    CHECK_FALSE(worthwhileCampMove(score(-16, 4, 16), rear, 4));
+    CHECK_FALSE(worthwhileCampMove(rear, rear, 0));
+    CHECK(worthwhileCampMove(score(-10, 0, 16), rear, 6));
+
+    // Backed against a wall at -6: a long sidestep to safety is not worth
+    // abandoning the cozy rear. AoE is tolerated; the frontline is separate.
+    const float cramped = score(-6, 0, 6);
+    const float sideways = score(-6, -16, 6);
+    CHECK_FALSE(worthwhileCampMove(cramped, sideways, 16));
+    CHECK(cramped > rear); // exposure remains a cost, not a free preference
+}
+
+TEST_CASE("Perimeter: camp movement protects healing and charges for disruptive walks", "[cardian][perimeter]")
+{
+    const float inRange = campCost(-16, 0, 16, 18, 17, 19, 20);
+    const float outOfRange = campCost(-16, 0, 16, 18, 17, 23, 20);
+    CHECK(worthwhileCampMove(outOfRange, inRange, 6));
+    CHECK_FALSE(worthwhileCampMove(4, 0, 20));
+    CHECK_FALSE(worthwhileCampMove(1.4f, 0, 0));
+}

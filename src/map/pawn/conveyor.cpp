@@ -199,6 +199,24 @@ namespace pawn::tactics
                           return !casting.contains(kv.first);
                       });
 
+        // A queued row is still the player's condition, not a four-second
+        // promise to cast after the condition or the editor has changed.
+        for (auto& n : m_needs.needs)
+        {
+            if (n.lockedBy != 0)
+            {
+                continue;
+            }
+            std::erase_if(n.requests, [&](const Request& r)
+            {
+                if (r.source != Source::Row)
+                {
+                    return false;
+                }
+                auto* controller = controllerOf(zoneutils::GetChar(r.caster));
+                return controller == nullptr || !controller->Gambits().RequestValid(r.rowId, n.key.target, r.spell);
+            });
+        }
         m_needs.expire(now, life);
 
         std::unordered_map<uint32, uint32> loads;
@@ -316,11 +334,14 @@ namespace pawn::tactics
             c.spell = static_cast<uint16>(spellFor(n, PChar, PTarget));
             // In range as the magic state will judge the cast: the spell's
             // own range plus both hitboxes
-            const auto* PSpell = c.spell != 0 ? spell::GetSpell(static_cast<SpellID>(c.spell)) : nullptr;
-            const float reach  = PSpell != nullptr ? PSpell->getRange() + PChar->modelHitboxSize + PTarget->modelHitboxSize : 0.0f;
+            auto* PSpell = c.spell != 0 ? spell::GetSpell(static_cast<SpellID>(c.spell)) : nullptr;
+            const float reach  = bank::castRange(PChar, PSpell, PTarget);
             c.open             = PSpell != nullptr && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone &&
-                     distance(PChar->loc.p, PTarget->loc.p) <= reach &&
-                     !PController->Acting() && !PController->HasQueuedOrder() && PController->canAct();
+                     PController->Gambits().MasterOn() && !PController->Acting() && !PController->HasQueuedOrder() && PController->canAct();
+            c.inRange          = distance(PChar->loc.p, PTarget->loc.p) <= reach;
+            // If nobody can cast now, the row's own mage can approach.
+            // Role-only needs retain their position/range policy.
+            c.open = c.open && (c.inRange || (rowFed && PChar->id == n.preferred()));
             c.kneeling = PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
             for (const auto& r : n.requests)
             {
@@ -358,26 +379,25 @@ namespace pawn::tactics
     {
         if (n.key.kind == NeedKind::Cure)
         {
-            // Nothing missing, nothing to cast, whatever a row asked while
-            // the gap was there; else her own row's tier, else the bank's
-            // pick, the cheapest tier that covers the gap
-            if (PTarget->isDead() || PTarget->health.hp >= PTarget->GetMaxHP())
+            // Explicit rows may cure a whole member, asleep or awake. The
+            // role alone avoids overcure. A delegated row keeps its spell.
+            if (PTarget->isDead() || (!n.rowFed() && PTarget->health.hp >= PTarget->GetMaxHP()))
             {
                 return static_cast<SpellID>(0);
             }
-            const uint16 asked = n.preferred() == PCaster->id ? n.askedSpell() : 0;
+            const uint16 asked = n.askedSpell();
             if (asked != 0)
             {
                 return bank::usable(PCaster, static_cast<SpellID>(asked)) ? static_cast<SpellID>(asked) : static_cast<SpellID>(0);
             }
-            return bank::pickTier(tiersOf(PCaster), PTarget);
+            return bank::pickTier(tiersOf(PCaster), PTarget, n.rowFed());
         }
-        // Her own request's spell (the role priced her tier, or her row
-        // named it), else what a row asked
-        uint16 id = 0;
+        // A row's named spell takes precedence, including when another
+        // mage casts it. With no row, use this role holder's own proposal.
+        uint16 id = n.askedSpell();
         for (const auto& r : n.requests)
         {
-            if (r.caster == PCaster->id && r.spell != 0)
+            if (id == 0 && r.caster == PCaster->id && r.spell != 0)
             {
                 id = r.spell;
                 break;
@@ -428,7 +448,7 @@ namespace pawn::tactics
             {
                 continue;
             }
-            return Assignment{ static_cast<SpellID>(n.spell), n.key.target, describe(n, scope) };
+            return Assignment{ static_cast<SpellID>(n.spell), n.key.target, describe(n, scope), n.rowFed() };
         }
         return std::nullopt;
     }

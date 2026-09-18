@@ -92,6 +92,7 @@ namespace pawn::tactics
 
         // A spell she knows, can use, can afford now and is not on recast
         auto usable(CBattleEntity* PCaster, SpellID id) -> bool;
+        auto castRange(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> float;
 
         // The effect a priced spell writes is on the target already, at its
         // tier or better: the seconds it has to go (infinite, for good).
@@ -120,7 +121,7 @@ namespace pawn::tactics
 
         // The tier for a target's gap among hers: the cheapest that covers
         // it, else the biggest heal; 0 when nothing is missing or no tier fits
-        auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget) -> SpellID;
+        auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget, bool requested = false) -> SpellID;
 
         // What one entity's ordinary melee does to another, by the formulas:
         // cached on the record per pair, a miss too. The pDIF sampler's 300

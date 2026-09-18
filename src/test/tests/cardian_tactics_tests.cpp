@@ -405,3 +405,17 @@ TEST_CASE("Defence down, the exact number: a hit without it, and the split per e
     CHECK_THAT(line, ContainsSubstring("; debuffs dealt: dia +37 by defence over 9 hits, +9 by ticks, poison +12 by ticks"));
     CHECK_THAT(line, ContainsSubstring("; paralysed: Zapp 2"));
 }
+
+TEST_CASE("Explicit best-Cure rows choose an affordable tier even at full HP", "[cardian][tactics][bank]")
+{
+    std::vector<CureOption> options{
+        { .spell = "Cure II", .mp = 24, .heals = 90 },
+        { .spell = "Cure", .mp = 8, .heals = 30 },
+    };
+    CHECK(pickCure(options, 0) == kNoPick); // the autonomous role still declines
+    CHECK(pickCure(options, 0, true) == 1); // a row still casts
+    CHECK(options[1].lands == 0);
+    CHECK(pickCure(options, 60, true) == 0);
+    options.clear();
+    CHECK(pickCure(options, 0, true) == kNoPick); // no available spell
+}

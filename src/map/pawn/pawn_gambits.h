@@ -192,6 +192,8 @@ namespace pawn
         void StampRetry(const std::string& id, timer::time_point at);
         // Her next think is the next tick: a new fight is a new think
         void Prompt();
+        // Recheck a queued spell without consuming timer predicates again.
+        auto RequestValid(const std::string& rowId, uint32 target, uint16 spell) -> bool;
 
         // The behaviour pass alone, every tick, pathing or not: switches are
         // asserted only while their rows' conditions hold
@@ -235,7 +237,7 @@ namespace pawn
         // What her rows call "the mob": her battle target, else the party's
         // fight she attends or walks in on (RESEARCH §12.15)
         auto FightTarget() -> CBattleEntity*;
-        auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex) -> bool;
+        auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex, bool pending = false) -> bool;
         auto ResolveSpell(const gambits::Action_t& action, CBattleEntity* PTarget) -> Maybe<SpellID>;
         // Behaviour rows (G_REACTION_BEHAVIOR only) flip controller switches
         // and never consume the think

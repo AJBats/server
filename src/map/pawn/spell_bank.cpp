@@ -762,6 +762,22 @@ namespace pawn::tactics
             return !failed("isEffectNullified", res) && res.get<bool>(0);
         }
 
+        auto castRange(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> float
+        {
+            if (PCaster == nullptr || PSpell == nullptr || PTarget == nullptr)
+            {
+                return 0.0f;
+            }
+            float reach = PSpell->getRange() + PCaster->modelHitboxSize + PTarget->modelHitboxSize;
+            const auto family = PSpell->getSpellFamily();
+            if (PCaster->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Entrust) &&
+                (family == SPELLFAMILY_INDI_BUFF || family == SPELLFAMILY_INDI_DEBUFF))
+            {
+                reach = 25.0f;
+            }
+            return std::min(reach, 40.0f); // magic state's outer range limit
+        }
+
         auto usable(CBattleEntity* PCaster, const SpellID id) -> bool
         {
             CSpell* PSpell = spell::GetSpell(id);
@@ -826,7 +842,7 @@ namespace pawn::tactics
             return out;
         }
 
-        auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget) -> SpellID
+        auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget, const bool requested) -> SpellID
         {
             if (PTarget == nullptr || PTarget->isDead())
             {
@@ -837,7 +853,7 @@ namespace pawn::tactics
             {
                 options.push_back(tier.option);
             }
-            const auto pick = pickCure(options, PTarget->GetMaxHP() - PTarget->health.hp);
+            const auto pick = pickCure(options, PTarget->GetMaxHP() - PTarget->health.hp, requested);
             return pick == kNoPick ? static_cast<SpellID>(0) : tiers[pick].id;
         }
 

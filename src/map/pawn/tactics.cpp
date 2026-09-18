@@ -709,9 +709,9 @@ namespace pawn::tactics
         {
             return std::nullopt;
         }
-        // Met already, or blocked by what is on the target: not fed. Said
-        // once per caster, row and target under debug, since the row asks
-        // every think
+        // Keep effect coordination separate from Cure's HP policy: a
+        // debuff already met (or nullified by an active effect) is not fed
+        // again. This check does not reject a Cure on a full-HP target.
         const auto on      = bank::onAlready(PSpell, PTarget);
         const bool blocked = !on.has_value() && bank::blockedOn(PSpell, PTarget);
         if (on.has_value() || blocked)
@@ -763,7 +763,7 @@ namespace pawn::tactics
         {
             return std::nullopt;
         }
-        return Assignment{ a->spell, a->target, a->why };
+        return Assignment{ a->spell, a->target, a->why, a->approach };
     }
 
     void roleReflex(CCharEntity* PPawn)

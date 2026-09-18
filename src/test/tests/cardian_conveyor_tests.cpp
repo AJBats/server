@@ -432,3 +432,20 @@ TEST_CASE("Pace is an EWMA after three samples", "[cardian][tactics][conveyor]")
     CHECK(p.spent.mean < 32.5);                      // not the plain mean of the four
     CHECK(p.spent.mean > 10.0);                      // and not the last sample either
 }
+
+TEST_CASE("Conveyor: an in-range helper casts before the requester walks; otherwise the requester can approach", "[cardian][tactics][conveyor]")
+{
+    Need n;
+    n.requests.push_back(row(3, 5, 1));
+    std::vector<Candidate> casters{
+        { .id = 3, .open = true, .spell = 1, .inRange = false },
+        { .id = 4, .open = true, .spell = 1, .inRange = true },
+    };
+    REQUIRE(pickCaster(n, casters) != nullptr);
+    CHECK(pickCaster(n, casters)->id == 4);
+    casters[1].open = false;
+    REQUIRE(pickCaster(n, casters) != nullptr);
+    CHECK(pickCaster(n, casters)->id == 3);
+    casters[0].open = false;
+    CHECK(pickCaster(n, casters) == nullptr);
+}

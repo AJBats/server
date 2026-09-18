@@ -317,6 +317,15 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_Towing = false;
         m_TowingMob.reset();
     }
+    // Drawing during an initial receive must not start its clock over.
+    // Ending the fight or abandoning the approach does end that receive.
+    const bool receivingApproach = to == Mode::Approach && m_Approach.has_value() && m_ReceiveMob.has_value() && m_Approach->target == *m_ReceiveMob;
+    if ((wasEngaged && !nowEngaged && !receivingApproach) || (from == Mode::Approach && to != Mode::Approach && !nowEngaged))
+    {
+        m_ReceiveMob.reset();
+        m_Receive = {};
+        m_ClosingWithoutHate = false;
+    }
     if (from == Mode::Attend && to != Mode::Attend)
     {
         m_Attended.reset();
@@ -988,6 +997,14 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
     // A new place: her seats aim afresh, and a spot kept after a fight goes
     m_Towing = false;
     m_TowingMob.reset();
+    // Relocating a camp remeasures an incoming pull, but cannot make a
+    // tank already helping in a fight wait for that fight to arrive again.
+    if (!m_Stake.has_value() || !m_Receive.joined)
+    {
+        m_ReceiveMob.reset();
+        m_Receive = {};
+    }
+    m_ClosingWithoutHate = false;
     m_FollowHeld.has = false;
     m_LeadHeld.has   = false;
     if (was != m_Stake.has_value())
@@ -1471,6 +1488,14 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         SayRefusal(PTarget, why);
         return false;
     }
+    if (kind == ApproachKind::Order && TowsAtStake())
+    {
+        // An explicit Engage order asks her to close now, even outside
+        // automatic camp admission. It never waits for a puller's handoff.
+        m_ReceiveMob = EntityId(PTarget);
+        m_Receive = {};
+        m_Receive.joined = true;
+    }
     // A perimeter mage takes the party's fight the way her role says,
     // attending, whatever brought her to the door: distance and the draw
     // cooldown are the fight ring's business, not hers. Attending needs an
@@ -1643,6 +1668,11 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
         return intent;
     }
 
+    if (place != nullptr && place->fixed())
+    {
+        return CampAttendIntent(PMob, *place, PTank);
+    }
+
     // The spell's own range to the tank, stretched: the hitboxes are the
     // slack, and a landing check that fails is on the log's record (the
     // user, 2026-09-17). Distances planar, as the spot finder's are
@@ -1720,6 +1750,146 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     return intent;
 }
 
+auto CPawnController::RearCampRoute(const position_t& point, const position_t& camp) const -> std::optional<std::vector<pathpoint_t>>
+{
+    const auto forward = [&](const position_t& p) { return cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, p.x, p.z); };
+    if (forward(point) > 0.05f)
+    {
+        return std::nullopt;
+    }
+    // If avoidance left her in front, she can walk back. Once behind the
+    // line, an AoE reposition cannot route round a wall through the front.
+    const float limit   = std::max(0.0f, forward(POwner->loc.p)) + 0.05f;
+    auto*       navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    if (navMesh == nullptr)
+    {
+        return std::vector<pathpoint_t>{ pathpoint_t{ .position = point, .wait = {}, .setRotation = false } };
+    }
+    auto path = navMesh->findPath(POwner->loc.p, point);
+    if (!path.has_value() || path->isPartial)
+    {
+        return std::nullopt;
+    }
+    for (const auto& step : path->points)
+    {
+        if (forward(step.position) > limit)
+        {
+            return std::nullopt;
+        }
+    }
+    return std::move(path->points);
+}
+
+auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent
+{
+    const auto  camp      = place.position();
+    const auto  me        = POwner->loc.p;
+    const float range     = CastRange();
+    const bool  preparing = !PMob->PAI->IsEngaged();
+    // An unpulled mob is not yet an AoE source at its current position.
+    // Prepare for the camp's landing point; use live geometry once it fights.
+    position_t mob  = preparing ? nearPosition(camp, cardian::stake::kMobAhead, 0.0f) : PMob->loc.p;
+    position_t tank = PTank->loc.p;
+    if (preparing)
+    {
+        const float reach = std::max(1.0f, PMob->GetMeleeRange(POwner) - 0.3f);
+        tank = nearPosition(mob, reach, std::numbers::pi_v<float> / 2.0f);
+    }
+    const float ring   = cardian::perimeter::ringOf(ReachOf(PMob), distance(mob, tank, true));
+    const float radius = std::clamp(ring + 1.0f - cardian::stake::kMobAhead, 3.0f, std::max(3.0f, range - 2.0f - cardian::stake::kMobAhead));
+    auto*       navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    const auto clipped = [&](const position_t& point) -> std::optional<position_t>
+    {
+        if (navMesh == nullptr)
+        {
+            return point;
+        }
+        const auto end = navMesh->findFurthestValidPoint(camp, point);
+        return end.has_value() ? std::optional<position_t>(*end) : std::nullopt;
+    };
+    const auto  forward   = [&](const position_t& p) { return cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, p.x, p.z); };
+    const auto  rear      = clipped(nearPosition(camp, radius, std::numbers::pi_v<float>));
+    const float rearDepth = rear.has_value() ? std::max(0.0f, -forward(*rear)) : radius;
+    const auto cost = [&](const position_t& p)
+    {
+        const float side = cardian::stake::forwardOf(camp.x, camp.z, static_cast<uint8>(camp.rotation + 64), p.x, p.z);
+        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range);
+    };
+
+    // Small rear arc search; mesh clipping naturally compresses it against
+    // a wall. Staying is always an option, including when every spot has AoE.
+    struct Candidate
+    {
+        position_t point;
+        float      score;
+    };
+    std::vector<Candidate> candidates;
+    candidates.reserve(46);
+    const auto add = [&](const position_t& raw)
+    {
+        const auto point = clipped(raw);
+        if (point.has_value() && forward(*point) <= 0.05f && IsClear(point->x, point->z))
+        {
+            candidates.push_back({ *point, cost(*point) });
+        }
+    };
+    for (const float depth : { radius, radius + 4.0f, radius + 8.0f, radius * 0.75f, radius * 0.5f })
+    {
+        for (int turn = -4; turn <= 4; ++turn)
+        {
+            add(nearPosition(camp, depth, std::numbers::pi_v<float> + turn * std::numbers::pi_v<float> / 8.0f));
+        }
+    }
+    if (const auto nearest = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + 1.0f, range - 1.0f, me.x, me.z); nearest.has_value())
+    {
+        add(position_t(nearest->first, me.y, nearest->second, 0, me.rotation));
+    }
+    std::stable_sort(candidates.begin(), candidates.end(), [](const auto& a, const auto& b) { return a.score < b.score; });
+    const float currentCost = cost(me);
+    float best = currentCost - 1.5f;
+    Intent intent;
+    for (const auto& candidate : candidates)
+    {
+        if (candidate.score >= best)
+        {
+            break;
+        }
+        const auto route = RearCampRoute(candidate.point, camp);
+        if (!route.has_value())
+        {
+            continue;
+        }
+        float      walk     = 0.0f;
+        position_t previous = me;
+        for (const auto& step : *route)
+        {
+            walk += distance(previous, step.position);
+            previous = step.position;
+        }
+        const float score = candidate.score + 0.25f * walk;
+        if (score < best && cardian::perimeter::worthwhileCampMove(currentCost, candidate.score, walk))
+        {
+            best                = score;
+            intent.kind         = Intent::Kind::Path;
+            intent.point        = candidate.point;
+            intent.arrive       = 0.5f;
+            intent.tolerance    = 0.75f;
+            intent.rearBoundary = camp;
+        }
+    }
+    const bool  moves   = intent.kind == Intent::Kind::Path;
+    const bool  exposed = distance(me, mob, true) < ring;
+    const uint8 verdict = moves ? 7 : exposed ? 8 : 9;
+    if (m_AttendVerdict != verdict)
+    {
+        m_AttendVerdict = verdict;
+        ShowInfoFmt("pawn: {} camp backline: {}{} (mob {:.1f} y, ring {:.1f}; cure {:.1f}/{:.0f}; {} geometry)", POwner->getName(),
+                    moves ? fmt::format("repositions to ({:.1f}, {:.1f})", intent.point.x, intent.point.z) : "holds her spot",
+                    !moves && exposed ? "; accepts AoE exposure" : "", distance(me, mob, true), ring, distance(me, tank, true), range, preparing ? "arrival" : "live");
+    }
+    return intent;
+}
+
 auto CPawnController::Sees(const pawn::danger::Danger& danger, const position_t& point) const -> bool
 {
     // Memoised per tick, to the yalm: the mob's own line-of-sight cache is
@@ -1786,6 +1956,41 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
         return AvoidAction::None;
     }
 
+    // A requested spell can take her into its real casting range. This
+    // proposal still passes through aggro/link avoidance below. Camp's
+    // rear boundary governs AoE positioning, not an explicit gambit.
+    if (!m_Retreat && !m_Waiting && !HasQueuedOrder() && m_Gambits->MasterOn())
+    {
+        const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
+        if (const auto cast = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged); cast.has_value() && cast->approach)
+        {
+            auto* target = pawn::tactics::entity(static_cast<CCharEntity*>(POwner), cast->target);
+            auto* PSpell = spell::GetSpell(cast->spell);
+            const float reach = pawn::tactics::bank::castRange(POwner, PSpell, target);
+            if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f)
+            {
+                const auto& me = POwner->loc.p;
+                const float gap = distance(me, target->loc.p);
+                intent.kind = Intent::Kind::Stand;
+                if (gap > reach)
+                {
+                    // Walk to the edge of casting range, not to the body.
+                    // Courtesy may shorten the waypoint, so its arrival
+                    // margin must stay small rather than a spell's radius.
+                    const float fraction = (gap - std::max(0.0f, reach - 0.5f)) / gap;
+                    intent.kind = Intent::Kind::Path;
+                    intent.point = position_t(me.x + (target->loc.p.x - me.x) * fraction,
+                                              me.y + (target->loc.p.y - me.y) * fraction,
+                                              me.z + (target->loc.p.z - me.z) * fraction, 0, 0);
+                    intent.arrive = 0.2f;
+                    intent.tolerance = 0.3f;
+                }
+                intent.seat = false;
+                intent.rearBoundary.reset();
+            }
+        }
+    }
+
     auto*      PPathFind    = POwner->PAI->PathFind.get();
     position_t point        = intent.point;
     float      followMax    = intent.tolerance;
@@ -1808,6 +2013,13 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
         // point, or the way between. A wall makes the rest no danger
         FocusDangers(POwner->loc.p, point);
         action = Avoid(point, followMax, followTarget, declump, intent.fighting);
+    }
+
+    // A path produced by avoidance or another mover cannot be kept as
+    // though it still led to the seat. Re-plan that seat when it resumes.
+    if (action != AvoidAction::None || intent.kind != Intent::Kind::Keep)
+    {
+        m_SeatPathActive = action == AvoidAction::None && intent.seat && intent.kind == Intent::Kind::Path;
     }
 
     // The step
@@ -1851,7 +2063,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
             case Intent::Kind::Path:
                 if (distance(POwner->loc.p, point) > followMax)
                 {
-                    if (!PathToward(point, followTarget) && intent.seat)
+                    if (!PathToward(point, followTarget, intent.rearBoundary.has_value() ? &*intent.rearBoundary : nullptr) && intent.seat)
                     {
                         m_FightSeat = {};
                     }
@@ -2056,7 +2268,10 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     const bool thinksEngaged = m_Mode == Mode::Fight || m_Mode == Mode::Hold;
     if (thinksEngaged && !engaged)
     {
-        Transition(IdleMode(), ServerExitReason());
+        if (!ResumeCampReceive())
+        {
+            Transition(IdleMode(), ServerExitReason());
+        }
     }
     else if (!thinksEngaged && engaged && m_Mode != Mode::Down && POwner->GetBattleTarget() != nullptr)
     {
@@ -2301,6 +2516,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    if (TowsAtStake() && CampReceive(PTarget) == cardian::stake::ReceiveAction::Outside)
+    {
+        Transition(IdleMode(), fmt::format("lets {} go (left camp before the receive)", PTarget->getName()));
+        POwner->PAI->Internal_Disengage();
+        co_return;
+    }
+
     // Holding, she walks with the player, and the formation's pace and
     // perch are hers. Fighting, neither is: the speed limit is never
     // broken once a fight starts, and a perch belongs to a slot
@@ -2377,21 +2599,17 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
                 }
             }
 
-            // The movers propose, in precedence: the step back (the mob
-            // settled on her toes), then her seat or the front, then, at
-            // the front standing still, the declump. Reach is the distance
+            // A camp tank owns her tow/seat, including the backoff distance.
+            // Else the movers propose the step back, the seat/front, then
+            // the declump. Reach is the distance
             // alone -- the server's CanAttack would say it, but it
             // disengages her as a side effect on a claimed or far target,
             // and counts a walking cardian as out of reach
             const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
-            intent             = StepBackIntent(PTarget);
+            intent             = tows ? std::optional<Intent>(TowIntent(PTarget)) : StepBackIntent(PTarget);
             if (!intent.has_value())
             {
-                if (tows)
-                {
-                    intent = TowIntent(PTarget);
-                }
-                else if (seat.has_value())
+                if (seat.has_value())
                 {
                     intent = SeatIntent(PTarget, point, inReach);
                 }
@@ -2463,8 +2681,10 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
             Transition(IdleMode(), fmt::format("lets {} go ({})", PMob->getName(), blocker));
         }
         // The party's fight she was walking in on ended, or moved to
-        // another mob
-        else if (join && PPartyTarget != PMob)
+        // another mob. After receiving she owns this fight, including
+        // a weapon-away pursuit after the engine's sight-range sheathe.
+        else if (join && PPartyTarget != PMob &&
+                 !(TowsAtStake() && m_Receive.joined && m_ReceiveMob.has_value() && *m_ReceiveMob == PMob))
         {
             Transition(IdleMode(), fmt::format("lets {} go (the party moved on)", PMob->getName()));
         }
@@ -2534,10 +2754,9 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
                     return true;
                 }
             }
-            // The tank at a stake never walks in on the party's fight: she
-            // waits at her tow point, weapon away, her rows Provoking it as
-            // it comes, and draws when it is within reach of the stake (the
-            // server drops an engagement past 30 y, so the draw range holds)
+            // Receive with the weapon away too: wait while the pull comes
+            // in, then close if it stalls. Offensive gambits still run in
+            // DoRoamTick, so Provoke need not wait for the receive or draw.
             if (join && TowsAtStake())
             {
                 if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
@@ -3284,8 +3503,14 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
         return false;
     }
 
+    auto* PTarget = castTarget.resolve<CBattleEntity>();
+    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone ||
+        distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
+    {
+        return false;
+    }
     FaceTarget(castTarget);
-    HeadLook(castTarget.resolve<CBattleEntity>());
+    HeadLook(PTarget);
     return CastAndStop(castTarget, spellid);
 }
 
@@ -3309,8 +3534,14 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
         return false;
     }
     const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
+    auto* PTarget = castTarget.resolve<CBattleEntity>();
+    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone ||
+        distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
+    {
+        return false;
+    }
     FaceTarget(castTarget);
-    HeadLook(castTarget.resolve<CBattleEntity>());
+    HeadLook(PTarget);
     return CastAndStop(castTarget, spellid);
 }
 
@@ -3410,7 +3641,7 @@ auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* P
                         auto*       MState  = static_cast<CMagicState*>(PMember->PAI->GetCurrentState());
                         auto*       MSpell  = MState->GetSpell();
                         const auto* MTarget = MState->target().resolve();
-                        if (MSpell == nullptr)
+                        if (MSpell == nullptr || PTarget == nullptr || MTarget != PTarget)
                         {
                             return;
                         }
@@ -3422,11 +3653,11 @@ auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* P
                         {
                             redundant = true;
                         }
-                        else if (PSpell->isCure() && PTarget != nullptr && PTarget == MTarget && PTarget->GetHPP() > 50)
+                        else if (PSpell->isCure() && MSpell->isCure() && PTarget->GetHPP() > 50)
                         {
                             redundant = true;
                         }
-                        else if (PSpell->isNa() && sameFamily && PSpell->getID() == MSpell->getID())
+                        else if (PSpell->isNa() && MSpell->isNa() && sameFamily && PSpell->getID() == MSpell->getID())
                         {
                             redundant = true;
                         }
@@ -4684,32 +4915,94 @@ auto CPawnController::TowsAtStake() const -> bool
     return Staked() && Behavior(pawn::Behavior::Role).value_or(0) == static_cast<uint16>(pawn::Role::Tank);
 }
 
+auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
+{
+    if (!m_ReceiveMob.has_value() || !(*m_ReceiveMob == PTarget))
+    {
+        m_ReceiveMob = EntityId(PTarget);
+        m_Receive = {};
+    }
+    const auto& stake = m_Stake->at;
+    const auto home = nearPosition(stake, cardian::stake::kMobAhead, 0.0f);
+    const cardian::stake::ReceiveConfig config{
+        settings::get<float>("pawn.CAMP_RECEIVE_IMMEDIATE"),
+        settings::get<double>("pawn.CAMP_RECEIVE_SECONDS_PER_YALM"),
+        settings::get<double>("pawn.CAMP_RECEIVE_MAX_WAIT"),
+        settings::get<float>("pawn.CAMP_RECEIVE_PROGRESS"),
+        settings::get<double>("pawn.CAMP_RECEIVE_WINDOW"),
+    };
+    const bool joined = m_Receive.joined;
+    const auto result = m_Receive.update(std::chrono::duration<double>(m_Tick.time_since_epoch()).count(),
+                                        distance(PTarget->loc.p, home, true),
+                                        isWithinDistance(stake, PTarget->loc.p, settings::get<float>("pawn.HUNT_LEASH")),
+                                        PTarget->GetBattleTarget() == POwner, PTarget->PAI->IsEngaged(), config);
+    if (!joined && m_Receive.joined)
+    {
+        ShowInfoFmt("pawn: {} receives {} ({:.1f} y from landing point, {})", POwner->getName(), PTarget->getName(),
+                    distance(PTarget->loc.p, home, true), PTarget->GetBattleTarget() == POwner ? "has hate" : "closes to help");
+    }
+    return result;
+}
+
+auto CPawnController::ResumeCampReceive() -> bool
+{
+    // The engine sheathes beyond its 30-y sight range. A flyby can cross
+    // that line while still inside camp's admission radius; preserve its
+    // clock (or committed pursuit) through a weapon-away approach.
+    auto* PMob = TowsAtStake() && m_ReceiveMob.has_value() ? m_ReceiveMob->resolve<CMobEntity>() : nullptr;
+    if (PMob == nullptr || POwner->isDead() || m_Waiting || (!m_Receive.sampled && !m_Receive.joined) || !PMob->PAI->IsEngaged())
+    {
+        return false;
+    }
+    const auto facts = EngageFactsFor(PMob);
+    if (facts.distance <= cardian::rules::kDrawRange || !cardian::rules::worthWalkingIn(facts) ||
+        (!m_Receive.joined && !isWithinDistance(m_Stake->at, PMob->loc.p, settings::get<float>("pawn.HUNT_LEASH"))))
+    {
+        return false;
+    }
+    m_Approach = Approach{ EntityId(PMob), ApproachKind::Join };
+    Transition(Mode::Approach, fmt::format("keeps receiving {} with weapon away (beyond draw range)", PMob->getName()));
+    return true;
+}
+
 auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
 {
-    // On the stake means within a reach of it, since the mob stops a
-    // reach short of her wherever it comes from; drifted twice that, it
-    // is towed again
+    // The flag is the frontline. Aim just ahead of it, with a small
+    // arrival allowance; any intrusion behind it calls for a correction.
+    // The ordinary avoidance pass still has the final word on movement.
     const auto& stake      = m_Stake->at;
+    const auto  home       = nearPosition(stake, cardian::stake::kMobAhead, 0.0f);
     const float reach      = std::max(1.0f, PTarget->GetMeleeRange(POwner) - 0.3f);
-    const float tolerance  = reach + kStakeTolerance;
-    const float mobToStake = std::hypot(PTarget->loc.p.x - stake.x, PTarget->loc.p.z - stake.z);
+    const float mobToHome  = distance(PTarget->loc.p, home, true);
+    const float forward   = cardian::stake::forwardOf(stake.x, stake.z, stake.rotation, PTarget->loc.p.x, PTarget->loc.p.z);
     const bool  newMob     = !m_TowingMob.has_value() || !(*m_TowingMob == PTarget);
     const bool  wasTowing  = !newMob && m_Towing;
-    m_Towing              = cardian::stake::towing(newMob, m_Towing, mobToStake, tolerance);
+    const bool  wasClosing = !newMob && m_ClosingWithoutHate;
+    const bool  received   = CampReceive(PTarget) == cardian::stake::ReceiveAction::Join;
+    const bool  hasHate    = PTarget->GetBattleTarget() == POwner;
+    m_ClosingWithoutHate  = received && !hasHate;
+    // During receive, stay ready at the landing point. Once committed,
+    // melee a mob on somebody else; only its actual target can tow it.
+    // Regaining hate starts a fresh, tight settle rather than a drift band.
+    m_Towing              = !received || (hasHate && cardian::stake::frontlineTowing(newMob || wasClosing, m_Towing, mobToHome, forward));
     m_TowingMob           = EntityId(PTarget);
     m_HasSlot             = false;
+    if (newMob || wasTowing != m_Towing || wasClosing != m_ClosingWithoutHate)
+    {
+        m_TowRouteDirection = 0.0f;
+        m_SeatPathActive = false;
+    }
 
     position_t point;
     if (m_Towing)
     {
-        // The mob stops a reach from her: one reach past the stake on its
-        // line puts it on the stake. A mob on the stake has no line; the
-        // stake's own heading serves
-        const auto [x, z] = cardian::stake::towPoint(PTarget->loc.p.x, PTarget->loc.p.z, stake.x, stake.z, reach, stake.rotation);
+        // The tank can stand behind the line to receive an incoming pull;
+        // it is the monster's intended stopping point that stays in front.
+        const auto [x, z] = cardian::stake::towPoint(PTarget->loc.p.x, PTarget->loc.p.z, home.x, home.z, reach, stake.rotation);
         point             = position_t(x, stake.y, z, 0, 0);
         if (!wasTowing)
         {
-            ShowInfoFmt("pawn: {} tows {} to the stake ({:.1f} y out): waits at ({:.1f}, {:.1f}), a reach ({:.1f}) past it", POwner->getName(), PTarget->getName(), mobToStake, x, z, reach);
+            ShowInfoFmt("pawn: {} {} {} ahead of the camp frontline ({:.1f} y from landing point, {:.1f} y forward): waits at ({:.1f}, {:.1f})", POwner->getName(), hasHate ? "tows" : "waits to receive", PTarget->getName(), mobToHome, forward, x, z);
         }
     }
     else
@@ -4719,16 +5012,23 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
         position_t frame = PTarget->loc.p;
         frame.rotation   = stake.rotation;
         point            = nearPosition(frame, FightRadius(PTarget), std::numbers::pi_v<float> / 2.0f);
-        if (wasTowing)
+        if (wasTowing && !m_ClosingWithoutHate)
         {
-            ShowInfoFmt("pawn: {} has {} on the stake ({:.1f} y off it) and takes its 3 o'clock", POwner->getName(), PTarget->getName(), mobToStake);
+            ShowInfoFmt("pawn: {} has {} settled ahead of camp ({:.1f} y from landing point, {:.1f} y forward) and plans its 3 o'clock seat", POwner->getName(), PTarget->getName(), mobToHome, forward);
         }
     }
     const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
-    auto       intent = SeatIntent(PTarget, point, inReach);
+    auto       intent = SeatIntent(PTarget, point, inReach && !m_Towing, true);
     intent.target     = PTarget;
     intent.fighting   = true;
     intent.vet        = PTarget->PAI->IsEngaged() || !pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))).aggressive;
+    if (settings::get<bool>("pawn.FORMATION_DEBUG") && m_Tick - m_LastTowRouteDebug >= 1s)
+    {
+        m_LastTowRouteDebug = m_Tick;
+        ShowInfoFmt("pawn: {} camp tank {}: mob ({:.1f}, {:.1f}), tank ({:.1f}, {:.1f}), goal ({:.1f}, {:.1f}), move {}, step ({:.1f}, {:.1f})",
+                    POwner->getName(), !received ? "receive" : m_ClosingWithoutHate ? "melee" : m_Towing ? "tow" : "seat", PTarget->loc.p.x, PTarget->loc.p.z,
+                    POwner->loc.p.x, POwner->loc.p.z, point.x, point.z, magic_enum::enum_name(intent.kind), intent.point.x, intent.point.z);
+    }
     return intent;
 }
 
@@ -4852,7 +5152,7 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
     return seat;
 }
 
-auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach) -> Intent
+auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute) -> Intent
 {
     using cardian::formation::Circle;
     using cardian::formation::seatName;
@@ -4897,7 +5197,7 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
 
     // A path already on the way stands until the seat has drifted a yalm
     // from where it was planned against
-    if (PPathFind->IsFollowingPath() && distance(seat, m_SeatDestination) <= 1.0f)
+    if (m_SeatPathActive && PPathFind->IsFollowingPath() && distance(seat, m_SeatDestination) <= 1.0f)
     {
         intent.kind = Intent::Kind::Keep;
         return intent;
@@ -4907,7 +5207,13 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     // there crossing the mob goes by the flank on her side first
     position_t   goal = seat;
     const Circle body{ PTarget->loc.p.x, PTarget->loc.p.z, PTarget->modelHitboxSize + 0.8f };
-    if (segmentCrosses(body, me.x, me.z, seat.x, seat.z))
+    if (campRoute)
+    {
+        const auto [x, z] = cardian::stake::routePoint(body.x, body.z, body.radius, me.x, me.z, seat.x, seat.z, m_TowRouteDirection);
+        goal.x = x;
+        goal.z = z;
+    }
+    else if (segmentCrosses(body, me.x, me.z, seat.x, seat.z))
     {
         const auto  right = SeatPoint(PTarget, pawn::Slot::FlankRight);
         const auto  left  = SeatPoint(PTarget, pawn::Slot::FlankLeft);
@@ -4925,7 +5231,10 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     }
 
     m_SeatDestination = seat;
-    intent.kind       = Intent::Kind::Path;
+    // The seat can be far away while the next detour step is under the
+    // planner's minimum distance. Judge the waypoint, not just the seat,
+    // or PathAround rejects the same short step on every tick.
+    intent.kind       = IsShortHop(goal, 0.0f) ? Intent::Kind::Hop : Intent::Kind::Path;
     intent.point      = goal;
     intent.arrive     = 0.3f;
     intent.tolerance  = 0.0f;
@@ -5098,9 +5407,27 @@ auto CPawnController::DeclumpIntent(const CBattleEntity* PTarget) const -> std::
     return std::nullopt;
 }
 
-auto CPawnController::PathToward(const position_t& point, const float closeTo) -> bool
+auto CPawnController::PathToward(const position_t& point, const float closeTo, const position_t* rearBoundary) -> bool
 {
     auto* PPathFind = POwner->PAI->PathFind.get();
+
+    if (rearBoundary != nullptr)
+    {
+        // Use the validated waypoints themselves: PathAround could choose a
+        // different route through the forward half. Courtesy can shorten the
+        // step, but cannot turn an AoE reposition into a frontline crossing.
+        auto route = RearCampRoute(CourtesyStep(point), *rearBoundary);
+        if (!route.has_value())
+        {
+            route = RearCampRoute(point, *rearBoundary);
+        }
+        if (!route.has_value() || route->empty())
+        {
+            PPathFind->Clear();
+            return false;
+        }
+        return PPathFind->PathThrough(std::move(*route), PATHFLAG_RUN);
+    }
 
     // The courtesy: where the walk would cut through the player, this
     // tick's step is planned round them instead (CourtesyStep); the

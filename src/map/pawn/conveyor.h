@@ -98,6 +98,7 @@ namespace pawn::tactics
             SpellID     spell{};
             uint32      target = 0;
             std::string why;
+            bool        approach = false; // a row may walk into range
         };
         auto assignment(uint32 caster, bool engaged, const Scope& scope) const -> std::optional<Assignment>;
 

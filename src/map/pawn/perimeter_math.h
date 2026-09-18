@@ -138,6 +138,23 @@ namespace cardian::perimeter
         return std::clamp(width / 3.0f, 0.5f, 2.5f);
     }
 
+    // Camp positions are compared within the rear half, rather than making
+    // every AoE radius impassable. Cure reach matters most; ordinary exposure
+    // can be accepted to keep a cramped backline. These costs are in roughly
+    // yalm-sized units, with a walking cost and improvement margin below.
+    inline auto campCost(const float forward, const float sideways, const float rearDepth, const float toMob, const float ring, const float toTank, const float castRange) -> float
+    {
+        const float alignment = 0.45f * std::abs(sideways) + 0.35f * std::abs(-forward - rearDepth) + 3.0f * std::max(0.0f, forward);
+        const float exposure  = 1.5f * std::clamp(ring - toMob, 0.0f, 8.0f);
+        const float healing   = 20.0f * std::max(0.0f, toTank - castRange);
+        return alignment + exposure + healing;
+    }
+
+    inline auto worthwhileCampMove(const float currentCost, const float destinationCost, const float walk) -> bool
+    {
+        return destinationCost + 0.25f * walk + 1.5f < currentCost;
+    }
+
     // The safe spots are a crescent: outside the ring round the mob, inside
     // cast range of the tank. The nearest one to where she stands -- a step
     // straight out from the mob when that lands in range, else round the

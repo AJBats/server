@@ -86,17 +86,18 @@ namespace cardian::tactics
     constexpr std::size_t kNoPick = static_cast<std::size_t>(-1);
 
     // Each option against the missing HP; the pick is the cheapest tier
-    // that covers it, else the one that heals most. Nothing missing, no pick
-    inline auto pickCure(std::vector<CureOption>& options, const int32 missing) -> std::size_t
+    // that covers it, else the one that heals most. A row may explicitly
+    // request a cure with nothing missing; then the cheapest tier wins.
+    inline auto pickCure(std::vector<CureOption>& options, const int32 missing, const bool requested = false) -> std::size_t
     {
         const int32 gap = std::max(0, missing);
         for (auto& o : options)
         {
             o.lands  = std::clamp(o.heals, 0, gap);
             o.over   = std::max(0, o.heals - gap);
-            o.covers = gap > 0 && o.heals >= gap;
+            o.covers = (gap > 0 || requested) && o.heals >= gap;
         }
-        if (gap == 0)
+        if (gap == 0 && !requested)
         {
             return kNoPick;
         }

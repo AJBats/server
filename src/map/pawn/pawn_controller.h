@@ -26,6 +26,7 @@
 #include "pawn_gambits.h"
 #include "pawn_rules.h"
 #include "perimeter_math.h"
+#include "stake_math.h"
 
 #include "ai/controllers/player_controller.h"
 
@@ -427,6 +428,7 @@ private:
         bool                 vet        = true;    // false: the party waved the company through
         bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
         bool                 seat       = false;   // a seat's path: failing it drops the seat
+        std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
     };
 
     // The tick's danger map, scanned once before the movers run so every
@@ -447,6 +449,8 @@ private:
     // what became of the mob (AttendExitReason).
     auto ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach;
     auto AttendIntent(CMobEntity* PMob, const Place* place) -> Intent;
+    auto CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent;
+    auto RearCampRoute(const position_t& point, const position_t& camp) const -> std::optional<std::vector<pathpoint_t>>;
     auto CastRange() const -> float;
     void Attend(CBattleEntity* PTarget, std::string_view how);
     auto AttendExitReason() -> std::string;
@@ -464,13 +468,16 @@ private:
     auto FormationIntent(const Place& place, const CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
 
     // The tank's tow at a stake (RESEARCH §12.16): a cardian with the Tank
-    // role, staked, never closes on the party's mob -- her rows Provoke it
-    // from where she waits. Waiting, she stands one mob's reach past the
-    // stake on the line from the mob through it (stake_math.h towPoint),
-    // so the mob chasing her stops on the stake; once it is there she
+    // role, staked, receives the party's mob while her rows Provoke it.
+    // Arrival or a stalled pull's grace period releases her to melee;
+    // with hate she tows. Waiting, she stands one mob's reach past its
+    // landing point, just ahead of the flag (stake_math.h towPoint),
+    // so the mob stops in front of camp; once it is there she
     // takes the stake's 3 o'clock on the mob, at her reach, and it turns
     // to face her without moving. Both through the seat mover.
     auto TowsAtStake() const -> bool;
+    auto CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
+    auto ResumeCampReceive() -> bool;
     auto TowIntent(const CBattleEntity* PTarget) -> Intent;
 
     // The courtesy (local_planner.h): this tick's step toward `point`,
@@ -519,7 +526,7 @@ private:
     auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t; // by the live frame
-    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side
+    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side
 
     // The beat: how long she takes to act on a decision -- to set off on
     // a hunt, to draw with the party, to close when the hold ends, to step
@@ -531,7 +538,7 @@ private:
     // Navmesh-path toward a point, healing off-mesh endpoints: an off-mesh
     // destination is snapped to the nearest valid point, and an off-mesh
     // owner is snapped back onto the mesh. Never falls back to raw stepping.
-    auto PathToward(const position_t& point, float closeTo) -> bool;
+    auto PathToward(const position_t& point, float closeTo, const position_t* rearBoundary = nullptr) -> bool;
 
     void FaceTarget(EntityId target) const;
 
@@ -716,12 +723,16 @@ private:
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
     // The stake the orders pushed, and the tank's tow: she is
-    // towing the mob to it until it is within a reach and kStakeTolerance
-    // of it, and tows again once it has drifted twice that far
+    // towing the mob just ahead of its frontline, within stake::kSettle,
+    // and tows again at twice that distance or any intrusion behind the line
     std::optional<pawn::Stake> m_Stake;
     bool                       m_Towing = false;
+    float                      m_TowRouteDirection = 0.0f;
+    timer::time_point          m_LastTowRouteDebug{};
     std::optional<EntityId>     m_TowingMob;
-    static constexpr float     kStakeTolerance = 1.5f;
+    std::optional<EntityId>     m_ReceiveMob;
+    cardian::stake::Receive     m_Receive;
+    bool                       m_ClosingWithoutHate = false;
 
     // NoteForSaving's book: what she last had written, and when
     bool              m_SaveSeeded    = false;
@@ -791,6 +802,7 @@ private:
     };
     FightSeat  m_FightSeat;
     bool       m_SeatVia = false;
+    bool       m_SeatPathActive = false; // only the seat mover owns this path
     position_t m_SeatDestination{};
 
     // The beat (pawn-modes step 4): one pending act, due at a time. A

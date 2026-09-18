@@ -325,21 +325,81 @@ namespace pawn
         }
     }
 
+    auto CGambits::RequestValid(const std::string& rowId, const uint32 target, const uint16 spellId) -> bool
+    {
+        if (!m_masterOn)
+        {
+            return false;
+        }
+        const auto row = std::find_if(m_gambits.begin(), m_gambits.end(), [&](const auto& r) { return r.gambit.identifier == rowId; });
+        if (row == m_gambits.end() || !row->enabled || IsBehavior(row->gambit))
+        {
+            return false;
+        }
+        const auto& g = row->gambit;
+        const auto action = std::find_if(g.actions.begin(), g.actions.end(), [](const auto& a) { return a.reaction == G_REACTION::MA; });
+        if (action == g.actions.end() ||
+            (action->select == G_SELECT::SPECIFIC && action->select_arg != spellId))
+        {
+            return false;
+        }
+        for (auto* candidate : Candidates(g.target_selector))
+        {
+            auto* castTarget = candidate;
+            if (g.target_selector == G_TARGET::TRIGGER_SELF_ACTION_TARGET)
+            {
+                castTarget = FightTarget();
+            }
+            else if (g.target_selector == G_TARGET::TRIGGER_TARGET_ACTION_SELF)
+            {
+                castTarget = POwner;
+            }
+            if (action->select == G_SELECT::ENTRUSTED)
+            {
+                castTarget = m_PController->GetLivePlayer();
+            }
+            if (const auto* spell = spellId != 0 ? spell::GetSpell(static_cast<SpellID>(spellId)) : nullptr;
+                spell != nullptr && spell->getValidTarget() == TARGET_SELF)
+            {
+                castTarget = POwner;
+            }
+            if (castTarget == nullptr || castTarget->id != target)
+            {
+                continue;
+            }
+            bool matches = true;
+            for (std::size_t group = 0; group < g.predicate_groups.size(); ++group)
+            {
+                if (!CheckTrigger(candidate, g, group, true))
+                {
+                    matches = false;
+                    break;
+                }
+            }
+            if (matches)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     auto CGambits::Candidates(const G_TARGET selector) -> std::vector<CBattleEntity*>
     {
         std::vector<CBattleEntity*> out;
 
-        auto nearbyAlive = [this](CBattleEntity* PMember)
+        auto partyAlive = [this](CBattleEntity* PMember)
         {
-            return PMember != nullptr && PMember->isAlive() && PMember->loc.zone == POwner->loc.zone &&
-                   distance(POwner->loc.p, PMember->loc.p) <= 15.0f;
+            // Selection describes the row's target, not its casting range.
+            // The requested action handles reach and walking into range.
+            return PMember != nullptr && PMember->isAlive() && PMember->loc.zone == POwner->loc.zone;
         };
 
         auto collect = [&](auto&& accept)
         {
             POwner->ForParty([&](CBattleEntity* PMember)
                              {
-                                 if (nearbyAlive(PMember) && accept(PMember))
+                                 if (partyAlive(PMember) && accept(PMember))
                                  {
                                      out.push_back(PMember);
                                  }
@@ -388,8 +448,7 @@ namespace pawn
             {
                 POwner->ForParty([&](CBattleEntity* PMember)
                                  {
-                                     if (PMember != nullptr && PMember->isDead() && PMember->loc.zone == POwner->loc.zone &&
-                                         distance(POwner->loc.p, PMember->loc.p) <= 20.0f)
+                                     if (PMember != nullptr && PMember->isDead() && PMember->loc.zone == POwner->loc.zone)
                                      {
                                          out.push_back(PMember);
                                      }
@@ -512,7 +571,7 @@ namespace pawn
         }
     } // namespace
 
-    auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex) -> bool
+    auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex, const bool pending) -> bool
     {
         TracyZoneScoped;
 
@@ -565,6 +624,11 @@ namespace pawn
                     break;
                 case G_CONDITION::TIMER:
                 {
+                    if (pending)
+                    {
+                        results.push_back(true); // this request already passed its timer
+                        break;
+                    }
                     if (arg == 0)
                     {
                         results.push_back(true);
