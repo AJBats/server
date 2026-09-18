@@ -308,17 +308,21 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_FightSeat     = {};
         m_SeatVia       = false;
         m_Towing        = false;
+        m_TowingMob.reset();
         m_HoldForPlayer = false;
     }
     if (from == Mode::Approach && to != Mode::Approach)
     {
         m_Approach.reset();
+        m_Towing = false;
+        m_TowingMob.reset();
     }
     if (from == Mode::Attend && to != Mode::Attend)
     {
         m_Attended.reset();
-        m_SaidNoSpotFor = 0;
-        m_AttendVerdict = 0;
+        m_AttendedOrdered = false;
+        m_SaidNoSpotFor    = 0;
+        m_AttendVerdict    = 0;
     }
     // A pending act belongs to the mode it was scheduled in; only the
     // player's order outlives a change
@@ -329,6 +333,28 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
 
     m_Mode = to;
     ShowInfoFmt("pawn: {} {} -> {}: {}", POwner->getName(), modeName(from), modeName(to), why);
+}
+
+void CPawnController::PlayerZoning()
+{
+    // Cancel delayed joins/orders before changing mode. Otherwise an Order,
+    // which normally survives a transition, could restart the old fight.
+    m_Pending.reset();
+    m_WsAfterBoost.reset();
+    m_Approach.reset();
+    m_HoldForPlayer = false;
+    if (POwner->PAI->PathFind != nullptr)
+    {
+        POwner->PAI->PathFind->Clear();
+    }
+    if (POwner->PAI->IsEngaged())
+    {
+        POwner->PAI->Internal_Disengage();
+    }
+    if (m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend)
+    {
+        Transition(IdleMode(), "the player is zoning; stands down");
+    }
 }
 
 auto CPawnController::ServerExitReason() -> std::string
@@ -960,7 +986,8 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
     const bool was = m_Stake.has_value();
     m_Stake        = std::move(stake);
     // A new place: her seats aim afresh, and a spot kept after a fight goes
-    m_Towing         = false;
+    m_Towing = false;
+    m_TowingMob.reset();
     m_FollowHeld.has = false;
     m_LeadHeld.has   = false;
     if (was != m_Stake.has_value())
@@ -1458,6 +1485,7 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         {
             POwner->PAI->Internal_Disengage();
         }
+        m_AttendedOrdered = kind == ApproachKind::Order;
         Attend(PTarget, how);
         return true;
     }
@@ -1628,12 +1656,11 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     const float       toMob     = distance(me, mob, true);
     const float       toTank    = distance(me, tank, true);
     // The aim sits inside the crescent's edges, past the walker's stop
-    // distance so arriving short never asks again -- as far in as the
-    // crescent is wide: a mob standing on its target leaves it thin, and
-    // a thin crescent is aimed at its middle, never called empty
+    // distance so arriving short stays safe. Thin crescents keep usable
+    // width between the padded edges and use a tighter arrival tolerance.
     constexpr float kInset = 2.5f;
     const float     width  = mobToTank + range - ring; // along the ray from the mob through the tank
-    const float     inset  = std::min(kInset, std::max(0.5f, width / 2.0f));
+    const float     inset  = cardian::perimeter::crescentInset(width);
 
     if (toMob >= ring && toTank <= range)
     {
@@ -1649,8 +1676,10 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     const position_t seed     = backline.value_or(me);
     if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, seed.x, seed.z); spot.has_value())
     {
-        intent.kind  = Intent::Kind::Path;
-        intent.point = position_t(spot->first, me.y, spot->second, 0, me.rotation);
+        intent.kind      = Intent::Kind::Path;
+        intent.point     = position_t(spot->first, me.y, spot->second, 0, me.rotation);
+        intent.arrive    = std::min(intent.arrive, inset / 2.0f);
+        intent.tolerance = std::min(intent.tolerance, inset / 2.0f);
         note(4, fmt::format("out of the crescent: walks to ({:.1f}, {:.1f}){} (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f}; width {:.1f}, inset {:.1f})",
                             spot->first, spot->second, backline.has_value() ? fmt::format(", the spot nearest the backline ({:.1f}, {:.1f})", backline->x, backline->z) : "",
                             toMob, ring, PTank->getName(), toTank, range, width, inset));
@@ -1673,15 +1702,15 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
             move[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(move[0])));
         }
         const float moveRange = (byTank ? reach.target : reach.mob) - settings::get<float>("pawn.PERIMETER_MARGIN");
-        ShowInfoFmt("pawn: {}: {} reaches {:.0f} y round {}; no spot clears it within her cure range ({:.0f} y): she stays in", POwner->getName(), move, moveRange,
+        ShowInfoFmt("pawn: {}: {} reaches {:.0f} y round {}; no spot with walking clearance within her cure range ({:.0f} y): she stays in", POwner->getName(), move, moveRange,
                     byTank ? PTank->getName() : PMob->getName(), range);
-        pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), fmt::format("{} reaches {:.0f} yalms; no spot clears it that I can still cure from, so I'm staying in.", move, moveRange));
+        pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), fmt::format("{} reaches {:.0f} yalms; I can't safely stay clear and keep curing, so I'm staying in.", move, moveRange));
     }
     if (toTank > range)
     {
         // Straight back the way she faces the mob when the tank stands on it
         const float fallback = 2.0f * std::numbers::pi_v<float> - rotationToRadian(me.rotation) + std::numbers::pi_v<float>;
-        const auto [x, z]    = cardian::perimeter::atRange(mob.x, mob.z, tank.x, tank.z, mobToTank + range - inset, fallback);
+        const auto [x, z]    = cardian::perimeter::atRange(mob.x, mob.z, tank.x, tank.z, mobToTank + range - kInset, fallback);
         intent.kind          = Intent::Kind::Path;
         intent.point         = position_t(x, me.y, z, 0, me.rotation);
         note(5, fmt::format("crescent empty (width {:.1f}): walks in to cure range at ({:.1f}, {:.1f}) (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y)", width, x, z, toMob, ring, PTank->getName(), toTank));
@@ -2140,7 +2169,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // The party's place gone means stand down: the player left the zone
     // with no stake holding her here. Their weapon going down does not
     // call the party off a fight that has started -- it runs until the
-    // mob dies or drifts past the leash -- but it does end a hold
+    // mob dies or an order ends it -- but it does end a hold
     // (below), which the party only drew for.
     if (place == nullptr && !m_Waiting && !m_World)
     {
@@ -2170,7 +2199,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // target switched, the hold follows it when the rules let her draw on
     // it outright, and holds on the new one until they strike or it comes.
     // A fight that has begun is not called off by a switch -- it runs until
-    // the mob dies or drifts past the leash, and only the chord's engage
+    // the mob dies or the player zones, and only the chord's engage
     // moves the party (M3.9; the user, 2026-09-17)
     if (m_HoldForPlayer && PPlayer != nullptr && PPlayer->PAI->IsEngaged())
     {
@@ -2232,6 +2261,12 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // The hold ends the moment the player has struck or the mob has come,
     // and says which: without it, a cardian closing on her own is a
     // mystery in the log
+    if (m_HoldForPlayer && PPlayer == nullptr)
+    {
+        // Also covers an unexpected loss of the player without SendToZone.
+        PlayerZoning();
+        co_return;
+    }
     if (m_HoldForPlayer && PPlayer != nullptr)
     {
         const bool struck = playerHasEnmity(PPlayer, PTarget);
@@ -2714,7 +2749,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // of us -- through the one door (Draw): the rules, then the draw, or
     // the walk in when it is farther than she may draw from. A walk in
     // already under way passed the door once; the approach below draws.
-    const auto     party        = PartyEngageTarget(PPlayer, place != nullptr ? place->position() : POwner->loc.p);
+    auto party = PartyEngageTarget(PPlayer, place != nullptr ? place->position() : POwner->loc.p);
+    // Like a drawn fighter, she keeps an accepted fight until it ends or
+    // an order changes it. The leash chooses new fights, not this one's
+    // continued attendance. PlayerZoning explicitly ends the commitment.
+    if (AttendedEngaged() || (m_AttendedOrdered && AttendedTarget() != nullptr))
+    {
+        party = { AttendedTarget(), "the fight she is attending" };
+    }
     CBattleEntity* PPartyTarget = party.target;
     const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
     if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget) && !(Attending(PPartyTarget) && IsPerimeterMage()))
@@ -2769,10 +2811,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             // At a place that never moves, the spot she attended from is
             // her seat until the place is set again: no tightening up
             // between fights (the user, 2026-09-17)
-            if (place != nullptr && place->fixed() && m_FollowHeld.has)
+            auto& held = FormationSlot() == pawn::Slot::Lead ? m_LeadHeld : m_FollowHeld;
+            if (place != nullptr && place->fixed() && held.has)
             {
-                ShowInfoFmt("pawn: {} keeps her spot at ({:.1f}, {:.1f}) after the fight ({:.1f} y from her seat)", POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, distance(POwner->loc.p, m_FollowHeld.point, true));
-                m_FollowHeld.point = POwner->loc.p;
+                ShowInfoFmt("pawn: {} keeps her spot at ({:.1f}, {:.1f}) after the fight ({:.1f} y from her seat)", POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, distance(POwner->loc.p, held.point, true));
+                held.point = POwner->loc.p;
             }
             Transition(IdleMode(), AttendExitReason());
         }
@@ -2908,6 +2951,20 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
 auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent
 {
+    // A quiet mage keeps her last spot, even far from camp. Incoming aggro
+    // outside the leash sends her home instead: release that distant spot
+    // and let ordinary formation movement and target acquisition take over.
+    auto& held = FormationSlot() == pawn::Slot::Lead ? m_LeadHeld : m_FollowHeld;
+    const float leash = settings::get<float>("pawn.HUNT_LEASH");
+    if (place.fixed() && held.has && !isWithinDistance(place.position(), POwner->loc.p, leash) && !isWithinDistance(place.position(), held.point, leash))
+    {
+        if (const auto* PAttacker = SelfDefenceTarget(); PAttacker != nullptr)
+        {
+            held.has = false;
+            ShowInfoFmt("pawn: {} leaves her kept spot and returns to camp ({} is on her outside the leash)", POwner->getName(), PAttacker->getName());
+        }
+    }
+
     // Where this pawn belongs: the lead holds a point ahead of the place,
     // everyone else a seat on the ring around it. FormationPoint sets
     // m_HasSlot for the avoidance pass.
@@ -3446,6 +3503,10 @@ auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer, const position_t& 
             return;
         }
         auto* PVictim = PMob->GetBattleTarget();
+        if (const auto* PChar = dynamic_cast<const CCharEntity*>(PVictim); PChar != nullptr && PChar->requestedZoneChange)
+        {
+            return; // the departing player's old aggro is not a new fight here
+        }
         if (PVictim != nullptr && (PVictim == POwner || (PPawn->PParty != nullptr && PVictim->PParty == PPawn->PParty)))
         {
             answer = { PMob, fmt::format("answering it on {}", PVictim->getName()) };
@@ -3824,7 +3885,7 @@ auto CPawnController::GetLivePlayer() const -> CCharEntity*
         // A Mog House stay keeps the player in the zone, parked at its origin
         // and out of sight: not someone to follow, fight beside or rest with
         if (auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-            PChar != nullptr && PChar->PSession != nullptr && PChar->loc.zone == POwner->loc.zone && !PChar->inMogHouse())
+            PChar != nullptr && PChar->PSession != nullptr && PChar->loc.zone == POwner->loc.zone && !PChar->inMogHouse() && !PChar->requestedZoneChange)
         {
             return PChar;
         }
@@ -4632,15 +4693,11 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
     const float reach      = std::max(1.0f, PTarget->GetMeleeRange(POwner) - 0.3f);
     const float tolerance  = reach + kStakeTolerance;
     const float mobToStake = std::hypot(PTarget->loc.p.x - stake.x, PTarget->loc.p.z - stake.z);
-    const bool  wasTowing  = m_Towing;
-    if (!m_Towing && mobToStake > 2.0f * tolerance)
-    {
-        m_Towing = true;
-    }
-    else if (m_Towing && mobToStake <= tolerance)
-    {
-        m_Towing = false;
-    }
+    const bool  newMob     = !m_TowingMob.has_value() || !(*m_TowingMob == PTarget);
+    const bool  wasTowing  = !newMob && m_Towing;
+    m_Towing              = cardian::stake::towing(newMob, m_Towing, mobToStake, tolerance);
+    m_TowingMob           = EntityId(PTarget);
+    m_HasSlot             = false;
 
     position_t point;
     if (m_Towing)
@@ -4648,7 +4705,7 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
         // The mob stops a reach from her: one reach past the stake on its
         // line puts it on the stake. A mob on the stake has no line; the
         // stake's own heading serves
-        const auto [x, z] = cardian::stake::towPoint(PTarget->loc.p.x, PTarget->loc.p.z, stake.x, stake.z, reach, rotationToRadian(stake.rotation));
+        const auto [x, z] = cardian::stake::towPoint(PTarget->loc.p.x, PTarget->loc.p.z, stake.x, stake.z, reach, stake.rotation);
         point             = position_t(x, stake.y, z, 0, 0);
         if (!wasTowing)
         {
@@ -4668,7 +4725,11 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
         }
     }
     const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
-    return SeatIntent(PTarget, point, inReach);
+    auto       intent = SeatIntent(PTarget, point, inReach);
+    intent.target     = PTarget;
+    intent.fighting   = true;
+    intent.vet        = PTarget->PAI->IsEngaged() || !pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))).aggressive;
+    return intent;
 }
 
 auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>

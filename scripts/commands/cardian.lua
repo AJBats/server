@@ -42,10 +42,11 @@
 --       peek <name>                      one of the shout's responders: jobs, nation, rank, affinity, gear
 --       invite <name> [kind] [log]       the party invite, sent for you; she answers it herself
 --       orders                           the party's orders: st <strategy> <retreat> <min> <max> <pull>
---                                        <aggressive> <links> <name;name>
+--                                        <aggressive> <links> <staked> <stake_zone> <name;name>
+--       stake [clear|toggle]             set/move, clear, or toggle camp using server state
 --       hunt <rule> <n>                  a hunt rule: min|max (check 0 Too Weak .. 7 Incredibly Tough),
 --                                        pull (0 nearest, 1 easiest, 2 toughest), aggressive|links (0/1)
---       strategy next|<n>                the party strategy (0 Off, 1 Roam); every cardian follows
+--       strategy next|<n>                the standing order (0 Hold, 1 Pull); independent of camp
 --       retreat [on|off]                 the "on me" switch, no arg toggles: disengage, engage nobody,
 --                                        avoid nothing, hunting pauses, until it clears
 --       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
@@ -756,7 +757,7 @@ local function sendVocab(player, name)
     reply(player, '#cd gv.e ' .. name)
 end
 
--- The party's orders, one line (Link protocol 2):
+-- The party's orders, one line (Link protocol 3):
 -- 'st <strategy> <retreat> <min> <max> <pull> <aggressive> <links> <staked> <stake zone> <name;name...>'
 local function sendOrders(player)
     local o = player:cardianOrders()
@@ -859,8 +860,17 @@ commandObj.onTrigger = function(player, line)
         end
         sendOrders(player)
     elseif verb == 'stake' then
-        -- 'stake' sets or moves it here, facing his way; 'stake clear' dissolves it
-        local err = args[2] == 'clear' and player:cardianStakeClear() or player:cardianStake()
+        -- The server owns the toggle decision, including two presses before
+        -- the first reply reaches the addon. Bare stake still sets/moves it.
+        local action = args[2]
+        local err
+        if args[3] ~= nil or (action ~= nil and action ~= 'clear' and action ~= 'toggle') then
+            err = 'usage: stake [clear|toggle]'
+        elseif action == 'clear' or (action == 'toggle' and player:cardianOrders().staked) then
+            err = player:cardianStakeClear()
+        else
+            err = player:cardianStake()
+        end
         if err == '' then
             reply(player, '#cd ok stake')
         else

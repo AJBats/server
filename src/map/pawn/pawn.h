@@ -187,10 +187,10 @@ namespace pawn
 
     // The party strategy channel (M3.9): one set of orders per player, read
     // by every cardian of theirs and every wild cardian in their party.
-    // Strategy 0 = Off, 1 = Roam (the hunters pull). Retreat is the "on me"
+    // Strategy 0 = Hold, 1 = Pull (the hunters pull). Retreat is the "on me"
     // switch over it: nobody engages, nobody avoids aggro, hunting pauses,
     // until it clears. Orders live in memory; a map restart starts everyone
-    // at Off.
+    // at Hold.
     constexpr uint16 kStrategyCount = 2;
     // Whose orders she follows: her summoner, or for a wild cardian the real
     // player in her party; 0 for nobody's
@@ -204,11 +204,10 @@ namespace pawn
     void setRetreat(CCharEntity* POwner, bool on);
 
     // The stake (RESEARCH §12.16): a place with a heading, one per player,
-    // set where he stands and facing his way, held until dissolved. With
-    // the plan on (strategy 1) the party keeps to it instead of to him,
-    // and the hunters do not pull; with the plan off they follow him as if
-    // there were none. Dissolving it turns the plan off, so a Roam left on
-    // never sends the hunters off by surprise. It dissolves by command,
+    // set where he stands and facing his way, held until dissolved. The
+    // camp holds independently of Hold/Pull; Retreat suspends it. Every
+    // set, move or break selects Hold, so changing camp never starts a
+    // fight. Pulling from camp is deferred. It dissolves by command,
     // when the whole party has left its zone (stakeSweep, from the zone
     // tick) and at his sign-out. In memory, like the strategy.
     struct Stake

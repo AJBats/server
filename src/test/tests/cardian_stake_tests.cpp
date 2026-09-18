@@ -48,9 +48,49 @@ TEST_CASE("Stake: the tow point is a reach past the stake, away from the mob", "
 
 TEST_CASE("Stake: a mob on the stake has no line, so the tow point takes the fallback bearing", "[cardian][stake]")
 {
-    const auto [x, z] = towPoint(5.0f, 5.0f, 5.0f, 5.0f, 3.0f, std::numbers::pi_v<float> / 2.0f);
+    const auto [x, z] = towPoint(5.0f, 5.0f, 5.0f, 5.0f, 3.0f, 64);
     CHECK_THAT(x, WithinAbs(5.0f, 1e-3));
-    CHECK_THAT(z, WithinAbs(8.0f, 1e-3));
+    CHECK_THAT(z, WithinAbs(2.0f, 1e-3));
+}
+
+TEST_CASE("Stake: only a settled monster receives the tow drift band", "[cardian][stake]")
+{
+    CHECK(towing(true, false, 8.0f, 5.2f));
+    CHECK(towing(false, true, 8.0f, 5.2f));
+    CHECK_FALSE(towing(false, true, 5.2f, 5.2f));
+    CHECK_FALSE(towing(false, false, 8.0f, 5.2f));
+    CHECK(towing(false, false, 10.5f, 5.2f));
+    CHECK_FALSE(towing(true, true, 3.0f, 5.2f));
+}
+
+TEST_CASE("Stake: distant waiting bodies do not establish the owner's departure", "[cardian][stake]")
+{
+    Census loading(30);
+    loading.observe(31, false); // an owned cardian waiting elsewhere
+    CHECK_FALSE(loading.dissolves());
+    loading.observe(31, true); // owner actually arrived elsewhere
+    CHECK(loading.dissolves());
+
+    Census occupied(30);
+    occupied.observe(31, true);
+    occupied.observe(30, false); // somebody still keeps the camp
+    CHECK_FALSE(occupied.dissolves());
+
+    Census ownerHere(30);
+    ownerHere.observe(30, true);
+    ownerHere.observe(31, false);
+    CHECK_FALSE(ownerHere.dissolves());
+    CHECK_FALSE(Census(30).dissolves());
+}
+
+TEST_CASE("Stake: tow point keeps camp between the tank and incoming mob", "[cardian][stake]")
+{
+    for (const auto mob : { std::pair{ 10.f, 0.f }, std::pair{ -3.f, 5.f }, std::pair{ 2.f, -7.f } })
+    {
+        const auto p = towPoint(mob.first, mob.second, 0, 0, 3, 0);
+        CHECK_THAT(std::hypot(p.first, p.second), WithinAbs(3.f, 1e-4));
+        CHECK_THAT(std::hypot(p.first - mob.first, p.second - mob.second), WithinAbs(std::hypot(mob.first, mob.second) + 3, 1e-4));
+    }
 }
 
 TEST_CASE("Stake: it dissolves only once the party is seen elsewhere and nobody is left in its zone", "[cardian][stake]")

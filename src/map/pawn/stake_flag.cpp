@@ -25,10 +25,12 @@
 
 #include "entities/char_entity.h"
 #include "entities/npc_entity.h"
+#include "instance.h"
 #include "lua/luautils.h"
 #include "packets/basic.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
+#include "zone_instance.h"
 
 #include <unordered_map>
 
@@ -51,7 +53,7 @@ namespace cardian::stakeflag
         // Owner charid -> the flag's entity id. A dynamic entity is written to
         // no table and survives no restart, so this map is the only handle we
         // have on a banner once it stands.
-        std::unordered_map<uint32, uint32> flagByOwner;
+        std::unordered_map<uint32, EntityId> flagByOwner;
 
         // A player of no nation (Jeuno and above) flies the beastmen's, which is
         // at least a flag. What he *should* fly is a design question the trial
@@ -74,12 +76,26 @@ namespace cardian::stakeflag
         // A stake that moved takes its flag with it
         dissolve(POwner->id);
 
+        if (dynamic_cast<CZoneInstance*>(POwner->loc.zone) != nullptr && POwner->PInstance == nullptr)
+        {
+            ShowWarningFmt("stake flag: {} has no instance for the banner", POwner->getName());
+            return;
+        }
+        const auto* entities = POwner->PInstance != nullptr ? static_cast<const CZoneEntities*>(POwner->PInstance) : POwner->loc.zone->GetZoneEntities();
+        // Dynamic IDs span 0x700..0x8ff; upstream allocation logs exhaustion
+        // but still returns an invalid 0x900 entity instead of nullptr.
+        if (entities->GetUsedDynamicTargIDsCount() >= 0x200)
+        {
+            ShowWarningFmt("stake flag: no dynamic IDs left for {}'s banner", POwner->getName());
+            return;
+        }
+
         const uint16 banner = bannerFor(POwner);
 
         // A decoration, made the way the game's own seasonal props are made
         // (scripts/events/egg_hunt_egg-stravaganza.lua): nameless, off widescan,
         // never targetable, and its targid released the moment it disappears.
-        auto* PFlag = luautils::GenerateDynamicEntity(POwner->loc.zone, nullptr,
+        auto* PFlag = luautils::GenerateDynamicEntity(POwner->loc.zone, POwner->PInstance,
                                                       lua.create_table_with(
                                                           "name", "     ",
                                                           "look", banner,
@@ -97,7 +113,7 @@ namespace cardian::stakeflag
             return;
         }
 
-        flagByOwner[POwner->id] = PFlag->id;
+        flagByOwner[POwner->id] = EntityId(PFlag);
         ShowInfoFmt("stake flag: {}'s banner (model {}) stands on the stake at ({:.1f}, {:.1f}, {:.1f}), facing {} deg",
                     POwner->getName(), banner, at.x, at.y, at.z, at.rotation * 360 / 256);
     }
@@ -119,7 +135,7 @@ namespace cardian::stakeflag
         //
         // A flag whose zone has since unloaded is simply not found, and
         // forgetting it here is the right end for it.
-        if (auto* PFlag = zoneutils::GetEntity(it->second, TYPE_NPC); PFlag != nullptr)
+        if (auto* PFlag = it->second.resolve<CNpcEntity>(); PFlag != nullptr)
         {
             if (PFlag->loc.zone != nullptr)
             {

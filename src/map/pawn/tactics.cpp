@@ -792,12 +792,13 @@ namespace pawn::tactics
         const uint16 zone = PChar->loc.zone != nullptr ? static_cast<uint16>(PChar->loc.zone->GetID()) : 0;
         const auto   now  = seconds(timer::now());
 
-        // The stake (RESEARCH §12.16), and whether the plan holds the party to it
+        // The camp holds independently of Hold/Pull; Retreat suspends it.
         if (const auto stake = pawn::stakeOf(PChar->id); stake.has_value())
         {
             auto* PZone = zoneutils::GetZone(stake->zone);
-            out.push_back(fmt::format("stake: {} at ({:.0f}, {:.0f}), facing {} deg; the plan is {}", PZone != nullptr ? PZone->getName() : "?",
-                                      stake->at.x, stake->at.z, stake->at.rotation * 360 / 256, pawn::strategyOf(PChar->id) == 1 ? "on (the party keeps to it)" : "off (they follow you)"));
+            out.push_back(fmt::format("camp: {} at ({:.0f}, {:.0f}), facing {} deg; {}; orders {}", PZone != nullptr ? PZone->getName() : "?",
+                                      stake->at.x, stake->at.z, stake->at.rotation * 360 / 256,
+                                      pawn::isRetreating(PChar->id) ? "retreat active" : "the party keeps to it", pawn::strategyName(pawn::strategyOf(PChar->id))));
         }
 
         auto* PTactician = find(PChar);

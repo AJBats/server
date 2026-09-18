@@ -136,6 +136,9 @@ public:
 
     // The human party member the pawn formation anchors on
     auto GetLivePlayer() const -> CCharEntity*;
+    // One accepted zone change ends the player's current fight commitment.
+    // It does not prevent the next idle tick answering a new threat.
+    void PlayerZoning();
 
     // This pawn's index among the pawns in its party (formation order)
     auto GetPawnPartyPosition() const -> uint8;
@@ -156,11 +159,11 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
-    // The stake (RESEARCH §12.16): the party's place while the plan is on,
+    // The stake (RESEARCH §12.16): the party's place whenever it stands,
     // pushed by the orders (pawn::applyOrdersTo); hers while she stands in
     // its zone and no retreat is called (Staked). Staked, she keeps to it:
-    // no trek after the player, no stand-down when he leaves the zone, the
-    // party's fight what comes within the leash of the stake
+    // no trek after the player. Zoning ends the current fight commitment;
+    // new fights are what comes within the leash of the stake.
     void SetStake(std::optional<pawn::Stake> stake);
     auto Staked() const -> bool;
     // She follows the player through zone lines: not waiting, not staked
@@ -712,11 +715,12 @@ private:
     uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
-    // The stake the orders pushed (the plan on), and the tank's tow: she is
+    // The stake the orders pushed, and the tank's tow: she is
     // towing the mob to it until it is within a reach and kStakeTolerance
     // of it, and tows again once it has drifted twice that far
     std::optional<pawn::Stake> m_Stake;
     bool                       m_Towing = false;
+    std::optional<EntityId>     m_TowingMob;
     static constexpr float     kStakeTolerance = 1.5f;
 
     // NoteForSaving's book: what she last had written, and when
@@ -752,6 +756,7 @@ private:
     // The perimeter: the mob she attends, and the fight she has said "no
     // safe spot" for
     std::optional<EntityId> m_Attended;
+    bool                    m_AttendedOrdered = false; // an explicit Engage is held until ended or replaced
     uint32                  m_SaidNoSpotFor   = 0;
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
     uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change

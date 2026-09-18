@@ -115,11 +115,11 @@ namespace
     // are the session's
     struct PartyOrders
     {
-        uint16               strategy = 0;
-        bool                 retreat  = false;
+        uint16                    strategy = 0;
+        bool                      retreat  = false;
         std::optional<pawn::Stake> stake;
         pawn::HuntRules            rules;
-        bool                       loaded = false;
+        bool                      loaded = false;
     };
     std::unordered_map<uint32, PartyOrders> ordersByOwner;
 
@@ -1202,7 +1202,7 @@ namespace pawn
             // the other (the user, 2026-09-17): the stake says where they
             // work from -- his side, or a place that does not move -- and
             // strategy 1 says they may start fights. Retreat beats both.
-            const auto& orders = ordersFor(owner);
+            const auto  orders = ordersFor(owner);
             const bool  starts = orders.strategy == 1 && !orders.retreat;
             PController->SetRetreat(orders.retreat);
             PController->SetStake(orders.retreat ? std::nullopt : orders.stake);
@@ -1291,7 +1291,13 @@ namespace pawn
         position_t at = POwner->loc.p;
         if (const auto fresh = cardian::link::freshPositionOf(POwner->id); fresh.has_value())
         {
-            at = position_t(fresh->x, fresh->y, fresh->z, 0, fresh->rotation);
+            const position_t streamed(fresh->x, fresh->y, fresh->z, 0, fresh->rotation);
+            // Age alone cannot detect a sample from before a warp. Normal
+            // packet/stream skew is small; a remote sample must not pin camp.
+            if (distance(at, streamed) <= 5.0f)
+            {
+                at = streamed;
+            }
         }
         auto&      orders = ordersFor(POwner->id);
         const bool moved  = orders.stake.has_value();
@@ -1300,8 +1306,8 @@ namespace pawn
         // to the camp ever starts him a fight he did not ask for (the user,
         // 2026-09-17). clearStake does the same when the camp comes down
         orders.strategy = 0;
-        ShowInfoFmt("pawn: {} {} the stake {} {} at ({:.1f}, {:.1f}, {:.1f}), facing {} deg; they hold", POwner->getName(), moved ? "moves" : "sets", moved ? "to" : "in",
-                    zoneNameOf(orders.stake->zone), at.x, at.y, at.z, at.rotation * 360 / 256);
+        ShowInfoFmt("pawn: {} {} the stake {} {} at ({:.1f}, {:.1f}, {:.1f}), facing {} deg; orders Hold{}", POwner->getName(), moved ? "moves" : "sets", moved ? "to" : "in",
+                    zoneNameOf(orders.stake->zone), at.x, at.y, at.z, at.rotation * 360 / 256, orders.retreat ? "; retreat still active" : "");
 
         // CARDIAN TRIAL (stake_flag.h): stand his national banner on the spot,
         // facing the same way. Nothing above this line knows or cares.
@@ -1327,7 +1333,7 @@ namespace pawn
         // down here and nowhere else.
         cardian::stakeflag::dissolve(ownerCharID);
 
-        ShowInfoFmt("pawn: {}'s stake in {} dissolves ({}); the plan is off", ownerNameOf(ownerCharID), zoneNameOf(zone), why);
+        ShowInfoFmt("pawn: {}'s stake in {} dissolves ({}); orders Hold", ownerNameOf(ownerCharID), zoneNameOf(zone), why);
         applyOrders(ownerCharID);
         return true;
     }
@@ -1340,34 +1346,41 @@ namespace pawn
             return;
         }
         lastSweep = timer::now();
+        std::vector<uint32> dissolved;
         for (auto& [owner, orders] : ordersByOwner)
         {
             if (!orders.stake.has_value())
             {
                 continue;
             }
-            uint32     inZone    = 0;
-            uint32     elsewhere = 0;
-            const auto count     = [&](const CCharEntity* PChar)
+            cardian::stake::Census census(static_cast<uint16>(orders.stake->zone));
+            const auto count = [&](const CCharEntity* PChar, const bool isOwner)
             {
                 if (PChar == nullptr || PChar->loc.zone == nullptr)
                 {
                     return;
                 }
-                (PChar->getZone() == orders.stake->zone ? inZone : elsewhere)++;
+                census.observe(static_cast<uint16>(PChar->getZone()), isOwner);
             };
-            count(zoneutils::GetChar(owner));
+            count(zoneutils::GetChar(owner), true);
             for (const auto& [charid, PPawn] : pawns)
             {
-                if (ordersOwnerOf(PPawn.get()) == owner)
+                const auto remembered     = playerByPawn.find(charid);
+                const auto effectiveOwner = partyPlayer(PPawn.get()) == nullptr && remembered != playerByPawn.end()
+                                                ? remembered->second : ordersOwnerOf(PPawn.get());
+                if (effectiveOwner == owner)
                 {
-                    count(PPawn.get());
+                    count(PPawn.get(), false);
                 }
             }
-            if (cardian::stake::dissolves(inZone, elsewhere))
+            if (census.dissolves())
             {
-                clearStake(owner, "the party has left it");
+                dissolved.push_back(owner);
             }
+        }
+        for (const auto owner : dissolved)
+        {
+            clearStake(owner, "the party has left it");
         }
     }
 
@@ -1840,13 +1853,19 @@ namespace pawn
         }
         for (auto& [charid, PPawn] : pawns)
         {
-            if (PPawn->loc.zone != PPlayer->loc.zone || travelOrders.contains(charid))
+            if (PPawn->loc.zone != PPlayer->loc.zone)
             {
                 continue;
             }
-            // A cardian who treks after him: not waiting, not keeping to a stake
-            const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr || !PController->Treks() || PController->GetLivePlayer() != PPlayer)
+            // Zoning ends the current commitment for every cardian with him.
+            // Only followers who trek also receive the destination order.
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController == nullptr || PController->GetLivePlayer() != PPlayer)
+            {
+                continue;
+            }
+            PController->PlayerZoning();
+            if (!PController->Treks() || travelOrders.contains(charid))
             {
                 continue;
             }
@@ -2043,6 +2062,7 @@ namespace pawn
 
     void reparent(const uint32 fromCharID, const uint32 toCharID)
     {
+        clearStake(fromCharID, "possession");
         for (auto& [pawnCharID, summonerCharID] : summonerByPawn)
         {
             if (summonerCharID == fromCharID)

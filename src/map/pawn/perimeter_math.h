@@ -130,6 +130,14 @@ namespace cardian::perimeter
         return ring - mobToTank > castRange;
     }
 
+    // Leave a third of the thin crescent usable instead of collapsing both
+    // padded boundaries to a tangent. Below one yalm the walking clearance
+    // does not fit; the controller uses its healing-first fallback.
+    inline auto crescentInset(const float width) -> float
+    {
+        return std::clamp(width / 3.0f, 0.5f, 2.5f);
+    }
+
     // The safe spots are a crescent: outside the ring round the mob, inside
     // cast range of the tank. The nearest one to where she stands -- a step
     // straight out from the mob when that lands in range, else round the
@@ -180,7 +188,7 @@ namespace cardian::perimeter
         if (mobToTank > 0.01f)
         {
             const float c = (ring * ring + mobToTank * mobToTank - range * range) / (2.0f * ring * mobToTank);
-            if (c > 1.0f)
+            if (mobToTank - ring > range)
             {
                 const float ex  = x - tankX;
                 const float ez  = z - tankZ;
@@ -193,7 +201,7 @@ namespace cardian::perimeter
             }
             if (c > -1.0f)
             {
-                halfWidth = std::acos(c);
+                halfWidth = std::acos(std::clamp(c, -1.0f, 1.0f));
             }
         }
         float off = herAt - tankAt;

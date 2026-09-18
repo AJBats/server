@@ -926,8 +926,6 @@ class PawnModule : public CPPModule
             const auto stake     = pawn::stakeOf(PChar->id);
             result["staked"]     = stake.has_value();
             result["stake_zone"] = stake.has_value() ? static_cast<uint16>(stake->zone) : 0;
-            result["stake_x"]    = stake.has_value() ? stake->at.x : 0.0f;
-            result["stake_z"]    = stake.has_value() ? stake->at.z : 0.0f;
             auto names           = ::lua.create_table();
             for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
             {

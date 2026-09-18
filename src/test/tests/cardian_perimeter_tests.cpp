@@ -140,9 +140,8 @@ TEST_CASE("Perimeter: the nearest safe spot is a step out, round the ring only a
     CHECK_THAT(std::hypot(chase->first - 50.0f, chase->second), WithinAbs(20.0f, 1e-2));
     CHECK(std::hypot(chase->first, chase->second) > 12.0f);
 
-    // A Bomb's 20 y self-destruct, ring 22, at the inset the controller
-    // uses (24.5 out, 17.5 in): an empty crescent
-    CHECK_FALSE(safeSpot(0.0f, 0.0f, 3.4f, 0.0f, 24.5f, 17.5f, 0.0f, -5.0f).has_value());
+    // A genuinely empty crescent still lets the controller prioritize cures.
+    CHECK_FALSE(safeSpot(0.0f, 0.0f, 3.4f, 0.0f, 24.0f, 20.0f, 0.0f, -5.0f).has_value());
 }
 
 TEST_CASE("Perimeter: no safe spot once the ring point behind the tank is out of cast range", "[cardian][perimeter]")
@@ -151,4 +150,44 @@ TEST_CASE("Perimeter: no safe spot once the ring point behind the tank is out of
     CHECK_FALSE(noSafeSpot(17.0f, 3.0f, 20.0f));
     CHECK(noSafeSpot(24.0f, 3.0f, 20.0f));
     CHECK(noSafeSpot(30.0f, 3.0f, 20.0f));
+}
+
+TEST_CASE("Perimeter: thin crescents never take the external-circle chase branch", "[cardian][perimeter]")
+{
+    // The reported Bomb geometry: the old half-width inset collapsed the
+    // crescent and rounded c above one, returning a point 19.2 from the mob.
+    const float inset = crescentInset(3.2f + 20.0f - 22.0f);
+    const auto spot = safeSpot(0, 0, 3.2f, 0, 22 + inset, 20 - inset, 0, -22);
+    REQUIRE(spot.has_value());
+    CHECK(std::hypot(spot->first, spot->second) >= 22 + inset - 1e-4f);
+    CHECK(std::hypot(spot->first - 3.2f, spot->second) <= 20 - inset + 1e-4f);
+
+    // Pin the old tangent inputs too: a rounding error must never turn an
+    // internal tangent into a point deep inside the forbidden circle.
+    const float oldInset = (3.2f + 20.0f - 22.0f) / 2;
+    const auto tangent = safeSpot(0, 0, 3.2f, 0, 22 + oldInset, 20 - oldInset, 0, -22);
+    if (tangent)
+    {
+        CHECK(std::hypot(tangent->first, tangent->second) >= 22 - 1e-4f);
+        CHECK(std::hypot(tangent->first - 3.2f, tangent->second) <= 20 + 1e-4f);
+    }
+
+    // Different seeds exercise both arc edges and the chase.
+    for (int di = 10; di <= 80; di += 2)
+    {
+        for (int wi = 11; wi <= 80; wi += 3)
+        {
+            const float d = di / 10.0f;
+            const float width = wi / 10.0f;
+            const float ring = d + 20 - width;
+            const float pad = crescentInset(width);
+            for (const auto seed : { std::pair{ 0.f, -22.f }, std::pair{ -22.f, 0.f }, std::pair{ 30.f, 20.f } })
+            {
+                const auto p = safeSpot(0, 0, d, 0, ring + pad, 20 - pad, seed.first, seed.second);
+                REQUIRE(p.has_value());
+                CHECK(std::hypot(p->first, p->second) >= ring + pad - 1e-3f);
+                CHECK(std::hypot(p->first - d, p->second) <= 20 - pad + 1e-3f);
+            }
+        }
+    }
 }
