@@ -56,6 +56,7 @@
 
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
+#include "ai/states/attack_state.h"
 #include "ai/states/magic_state.h"
 #include "ai/states/weaponskill_state.h"
 #include "ai/states/ability_state.h"
@@ -325,6 +326,8 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     {
         m_ReceiveMob.reset();
         m_Receive = {};
+        m_KeepCampFightSpot = false;
+        m_CampSettlement = {};
         m_ClosingWithoutHate = false;
     }
     if (from == Mode::Attend && to != Mode::Attend)
@@ -933,6 +936,8 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
     // A new place: her seats aim afresh, and a spot kept after a fight goes
     m_Towing = false;
     m_TowingMob.reset();
+    m_KeepCampFightSpot = false;
+    m_CampSettlement = {};
     // Relocating a camp remeasures an incoming pull, but cannot make a
     // tank already helping in a fight wait for that fight to arrive again.
     if (!m_Stake.has_value() || !m_Receive.joined)
@@ -1437,6 +1442,8 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         m_ReceiveMob = EntityId(PTarget);
         m_Receive = {};
         m_Receive.joined = true;
+        m_KeepCampFightSpot = false;
+        m_CampSettlement = {};
     }
     // A perimeter mage takes the party's fight the way her role says,
     // attending, whatever brought her to the door: distance and the draw
@@ -4797,6 +4804,8 @@ auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stak
     {
         m_ReceiveMob = EntityId(PTarget);
         m_Receive = {};
+        m_KeepCampFightSpot = false;
+        m_CampSettlement = {};
     }
     const auto& stake = m_Stake->at;
     const auto home = nearPosition(stake, cardian::stake::kMobAhead, 0.0f);
@@ -4841,7 +4850,7 @@ auto CPawnController::ResumeCampReceive() -> bool
     return true;
 }
 
-auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
+auto CPawnController::TowIntent(CBattleEntity* PTarget) -> Intent
 {
     // The flag is the frontline. Aim just ahead of it, with a small
     // arrival allowance; any intrusion behind it calls for a correction.
@@ -4850,19 +4859,43 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
     const auto  home       = nearPosition(stake, cardian::stake::kMobAhead, 0.0f);
     const float reach      = std::max(1.0f, PTarget->GetMeleeRange(POwner) - 0.3f);
     const float mobToHome  = distance(PTarget->loc.p, home, true);
+    const float mobToFlag  = distance(PTarget->loc.p, stake, true);
     const float forward   = cardian::stake::forwardOf(stake.x, stake.z, stake.rotation, PTarget->loc.p.x, PTarget->loc.p.z);
     const bool  newMob     = !m_TowingMob.has_value() || !(*m_TowingMob == PTarget);
     const bool  wasTowing  = !newMob && m_Towing;
     const bool  wasClosing = !newMob && m_ClosingWithoutHate;
     const bool  received   = CampReceive(PTarget) == cardian::stake::ReceiveAction::Join;
     const bool  hasHate    = PTarget->GetBattleTarget() == POwner;
+    const bool  wasKept    = m_KeepCampFightSpot;
+    const bool  pathing    = PTarget->PAI->PathFind != nullptr && PTarget->PAI->PathFind->IsFollowingPath();
+    auto* const victim    = PTarget->GetBattleTarget();
+    // Ordinary melee state excludes pauses to cast, shoot or use a TP move.
+    // A failed route or a wall must not be mistaken for reaching the fight.
+    // Once accepted, these action checks do not revoke the established spot.
+    const bool meleeReady = !wasKept && !pathing && PTarget->isAlive() && victim != nullptr && victim->isAlive() &&
+        victim->loc.zone == PTarget->loc.zone && PTarget->PAI->IsCurrentState<CAttackState>() &&
+        !PTarget->StatusEffectContainer->HasPreventActionEffect() &&
+        isWithinDistance(PTarget->loc.p, victim->loc.p, PTarget->GetMeleeRange(victim)) && PTarget->CanSeeTarget(victim);
+    const bool settled = m_CampSettlement.observe(PTarget->PAI->getTick().time_since_epoch().count(),
+        PTarget->PAI->getPrevTick().time_since_epoch().count(), PTarget->loc.p.x, PTarget->loc.p.y, PTarget->loc.p.z, meleeReady);
+    m_KeepCampFightSpot    = cardian::stake::keepsFightSpot(wasKept, settled, mobToFlag, forward);
+    // Do not start towing on the first plausible stop and thereby move the
+    // mob before its confirming update. The normal walker still vets Stand.
+    const bool confirming = received && hasHate && !m_KeepCampFightSpot && meleeReady &&
+        cardian::stake::keepsFightSpot(false, true, mobToFlag, forward);
     m_ClosingWithoutHate  = received && !hasHate;
     // During receive, stay ready at the landing point. Once committed,
     // melee a mob on somebody else; only its actual target can tow it.
-    // Regaining hate starts a fresh, tight settle rather than a drift band.
-    m_Towing              = !received || (hasHate && cardian::stake::frontlineTowing(newMob || wasClosing, m_Towing, mobToHome, forward));
+    // A stopped pull in the front half belongs to the player: gaining hate
+    // must not drag that fight to the exact landing point. No dwell timer.
+    m_Towing              = !received || (hasHate && !m_KeepCampFightSpot && !confirming && cardian::stake::frontlineTowing(newMob || wasClosing, m_Towing, mobToHome, forward));
     m_TowingMob           = EntityId(PTarget);
     m_HasSlot             = false;
+    if (m_KeepCampFightSpot != wasKept)
+    {
+        ShowInfoFmt("pawn: {} {} {}'s fight spot ({:.1f} y from flag, {:.1f} y forward)", POwner->getName(),
+                    m_KeepCampFightSpot ? "accepts" : "releases", PTarget->getName(), distance(PTarget->loc.p, stake, true), forward);
+    }
     if (newMob || wasTowing != m_Towing || wasClosing != m_ClosingWithoutHate)
     {
         m_TowRoute.reset();
@@ -4870,7 +4903,11 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
     }
 
     position_t point;
-    if (m_Towing)
+    if (confirming)
+    {
+        point = POwner->loc.p;
+    }
+    else if (m_Towing)
     {
         // The tank can stand behind the line to receive an incoming pull;
         // it is the monster's intended stopping point that stays in front.
@@ -4894,11 +4931,11 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
         }
     }
     const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
-    auto       intent = SeatIntent(PTarget, point, inReach && !m_Towing, true);
+    auto       intent = confirming ? Intent{} : SeatIntent(PTarget, point, inReach && !m_Towing, true);
     // The mob being still does not mean she has reached 3 o'clock yet.
     // Only polish an arrived seat, never a receive/tow or an unfinished path.
     // Keep observing while positioning so an old settle timer cannot survive it.
-    const bool seated = !m_Towing && inReach && intent.kind == Intent::Kind::Stand &&
+    const bool seated = !confirming && !m_Towing && inReach && intent.kind == Intent::Kind::Stand &&
                         isWithinDistance(POwner->loc.p, point, settings::get<float>("pawn.FIGHT_SEAT_DEADBAND")) &&
                         !POwner->PAI->PathFind->IsFollowingPath();
     if (auto backoff = StepBackIntent(PTarget, seated); backoff.has_value())
@@ -4912,7 +4949,7 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
     {
         m_LastTowRouteDebug = m_Tick;
         ShowInfoFmt("pawn: {} camp tank {}: mob ({:.1f}, {:.1f}), tank ({:.1f}, {:.1f}), goal ({:.1f}, {:.1f}), move {}, step ({:.1f}, {:.1f})",
-                    POwner->getName(), !received ? "receive" : m_ClosingWithoutHate ? "melee" : m_Towing ? "tow" : "seat", PTarget->loc.p.x, PTarget->loc.p.z,
+                    POwner->getName(), confirming ? "confirm stop" : !received ? "receive" : m_ClosingWithoutHate ? "melee" : m_Towing ? "tow" : "seat", PTarget->loc.p.x, PTarget->loc.p.z,
                     POwner->loc.p.x, POwner->loc.p.z, point.x, point.z, magic_enum::enum_name(intent.kind), intent.point.x, intent.point.z);
     }
     return intent;

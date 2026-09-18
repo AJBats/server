@@ -478,7 +478,8 @@ private:
     // The tank's tow at a stake (RESEARCH §12.16): a cardian with the Tank
     // role, staked, receives the party's mob while her rows Provoke it.
     // Arrival or a stalled pull's grace period releases her to melee;
-    // with hate she tows. Waiting, she stands one mob's reach past its
+    // with hate she tows unless the mob has stopped ahead of the flag,
+    // within 20 yalms. Waiting, she stands one mob's reach past its
     // landing point, just ahead of the flag (stake_math.h towPoint),
     // so the mob stops in front of camp; once it is there she
     // takes the stake's 3 o'clock on the mob, at her reach, and it turns
@@ -486,7 +487,7 @@ private:
     auto TowsAtStake() const -> bool;
     auto CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
     auto ResumeCampReceive() -> bool;
-    auto TowIntent(const CBattleEntity* PTarget) -> Intent;
+    auto TowIntent(CBattleEntity* PTarget) -> Intent;
 
     // The courtesy (local_planner.h): this tick's step toward `point`,
     // planned over a one-yalm grid round her against the player's body
@@ -730,10 +731,12 @@ private:
     bool              m_Retreat    = false;
     bool              m_Waiting     = false;
     // The stake the orders pushed, and the tank's tow: she is
-    // towing the mob just ahead of its frontline, within stake::kSettle,
-    // and tows again at twice that distance or any intrusion behind the line
+    // towing toward its frontline unless the player's pull has stopped
+    // at an acceptable spot in front, within 20 yalms of the flag
     std::optional<pawn::Stake> m_Stake;
     bool                       m_Towing = false;
+    bool                       m_KeepCampFightSpot = false;
+    cardian::stake::Settlement  m_CampSettlement;
     cardian::stake::Route       m_TowRoute;
     timer::time_point          m_LastTowRouteDebug{};
     std::optional<EntityId>     m_TowingMob;

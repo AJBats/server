@@ -46,6 +46,46 @@ namespace cardian::stake
     constexpr float kSettle   = 1.5f;
     constexpr float kMobAhead = 2.0f; // settle allowance remains entirely ahead of the flag
 
+    // A path being empty alone says nothing about arrival: it may have
+    // failed. Confirm melee-ready stillness on consecutive mob updates.
+    // Tick IDs come from the mob's AI clock; duplicate reads and a missed
+    // update cannot supply the second observation. No elapsed-time policy.
+    struct Settlement
+    {
+        std::optional<int64> tick;
+        float x = 0.0f;
+        float y = 0.0f;
+        float z = 0.0f;
+        bool meleeReady = false;
+
+        auto observe(const int64 now, const int64 previousTick, const float px, const float py, const float pz,
+                     const bool ready) -> bool
+        {
+            if (tick == now)
+            {
+                return false;
+            }
+            constexpr float kStill = 0.1f; // same positional slack as melee step-back
+            const bool settled = ready && meleeReady && tick == previousTick &&
+                std::hypot(px - x, py - y, pz - z) <= kStill;
+            tick = now;
+            x = px;
+            y = py;
+            z = pz;
+            meleeReady = ready;
+            return settled;
+        }
+    };
+
+    // The player's pull chooses the fight's spot. A confirmed melee stop
+    // ahead of the flag and within 20 yalms is good enough, immediately.
+    // Keep that permission through hate changes and local movement; leaving
+    // this area revokes it. The controller resets it for a new mob or camp.
+    inline auto keepsFightSpot(const bool kept, const bool settled, const float flagDistance, const float forward) -> bool
+    {
+        return forward >= 0.0f && flagDistance <= 20.0f && (kept || settled);
+    }
+
     struct ReceiveConfig
     {
         float  immediate = 3.0f;

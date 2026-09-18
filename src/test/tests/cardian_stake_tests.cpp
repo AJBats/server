@@ -32,6 +32,105 @@
 using namespace cardian::stake;
 using Catch::Matchers::WithinAbs;
 
+TEST_CASE("Stake: a stopped player pull immediately owns its spot in the front half", "[cardian][stake]")
+{
+    // The sapling report: already stopped 3.8 y forward, 3.9 y from the
+    // old landing point. Neither six nor eight seconds of fighting is needed.
+    CHECK(keepsFightSpot(false, true, 5.2f, 3.8f));
+    CHECK_FALSE(keepsFightSpot(false, false, 5.2f, 3.8f));
+    CHECK(keepsFightSpot(true, false, 5.4f, 3.9f)); // local movement after acceptance
+    CHECK(keepsFightSpot(false, true, 20.0f, 0.0f));
+    CHECK_FALSE(keepsFightSpot(true, true, 20.01f, 2.0f));
+    CHECK_FALSE(keepsFightSpot(true, true, 5.0f, -0.01f));
+    CHECK_FALSE(keepsFightSpot(false, true, 49.0f, 40.0f)); // admission is not relocation
+}
+
+TEST_CASE("Stake: leaving the accepted area requires a new stop, with no distance timeout", "[cardian][stake]")
+{
+    bool kept = keepsFightSpot(false, true, 19.0f, 3.0f);
+    REQUIRE(kept);
+    kept = keepsFightSpot(kept, false, 21.0f, 3.0f);
+    CHECK_FALSE(kept);
+    kept = keepsFightSpot(kept, false, 19.0f, 3.0f);
+    CHECK_FALSE(kept);
+    kept = keepsFightSpot(kept, true, 19.0f, 3.0f);
+    CHECK(kept);
+    // The radius is centered on the flag, at every heading, not the point
+    // two yalms in front of it. A 19-yalm lateral pull is acceptable.
+    for (int heading = 0; heading < 256; heading += 8)
+    {
+        const auto rotation = static_cast<uint8>(heading);
+        const float angle = heading * 2.0f * std::numbers::pi_v<float> / 256.0f;
+        const float x = 0.1f * std::cos(angle) + 19.0f * std::sin(angle);
+        const float z = -0.1f * std::sin(angle) + 19.0f * std::cos(angle);
+        CHECK(keepsFightSpot(false, true, std::hypot(x, z), forwardOf(0, 0, rotation, x, z)));
+    }
+}
+
+TEST_CASE("Stake settlement: confirm a melee stop on the next mob update, never two reads of one update", "[cardian][stake][settlement]")
+{
+    Settlement stop;
+    CHECK_FALSE(stop.observe(100, 99, 5, 0, 3, true));
+    CHECK_FALSE(stop.observe(100, 99, 5, 0, 3, true));
+    CHECK(stop.observe(101, 100, 5, 0, 3, true));
+    // There is no eight-second dwell, weapon-delay or first-swing condition.
+    CHECK(keepsFightSpot(false, stop.observe(102, 101, 5, 0, 3, true), std::hypot(5.f, 3.f), 5));
+}
+
+TEST_CASE("Stake settlement: a pathless pause without available melee cannot establish the spot", "[cardian][stake][settlement]")
+{
+    Settlement stop;
+    // The adapter reports unavailable melee for a dead/missing target,
+    // an active path, a wall, a ranged/casting pause or an out-of-reach target.
+    for (int tick = 1; tick <= 30; ++tick)
+    {
+        CHECK_FALSE(stop.observe(tick, tick - 1, 5, 0, 3, false));
+    }
+    CHECK_FALSE(stop.observe(31, 30, 5, 0, 3, true));
+    CHECK(stop.observe(32, 31, 5, 0, 3, true));
+    // Starting an action between observations requires a new confirmation.
+    CHECK_FALSE(stop.observe(33, 32, 5, 0, 3, false));
+    CHECK_FALSE(stop.observe(34, 33, 5, 0, 3, true));
+    CHECK(stop.observe(35, 34, 5, 0, 3, true));
+}
+
+TEST_CASE("Stake settlement: arrival movement does not count, including vertical movement", "[cardian][stake][settlement]")
+{
+    Settlement stop;
+    CHECK_FALSE(stop.observe(1, 0, 10, 0, 0, true));
+    CHECK_FALSE(stop.observe(2, 1, 9, 0, 0, true));
+    CHECK_FALSE(stop.observe(3, 2, 8, 0, 0, true));
+    CHECK(stop.observe(4, 3, 8.02f, 0, 0, true)); // positional slack
+    CHECK_FALSE(stop.observe(5, 4, 8.02f, 1, 0, true));
+    CHECK_FALSE(stop.observe(6, 5, 8.10f, 1.08f, 0, true)); // >0.1 y in 3D
+    CHECK(stop.observe(7, 6, 8.10f, 1.08f, 0, true));
+}
+
+TEST_CASE("Stake settlement: missing observations and new fights cannot reuse old stillness", "[cardian][stake][settlement]")
+{
+    Settlement stop;
+    CHECK_FALSE(stop.observe(1, 0, 5, 0, 0, true));
+    CHECK_FALSE(stop.observe(10, 9, 5, 0, 0, true)); // no observation of update 9
+    CHECK(stop.observe(11, 10, 5, 0, 0, true));
+    stop = {}; // new mob, new camp, explicit replacement or end of fight
+    CHECK_FALSE(stop.observe(12, 11, 5, 0, 0, true));
+    CHECK(stop.observe(13, 12, 5, 0, 0, true));
+}
+
+TEST_CASE("Stake settlement: later spells and hate changes preserve an accepted fight", "[cardian][stake][settlement]")
+{
+    Settlement stop;
+    CHECK_FALSE(stop.observe(1, 0, 5, 0, 0, true));
+    bool kept = keepsFightSpot(false, stop.observe(2, 1, 5, 0, 0, true), 5, 5);
+    REQUIRE(kept);
+    kept = keepsFightSpot(kept, stop.observe(3, 2, 5, 0, 0, false), 5, 5); // casts
+    CHECK(kept);
+    kept = keepsFightSpot(kept, stop.observe(4, 3, 6, 0, 0, false), 6, 6); // pursues nearby new target
+    CHECK(kept);
+    kept = keepsFightSpot(kept, stop.observe(5, 4, -1, 0, 0, true), 1, -1);
+    CHECK_FALSE(kept); // crossing the frontline still revokes permission
+}
+
 TEST_CASE("Stake receive: arrival or hate joins immediately, never an idle draw", "[cardian][stake][receive]")
 {
     const ReceiveConfig config;
