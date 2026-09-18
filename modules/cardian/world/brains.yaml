@@ -6,9 +6,9 @@
 #   who        self, party (a party member), mob (the mob)
 #   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n
 #              | has <status> | lacks <status> | top enmity | not top enmity
-#   action     avoid aggro | rest with leader | rest | rest in battle (sit out
+#   action     avoid aggro | rest with leader
 #              | melee mage (a support mage on the fight ring, not the perimeter)
-#              even mid-fight, when the mob is not on her) | home point with
+#              | home point with
 #              leader | boost before weapon skills | formation <lead|flank left|flank
 #              right|rear left|rear right|behind> | role <support mage|tank|melee damage> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
@@ -35,7 +35,6 @@
 common:
   - "self: always -> avoid aggro"
   - "self: always -> rest with leader"
-  - "self: hp < 60 -> rest"
 
 roles:
   tank:
@@ -47,7 +46,7 @@ roles:
     - "party: hp < 60 -> cast best cure"          # Zapp's row
     - "party: has sleep -> cast cure"             # a Cure wakes her; "sleep" answers Sleep II and Lullaby too
     - "mob: hp >= 50 -> cast random damage"       # never one the mob already carries
-    - "self: mp < 25 -> rest in battle"           # sits out for MP even mid-fight; the resting pipeline starts here
+    - "self: always -> role support mage"        # the shared policy owns recovery
 
 jobs:
   MNK:

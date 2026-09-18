@@ -70,9 +70,9 @@ namespace pawn
         Formation           = 4, // a Slot
         RestWithPlayer      = 6, // switch: kneel when the player kneels
         HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
-        Rest                = 8, // switch: kneel when idle, and stay down until whole (a world body's rest; ROADMAP D5)
+        // 8: retired Rest; resting is owned by the shared policy.
         BoostBeforeWs       = 9, // switch: a Monk's Boost goes out right before her weapon skill, nothing between (D5)
-        RestInBattle        = 10, // switch: she sits out to rest even mid-fight, as long as the mob is not on her (a mage's MP; D5)
+        // 10: retired RestInBattle. Never reuse persisted behavior IDs.
         Role                = 11, // a parameter: the role she plays (pawn::Role); the tactician's conveyor assigns her casts (RESEARCH §12.12 item 2)
         MeleeMage           = 12, // switch: a support mage draws and takes the fight ring as any cardian does, instead of attending from the perimeter (RESEARCH §12.15)
     };

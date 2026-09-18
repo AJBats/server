@@ -284,6 +284,14 @@ namespace cardian::tactics
             return members.back();
         }
 
+        void attend(const uint32 id, const std::string_view name, const uint16 memberZone)
+        {
+            if (!settling() && memberZone == zone)
+            {
+                member(id, name); // present but quiet is a zero-spend sample
+            }
+        }
+
         auto find(const uint32 id) const -> const MemberFigures*
         {
             for (const auto& m : members)

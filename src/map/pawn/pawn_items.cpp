@@ -21,6 +21,7 @@
 
 #include "pawn_items.h"
 #include "pawn.h"
+#include "pawn_controller.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -595,6 +596,12 @@ namespace pawn::items
             return "item is busy";
         }
 
+        // Item use has its own engine wind-up. Leave the kneel before that
+        // animation starts, through the same lifecycle as other orders.
+        if (auto* controller = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); controller != nullptr)
+        {
+            controller->StandFromRest("using an item");
+        }
         if (!PPawn->PAI->UseItem(EntityId(PPawn), location, slot))
         {
             return "cannot use right now";

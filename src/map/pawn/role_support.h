@@ -37,15 +37,19 @@ namespace pawn::tactics::role
 {
     using cardian::tactics::Pace;
 
+    struct Threat
+    {
+        double biggestHit = 0.0;
+        double takenPerSecond = 0.0;
+        bool tpReady = false;
+    };
+    auto threat(FightLog& log, CBattleEntity* PMember, double now) -> Threat;
+
     // The Support Mage role's feeders (RESEARCH §12.2 item 2, §12.6,
     // §12.14): one row switches it on, and it stands on its own with no
     // other row. Any job may hold it; nothing here reads her job, only
     // what she can cast and what the bank says it is worth. It feeds the
     // conveyor; the conveyor decides who casts.
-
-    // Every tick: a member about to die is fed as the reflex, the role's
-    // one shortcut past the queue
-    void reflex(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, double now);
 
     // On her think: cures where the missing HP has piled up to a tier she
     // has (the biggest in a fight, the smallest between, so nothing

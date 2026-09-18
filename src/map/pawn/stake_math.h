@@ -164,12 +164,25 @@ namespace cardian::stake
     {
         // A fighting seat can sit inside the usual padding. Leave room to
         // reach it instead of orbiting an unreachable padded ring.
-        const float radius = std::min(bodyRadius, std::hypot(goalX - mobX, goalZ - mobZ) - 0.4f);
+        const float radius = formation::meleeClearance(std::hypot(goalX - mobX, goalZ - mobZ), bodyRadius);
         const formation::Circle body{ mobX, mobZ, radius };
         if (radius <= 0.1f || !formation::segmentCrosses(body, x, z, goalX, goalZ))
         {
             direction = 0.0f;
             return { goalX, goalZ };
+        }
+        // A pursuing mob can step onto the tank while she takes her seat.
+        // Tangent routing assumes she starts outside the body: from inside,
+        // its wrapped angles can ask for almost a full lap. Step outward
+        // first, then choose the short way round from that new position.
+        const float away = std::hypot(x - mobX, z - mobZ);
+        if (away < radius)
+        {
+            direction = 0.0f;
+            const float dx = away > 0.01f ? x - mobX : goalX - mobX;
+            const float dz = away > 0.01f ? z - mobZ : goalZ - mobZ;
+            const float scale = (radius + 0.2f) / std::hypot(dx, dz);
+            return { mobX + dx * scale, mobZ + dz * scale };
         }
         const auto point = formation::detourAround(body, x, z, goalX, goalZ, 0.2f, std::min(1.0f, radius * 0.5f), 0.3f, direction);
         if (direction == 0.0f)
@@ -179,6 +192,43 @@ namespace cardian::stake
         }
         return point;
     }
+
+    // Remember a side only while routing around substantially the same
+    // obstacle. Measure drift from the last reset, so small steps accumulate.
+    struct Route
+    {
+        static constexpr float kMobDrift = 1.0f;
+        float direction = 0.0f;
+        float mobX = 0.0f;
+        float mobZ = 0.0f;
+        bool sampled = false;
+
+        void reset()
+        {
+            *this = {};
+        }
+
+        auto observe(const float x, const float z) -> bool
+        {
+            if (sampled && std::hypot(x - mobX, z - mobZ) < kMobDrift)
+            {
+                return false;
+            }
+            const bool changed = sampled;
+            direction = 0.0f;
+            mobX = x;
+            mobZ = z;
+            sampled = true;
+            return changed;
+        }
+
+        auto point(const float x, const float z, const float radius,
+                   const float tankX, const float tankZ, const float goalX, const float goalZ) -> std::pair<float, float>
+        {
+            observe(x, z);
+            return routePoint(x, z, radius, tankX, tankZ, goalX, goalZ, direction);
+        }
+    };
 
     // The stake dissolves once the whole party has left its zone: nobody
     // of the party in it, and somebody of it seen in another zone. A

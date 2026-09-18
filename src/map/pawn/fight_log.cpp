@@ -152,6 +152,15 @@ namespace pawn::tactics
         r.zoneName = PMob->loc.zone != nullptr ? PMob->loc.zone->getName() : "";
         r.mobMaxHp = PMob->GetMaxHP();
         r.openedAt = seconds(timer::now());
+        // Attendance is independent of casts/hits. Capture it at opening too,
+        // so a fight ending before the next shared tick still counts.
+        for (const auto id : m_members)
+        {
+            if (auto* member = zoneutils::GetChar(id); member != nullptr)
+            {
+                r.attend(id, member->getName(), static_cast<uint16>(member->getZone()));
+            }
+        }
         // What it lost before we watched: the opening blow of a ranged or
         // magic pull lands before any event of ours reaches the log
         r.mobDamage = std::max<int32>(0, r.mobMaxHp - PMob->health.hp);
@@ -326,6 +335,13 @@ namespace pawn::tactics
         for (std::size_t i = 0; i < m_open.size();)
         {
             auto&       r    = m_open[i];
+            for (auto* member : members)
+            {
+                if (member != nullptr)
+                {
+                    r.attend(member->id, member->getName(), static_cast<uint16>(member->getZone()));
+                }
+            }
             auto*       PMob = asMob(dynamic_cast<CBattleEntity*>(zoneutils::GetEntity(r.mobId, TYPE_MOB)));
             std::string why;
             if (PMob == nullptr)

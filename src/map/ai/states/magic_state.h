@@ -46,6 +46,7 @@ public:
     auto CanFollowPath() -> bool override;
     auto CanInterrupt() -> bool override;
     auto GetSpell() const -> CSpell*;
+    auto GetCastTime() const -> timer::duration { return m_castTime; } // CARDIAN: observe the resolved cast duration without rerolling Quick Magic
     void TryInterrupt(CBattleEntity* PAttacker) override;
     void SpendCost();
     auto GetRecast() const -> timer::duration;

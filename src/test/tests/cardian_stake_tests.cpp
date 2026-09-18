@@ -228,15 +228,16 @@ TEST_CASE("Stake: recovery detours converge instead of chasing the tank's live f
         const float angle = heading * std::numbers::pi_v<float> / 180.0f;
         for (const float goalRadius : { 1.5f, 3.3f, 8.0f })
         {
+            const float clearance = cardian::formation::meleeClearance(std::min(goalRadius, 3.0f), 1.5f);
             const float gx = std::cos(angle) * goalRadius;
             const float gz = std::sin(angle) * goalRadius;
             float x = -std::cos(angle) * 3.0f;
             float z = -std::sin(angle) * 3.0f;
-            float direction = 0.0f;
+            Route route;
             int ticks = 0;
             for (; ticks < 160 && std::hypot(x - gx, z - gz) > 0.5f; ++ticks)
             {
-                const auto [px, pz] = routePoint(0, 0, 1.6f, x, z, gx, gz, direction);
+                const auto [px, pz] = route.point(0, 0, clearance, x, z, gx, gz);
                 const float gap = std::hypot(px - x, pz - z);
                 REQUIRE(gap > 0.01f);
                 const float step = std::min(0.6f, gap);
@@ -252,11 +253,12 @@ TEST_CASE("Stake: recovery detours converge instead of chasing the tank's live f
 
 TEST_CASE("Stake: a tank and pursuing mob recover from behind camp and settle", "[cardian][stake]")
 {
+    const float clearance = cardian::formation::meleeClearance(1.6f, 1.5f);
     for (const float sideways : { -3.0f, 0.0f, 3.0f })
     {
         float mx = -3.0f, mz = sideways;
         float tx = -6.0f, tz = sideways;
-        float direction = 0.0f;
+        Route route;
         bool towing = true;
         float finalMotion = 0.0f;
         auto step = [](float& x, float& z, const float gx, const float gz, const float stop)
@@ -276,14 +278,19 @@ TEST_CASE("Stake: a tank and pursuing mob recover from behind camp and settle", 
             towing = frontlineTowing(tick == 0, towing, std::hypot(mx - kMobAhead, mz), mx);
             if (wasTowing != towing)
             {
-                direction = 0.0f;
+                route.reset();
             }
             const auto goal = towing ? towPoint(mx, mz, kMobAhead, 0, 3.3f, 0) : std::pair{mx, mz - 1.6f};
+            route.observe(mx, mz);
             float moved = 0.0f;
             if (std::hypot(tx - goal.first, tz - goal.second) > (towing ? 0.5f : 1.2f))
             {
-                const auto point = routePoint(mx, mz, 1.6f, tx, tz, goal.first, goal.second, direction);
+                const auto point = route.point(mx, mz, clearance, tx, tz, goal.first, goal.second);
                 moved = step(tx, tz, point.first, point.second, 0.3f);
+            }
+            else
+            {
+                route.reset(); // the controller forgets its detour on arrival
             }
             step(mx, mz, tx, tz, 3.6f);
             if (tick >= 280)
@@ -296,5 +303,92 @@ TEST_CASE("Stake: a tank and pursuing mob recover from behind camp and settle", 
         CHECK(mx >= 0.0f);
         CHECK(std::hypot(mx - kMobAhead, mz) <= 3.0f);
         CHECK_THAT(finalMotion, WithinAbs(0.0f, 1e-4));
+    }
+}
+
+TEST_CASE("Stake: a shifted rabbit releases the old long-way route", "[cardian][stake]")
+{
+    // Rounded 2026-09-18 playtest positions: the old direction sent Jevyak
+    // east to (-620.1, 572.9) before circling back to her western seat.
+    Route route;
+    route.observe(-619.3f, 574.4f);
+    route.direction = 1.0f;
+    const auto point = route.point(-621.7f, 573.7f, 1.6f, -620.7f, 572.3f, -623.7f, 573.9f);
+    CHECK(point.first < -620.7f);
+    CHECK(route.direction == -1.0f);
+}
+
+TEST_CASE("Stake: small mob shifts preserve the route but accumulated drift replans", "[cardian][stake]")
+{
+    Route route;
+    route.observe(0, 0);
+    route.direction = -1.0f;
+    CHECK_FALSE(route.observe(0.3f, 0));
+    CHECK_FALSE(route.observe(0.6f, 0));
+    CHECK_FALSE(route.observe(0.9f, 0));
+    CHECK(route.direction == -1.0f);
+    CHECK(route.observe(1.2f, 0));
+    CHECK(route.direction == 0.0f);
+}
+
+TEST_CASE("Stake: a rabbit stepping onto its tank cannot cause a near-full lap", "[cardian][stake]")
+{
+    const float clearance = cardian::formation::meleeClearance(2.0f, 1.5f);
+    for (const auto start : { std::pair{-0.7f, -0.7f}, std::pair{-0.001f, 0.0f},
+                              std::pair{0.0f, 0.0f}, std::pair{-1.0f, 0.2f} })
+    {
+        for (const float oldDirection : { -1.0f, 0.0f, 1.0f })
+        {
+            float x = start.first, z = start.second;
+            Route route;
+            route.observe(0, 0);
+            route.direction = oldDirection;
+            float walked = 0.0f;
+            for (int tick = 0; tick < 80 && std::hypot(x + 2.0f, z - 0.2f) > 0.5f; ++tick)
+            {
+                const auto p = route.point(0, 0, clearance, x, z, -2.0f, 0.2f);
+                const float gap = std::hypot(p.first - x, p.second - z);
+                REQUIRE(gap > 0.0f);
+                const float step = std::min(0.6f, gap);
+                x += (p.first - x) * step / gap;
+                z += (p.second - z) * step / gap;
+                walked += step;
+            }
+            INFO("start " << start.first << ", " << start.second << "; direction " << oldDirection);
+            CHECK(std::hypot(x + 2.0f, z - 0.2f) <= 0.5f);
+            CHECK(walked < 4.0f); // a short adjustment, not the old ~10-y lap
+        }
+    }
+}
+
+TEST_CASE("Stake: the shared spacing leaves a reachable seat after backing off", "[cardian][stake]")
+{
+    // Small and large mobs, with the tank backing away at different
+    // bearings: the preferred seat must stay reachable outside the same
+    // threshold that calls for a step back.
+    for (const float preferred : { 0.7f, 1.0f, 1.6f, 2.0f, 3.0f })
+    {
+        const float clearance = cardian::formation::meleeClearance(preferred, 1.5f);
+        for (int degrees = 0; degrees < 360; degrees += 30)
+        {
+            const float angle = degrees * std::numbers::pi_v<float> / 180.0f;
+            const auto backoff = cardian::formation::backOff(0, 0, 0, 0, preferred, angle);
+            CHECK(std::hypot(backoff.first, backoff.second) > clearance);
+            float x = backoff.first, z = backoff.second;
+            Route route;
+            int ticks = 0;
+            for (; ticks < 100 && std::hypot(x - preferred, z) > 0.1f; ++ticks)
+            {
+                const auto p = route.point(0, 0, clearance, x, z, preferred, 0);
+                const float gap = std::hypot(p.first - x, p.second - z);
+                REQUIRE(gap > 0.001f);
+                const float step = std::min(0.3f, gap);
+                x += (p.first - x) * step / gap;
+                z += (p.second - z) * step / gap;
+            }
+            INFO("preferred radius " << preferred << "; initial bearing " << degrees);
+            CHECK(ticks < 100);
+            CHECK(std::hypot(x - preferred, z) <= 0.1f);
+        }
     }
 }

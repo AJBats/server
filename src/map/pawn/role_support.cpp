@@ -42,8 +42,6 @@ namespace pawn::tactics::role
 {
     namespace
     {
-        constexpr double kSecondsToLand = 3.0; // a cure's cast time, and the think before it
-
         auto fighting(const FightLog& log) -> bool
         {
             return std::any_of(log.open().begin(), log.open().end(), [](const FightRecord& r)
@@ -52,52 +50,54 @@ namespace pawn::tactics::role
                                });
         }
 
-        // What the open fights threaten one member with: the biggest hit
-        // any has landed on anyone (a switch can bring it to her), the
-        // spot's memory of it, or the formulas' guess before either; and
-        // the rate she takes -- her own this fight, else the spot's or the
-        // guess only when the mob is on her, else nothing
-        struct Threat
-        {
-            double biggestHit     = 0.0;
-            double takenPerSecond = 0.0;
-        };
+    } // namespace
 
-        auto threat(FightLog& log, CBattleEntity* PMember, const double now) -> Threat
+    // What the open fights threaten one member with: the biggest hit
+    // any has landed on anyone (a switch can bring it to her), the
+    // spot's memory of it, or the formulas' guess before either; and
+    // the rate she takes -- her own this fight, else the spot's or the
+    // guess only when the mob is on her, else nothing
+    auto threat(FightLog& log, CBattleEntity* PMember, const double now) -> Threat
+    {
+        Threat t;
+        for (auto& r : log.open())
         {
-            Threat t;
-            for (auto& r : log.open())
+            if (r.settling())
             {
-                if (r.settling())
-                {
-                    continue;
-                }
-                const auto& spot     = spotAverages(r.zone, r.mobName);
-                const auto* top      = r.biggest();
-                const bool  onRecord = top != nullptr || spot.fights > 0;
-                std::optional<FightRecord::MeleeGuess> guess;
-                auto* PMob = dynamic_cast<CMobEntity*>(zoneutils::GetEntity(r.mobId, TYPE_MOB));
-                if (!onRecord && PMob != nullptr && PMob->id == r.mobId)
-                {
-                    guess = bank::melee(r, PMob, PMember, true);
-                }
-                t.biggestHit = std::max({ t.biggestHit, top != nullptr ? static_cast<double>(top->biggestHit) : 0.0, spot.biggestHit.mean, guess ? guess->biggest : 0.0 });
-
-                const double secs = r.seconds(now);
-                const auto*  m    = r.find(PMember->id);
-                const double own  = m != nullptr && secs > 0.0 ? m->damageTaken / secs : 0.0;
-                if (own > 0.0)
-                {
-                    t.takenPerSecond = std::max(t.takenPerSecond, own);
-                }
-                else if (r.hitting == PMember->id)
-                {
-                    t.takenPerSecond = std::max(t.takenPerSecond, spot.fights > 0 ? spot.takenPerSecond.mean : (guess ? guess->perSecond : 0.0));
-                }
+                continue;
             }
-            return t;
-        }
+            const auto& spot     = spotAverages(r.zone, r.mobName);
+            const auto* top      = r.biggest();
+            const bool  onRecord = top != nullptr || spot.fights > 0;
+            std::optional<FightRecord::MeleeGuess> guess;
+            auto* PMob = dynamic_cast<CMobEntity*>(zoneutils::GetEntity(r.mobId, TYPE_MOB));
+            if (PMob != nullptr && PMob->id == r.mobId && PMob->GetBattleTarget() == PMember && PMob->health.tp >= 1000)
+            {
+                t.tpReady = true;
+            }
+            if (!onRecord && PMob != nullptr && PMob->id == r.mobId)
+            {
+                guess = bank::melee(r, PMob, PMember, true);
+            }
+            t.biggestHit = std::max({ t.biggestHit, top != nullptr ? static_cast<double>(top->biggestHit) : 0.0, spot.biggestHit.mean, guess ? guess->biggest : 0.0 });
 
+            const double secs = r.seconds(now);
+            const auto*  m    = r.find(PMember->id);
+            const double own  = m != nullptr && secs > 0.0 ? m->damageTaken / secs : 0.0;
+            if (own > 0.0)
+            {
+                t.takenPerSecond += own;
+            }
+            else if (r.hitting == PMember->id)
+            {
+                t.takenPerSecond += spot.fights > 0 ? spot.takenPerSecond.mean : (guess ? guess->perSecond : 0.0);
+            }
+        }
+        return t;
+    }
+
+    namespace
+    {
         auto curable(const CCharEntity* PHolder, CBattleEntity* PMember) -> bool
         {
             return PMember != nullptr && PMember->objtype == TYPE_PC && !PMember->isDead() && PMember->loc.zone == PHolder->loc.zone;
@@ -118,30 +118,6 @@ namespace pawn::tactics::role
             .zoneId     = PChar->getZone(),
             .gmLevel    = PChar->m_GMlevel,
         });
-    }
-
-    void reflex(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, const double now)
-    {
-        if (!fighting(log))
-        {
-            return;
-        }
-        for (auto* PMember : scope.members)
-        {
-            if (!curable(PHolder, PMember) || PMember->health.hp >= PMember->GetMaxHP())
-            {
-                continue;
-            }
-            const auto   t  = threat(log, PMember, now);
-            const double mg = cardian::tactics::margin(PMember->health.hp, t.biggestHit, t.takenPerSecond, kSecondsToLand);
-            if (mg >= 0.0)
-            {
-                continue;
-            }
-            conveyor.feed({ NeedKind::Cure, 0, PMember->id },
-                          Request{ .source = Source::Reflex, .caster = PHolder->id, .fedAt = now, .score = mg, .why = fmt::format("{:.0f} HP short of the next big hit", -mg) },
-                          scope);
-        }
     }
 
     void think(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, const bool engaged, const double now)

@@ -27,6 +27,7 @@
 #include "pawn_rules.h"
 #include "perimeter_math.h"
 #include "stake_math.h"
+#include "rest_math.h"
 
 #include "ai/controllers/player_controller.h"
 
@@ -131,6 +132,13 @@ public:
     auto CastAssigned(EntityId target, SpellID spellid) -> bool;
     // The cast itself, for both: a cast that begins drops the walk she was on
     auto CastAndStop(EntityId target, SpellID spellid) -> bool;
+    auto RestAllowsAction() const -> bool;
+    auto RestReadyIn(double now) const -> double;
+    auto RestInterruptionCost() const -> double;
+    auto PrepareRestAction(bool ordered = false) -> bool;
+    void StandFromRest(std::string_view why);
+    // True while the policy keeps her kneeling; defer routine positioning then.
+    auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false) -> bool;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -506,13 +514,14 @@ private:
     // The step back: a target that has settled on her toes (a mob walks
     // onto its target's exact coordinates) is given room. Once it has
     // stood still for MELEE_BACKOFF_DELAY, a cardian nearer it than
-    // MELEE_BACKOFF_TRIGGER steps straight back to RoamDistance, capped at
+    // FightClearance steps straight back to RoamDistance, capped at
     // its melee reach less MELEE_BACKOFF_MARGIN -- a target out of reach is
     // one it walks onto again -- and never twice within
     // MELEE_BACKOFF_COOLDOWN. The step is proposed to a clear spot (a wall
     // or a circle behind her: round the mob a little, either side), or
-    // not at all.
-    auto StepBackIntent(const CBattleEntity* PTarget) -> std::optional<Intent>;
+    // not at all. Camp positioning passes positioned=false until arrival,
+    // resetting the settle wait without changing the movement/cooldown.
+    auto StepBackIntent(const CBattleEntity* PTarget, bool positioned = true) -> std::optional<Intent>;
 
     // The fight ring (formation_math.h RingSeats): every cardian on a mob
     // but the one it is fighting takes a seat around it -- the nearest
@@ -522,6 +531,7 @@ private:
     // step back's rule). A far seat is reached round the mob's side, never
     // through it.
     auto FightRadius(const CBattleEntity* PTarget) const -> float;
+    auto FightClearance(const CBattleEntity* PTarget) const -> float;
     auto TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>;
     auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
@@ -590,9 +600,6 @@ private:
     // meant to be away from the player
     auto PacingBlocker(const CCharEntity* PPlayer) const -> std::string;
     auto CampBlocker() const -> std::string;
-    auto PartyNeedsRest() const -> bool;
-    auto PartyResting() const -> bool;         // a member of her party kneels
-    bool m_RestForParty = false;               // the leader kneels while a member rests: the camp stops and rests together
 
     // The nearest idle, non-special mob in the difficulty band within
     // HUNT_RADIUS of the player. `skipped`, when given, collects what
@@ -727,7 +734,7 @@ private:
     // and tows again at twice that distance or any intrusion behind the line
     std::optional<pawn::Stake> m_Stake;
     bool                       m_Towing = false;
-    float                      m_TowRouteDirection = 0.0f;
+    cardian::stake::Route       m_TowRoute;
     timer::time_point          m_LastTowRouteDebug{};
     std::optional<EntityId>     m_TowingMob;
     std::optional<EntityId>     m_ReceiveMob;
@@ -858,10 +865,11 @@ private:
     // not
     auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
     timer::time_point m_LastHuntLogTime;
-    timer::time_point m_WorldRestLogTime; // the farmer's rest line, throttled: damage over time re-kneels her every tick
-    bool              m_RestUntilWhole = false; // kneeling on her own Rest row: down until HP and MP are back
-    bool              m_LeaderRestingSeen = false; // the leader's kneel as last seen, and when she follows it
-    timer::time_point m_RestFollowDue;
+    cardian::rest::State m_Rest;
+    cardian::rest::Follow m_RestFollow;
+    int m_RestTicks = 0;
+    bool m_RestDeferredPosition = false;
+    double m_RestChatAt = 0.0;
     // Boost before weapon skills: the weapon skill held one tick while Boost goes out first
     struct HeldWs
     {

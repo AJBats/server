@@ -102,13 +102,32 @@ namespace pawn::tactics
         uint32      target = 0;
         std::string why;
         bool        approach = false;
+        bool        emergency = false;
     };
     auto assignment(CCharEntity* PPawn, bool engaged) -> std::optional<Assignment>;
 
-    // The Support Mage role (role_support.h): its reflex every tick, its
-    // own needs on her think
-    void roleReflex(CCharEntity* PPawn);
+    // Emergency aid is measured/selected centrally in the party tick;
+    // the Support Mage's ordinary needs are fed on her think.
     void roleThink(CCharEntity* PPawn, bool engaged);
+
+    struct RestAdvice
+    {
+        bool wake = false;
+        bool knownCost = false;
+        double readyMp = 0.0;
+        bool recover = false;
+        bool criticalMp = false;
+        double spentPerSecond = 0.0;
+        double recoveredPerSecond = 0.0;
+        double reserveMp = 0.0;
+        double projectedMp = 0.0;
+        double cheapestCureMp = 0.0;
+        double fightSpentMp = 0.0;
+        double recoveryTargetMp = 0.0;
+        std::string why;
+    };
+    auto restAdvice(CCharEntity* PPawn) -> std::optional<RestAdvice>;
+    void resetRestMemory(CCharEntity* PPawn);
 
     // The !tactics command: the caller's scope, its open and recent fights,
     // this zone's spot averages, the members' cure figures, this zone's

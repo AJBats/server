@@ -23,10 +23,12 @@
 
 #include "conveyor.h"
 #include "fight_log.h"
+#include "cure_readiness.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "role_support.h"
+#include "rest_policy.h"
 
 #include "common/logging.h"
 #include "common/settings.h"
@@ -157,6 +159,8 @@ namespace pawn::tactics
                 return m_conveyor;
             }
 
+            auto resting() -> RestPlanner& { return m_rest; }
+
             // The guess before the pull is weak until a few fights have
             // closed since the roster, a job or a level last changed
             auto guessWeak() const -> bool
@@ -174,6 +178,21 @@ namespace pawn::tactics
                 refreshScope(now, PAsker);
                 m_log.tick(now, state.scratch);
                 const auto scope = scopeOf(PAsker);
+                const auto measured = measureCures(scope, seconds(now));
+                std::vector<cardian::cure::Target> targets;
+                if (std::any_of(m_log.open().begin(), m_log.open().end(), [](const auto& r) { return !r.settling(); }))
+                {
+                    for (auto* member : scope.members)
+                    {
+                        if (member == nullptr || member->isDead()) continue;
+                        const auto threat = role::threat(m_log, member, seconds(now));
+                        targets.push_back({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
+                            threat.biggestHit, threat.takenPerSecond, threat.tpReady});
+                    }
+                }
+                auto emergency = cardian::cure::choose(measured, targets, m_conveyor.emergencies());
+                m_rest.tick(m_log, scope, seconds(now), emergency);
+                m_conveyor.emergency(std::move(emergency));
                 m_conveyor.tick(seconds(now), requestLife(), scope);
                 pace(scope);
             }
@@ -205,6 +224,7 @@ namespace pawn::tactics
             void changed(const timer::time_point)
             {
                 m_weakFrom = m_log.closedCount();
+                m_rest.reset(m_log.closedCount());
                 if (debug())
                 {
                     std::string names;
@@ -331,6 +351,7 @@ namespace pawn::tactics
             uint32                                  m_weakFrom = 0;
             FightLog                                m_log;
             Conveyor                                m_conveyor;
+            RestPlanner                             m_rest;
             std::unordered_map<uint32, cardian::tactics::Pace> m_pace;       // by role holder
             std::unordered_map<uint32, int32>                  m_cycleSpent; // by member, over the cycle under way
             bool                                    m_cycleOpen  = false;
@@ -433,6 +454,7 @@ namespace pawn::tactics
         {
             if (auto* PTactician = counted(routedMember(PCaster)); PTactician != nullptr)
             {
+                PTactician->resting().observe(PCaster, seconds(timer::now()));
                 CSpell* PSpell = PLuaSpell != nullptr ? PLuaSpell->GetSpell() : nullptr;
                 PTactician->log().onMagicStart(PCaster, PTarget, PSpell);
                 if (PCaster->objtype == TYPE_PC)
@@ -446,6 +468,9 @@ namespace pawn::tactics
         {
             if (auto* PTactician = counted(routedMember(PCaster)); PTactician != nullptr)
             {
+                // Sample at spell completion as well as each party tick so a
+                // later recovery tick does not conceal the spell's MP loss.
+                PTactician->resting().observe(PCaster, seconds(timer::now()));
                 PTactician->log().onMagicUse(PCaster, PTarget, PSpell, PAction);
                 if (PCaster->objtype == TYPE_PC)
                 {
@@ -763,15 +788,7 @@ namespace pawn::tactics
         {
             return std::nullopt;
         }
-        return Assignment{ a->spell, a->target, a->why, a->approach };
-    }
-
-    void roleReflex(CCharEntity* PPawn)
-    {
-        if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
-        {
-            role::reflex(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), seconds(timer::now()));
-        }
+        return Assignment{ a->spell, a->target, a->why, a->approach, a->emergency };
     }
 
     void roleThink(CCharEntity* PPawn, const bool engaged)
@@ -779,6 +796,26 @@ namespace pawn::tactics
         if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
         {
             role::think(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), engaged, seconds(timer::now()));
+        }
+    }
+
+    auto restAdvice(CCharEntity* PPawn) -> std::optional<RestAdvice>
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        if (tactician != nullptr)
+        {
+            // Another member may have advanced the shared planner before
+            // this body's Healing tick. Price the MP it actually has now.
+            tactician->resting().observe(PPawn, seconds(timer::now()));
+        }
+        return tactician != nullptr ? tactician->resting().advice(PPawn->id) : std::nullopt;
+    }
+
+    void resetRestMemory(CCharEntity* PPawn)
+    {
+        if (auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr; tactician != nullptr)
+        {
+            tactician->resting().reset(tactician->log().closedCount());
         }
     }
 
@@ -820,6 +857,10 @@ namespace pawn::tactics
                 out.push_back(line);
             }
             const auto  scope = scopeOf(PChar);
+            for (const auto& line : PTactician->resting().lines(scope))
+            {
+                out.push_back(line);
+            }
             std::string holders;
             for (auto* PMember : scope.members)
             {

@@ -49,6 +49,9 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/conveyor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/role_support.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/stake_flag.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_rest.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rest_policy.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cure_readiness.cpp
 )
 
 set(MAP_CORE_SOURCES

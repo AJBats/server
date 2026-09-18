@@ -160,6 +160,11 @@ namespace pawn::text
                 return std::nullopt;
             }
             g.actions.emplace_back(static_cast<gambits::G_REACTION>(reaction), static_cast<gambits::G_SELECT>(select), arg);
+            // CARDIAN: the old rest switches are retired, including numeric imports.
+            if (reaction == 100 && (select == 8 || select == 10))
+            {
+                return std::nullopt;
+            }
         }
         if (g.actions.empty())
         {

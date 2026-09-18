@@ -60,6 +60,7 @@
 #include "ai/states/weaponskill_state.h"
 #include "ai/states/ability_state.h"
 #include "ai/states/range_state.h"
+#include "ai/states/item_state.h"
 #include "enmity_container.h"
 #include "entities/char_entity.h"
 #include "status_effect_container.h"
@@ -253,7 +254,7 @@ void CPawnController::Attend(CBattleEntity* PTarget, const std::string_view how)
     }
     m_Attended        = EntityId(PTarget);
     m_AttendedEngaged = false;
-    POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+    // Attendance observes a fight; the rest policy decides when she stands.
     m_Gambits->Prompt();
     Transition(Mode::Attend, fmt::format("attends the fight on {} from the perimeter ({})", PTarget->getName(), how));
 }
@@ -476,25 +477,13 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
         {
             PPathFind->Clear();
         }
-        const bool kneeling = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-        if (leg == 2)
+        if (leg == 2 && order.face.has_value())
         {
-            if (order.face.has_value())
-            {
-                POwner->loc.p.rotation = worldAngle(POwner->loc.p, *order.face);
-                POwner->updatemask |= UPDATE_POS;
-            }
-            if (order.kneel && !kneeling)
-            {
-                const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
-                POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-            }
-        }
-        else if (kneeling)
-        {
-            POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+            POwner->loc.p.rotation = worldAngle(POwner->loc.p, *order.face);
+            POwner->updatemask |= UPDATE_POS;
         }
     }
+    RestTick(leg == 2, leg == 2 && order.kneel);
     if (leg == 2)
     {
         Move(Intent{});
@@ -646,53 +635,9 @@ void CPawnController::RoamTick()
         return;
     }
 
-    // Rest when her Rest row says so (a gambit: HP or MP under its line),
-    // up when whole: the Healing status is the real thing, kneel and regen
-    // ticks, and a rest is never taken mid-walk
-    const bool  resting  = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    const bool  hasMana  = POwner->GetMaxMP() > 0;
-    const bool  ownLow   = Behavior(pawn::Behavior::Rest).value_or(0) != 0 || Behavior(pawn::Behavior::RestInBattle).value_or(0) != 0;
-    const bool  partyLow = PartyNeedsRest();
-    const bool  low      = ownLow || partyLow;
-    const bool  whole    = POwner->GetHPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL") && (!hasMana || POwner->GetMPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL"));
-    auto*       PPathFind = POwner->PAI->PathFind.get();
-    if (resting)
-    {
-        // Aggro reaching her ends the rest early: up, and the avoid logic
-        // below walks her out of its circle, whole or not. Kneeling for the
-        // party (a member resting), she stays down until that member is up
-        RefreshDangers(nullptr);
-        const bool threatened = InsideDanger();
-        if ((!whole || (m_RestForParty && (PartyResting() || partyLow))) && !threatened)
-        {
-            return;
-        }
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        m_RestForParty = false;
-        ShowInfoFmt("world: {} is up again (hp {}%{}{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "",
-                    threatened && !whole ? ", aggro coming" : "");
-    }
-    else if (low && !POwner->PAI->IsCurrentState<CMagicState>())
-    {
-        if (PPathFind != nullptr && PPathFind->IsFollowingPath())
-        {
-            PPathFind->Clear();
-        }
-        const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
-        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-        // A kneel for the party (a member low) holds while the party needs
-        // it, not until she herself is whole -- she usually is already
-        m_RestForParty = partyLow && !ownLow;
-        // Damage over time knocks her out of the kneel every tick and she
-        // kneels again: one line every so often, not one a tick
-        if (m_Tick - m_WorldRestLogTime > 15s)
-        {
-            m_WorldRestLogTime = m_Tick;
-            ShowInfoFmt("world: {} rests (hp {}%{}{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "",
-                        m_RestForParty ? ", for the party" : "");
-        }
-        return;
-    }
+    auto* PPathFind = POwner->PAI->PathFind.get();
+
+    RestTick(false); // the solo-farmer rest stand-in is retired
 
     // Her ground is hers to hold: a mob that has come for her is answered
     if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
@@ -748,17 +693,6 @@ void CPawnController::RoamTick()
         if (const auto why = CampBlocker(); !why.empty())
         {
             Move(Intent{});
-            // A member resting is the camp resting: the leader kneels with
-            // her (and the party kneels with the leader), up when she is
-            // (user: "call the party to stop and heal to full")
-            if (PartyResting() && !resting && !POwner->PAI->IsCurrentState<CMagicState>() && (PPathFind == nullptr || !PPathFind->IsFollowingPath()))
-            {
-                const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
-                POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-                m_RestForParty = true;
-                ShowInfoFmt("world: {} rests with her party ({})", POwner->getName(), why);
-                return;
-            }
             if (!POwner->PAI->IsCurrentState<CMagicState>())
             {
                 m_Gambits->Tick(m_Tick, false);
@@ -993,7 +927,9 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
         return;
     }
     const bool was = m_Stake.has_value();
+    StandFromRest("the camp changed");
     m_Stake        = std::move(stake);
+    pawn::tactics::resetRestMemory(static_cast<CCharEntity*>(POwner));
     // A new place: her seats aim afresh, and a spot kept after a fight goes
     m_Towing = false;
     m_TowingMob.reset();
@@ -1185,7 +1121,7 @@ void CPawnController::ShareSignet(CCharEntity* PPlayer)
 auto CPawnController::Acting() const -> bool
 {
     return POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CWeaponSkillState>() ||
-           POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>();
+           POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>() || POwner->PAI->IsCurrentState<CItemState>();
 }
 
 void CPawnController::HeadLook(const CBaseEntity* PAt)
@@ -1233,7 +1169,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
 
     const EntityId target(PTarget);
     const auto     err = Acting() ? std::string("busy") : TryAction(kind, mode, id, target);
-    if (err != "busy" && err != "recast")
+    if (err != "busy" && err != "recast" && err != "standing up")
     {
         return err;
     }
@@ -1312,6 +1248,10 @@ void CPawnController::Note(const std::string& text) const
 
 auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const unsigned id, const EntityId target) -> std::string
 {
+    if (!PrepareRestAction(true))
+    {
+        return "standing up";
+    }
     bool fired = false;
     switch (kind)
     {
@@ -1397,14 +1337,16 @@ void CPawnController::FireQueuedOrder()
     }
 
     auto* PTarget = target.resolve<CBattleEntity>();
-    if (PTarget == nullptr || PTarget->isDead())
+    if (PTarget == nullptr)
     {
         m_QueuedOrder.reset();
         return;
     }
 
+    // The action's own target rules decide whether a corpse is valid. A
+    // Raise ordered while resting waits here through the same stand gate.
     const auto err = TryAction(kind, mode, id, target);
-    if (err == "recast")
+    if (err == "recast" || err == "standing up")
     {
         return; // the timer has not run out: next tick, until the deadline
     }
@@ -1520,7 +1462,7 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
     {
         m_RefusedTarget = 0;
         m_Approach.reset();
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        StandFromRest("drawing her weapon");
         if (POwner->PAI->IsEngaged())
         {
             POwner->PAI->Internal_ChangeTarget(EntityId(PTarget));
@@ -1959,7 +1901,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
     // A requested spell can take her into its real casting range. This
     // proposal still passes through aggro/link avoidance below. Camp's
     // rear boundary governs AoE positioning, not an explicit gambit.
-    if (!m_Retreat && !m_Waiting && !HasQueuedOrder() && m_Gambits->MasterOn())
+    if (!m_Retreat && !m_Waiting && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
     {
         const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
         if (const auto cast = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged); cast.has_value() && cast->approach)
@@ -2020,6 +1962,16 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
     if (action != AvoidAction::None || intent.kind != Intent::Kind::Keep)
     {
         m_SeatPathActive = action == AvoidAction::None && intent.seat && intent.kind == Intent::Kind::Path;
+    }
+
+    // Moving uses the same stand transition as spells and orders. A danger
+    // escape can interrupt a rest; merely keeping an idle path cannot.
+    const bool takesStep = action != AvoidAction::None ||
+        (intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep && distance(POwner->loc.p, point) > followMax) ||
+        (intent.kind == Intent::Kind::Keep && PPathFind->IsFollowingPath());
+    if (takesStep)
+    {
+        StandFromRest(action == AvoidAction::Escape ? "escaping danger" : "moving");
     }
 
     // The step
@@ -2130,6 +2082,10 @@ void CPawnController::WalkToward(CBattleEntity* PTarget)
 
 void CPawnController::IdleEmote(const CCharEntity* PPlayer)
 {
+    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    {
+        return;
+    }
     // The first idle moment only sets the clock: no fidget on arrival
     if (m_NextIdleEmoteTime == timer::time_point::min() || m_Tick >= m_NextIdleEmoteTime)
     {
@@ -2230,7 +2186,9 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     TracyZoneString(POwner->getName());
 
     m_Tick = tick;
-
+    m_Gambits->TickBehaviors();
+    m_Rest.observe(POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing),
+                   std::chrono::duration<double>(tick.time_since_epoch()).count());
     // This tick's cost, for the world's load line (always) and the per-zone
     // detail under pawn.WORLD_TICK_DEBUG
     struct BrainClock
@@ -2431,17 +2389,6 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    // Rest in battle (D5, the user's resting pipeline): a mage whose MP row
-    // holds sits out of a fight that is not on her -- she neither closes nor
-    // casts, and the idle path kneels her next tick, down until whole. The
-    // melee carry on; the leader holds the next pull while she sits
-    if (m_World && Behavior(pawn::Behavior::RestInBattle).value_or(0) != 0 && PTarget->GetBattleTarget() != POwner)
-    {
-        Transition(IdleMode(), "sits out to rest");
-        POwner->PAI->Internal_Disengage();
-        co_return;
-    }
-
     // A target gone underground with no fight on is let go, not waited on
     if (auto* PMobTarget = dynamic_cast<CMobEntity*>(PTarget); PMobTarget != nullptr && pawn::isUnderground(PMobTarget) && !PMobTarget->PAI->IsEngaged())
     {
@@ -2599,7 +2546,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
                 }
             }
 
-            // A camp tank owns her tow/seat, including the backoff distance.
+            // A camp tank finishes her tow/seat before step-back polish.
             // Else the movers propose the step back, the seat/front, then
             // the declump. Reach is the distance
             // alone -- the server's CanAttack would say it, but it
@@ -2903,67 +2850,6 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     TidyBag();
     m_Gambits->TickBehaviors();
 
-    // Her rest comes before the party's fight: a body whose own row holds
-    // kneels, or stays kneeling, rather than drawing -- else a mage sitting
-    // out for MP draws, sits out, draws, sits out (user, D5 dogfood)
-    // Rest with the player: the Healing status is the real thing -- kneel
-    // animation and resting regen ticks -- so the party sits down together.
-    // Her own Rest row (HP or MP under its line) kneels her too, and that
-    // rest holds until she is whole (D5: how a camp rests)
-    // The leader's kneel and stand reach her a beat later (her seat's
-    // reaction, as her draw does), so a camp does not move as one
-    const bool leaderResting = PPlayer != nullptr && RestsWithPlayer() && PPlayer->animation == xi::Animation::Healing;
-    if (leaderResting != m_LeaderRestingSeen)
-    {
-        m_LeaderRestingSeen = leaderResting;
-        m_RestFollowDue     = m_Tick + ReactionBeat();
-    }
-    const bool playerResting = m_Tick >= m_RestFollowDue ? leaderResting : !leaderResting;
-    const bool ownRest       = Behavior(pawn::Behavior::Rest).value_or(0) != 0 || Behavior(pawn::Behavior::RestInBattle).value_or(0) != 0;
-    const bool resting       = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    // Rest with the player within 10 y of him; at a place that never moves
-    // the party is camped, so she rests where she stands -- the spot she
-    // kept after the fight is farther than that (the user, 2026-09-17)
-    const bool campedHere    = place != nullptr && place->fixed();
-    const bool hasMana       = POwner->GetMaxMP() > 0;
-    const bool whole         = POwner->GetHPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL") && (!hasMana || POwner->GetMPP() >= settings::get<uint8>("pawn.WORLD_REST_UNTIL"));
-    if (resting)
-    {
-        // Aggro reaching her ends the rest early: up, and the walker's vet
-        // below walks her out of its circle
-        RefreshDangers(nullptr);
-        const bool threatened = InsideDanger();
-        if ((playerResting || (m_RestUntilWhole && !whole)) && !threatened)
-        {
-            co_return;
-        }
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        const bool ownEnds = m_RestUntilWhole;
-        m_RestUntilWhole   = false;
-        if (ownEnds || threatened)
-        {
-            ShowInfoFmt("world: {} is up again (hp {}%{}{})", POwner->getName(), POwner->GetHPP(), hasMana ? fmt::format(", mp {}%", POwner->GetMPP()) : "",
-                        threatened ? ", aggro coming" : "");
-        }
-    }
-    else if ((playerResting && PPlayer != nullptr && (campedHere || distance(POwner->loc.p, PPlayer->loc.p) < 10.0f)) || (ownRest && !m_Approach.has_value()))
-    {
-        // Her own row's kneel is her own, whoever else is kneeling: she stays
-        // down until whole while the party goes on without her (user, D5
-        // dogfood: a Red Mage resting for MP stood up when the melee engaged)
-        if (ownRest && POwner->PAI->PathFind->IsFollowingPath())
-        {
-            POwner->PAI->PathFind->Clear();
-        }
-        if (!POwner->PAI->PathFind->IsFollowingPath())
-        {
-            const auto healingTickDelay = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
-            POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, healingTickDelay, 0s);
-            m_RestUntilWhole = ownRest;
-            co_return;
-        }
-    }
-
     // The party's fight -- the player's target, a pawn's, or a mob on one
     // of us -- through the one door (Draw): the rules, then the draw, or
     // the walk in when it is farther than she may draw from. A walk in
@@ -3144,6 +3030,19 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         RestoreNormalSpeed();
         proposal.kind = Intent::Kind::Keep;
+    }
+    const bool stationary = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
+                             distance(POwner->loc.p, proposal.point) <= proposal.tolerance) &&
+                            !POwner->PAI->PathFind->IsFollowingPath();
+    // A proposed seat adjustment is optional while a camped support mage
+    // rests. An active path is already movement, and still requires a stand.
+    // RestTick first checks urgent healing, danger and orders. Only when it
+    // keeps her down do we suppress the proposal; Move still vets her current
+    // position for aggro/link danger and may escape it.
+    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath()))
+    {
+        proposal.kind = Intent::Kind::Stand;
+        proposal.seat = false;
     }
     const auto avoidAction = Move(proposal);
     if (!avoidAction.has_value())
@@ -3518,6 +3417,10 @@ auto CPawnController::CastAndStop(const EntityId target, const SpellID spellid) 
 {
     // A cast she wants stops whatever walk she is on: the path is dropped
     // as the cast begins, or the pathfinder's next step would interrupt it
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
     const bool cast = CPlayerController::Cast(target, spellid);
     if (cast && POwner->PAI->PathFind != nullptr)
     {
@@ -3566,6 +3469,10 @@ auto CPawnController::BoostReady() const -> bool
 
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
 {
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
     // Boost first, the weapon skill on the very next tick (DoCombatTick) --
@@ -3585,6 +3492,10 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
 
 auto CPawnController::Ability(const EntityId target, const uint16 abilityid) -> bool
 {
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
     return CPlayerController::Ability(target, abilityid);
@@ -3592,6 +3503,10 @@ auto CPawnController::Ability(const EntityId target, const uint16 abilityid) -> 
 
 auto CPawnController::RangedAttack(const EntityId target) -> bool
 {
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
     timer::duration rangedDelay = 10s;
     if (const auto* PRange = dynamic_cast<CItemWeapon*>(POwner->m_Weapons[SLOT_RANGED]))
     {
@@ -3804,50 +3719,6 @@ auto CPawnController::PacingBlocker(const CCharEntity* PPlayer) const -> std::st
         }
     }
     return "";
-}
-
-// A camp stops and rests together when any member is low (D5, user): the
-// leader kneels on this, the party kneels with her
-auto CPawnController::PartyNeedsRest() const -> bool
-{
-    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
-    if (PPawn->PParty == nullptr)
-    {
-        return false;
-    }
-    const auto line = settings::get<uint8>("pawn.WORLD_PARTY_REST_HP");
-    for (const auto* PMember : PPawn->PParty->members)
-    {
-        if (PMember->loc.zone == POwner->loc.zone && !PMember->isDead() && !PMember->PAI->IsEngaged() && PMember->GetHPP() < line)
-        {
-            return true;
-        }
-    }
-    return false;
-}
-
-auto CPawnController::PartyResting() const -> bool
-{
-    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
-    if (PPawn->PParty == nullptr)
-    {
-        return false;
-    }
-    // A member kneeling because the leader kneels does not count, or the
-    // camp would never stand: only one still short of whole does
-    const auto until = settings::get<uint8>("pawn.WORLD_REST_UNTIL");
-    for (const auto* PMember : PPawn->PParty->members)
-    {
-        if (PMember == POwner || PMember->loc.zone != POwner->loc.zone || PMember->isDead() || !PMember->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
-        {
-            continue;
-        }
-        if (PMember->GetHPP() < until || (PMember->GetMaxMP() > 0 && PMember->GetMPP() < until))
-        {
-            return true;
-        }
-    }
-    return false;
 }
 
 // The camp leader's pacing (D5): nobody sets off while a member of her
@@ -4872,6 +4743,11 @@ auto CPawnController::FightRadius(const CBattleEntity* PTarget) const -> float
     return std::min(RoamDistance, POwner->GetMeleeRange(PTarget) - settings::get<float>("pawn.MELEE_BACKOFF_MARGIN"));
 }
 
+auto CPawnController::FightClearance(const CBattleEntity* PTarget) const -> float
+{
+    return cardian::formation::meleeClearance(FightRadius(PTarget), settings::get<float>("pawn.MELEE_BACKOFF_TRIGGER"));
+}
+
 auto CPawnController::LiveFrame(const CBattleEntity* PTarget) const -> uint8
 {
     // The ring's frame: the mob facing its target; a mob with none faces
@@ -4989,7 +4865,7 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
     m_HasSlot             = false;
     if (newMob || wasTowing != m_Towing || wasClosing != m_ClosingWithoutHate)
     {
-        m_TowRouteDirection = 0.0f;
+        m_TowRoute.reset();
         m_SeatPathActive = false;
     }
 
@@ -5019,6 +4895,16 @@ auto CPawnController::TowIntent(const CBattleEntity* PTarget) -> Intent
     }
     const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
     auto       intent = SeatIntent(PTarget, point, inReach && !m_Towing, true);
+    // The mob being still does not mean she has reached 3 o'clock yet.
+    // Only polish an arrived seat, never a receive/tow or an unfinished path.
+    // Keep observing while positioning so an old settle timer cannot survive it.
+    const bool seated = !m_Towing && inReach && intent.kind == Intent::Kind::Stand &&
+                        isWithinDistance(POwner->loc.p, point, settings::get<float>("pawn.FIGHT_SEAT_DEADBAND")) &&
+                        !POwner->PAI->PathFind->IsFollowingPath();
+    if (auto backoff = StepBackIntent(PTarget, seated); backoff.has_value())
+    {
+        intent = *backoff;
+    }
     intent.target     = PTarget;
     intent.fighting   = true;
     intent.vet        = PTarget->PAI->IsEngaged() || !pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))).aggressive;
@@ -5163,6 +5049,18 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     const float off       = distance(me, seat);
     Intent      intent;
 
+    // A moved mob invalidates the old detour before the cached-path check.
+    // Keep the chosen side through small shifts to avoid left-right wiggling.
+    if (campRoute && m_TowRoute.observe(PTarget->loc.p.x, PTarget->loc.p.z))
+    {
+        m_SeatPathActive = false;
+        if (settings::get<bool>("pawn.FORMATION_DEBUG"))
+        {
+            ShowInfoFmt("pawn: {} replans her camp route around {} (mob moved {:.1f} y or more)",
+                        POwner->getName(), PTarget->getName(), cardian::stake::Route::kMobDrift);
+        }
+    }
+
     // On her seat, or near enough while in reach: she stands. The first
     // time, the seat settles: the ring's frame as it stands is hers for
     // the fight, whatever the mob turns to face
@@ -5170,6 +5068,10 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     if (off <= deadband)
     {
         m_SeatVia = false;
+        if (campRoute)
+        {
+            m_TowRoute.reset();
+        }
         if (m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
         {
             m_FightSeat.settled = true;
@@ -5185,6 +5087,10 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     {
         if (PPathFind->ValidPosition(seat))
         {
+            if (campRoute)
+            {
+                m_TowRoute.reset();
+            }
             intent.kind  = Intent::Kind::Hop;
             intent.point = seat;
             return intent;
@@ -5209,7 +5115,7 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     const Circle body{ PTarget->loc.p.x, PTarget->loc.p.z, PTarget->modelHitboxSize + 0.8f };
     if (campRoute)
     {
-        const auto [x, z] = cardian::stake::routePoint(body.x, body.z, body.radius, me.x, me.z, seat.x, seat.z, m_TowRouteDirection);
+        const auto [x, z] = m_TowRoute.point(body.x, body.z, FightClearance(PTarget), me.x, me.z, seat.x, seat.z);
         goal.x = x;
         goal.z = z;
     }
@@ -5266,7 +5172,7 @@ auto CPawnController::ReactionBeat() const -> timer::duration
     return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.REACTION_BEAT") * static_cast<float>(beats)));
 }
 
-auto CPawnController::StepBackIntent(const CBattleEntity* PTarget) -> std::optional<Intent>
+auto CPawnController::StepBackIntent(const CBattleEntity* PTarget, const bool positioned) -> std::optional<Intent>
 {
     TracyZoneScoped;
 
@@ -5278,7 +5184,7 @@ auto CPawnController::StepBackIntent(const CBattleEntity* PTarget) -> std::optio
     {
         return std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>(key)));
     };
-    if (!settled)
+    if (!positioned || !settled)
     {
         m_TargetRestId    = PTarget->id;
         m_TargetRestPos   = PTarget->loc.p;
@@ -5305,7 +5211,7 @@ auto CPawnController::StepBackIntent(const CBattleEntity* PTarget) -> std::optio
     }
 
     const float away = distance(POwner->loc.p, PTarget->loc.p);
-    if (away >= settings::get<float>("pawn.MELEE_BACKOFF_TRIGGER"))
+    if (away >= FightClearance(PTarget))
     {
         return std::nullopt;
     }

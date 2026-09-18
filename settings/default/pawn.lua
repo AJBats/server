@@ -194,11 +194,14 @@ xi.settings.pawn =
     -- stops there (upstream's approach since the 2026-06 pathfind
     -- refactor), so a cardian it targets ends up under its feet. Once it
     -- has stood still for BACKOFF_DELAY seconds, a cardian nearer it than
-    -- BACKOFF_TRIGGER yalms steps straight back, in one go, to 3 yalms from
-    -- it -- never past its melee reach less BACKOFF_MARGIN, because a
-    -- target out of reach is one it walks onto again, and never twice
-    -- within BACKOFF_COOLDOWN seconds (the mob's own re-path cadence), so
-    -- the two can never chase each other. A TRIGGER of 0 turns it off.
+    -- BACKOFF_TRIGGER yalms takes a backward step toward her preferred
+    -- distance (up to 3 yalms, capped at melee reach less BACKOFF_MARGIN).
+    -- Both step-back and camp routing cap that shared inner clearance
+    -- 0.4 yalms inside the preferred distance to leave room for the seat.
+    -- A camp tank applies step-back only after towing and taking 3 o'clock.
+    -- Each step keeps her in melee range: a target out of reach is one it
+    -- walks onto again. Steps are at least BACKOFF_COOLDOWN seconds apart
+    -- (the mob's own re-path cadence). A TRIGGER of 0 disables this spacing.
     MELEE_BACKOFF_DELAY    = 0.5,
     MELEE_BACKOFF_TRIGGER  = 1.5,
     MELEE_BACKOFF_MARGIN   = 1.6, -- was 0.6: she sat at the edge of her reach; now about 1.6 y off a small mob (2026-09-05)
@@ -392,9 +395,8 @@ xi.settings.pawn =
     -- tick costs, and the process's CPU and memory. 0 turns it off.
     WORLD_LOAD_REPORT = 300,
 
-    -- The farmer (ROADMAP D1). She rests when HP is under WORLD_REST_HP
-    -- percent, or MP under WORLD_REST_MP for a job with any, until both
-    -- are back to WORLD_REST_UNTIL. On the hunt's cadence she picks a mob
+    -- The farmer (ROADMAP D1). The old threshold rest stand-in is retired;
+    -- recovery belongs to the shared role policy. On the hunt's cadence she picks a mob
     -- checked between WORLD_HUNT_MIN and WORLD_HUNT_MAX (0 too weak, 1
     -- incredibly easy, 2 easy prey, 3 decent challenge, 4 even match,
     -- 5 tough) within HUNT_RADIUS of herself, by the party's own pull
@@ -404,9 +406,6 @@ xi.settings.pawn =
     -- meets; there with nothing found, she pauses WORLD_HEADING_PAUSE
     -- seconds and looks again. KO'd, she lies where she fell for
     -- WORLD_KO_FADE seconds before she fades, to stand whole next time.
-    WORLD_REST_HP       = 60,
-    WORLD_REST_MP       = 30,
-    WORLD_REST_UNTIL    = 95,
     WORLD_HUNT_MIN      = 2,
     WORLD_HUNT_MAX      = 3,
     -- A camp (ROADMAP D5): its leader picks by the party's band -- a duo
@@ -421,10 +420,6 @@ xi.settings.pawn =
     WORLD_TRIO_HUNT_MAX = 4,
     WORLD_HEALER_MP     = 25,
     WORLD_KO_RETURN     = 120,
-    -- The whole camp stops and rests when any member is under this many
-    -- percent HP: the leader kneels, the party kneels with her, and the
-    -- mages cure the low one while they sit (user, D5 dogfood)
-    WORLD_PARTY_REST_HP = 40,
     WORLD_SCAN_MIN      = 20,
     WORLD_SCAN_MAX      = 40,
     WORLD_HEADING_SLOP  = 6,

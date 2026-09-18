@@ -175,6 +175,14 @@ namespace cardian::formation
         return { mobX + dx / len * radius, mobZ + dz / len * radius };
     }
 
+    // One inner spacing threshold for step-back and melee routes. Leave
+    // room between the routing circle and the preferred fighting seat,
+    // including for small mobs whose melee reach limits that seat.
+    inline auto meleeClearance(const float preferredRadius, const float trigger) -> float
+    {
+        return std::clamp(trigger, 0.0f, std::max(0.0f, preferredRadius - 0.4f));
+    }
+
     // The step back: a settled mob stands on its target's exact
     // coordinates (upstream's approach lands there), so a cardian it
     // targets is under its feet. She steps out to `radius` from the mob

@@ -100,6 +100,7 @@ public:
     // whether the state can be interrupted (including by stun/sleep)
     virtual auto CanInterrupt() -> bool = 0;
     auto         IsCompleted() const -> bool;
+    auto GetStartTime() const -> timer::time_point { return m_entryTime; } // CARDIAN: read-only action readiness measurement
     void         ResetEntryTime();
     void         SetTarget(const EntityId& target);
 

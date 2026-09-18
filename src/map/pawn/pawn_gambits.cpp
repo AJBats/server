@@ -23,6 +23,7 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "tactics.h"
+#include "spell_bank.h"
 
 #include "utils/battleutils.h"
 #include "spell.h"
@@ -235,12 +236,8 @@ namespace pawn
         const bool conveyor    = pawn::tactics::has(POwner);
         const bool supportMage = conveyor && pawn::tactics::supportMage(POwner);
 
-        // Every tick, ahead of the think: the role's reflex, and whatever
-        // the conveyor has assigned her
-        if (supportMage)
-        {
-            pawn::tactics::roleReflex(POwner);
-        }
+        // The shared party tick measures and assigns emergency aid before
+        // ordinary needs. Each mage reads that same decision here.
         if (conveyor && CastAssignment(engaged))
         {
             return;
@@ -299,7 +296,12 @@ namespace pawn
     auto CGambits::CastAssignment(const bool engaged) -> bool
     {
         const auto a = pawn::tactics::assignment(POwner, engaged);
-        return a.has_value() && CastAssigned(a->spell, a->target, a->why);
+        if (a.has_value() && a->emergency && (!m_PController->RestAllowsAction() || m_PController->Acting() ||
+            !m_PController->canAct() || !pawn::tactics::bank::usable(POwner, a->spell)))
+        {
+            return true; // reserve this slot without sending a failed cast every tick
+        }
+        return a.has_value() && (CastAssigned(a->spell, a->target, a->why) || a->emergency);
     }
 
     auto CGambits::CastAssigned(const SpellID spellId, const uint32 target, const std::string& why) -> bool
@@ -982,7 +984,7 @@ namespace pawn
 
     void CGambits::SetBehaviorRow(const pawn::Behavior behavior, const uint16 arg)
     {
-        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "rest", "boost before weapon skills", "rest in battle", "role", "melee mage" };
+        static constexpr std::array<std::string_view, pawn::BehaviorCount> names{ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "boost before weapon skills", "?", "role", "melee mage" };
         const auto                                                         name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool                                                         sw   = pawn::isSwitch(behavior);
 

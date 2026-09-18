@@ -23,6 +23,7 @@
 
 #include "conveyor_math.h"
 #include "spell_bank.h"
+#include "cure_math.h"
 
 #include "common/cbasetypes.h"
 
@@ -80,6 +81,8 @@ namespace pawn::tactics
         // states (each its own locked need), stale requests withdrawn,
         // every unlocked need assigned afresh
         void tick(double now, double life, const Scope& scope);
+        void emergency(std::vector<cardian::cure::Choice> choices) { m_emergency = std::move(choices); }
+        auto emergencies() const -> std::span<const cardian::cure::Choice> { return m_emergency; }
 
         // A cast starting (the log's MAGIC_START, the spell from the event):
         // its need opened if nobody fed it, locked from this instant
@@ -99,6 +102,7 @@ namespace pawn::tactics
             uint32      target = 0;
             std::string why;
             bool        approach = false; // a row may walk into range
+            bool        emergency = false; // holds her slot while preparing first aid
         };
         auto assignment(uint32 caster, bool engaged, const Scope& scope) const -> std::optional<Assignment>;
 
@@ -118,6 +122,7 @@ namespace pawn::tactics
         static auto offensive(const Need& n, const Scope& scope) -> bool;
 
         cardian::tactics::Needs                                m_needs;
+        std::vector<cardian::cure::Choice>                      m_emergency;
         std::unordered_map<uint32, NeedKey>                    m_pending; // caster -> the need her cast in flight is for
         std::unordered_map<uint32, std::vector<bank::CureTier>> m_tiers;   // caster -> her tiers this tick
     };

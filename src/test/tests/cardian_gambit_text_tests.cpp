@@ -90,3 +90,14 @@ TEST_CASE("row grammar: malformed rows are refused", "[cardian][gambits]")
     REQUIRE_FALSE(parseRow("1|1:50|2:0|0").has_value());      // an action without its argument
     REQUIRE_FALSE(parseRow("70000|1:50|2:0:1|0").has_value()); // target outside 16 bits
 }
+
+TEST_CASE("row grammar: retired rest actions cannot return through numeric imports", "[cardian][gambits][rest]")
+{
+    REQUIRE_FALSE(parseRow("0|0:0|100:8:1|0").has_value());
+    REQUIRE_FALSE(parseRow("0|0:0|100:10:0|0").has_value());
+    REQUIRE_FALSE(parseRow("0|0:0|100:6:1+100:8:1|0").has_value());
+    REQUIRE(parseRow("0|0:0|100:6:1|0").has_value());
+    REQUIRE(parseRow("0|0:0|100:11:1|0").has_value());
+    REQUIRE(parseRow("1|1:50|2:2:8|0").has_value());
+    REQUIRE(parseRow("1|1:50|2:2:10|0").has_value());
+}

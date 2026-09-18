@@ -293,6 +293,17 @@ namespace pawn::tactics
         {
             ShowInfoFmt("tactics: {} on #{} {} by {}", kindName(*key), key->target, landed ? "met" : "not met", PCaster->getName());
         }
+        // Emergency aid may have several Cures in flight. One finishing
+        // must not unlock ordinary duplicate requests while another remains.
+        for (const auto& [caster, pending] : m_pending)
+        {
+            if (pending == *key)
+            {
+                n->lockedBy = caster;
+                n->assigned = 0;
+                return;
+            }
+        }
         m_needs.forget(*key);
     }
 
@@ -330,6 +341,10 @@ namespace pawn::tactics
             {
                 continue;
             }
+            if (std::any_of(m_emergency.begin(), m_emergency.end(), [&](const auto& c) { return c.cast && c.cure.caster == PChar->id; }))
+            {
+                continue; // this slot is reserved for first aid, including preparation
+            }
             cardian::tactics::Candidate c{ .id = PChar->id };
             c.spell = static_cast<uint16>(spellFor(n, PChar, PTarget));
             // In range as the magic state will judge the cast: the spell's
@@ -337,7 +352,9 @@ namespace pawn::tactics
             auto* PSpell = c.spell != 0 ? spell::GetSpell(static_cast<SpellID>(c.spell)) : nullptr;
             const float reach  = bank::castRange(PChar, PSpell, PTarget);
             c.open             = PSpell != nullptr && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone &&
-                     PController->Gambits().MasterOn() && !PController->Acting() && !PController->HasQueuedOrder() && PController->canAct();
+                     PController->Gambits().MasterOn() && PController->RestAllowsAction() && !PController->Acting() && !PController->HasQueuedOrder() && PController->canAct();
+            c.open = c.open && !PChar->StatusEffectContainer->HasPreventActionEffect() &&
+                     !PChar->StatusEffectContainer->HasStatusEffect({xi::StatusEffect::Silence, xi::StatusEffect::Mute});
             c.inRange          = distance(PChar->loc.p, PTarget->loc.p) <= reach;
             // If nobody can cast now, the row's own mage can approach.
             // Role-only needs retain their position/range policy.
@@ -441,6 +458,16 @@ namespace pawn::tactics
 
     auto Conveyor::assignment(const uint32 caster, const bool engaged, const Scope& scope) const -> std::optional<Assignment>
     {
+        for (const auto& choice : m_emergency)
+        {
+            if (choice.cure.caster != caster || !choice.cast) continue;
+            auto* target = resolve(scope, choice.cure.target);
+            if (target == nullptr || target->isDead()) return std::nullopt;
+            // Emergency selection already accounted for the amount/timing
+            // of Cures in flight. Its additional Cure may bypass that lock.
+            return Assignment{static_cast<SpellID>(choice.cure.spell), choice.cure.target,
+                "emergency aid: earliest useful Cure", true, true};
+        }
         for (const auto index : cardian::tactics::slotOrder(m_needs.needs, caster))
         {
             const auto& n = m_needs.needs[index];
@@ -456,6 +483,13 @@ namespace pawn::tactics
     auto Conveyor::lines(const Scope& scope) const -> std::vector<std::string>
     {
         std::vector<std::string> out;
+        for (const auto& choice : m_emergency)
+        {
+            const auto& c = choice.cure;
+            out.push_back(fmt::format("Emergency {} -> {}: {} #{}, starts in {:.1f}s, lands in {:.1f}s, ~{:.0f} HP",
+                nameOf(scope, c.caster), nameOf(scope, c.target), choice.cast ? "Cure" : "prepare Cure",
+                c.spell, c.time.start, c.time.land, c.heals));
+        }
         for (const auto& n : m_needs.needs)
         {
             std::string voices;
