@@ -31,4 +31,5 @@ enum PATHFLAG
     PATHFLAG_SLIDE    = 0x10, // slide to end point if close enough (unused in C++, reserved for Lua)
     PATHFLAG_PATROL   = 0x20, // loop the path continuously while roaming
     PATHFLAG_COORDS   = 0x40, // walk through to end; do not repeat
+    PATHFLAG_CARDIAN  = 0x80, // CARDIAN: shorter paths for precise positioning
 };

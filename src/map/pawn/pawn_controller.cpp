@@ -30,6 +30,7 @@
 #include "pawn_doors.h"
 #include "role_support.h"
 #include "spell_bank.h"
+#include "spell_movement.h"
 #include "stake_math.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
@@ -1897,17 +1898,14 @@ auto CPawnController::ApproachIntent(const CBattleEntity* PTarget) const -> Inte
 
 auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
 {
-    // A cast or a shot in flight is never walked: the server interrupts
-    // either once she moves a third of a yalm, so whatever the movers want
-    // waits
+    // Stay stationary during spells and ranged attacks to avoid interrupting them.
     if (POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CRangeState>())
     {
         return AvoidAction::None;
     }
 
-    // A requested spell can take her into its real casting range. This
-    // proposal still passes through aggro/link avoidance below. Camp's
-    // rear boundary governs AoE positioning, not an explicit gambit.
+    // Spell approaches seek range and line of sight through the shared
+    // avoidance checks. They may leave the camp's formation boundary.
     if (!m_Retreat && !m_Waiting && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
     {
         const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
@@ -1918,21 +1916,17 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
             const float reach = pawn::tactics::bank::castRange(POwner, PSpell, target);
             if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f)
             {
-                const auto& me = POwner->loc.p;
-                const float gap = distance(me, target->loc.p);
+                // Use the same line-of-sight requirement as spell validation.
+                const bool sight = !POwner->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock) || POwner->CanSeeTarget(target);
                 intent.kind = Intent::Kind::Stand;
-                if (gap > reach)
+                intent.fallback.reset();
+                if (const auto goal = cardian::casting::approach(POwner->loc.p, target->loc.p, reach, sight); goal.has_value())
                 {
-                    // Walk to the edge of casting range, not to the body.
-                    // Courtesy may shorten the waypoint, so its arrival
-                    // margin must stay small rather than a spell's radius.
-                    const float fraction = (gap - std::max(0.0f, reach - 0.5f)) / gap;
                     intent.kind = Intent::Kind::Path;
-                    intent.point = position_t(me.x + (target->loc.p.x - me.x) * fraction,
-                                              me.y + (target->loc.p.y - me.y) * fraction,
-                                              me.z + (target->loc.p.z - me.z) * fraction, 0, 0);
-                    intent.arrive = 0.2f;
-                    intent.tolerance = 0.3f;
+                    intent.point = *goal;
+                    intent.arrive = cardian::casting::kArrival;
+                    intent.tolerance = cardian::casting::kTolerance;
+                    intent.fallback = target->loc.p;
                 }
                 intent.seat = false;
                 intent.rearBoundary.reset();
@@ -1940,6 +1934,11 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
         }
     }
 
+    return Walk(std::move(intent));
+}
+
+auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
+{
     auto*      PPathFind    = POwner->PAI->PathFind.get();
     position_t point        = intent.point;
     float      followMax    = intent.tolerance;
@@ -2022,9 +2021,22 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
             case Intent::Kind::Path:
                 if (distance(POwner->loc.p, point) > followMax)
                 {
-                    if (!PathToward(point, followTarget, intent.rearBoundary.has_value() ? &*intent.rearBoundary : nullptr) && intent.seat)
+                    if (!PathToward(point, followTarget, intent.rearBoundary.has_value() ? &*intent.rearBoundary : nullptr))
                     {
-                        m_FightSeat = {};
+                        if (intent.fallback.has_value())
+                        {
+                            // Retry toward the spell target through the same avoidance
+                            // checks. Range and sight determine when to stop each tick.
+                            intent.point = *intent.fallback;
+                            intent.arrive = 0.0f;
+                            intent.tolerance = 0.0f;
+                            intent.fallback.reset();
+                            return Walk(std::move(intent));
+                        }
+                        if (intent.seat)
+                        {
+                            m_FightSeat = {};
+                        }
                     }
                 }
                 else if (PPathFind->IsFollowingPath())
@@ -4238,9 +4250,10 @@ auto CPawnController::FormationPoint(const Anchor& a, const float offset, const 
 
 auto CPawnController::IsShortHop(const position_t& point, const float followMax) const -> bool
 {
-    constexpr float plannerMinimumHop = 1.2f;
-    const float     hop               = distance(POwner->loc.p, point);
-    return hop > followMax && hop < plannerMinimumHop && POwner->PAI->PathFind->ValidPosition(point);
+    // Small seating and avoidance adjustments use a direct step on the mesh.
+    constexpr float directStepLimit = 1.2f;
+    const float     hop             = distance(POwner->loc.p, point);
+    return hop > followMax && hop < directStepLimit && POwner->PAI->PathFind->ValidPosition(point);
 }
 
 void CPawnController::NotePathFailure(const AvoidAction action, const position_t& point, const float away)
@@ -5118,8 +5131,7 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
         return intent;
     }
 
-    // A hop under the planner's floor (IsShortHop): straight at it, on
-    // the mesh
+    // A small seat adjustment (IsShortHop): straight at it, on the mesh.
     if (off < 1.2f)
     {
         if (PPathFind->ValidPosition(seat))
@@ -5174,9 +5186,7 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     }
 
     m_SeatDestination = seat;
-    // The seat can be far away while the next detour step is under the
-    // planner's minimum distance. Judge the waypoint, not just the seat,
-    // or PathAround rejects the same short step on every tick.
+    // Choose the movement method from the next waypoint's distance.
     intent.kind       = IsShortHop(goal, 0.0f) ? Intent::Kind::Hop : Intent::Kind::Path;
     intent.point      = goal;
     intent.arrive     = 0.3f;
@@ -5299,8 +5309,8 @@ auto CPawnController::StepBackIntent(const CBattleEntity* PTarget, const bool po
         }
     }
 
-    // A hop this short is under the planner's floor: straight at the
-    // point (the walker's lock-on turns her face back to the mob)
+    // Step straight to the point; the walker's lock-on turns her face
+    // back to the mob.
     m_LastStepBackAt = m_Tick;
     m_Pending.reset();
     Intent intent;
@@ -5372,10 +5382,15 @@ auto CPawnController::PathToward(const position_t& point, const float closeTo, c
         return PPathFind->PathThrough(std::move(*route), PATHFLAG_RUN);
     }
 
-    // The courtesy: where the walk would cut through the player, this
-    // tick's step is planned round them instead (CourtesyStep); the
-    // destination itself otherwise
-    if (PPathFind->PathAround(CourtesyStep(point), closeTo, PATHFLAG_RUN))
+    // Allow short navmesh requests for precise Cardian positioning.
+    constexpr uint8 pathFlags = PATHFLAG_RUN | PATHFLAG_CARDIAN;
+    const auto request = [&](const position_t& goal)
+    {
+        // Let the caller decide where to stop when no arrival margin is requested.
+        return closeTo == 0.0f ? PPathFind->PathTo(goal, pathFlags) : PPathFind->PathAround(goal, closeTo, pathFlags);
+    };
+    // Adjust the route to respect the player's personal space.
+    if (request(CourtesyStep(point)))
     {
         return true;
     }
@@ -5389,7 +5404,7 @@ auto CPawnController::PathToward(const position_t& point, const float closeTo, c
     // Client-positioned players can stand where the mesh doesn't reach
     if (const auto snapped = navMesh->findClosestValidPoint(point); snapped.has_value())
     {
-        if (PPathFind->PathAround(*snapped, closeTo, PATHFLAG_RUN))
+        if (request(*snapped))
         {
             return true;
         }
@@ -5397,5 +5412,5 @@ auto CPawnController::PathToward(const position_t& point, const float closeTo, c
 
     // We may be off-mesh ourselves (knockback, legacy stepping)
     navMesh->snapToValidPosition(POwner->loc.p);
-    return PPathFind->PathAround(point, closeTo, PATHFLAG_RUN);
+    return request(point);
 }

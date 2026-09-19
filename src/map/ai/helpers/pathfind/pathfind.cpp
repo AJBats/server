@@ -326,7 +326,11 @@ auto CPathFind::FollowPath(timer::time_point tick) -> void
     // Stop short only for the last waypoint so corners are rounded precisely.
     const bool  steppingToFinal = path_.atOrPastLastIndex();
     const float stopShort       = steppingToFinal ? distanceFromPoint_ : 0.0f;
-    StepToInternal(targetPoint.position, pathFlags_ & PATHFLAG_RUN, stopShort);
+    // CARDIAN: hold position once the final stopping distance is reached.
+    if (!(pathFlags_ & PATHFLAG_CARDIAN) || !steppingToFinal || !isWithinDistance(owner_->position(), targetPoint.position, stopShort))
+    {
+        StepToInternal(targetPoint.position, pathFlags_ & PATHFLAG_RUN, stopShort);
+    }
 
     if (path_.consumed())
     {
@@ -377,8 +381,12 @@ auto CPathFind::FindPathInternal(const position_t& start, const position_t& end)
     TracyZoneScoped;
     TracyZoneString(owner_->name());
 
-    // Already co-located on the navmesh grid - a query would return a trivial/empty path.
-    if (isNear(start, end))
+    // CARDIAN: allow shorter paths for precise Cardian positioning.
+    // Other requests retain the standard one-yalm minimum.
+    const bool closeEnough = (pathFlags_ & PATHFLAG_CARDIAN)
+                                 ? isWithinDistance(start, end, 0.1f)
+                                 : isNear(start, end);
+    if (closeEnough)
     {
         path_.setPartial(false);
         return false;
@@ -393,6 +401,30 @@ auto CPathFind::FindPathInternal(const position_t& start, const position_t& end)
         path_.clear();
 
         return false;
+    }
+
+    // CARDIAN: require a route that can move the owner, allowing callers
+    // to retry with another destination when necessary.
+    if ((pathFlags_ & PATHFLAG_CARDIAN) && !built->points.empty())
+    {
+        const auto& points = built->points;
+        const bool  cornersReached = std::all_of(points.begin(), points.end() - 1, [&](const auto& point)
+        {
+            return isWithinDistance(start, point.position, 0.1f);
+        });
+        if (cornersReached)
+        {
+            const auto& endPoint = points.back().position;
+            const float gap = distance(start, endPoint);
+            auto arrival = start;
+            // Check final movement without changing the owner's position.
+            const float advance = pathfind::stepTowards(arrival, endPoint, gap, distanceFromPoint_);
+            if (gap <= 0.1f || advance <= 0.0f || distanceSquared(start, arrival) == 0.0f)
+            {
+                path_.clear();
+                return false;
+            }
+        }
     }
 
     path_.assign(std::move(built->points), built->isPartial);

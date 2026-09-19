@@ -409,13 +409,8 @@ private:
     };
     auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, bool fighting) -> AvoidAction;
 
-    // The locomotion pass (pawn-modes step 3). The movers -- formation,
-    // the walk in, the seat, the step back, the declump -- only propose:
-    // an Intent says where she wants to be this tick and how. Move is
-    // the one walker: it vets the proposal against the tick's danger map
-    // the same way for every mover (escape, hold at the rim, detour,
-    // re-seat a slot), makes the tick's one path or step, and keeps her
-    // face on the mob in reach. Nothing else moves her.
+    // Movers propose an intent. Move applies spell positioning; Walk checks
+    // avoidance, executes movement, and maintains combat facing.
     struct Intent
     {
         enum class Kind : uint8
@@ -437,6 +432,7 @@ private:
         bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
         bool                 seat       = false;   // a seat's path: failing it drops the seat
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
+        std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
     };
 
     // The tick's danger map, scanned once before the movers run so every
@@ -466,6 +462,7 @@ private:
     // The walker. Returns the vet's action, or nothing when the tick was
     // spent on a warp.
     auto Move(Intent intent) -> std::optional<AvoidAction>;
+    auto Walk(Intent intent) -> std::optional<AvoidAction>;
 
     // The formation mover, roaming or holding for the player's strike:
     // where this pawn belongs (the lead's point ahead of the place, or a
@@ -548,7 +545,8 @@ private:
 
     // Navmesh-path toward a point, healing off-mesh endpoints: an off-mesh
     // destination is snapped to the nearest valid point, and an off-mesh
-    // owner is snapped back onto the mesh. Never falls back to raw stepping.
+    // owner is snapped back onto the mesh. Zero closeTo uses PathTo, otherwise
+    // PathAround supplies the stop-short distance. Never uses raw stepping.
     auto PathToward(const position_t& point, float closeTo, const position_t* rearBoundary = nullptr) -> bool;
 
     void FaceTarget(EntityId target) const;

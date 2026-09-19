@@ -52,6 +52,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_rest.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rest_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cure_readiness.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/spell_movement.h # CARDIAN: spell range and sight approach
 )
 
 set(MAP_CORE_SOURCES
