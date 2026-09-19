@@ -28,6 +28,7 @@
 // nobody's followers set out ahead of him, and nobody is a cardian.
 
 #include "map/lua/lua_base_entity.h"
+#include "map/pause/pause.h"
 #include "map/pawn/pawn.h"
 #include "map/pawn/world.h"
 #include "map/utils/moduleutils.h"
@@ -93,6 +94,24 @@ class CardianTestStubs : public CPPModule
         lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const uint32 /* playerCharID */) -> std::string
         {
             return "";
+        };
+
+        // The combat pause is core, so this is the real manager, not a stub: what a
+        // Lua test needs to hold the simulation and let it go (scripts/tests/cardian/
+        // pause.lua). Held by nobody in particular, so no holder can go offline.
+        lua["xi"]["cardian"].get_or_create<sol::table>();
+        lua["xi"]["cardian"]["pause"]            = lua.create_table();
+        lua["xi"]["cardian"]["pause"]["hold"]    = []() -> bool
+        {
+            return cardian::pause::hold(0, "a test") == cardian::pause::Result::Ok;
+        };
+        lua["xi"]["cardian"]["pause"]["release"] = []() -> bool
+        {
+            return cardian::pause::release("a test") == cardian::pause::Result::Ok;
+        };
+        lua["xi"]["cardian"]["pause"]["isHeld"]  = []() -> bool
+        {
+            return cardian::pause::isHeld();
         };
     }
 };

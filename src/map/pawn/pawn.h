@@ -390,4 +390,8 @@ namespace pawn
     // after all charTicks): answer pending invites, then discard queued
     // outbound packets.
     void onZoneTick(CZone* PZone);
+
+    // The zone tick while the simulation is held (pause/pause.h): nothing steps, but
+    // nobody else drains a session-less char's outbound queue, so that still happens.
+    void onZoneTickHeld(CZone* PZone);
 } // namespace pawn

@@ -35,6 +35,7 @@
 
 #include "ai/ai_container.h"
 #include "entities/char_entity.h"
+#include "pause/pause.h"
 #include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
 #include "item_container.h"
@@ -1296,8 +1297,16 @@ class PawnModule : public CPPModule
         pawn::tactics::zoneIn(PChar);
     }
 
+    // A held simulation (pause/pause.h) takes no step here either: the world's
+    // bodies, the seat ladder and the tacticians wait, and only the outboxes drain.
     void OnZoneTick(CZone* PZone) override
     {
+        if (cardian::pause::isHeld())
+        {
+            pawn::onZoneTickHeld(PZone);
+            return;
+        }
+
         pawn::onZoneTick(PZone);
     }
 

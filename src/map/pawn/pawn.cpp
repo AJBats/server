@@ -2154,6 +2154,17 @@ namespace pawn
         ShowInfoFmt("pawn: {} ({}) crossed into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
     }
 
+    void onZoneTickHeld(CZone* PZone)
+    {
+        for (const auto& [charid, PPawn] : pawns)
+        {
+            if (PPawn->loc.zone == PZone)
+            {
+                PPawn->clearPacketList();
+            }
+        }
+    }
+
     void onZoneTick(CZone* PZone)
     {
         stakeSweep();

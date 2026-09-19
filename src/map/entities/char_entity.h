@@ -672,11 +672,8 @@ public:
     std::vector<GearSetMod_t>     m_GearSetMods; // The list of gear set mods currently applied to the character.
     std::vector<AuctionHistory_t> m_ah_history;  // AH history list (in the future consider using UContainer)
 
-    // CARDIAN: real time, not simulation time. Flood control guards actions that a
-    // combat pause deliberately leaves working (emotes, shopping, wide scan, jump);
-    // on a held simulation clock their interval would never elapse, so the first one
-    // through would be the last until the pause lifted.
-    // (m_LastPacketType below is re-padded to the wider type: whitespace only.)
+    // CARDIAN: real time -- packet flood control must not freeze with a held simulation.
+    // (m_LastPacketType below is re-padded: whitespace only.)
     HashMap<uint16, realtime::time_point> m_PacketRecievedTimestamps;
     uint16                                m_LastPacketType{};
 

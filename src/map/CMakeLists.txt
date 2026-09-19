@@ -10,7 +10,8 @@ add_subdirectory(utils)
 
 set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
-    # CARDIAN: pawn/possession modules -- APP_SOURCES so their self-registration is linked
+    # CARDIAN: pawn/possession/pause modules -- APP_SOURCES so their self-registration is linked
+    ${CMAKE_CURRENT_SOURCE_DIR}/pause/pause_module.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_controller.cpp
@@ -94,6 +95,9 @@ set(MAP_CORE_SOURCES
     # CARDIAN: the map's real players as the pawn code asks after them, core because map_engine hands it the sessions
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.h
+    # CARDIAN: the combat pause's manager, core because the AI tick and packet handlers ask it
+    ${CMAKE_CURRENT_SOURCE_DIR}/pause/pause.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pause/pause.h
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.h
     ${CMAKE_CURRENT_SOURCE_DIR}/conquest_data.cpp

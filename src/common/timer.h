@@ -28,33 +28,12 @@
 #include "cbasetypes.h"
 #include "earth_time.h"
 
-// CARDIAN: the two clock domains.
-//
-// timer:: (below) is the SIMULATION clock: it carries an offset, so gameplay
-// deadlines (casts, recasts, status effects, respawns, AI) can be moved as a body --
-// the test harness does this with sim:skipTime(), and it is what lets a simulation
-// pause hold gameplay still. Everything scheduled against timer::time_point keeps its remaining time
-// when that offset moves, which is the property that makes those features possible.
-//
-// realtime:: is the steady clock without that offset, for work that must keep
-// measuring real elapsed time no matter what the simulation is doing: the
-// inactivity watchdog, the Cardian Link's keepalive, packet flood control, log
-// throttles and query timing. Freezing gameplay must never convince a watchdog that
-// a genuinely wedged thread just updated. (Client session liveness is a third
-// domain: it rides earth_time, the wall clock, which a simulation pause never
-// touches.)
-//
-// The two are DELIBERATELY different types. realtime::time_point and
-// timer::time_point are both steady-clock based, but a distinct clock type makes
-// them distinct time_points, so putting a simulation timestamp in a liveness path
-// (or the reverse) is a compile error rather than a bug that only shows up while
-// paused. Durations are shared -- only the instants are domain-specific.
+// CARDIAN: the real-time clock domain -- the steady clock without timer::'s offset or hold. A
+// distinct type, so its instants cannot mix with simulation time (RESEARCH.md 3.2).
 namespace realtime
 {
 
-// Test-only. How the test harness says "real time went by" without waiting for it:
-// timer::add_offset, the harness's fast-forward, moves both domains. Nothing in a
-// live server writes this, so there realtime is exactly the steady clock.
+// Test-only: the harness's fast-forward (timer::add_offset) moves this. Zero on a live server.
 inline std::atomic<std::chrono::steady_clock::rep> test_offset{ 0 };
 
 struct clock
@@ -99,23 +78,40 @@ using time_point = clock::time_point;
 
 inline const time_point start_time = clock::now();
 
-// CARDIAN: the offset is read from every thread that asks the time, and
-// add_simulation_offset exists so that it can be written while they do, so it is
-// atomic rather than a plain duration. Relaxed ordering: readers need the value to
-// be whole, not ordered against other memory. (GM time commands do not come through
-// here: !addtime moves earth_time's offset.)
+// CARDIAN: atomic -- every thread reads it while the test harness or a release() writes it.
 inline std::atomic<duration::rep> time_offset{ 0 };
 
-// CARDIAN: one read of the atomic offset, for now() and for callers that need to
-// know how far the simulation clock currently sits from the steady clock.
+// CARDIAN: the hold -- zero while the clock runs, else the instant now() answers until release().
+inline std::atomic<duration::rep> held_at{ 0 };
+
+// CARDIAN: the simulation clock's offset from the steady clock (not meaningful while held).
 inline duration get_offset()
 {
-    return duration{ time_offset.load(std::memory_order_relaxed) };
+    return duration{ time_offset.load() };
+}
+
+// CARDIAN: the simulation clock as it would read if nothing held it.
+inline time_point now_running()
+{
+    return clock::now() + get_offset();
 }
 
 inline time_point now()
 {
-    return clock::now() + get_offset(); // CARDIAN: reads the atomic offset
+    // CARDIAN: held_at is read before the offset and release() writes them in the other order,
+    // so a reader that finds the hold gone also finds the offset that continues it.
+    if (const auto held = held_at.load(); held != 0)
+    {
+        return time_point{ duration{ held } };
+    }
+
+    return now_running();
+}
+
+// CARDIAN: is the simulation clock held. Safe from any thread.
+inline bool is_held()
+{
+    return held_at.load() != 0;
 }
 
 inline duration get_uptime()
@@ -138,19 +134,35 @@ inline time_point from_utc(const earth_time::time_point& utc_tp = earth_time::no
     return utc_tp - utc_now + timer_now;
 };
 
-// CARDIAN: moves the simulation clock alone: the entry for giving a held simulation
-// its time back at resume. Real time is not this function's to move.
+// CARDIAN: moves the simulation clock alone (release() and tests); real time is not its to move.
 inline void add_simulation_offset(const duration& additional_offset)
 {
-    time_offset.fetch_add(additional_offset.count(), std::memory_order_relaxed);
+    time_offset.fetch_add(additional_offset.count());
+}
+
+// CARDIAN: stop the simulation clock where it stands. Main thread only; no-op if already held.
+inline void hold()
+{
+    if (!is_held())
+    {
+        held_at.store(now_running().time_since_epoch().count());
+    }
+}
+
+// CARDIAN: restart the clock from the instant it was held at, absorbing whatever went by.
+// Main thread only; no-op if not held.
+inline void release()
+{
+    if (const auto held = held_at.load(); held != 0)
+    {
+        add_simulation_offset(duration{ held } - now_running().time_since_epoch());
+        held_at.store(0);
+    }
 }
 
 inline void add_offset(const duration& additional_offset)
 {
-    // CARDIAN: upstream's fast-forward, called only by the test harness to say "this
-    // much time went by" (sim:skipTime and every simulated tick). Time going by moves
-    // both clock domains, so real-time work such as packet flood control sees the
-    // harness's skips exactly as it did when there was one clock.
+    // CARDIAN: only the test harness calls this ("time went by"), so it moves both clock domains.
     add_simulation_offset(additional_offset);
     realtime::advance_for_tests(additional_offset);
 }
@@ -158,7 +170,7 @@ inline void add_offset(const duration& additional_offset)
 inline void reset_offset()
 {
     // CARDIAN: undoes add_offset, so it clears both domains.
-    time_offset.store(0, std::memory_order_relaxed);
+    time_offset.store(0);
     realtime::test_offset.store(0, std::memory_order_relaxed);
 }
 

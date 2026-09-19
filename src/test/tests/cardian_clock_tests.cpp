@@ -25,8 +25,9 @@
 // is the same steady clock without it, for work that must keep measuring real
 // elapsed time. These tests pin the properties the pause feature stands on, using
 // the two offset entries alone -- no pause, no server, no client:
-//   timer::add_simulation_offset  moves the simulation clock only (a pause's resume)
+//   timer::add_simulation_offset  moves the simulation clock only
 //   timer::add_offset             the test harness's "time went by": both domains
+//   timer::hold / timer::release  stop the simulation clock and restart it
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -35,6 +36,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "cardian_clock_guard.h"
 #include "common/timer.h"
 #include "map/entities/char_entity.h"
 
@@ -58,28 +60,9 @@ static_assert(std::is_same_v<realtime::duration, timer::duration>);
 // together with its reader, this stops the build where the pair alone would not.
 static_assert(std::is_same_v<decltype(CCharEntity::m_PacketRecievedTimestamps)::mapped_type, realtime::time_point>);
 
-namespace
-{
-
-// Both offsets are process-global and the Lua suite's sim:skipTime() shares them,
-// so a test restores exactly what it found rather than zeroing them.
-struct OffsetGuard
-{
-    timer::duration      saved     = timer::get_offset();
-    realtime::clock::rep savedReal = realtime::test_offset.load();
-
-    ~OffsetGuard()
-    {
-        timer::time_offset.store(saved.count());
-        realtime::test_offset.store(savedReal);
-    }
-};
-
-} // namespace
-
 TEST_CASE("clock domains: a simulation offset does not move real time", "[cardian][clock]")
 {
-    const OffsetGuard guard;
+    const ClockGuard guard;
 
     const auto realBefore = realtime::now();
     const auto simBefore  = timer::now();
@@ -95,7 +78,7 @@ TEST_CASE("clock domains: a simulation offset does not move real time", "[cardia
 
 TEST_CASE("clock domains: the watchdog cannot be fooled by a time shift", "[cardian][clock]")
 {
-    const OffsetGuard guard;
+    const ClockGuard guard;
 
     // What MapEngine::watchdogWatcher does: remember when the main thread last
     // checked in, then ask how long ago that was. A simulation shift in either
@@ -111,7 +94,7 @@ TEST_CASE("clock domains: the watchdog cannot be fooled by a time shift", "[card
 
 TEST_CASE("clock domains: a deadline keeps its remaining time across an offset round trip", "[cardian][clock]")
 {
-    const OffsetGuard guard;
+    const ClockGuard guard;
 
     // Gameplay deadlines are absolute points on the simulation clock, so an offset
     // that is later given back leaves every one of them where it was.
@@ -125,13 +108,13 @@ TEST_CASE("clock domains: a deadline keeps its remaining time across an offset r
 
     // Integer nanosecond arithmetic: the offset itself comes back exactly. The clock
     // reads around it are only as close as the machine was quick.
-    REQUIRE(timer::get_offset() == guard.saved);
+    REQUIRE(timer::get_offset() == guard.savedOffset);
     REQUIRE(std::chrono::abs(remainingBefore - remainingAfter) < 1s);
 }
 
 TEST_CASE("clock domains: the harness's time going by moves both domains", "[cardian][clock]")
 {
-    const OffsetGuard guard;
+    const ClockGuard guard;
 
     const auto realBefore = realtime::now();
     const auto simBefore  = timer::now();
@@ -145,52 +128,9 @@ TEST_CASE("clock domains: the harness's time going by moves both domains", "[car
     REQUIRE(std::chrono::abs((timer::now() - simBefore) - 1h) < 1s);
 }
 
-TEST_CASE("clock domains: a hold gives a deadline its time back", "[cardian][clock]")
-{
-    const OffsetGuard guard;
-
-    // The pause's arithmetic, done by hand: ten minutes go by -- far longer than the
-    // cast had left -- and the simulation clock is then given back exactly what was
-    // measured on the real clock. The cast must still have its minute.
-    const auto castFinishesAt = timer::now() + 60s;
-
-    const auto holdStart = realtime::now();
-    timer::add_offset(10min);
-    const auto heldFor = realtime::now() - holdStart;
-    timer::add_simulation_offset(-heldFor);
-
-    REQUIRE(std::chrono::abs(heldFor - 10min) < 1s);
-    REQUIRE(std::chrono::abs((castFinishesAt - timer::now()) - 60s) < 1s);
-
-    // The same ten minutes with nothing given back: the cast is long over.
-    timer::add_offset(10min);
-    REQUIRE(timer::now() >= castFinishesAt);
-}
-
-TEST_CASE("clock domains: to_utc of now ignores the offset on one thread", "[cardian][clock]")
-{
-    const OffsetGuard guard;
-
-    // map/time_server.cpp schedules its JST work from to_utc(timer::now()) and relies
-    // on this: to_utc subtracts a now() of its own, so with no writer in between the
-    // offset cancels and that work keeps real wall time.
-    //
-    // The cancellation is NOT safe against a concurrent writer: to_utc reads the
-    // offset a second time, and an offset written between the caller's read and
-    // to_utc's shifts the result by the whole write. Nothing writes concurrently
-    // today; the pause will, so closing that window is a prerequisite of the pause
-    // and this test only covers the single-threaded half.
-    const auto wallBefore = timer::to_utc(timer::now());
-
-    timer::add_simulation_offset(6h);
-
-    const auto wallAfter = timer::to_utc(timer::now());
-    REQUIRE(std::chrono::abs(wallAfter - wallBefore) < 1s);
-}
-
 TEST_CASE("clock domains: concurrent offset writes are not lost and reads stay whole", "[cardian][clock]")
 {
-    const OffsetGuard guard;
+    const ClockGuard guard;
 
     // Two writers race add_simulation_offset while readers ask the time. With a plain
     // read-modify-write the writers lose updates and the offset does not come back
@@ -205,7 +145,7 @@ TEST_CASE("clock domains: concurrent offset writes are not lost and reads stay w
     constexpr uint64           minOverlap  = 1000;
     constexpr int              maxRounds   = 200000000;
     const timer::duration::rep stepTicks   = step.count();
-    const timer::duration::rep baseTicks   = guard.saved.count();
+    const timer::duration::rep baseTicks   = guard.savedOffset.count();
 
     std::atomic<int>    ready{ 0 };
     std::atomic<bool>   go{ false };
@@ -287,5 +227,170 @@ TEST_CASE("clock domains: concurrent offset writes are not lost and reads stay w
 
     REQUIRE(readsWhileWriting.load() >= minOverlap);
     REQUIRE_FALSE(partial.load());
-    REQUIRE(timer::get_offset() == guard.saved);
+    REQUIRE(timer::get_offset() == guard.savedOffset);
+}
+
+//
+// The hold: timer::hold() and timer::release().
+//
+
+TEST_CASE("clock hold: a held clock stands still while time goes by", "[cardian][clock]")
+{
+    const ClockGuard guard;
+
+    const auto realBefore = realtime::now();
+
+    timer::hold();
+    REQUIRE(timer::is_held());
+    const auto heldInstant = timer::now();
+
+    timer::add_offset(10min);
+
+    // Ten minutes went by for the real clock and not one tick for the held one.
+    REQUIRE(timer::now() == heldInstant);
+    REQUIRE(std::chrono::abs((realtime::now() - realBefore) - 10min) < 1s);
+
+    timer::release();
+    REQUIRE_FALSE(timer::is_held());
+}
+
+TEST_CASE("clock hold: a deadline keeps its time across holds", "[cardian][clock]")
+{
+    const ClockGuard guard;
+
+    const auto castFinishesAt = timer::now() + 60s;
+
+    // Two holds in a row, ten minutes each: far longer than the cast had left.
+    for (int i = 0; i < 2; ++i)
+    {
+        timer::hold();
+        timer::add_offset(10min);
+        REQUIRE(timer::now() < castFinishesAt);
+        timer::release();
+    }
+
+    REQUIRE(std::chrono::abs((castFinishesAt - timer::now()) - 60s) < 1s);
+
+    // Released, the clock runs again: a skip past the deadline reaches it.
+    timer::add_offset(61s);
+    REQUIRE(timer::now() >= castFinishesAt);
+}
+
+TEST_CASE("clock hold: the clock stops and starts but never jumps", "[cardian][clock]")
+{
+    const ClockGuard guard;
+
+    const auto before = timer::now();
+
+    timer::hold();
+    const auto held = timer::now();
+    timer::add_offset(10min);
+    const auto stillHeld = timer::now();
+    timer::release();
+    const auto after = timer::now();
+
+    REQUIRE(before <= held);
+    REQUIRE(held == stillHeld);
+    REQUIRE(after >= held);
+    REQUIRE(after - held < 1s);
+}
+
+TEST_CASE("clock hold: holding twice and releasing twice change nothing", "[cardian][clock]")
+{
+    const ClockGuard guard;
+
+    timer::hold();
+    const auto held = timer::now();
+    timer::add_offset(5min);
+    timer::hold();
+    REQUIRE(timer::now() == held);
+
+    timer::release();
+    const auto offsetAfterRelease = timer::get_offset();
+    timer::release();
+    REQUIRE(timer::get_offset() == offsetAfterRelease);
+    REQUIRE_FALSE(timer::is_held());
+}
+
+TEST_CASE("clock hold: a deadline's wall-clock time does not jump at release", "[cardian][clock]")
+{
+    const ClockGuard guard;
+
+    // to_utc is how a deadline is persisted (status effects) and how time_server
+    // reads the wall clock. It converts through timer::now(), so a clock that jumped
+    // at release would move every converted deadline by the length of the hold. The
+    // harness's fast-forward leaves the wall clock alone, so here the answer must
+    // not move at all.
+    const auto castFinishesAt = timer::now() + 60s;
+    const auto wallBefore     = timer::to_utc(castFinishesAt);
+
+    timer::hold();
+    timer::add_offset(10min);
+    REQUIRE(std::chrono::abs(timer::to_utc(castFinishesAt) - wallBefore) < 1s);
+
+    timer::release();
+    REQUIRE(std::chrono::abs(timer::to_utc(castFinishesAt) - wallBefore) < 1s);
+}
+
+TEST_CASE("clock hold: other threads never see the clock jump", "[cardian][clock]")
+{
+    const ClockGuard guard;
+
+    // hold() and release() belong to the main thread, but any thread may be reading
+    // while they run. A reader may see the clock stand still and may see it run; it
+    // must never get a wild value. The bound is loose because hold() can be preempted
+    // between its read of the running clock and its store. (What a hold does to time
+    // is pinned single-threaded above: the harness's fast-forward is not for racing.)
+    constexpr int cycles = 20000;
+
+    std::atomic<bool> go{ false };
+    std::atomic<bool> stop{ false };
+    std::atomic<bool> jumped{ false };
+    std::atomic<int>  ready{ 0 };
+
+    std::vector<std::thread> readers;
+    for (int i = 0; i < 4; ++i)
+    {
+        readers.emplace_back(
+            [&]
+            {
+                ready.fetch_add(1);
+                while (!go.load())
+                {
+                    std::this_thread::yield();
+                }
+
+                auto last = timer::now();
+                while (!stop.load(std::memory_order_relaxed))
+                {
+                    const auto current = timer::now();
+                    if (std::chrono::abs(current - last) > 1s)
+                    {
+                        jumped.store(true);
+                    }
+                    last = current;
+                }
+            });
+    }
+
+    while (ready.load() < 4)
+    {
+        std::this_thread::yield();
+    }
+    go.store(true);
+
+    for (int n = 0; n < cycles; ++n)
+    {
+        timer::hold();
+        timer::release();
+    }
+
+    stop.store(true);
+    for (auto& reader : readers)
+    {
+        reader.join();
+    }
+
+    REQUIRE_FALSE(jumped.load());
+    REQUIRE_FALSE(timer::is_held());
 }
