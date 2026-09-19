@@ -80,6 +80,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const double now = restSeconds(timer::now());
     auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
     auto* leader = GetAnchor();
+    const auto* place = CurrentPlace(leader);
     const bool followEnabled = m_Gambits->MasterOn() && RestsWithPlayer() && leader != nullptr;
     const bool follow = m_RestFollow.request(followEnabled, leader != nullptr && leader->animation == xi::Animation::Healing,
                                            now, std::chrono::duration<double>(ReactionBeat()).count());
@@ -90,7 +91,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool supportRecovery = support && (advice->recover || POwner->health.hp < POwner->GetMaxHP());
     // Rest With Player stays an explicit input even when a support role owns
     // autonomous recovery. Do not overwrite it with the role's MP decision.
-    const bool want = townKneel || (support && Staked() && (supportRecovery || healing != nullptr));
+    const bool want = townKneel || (support && place != nullptr && (supportRecovery || healing != nullptr));
     const int ticks = healing != nullptr ? healing->GetElapsedTickCount() : 0;
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
     m_RestTicks = ticks;
@@ -124,12 +125,12 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         .campClear = campClear, .mpMissing = mpMissing,
         .urgent = support && advice->wake, .blocked = blocked,
         .moving = !stationary, .routinePosition = routinePosition && support && Staked(),
-        .recovered = support && Staked() && !supportRecovery, .tickLanded = landed});
+        .recovered = support && place != nullptr && !supportRecovery, .tickLanded = landed});
     if (decision == cardian::rest::Decision::Stand)
     {
         StandFromRest(support && advice->wake ? advice->why : unsafe ? "danger" : noRecovery ? "recovery blocked" :
             HasQueuedOrder() ? "the player's action order" :
-            support && Staked() && landed && !supportRecovery && !withPlayer && !campClear ? "recovery tick: pace and reserve ready" : "rest request ended or movement needed");
+            support && place != nullptr && landed && !supportRecovery && !withPlayer && !campClear ? "recovery tick: pace and reserve ready" : "rest request ended or movement needed");
     }
     else if (decision == cardian::rest::Decision::Kneel)
     {
@@ -144,7 +145,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         ShowInfoFmt("rest: {} keeps resting after recovery tick: no party enemy within {:.0f} y of camp; MP {}/{} (pace and reserve ready)",
                     POwner->getName(), settings::get<float>("pawn.HUNT_LEASH"), POwner->health.mp, POwner->GetMaxMP());
     }
-    if (support && Staked() && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) && now >= m_RestChatAt)
+    if (support && place != nullptr && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) && now >= m_RestChatAt)
     {
         m_RestChatAt = now + 60.0;
         if (advice->knownCost && POwner->health.mp < advice->readyMp)
