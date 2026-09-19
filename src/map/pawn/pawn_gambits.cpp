@@ -1724,6 +1724,33 @@ namespace pawn
                         PTarget != nullptr && PTarget != POwner ? fmt::format(" ({:.1f} y)", distance(POwner->loc.p, PTarget->loc.p)) : "");
         }
     }
+    auto abilitiesFor(CCharEntity* PChar) -> std::vector<CAbility*>
+    {
+        std::vector<CAbility*> out;
+        if (PChar == nullptr)
+        {
+            return out;
+        }
+        for (const auto job : { PChar->GetMJob(), PChar->GetSJob() })
+        {
+            if (job == xi::Job::NONE)
+            {
+                continue;
+            }
+            for (auto* PAbility : ability::GetAbilities(job))
+            {
+                // Job lists also contain pet abilities outside the character bitfield.
+                if (PAbility != nullptr && PAbility->getID() < sizeof(PChar->m_Abilities) * 8 &&
+                    charutils::hasAbility(PChar, PAbility->getID()) &&
+                    std::find(out.begin(), out.end(), PAbility) == out.end())
+                {
+                    out.push_back(PAbility);
+                }
+            }
+        }
+        return out;
+    }
+
     auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary
     {
         Vocabulary v;
@@ -1800,20 +1827,9 @@ namespace pawn
             v.actions.push_back({ fmt::format("2:0:{}", static_cast<uint32>(family)), familyName(static_cast<uint32>(family)) + " (best)", "Magic" });
         }
 
-        // Job abilities she has (the ability table is built per job and level)
-        for (const auto job : { PPawn->GetMJob(), PPawn->GetSJob() })
+        for (auto* PAbility : abilitiesFor(PPawn))
         {
-            for (auto* PAbility : ability::GetAbilities(job))
-            {
-                if (PAbility != nullptr && charutils::hasAbility(PPawn, PAbility->getID()))
-                {
-                    const auto key = fmt::format("3:2:{}", PAbility->getID());
-                    if (std::none_of(v.actions.begin(), v.actions.end(), [&](const VocabEntry& e) { return e.key == key; }))
-                    {
-                        v.actions.push_back({ key, titleCase(PAbility->getName()), "Abilities", PAbility->getValidTarget() });
-                    }
-                }
-            }
+            v.actions.push_back({ fmt::format("3:2:{}", PAbility->getID()), titleCase(PAbility->getName()), "Abilities", PAbility->getValidTarget() });
         }
 
         // A level-up rebuilds her learned-weapon-skill bitfield, and a

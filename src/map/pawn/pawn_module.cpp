@@ -1114,24 +1114,17 @@ class PawnModule : public CPPModule
             // ability id, so they are matched through her own ability list
             if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_ABILITY); PList != nullptr)
             {
-                for (const auto job : { PPawn->GetMJob(), PPawn->GetSJob() })
+                for (auto* PAbility : pawn::abilitiesFor(PPawn))
                 {
-                    for (auto* PAbility : ability::GetAbilities(job))
+                    for (const auto& recast : *PList)
                     {
-                        if (PAbility == nullptr || !charutils::hasAbility(PPawn, PAbility->getID()))
+                        if (recast.ID != PAbility->getRecastId())
                         {
                             continue;
                         }
-                        for (const auto& recast : *PList)
+                        if (const auto seconds = left(recast); seconds > 0.0)
                         {
-                            if (recast.ID != PAbility->getRecastId())
-                            {
-                                continue;
-                            }
-                            if (const auto seconds = left(recast); seconds > 0.0)
-                            {
-                                table[fmt::format("3:2:{}", PAbility->getID())] = seconds;
-                            }
+                            table[fmt::format("3:2:{}", PAbility->getID())] = seconds;
                         }
                     }
                 }

@@ -41,6 +41,7 @@
 #include <utility>
 #include <vector>
 
+class CAbility;
 class CBattleEntity;
 class CCharEntity;
 class CPawnController;
@@ -156,6 +157,9 @@ namespace pawn
         std::vector<VocabEntry> actions;
     };
     auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary;
+
+    // Current character abilities, shared by the action catalogue and cooldowns.
+    auto abilitiesFor(CCharEntity* PChar) -> std::vector<CAbility*>;
 
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
     // for a character owner. It speaks the trust vocabulary (gambits::G_*,
