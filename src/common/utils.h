@@ -221,10 +221,12 @@ auto getRandomSampleString(T min, T max) -> std::string
 } // namespace utils
 
 // clang-format off
-static Synchronized<HashMap<std::string, timer::time_point>> lastExecutionTimes;
+// CARDIAN: real time -- on a held simulation clock the interval would never elapse
+// and a throttled log line would fire once, then stay silent for the whole pause.
+static Synchronized<HashMap<std::string, realtime::time_point>> lastExecutionTimes;
 #define RATE_LIMIT(duration, code)                                                    \
 {                                                                                     \
-    const auto currentTime = timer::now();                                            \
+    const auto currentTime = realtime::now(); /* CARDIAN: real time, see above */     \
     const auto key         = std::string(__FILE__) + ":" + std::to_string(__LINE__);  \
     lastExecutionTimes.write([&](auto& lastExecutionTimes)                            \
     {                                                                                 \

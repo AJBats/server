@@ -90,6 +90,15 @@ namespace
     };
     std::unordered_map<uint32, StoredPosition> g_freshPositions;
 
+    // StoredPosition::at is simulation time, unlike the connection's own liveness
+    // fields, and that serves both of its jobs. Freshness asks how much game has
+    // passed since the addon said where he stands. Velocity divides by the gap
+    // between two samples, and a held simulation takes no simulation time: the last
+    // sample before a pause and the first after it sit a normal step apart, so his
+    // motion carries across the pause unbroken. That holds only while samples that
+    // arrive DURING a hold are not ingested -- they would report a standing player
+    // and a zero gap, and collapse the estimate. Whatever holds the simulation must
+    // therefore keep those samples out; this file does not.
     constexpr auto FreshPositionMaxAge = std::chrono::seconds(1);
 
     class Connection;
@@ -329,7 +338,7 @@ namespace
         // Returns why the connection ended
         auto serve() -> Task<std::string>
         {
-            lastRx_      = timer::now();
+            lastRx_      = realtime::now();
             windowStart_ = lastRx_;
 
             while (socket_.is_open() && !scheduler_.closeRequested())
@@ -341,7 +350,7 @@ namespace
                 if (!result.has_value())
                 {
                     // Nothing arrived within a ping interval
-                    if (timer::now() - lastRx_ > config_.deadAfter)
+                    if (realtime::now() - lastRx_ > config_.deadAfter)
                     {
                         serverDrop_ = true;
                         co_return fmt::format("silent for {}ms", config_.deadAfter.count());
@@ -365,7 +374,7 @@ namespace
                     co_return ec.message();
                 }
 
-                const auto now = timer::now();
+                const auto now = realtime::now();
                 lastRx_        = now;
 
                 if (now - windowStart_ >= 1s)
@@ -645,8 +654,8 @@ namespace
         std::string                 inbox_;
         std::deque<std::string>     outbox_;
         std::string                 writeError_;
-        timer::time_point           lastRx_{};
-        timer::time_point           windowStart_{};
+        realtime::time_point        lastRx_{};
+        realtime::time_point        windowStart_{};
         uint32                      linesThisSecond_ = 0;
         uint32                      pingSeq_         = 0;
         uint32                      boundCharID_     = 0;

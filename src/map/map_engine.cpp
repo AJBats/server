@@ -316,7 +316,7 @@ auto MapEngine::watchdogUpdater() -> Task<void>
         // will kill the server from a worker thread.
         // We do this because if the main thread is blocked severely enough to trigger the watchdog,
         // your server is degraded - likely beyond repair.
-        watchdogLastUpdate_ = timer::now();
+        watchdogLastUpdate_ = realtime::now(); // CARDIAN: liveness runs on real time
         co_await scheduler_.yieldFor(kMainThreadBacklogThreshold);
     }
 }
@@ -333,13 +333,13 @@ auto MapEngine::watchdogWatcher() -> Task<void>
 
     const auto periodMs = (period > 0) ? std::chrono::milliseconds(period) : 2000ms;
 
-    watchdogLastUpdate_ = timer::now();
+    watchdogLastUpdate_ = realtime::now(); // CARDIAN: liveness runs on real time
 
     // Run "forever"
     while (!scheduler_.closeRequested())
     {
         const auto lastUpdate = watchdogLastUpdate_.load();
-        if ((timer::now() - lastUpdate) >= periodMs)
+        if ((realtime::now() - lastUpdate) >= periodMs) // CARDIAN: liveness runs on real time
         {
             if (debug::isRunningUnderDebugger())
             {

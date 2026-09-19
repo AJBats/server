@@ -105,6 +105,9 @@ private:
     std::unique_ptr<MapStatistics> mapStatistics_;
     std::unique_ptr<MapNetworking> networking_;
     std::unique_ptr<IPCClient>     ipcClient_;
-    std::atomic<timer::time_point> watchdogLastUpdate_;
-    MapConfig&                     config_;
+    // CARDIAN: real time, not simulation time -- a paused or time-shifted simulation
+    // must never look to the watchdog like a main thread that just checked in.
+    // (config_ below is re-padded to the wider type: whitespace only.)
+    std::atomic<realtime::time_point> watchdogLastUpdate_;
+    MapConfig&                        config_;
 };
