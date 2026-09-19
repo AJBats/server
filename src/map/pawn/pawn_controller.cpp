@@ -1469,8 +1469,15 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
     if (verdict)
     {
         m_RefusedTarget = 0;
-        m_Approach.reset();
         StandFromRest("drawing her weapon");
+        if (!RestAllowsAction())
+        {
+            // Retain the target while the body finishes kneeling and rising.
+            m_Approach = Approach{ EntityId(PTarget), kind };
+            Transition(Mode::Approach, "standing to engage");
+            return false;
+        }
+        m_Approach.reset();
         if (POwner->PAI->IsEngaged())
         {
             POwner->PAI->Internal_ChangeTarget(EntityId(PTarget));
@@ -1978,6 +1985,11 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     if (takesStep)
     {
         StandFromRest(action == AvoidAction::Escape ? "escaping danger" : "moving");
+        if (!RestAllowsAction())
+        {
+            PPathFind->Clear();
+            return action;
+        }
     }
 
     // The step
@@ -2208,6 +2220,11 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     m_Gambits->TickBehaviors();
     m_Rest.observe(POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing),
                    std::chrono::duration<double>(tick.time_since_epoch()).count());
+    // A one-shot wake request (such as moving camp) survives the kneel.
+    if (m_Rest.standPending)
+    {
+        StandFromRest("kneeling finished after a wake request");
+    }
     // This tick's cost, for the world's load line (always) and the per-zone
     // detail under pawn.WORLD_TICK_DEBUG
     struct BrainClock

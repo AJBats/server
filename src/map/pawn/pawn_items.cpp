@@ -596,11 +596,13 @@ namespace pawn::items
             return "item is busy";
         }
 
-        // Item use has its own engine wind-up. Leave the kneel before that
-        // animation starts, through the same lifecycle as other orders.
+        // Finish the rest transitions before the item's engine wind-up.
         if (auto* controller = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); controller != nullptr)
         {
-            controller->StandFromRest("using an item");
+            if (!controller->PrepareRestAction(true))
+            {
+                return "standing up";
+            }
         }
         if (!PPawn->PAI->UseItem(EntityId(PPawn), location, slot))
         {

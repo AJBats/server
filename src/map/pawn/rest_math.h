@@ -10,6 +10,7 @@
 
 namespace cardian::rest
 {
+    constexpr double kKneelSeconds = 1.0;
     constexpr double kStandSeconds = 1.0;
     constexpr double kPaceSeconds = 60.0;
 
@@ -247,16 +248,29 @@ namespace cardian::rest
         // post-action quiet period. MP pacing owns ordinary rest entry once
         // the body is free. If bobbing persists, inspect pacing before adding
         // a second policy timer (RESEARCH §12.8 / ROADMAP slice 5).
-        // Keep the physical rise gate; its duration still needs live validation.
+        // Finish kneeling before starting the physical rise.
+        double riseAfter = 0.0;
         double actAfter = 0.0;
         bool observedDown = false;
         bool wantsDown = false;
+        bool standPending = false;
+
+        auto requestStand(const double now) -> bool
+        {
+            wantsDown = false;
+            standPending = true;
+            return now >= riseAfter;
+        }
 
         void stood(const double now)
         {
             observedDown = false;
             wantsDown = false;
-            actAfter = now + kStandSeconds;
+            standPending = false;
+            // An engine interruption may remove Healing during the kneel.
+            // It must not make an action ready earlier than an ordinary rise.
+            actAfter = std::max(now, riseAfter) + kStandSeconds;
+            riseAfter = 0.0;
         }
 
         void observe(const bool down, const double now)
@@ -270,7 +284,13 @@ namespace cardian::rest
 
         auto canAct(const double now, const bool down) const -> bool
         {
-            return !wantsDown && !down && now >= actAfter;
+            return !wantsDown && !observedDown && !down && now >= actAfter;
+        }
+
+        auto readyIn(const double now, const bool down) const -> double
+        {
+            return down || observedDown ? std::max(0.0, riseAfter - now) + kStandSeconds
+                                        : std::max(0.0, actAfter - now);
         }
 
         auto decide(const Facts& f) -> Decision
@@ -283,12 +303,12 @@ namespace cardian::rest
             // recovery ramp until MP is full. This never starts a new rest or
             // forces a wake when an enemy arrives; ordinary pacing resumes.
             const bool preserveRecovery = f.resting && f.campClear && f.mpMissing;
-            const bool up = f.urgent || f.blocked || movementRequiresStand || (!f.want && !f.withPlayer) ||
+            const bool up = standPending || f.urgent || f.blocked || movementRequiresStand || (!f.want && !f.withPlayer) ||
                             (f.resting && f.recovered && f.tickLanded && !f.withPlayer && !preserveRecovery);
             wantsDown = !up;
             if (f.resting)
             {
-                if (up)
+                if (up && requestStand(f.now))
                 {
                     stood(f.now);
                     return Decision::Stand;
@@ -301,6 +321,7 @@ namespace cardian::rest
                 return Decision::StayUp;
             }
             observedDown = true;
+            riseAfter = f.now + kKneelSeconds;
             return Decision::Kneel;
         }
     };

@@ -41,8 +41,7 @@ auto CPawnController::RestInterruptionCost() const -> double
 
 auto CPawnController::RestReadyIn(const double now) const -> double
 {
-    return POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing)
-        ? cardian::rest::kStandSeconds : std::max(0.0, m_Rest.actAfter - now);
+    return m_Rest.readyIn(now, POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
 }
 
 void CPawnController::StandFromRest(const std::string_view why)
@@ -51,8 +50,13 @@ void CPawnController::StandFromRest(const std::string_view why)
     m_Rest.wantsDown = false;
     if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
     {
+        const double now = restSeconds(timer::now());
+        if (!m_Rest.requestStand(now))
+        {
+            return;
+        }
         POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        m_Rest.stood(restSeconds(timer::now()));
+        m_Rest.stood(now);
         m_RestTicks = 0;
         ShowInfoFmt("rest: {} stands ({})", POwner->getName(), why);
     }
@@ -73,7 +77,7 @@ auto CPawnController::PrepareRestAction(const bool ordered) -> bool
 
 auto CPawnController::RestTick(const bool stationary, const bool townKneel, const bool routinePosition) -> bool
 {
-    const double now = restSeconds(m_Tick);
+    const double now = restSeconds(timer::now());
     auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
     auto* leader = GetAnchor();
     const bool followEnabled = m_Gambits->MasterOn() && RestsWithPlayer() && leader != nullptr;

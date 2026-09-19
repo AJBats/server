@@ -350,6 +350,87 @@ TEST_CASE("An urgent cure stands now and casts only after standing", "[cardian][
     REQUIRE(s.canAct(12, false));
 }
 
+TEST_CASE("A wake during kneeling waits for both physical transitions", "[cardian][rest][kneel]")
+{
+    for (auto facts : {
+        Facts{.now=10.2, .resting=true, .want=true, .urgent=true},
+        Facts{.now=10.2, .resting=true, .want=true, .blocked=true},
+        Facts{.now=10.2, .resting=true, .want=true, .moving=true},
+        Facts{.now=10.2, .resting=true}})
+    {
+        State s;
+        REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+        CHECK_THAT(s.readyIn(10.2, true), WithinAbs(1.8, 1e-9));
+        REQUIRE(s.decide(facts) == Decision::StayDown);
+        CHECK(s.standPending);
+        CHECK_FALSE(s.canAct(10.2, true));
+        facts.now = 10.9;
+        CHECK(s.decide(facts) == Decision::StayDown);
+        // Once requested, waking survives even a one-shot reason disappearing.
+        REQUIRE(s.decide({.now=11, .resting=true, .want=true}) == Decision::Stand);
+        CHECK_FALSE(s.standPending);
+        CHECK_FALSE(s.canAct(11.2, false)); // the old early-Cure failure
+        CHECK_FALSE(s.canAct(11.999, false));
+        CHECK_THAT(s.readyIn(11.5, false), WithinAbs(0.5, 1e-9));
+        CHECK(s.canAct(12, false));
+    }
+}
+
+TEST_CASE("Repeated direct wake requests preserve the original kneel deadline", "[cardian][rest][kneel]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    CHECK_FALSE(s.requestStand(10.2));
+    CHECK_FALSE(s.requestStand(10.6));
+    CHECK_FALSE(s.requestStand(10.999));
+    REQUIRE(s.requestStand(11));
+    s.stood(11);
+    CHECK_THAT(s.readyIn(11, false), WithinAbs(1.0, 1e-9));
+    CHECK_FALSE(s.canAct(11.999, false));
+    CHECK(s.canAct(12, false));
+}
+
+TEST_CASE("A delayed movement tick still gives the actual rise a full second", "[cardian][rest][kneel]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    REQUIRE_FALSE(s.requestStand(10.2));
+    REQUIRE(s.requestStand(11.2));
+    s.stood(11.2);
+    CHECK_FALSE(s.canAct(12, false));
+    CHECK_THAT(s.readyIn(12, false), WithinAbs(0.2, 1e-9));
+    CHECK(s.canAct(12.2, false));
+}
+
+TEST_CASE("An engine interruption during kneeling cannot bypass either delay", "[cardian][rest][kneel]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    // Healing can disappear before the next controller observation.
+    CHECK_FALSE(s.canAct(10.2, false));
+    CHECK_THAT(s.readyIn(10.2, false), WithinAbs(1.8, 1e-9));
+    s.observe(false, 10.2);
+    CHECK_THAT(s.readyIn(10.2, false), WithinAbs(1.8, 1e-9));
+    CHECK_FALSE(s.standPending);
+    CHECK(s.decide({.now=11.2, .want=true}) == Decision::StayUp);
+    CHECK_FALSE(s.canAct(11.999, false));
+    CHECK(s.canAct(12, false));
+    REQUIRE(s.decide({.now=12, .want=true}) == Decision::Kneel);
+    CHECK_FALSE(s.requestStand(12.2)); // a new rest has its own entry delay
+    CHECK_THAT(s.readyIn(12.2, true), WithinAbs(1.8, 1e-9));
+}
+
+TEST_CASE("An established rest keeps the accepted one-second rise", "[cardian][rest][kneel]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    CHECK_THAT(s.readyIn(30, true), WithinAbs(1.0, 1e-9));
+    REQUIRE(s.requestStand(30));
+    s.stood(30);
+    CHECK_FALSE(s.canAct(30.999, false));
+    CHECK(s.canAct(31, false));
+}
+
 TEST_CASE("An empty camp preserves recovery beyond the pacing target during a distant pull", "[cardian][rest][pacing]")
 {
     Flow flow;
