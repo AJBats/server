@@ -27,6 +27,7 @@
 #include "recast_container.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
+#include "utils/charutils.h"
 
 #include <algorithm>
 #include <iterator>
@@ -35,8 +36,6 @@ namespace pawn
 {
     namespace
     {
-        constexpr std::size_t kSpellListSize = 1024;
-
         // Index = element (ELEMENT_FIRE .. ELEMENT_DARK), 1-based like the enum
         constexpr SPELLFAMILY kNukeFamilies[8]  = { SPELLFAMILY_FIRE, SPELLFAMILY_BLIZZARD, SPELLFAMILY_AERO, SPELLFAMILY_STONE, SPELLFAMILY_THUNDER, SPELLFAMILY_WATER, SPELLFAMILY_BANISH, SPELLFAMILY_DRAIN };
         constexpr SPELLFAMILY kEnFamilies[8]    = { SPELLFAMILY_ENFIRE, SPELLFAMILY_ENBLIZZARD, SPELLFAMILY_ENAERO, SPELLFAMILY_ENSTONE, SPELLFAMILY_ENTHUNDER, SPELLFAMILY_ENWATER, SPELLFAMILY_NONE, SPELLFAMILY_NONE };
@@ -49,37 +48,41 @@ namespace pawn
     {
     }
 
+    auto CSpellBook::Eligible(CBattleEntity* PCaster, CSpell* PSpell) -> bool
+    {
+        if (PCaster == nullptr || PSpell == nullptr)
+        {
+            return false;
+        }
+        auto* PChar = dynamic_cast<CCharEntity*>(PCaster);
+        return (PChar == nullptr || charutils::hasSpell(PChar, static_cast<uint16>(PSpell->getID()))) &&
+               spell::CanUseSpell(PCaster, PSpell);
+    }
+
     void CSpellBook::Refresh()
     {
-        const uint64 signature = Signature();
-        if (signature != m_signature)
+        std::vector<SpellID> learned;
+        for (uint16 id = 0; id < MAX_SPELL_ID; ++id)
         {
-            m_signature = signature;
+            if (m_PChar->m_SpellList[id])
+            {
+                const auto spellId = static_cast<SpellID>(id);
+                const auto* spell = spell::GetSpell(spellId);
+                if (spell != nullptr && spell->getSpellGroup() != SPELLGROUP_TRUST)
+                {
+                    learned.push_back(spellId);
+                }
+            }
+        }
+        if (learned != m_known)
+        {
+            m_known = std::move(learned);
             Rebuild();
         }
     }
 
-    auto CSpellBook::Signature() const -> uint64
-    {
-        uint64 known = 0;
-        for (std::size_t id = 0; id < kSpellListSize; ++id)
-        {
-            if (m_PChar->m_SpellList[id])
-            {
-                ++known;
-            }
-        }
-
-        return (static_cast<uint64>(m_PChar->GetMJob()) << 56) |
-               (static_cast<uint64>(m_PChar->GetSJob()) << 48) |
-               (static_cast<uint64>(m_PChar->GetMLevel()) << 40) |
-               (static_cast<uint64>(m_PChar->GetSLevel()) << 32) |
-               known;
-    }
-
     void CSpellBook::Rebuild()
     {
-        m_known.clear();
         m_ga.clear();
         m_damage.clear();
         m_buff.clear();
@@ -89,21 +92,9 @@ namespace pawn
         m_raise.clear();
         m_severe.clear();
 
-        for (std::size_t id = 0; id < kSpellListSize; ++id)
+        for (const auto spellId : m_known)
         {
-            if (!m_PChar->m_SpellList[id])
-            {
-                continue;
-            }
-
-            const auto spellId = static_cast<SpellID>(id);
-            CSpell*    spell   = spell::GetSpell(spellId);
-            if (spell == nullptr || spell->getSpellGroup() == SPELLGROUP_TRUST || !spell::CanUseSpell(m_PChar, spell))
-            {
-                continue;
-            }
-
-            m_known.emplace_back(spellId);
+            CSpell* spell = spell::GetSpell(spellId);
 
             // Same bucketing as CMobSpellContainer::AddSpell, so family and
             // category queries answer the way trust brains expect
@@ -144,8 +135,8 @@ namespace pawn
 
     auto CSpellBook::IsUsable(const SpellID spellId) const -> bool
     {
-        const CSpell* spell = spell::GetSpell(spellId);
-        if (spell == nullptr)
+        CSpell* spell = spell::GetSpell(spellId);
+        if (!Eligible(m_PChar, spell))
         {
             return false;
         }

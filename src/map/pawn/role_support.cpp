@@ -128,7 +128,7 @@ namespace pawn::tactics::role
         // 2026-09-15); a tier known only by its floor waits for twice that,
         // so the first cure lands whole and teaches the number
         int32 line = 0;
-        for (const auto& tier : bank::cureTiers(PHolder, false))
+        for (const auto& tier : bank::cureTiers(PHolder, bank::CureAvailability::Eligible))
         {
             const int32 heals = tier.option.known ? static_cast<int32>(std::lround(tier.option.heals * 1.25)) : 2 * tier.option.heals;
             line              = line == 0 ? heals : (inFight ? std::max(line, heals) : std::min(line, heals));

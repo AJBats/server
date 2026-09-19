@@ -124,7 +124,7 @@ namespace pawn::tactics
                     }
                 }
             }
-            auto tiers = bank::cureTiers(body, false); // known tiers, including ones on recast
+            auto tiers = bank::cureTiers(body, bank::CureAvailability::Eligible);
             double cheapestCure = 0.0;
             for (const auto& tier : tiers)
             {

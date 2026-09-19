@@ -23,6 +23,7 @@
 
 #include "fight_log.h"
 #include "pawn_gambits.h"
+#include "pawn_spellbook.h"
 #include "tactics.h"
 
 #include "common/logging.h"
@@ -703,7 +704,7 @@ namespace pawn::tactics
             if (PSpell->isCure() && PTarget != nullptr && asMob(PTarget) == nullptr) // a cure on undead is an attack
             {
                 std::vector<CureOption> options;
-                for (const auto& tier : cureTiers(PCaster, false))
+                for (const auto& tier : cureTiers(PCaster, CureAvailability::Eligible))
                 {
                     options.push_back(tier.option);
                 }
@@ -781,7 +782,7 @@ namespace pawn::tactics
         auto usable(CBattleEntity* PCaster, const SpellID id) -> bool
         {
             CSpell* PSpell = spell::GetSpell(id);
-            if (PSpell == nullptr || !spell::CanUseSpell(PCaster, id))
+            if (!CSpellBook::Eligible(PCaster, PSpell))
             {
                 return false;
             }
@@ -815,13 +816,13 @@ namespace pawn::tactics
         // The formula's number when it answers, known; the learned estimate
         // when it does not (Rapture up, or the sampler failed), a floor
         // until an uncapped cure has taught it
-        auto cureTiers(CBattleEntity* PCaster, const bool affordable) -> std::vector<CureTier>
+        auto cureTiers(CBattleEntity* PCaster, const CureAvailability availability) -> std::vector<CureTier>
         {
             std::vector<CureTier> out;
             for (const auto id : { SpellID::Cure, SpellID::Cure_II, SpellID::Cure_III, SpellID::Cure_IV, SpellID::Cure_V, SpellID::Cure_VI })
             {
                 CSpell* PTier = spell::GetSpell(id);
-                if (PTier == nullptr || !spell::CanUseSpell(PCaster, id) || (affordable && !usable(PCaster, id)))
+                if (!(availability == CureAvailability::Ready ? usable(PCaster, id) : CSpellBook::Eligible(PCaster, PTier)))
                 {
                     continue;
                 }
@@ -938,7 +939,7 @@ namespace pawn::tactics
             for (const auto& p : kPriced)
             {
                 CSpell* PSpell = spell::GetSpell(p.id);
-                if (PSpell == nullptr || !spell::CanUseSpell(PMember, p.id))
+                if (!CSpellBook::Eligible(PMember, PSpell))
                 {
                     continue;
                 }

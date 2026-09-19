@@ -34,16 +34,19 @@ class CCharEntity;
 
 namespace pawn
 {
-    // The character-data counterpart of CMobSpellContainer: the spells this
-    // pawn has learned and can cast at its current job and level, classified
-    // the way the gambit interpreter expects, with the same availability
-    // (MP, recast) and selection queries. Refresh() re-derives the book when
-    // the character's job, level or learned-spell count changes, so a pawn
-    // that learns Cure III starts casting it on the next think.
+    // Cache learned spells by family; check job and temporary requirements
+    // live when selecting. Refresh() notices changes to the learned list,
+    // including replacements that leave its size unchanged.
     class CSpellBook
     {
     public:
         explicit CSpellBook(CCharEntity* PChar);
+
+        // Shared capability for gambits, tactics and the action menu.
+        // Characters must have learned the spell and meet the engine's
+        // current job/level/status requirements. Non-characters retain
+        // engine eligibility. MP, recast and action timing are separate.
+        static auto Eligible(CBattleEntity* PCaster, CSpell* PSpell) -> bool;
 
         void Refresh();
 
@@ -75,13 +78,11 @@ namespace pawn
 
     private:
         auto IsUsable(SpellID spellId) const -> bool;
-        auto Signature() const -> uint64;
         auto WeakestElement(CBattleEntity* PTarget) const -> std::size_t;
         auto BestOfElementFamilies(std::size_t element, const SPELLFAMILY (&families)[8]) const -> Maybe<SpellID>;
         void Rebuild();
 
         CCharEntity* m_PChar;
-        uint64       m_signature = 0;
 
         std::vector<SpellID> m_known;
         std::vector<SpellID> m_ga;

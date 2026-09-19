@@ -1785,7 +1785,7 @@ namespace pawn
         for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
         {
             auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
-            if (PSpell == nullptr || !charutils::hasSpell(PPawn, id) || !spell::CanUseSpell(PPawn, PSpell))
+            if (!CSpellBook::Eligible(PPawn, PSpell))
             {
                 continue;
             }

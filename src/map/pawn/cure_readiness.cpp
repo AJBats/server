@@ -13,7 +13,6 @@
 #include "recast_container.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
-#include "utils/charutils.h"
 
 namespace pawn::tactics
 {
@@ -92,24 +91,17 @@ namespace pawn::tactics
             const double committed = casting != nullptr && !casting->IsCompleted() &&
                 !body->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Manafont)
                 ? battleutils::CalculateSpellCost(body, casting->GetSpell()) : 0.0;
-            const auto tiers = bank::cureTiers(body, false);
+            const auto tiers = bank::cureTiers(body, bank::CureAvailability::Eligible);
             for (auto* target : scope.members)
             {
                 if (target == nullptr || target->isDead() || target->loc.zone != body->loc.zone) continue;
-                for (const auto id : {SpellID::Cure, SpellID::Cure_II, SpellID::Cure_III, SpellID::Cure_IV, SpellID::Cure_V, SpellID::Cure_VI})
+                for (const auto& tier : tiers)
                 {
+                    const auto id = tier.id;
                     cardian::cure::Option option{.caster = body->id, .target = target->id, .spell = static_cast<uint16>(id)};
-                    const auto tier = std::find_if(tiers.begin(), tiers.end(), [&](const auto& t) { return t.id == id; });
-                    // Keep an unavailable entry for unlearned/job-ineligible
-                    // tiers. No spell is inferred from a mage's role or job.
-                    if (tier == tiers.end() || !charutils::hasSpell(body, static_cast<uint16>(id)))
-                    {
-                        out.push_back(option);
-                        continue;
-                    }
                     auto* spell = spell::GetSpell(id);
-                    option.heals = bank::expectedCure(body, spell, target).value_or(tier->option.heals);
-                    option.mp = tier->option.mp;
+                    option.heals = bank::expectedCure(body, spell, target).value_or(tier.option.heals);
+                    option.mp = tier.option.mp;
                     option.wakeCost = wakeCost;
                     double recast = 0.0;
                     if (const auto* r = body->PRecastContainer->GetRecast(RECAST_MAGIC, static_cast<Recast>(id)))

@@ -110,14 +110,16 @@ namespace pawn::tactics
         // Rapture, which the formula's last step would consume
         auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget = nullptr) -> std::optional<int32>;
 
-        // Her cure tiers with what each heals: every tier she can use, or
-        // only the ones she can afford this moment
+        // Eligible tiers include spells on recast or beyond current MP.
+        // Ready also applies the bank's MP/recast policy; the controller
+        // still owns standing, action timing and target reach.
+        enum class CureAvailability { Eligible, Ready };
         struct CureTier
         {
             SpellID    id{};
             CureOption option;
         };
-        auto cureTiers(CBattleEntity* PCaster, bool affordable) -> std::vector<CureTier>;
+        auto cureTiers(CBattleEntity* PCaster, CureAvailability availability) -> std::vector<CureTier>;
 
         // The tier for a target's gap among hers: the cheapest that covers
         // it, else the biggest heal; 0 when nothing is missing or no tier fits

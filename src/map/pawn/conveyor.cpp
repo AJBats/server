@@ -387,7 +387,7 @@ namespace pawn::tactics
         auto it = m_tiers.find(PCaster->id);
         if (it == m_tiers.end())
         {
-            it = m_tiers.emplace(PCaster->id, bank::cureTiers(PCaster, true)).first;
+            it = m_tiers.emplace(PCaster->id, bank::cureTiers(PCaster, bank::CureAvailability::Ready)).first;
         }
         return it->second;
     }
