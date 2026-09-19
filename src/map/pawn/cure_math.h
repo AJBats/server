@@ -52,13 +52,12 @@ namespace cardian::cure
         double maximum = 0.0;
         double biggest = 0.0;
         double damageRate = 0.0;
-        bool tpReady = false;
     };
 
     struct Choice
     {
         Option cure;
-        bool cast = true; // a full-HP TP warning asks for readiness only
+        bool cast = true; // prepare for unsafe damage pressure without curing a full-HP target
         double requiredHp = 0.0; // preserve an emergency through its stand/approach
     };
 
@@ -160,11 +159,7 @@ namespace cardian::cure
                 if (best == nullptr) break;
                 const double horizon = best->time.land + safetySeconds;
                 const double gap = remaining(horizon);
-                const bool covered = std::any_of(incoming.begin(), incoming.end(), [&](const auto& c)
-                {
-                    return c.target == target.id && c.time.land <= horizon;
-                });
-                if (gap >= 0.0 && (!target.tpReady || covered)) break;
+                if (gap >= 0.0) break;
                 assigned.insert(best->caster);
                 requiredHp = std::max(requiredHp, target.biggest + target.damageRate * horizon);
                 out.push_back({*best, target.hp < target.maximum, requiredHp});

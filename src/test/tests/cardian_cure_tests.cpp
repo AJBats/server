@@ -15,7 +15,7 @@ namespace
         return {.caster = caster, .target = 99, .spell = spell, .heals = heals, .mp = 8,
             .time = {land - 2, land}, .wakeCost = wake};
     }
-    const Target injured{99, 60, 100, 30, 10, false};
+    const Target injured{99, 60, 100, 30, 10};
     auto plan(std::vector<Option> options, Target target = injured) -> std::vector<Choice>
     {
         return choose(options, std::vector<Target>{target});
@@ -43,11 +43,11 @@ TEST_CASE("Cure size is considered without waiting for a larger tier on cooldown
 {
     auto large = cure(1, 2, 90, 0, 2);
     large.mp = 24;
-    const auto result = plan({cure(1, 2, 10), large}, {99, 40, 100, 30, 15, false});
+    const auto result = plan({cure(1, 2, 10), large}, {99, 40, 100, 30, 15});
     REQUIRE(result.size() == 1);
     CHECK(result[0].cure.spell == 2); // same arrival; small tier cannot make her safe
     large.time = {15, 17};
-    const auto ready = plan({cure(1, 2), large}, {99, 40, 100, 30, 10, false});
+    const auto ready = plan({cure(1, 2), large}, {99, 40, 100, 30, 10});
     REQUIRE(ready.size() == 1);
     CHECK(ready[0].cure.spell == 1);
 }
@@ -89,7 +89,7 @@ TEST_CASE("An insufficient or late Cure in flight allows another mage", "[cardia
 {
     auto incoming = cure(1, 1, 5);
     incoming.inFlight = true;
-    auto result = plan({incoming, cure(2, 3)}, {99, 40, 100, 30, 10, false});
+    auto result = plan({incoming, cure(2, 3)}, {99, 40, 100, 30, 10});
     REQUIRE(result.size() == 1);
     CHECK(result[0].cure.caster == 2);
     incoming.time.land = 15;
@@ -101,7 +101,7 @@ TEST_CASE("An insufficient or late Cure in flight allows another mage", "[cardia
 
 TEST_CASE("Emergency may assign simultaneous cures but does not wake the whole party", "[cardian][cure]")
 {
-    const auto result = plan({cure(1, 2, 20), cure(2, 2, 20), cure(3, 2, 20)}, {99, 40, 100, 30, 15, false});
+    const auto result = plan({cure(1, 2, 20), cure(2, 2, 20), cure(3, 2, 20)}, {99, 40, 100, 30, 15});
     REQUIRE(result.size() == 2);
     CHECK(result[0].cure.caster != result[1].cure.caster);
 }
@@ -117,23 +117,34 @@ TEST_CASE("One healer cannot promise simultaneous first aid to two targets", "[c
 {
     auto second = cure(1, 3);
     second.target = 100;
-    const auto result = choose(std::vector<Option>{cure(1, 3), second}, std::vector<Target>{injured, {100, 50, 100, 30, 10, false}});
+    const auto result = choose(std::vector<Option>{cure(1, 3), second}, std::vector<Target>{injured, {100, 50, 100, 30, 10}});
     REQUIRE(result.size() == 1);
     CHECK(result[0].cure.target == 100);
 }
 
-TEST_CASE("TP readiness at full HP prepares a mage without casting a cure", "[cardian][cure]")
+TEST_CASE("Unsafe damage pressure at full HP prepares a mage without casting a cure", "[cardian][cure]")
 {
-    const auto result = plan({cure(1, 3)}, {99, 100, 100, 30, 0, true});
+    const auto result = plan({cure(1, 3)}, {99, 100, 100, 30, 20});
     REQUIRE(result.size() == 1);
     CHECK_FALSE(result[0].cast);
-    CHECK(plan({cure(1, 3)}, {99, 100, 100, 30, 0, false}).empty());
+    CHECK(plan({cure(1, 3)}, {99, 100, 100, 30, 0}).empty());
+}
+
+TEST_CASE("Small injuries under light damage pressure do not summon emergency aid", "[cardian][cure]")
+{
+    // Jevyak's roaming playtest: these small injuries must wait for ordinary
+    // Cure policy instead of waking Zapp or spending MP on emergency top-offs.
+    for (const double hp : {143.0, 154.0, 151.0, 157.0})
+    {
+        CAPTURE(hp);
+        CHECK(plan({cure(1, 3, 24, 50)}, {99, hp, 157, 12, 1}).empty());
+    }
 }
 
 TEST_CASE("In-flight healing cannot overflow max HP or rescue after predicted death", "[cardian][cure]")
 {
-    CHECK_THAT(margin({99, 90, 100, 20, 10, false}, 4, std::vector<Option>{cure(1, 1, 80)}), WithinAbs(50, 1e-9));
-    CHECK(margin({99, 10, 100, 20, 10, false}, 4, std::vector<Option>{cure(1, 2, 100)}) < 0);
+    CHECK_THAT(margin({99, 90, 100, 20, 10}, 4, std::vector<Option>{cure(1, 1, 80)}), WithinAbs(50, 1e-9));
+    CHECK(margin({99, 10, 100, 20, 10}, 4, std::vector<Option>{cure(1, 2, 100)}) < 0);
 }
 
 TEST_CASE("Quiet fight attendance records zero MP without inventing absent members", "[cardian][cure][rest]")

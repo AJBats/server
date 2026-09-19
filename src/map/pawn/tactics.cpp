@@ -187,7 +187,7 @@ namespace pawn::tactics
                         if (member == nullptr || member->isDead()) continue;
                         const auto threat = role::threat(m_log, member, seconds(now));
                         targets.push_back({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
-                            threat.biggestHit, threat.takenPerSecond, threat.tpReady});
+                            threat.biggestHit, threat.takenPerSecond});
                     }
                 }
                 auto emergency = cardian::cure::choose(measured, targets, m_conveyor.emergencies());

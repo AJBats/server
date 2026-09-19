@@ -41,7 +41,6 @@ namespace pawn::tactics::role
     {
         double biggestHit = 0.0;
         double takenPerSecond = 0.0;
-        bool tpReady = false;
     };
     auto threat(FightLog& log, CBattleEntity* PMember, double now) -> Threat;
 

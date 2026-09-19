@@ -232,12 +232,12 @@ namespace cardian::rest
         bool resting = false;
         bool want = false;
         bool withPlayer = false; // explicit Rest With Player request, independent of MP pacing
-        bool campClear = false; // Support Mage: no party enemy within the camp's engagement boundary
+        bool campClear = false; // Support Mage: no party enemy within the current place's engagement boundary
         bool mpMissing = false;
         bool urgent = false;
         bool blocked = false; // unsafe, acting, ordered away, unable to recover
         bool moving = false;
-        bool routinePosition = false; // an ongoing camp rest may defer this move
+        bool routinePosition = false; // an ongoing rest may defer this move
         bool recovered = false;
         bool tickLanded = false;
     };
@@ -299,7 +299,7 @@ namespace cardian::rest
             const bool movementRequiresStand = f.moving && !(f.resting && f.routinePosition);
             // A player's rest is another request to this lifecycle, including
             // for Support Mage. Reaching her MP target cannot cancel it.
-            // While camp has no enemy to act on, preserve an existing rest's
+            // While the party's place has no enemy, preserve an existing rest's
             // recovery ramp until MP is full. This never starts a new rest or
             // forces a wake when an enemy arrives; ordinary pacing resumes.
             const bool preserveRecovery = f.resting && f.campClear && f.mpMissing;

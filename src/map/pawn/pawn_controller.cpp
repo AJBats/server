@@ -3070,8 +3070,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const bool stationary = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
                              distance(POwner->loc.p, proposal.point) <= proposal.tolerance) &&
                             !POwner->PAI->PathFind->IsFollowingPath();
-    // A proposed seat adjustment is optional while a camped support mage
-    // rests. An active path is already movement, and still requires a stand.
+    // RestTick may defer a proposed seat adjustment during support recovery.
+    // An active path is already movement, and still requires a stand.
     // RestTick first checks urgent healing, danger and orders. Only when it
     // keeps her down do we suppress the proposal; Move still vets her current
     // position for aggro/link danger and may escape it.

@@ -431,8 +431,12 @@ TEST_CASE("An established rest keeps the accepted one-second rise", "[cardian][r
     CHECK(s.canAct(31, false));
 }
 
-TEST_CASE("An empty camp preserves recovery beyond the pacing target during a distant pull", "[cardian][rest][pacing]")
+TEST_CASE("A quiet place preserves recovery beyond the pacing target until full MP", "[cardian][rest][pacing]")
 {
+    bool formationMoving = false;
+    SECTION("A distant pull leaves the stake quiet") {}
+    SECTION("The player walks away while no party enemy is nearby") { formationMoving = true; }
+
     Flow flow;
     State s;
     flow.observe(0, 47, 85);
@@ -454,7 +458,8 @@ TEST_CASE("An empty camp preserves recovery beyond the pacing target during a di
             REQUIRE_FALSE(p.recover);
         }
         const auto decision = s.decide({.now=now, .resting=true, .want=true,
-            .campClear=true, .mpMissing=mp < 85, .recovered=!p.recover, .tickLanded=true});
+            .campClear=true, .mpMissing=mp < 85, .moving=formationMoving, .routinePosition=true,
+            .recovered=!p.recover, .tickLanded=true});
         CHECK(decision == (mp < 85 ? Decision::StayDown : Decision::Stand));
         CHECK_FALSE(s.canAct(now, mp < 85));
     }
@@ -676,16 +681,36 @@ TEST_CASE("An incoming camp reposition cannot interrupt recovery to enable Dia",
     REQUIRE(s.canAct(17, false));
 }
 
-TEST_CASE("Rest defers only an ongoing camp rest's routine positioning", "[cardian][rest]")
+TEST_CASE("Rest defers only an ongoing rest's routine positioning", "[cardian][rest]")
 {
     State s;
     // An awake mage finishes positioning before beginning a new rest.
     REQUIRE(s.decide({.now=10, .want=true, .moving=true,
                       .routinePosition=true}) == Decision::StayUp);
     REQUIRE(s.decide({.now=11, .want=true}) == Decision::Kneel);
-    // Walking with the leader or an active path still requires standing.
+    // An active path or other mandatory movement still requires standing.
     REQUIRE(s.decide({.now=12, .resting=true, .want=true,
                       .moving=true}) == Decision::Stand);
+}
+
+TEST_CASE("Repeated formation requests wait until recovery elects to stand", "[cardian][rest]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    // The fight ends, then the player moves: formation keeps requesting a
+    // new position throughout the rest, including across a recovery tick.
+    for (const double now : {15.0, 17.4, 20.0, 30.0})
+    {
+        REQUIRE(s.decide({.now=now, .resting=true, .want=true, .moving=true,
+                          .routinePosition=true, .tickLanded=now == 30.0}) == Decision::StayDown);
+        REQUIRE_FALSE(s.canAct(now, true));
+    }
+    // When recovery completes, the same formation request can resume after
+    // the stand gate. Deferring movement never postpones that decision.
+    REQUIRE(s.decide({.now=40, .resting=true, .want=true, .moving=true,
+                      .routinePosition=true, .recovered=true, .tickLanded=true}) == Decision::Stand);
+    REQUIRE_FALSE(s.canAct(40, false));
+    REQUIRE(s.canAct(41, false));
 }
 
 TEST_CASE("Danger and orders still interrupt rest during a deferred seat move", "[cardian][rest]")

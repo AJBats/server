@@ -71,10 +71,6 @@ namespace pawn::tactics::role
             const bool  onRecord = top != nullptr || spot.fights > 0;
             std::optional<FightRecord::MeleeGuess> guess;
             auto* PMob = dynamic_cast<CMobEntity*>(zoneutils::GetEntity(r.mobId, TYPE_MOB));
-            if (PMob != nullptr && PMob->id == r.mobId && PMob->GetBattleTarget() == PMember && PMob->health.tp >= 1000)
-            {
-                t.tpReady = true;
-            }
             if (!onRecord && PMob != nullptr && PMob->id == r.mobId)
             {
                 guess = bank::melee(r, PMob, PMember, true);

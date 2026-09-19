@@ -91,15 +91,15 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool supportRecovery = support && (advice->recover || POwner->health.hp < POwner->GetMaxHP());
     // Rest With Player stays an explicit input even when a support role owns
     // autonomous recovery. Do not overwrite it with the role's MP decision.
-    const bool want = townKneel || (support && place != nullptr && (supportRecovery || healing != nullptr));
+    const bool want = townKneel || (support && place != nullptr && (supportRecovery || (healing != nullptr && POwner->health.mp < POwner->GetMaxMP())));
     const int ticks = healing != nullptr ? healing->GetElapsedTickCount() : 0;
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
     m_RestTicks = ticks;
     const bool mpMissing = POwner->health.mp < POwner->GetMaxMP();
-    // Use the same targets and flag-centered HUNT_LEASH as camp engagement.
+    // Use the same targets and place-centered HUNT_LEASH as party engagement.
     // A distant pull or untouched wildlife does not end a useful rest.
-    const bool campClear = support && Staked() && healing != nullptr && mpMissing &&
-        PartyEngageTarget(leader, m_Stake->at).target == nullptr;
+    const bool campClear = support && place != nullptr && healing != nullptr && mpMissing &&
+        PartyEngageTarget(leader, place->position()).target == nullptr;
 
     bool unsafe = false;
     if (want || withPlayer || healing != nullptr)
@@ -120,11 +120,14 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
             xi::StatusEffect::Disease, xi::StatusEffect::Plague, xi::StatusEffect::CurseIi});
     const bool blocked = Acting() || unsafe || noRecovery || POwner->isDead() ||
         m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || POwner->PAI->IsEngaged();
+    // An ongoing support rest defers formation and seat requests every tick,
+    // even while the player moves. The rest policy decides when to stand.
+    const bool deferPosition = routinePosition && support && place != nullptr;
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
         .campClear = campClear, .mpMissing = mpMissing,
         .urgent = support && advice->wake, .blocked = blocked,
-        .moving = !stationary, .routinePosition = routinePosition && support && Staked(),
+        .moving = !stationary, .routinePosition = deferPosition,
         .recovered = support && place != nullptr && !supportRecovery, .tickLanded = landed});
     if (decision == cardian::rest::Decision::Stand)
     {
@@ -142,8 +145,8 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     }
     else if (decision == cardian::rest::Decision::StayDown && campClear && landed && !supportRecovery && !withPlayer)
     {
-        ShowInfoFmt("rest: {} keeps resting after recovery tick: no party enemy within {:.0f} y of camp; MP {}/{} (pace and reserve ready)",
-                    POwner->getName(), settings::get<float>("pawn.HUNT_LEASH"), POwner->health.mp, POwner->GetMaxMP());
+        ShowInfoFmt("rest: {} keeps resting after recovery tick: no party enemy within {:.0f} y of {}; MP {}/{} (pace and reserve ready)",
+                    POwner->getName(), settings::get<float>("pawn.HUNT_LEASH"), place->name(), POwner->health.mp, POwner->GetMaxMP());
     }
     if (support && place != nullptr && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) && now >= m_RestChatAt)
     {
@@ -162,10 +165,10 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         }
     }
     const bool down = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    if (down && routinePosition && !stationary && !m_RestDeferredPosition)
+    if (down && deferPosition && !stationary && !m_RestDeferredPosition)
     {
         m_RestDeferredPosition = true;
-        ShowInfoFmt("rest: {} defers camp repositioning to preserve recovery", POwner->getName());
+        ShowInfoFmt("rest: {} defers routine repositioning to preserve recovery", POwner->getName());
     }
     if (!down)
     {
