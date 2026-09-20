@@ -36,7 +36,7 @@ using namespace std::chrono_literals;
 
 namespace
 {
-    const auto t0 = std::chrono::steady_clock::now();
+    const auto t0 = timer::now();
 
     // A world the ladder can look at, and an engine that only writes down
     // what it was asked. Zone 1 has the player in it, zone 2 is next door,
@@ -83,7 +83,7 @@ namespace
         {
             ladder.offer(charid, Facts{ .zone = zone, .tier = tier, .owner = owner });
         }
-        auto run(const std::chrono::steady_clock::duration at = 0s) -> std::vector<std::string>
+        auto run(const timer::duration at = 0s) -> std::vector<std::string>
         {
             log.clear();
             ladder.run(t0 + at);

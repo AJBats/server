@@ -29,6 +29,7 @@
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/timer.h"
 #include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "enums/chat_message_type.h"
@@ -382,9 +383,9 @@ namespace pawn::finder
         // that yes (pawn charid -> the inviter and the goal)
         struct Consent
         {
-            uint32                                playerCharID = 0;
-            Goal                                  goal;
-            std::chrono::steady_clock::time_point at; // a consent not answered within kConsentLifetime lapses
+            uint32            playerCharID = 0;
+            Goal              goal;
+            timer::time_point at; // a consent not answered within kConsentLifetime lapses
         };
         std::unordered_map<uint32, Consent> consented;
         constexpr auto                      kConsentLifetime = std::chrono::minutes(2);
@@ -398,15 +399,15 @@ namespace pawn::finder
 
         struct Held
         {
-            Shout                                 shout;
-            std::chrono::steady_clock::time_point madeAt;
+            Shout             shout;
+            timer::time_point madeAt;
         };
-        std::unordered_map<uint32, Held>                                  shouts; // by the player's charid
-        std::unordered_map<uint32, std::chrono::steady_clock::time_point> shoutedAt;
-        uint32                                                            lastShoutId = 0;
+        std::unordered_map<uint32, Held>              shouts; // by the player's charid
+        std::unordered_map<uint32, timer::time_point> shoutedAt;
+        uint32                                        lastShoutId = 0;
         // When each body last heard a player's shout, by player: the friend
         // seat goes to the friend longest unheard
-        std::unordered_map<uint32, std::unordered_map<uint32, std::chrono::steady_clock::time_point>> lastHeard;
+        std::unordered_map<uint32, std::unordered_map<uint32, timer::time_point>> lastHeard;
 
         constexpr auto kShoutLifetime = std::chrono::minutes(10);
 
@@ -417,7 +418,7 @@ namespace pawn::finder
             {
                 return nullptr;
             }
-            if (std::chrono::steady_clock::now() - it->second.madeAt > kShoutLifetime)
+            if (timer::now() - it->second.madeAt > kShoutLifetime)
             {
                 shouts.erase(it);
                 return nullptr;
@@ -433,7 +434,7 @@ namespace pawn::finder
                 return 0;
             }
             const auto ready = it->second + std::chrono::seconds(settings::get<uint32>("pawn.SHOUT_COOLDOWN"));
-            const auto now   = std::chrono::steady_clock::now();
+            const auto now   = timer::now();
             return now >= ready ? 0 : static_cast<uint32>(std::chrono::duration_cast<std::chrono::milliseconds>(ready - now).count());
         }
 
@@ -683,7 +684,7 @@ namespace pawn::finder
         const auto heardAt = [&](const std::pair<std::vector<Candidate>*, size_t>& ref)
         {
             const auto it = heard.find((*ref.first)[ref.second].charid);
-            return it != heard.end() ? it->second : std::chrono::steady_clock::time_point::min();
+            return it != heard.end() ? it->second : timer::time_point::min();
         };
         std::string seat = "empty";
         if (const auto oldest = std::ranges::min_element(friends, {}, heardAt); oldest != friends.end())
@@ -709,7 +710,7 @@ namespace pawn::finder
         // Her timing: the first voice after a beat, then uneven gaps -- most
         // short, now and then a lull -- and each deliberates a while
         Held made;
-        made.madeAt     = std::chrono::steady_clock::now();
+        made.madeAt     = timer::now();
         made.shout.id   = ++lastShoutId;
         made.shout.goal = goal;
         uint32 at       = xirand::GetRandomNumber(700, 2200);
@@ -844,7 +845,7 @@ namespace pawn::finder
     // lapsed, or whose player has left the world, holds nobody and is dropped
     auto shoutedFor(const std::string& name) -> bool
     {
-        const auto now = std::chrono::steady_clock::now();
+        const auto now = timer::now();
         for (auto it = shouts.begin(); it != shouts.end();)
         {
             if (now - it->second.madeAt > kShoutLifetime || zoneutils::GetChar(it->first) == nullptr)
@@ -929,7 +930,7 @@ namespace pawn::finder
             return "she already has an invite";
         }
 
-        consented[charid] = Consent{ PPlayer->id, goal, std::chrono::steady_clock::now() };
+        consented[charid] = Consent{ PPlayer->id, goal, timer::now() };
         PPawn->InvitePending.UniqueNo = PPlayer->id;
         PPawn->InvitePending.ActIndex = PPlayer->targid;
         PPawn->pushPacket<GP_SERV_COMMAND_GROUP_SOLICIT_REQ>(PPawn->id, PPawn->targid, PPlayer->getName(), PartyKind::Party);
@@ -957,7 +958,7 @@ namespace pawn::finder
         }
         const Consent consent = it->second;
         consented.erase(it);
-        if (PInviter == nullptr || PInviter->id != consent.playerCharID || std::chrono::steady_clock::now() - consent.at > kConsentLifetime)
+        if (PInviter == nullptr || PInviter->id != consent.playerCharID || timer::now() - consent.at > kConsentLifetime)
         {
             return !wild;
         }

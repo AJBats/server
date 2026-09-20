@@ -39,6 +39,7 @@
 #include "items/transaction.h"
 #include "items/transactions/item_claim.h"
 #include "lua/luautils.h"
+#include "pause/pause.h"
 #include "recast_container.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
@@ -570,6 +571,13 @@ namespace pawn::items
 
     auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> std::string
     {
+        // A held simulation (pause/pause.h) starts nothing, and a slot is no order to
+        // keep for the release: her bag can be sorted meanwhile.
+        if (cardian::pause::isHeld())
+        {
+            return "not while paused";
+        }
+
         // Items are used from the inventory only; a bag's contents are worn
         // or fetched first
         if (location != LOC_INVENTORY)

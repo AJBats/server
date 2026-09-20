@@ -71,6 +71,7 @@
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
 #include "party.h"
+#include "pause/pause.h"
 #include "recast_container.h"
 #include "packets/s2c/0x05a_motionmes.h"
 #include "ability.h"
@@ -1173,9 +1174,13 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         return "KO'd";
     }
 
+    // Held (pause/pause.h), nothing starts: the order goes straight to her queue. Her
+    // tick clock stands still with the simulation, so its grace runs from the release.
     const EntityId target(PTarget);
-    const auto     err = Acting() ? std::string("busy") : TryAction(kind, mode, id, target);
-    if (err != "busy" && err != "recast" && err != "standing up")
+    const auto     err = cardian::pause::isHeld() ? std::string("paused")
+                         : Acting()               ? std::string("busy")
+                                                  : TryAction(kind, mode, id, target);
+    if (err != "paused" && err != "busy" && err != "recast" && err != "standing up")
     {
         return err;
     }
@@ -2229,16 +2234,16 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     // detail under pawn.WORLD_TICK_DEBUG
     struct BrainClock
     {
-        const CBattleEntity*                  owner;
-        std::chrono::steady_clock::time_point start;
+        const CBattleEntity* owner;
+        realtime::time_point start;
         ~BrainClock()
         {
             if (owner->loc.zone != nullptr)
             {
-                pawn::world::noteBrainTick(static_cast<uint16>(owner->loc.zone->GetID()), std::chrono::steady_clock::now() - start);
+                pawn::world::noteBrainTick(static_cast<uint16>(owner->loc.zone->GetID()), realtime::now() - start);
             }
         }
-    } const brainClock{ POwner, std::chrono::steady_clock::now() };
+    } const brainClock{ POwner, realtime::now() };
     std::ignore = brainClock;
 
     // A zone change meant for the client protocol -- a warp, a teleport --

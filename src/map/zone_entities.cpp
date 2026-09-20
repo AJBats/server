@@ -2186,9 +2186,10 @@ auto CZoneEntities::ZoneServer(timer::time_point tick) -> Task<void>
         m_EffectCheckTime = m_EffectCheckTime + 3s > tick ? m_EffectCheckTime + 3s : tick + 3s;
     }
 
-    if (tick > m_computeTime && !m_charTargIds.empty())
+    // CARDIAN: the player spawn sync is paced on real time, so it runs through a held simulation.
+    if (const auto realNow = realtime::now(); realNow > m_computeTime && !m_charTargIds.empty())
     {
-        m_computeTime = tick + 567ms;
+        m_computeTime = realNow + 567ms; // CARDIAN
 
         std::set<uint16>::iterator charTargIdIter = m_charTargIds.lower_bound(m_lastCharComputeTargId);
         if (charTargIdIter == m_charTargIds.end())

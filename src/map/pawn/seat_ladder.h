@@ -31,6 +31,7 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "common/timer.h"
 
 #include <algorithm>
 #include <chrono>
@@ -82,9 +83,9 @@ namespace pawn::seats
         bool inParty = false; // in a real player's party, or invited into one and not yet answered
 
         // owned by run()
-        Step                                  step = Step::Absent;
-        Step                                  want = Step::Absent;
-        std::chrono::steady_clock::time_point retryAfter{};
+        Step              step = Step::Absent;
+        Step              want = Step::Absent;
+        timer::time_point retryAfter{};
     };
 
     // Where the players are, and who is with one: derivable from memory
@@ -124,7 +125,7 @@ namespace pawn::seats
                    std::tuple(b.live, b.inParty, b.facts.tier, b.near, b.seq);
         }
 
-        Ladder(Before before, Lookup lookup, Engine engine, const uint32 standsPerRun = 3, const std::chrono::steady_clock::duration retryDelay = std::chrono::seconds(30))
+        Ladder(Before before, Lookup lookup, Engine engine, const uint32 standsPerRun = 3, const timer::duration retryDelay = std::chrono::seconds(30))
         : before(std::move(before))
         , lookup(std::move(lookup))
         , engine(std::move(engine))
@@ -200,7 +201,7 @@ namespace pawn::seats
 
         // ---- the run: where she stands ------------------------------------
 
-        void run(const std::chrono::steady_clock::time_point now)
+        void run(const timer::time_point now)
         {
             refresh(now);
             std::stable_sort(entries.begin(), entries.end(), before);
@@ -363,7 +364,7 @@ namespace pawn::seats
             return it == entries.end() ? nullptr : &*it;
         }
 
-        void refresh(const std::chrono::steady_clock::time_point now)
+        void refresh(const timer::time_point now)
         {
             std::unordered_map<uint16, std::pair<bool, bool>> zones; // near, in
             for (auto& e : entries)
@@ -393,15 +394,15 @@ namespace pawn::seats
             e.step = to;
         }
 
-        Before                                before;
-        Lookup                                lookup;
-        Engine                                engine;
-        uint32                                standsPerRun;
-        std::chrono::steady_clock::duration   retryDelay;
-        uint32                                standingCap = 0;
-        uint32                                fadedCap    = 0;
-        std::vector<Entry>                    entries;
-        int64                                 lowSeq  = 0;
-        int64                                 highSeq = 0;
+        Before             before;
+        Lookup             lookup;
+        Engine             engine;
+        uint32             standsPerRun;
+        timer::duration    retryDelay;
+        uint32             standingCap = 0;
+        uint32             fadedCap    = 0;
+        std::vector<Entry> entries;
+        int64              lowSeq  = 0;
+        int64              highSeq = 0;
     };
 } // namespace pawn::seats

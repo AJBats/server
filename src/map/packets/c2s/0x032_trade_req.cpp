@@ -85,9 +85,9 @@ void GP_CLI_COMMAND_TRADE_REQ::process(MapSession* PSession, CCharEntity* PChar)
         return;
     }
 
-    const timer::time_point currentTime           = timer::now();
-    const auto              lastTargetTrade       = currentTime - PTarget->lastTradeInvite;
-    const bool              targetHasRecentInvite = PTarget->TradePending.ActIndex != 0 && lastTargetTrade < 60s;
+    const auto currentTime           = realtime::now(); // CARDIAN: the invite window runs on real time
+    const auto lastTargetTrade       = currentTime - PTarget->lastTradeInvite;
+    const bool targetHasRecentInvite = PTarget->TradePending.ActIndex != 0 && lastTargetTrade < 60s;
 
     if (targetHasRecentInvite)
     {

@@ -55,6 +55,7 @@
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
 #include "party.h"
+#include "pause/pause.h"
 #include "enums/char_persist.h"
 #include "persist_batch.h"
 #include "utils/charutils.h"
@@ -98,7 +99,7 @@ namespace
     std::unordered_map<uint32, timer::time_point> pendingInvites;
 
     // played charid -> arrival time of its last 0x015 position packet
-    std::unordered_map<uint32, timer::time_point> lastPositionPacket;
+    std::unordered_map<uint32, realtime::time_point> lastPositionPacket;
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
@@ -1513,6 +1514,12 @@ namespace pawn
             return "KO'd";
         }
 
+        // A held simulation (pause/pause.h) moves nobody
+        if (cardian::pause::isHeld())
+        {
+            return "not while paused";
+        }
+
         const float range = settings::get<float>("pawn.RESCUE_RANGE");
         const float away  = distance(PPlayer->loc.p, PPawn->loc.p);
         if (away > range)
@@ -2080,7 +2087,7 @@ namespace pawn
 
     void notePositionPacket(const CCharEntity* PChar)
     {
-        lastPositionPacket.insert_or_assign(PChar->id, timer::now());
+        lastPositionPacket.insert_or_assign(PChar->id, realtime::now());
     }
 
     auto positionPacketAge(uint32 charid) -> std::optional<std::chrono::milliseconds>
@@ -2090,7 +2097,7 @@ namespace pawn
         {
             return std::nullopt;
         }
-        return std::chrono::duration_cast<std::chrono::milliseconds>(timer::now() - it->second);
+        return std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second);
     }
 
     // Move a live pawn between zones same-process: the M2 despawn/spawn
@@ -2168,7 +2175,7 @@ namespace pawn
     void onZoneTick(CZone* PZone)
     {
         stakeSweep();
-        const auto started   = std::chrono::steady_clock::now();
+        const auto started   = realtime::now();
         uint32     pawnsHere = 0;
         for (const auto& [charid, PPawn] : pawns)
         {
@@ -2232,6 +2239,6 @@ namespace pawn
 
         world::onZoneTick(PZone);
         seats::tick();
-        world::noteModuleTick(PZone, std::chrono::steady_clock::now() - started, pawnsHere);
+        world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

@@ -96,6 +96,8 @@ set(MAP_CORE_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.h
     # CARDIAN: the combat pause's manager, core because the AI tick and packet handlers ask it
+    ${CMAKE_CURRENT_SOURCE_DIR}/pause/input_gate.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pause/input_gate.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pause/pause.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pause/pause.h
     ${CMAKE_CURRENT_SOURCE_DIR}/command_handler.cpp

@@ -87,7 +87,7 @@ void auctionutils::OpenListOfSales(CCharEntity* PChar)
 
     DebugAuctionsFmt("AH: OpenListOfSales: player: {}", PChar->getName());
 
-    if (const auto curTick = timer::now(); curTick > PChar->m_AHHistoryTimestamp + 5s)
+    if (const auto curTick = realtime::now(); curTick > PChar->m_AHHistoryTimestamp + 5s) // CARDIAN: throttled on real time
     {
         PChar->m_ah_history.clear();
         PChar->m_AHHistoryTimestamp = curTick;

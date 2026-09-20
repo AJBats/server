@@ -22,6 +22,7 @@
 #include "pause.h"
 
 #include "common/logging.h"
+#include "input_gate.h"
 #include "pawn/players.h"
 
 namespace cardian::pause
@@ -76,6 +77,10 @@ auto release(const std::string_view why) -> Result
 
     book.holder = 0;
     book.holderName.clear();
+
+    // Last, with the clock running and nothing held: each goes to the game's own
+    // handler as if it had just arrived.
+    input::replay();
     return Result::Ok;
 }
 

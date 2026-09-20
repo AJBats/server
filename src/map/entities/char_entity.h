@@ -594,20 +594,20 @@ public:
 
     void SetName(const std::string& name); // set the name of character, limited to 15 characters
 
-    timer::time_point lastTradeInvite{};
-    EntityId          TradePending{};    // Character ID offering trade
-    EntityId          InvitePending{};   // Character ID sending party invite
-    EntityId          BazaarID{};        // Pointer to the bazaar we are browsing.
-    BazaarList_t      BazaarCustomers{}; // Array holding the IDs of the current customers
+    realtime::time_point lastTradeInvite{}; // CARDIAN: real time, an unanswered invite lapses through a held simulation
+    EntityId             TradePending{};    // Character ID offering trade
+    EntityId             InvitePending{};   // Character ID sending party invite
+    EntityId             BazaarID{};        // Pointer to the bazaar we are browsing.
+    BazaarList_t         BazaarCustomers{}; // Array holding the IDs of the current customers
 
     std::unique_ptr<monstrosity::MonstrosityData_t> m_PMonstrosity;
 
-    uint8             m_LevelRestriction; // Character level limit
-    uint16            m_Costume;
-    uint16            m_Costume2;
-    timer::time_point m_AHHistoryTimestamp;
-    timer::time_point m_DeathTimestamp;
-    timer::time_point m_deathSyncTime{}; // Timer used for sending an update packet at a regular interval while the character is dead
+    uint8                m_LevelRestriction; // Character level limit
+    uint16               m_Costume;
+    uint16               m_Costume2;
+    realtime::time_point m_AHHistoryTimestamp; // CARDIAN: real time, the sales list refreshes through a held simulation
+    timer::time_point    m_DeathTimestamp;
+    timer::time_point    m_deathSyncTime{}; // Timer used for sending an update packet at a regular interval while the character is dead
 
     uint8      m_hasTractor;        // checks if player has tractor already
     uint8      m_hasRaise;          // checks if player has raise already
@@ -621,8 +621,8 @@ public:
 
     uint32 m_PrevZonelineID; // The ID of the previous zoneline the player went through.
 
-    timer::duration   m_PlayTime;
-    timer::time_point m_SaveTime;
+    timer::duration      m_PlayTime;
+    realtime::time_point m_SaveTime; // CARDIAN: real time, held minutes are playtime
 
     timer::time_point m_LeaderCreatedPartyTime{}; // Time that a party member joined and this player was leader.
 
@@ -639,8 +639,8 @@ public:
     auto inMogHouse() const -> bool;
 
     auto gmCallContainer() -> GMCallContainer&;
-    auto lastProposalCloseTime() const -> timer::time_point;
-    void setLastProposalCloseTime(timer::time_point t);
+    auto lastProposalCloseTime() const -> realtime::time_point; // CARDIAN: real time, as its cooldown is
+    void setLastProposalCloseTime(realtime::time_point t);      // CARDIAN
 
     auto maze() -> maze_t&;
 
@@ -675,6 +675,7 @@ public:
     // CARDIAN: real time -- packet flood control must not freeze with a held simulation.
     // (m_LastPacketType below is re-padded: whitespace only.)
     HashMap<uint16, realtime::time_point> m_PacketRecievedTimestamps;
+    realtime::time_point                  m_nextUpdateRealTime{}; // CARDIAN: his update throttle; PostTick runs through a hold
     uint16                                m_LastPacketType{};
 
     void            SetPlayTime(timer::duration playTime); // Set playtime
@@ -796,7 +797,7 @@ private:
     // Lazily initialized AMAN data
     Maybe<CAMANContainer> m_AMAN;
     GMCallContainer       gmCallContainer_;
-    timer::time_point     lastProposalCloseTime_{}; // Time last /nominate closed
+    realtime::time_point  lastProposalCloseTime_{}; // Time last /nominate closed // CARDIAN: real time
 
     std::unique_ptr<CItemContainer> m_Inventory;
     std::unique_ptr<CItemContainer> m_Mogsafe;

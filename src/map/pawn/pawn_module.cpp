@@ -1226,6 +1226,12 @@ class PawnModule : public CPPModule
                 return "no such cardian";
             }
 
+            // Refused whole while held, as the use would be: not half of it, the transfer
+            if (cardian::pause::isHeld())
+            {
+                return "not while paused";
+            }
+
             uint8 landed = 0;
             if (auto err = pawn::items::giveToPawn(PChar, PPawn, slot, qty, &landed); !err.empty())
             {

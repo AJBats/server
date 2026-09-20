@@ -19,6 +19,7 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "common/timer.h"
 #include "pawn_travel.h" // position_t
 
 #include <chrono>
@@ -146,5 +147,5 @@ namespace pawn::world
     // The load line, always on: every pawn.WORLD_LOAD_REPORT seconds, how
     // many bodies stand in how many zones, what a body's tick costs, and
     // the process's CPU and memory
-    void reportLoad(std::chrono::steady_clock::time_point now);
+    void reportLoad(realtime::time_point now);
 } // namespace pawn::world

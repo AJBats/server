@@ -19,17 +19,25 @@
 ===========================================================================
 */
 
+#include "input_gate.h"
 #include "pause.h"
 
 #include "utils/moduleutils.h"
 
-// The pause's own seat in the module system, for the one duty that needs a tick
-// that keeps coming while the simulation is held: letting go of a hold whose holder
-// went offline. The time server is process-wide and runs every 2.4 s, held or not.
+// The pause's own seat in the module system, for the two duties the module hooks
+// serve. A tick that keeps coming while the simulation is held, to let go of a hold
+// whose holder went offline: the time server is process-wide and runs every 2.4 s,
+// held or not. And a word on every validated client packet before its handler, which
+// is the input gate (input_gate.h).
 class CardianPauseModule : public CPPModule
 {
     void OnInit() override
     {
+    }
+
+    auto OnIncomingPacket(MapSession* /* PSession */, CCharEntity* PChar, CBasicPacket& packet) -> bool override
+    {
+        return cardian::pause::input::intercept(PChar, packet);
     }
 
     void OnTimeServerTick() override

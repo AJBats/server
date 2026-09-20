@@ -169,8 +169,9 @@ private:
 
     timer::time_point m_EffectCheckTime{ timer::now() };
 
-    timer::time_point m_computeTime{ timer::now() };
-    uint16            m_lastCharComputeTargId{ 0 };
+    // CARDIAN: real time -- a client arriving through a held simulation is still shown the players.
+    realtime::time_point m_computeTime{ realtime::now() };
+    uint16               m_lastCharComputeTargId{ 0 };
 
     //
     // Intermediate collections for use inside ZoneServer

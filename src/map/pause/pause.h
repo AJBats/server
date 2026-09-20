@@ -31,7 +31,8 @@
 //
 // A hold freezes the simulation and nothing else. The simulation clock stands still
 // (common/timer.h), so every cast, recast, effect and respawn keeps the time it had
-// left, and the AI tick stands down (ai/ai_container.cpp), so nothing takes a step.
+// left, and the zone's entity ticks stand down (zone_entities.cpp), so nothing takes a
+// step. A command a player's client sends waits for the release (input_gate.h).
 // Networking, the Cardian Link, menus, shopping and chat run on: the point is to
 // give one player time to think and to order a party, not to stop the world.
 //

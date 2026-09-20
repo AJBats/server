@@ -17,6 +17,7 @@
 #include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/timer.h"
 #include "common/utils.h"
 #include "common/vana_time.h"
 #include "common/xirand.h"
@@ -89,27 +90,27 @@ namespace
         // her dwell, then walks to an exit and fades, and the seat refills
         // with another face. The controller walks her (TownTick) and
         // reports the arrivals; the zone tick keeps the clock and unseats
-        std::optional<position_t>                            cameFrom;
-        std::optional<position_t>                            face;
-        std::optional<position_t>                            exitAt;
-        std::array<uint32, 2>                                dwell{};
-        std::optional<std::chrono::steady_clock::time_point> leaveAt;
-        std::string                                          pose;
-        int32                                                seat    = -1; // her laid-out seat in a clustered slot
-        std::vector<position_t>                              via;          // points walked in order on the way in, in reverse on the way out
-        size_t                                               viaNext = 0;  // the next via point on the way in
-        std::vector<position_t>                              wayOut;       // set when she leaves: the via points reversed, then the exit
-        size_t                                               outNext = 0;
-        bool                                                 atSeat  = false;
-        bool                                                 leaving = false;
-        bool                                                 gone    = false; // at the exit, or the walk given up
-        std::optional<std::chrono::steady_clock::time_point> faceBackAt;      // turned to a listener: when she faces the middle again
+        std::optional<position_t>        cameFrom;
+        std::optional<position_t>        face;
+        std::optional<position_t>        exitAt;
+        std::array<uint32, 2>            dwell{};
+        std::optional<timer::time_point> leaveAt;
+        std::string                      pose;
+        int32                            seat    = -1; // her laid-out seat in a clustered slot
+        std::vector<position_t>          via;          // points walked in order on the way in, in reverse on the way out
+        size_t                           viaNext = 0;  // the next via point on the way in
+        std::vector<position_t>          wayOut;       // set when she leaves: the via points reversed, then the exit
+        size_t                           outNext = 0;
+        bool                             atSeat  = false;
+        bool                             leaving = false;
+        bool                             gone    = false; // at the exit, or the walk given up
+        std::optional<timer::time_point> faceBackAt;      // turned to a listener: when she faces the middle again
 
         // KO'd and faded: when she walks back to her seat (WORLD_KO_RETURN)
-        std::optional<std::chrono::steady_clock::time_point> returnAt;
+        std::optional<timer::time_point> returnAt;
 
         // KO'd: when she fell, so she fades after WORLD_KO_FADE
-        std::optional<std::chrono::steady_clock::time_point> downSince;
+        std::optional<timer::time_point> downSince;
 
         uint32 sweepTick = 0; // the zone's count of her ticks, for the slow checks (sweepBody)
 
@@ -132,9 +133,9 @@ namespace
     // seconds more, so a player popping out to shed aggro and straight
     // back finds the zone as they left it. Neighbours come from the
     // zone's own exits in its zone file, never a hand list.
-    std::unordered_map<uint16, std::vector<uint16>>                    neighbourCache;
-    std::unordered_map<uint16, std::chrono::steady_clock::time_point> lastLive;
-    std::unordered_map<uint16, bool>                                   wasLive;
+    std::unordered_map<uint16, std::vector<uint16>> neighbourCache;
+    std::unordered_map<uint16, timer::time_point>   lastLive;
+    std::unordered_map<uint16, bool>                wasLive;
 
     auto neighboursOf(const uint16 zoneId) -> const std::vector<uint16>&
     {
@@ -160,13 +161,13 @@ namespace
     // The load line's counters, always on
     struct Load
     {
-        std::chrono::steady_clock::time_point since{};
-        rusage                                usage{};
-        uint64                                brainTicks = 0;
-        std::chrono::nanoseconds              brainTotal{};
-        uint64                                moduleTicks = 0;
-        std::chrono::nanoseconds              moduleTotal{};
-        bool                                  started = false;
+        realtime::time_point     since{};
+        rusage                   usage{};
+        uint64                   brainTicks = 0;
+        std::chrono::nanoseconds brainTotal{};
+        uint64                   moduleTicks = 0;
+        std::chrono::nanoseconds moduleTotal{};
+        bool                     started = false;
     };
     Load load;
 
@@ -1033,17 +1034,17 @@ namespace
     };
     struct ZoneSlots
     {
-        bool                                               loaded = false;
-        std::vector<ExitSpec>                              exits;      // as authored (the re-read compares against these)
-        std::vector<position_t>                            exitPoints; // the same, on the mesh: where bodies appear and fade
-        std::vector<SlotSpec>                              specs;
-        std::vector<std::vector<std::string>>              occupants; // names, by slot
-        std::vector<uint32>                                turns;     // a turnstile's departures so far: the next face differs
-        std::vector<std::chrono::steady_clock::time_point> refillAt;  // a turnstile refills no sooner than this
-        std::vector<std::vector<std::string>>              recent;    // the last few faces a turnstile showed
-        std::vector<std::vector<Seat>>                     layout;    // a clustered slot's seats, laid out once
-        std::vector<std::vector<std::string>>              holders;   // who holds each laid-out seat ("" = free)
-        std::filesystem::file_time_type                    written{}; // the file as read, so an edit is noticed
+        bool                                  loaded = false;
+        std::vector<ExitSpec>                 exits;      // as authored (the re-read compares against these)
+        std::vector<position_t>               exitPoints; // the same, on the mesh: where bodies appear and fade
+        std::vector<SlotSpec>                 specs;
+        std::vector<std::vector<std::string>> occupants; // names, by slot
+        std::vector<uint32>                   turns;     // a turnstile's departures so far: the next face differs
+        std::vector<timer::time_point>        refillAt;  // a turnstile refills no sooner than this
+        std::vector<std::vector<std::string>> recent;    // the last few faces a turnstile showed
+        std::vector<std::vector<Seat>>        layout;    // a clustered slot's seats, laid out once
+        std::vector<std::vector<std::string>> holders;   // who holds each laid-out seat ("" = free)
+        std::filesystem::file_time_type       written{}; // the file as read, so an edit is noticed
     };
     std::unordered_map<uint16, ZoneSlots> zoneSlots;
 
@@ -1453,7 +1454,7 @@ namespace
         table.specs   = std::move(file.slots);
         table.occupants.assign(table.specs.size(), {});
         table.turns.assign(table.specs.size(), 0);
-        table.refillAt.assign(table.specs.size(), std::chrono::steady_clock::time_point{});
+        table.refillAt.assign(table.specs.size(), timer::time_point{});
         table.recent.assign(table.specs.size(), {});
         table.layout.assign(table.specs.size(), {});
         table.holders.assign(table.specs.size(), {});
@@ -1667,7 +1668,7 @@ namespace
         auto&       table  = zoneSlots[zoneId];
         const auto& spec   = table.specs[slot];
         const auto  have   = table.occupants[slot].size();
-        if (have >= spec.seats() || !seatOpen(spec) || (spec.turnstile() && std::chrono::steady_clock::now() < table.refillAt[slot]))
+        if (have >= spec.seats() || !seatOpen(spec) || (spec.turnstile() && timer::now() < table.refillAt[slot]))
         {
             return 0;
         }
@@ -1807,7 +1808,7 @@ namespace
             // town's clock runs unseen -- she leaves it on time all the same
             body.atSeat  = true;
             body.viaNext = body.via.size();
-            body.leaveAt = std::chrono::steady_clock::now() + std::chrono::seconds(xirand::GetRandomNumber(item.dwell[0], item.dwell[1] + 1));
+            body.leaveAt = timer::now() + std::chrono::seconds(xirand::GetRandomNumber(item.dwell[0], item.dwell[1] + 1));
         }
         return true;
     }
@@ -1842,7 +1843,7 @@ namespace
             if (table.specs[slot].turnstile())
             {
                 ++table.turns[slot];
-                table.refillAt[slot] = std::chrono::steady_clock::now() + std::chrono::seconds(xirand::GetRandomNumber(settings::get<uint32>("pawn.WORLD_TOWN_GAP_MIN"), settings::get<uint32>("pawn.WORLD_TOWN_GAP_MAX") + 1));
+                table.refillAt[slot] = timer::now() + std::chrono::seconds(xirand::GetRandomNumber(settings::get<uint32>("pawn.WORLD_TOWN_GAP_MIN"), settings::get<uint32>("pawn.WORLD_TOWN_GAP_MAX") + 1));
                 auto& recent         = table.recent[slot];
                 std::erase(recent, body.name);
                 recent.push_back(body.name);
@@ -1915,11 +1916,11 @@ namespace
     // other in the same cluster, then they emote, staggered")
     struct Chat
     {
-        std::chrono::steady_clock::time_point    nextAt{};
+        timer::time_point                        nextAt{};
         uint32                                   lastSpeaker = 0;
         uint64                                   roster = 0; // who was in the group last tick: a changed group settles before it talks
         std::optional<std::pair<uint32, uint32>> reply;      // speaker, listener
-        std::chrono::steady_clock::time_point    replyAt{};
+        timer::time_point                        replyAt{};
     };
     std::unordered_map<uint64, Chat> chats;
 
@@ -1934,7 +1935,7 @@ namespace
         PPawn->updatemask |= UPDATE_POS;
     }
 
-    void emoteAt(Body& speaker, const Body& listener, const bool emphatic, const std::chrono::steady_clock::time_point now)
+    void emoteAt(Body& speaker, const Body& listener, const bool emphatic, const timer::time_point now)
     {
         auto* PSpeaker  = pawn::findPawn(speaker.charid);
         auto* PListener = pawn::findPawn(listener.charid);
@@ -1959,7 +1960,7 @@ namespace
         }
     }
 
-    void chatTick(CZone* PZone, ZoneSlots& table, const std::chrono::steady_clock::time_point now)
+    void chatTick(CZone* PZone, ZoneSlots& table, const timer::time_point now)
     {
         const auto gapMin = settings::get<uint32>("pawn.WORLD_CHAT_GAP_MIN");
         const auto gapMax = settings::get<uint32>("pawn.WORLD_CHAT_GAP_MAX");
@@ -2082,7 +2083,7 @@ namespace
         }
     }
 
-    void tickTown(CZone* PZone, const std::chrono::steady_clock::time_point now, const bool poll)
+    void tickTown(CZone* PZone, const timer::time_point now, const bool poll)
     {
         const auto zoneId = static_cast<uint16>(PZone->GetID());
         const auto tit    = zoneSlots.find(zoneId);
@@ -2342,7 +2343,7 @@ namespace pawn::world
             return true;
         }
         const auto it = lastLive.find(zoneId);
-        return it != lastLive.end() && std::chrono::steady_clock::now() - it->second < std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY"));
+        return it != lastLive.end() && timer::now() - it->second < std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY"));
     }
 
     auto playerIn(const uint16 zoneId) -> bool
@@ -2688,7 +2689,7 @@ namespace pawn::world
         if (body.dwell[1] > 0)
         {
             const auto seconds = xirand::GetRandomNumber(body.dwell[0], body.dwell[1] + 1);
-            body.leaveAt       = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            body.leaveAt       = timer::now() + std::chrono::seconds(seconds);
             ShowInfoFmt("world: {} takes her seat for {} s", body.name, seconds);
         }
     }
@@ -2789,7 +2790,7 @@ namespace pawn::world
             return;
         }
         const auto zoneId = static_cast<uint16>(PZone->GetID());
-        const auto now    = std::chrono::steady_clock::now();
+        const auto now    = timer::now();
 
         // Where the players are, for the ladder's lookups (seats.cpp): a
         // zone is live with a real player in it or next door, and stays warm
@@ -2956,10 +2957,10 @@ namespace pawn::world
         // Who stands is the ladder's to say, on its own clock (seats::tick):
         // a zone that goes cold simply stops being live in its lookups
 
-        reportLoad(now);
+        reportLoad(realtime::now());
     }
 
-    void reportLoad(const std::chrono::steady_clock::time_point now)
+    void reportLoad(const realtime::time_point now)
     {
         const auto every = settings::get<uint32>("pawn.WORLD_LOAD_REPORT");
         if (every == 0)

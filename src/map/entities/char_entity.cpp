@@ -196,7 +196,7 @@ CCharEntity::CCharEntity()
     m_hasArise           = false;
     m_LevelRestriction   = 0;
     servmesLastOffset_   = std::nullopt;
-    m_AHHistoryTimestamp = timer::time_point::min();
+    m_AHHistoryTimestamp = realtime::time_point::min(); // CARDIAN
     m_DeathTimestamp     = timer::time_point::min();
 
     m_EquipFlag         = 0;
@@ -235,7 +235,7 @@ CCharEntity::CCharEntity()
     resetPetZoningInfo();
     petZoningInfo.petID = 0;
 
-    m_SaveTime    = timer::time_point::min();
+    m_SaveTime    = realtime::time_point::min(); // CARDIAN
     m_reloadParty = false;
 
     m_moghouseID     = 0;
@@ -838,12 +838,12 @@ auto CCharEntity::aman() -> CAMANContainer&
     return *m_AMAN;
 }
 
-auto CCharEntity::lastProposalCloseTime() const -> timer::time_point
+auto CCharEntity::lastProposalCloseTime() const -> realtime::time_point // CARDIAN
 {
     return lastProposalCloseTime_;
 }
 
-void CCharEntity::setLastProposalCloseTime(timer::time_point t)
+void CCharEntity::setLastProposalCloseTime(realtime::time_point t) // CARDIAN
 {
     lastProposalCloseTime_ = t;
 }
@@ -974,14 +974,14 @@ void CCharEntity::setBlockingAid(bool isBlockingAid)
 void CCharEntity::SetPlayTime(timer::duration playTime)
 {
     m_PlayTime = playTime;
-    m_SaveTime = timer::now();
+    m_SaveTime = realtime::now(); // CARDIAN: playtime is real time, held minutes count
 }
 
 timer::duration CCharEntity::GetPlayTime(bool needUpdate)
 {
     if (needUpdate)
     {
-        auto currentTime = timer::now();
+        auto currentTime = realtime::now(); // CARDIAN
 
         m_PlayTime += currentTime - m_SaveTime;
         m_SaveTime = currentTime;
@@ -1184,11 +1184,12 @@ void CCharEntity::PostTick()
         m_EffectsChanged = false;
     }
 
-    timer::time_point now = timer::now();
+    // CARDIAN: throttled on real time, his PostTick runs through a held simulation (pause/pause.h).
+    const auto now = realtime::now();
 
-    if (updatemask && now > m_nextUpdateTimer)
+    if (updatemask && now > m_nextUpdateRealTime) // CARDIAN
     {
-        m_nextUpdateTimer = now + 250ms;
+        m_nextUpdateRealTime = now + 250ms; // CARDIAN
 
         if (loc.zone && !m_isGMHidden)
         {

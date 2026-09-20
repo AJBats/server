@@ -28,6 +28,7 @@
 // nobody's followers set out ahead of him, and nobody is a cardian.
 
 #include "map/lua/lua_base_entity.h"
+#include "map/pause/input_gate.h"
 #include "map/pause/pause.h"
 #include "map/pawn/pawn.h"
 #include "map/pawn/world.h"
@@ -112,6 +113,16 @@ class CardianTestStubs : public CPPModule
         lua["xi"]["cardian"]["pause"]["isHeld"]  = []() -> bool
         {
             return cardian::pause::isHeld();
+        };
+        // The command a character has waiting for the release, as its packet id and,
+        // for 0x01A, its action id; nothing when he has none.
+        lua["xi"]["cardian"]["pause"]["queued"] = [](const uint32 charid) -> std::tuple<sol::optional<uint16>, sol::optional<uint16>>
+        {
+            if (const auto command = cardian::pause::input::queued(charid))
+            {
+                return { command->packetId, command->actionId };
+            }
+            return { sol::nullopt, sol::nullopt };
         };
     }
 };
