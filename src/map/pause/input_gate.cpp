@@ -28,10 +28,14 @@
 #include "item_container.h"
 #include "items/item.h"
 #include "packets/basic.h"
+#include "packets/c2s/0x015_pos.h"
 #include "packets/c2s/0x01a_action.h"
 #include "packets/c2s/0x037_item_use.h"
 #include "packets/c2s/0x0e8_camp.h"
+#include "pawn/cardian_link.h"
 #include "utils/zoneutils.h"
+
+#include <fmt/format.h>
 
 #include <magic_enum/magic_enum.hpp>
 #include <memory>
@@ -49,6 +53,7 @@ struct Waiting
     Queued                        what;
     xi::ZoneId                    zone{};
     uint16                        itemId = 0; // 0x037 names a slot: what lay in it when he chose
+    std::string                   line;       // "2:2:1 1024": its key and target index, for his queue line
     std::unique_ptr<CBasicPacket> packet;
 };
 
@@ -111,6 +116,53 @@ auto nameOf(const Queued& what) -> std::string
     return std::string(magic_enum::enum_name(static_cast<PacketC2S>(what.packetId)));
 }
 
+// What he chose and on whom, for his command window's queue line: the action's key
+// and the target's index, in the terms the server already speaks -- the catalogue's
+// kind:mode:id where the action has one (pawn_gambits.cpp), `item:<id>`, and
+// `cmd:<name>` for the rest of the action menu. The addon words it.
+auto lineOf(const Queued& what, const uint16 itemId, const CBasicPacket& packet) -> std::string
+{
+    std::string key;
+    if (static_cast<PacketC2S>(what.packetId) == PacketC2S::GP_CLI_COMMAND_ACTION)
+    {
+        const auto* typed = packet.as<GP_CLI_COMMAND_ACTION>();
+        switch (static_cast<GP_CLI_COMMAND_ACTION_ACTIONID>(what.actionId))
+        {
+            case GP_CLI_COMMAND_ACTION_ACTIONID::CastMagic:
+                key = fmt::format("2:2:{}", typed->CastMagic.SpellId);
+                break;
+            case GP_CLI_COMMAND_ACTION_ACTIONID::JobAbility:
+                key = fmt::format("3:2:{}", typed->JobAbility.SkillId);
+                break;
+            case GP_CLI_COMMAND_ACTION_ACTIONID::Weaponskill:
+                key = fmt::format("4:2:{}", typed->Weaponskill.SkillId);
+                break;
+            case GP_CLI_COMMAND_ACTION_ACTIONID::Shoot:
+                key = "1:0:0";
+                break;
+            default:
+                key = "cmd:" + nameOf(what);
+                break;
+        }
+    }
+    else if (static_cast<PacketC2S>(what.packetId) == PacketC2S::GP_CLI_COMMAND_ITEM_USE)
+    {
+        key = fmt::format("item:{}", itemId);
+    }
+    else
+    {
+        key = "cmd:Heal";
+    }
+    return fmt::format("{} {}", key, what.targetIndex);
+}
+
+// His addon's queue line follows every change: a command queued, replaced, taken
+// back, or gone at the release.
+void tell(const CCharEntity* PChar, const std::string& line)
+{
+    cardian::link::sendToCharacter(PChar->id, line.empty() ? fmt::format("cd q {}", PChar->getName()) : fmt::format("cd q {} {}", PChar->getName(), line));
+}
+
 // The dispatcher's own two steps: the command is judged as of now, not as of when
 // it was queued.
 template <typename T>
@@ -128,12 +180,32 @@ void deliver(CCharEntity* PChar, const CBasicPacket& packet, const Queued& what)
     }
 }
 
+// A position packet while held is made to say where the server already has him, and
+// then handled as ever: it still asks for the entities around him and carries who he
+// looks at. His client is told speed 0 (packets/char_status.cpp); this covers the
+// moment before it hears, and a client that does not listen.
+void pin(const CCharEntity* PChar, CBasicPacket& packet)
+{
+    auto* pos      = packet.as<GP_CLI_COMMAND_POS>();
+    pos->x         = PChar->loc.p.x;
+    pos->z         = PChar->loc.p.y; // the packet's z is the server's y, as its handler reads it
+    pos->y         = PChar->loc.p.z;
+    pos->dir       = static_cast<int8_t>(PChar->loc.p.rotation);
+    pos->MoveFlame = PChar->loc.p.moving;
+}
+
 } // namespace
 
 auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
 {
     if (!timer::is_held() || PChar == nullptr)
     {
+        return false;
+    }
+
+    if (static_cast<PacketC2S>(packet.getType()) == PacketC2S::GP_CLI_COMMAND_POS)
+    {
+        pin(PChar, packet);
         return false;
     }
 
@@ -155,8 +227,10 @@ auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
 
     const bool   isItem = static_cast<PacketC2S>(what->packetId) == PacketC2S::GP_CLI_COMMAND_ITEM_USE;
     const uint16 itemId = isItem ? itemIn(PChar, packet) : uint16{ 0 };
+    auto         line   = lineOf(*what, itemId, packet);
 
-    waiting.insert_or_assign(PChar->id, Waiting{ *what, PChar->getZone(), itemId, packet.copy() });
+    tell(PChar, line);
+    waiting.insert_or_assign(PChar->id, Waiting{ *what, PChar->getZone(), itemId, std::move(line), packet.copy() });
     return true;
 }
 
@@ -167,6 +241,23 @@ auto queued(const uint32 charid) -> std::optional<Queued>
         return it->second.what;
     }
     return std::nullopt;
+}
+
+auto queuedLine(const uint32 charid) -> std::string
+{
+    const auto it = waiting.find(charid);
+    return it != waiting.end() ? it->second.line : std::string();
+}
+
+auto cancel(CCharEntity* PChar) -> bool
+{
+    if (PChar == nullptr || waiting.erase(PChar->id) == 0)
+    {
+        return false;
+    }
+    ShowInfoFmt("pause: {} takes his queued command back", PChar->getName());
+    tell(PChar, "");
+    return true;
 }
 
 void replay()
@@ -180,8 +271,14 @@ void replay()
         if (PChar == nullptr || PChar->getZone() != command.zone)
         {
             ShowInfoFmt("pause: the queued {} of {} is dropped, he is {}", nameOf(command.what), charid, PChar == nullptr ? "gone" : "in another zone");
+            if (PChar != nullptr)
+            {
+                tell(PChar, "");
+            }
             continue;
         }
+
+        tell(PChar, "");
 
         switch (static_cast<PacketC2S>(command.what.packetId))
         {

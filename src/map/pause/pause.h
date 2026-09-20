@@ -38,6 +38,11 @@
 //
 // There is one hold and it belongs to whoever took it. When that player goes
 // offline the hold lets go by itself, and the server carries on as it would have.
+//
+// Taking and letting go tell the players: each real player's client gets his status
+// packet again, which carries speed 0 while held (packets/char_status.cpp) -- that is
+// the movement lock, derived from the hold, so there is nothing to restore -- and
+// every bound addon gets `cd paused <holder>` or `cd resumed` for its banner.
 // Everything here is for the main thread except isHeld(), which is safe from anywhere.
 namespace cardian::pause
 {
@@ -61,6 +66,11 @@ struct Status
 
 auto hold(uint32 holderCharId, std::string_view holderName) -> Result;
 auto release(std::string_view why) -> Result;
+
+// The pause button: takes the hold, or lets go of the asker's own. Anyone may pause
+// and only the holder may resume (co-op's real rules are a later decision). Answers
+// with why not, or with nothing when it did.
+auto toggle(uint32 charId, std::string_view name) -> std::string;
 
 auto isHeld() -> bool;
 auto status() -> Status;

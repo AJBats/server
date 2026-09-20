@@ -22,6 +22,8 @@
 #include "input_gate.h"
 #include "pause.h"
 
+#include "entities/char_entity.h"
+#include "lua/lua_base_entity.h"
 #include "utils/moduleutils.h"
 
 // The pause's own seat in the module system, for the two duties the module hooks
@@ -31,8 +33,30 @@
 // is the input gate (input_gate.h).
 class CardianPauseModule : public CPPModule
 {
+    // The pause button's server side: `!cardian pause`, which the addon sends over the
+    // Link. Answers with why not, or with nothing when the hold was taken or let go.
     void OnInit() override
     {
+        lua["CBaseEntity"]["cardianPause"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        {
+            const auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr)
+            {
+                return "no character";
+            }
+            return cardian::pause::toggle(PChar->id, PChar->getName());
+        };
+
+        // The player's own queued command, for his command window's queue line ("" with
+        // none), and him taking it back
+        lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        {
+            return cardian::pause::input::queuedLine(PLuaBaseEntity->GetBaseEntity()->id);
+        };
+        lua["CBaseEntity"]["cardianCancelOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
+        {
+            return cardian::pause::input::cancel(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()));
+        };
     }
 
     auto OnIncomingPacket(MapSession* /* PSession */, CCharEntity* PChar, CBasicPacket& packet) -> bool override

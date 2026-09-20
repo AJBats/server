@@ -57,6 +57,7 @@
 #include "party.h"
 #include "pause/pause.h"
 #include "enums/char_persist.h"
+#include "enums/msg_basic.h"
 #include "persist_batch.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
@@ -2083,6 +2084,27 @@ namespace pawn
     {
         const auto delay = std::chrono::milliseconds(settings::get<uint32>("pawn.INVITE_ACCEPT_DELAY"));
         pendingInvites.insert_or_assign(PPawn->id, timer::now() + delay);
+    }
+
+    void noteBattleMessage(CCharEntity* PPawn, const uint16 message, const uint16 aboutIndex)
+    {
+        const auto  name    = magic_enum::enum_name(static_cast<MsgBasic>(message));
+        const auto  said    = name.empty() ? fmt::format("message {}", message) : std::string(name);
+        const auto* PAbout  = aboutIndex != 0 ? PPawn->GetEntity(aboutIndex) : nullptr;
+        const auto  about   = PAbout != nullptr && PAbout != PPawn ? fmt::format(" (about {})", PAbout->getName()) : std::string();
+        ShowInfoFmt("pawn: {} is told {}{}", PPawn->getName(), said, about);
+
+        // A skill rising is the game's word after an action that worked, not a refusal
+        const auto msg = static_cast<MsgBasic>(message);
+        if (msg == MsgBasic::SkillGain || msg == MsgBasic::SkillLevelUp)
+        {
+            return;
+        }
+
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->ToldAfterOrder(said);
+        }
     }
 
     void notePositionPacket(const CCharEntity* PChar)

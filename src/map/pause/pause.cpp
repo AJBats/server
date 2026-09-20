@@ -22,8 +22,16 @@
 #include "pause.h"
 
 #include "common/logging.h"
+#include "common/settings.h"
+#include "entities/char_entity.h"
 #include "input_gate.h"
+#include "packets/char_status.h"
+#include "pawn/cardian_link.h"
 #include "pawn/players.h"
+#include "utils/zoneutils.h"
+#include "zone.h"
+
+#include <fmt/format.h>
 
 namespace cardian::pause
 {
@@ -40,6 +48,24 @@ struct Book
     uint32               holds = 0;
     realtime::duration   heldTotal{};
 } book;
+
+// The movement lock rides his status packet (packets/char_status.cpp), so a hold
+// taken or let go sends it at once rather than at his next change.
+void resendStatus()
+{
+    zoneutils::ForEachZone(
+        [](CZone* PZone)
+        {
+            PZone->ForEachChar(
+                [](CCharEntity* PChar)
+                {
+                    if (PChar->PSession != nullptr)
+                    {
+                        PChar->pushPacket<CCharStatusPacket>(PChar);
+                    }
+                });
+        });
+}
 
 } // namespace
 
@@ -58,6 +84,9 @@ auto hold(const uint32 holderCharId, const std::string_view holderName) -> Resul
     ++book.holds;
 
     ShowInfoFmt("pause: held by {} ({})", book.holderName, book.holder);
+
+    resendStatus();
+    cardian::link::sendToAll(fmt::format("cd paused {}", book.holderName));
     return Result::Ok;
 }
 
@@ -78,10 +107,35 @@ auto release(const std::string_view why) -> Result
     book.holder = 0;
     book.holderName.clear();
 
+    resendStatus();
+    cardian::link::sendToAll("cd resumed");
+
     // Last, with the clock running and nothing held: each goes to the game's own
     // handler as if it had just arrived.
     input::replay();
     return Result::Ok;
+}
+
+auto toggle(const uint32 charId, const std::string_view name) -> std::string
+{
+    if (!settings::get<bool>("cardian.PAUSE_ENABLED"))
+    {
+        return "the pause is switched off on this server";
+    }
+
+    if (!timer::is_held())
+    {
+        hold(charId, name);
+        return "";
+    }
+
+    if (book.holder != charId)
+    {
+        return fmt::format("{} has the game paused", book.holderName);
+    }
+
+    release("its holder resumed");
+    return "";
 }
 
 auto isHeld() -> bool

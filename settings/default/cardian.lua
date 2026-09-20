@@ -38,4 +38,9 @@ xi.settings.cardian =
     -- held order the grace runs out on is let go with a note: a spell
     -- pressed twice is one cast, not two.
     ORDER_GRACE = 3.0,
+
+    -- The combat pause (ROADMAP B): the addon's pause button holds the whole
+    -- simulation -- combat and movement, nothing else -- until the player who
+    -- took it resumes. Off, the button is refused with a note.
+    PAUSE_ENABLED = true,
 }

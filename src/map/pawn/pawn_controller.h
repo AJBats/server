@@ -236,6 +236,18 @@ public:
         return m_QueuedOrder.has_value();
     }
 
+    // The queued order for the command window's queue line: its action key and
+    // its target's index, "2:2:1 1024"; "" with none. The addon words it from the
+    // list it holds. It is told whenever this changes (`cd q <her name> <key>
+    // <target index>`), and the player can take the order back.
+    auto QueuedOrderLine() const -> std::string;
+    auto CancelQueuedOrder() -> bool;
+
+    // The game told her something (pawn::noteBattleMessage). An order that has just
+    // started and this on its heels is the game refusing it -- out of range, no line
+    // of sight, its own script's word -- which the player hears as a note.
+    void ToldAfterOrder(const std::string& said);
+
     // The attack order, fired once her beat is served: the front row draws
     // first, the back line a touch later
     void FireOrderedEngage();
@@ -861,6 +873,14 @@ private:
     auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     void Note(const std::string& text) const; // one line to the player's addon, printed as a complaint
+
+    // The one way the queued order changes, so the addon's queue line is never stale
+    void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
+
+    // The order that last started, and when: what a refusal right after it is about
+    std::string       m_StartedOrder;
+    timer::time_point m_StartedOrderAt{ timer::time_point::min() };
+    void              OrderStarted(unsigned kind, unsigned id);
 
     // The action itself, no queueing: "" when it fired, "recast", or why
     // not

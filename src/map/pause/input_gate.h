@@ -24,6 +24,7 @@
 #include "common/cbasetypes.h"
 
 #include <optional>
+#include <string>
 
 class CBasicPacket;
 class CCharEntity;
@@ -40,7 +41,10 @@ class CCharEntity;
 //
 // What is not a command passes as ever: talking to an NPC (shops and menus work
 // through a pause on purpose), assist (it only moves the client's cursor), the
-// zone-in sync and the blockaid setting. Main thread only.
+// zone-in sync and the blockaid setting.
+//
+// His body stays where it is: a position packet while held is pinned to where the
+// server has him before its handler reads it (pause P4). Main thread only.
 namespace cardian::pause::input
 {
 
@@ -52,11 +56,20 @@ struct Queued
 };
 
 // Asked of every validated client packet, before its handler. True while held for a
-// command: it has been queued and the handler must not run.
+// command: it has been queued and the handler must not run. A position packet is
+// pinned in place and answers false: its handler still runs.
 auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool;
 
 // The command that character has waiting, if any.
 auto queued(uint32 charid) -> std::optional<Queued>;
+
+// The same for his command window's queue line: its key and its target's index, "2:2:1
+// 1024", "" with none. The addon words it. It is told whenever this changes (`cd q
+// <his name> <key> <target index>`).
+auto queuedLine(uint32 charid) -> std::string;
+
+// The player takes his queued command back. False with none.
+auto cancel(CCharEntity* PChar) -> bool;
 
 // Hands every queued command to its handler and empties the queue. The release's
 // last step, once the clock runs again; a character who has left, or changed zone

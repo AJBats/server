@@ -32,6 +32,7 @@
 #include "common/types/position.h"
 #include "entities/char_entity.h"
 #include "map_session.h"
+#include "pause/pause.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -47,7 +48,7 @@ extern sol::state lua;
 // kProtocol) unloads itself when its own differs: both are bumped together
 // whenever a line either side sends changes shape, and no line is kept
 // compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 3; // 3: authoritative stake toggle (RESEARCH §12.16)
+constexpr uint32 kLinkProtocol = 5; // 5: the queue line (cd q <name> [<key> <target index>]; cd queues; cd cancel <name|me>)
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>
@@ -97,8 +98,7 @@ namespace
     // sample before a pause and the first after it sit a normal step apart, so his
     // motion carries across the pause unbroken. That holds only while samples that
     // arrive DURING a hold are not ingested -- they would report a standing player
-    // and a zero gap, and collapse the estimate. Whatever holds the simulation must
-    // therefore keep those samples out; this file does not.
+    // and a zero gap, and collapse the estimate. handlePos keeps them out.
     constexpr auto FreshPositionMaxAge = std::chrono::seconds(1);
 
     class Connection;
@@ -505,6 +505,12 @@ namespace
                 calibrated_              = false;
                 ShowInfoFmt("link: {} bound to {} ({})", peer_, PChar->getName(), id);
                 enqueue(fmt::format("bound {} {}", id, PChar->getName()));
+
+                // An addon that binds into a held simulation shows the banner too
+                if (const auto pause = cardian::pause::status(); pause.held)
+                {
+                    enqueue(fmt::format("cd paused {}", pause.holderName));
+                }
                 return true;
             }
             if (verb == "whoami")
@@ -580,6 +586,12 @@ namespace
             if (PChar == nullptr)
             {
                 enqueue("err bind stale");
+                return;
+            }
+
+            // A held simulation (pause/pause.h) takes no samples: see StoredPosition::at
+            if (cardian::pause::isHeld())
+            {
                 return;
             }
 
@@ -795,6 +807,14 @@ namespace cardian::link
         }
         it->second->push(std::move(line));
         return true;
+    }
+
+    void sendToAll(const std::string& line)
+    {
+        for (const auto& [charid, connection] : g_boundConnections)
+        {
+            connection->push(line);
+        }
     }
 
     auto freshPositionOf(uint32 charid) -> std::optional<FreshPosition>

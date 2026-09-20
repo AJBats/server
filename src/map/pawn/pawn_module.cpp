@@ -1191,6 +1191,25 @@ class PawnModule : public CPPModule
             return err;
         };
 
+        // The command window's queue line: what she has waiting ("" with none),
+        // and the player taking it back
+        lua["CBaseEntity"]["cardianQueued"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            auto* PController         = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr ? PController->QueuedOrderLine() : "";
+        };
+        lua["CBaseEntity"]["cardianCancel"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            return PController != nullptr && PController->CancelQueuedOrder() ? "" : "nothing queued";
+        };
+
         lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -1346,7 +1365,20 @@ class PawnModule : public CPPModule
 
     void OnPushPacket(CCharEntity* PChar, const std::unique_ptr<CBasicPacket>& packet) override
     {
-        if (!pawn::isPawn(PChar) || packet->getType() != std::to_underlying(PacketS2C::GP_SERV_COMMAND_GROUP_SOLICIT_REQ))
+        if (!pawn::isPawn(PChar))
+        {
+            return;
+        }
+
+        // What the game tells her in a battle message: the message number at 0x18,
+        // the index of whom it is about at 0x16
+        if (packet->getType() == std::to_underlying(PacketS2C::GP_SERV_COMMAND_BATTLE_MESSAGE))
+        {
+            pawn::noteBattleMessage(PChar, packet->ref<uint16>(0x18), packet->ref<uint16>(0x16));
+            return;
+        }
+
+        if (packet->getType() != std::to_underlying(PacketS2C::GP_SERV_COMMAND_GROUP_SOLICIT_REQ))
         {
             return;
         }

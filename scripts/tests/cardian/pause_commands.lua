@@ -175,6 +175,30 @@ describe('Combat pause: commands', function()
         player.assert.no:hasEffect(xi.effect.FOOD)
     end)
 
+    it('names the queued command for his command window, and lets him take it back', function()
+        player:setHP(10)
+        local mp = player:getMP()
+
+        assert(pause.hold())
+        assert(player:cardianQueuedOwn() == '', 'a queue line with nothing queued: ' .. player:cardianQueuedOwn())
+
+        player.actions:useSpell(player, xi.magic.spell.CURE)
+        local line = player:cardianQueuedOwn()
+        assert(line == string.format('2:2:%d %d', xi.magic.spell.CURE, player:getTargID()), 'the queue line reads: ' .. line)
+
+        player.actions:engage(mob)
+        line = player:cardianQueuedOwn()
+        assert(line == string.format('cmd:Attack %d', mob:getTargID()), 'the replaced queue line reads: ' .. line)
+
+        assert(player:cardianCancelOwn(), 'he could not take his queued command back')
+        assert(player:cardianQueuedOwn() == '' and pause.queued(player:getID()) == nil, 'the command is still queued after he took it back')
+        assert(not player:cardianCancelOwn(), 'a second cancel found something to take back')
+
+        assert(pause.release())
+        xi.test.world:skipTime(3)
+        assert(not player:isEngaged() and player:getMP() == mp, 'a command he took back went ahead at the release')
+    end)
+
     it('holds /heal for the release', function()
         assert(pause.hold())
         heal()

@@ -1182,6 +1182,10 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
                                                   : TryAction(kind, mode, id, target);
     if (err != "paused" && err != "busy" && err != "recast" && err != "standing up")
     {
+        if (err.empty())
+        {
+            OrderStarted(kind, id);
+        }
         return err;
     }
 
@@ -1194,8 +1198,8 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     {
         return fmt::format("{} is {} s away", OrderName(kind, id), wholeSeconds(wait));
     }
-    m_QueuedOrder         = std::make_pair(key, target);
     m_QueuedOrderDeadline = m_Tick + grace;
+    SetQueuedOrder(std::make_pair(key, target));
     ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), err, wholeSeconds(grace));
     return "";
 }
@@ -1247,6 +1251,55 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
         default:
             return "that";
     }
+}
+
+void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order)
+{
+    m_QueuedOrder = std::move(order);
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+    {
+        const auto line = QueuedOrderLine();
+        cardian::link::sendToCharacter(owner, line.empty() ? fmt::format("cd q {}", POwner->getName()) : fmt::format("cd q {} {}", POwner->getName(), line));
+    }
+}
+
+auto CPawnController::QueuedOrderLine() const -> std::string
+{
+    if (!m_QueuedOrder.has_value())
+    {
+        return "";
+    }
+    const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
+    return fmt::format("{} {}", m_QueuedOrder->first, PTarget != nullptr ? PTarget->targid : 0);
+}
+
+auto CPawnController::CancelQueuedOrder() -> bool
+{
+    if (!m_QueuedOrder.has_value())
+    {
+        return false;
+    }
+    ShowInfoFmt("pawn: {} drops the queued {} (the player took it back)", POwner->getName(), m_QueuedOrder->first);
+    SetQueuedOrder(std::nullopt);
+    return true;
+}
+
+void CPawnController::OrderStarted(const unsigned kind, const unsigned id)
+{
+    m_StartedOrder   = OrderName(kind, id);
+    m_StartedOrderAt = m_Tick;
+}
+
+void CPawnController::ToldAfterOrder(const std::string& said)
+{
+    constexpr auto kHeels = 2s;
+    if (m_StartedOrder.empty() || m_Tick - m_StartedOrderAt > kHeels)
+    {
+        return;
+    }
+    ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), m_StartedOrder, said);
+    Note(fmt::format("{} refused: {}", m_StartedOrder, said));
+    m_StartedOrder.clear();
 }
 
 void CPawnController::Note(const std::string& text) const
@@ -1328,14 +1381,14 @@ void CPawnController::FireQueuedOrder()
     unsigned   id            = 0;
     if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
     {
-        m_QueuedOrder.reset();
+        SetQueuedOrder(std::nullopt);
         return;
     }
 
     // The grace ran out: with her still busy, or the timer still running
     if (m_Tick > m_QueuedOrderDeadline)
     {
-        m_QueuedOrder.reset();
+        SetQueuedOrder(std::nullopt);
         const auto wait = OrderWait(kind, id);
         const auto why  = (Acting() || wait <= 0s) ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait));
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
@@ -1350,7 +1403,7 @@ void CPawnController::FireQueuedOrder()
     auto* PTarget = target.resolve<CBattleEntity>();
     if (PTarget == nullptr)
     {
-        m_QueuedOrder.reset();
+        SetQueuedOrder(std::nullopt);
         return;
     }
 
@@ -1361,14 +1414,16 @@ void CPawnController::FireQueuedOrder()
     {
         return; // the timer has not run out: next tick, until the deadline
     }
-    m_QueuedOrder.reset();
+    SetQueuedOrder(std::nullopt);
     if (!err.empty())
     {
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, err);
         Note(fmt::format("{} let go: {}", OrderName(kind, id), err));
         return;
     }
-    ShowInfoFmt("pawn: {} fires the queued {} on {}", POwner->getName(), key, PTarget->getName());
+    // Started, not done: the game may still refuse it on its next step (ToldAfterOrder)
+    OrderStarted(kind, id);
+    ShowInfoFmt("pawn: {} starts the queued {} on {}", POwner->getName(), key, PTarget->getName());
 }
 
 auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool

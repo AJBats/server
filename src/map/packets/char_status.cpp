@@ -27,6 +27,7 @@
 
 #include "entities/char_entity.h"
 #include "items/item_linkshell.h"
+#include "pause/pause.h" // CARDIAN
 #include "status_effect_container.h"
 #include "utils/mountutils.h"
 
@@ -273,7 +274,8 @@ CCharStatusPacket::CCharStatusPacket(CCharEntity* PChar)
     // flags 1 starts at 0x2C
     charStatusFlags::flags1_t flags1 = {};
 
-    flags1.Speed        = PChar->UpdateSpeed();
+    // CARDIAN: a held simulation (pause/pause.h) tells his client speed 0, the movement lock.
+    flags1.Speed        = cardian::pause::isHeld() ? 0 : PChar->UpdateSpeed();
     flags1.Hackmove     = PChar->wallhackEnabled; // GM wallhack, walk through walls
     flags1.FreezeFlag   = PChar->isFrozenFlagged; // Freezes player in place, making them unable to move. Used when opening treasure chests, for instance.
     flags1.unknown_1_14 = 0;                      // Unknown.
