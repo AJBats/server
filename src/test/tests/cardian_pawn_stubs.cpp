@@ -110,6 +110,11 @@ class CardianTestStubs : public CPPModule
         {
             return cardian::pause::release("a test") == cardian::pause::Result::Ok;
         };
+        // A test that let real time go by in a hold leaves the calendar as it found it
+        lua["xi"]["cardian"]["pause"]["forgetDrift"] = []()
+        {
+            earth_time::calendar_state.store(0);
+        };
         lua["xi"]["cardian"]["pause"]["isHeld"]  = []() -> bool
         {
             return cardian::pause::isHeld();

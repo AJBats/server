@@ -59,7 +59,7 @@ public:
 
     static time_point now() noexcept
     {
-        return time_point{ std::chrono::duration_cast<duration>(earth_time::now() - earth_time::vanadiel_epoch) };
+        return time_point{ std::chrono::duration_cast<duration>(earth_time::now() - earth_time::calendar_epoch()) }; // CARDIAN: the held, drifted calendar
     }
 };
 

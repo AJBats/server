@@ -102,6 +102,7 @@ auto hold(const uint32 holderCharId, const std::string_view holderName) -> Resul
     }
 
     timer::hold();
+    earth_time::hold_calendar();
 
     book.holder     = holderCharId;
     book.holderName = holderName;
@@ -111,7 +112,7 @@ auto hold(const uint32 holderCharId, const std::string_view holderName) -> Resul
     ShowInfoFmt("pause: held by {} ({})", book.holderName, book.holder);
 
     resendStatus();
-    cardian::link::sendToAll(fmt::format("cd paused {}", book.holderName));
+    cardian::link::sendToAll(fmt::format("cd paused {} {}", book.holderName, earth_time::vanadiel_timestamp()));
     return Result::Ok;
 }
 
@@ -126,6 +127,7 @@ auto release(const std::string_view why) -> Result
     book.heldTotal += heldFor;
 
     timer::release();
+    earth_time::release_calendar();
 
     ShowInfoFmt("pause: released after {:.1f}s, {} (held by {})", std::chrono::duration<double>(heldFor).count(), why, book.holderName);
 
@@ -134,7 +136,7 @@ auto release(const std::string_view why) -> Result
 
     resendStatus();
     resendTimers();
-    cardian::link::sendToAll("cd resumed");
+    cardian::link::sendToAll(fmt::format("cd resumed {}", earth_time::vanadiel_timestamp()));
 
     // Last, with the clock running and nothing held: each goes to the game's own
     // handler as if it had just arrived.

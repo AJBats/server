@@ -48,7 +48,7 @@ extern sol::state lua;
 // kProtocol) unloads itself when its own differs: both are bumped together
 // whenever a line either side sends changes shape, and no line is kept
 // compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 5; // 5: the queue line (cd q <name> [<key> <target index>]; cd queues; cd cancel <name|me>)
+constexpr uint32 kLinkProtocol = 6; // 6: the held calendar (cd paused <holder> <game time>; cd resumed <game time>; cd calendar <game time>)
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>
@@ -509,7 +509,12 @@ namespace
                 // An addon that binds into a held simulation shows the banner too
                 if (const auto pause = cardian::pause::status(); pause.held)
                 {
-                    enqueue(fmt::format("cd paused {}", pause.holderName));
+                    enqueue(fmt::format("cd paused {} {}", pause.holderName, earth_time::vanadiel_timestamp()));
+                }
+                else
+                {
+                    // The calendar runs behind real time by every pause so far: his client is told where it stands
+                    enqueue(fmt::format("cd calendar {}", earth_time::vanadiel_timestamp()));
                 }
                 return true;
             }
