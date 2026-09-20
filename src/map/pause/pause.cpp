@@ -26,8 +26,11 @@
 #include "entities/char_entity.h"
 #include "input_gate.h"
 #include "packets/char_status.h"
+#include "packets/s2c/0x063_miscdata_status_icons.h"
+#include "packets/s2c/0x119_abil_recast.h"
 #include "pawn/cardian_link.h"
 #include "pawn/players.h"
+#include "status_effect_container.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -49,21 +52,43 @@ struct Book
     realtime::duration   heldTotal{};
 } book;
 
+template <typename F>
+void forEachRealPlayer(F&& func)
+{
+    zoneutils::ForEachZone(
+        [&func](CZone* PZone)
+        {
+            PZone->ForEachChar(
+                [&func](CCharEntity* PChar)
+                {
+                    if (PChar->PSession != nullptr)
+                    {
+                        func(PChar);
+                    }
+                });
+        });
+}
+
 // The movement lock rides his status packet (packets/char_status.cpp), so a hold
 // taken or let go sends it at once rather than at his next change.
 void resendStatus()
 {
-    zoneutils::ForEachZone(
-        [](CZone* PZone)
+    forEachRealPlayer(
+        [](CCharEntity* PChar)
         {
-            PZone->ForEachChar(
-                [](CCharEntity* PChar)
-                {
-                    if (PChar->PSession != nullptr)
-                    {
-                        PChar->pushPacket<CCharStatusPacket>(PChar);
-                    }
-                });
+            PChar->pushPacket<CCharStatusPacket>(PChar);
+        });
+}
+
+// His client counts ability recasts and buff timers down on its own clock, which ran
+// on through the hold, so at the release it is told again what is left of each.
+void resendTimers()
+{
+    forEachRealPlayer(
+        [](CCharEntity* PChar)
+        {
+            PChar->pushPacket<GP_SERV_COMMAND_ABIL_RECAST>(PChar);
+            PChar->pushPacket<GP_SERV_COMMAND_MISCDATA::STATUS_ICONS>(PChar);
         });
 }
 
@@ -108,6 +133,7 @@ auto release(const std::string_view why) -> Result
     book.holderName.clear();
 
     resendStatus();
+    resendTimers();
     cardian::link::sendToAll("cd resumed");
 
     // Last, with the clock running and nothing held: each goes to the game's own
@@ -116,16 +142,24 @@ auto release(const std::string_view why) -> Result
     return Result::Ok;
 }
 
-auto toggle(const uint32 charId, const std::string_view name) -> std::string
+auto toggle(CCharEntity* PChar) -> std::string
 {
     if (!settings::get<bool>("cardian.PAUSE_ENABLED"))
     {
         return "the pause is switched off on this server";
     }
 
+    const uint32 charId = PChar->id;
+
     if (!timer::is_held())
     {
-        hold(charId, name);
+        // Nobody logs out of a held game (input_gate.h), so nobody holds one on his way out
+        if (PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Leavegame))
+        {
+            return "you are logging out";
+        }
+
+        hold(charId, PChar->getName());
         return "";
     }
 

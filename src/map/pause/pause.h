@@ -27,6 +27,8 @@
 #include <string>
 #include <string_view>
 
+class CCharEntity;
+
 // The combat pause: one hold over the whole map process, every zone at once.
 //
 // A hold freezes the simulation and nothing else. The simulation clock stands still
@@ -42,7 +44,9 @@
 // Taking and letting go tell the players: each real player's client gets his status
 // packet again, which carries speed 0 while held (packets/char_status.cpp) -- that is
 // the movement lock, derived from the hold, so there is nothing to restore -- and
-// every bound addon gets `cd paused <holder>` or `cd resumed` for its banner.
+// every bound addon gets `cd paused <holder>` or `cd resumed` for its banner. The
+// release also tells each client again what is left of his ability recasts and buff
+// timers, which it counted down on its own clock while the server stood still.
 // Everything here is for the main thread except isHeld(), which is safe from anywhere.
 namespace cardian::pause
 {
@@ -68,9 +72,10 @@ auto hold(uint32 holderCharId, std::string_view holderName) -> Result;
 auto release(std::string_view why) -> Result;
 
 // The pause button: takes the hold, or lets go of the asker's own. Anyone may pause
-// and only the holder may resume (co-op's real rules are a later decision). Answers
-// with why not, or with nothing when it did.
-auto toggle(uint32 charId, std::string_view name) -> std::string;
+// and only the holder may resume (co-op's real rules are a later decision); a player
+// on his way out of the game may not pause. Answers with why not, or with nothing
+// when it did.
+auto toggle(CCharEntity* PChar) -> std::string;
 
 auto isHeld() -> bool;
 auto status() -> Status;

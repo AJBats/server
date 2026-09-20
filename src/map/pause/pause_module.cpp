@@ -39,12 +39,12 @@ class CardianPauseModule : public CPPModule
     {
         lua["CBaseEntity"]["cardianPause"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
-            const auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PChar == nullptr)
             {
                 return "no character";
             }
-            return cardian::pause::toggle(PChar->id, PChar->getName());
+            return cardian::pause::toggle(PChar);
         };
 
         // The player's own queued command, for his command window's queue line ("" with

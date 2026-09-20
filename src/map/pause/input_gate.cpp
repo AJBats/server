@@ -24,6 +24,7 @@
 #include "common/logging.h"
 #include "common/timer.h"
 #include "entities/char_entity.h"
+#include "enums/chat_message_type.h"
 #include "enums/packet_c2s.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -31,8 +32,11 @@
 #include "packets/c2s/0x015_pos.h"
 #include "packets/c2s/0x01a_action.h"
 #include "packets/c2s/0x037_item_use.h"
+#include "packets/c2s/0x0e7_reqlogout.h"
 #include "packets/c2s/0x0e8_camp.h"
+#include "packets/s2c/0x017_chat_std.h"
 #include "pawn/cardian_link.h"
+#include "status_effect_container.h"
 #include "utils/zoneutils.h"
 
 #include <fmt/format.h>
@@ -194,6 +198,14 @@ void pin(const CCharEntity* PChar, CBasicPacket& packet)
     pos->MoveFlame = PChar->loc.p.moving;
 }
 
+// Would this logout request start his countdown? One that stops a countdown, or
+// changes the kind of one already running, starts nothing.
+auto startsLogout(const CCharEntity* PChar, const CBasicPacket& packet) -> bool
+{
+    const auto mode = static_cast<GP_CLI_COMMAND_REQLOGOUT_MODE>(packet.as<GP_CLI_COMMAND_REQLOGOUT>()->Mode);
+    return mode != GP_CLI_COMMAND_REQLOGOUT_MODE::Off && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Leavegame);
+}
+
 } // namespace
 
 auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
@@ -201,6 +213,17 @@ auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
     if (!timer::is_held() || PChar == nullptr)
     {
         return false;
+    }
+
+    if (static_cast<PacketC2S>(packet.getType()) == PacketC2S::GP_CLI_COMMAND_REQLOGOUT)
+    {
+        if (!startsLogout(PChar, packet))
+        {
+            return false;
+        }
+        ShowInfoFmt("pause: {} may not log out of a held game", PChar->getName());
+        PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PChar, MESSAGE_SYSTEM_3, "The game is paused. Resume it to log out.");
+        return true;
     }
 
     if (static_cast<PacketC2S>(packet.getType()) == PacketC2S::GP_CLI_COMMAND_POS)

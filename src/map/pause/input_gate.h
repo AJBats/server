@@ -43,6 +43,10 @@ class CCharEntity;
 // through a pause on purpose), assist (it only moves the client's cursor), the
 // zone-in sync and the blockaid setting.
 //
+// Nobody logs out of a held game: a request that would start the logout countdown
+// (game time, it would never run down) is refused with a line of chat, not queued.
+// Stopping a countdown already running passes.
+//
 // His body stays where it is: a position packet while held is pinned to where the
 // server has him before its handler reads it (pause P4). Main thread only.
 namespace cardian::pause::input
