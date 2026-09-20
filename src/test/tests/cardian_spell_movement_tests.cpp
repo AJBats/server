@@ -213,20 +213,20 @@ TEST_CASE("A blocked in-range spell follows a route until sight returns", "[card
 TEST_CASE("Spell approach needs both range and sight and follows a changed target", "[cardian][casting]")
 {
     const position_t from{0, 0, 0, 0, 0};
-    const position_t near{10, 0, 0, 0, 0};
-    const position_t far{24, -8, 0, 0, 0};
-    CHECK_FALSE(cardian::casting::approach(from, near, 20, true).has_value());
+    const position_t nearTarget{10, 0, 0, 0, 0};
+    const position_t farTarget{24, -8, 0, 0, 0};
+    CHECK_FALSE(cardian::casting::approach(from, nearTarget, 20, true).has_value());
     CHECK_FALSE(cardian::casting::approach(from, from, 20, true).has_value());
-    const auto blocked = cardian::casting::approach(from, far, 20, false);
+    const auto blocked = cardian::casting::approach(from, farTarget, 20, false);
     REQUIRE(blocked.has_value());
-    CHECK(distance(*blocked, far) == 0);
-    const auto visible = cardian::casting::approach(from, far, 20, true);
+    CHECK(distance(*blocked, farTarget) == 0);
+    const auto visible = cardian::casting::approach(from, farTarget, 20, true);
     REQUIRE(visible.has_value());
-    CHECK(distance(*visible, far) == Catch::Approx(19.5f));
+    CHECK(distance(*visible, farTarget) == Catch::Approx(19.5f));
     CHECK(visible->y < 0); // range is three-dimensional, including a slope
-    const auto switched = cardian::casting::approach(from, near, 20, false);
+    const auto switched = cardian::casting::approach(from, nearTarget, 20, false);
     REQUIRE(switched.has_value());
-    CHECK(distance(*switched, near) == 0);
+    CHECK(distance(*switched, nearTarget) == 0);
 }
 
 TEST_CASE("Unflagged path requests retain the original one-yalm cutoff", "[cardian][casting][pathfind]")
@@ -558,11 +558,12 @@ TEST_CASE("A spell route whose final step rounds to unchanged XYZ reaches the fa
     REQUIRE(raw.has_value());
     REQUIRE(raw->points.size() == 1);
     const auto& end = raw->points.back().position;
-    // Squared-distance admission passes, but the actual step cannot advance.
+    // Squared-distance admission passes, but the actual step cannot advance:
+    // nothing, or the crumb a math library's rounding leaves of it.
     REQUIRE_FALSE(isWithinDistance(stalled, end, cardian::casting::kArrival));
     auto stepped = stalled;
     pathfind::stepTowards(stepped, end, 0.8f, cardian::casting::kArrival);
-    REQUIRE(distanceSquared(stalled, stepped) == 0.0f);
+    REQUIRE(distance(stalled, stepped) < 1e-6f);
     REQUIRE_FALSE(f.path.PathAround(*goal, cardian::casting::kArrival, flags));
     CHECK_FALSE(f.path.IsFollowingPath());
 

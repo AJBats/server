@@ -507,16 +507,16 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
     // waypoint is passed within a yalm and a half; her seat she lands on
     // exactly -- the last stretch is one straight step onto it, so a group's
     // ring is a ring and no two of them overlap
-    const position_t& goal = order.goal;
-    const float       flat = std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z);
-    const bool        near = flat < 1.6f && std::abs(POwner->loc.p.y - goal.y) < 3.0f;
-    if (near && (!order.goalIsSeat || flat < 0.35f))
+    const position_t& goal   = order.goal;
+    const float       flat   = std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z);
+    const bool        atGoal = flat < 1.6f && std::abs(POwner->loc.p.y - goal.y) < 3.0f;
+    if (atGoal && (!order.goalIsSeat || flat < 0.35f))
     {
         Move(Intent{});
         pawn::world::noteReached(POwner->id);
         return;
     }
-    if (near)
+    if (atGoal)
     {
         Intent hop{};
         hop.kind  = Intent::Kind::Hop;
@@ -4270,16 +4270,16 @@ auto CPawnController::ReachableFormationPoint(const Anchor& a, const float offse
     // the maze to walk either way), and when she stands off the mesh (a
     // push-out, a ledge lip) no walk can be priced and the point stands
     bool             walkedIn = false;
-    const position_t far      = point;
+    const position_t farEnd   = point;
     if (const auto toPlayer = navMesh != nullptr ? WalkLength(from) : std::nullopt; toPlayer.has_value())
     {
-        const float span = distance(from, far);
+        const float span = distance(from, farEnd);
         for (int step = 0; step <= 3; ++step)
         {
             if (step > 0)
             {
                 const float t = std::max(1.0f - step / 3.0f, span > 0.0f ? 1.0f / span : 0.0f);
-                point         = position_t(from.x + (far.x - from.x) * t, from.y + (far.y - from.y) * t, from.z + (far.z - from.z) * t, 0, 0);
+                point         = position_t(from.x + (farEnd.x - from.x) * t, from.y + (farEnd.y - from.y) * t, from.z + (farEnd.z - from.z) * t, 0, 0);
                 if (const auto onMesh = navMesh->findClosestValidPoint(point); onMesh.has_value())
                 {
                     point = *onMesh;

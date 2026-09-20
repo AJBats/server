@@ -11,7 +11,7 @@
 
     Stored, pushed by the code that knows it changed:  zone, tier, owner, down
     Stamped by the ladder:                             seq (re-stamped on a change of tier or down, never of zone)
-    Looked up on every run:                            live, near, inParty
+    Looked up on every run:                            live, nearby, inParty
     Owned by run():                                    step, want, retryAfter
 
   Each run refreshes the looked-up facts, sorts the whole vector with the
@@ -79,7 +79,7 @@ namespace pawn::seats
 
         // looked up on every run
         bool live    = false; // she may hold a body now: not down, no stand of hers waiting on a retry, and a player in her zone or next door -- or she is owned, and her player's wherever she is, or in a real player's party, and theirs wherever she waits (the user, 2026-09-14)
-        bool near    = false; // a player in her zone itself
+        bool nearby  = false; // a player in her zone itself
         bool inParty = false; // in a real player's party, or invited into one and not yet answered
 
         // owned by run()
@@ -121,8 +121,8 @@ namespace pawn::seats
         // own zone, then seq
         static bool defaultOrder(const Entry& a, const Entry& b)
         {
-            return std::tuple(a.live, a.inParty, a.facts.tier, a.near, a.seq) >
-                   std::tuple(b.live, b.inParty, b.facts.tier, b.near, b.seq);
+            return std::tuple(a.live, a.inParty, a.facts.tier, a.nearby, a.seq) >
+                   std::tuple(b.live, b.inParty, b.facts.tier, b.nearby, b.seq);
         }
 
         Ladder(Before before, Lookup lookup, Engine engine, const uint32 standsPerRun = 3, const timer::duration retryDelay = std::chrono::seconds(30))
@@ -374,7 +374,7 @@ namespace pawn::seats
                 {
                     it->second = { lookup.playerNear(e.facts.zone), lookup.playerIn(e.facts.zone) };
                 }
-                e.near    = it->second.second;
+                e.nearby  = it->second.second;
                 e.inParty = lookup.inParty(e.charid);
                 e.live    = !e.facts.down && now >= e.retryAfter && (e.facts.owner != 0 || e.inParty || it->second.first);
             }

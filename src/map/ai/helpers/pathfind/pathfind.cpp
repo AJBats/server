@@ -419,7 +419,8 @@ auto CPathFind::FindPathInternal(const position_t& start, const position_t& end)
             auto arrival = start;
             // Check final movement without changing the owner's position.
             const float advance = pathfind::stepTowards(arrival, endPoint, gap, distanceFromPoint_);
-            if (gap <= 0.1f || advance <= 0.0f || distanceSquared(start, arrival) == 0.0f)
+            // CARDIAN: under a millionth of a yalm is no progress, whatever crumb the float rounding leaves.
+            if (gap <= 0.1f || advance < 1e-6f || distanceSquared(start, arrival) == 0.0f)
             {
                 path_.clear();
                 return false;

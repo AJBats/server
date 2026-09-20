@@ -181,15 +181,15 @@ namespace cardian::perimeter
         // range; inside the ring by then, the ring rule below places her
         if (away >= ring)
         {
-            const float ex  = x - tankX;
-            const float ez  = z - tankZ;
-            const float far = std::sqrt(ex * ex + ez * ez);
-            if (far <= range)
+            const float ex   = x - tankX;
+            const float ez   = z - tankZ;
+            const float dist = std::sqrt(ex * ex + ez * ez);
+            if (dist <= range)
             {
                 return std::pair{ x, z };
             }
-            const float nx = tankX + ex / far * range;
-            const float nz = tankZ + ez / far * range;
+            const float nx = tankX + ex / dist * range;
+            const float nz = tankZ + ez / dist * range;
             if (std::hypot(nx - mobX, nz - mobZ) >= ring)
             {
                 return std::pair{ nx, nz };
@@ -207,14 +207,14 @@ namespace cardian::perimeter
             const float c = (ring * ring + mobToTank * mobToTank - range * range) / (2.0f * ring * mobToTank);
             if (mobToTank - ring > range)
             {
-                const float ex  = x - tankX;
-                const float ez  = z - tankZ;
-                const float far = std::sqrt(ex * ex + ez * ez);
-                if (far < 0.01f)
+                const float ex   = x - tankX;
+                const float ez   = z - tankZ;
+                const float dist = std::sqrt(ex * ex + ez * ez);
+                if (dist < 0.01f)
                 {
                     return std::pair{ tankX, tankZ };
                 }
-                return std::pair{ tankX + ex / far * range, tankZ + ez / far * range };
+                return std::pair{ tankX + ex / dist * range, tankZ + ez / dist * range };
             }
             if (c > -1.0f)
             {

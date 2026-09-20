@@ -270,9 +270,9 @@ namespace pawn::items
 
     auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> std::string
     {
-        if (const auto far = outOfReach(PPlayer, PPawn); !far.empty())
+        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
         {
-            return far;
+            return tooFar;
         }
 
         CardianTransfer transfer;
@@ -502,9 +502,9 @@ namespace pawn::items
 
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
     {
-        if (const auto far = outOfReach(PPlayer, PPawn); !far.empty())
+        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
         {
-            return far;
+            return tooFar;
         }
         return CardianTransfer().move(PPawn, PPlayer, slot, qty);
     }

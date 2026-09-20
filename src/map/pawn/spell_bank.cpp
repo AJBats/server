@@ -208,7 +208,7 @@ namespace pawn::tactics
         // when the answer would cost 300 rolls the caller has not budgeted
         auto pdifOf(CBattleEntity* PActor, const uint8 targetLevel, const int32 defence, const xi::SkillType type, const bool allowSample = true) -> std::optional<PdifSample>
         {
-            const PdifKey key{ .member = PActor->id, .weapon = static_cast<uint8>(type), .defence = defence, .mobLevel = targetLevel, .attack = PActor->ATT(SLOT_MAIN), .level = PActor->GetMLevel(), .zone = PActor->loc.zone != nullptr ? static_cast<uint16>(PActor->loc.zone->GetID()) : 0 };
+            const PdifKey key{ .member = PActor->id, .weapon = static_cast<uint8>(type), .defence = defence, .mobLevel = targetLevel, .attack = PActor->ATT(SLOT_MAIN), .level = PActor->GetMLevel(), .zone = PActor->loc.zone != nullptr ? static_cast<uint16>(PActor->loc.zone->GetID()) : uint16{ 0 } };
             if (const auto it = pdifCache.find(key); it != pdifCache.end())
             {
                 return it->second;

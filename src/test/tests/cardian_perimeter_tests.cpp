@@ -116,11 +116,11 @@ TEST_CASE("Perimeter: the nearest safe spot is a step out, round the ring only a
 
     // Inside a 19 y ring on the far side: straight out would be 22 from the
     // tank, so round the ring to where range is met, on her side of the mob
-    const auto far = safeSpot(0.0f, 0.0f, 3.0f, 0.0f, 19.0f, 20.0f, -5.0f, 0.5f);
-    REQUIRE(far.has_value());
-    CHECK_THAT(std::hypot(far->first, far->second), WithinAbs(19.0f, 1e-3));
-    CHECK_THAT(std::hypot(far->first - 3.0f, far->second), WithinAbs(20.0f, 1e-2));
-    CHECK(far->second > 0.0f);
+    const auto farSide = safeSpot(0.0f, 0.0f, 3.0f, 0.0f, 19.0f, 20.0f, -5.0f, 0.5f);
+    REQUIRE(farSide.has_value());
+    CHECK_THAT(std::hypot(farSide->first, farSide->second), WithinAbs(19.0f, 1e-3));
+    CHECK_THAT(std::hypot(farSide->first - 3.0f, farSide->second), WithinAbs(20.0f, 1e-2));
+    CHECK(farSide->second > 0.0f);
 
     // Outside the ring but out of range: in toward the tank, to the range
     const auto out = safeSpot(0.0f, 0.0f, 3.0f, 0.0f, 12.0f, 20.0f, 30.0f, 0.0f);

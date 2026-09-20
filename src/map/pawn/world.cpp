@@ -42,8 +42,14 @@
 #include "utils/zoneutils.h"
 #include "zone.h"
 
+#ifdef _WIN32
+#include <windows.h>
+
+#include <psapi.h>
+#else
 #include <sys/resource.h>
 #include <unistd.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -162,7 +168,7 @@ namespace
     struct Load
     {
         realtime::time_point     since{};
-        rusage                   usage{};
+        std::optional<double>    cpuAtSince; // this process's CPU time at `since`; none when the sample failed
         uint64                   brainTicks = 0;
         std::chrono::nanoseconds brainTotal{};
         uint64                   moduleTicks = 0;
@@ -171,17 +177,47 @@ namespace
     };
     Load load;
 
-    auto cpuSeconds(const rusage& ru) -> double
+    // CPU time this process has used so far, user and kernel together; none
+    // when the system would not say
+    auto processCpuSeconds() -> std::optional<double>
     {
+#ifdef _WIN32
+        FILETIME created{}, exited{}, kernel{}, user{};
+        if (!GetProcessTimes(GetCurrentProcess(), &created, &exited, &kernel, &user))
+        {
+            return std::nullopt;
+        }
+        const auto ticks = [](const FILETIME& ft)
+        {
+            return (static_cast<uint64>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+        };
+        return static_cast<double>(ticks(kernel) + ticks(user)) / 1e7; // 100 ns ticks
+#else
+        rusage ru{};
+        if (getrusage(RUSAGE_SELF, &ru) != 0)
+        {
+            return std::nullopt;
+        }
         return static_cast<double>(ru.ru_utime.tv_sec + ru.ru_stime.tv_sec) + static_cast<double>(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) / 1e6;
+#endif
     }
 
+    // Memory this process holds in RAM
     auto rssMegabytes() -> long
     {
+#ifdef _WIN32
+        PROCESS_MEMORY_COUNTERS counters{};
+        if (!K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof(counters)))
+        {
+            return 0;
+        }
+        return static_cast<long>(counters.WorkingSetSize / (1024 * 1024));
+#else
         std::ifstream statm("/proc/self/statm");
         long          pages = 0, resident = 0;
         statm >> pages >> resident;
         return resident * sysconf(_SC_PAGESIZE) / (1024 * 1024);
+#endif
     }
 
     // Bodies waiting to stand, a few per zone tick: minting and loading a
@@ -402,6 +438,12 @@ namespace
         }
     }
 
+} // namespace
+
+// The YAML reader reflects a file's struct by name, which MSVC allows only for
+// a type with external linkage: the file shapes live in a named namespace
+namespace pawn::world::files
+{
     // -- Brains (ROADMAP D5): modules/cardian/world/brains.yaml ------------------------
     // Rows in the gambit grammar: common, then her job's, then her role's.
     struct BrainFile
@@ -410,6 +452,12 @@ namespace
         std::map<std::string, std::vector<std::string>> roles;
         std::map<std::string, std::vector<std::string>> jobs;
     };
+} // namespace pawn::world::files
+
+namespace
+{
+    using pawn::world::files::BrainFile;
+
     constexpr glz::opts kBrainYaml{ .error_on_unknown_keys = true, .error_on_missing_keys = false };
     const std::filesystem::path     kBrainPath = std::filesystem::path("modules/cardian/world") / "brains.yaml";
     BrainFile                       brainFile;
@@ -933,6 +981,10 @@ namespace
     {
         return std::chrono::duration_cast<std::chrono::microseconds>(ns).count();
     }
+} // namespace
+
+namespace pawn::world::files
+{
     // -- The slot tables (ROADMAP D3, RESEARCH §11.5) -----------------------------
     // A Cardian-owned YAML per zone, modules/cardian/world/<Zone>.yaml, says
     // what happens where, never who: an activity, a level band, a count, a
@@ -1015,14 +1067,22 @@ namespace
         std::array<float, 3> at{};
         bool                 operator==(const ExitSpec&) const = default;
     };
-    // Unknown keys are mistakes; a missing one takes the default (roam, party)
-    constexpr glz::opts kSlotYaml{ .error_on_unknown_keys = true, .error_on_missing_keys = false };
     struct SlotFile
     {
         std::vector<ExitSpec> exits;
         std::vector<SlotSpec> slots;
         bool                  operator==(const SlotFile&) const = default;
     };
+} // namespace pawn::world::files
+
+namespace
+{
+    using pawn::world::files::ExitSpec;
+    using pawn::world::files::SlotFile;
+    using pawn::world::files::SlotSpec;
+
+    // Unknown keys are mistakes; a missing one takes the default (roam, party)
+    constexpr glz::opts kSlotYaml{ .error_on_unknown_keys = true, .error_on_missing_keys = false };
     // One seat of a clustered slot: where she stands, what she faces, and
     // which group of how many she belongs to
     struct Seat
@@ -2969,9 +3029,9 @@ namespace pawn::world
         }
         if (!load.started)
         {
-            load.started = true;
-            load.since   = now;
-            getrusage(RUSAGE_SELF, &load.usage);
+            load.started    = true;
+            load.since      = now;
+            load.cpuAtSince = processCpuSeconds();
             return;
         }
         if (now - load.since < std::chrono::seconds(every))
@@ -2979,10 +3039,10 @@ namespace pawn::world
             return;
         }
 
-        rusage usage{};
-        getrusage(RUSAGE_SELF, &usage);
-        const double wall = std::chrono::duration<double>(now - load.since).count();
-        const double cpu  = wall > 0 ? 100.0 * (cpuSeconds(usage) - cpuSeconds(load.usage)) / wall : 0.0;
+        // A share of one core over the interval, from two good samples
+        const auto   cpuNow = processCpuSeconds();
+        const double wall   = std::chrono::duration<double>(now - load.since).count();
+        const double cpu    = wall > 0 && cpuNow.has_value() && load.cpuAtSince.has_value() ? 100.0 * (*cpuNow - *load.cpuAtSince) / wall : 0.0;
 
         uint32                     present = 0;
         std::unordered_set<uint16> zonesWithBodies;
@@ -3005,7 +3065,7 @@ namespace pawn::world
                     present, zonesWithBodies.size(), liveZones, brainAvg, moduleAvg, cpu, rssMegabytes());
 
         load.since       = now;
-        load.usage       = usage;
+        load.cpuAtSince  = cpuNow;
         load.brainTicks  = 0;
         load.brainTotal  = {};
         load.moduleTicks = 0;
