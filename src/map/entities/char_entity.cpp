@@ -3109,7 +3109,7 @@ auto CCharEntity::getCharVar(const std::string& varName) const -> int32
 
         // If the cached variable is not expired, return it.  Else, fall through so that the
         // database can be cleaned up.
-        if (cachedVarData.second == 0 || cachedVarData.second > earth_time::timestamp())
+        if (cachedVarData.second == 0 || cachedVarData.second > earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             return cachedVarData.first;
         }
@@ -3123,7 +3123,7 @@ auto CCharEntity::getCharVar(const std::string& varName) const -> int32
 
 auto CCharEntity::getCharVarsWithPrefix(const std::string& prefix) -> std::vector<std::pair<std::string, int32>>
 {
-    const auto currentTimestamp = earth_time::timestamp();
+    const auto currentTimestamp = earth_time::game_timestamp(); // CARDIAN: the game clock
 
     std::vector<std::pair<std::string, int32>> charVars;
 
@@ -3152,7 +3152,7 @@ auto CCharEntity::getCharVarsWithPrefix(const std::string& prefix) -> std::vecto
 
 auto CCharEntity::getCharVarsWithSuffix(const std::string& suffix) -> std::vector<std::pair<std::string, int32>>
 {
-    const auto currentTimestamp = earth_time::timestamp();
+    const auto currentTimestamp = earth_time::game_timestamp(); // CARDIAN: the game clock
 
     std::vector<std::pair<std::string, int32>> charVars;
 

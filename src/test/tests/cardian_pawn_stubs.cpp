@@ -115,6 +115,12 @@ class CardianTestStubs : public CPPModule
         {
             earth_time::calendar_state.store(0);
         };
+        // Real seconds going by on the Earth clock, which the harness's skipTime leaves
+        // alone: it moves the simulation clock only
+        lua["xi"]["cardian"]["pause"]["realSecondsGoBy"] = [](const uint32 seconds)
+        {
+            earth_time::add_offset(std::chrono::seconds(seconds));
+        };
         lua["xi"]["cardian"]["pause"]["isHeld"]  = []() -> bool
         {
             return cardian::pause::isHeld();

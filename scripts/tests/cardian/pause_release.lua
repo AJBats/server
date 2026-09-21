@@ -115,6 +115,7 @@ describe('Combat pause: the release and logging out', function()
 
     after_each(function()
         pause.release()
+        pause.forgetDrift() -- a hold lets real milliseconds by: leave Lua's clock level for the suites after this
     end)
 
     it('tells his client what is left of a recast at the release', function()

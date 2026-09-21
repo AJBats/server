@@ -51,7 +51,7 @@ uint32 GetServerVar(const std::string& name)
         value  = rset->get<int32>("value");
         expiry = rset->get<uint32>("expiry");
 
-        if (expiry > 0 && expiry <= earth_time::timestamp())
+        if (expiry > 0 && expiry <= earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             value = 0;
             db::preparedStmt("DELETE FROM server_variables WHERE name = ? LIMIT 1", name);
@@ -81,7 +81,7 @@ int32 GetVolatileServerVar(const std::string& name)
 
         // If the cached variable is not expired, return it.  Else, fall through so that the
         // database can be cleaned up.
-        if (cachedVarData.second == 0 || cachedVarData.second > earth_time::timestamp())
+        if (cachedVarData.second == 0 || cachedVarData.second > earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             return cachedVarData.first;
         }

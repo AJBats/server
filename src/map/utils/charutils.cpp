@@ -7080,7 +7080,7 @@ auto FetchCharVar(uint32 charId, const std::string& varName) -> std::pair<int32,
         value  = rset->get<int32>(0);
         expiry = rset->get<uint32>(1);
 
-        if (expiry > 0 && expiry <= earth_time::timestamp())
+        if (expiry > 0 && expiry <= earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             value = 0;
             db::preparedStmt("DELETE FROM char_vars WHERE charid = ? AND varname = ?", charId, varName);

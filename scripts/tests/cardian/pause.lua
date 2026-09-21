@@ -86,6 +86,7 @@ describe('Combat pause', function()
     -- The zone's mobs outlive a test, and so would her flag.
     after_each(function()
         pause.release()
+        pause.forgetDrift() -- a hold lets real milliseconds by: leave Lua's clock level for the suites after this
         mob:setUnkillable(false)
     end)
 

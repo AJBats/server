@@ -23,13 +23,16 @@
 
 #include "common/timer.h"
 
-// The simulation hold and both clock offsets are process-global, and the Lua suite
-// runs after the C++ cases in the same process: a test that touches any of them
-// leaves all three exactly as it found them, even when it fails half way.
+// The simulation hold, both clock offsets and the calendar's drift are process-global,
+// and the Lua suite runs after the C++ cases in the same process: a test that touches
+// any of them leaves all four exactly as it found them, even when it fails half way.
+// A pause holds the calendar too, and the real milliseconds a hold lasts join the
+// drift, which Lua's clock reads.
 struct ClockGuard
 {
-    timer::duration      savedOffset = timer::get_offset();
-    realtime::clock::rep savedReal   = realtime::test_offset.load();
+    timer::duration           savedOffset   = timer::get_offset();
+    realtime::clock::rep      savedReal     = realtime::test_offset.load();
+    earth_time::duration::rep savedCalendar = earth_time::calendar_state.load();
 
     ClockGuard()                             = default;
     ClockGuard(const ClockGuard&)            = delete;
@@ -40,5 +43,6 @@ struct ClockGuard
         timer::held_at.store(0);
         timer::time_offset.store(savedOffset.count());
         realtime::test_offset.store(savedReal);
+        earth_time::calendar_state.store(savedCalendar);
     }
 };

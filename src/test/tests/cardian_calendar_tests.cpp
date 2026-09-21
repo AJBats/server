@@ -187,6 +187,26 @@ TEST_CASE("calendar: a JST midnight of the game clock is a Vana'diel midnight, w
     REQUIRE(off < xi::vanadiel_clock::minutes(1));
 }
 
+TEST_CASE("calendar: a real instant handed to Lua is as far back on its clock as it really is", "[cardian][calendar]")
+{
+    const CalendarGuard guard;
+
+    const auto created = earth_time::now() - 72h; // a character made three days ago
+
+    earth_time::hold_calendar();
+    earth_time::add_offset(2h);
+    earth_time::release_calendar();
+
+    // Lua's age arithmetic, GetSystemTime() - getTimeCreated(): three days and the two hours, held or not
+    const auto age = earth_time::game_now() - earth_time::to_game(created);
+    REQUIRE(age >= 74h);
+    REQUIRE(age < 74h + 1s);
+
+    // an instant nobody set is not moved: Lua tests it against zero
+    REQUIRE(earth_time::to_game(earth_time::time_point{}) == earth_time::time_point{});
+    REQUIRE(earth_time::to_game(earth_time::time_point::min()) == earth_time::time_point::min());
+}
+
 TEST_CASE("calendar: the saved pair gives the drift at boot under either rule for time off", "[cardian][calendar]")
 {
     using cardian::pause::calendar::driftAtBoot;

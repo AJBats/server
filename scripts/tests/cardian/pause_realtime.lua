@@ -38,6 +38,7 @@ describe('Combat pause: real time runs on', function()
 
     after_each(function()
         pause.release()
+        pause.forgetDrift() -- a hold lets real milliseconds by: leave Lua's clock level for the suites after this
     end)
 
     it('lets him sort his bag as often as he likes', function()

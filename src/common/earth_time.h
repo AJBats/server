@@ -83,6 +83,13 @@ inline time_point game_now()
     return vanadiel_epoch + (now() - calendar_epoch());
 }
 
+// CARDIAN: a real instant as far back on the game clock as it is on the real one, so that Lua's GetSystemTime()
+// less it is the real time since. An unset instant (the epoch, or earlier) stays as it is.
+inline time_point to_game(const time_point& tp)
+{
+    return tp <= time_point{} ? tp : tp - (now() - game_now());
+}
+
 // CARDIAN: start the calendar this far behind real time: the drift a saved game carries over a restart.
 // Main thread only, before anything reads the calendar; lets go of a hold.
 inline void set_calendar_drift(const duration drift)
@@ -366,6 +373,12 @@ inline bool is_dst(const time_point& tp = now())
 inline uint32 timestamp(const time_point& tp = now())
 {
     return static_cast<uint32>(std::chrono::floor<std::chrono::seconds>(tp.time_since_epoch()).count());
+}
+
+// CARDIAN: the game clock as a Unix timestamp: what Lua's GetSystemTime() answers, and what variables expire by.
+inline uint32 game_timestamp()
+{
+    return timestamp(game_now());
 }
 
 // Returns the number of Earth seconds since the Vana'diel epoch.

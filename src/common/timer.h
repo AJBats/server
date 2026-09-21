@@ -134,6 +134,12 @@ inline time_point from_utc(const earth_time::time_point& utc_tp = earth_time::no
     return utc_tp - utc_now + timer_now;
 };
 
+// CARDIAN: a simulation instant on the game clock's Unix scale, for Lua to set beside GetSystemTime().
+inline earth_time::time_point to_game_utc(const time_point& timer_tp)
+{
+    return std::chrono::time_point_cast<earth_time::duration>(timer_tp - timer::now() + earth_time::game_now());
+}
+
 // CARDIAN: moves the simulation clock alone (release() and tests); real time is not its to move.
 inline void add_simulation_offset(const duration& additional_offset)
 {

@@ -263,7 +263,7 @@ auto MapEngine::init() -> Task<void>
     zoneutils::TOTDChange(vanadiel_time::get_totd()); // This tells the zones to spawn stuff based on time of day conditions (such as undead at night)
 
     ShowInfo("do_init: Removing expired database variables");
-    uint32 currentTimestamp = earth_time::timestamp();
+    uint32 currentTimestamp = earth_time::game_timestamp(); // CARDIAN: the game clock
     db::preparedStmt("DELETE FROM char_vars WHERE expiry > 0 AND expiry <= ?", currentTimestamp);
     db::preparedStmt("DELETE FROM server_variables WHERE expiry > 0 AND expiry <= ?", currentTimestamp);
 
