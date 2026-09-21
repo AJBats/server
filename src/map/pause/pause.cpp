@@ -104,6 +104,7 @@ auto hold(const uint32 holderCharId, const std::string_view holderName) -> Resul
 
     timer::hold();
     earth_time::hold_calendar();
+    calendar::save(); // whoever follows the game clock by the row sees it stand still
 
     book.holder     = holderCharId;
     book.holderName = holderName;
@@ -129,7 +130,7 @@ auto release(const std::string_view why) -> Result
 
     timer::release();
     earth_time::release_calendar();
-    calendar::save(); // the drift just grew by this hold
+    calendar::save(); // the drift just grew by this hold, and the row says running again
 
     ShowInfoFmt("pause: released after {:.1f}s, {} (held by {})", std::chrono::duration<double>(heldFor).count(), why, book.holderName);
 

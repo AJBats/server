@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "common/cardian_clock_row.h"
 #include "common/cbasetypes.h"
 #include "common/earth_time.h"
 
@@ -43,26 +44,20 @@
 namespace cardian::pause::calendar
 {
 
-struct Saved
-{
-    int64 realMs = 0; // real Unix time of the write
-    int64 gameMs = 0; // what the game clock read at that moment
-};
-
-// What both clocks read now.
-auto snapshot() -> Saved;
-
-// The drift to start with, from the last row written. A real clock that reads earlier
-// than the row (a restored backup, a corrected clock) counts as no time off at all.
-auto driftAtBoot(const Saved& saved, earth_time::time_point realNow, bool runsOffline) -> earth_time::duration;
+// The row's shape and arithmetic are shared with the processes that follow this
+// clock (common/cardian_clock_row.h); this is the owner's side of it.
+using Saved = cardian::clock_row::Row;
+using cardian::clock_row::driftAtBoot;
+using cardian::clock_row::snapshot;
 
 // Reads the row and sets the calendar's drift, then arms save(). Called once, after
 // the database connects and before anything reads the calendar. The test server
 // never calls it: it shares a database with dev and its clocks are fast-forwarded.
 void load();
 
-// Writes the row: at every release, once a minute, and as the map shuts down, so a
-// clean stop loses nothing and a crash at most a minute. Nothing until load() has run.
+// Writes the row: at every hold and release, once a minute, and as the map shuts
+// down, so the row is exact wherever the clock changes its behaviour, a clean stop
+// loses nothing and a crash at most a minute. Nothing until load() has run.
 void save();
 
 // save(), when a minute of real time has gone by since the last one. For a tick that

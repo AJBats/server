@@ -22,6 +22,7 @@
 #include "world_application.h"
 
 #include "common/application.h"
+#include "common/cardian_clock_row.h" // CARDIAN
 #include "common/logging.h"
 
 #include "ipc_server.h"
@@ -49,6 +50,8 @@ WorldApplication::~WorldApplication() = default;
 
 auto WorldApplication::createEngine() -> std::unique_ptr<Engine>
 {
+    cardian::clock_row::isFollower = true; // CARDIAN: xi_world proper follows the map's game clock; the test server never comes here
+
     const auto httpEnabled = settings::get<bool>("network.ENABLE_HTTP");
     return std::make_unique<WorldEngine>(scheduler_, zmqService_, WorldEngine::EnableHTTPServer{ httpEnabled });
 }

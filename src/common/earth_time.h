@@ -97,6 +97,13 @@ inline void set_calendar_drift(const duration drift)
     calendar_state.store(drift.count() * 2);
 }
 
+// CARDIAN: hold the calendar at this game instant (what game_now() then answers): for a process that follows
+// another's game clock. Main thread only.
+inline void hold_calendar_at(const time_point gameInstant)
+{
+    calendar_state.store((gameInstant - vanadiel_epoch).count() * 2 + 1);
+}
+
 inline std::tm to_utc_tm(const time_point& tp = now())
 {
     std::time_t time_t_val = clock::to_time_t(tp);

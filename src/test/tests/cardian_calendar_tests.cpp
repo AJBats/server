@@ -62,6 +62,14 @@ auto gameSeconds() -> int64
     return earth_time::vanadiel_timestamp();
 }
 
+// A held game clock answers its instant to within the two reads of the real clock it
+// takes to say so, and a row carries milliseconds: a second is the neighbouring cases'
+// allowance, and far below the minutes these cases let go by.
+bool standsAt(const earth_time::time_point instant)
+{
+    return std::chrono::abs(earth_time::game_now() - instant) < 1s;
+}
+
 } // namespace
 
 TEST_CASE("calendar: it stands still through a hold while real time goes by", "[cardian][calendar]")
@@ -235,6 +243,122 @@ TEST_CASE("calendar: a row written in the middle of a hold keeps the hold so far
     const auto drift = cardian::pause::calendar::driftAtBoot(saved, earth_time::now(), true);
     REQUIRE(drift >= 30min);
     REQUIRE(drift < 30min + 1s);
+}
+
+// A process that follows the game clock by the saved row (common/cardian_clock_row.h,
+// pause P7d). Owner and follower are one process here: the owner's row is taken, the
+// calendar is put back level with real time as a follower's starts, and the follower
+// is handed the row.
+
+TEST_CASE("clock row: a follower of a running row reads the owner's game clock, however old the row", "[cardian][calendar]")
+{
+    const CalendarGuard guard;
+
+    earth_time::set_calendar_drift(10min);
+    const auto row = cardian::clock_row::snapshot();
+    REQUIRE_FALSE(row.held);
+
+    earth_time::set_calendar_drift(0s);
+    cardian::clock_row::follow(row, earth_time::now(), true);
+    REQUIRE(std::chrono::abs(earth_time::now() - earth_time::game_now() - 10min) < 1s);
+
+    // an hour on, nobody has written: the row has not gone stale
+    earth_time::add_offset(1h);
+    cardian::clock_row::follow(row, earth_time::now(), true);
+    REQUIRE(std::chrono::abs(earth_time::now() - earth_time::game_now() - 10min) < 1s);
+}
+
+TEST_CASE("clock row: a follower stands still with a held row and carries on with the release's", "[cardian][calendar]")
+{
+    using cardian::clock_row::follow;
+    using cardian::clock_row::fromMs;
+    using cardian::clock_row::snapshot;
+
+    const CalendarGuard guard;
+
+    earth_time::hold_calendar();
+    const auto heldRow = snapshot();
+    REQUIRE(heldRow.held);
+    const auto ownerState = earth_time::calendar_state.load();
+
+    earth_time::set_calendar_drift(0s);
+    follow(heldRow, earth_time::now(), true);
+    REQUIRE(standsAt(fromMs(heldRow.gameMs)));
+
+    // half an hour into the hold, the owner's heartbeat keeps the row written
+    earth_time::add_offset(30min);
+    const cardian::clock_row::Row heartbeat{ cardian::clock_row::toMs(earth_time::now()), heldRow.gameMs, true };
+    follow(heartbeat, earth_time::now(), true);
+    REQUIRE(standsAt(fromMs(heldRow.gameMs)));
+
+    // the owner lets go; the follower, still on the old row, is handed the new one
+    earth_time::calendar_state.store(ownerState);
+    earth_time::release_calendar();
+    const auto ownerGame  = earth_time::game_now();
+    const auto runningRow = snapshot();
+    REQUIRE_FALSE(runningRow.held);
+
+    earth_time::hold_calendar_at(fromMs(heldRow.gameMs));
+    follow(runningRow, earth_time::now(), true);
+    REQUIRE(std::chrono::abs(earth_time::game_now() - ownerGame) < 1s);
+    REQUIRE(earth_time::now() - earth_time::game_now() > 30min - 1s);
+}
+
+TEST_CASE("clock row: a row nobody writes any more is read as the owner's boot will read it", "[cardian][calendar]")
+{
+    using cardian::clock_row::Row;
+    using cardian::clock_row::stands;
+
+    const Row  running{ 1'800'000'600'000, 1'800'000'000'000, false };
+    const Row  held{ running.realMs, running.gameMs, true };
+    const auto written = cardian::clock_row::fromMs(running.realMs);
+
+    // a heartbeat late: the owner is slow, not off, and the row says
+    REQUIRE_FALSE(stands(running, written + 2min, false));
+    REQUIRE(stands(held, written + 2min, true));
+
+    // the owner is off. Time standing still while off: it will carry on from game_ms
+    REQUIRE(stands(running, written + 4min, false));
+    REQUIRE(stands(held, written + 4min, false));
+
+    // the owner is off. Its time goes by while off -- also for an owner that died in a hold
+    REQUIRE_FALSE(stands(running, written + 4min, true));
+    REQUIRE_FALSE(stands(held, written + 4min, true));
+
+    const CalendarGuard guard;
+    cardian::clock_row::follow(running, written + 4min, false);
+    REQUIRE(standsAt(cardian::clock_row::fromMs(running.gameMs)));
+}
+
+TEST_CASE("clock row: a follower's late look at the row fires no hourly tick twice and loses none", "[cardian][calendar]")
+{
+    // The check xi_world's time_server makes every tick, on the instant it is handed.
+    auto       fired = 0;
+    const auto hour  = earth_time::time_point(1'800'000'000s); // on the hour
+    auto       next  = hour;
+    const auto tick  = [&](const earth_time::time_point gameTime)
+    {
+        if (gameTime >= next)
+        {
+            ++fired;
+            next = std::chrono::ceil<std::chrono::hours>(gameTime);
+        }
+    };
+
+    // A hold taken just short of the hour, seen one tick late: the follower ran on past
+    // the hour, then its view steps back to the held instant, and later crosses again.
+    tick(hour - 2s);
+    tick(hour + 400ms);
+    REQUIRE(fired == 1);
+    tick(hour - 500ms);
+    tick(hour - 500ms);
+    tick(hour + 1900ms);
+    REQUIRE(fired == 1);
+
+    // A release seen late: the view stands, then jumps across the next hour.
+    tick(hour + 1h - 1s);
+    tick(hour + 1h + 1400ms);
+    REQUIRE(fired == 2);
 }
 
 TEST_CASE("calendar: real time is never moved", "[cardian][calendar]")

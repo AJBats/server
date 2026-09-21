@@ -26,9 +26,6 @@
 #include "common/settings.h"
 #include "common/timer.h"
 
-#include <algorithm>
-#include <string>
-
 namespace cardian::pause::calendar
 {
 namespace
@@ -39,39 +36,24 @@ constexpr auto kSaveEvery = std::chrono::minutes(1);
 bool                 armed = false;
 realtime::time_point lastSave{};
 
-auto toMs(const earth_time::time_point tp) -> int64
-{
-    return std::chrono::duration_cast<std::chrono::milliseconds>(tp.time_since_epoch()).count();
-}
-
 } // namespace
-
-auto snapshot() -> Saved
-{
-    return Saved{ toMs(earth_time::now()), toMs(earth_time::game_now()) };
-}
-
-auto driftAtBoot(const Saved& saved, const earth_time::time_point realNow, const bool runsOffline) -> earth_time::duration
-{
-    const auto atWrite = std::chrono::milliseconds(saved.realMs - saved.gameMs);
-    const auto off     = std::max<int64>(0, toMs(realNow) - saved.realMs);
-    return atWrite + std::chrono::milliseconds(runsOffline ? 0 : off);
-}
 
 void load()
 {
-    const auto rset = db::preparedStmt("SELECT real_ms, game_ms FROM cardian_clock WHERE id = 1");
-    if (!rset)
+    clock_row::ensureTable();
+
+    bool       failed = false;
+    const auto saved  = clock_row::read(&failed);
+    if (failed)
     {
-        ShowWarning("calendar: no cardian_clock table (apply modules/cardian/sql/cardian_clock.sql): the game clock starts level with real time and is not saved");
+        ShowError("calendar: cardian_clock could not be made or read: the game clock starts level with real time, any saved drift is forgotten for this run, and nothing is saved");
         return;
     }
 
-    if (rset->next())
+    if (saved)
     {
-        const Saved saved{ rset->get<int64>("real_ms"), rset->get<int64>("game_ms") };
-        const bool  runsOffline = settings::get<bool>("cardian.CLOCK_RUNS_OFFLINE");
-        const auto  drift       = driftAtBoot(saved, earth_time::now(), runsOffline);
+        const bool runsOffline = settings::get<bool>("cardian.CLOCK_RUNS_OFFLINE");
+        const auto drift       = driftAtBoot(*saved, earth_time::now(), runsOffline);
 
         earth_time::set_calendar_drift(drift);
         ShowInfoFmt("calendar: the game clock runs {:.0f}s behind real time ({})",
@@ -94,9 +76,7 @@ void save()
         return;
     }
 
-    // As text: the statement binder carries no 64-bit integer, and the server converts exactly
-    const auto now = snapshot();
-    db::preparedStmt("REPLACE INTO cardian_clock (id, real_ms, game_ms) VALUES (1, ?, ?)", std::to_string(now.realMs), std::to_string(now.gameMs));
+    clock_row::write(snapshot());
     lastSave = realtime::now();
 }
 
