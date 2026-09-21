@@ -380,6 +380,13 @@ namespace pawn
     // Accept answer runs.
     void noteInvite(const CCharEntity* PPawn);
 
+    // The game told a cardian something in a battle message (seen at
+    // OnPushPacket): "too far away", "unable to see", "you must wait longer".
+    // A client would show it; she has none, so the map log says it, and when
+    // it comes on the heels of an order the player is told why it came to
+    // nothing. `message` is a MsgBasic, `aboutIndex` the target it names.
+    void noteBattleMessage(CCharEntity* PPawn, uint16 message, uint16 aboutIndex);
+
     // Formation latency instrumentation: the moment a played character's own
     // position packet (0x015) last arrived, so the pawn controller can show
     // how stale the packet path is next to the Cardian Link's stream.
@@ -390,4 +397,8 @@ namespace pawn
     // after all charTicks): answer pending invites, then discard queued
     // outbound packets.
     void onZoneTick(CZone* PZone);
+
+    // The zone tick while the simulation is held (pause/pause.h): nothing steps, but
+    // nobody else drains a session-less char's outbound queue, so that still happens.
+    void onZoneTickHeld(CZone* PZone);
 } // namespace pawn

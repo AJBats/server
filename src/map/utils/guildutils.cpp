@@ -70,7 +70,7 @@ void Cleanup()
 void UpdateGuildPointsPattern()
 {
     // TODO: This function can be faulty when dealing with multiple processes. Needs to be synchronized properly across servers.
-    const auto jstDayOfYear = earth_time::jst::get_yearday();
+    const auto jstDayOfYear = earth_time::jst::get_yearday(earth_time::game_now()); // CARDIAN: the game clock
     const bool doUpdate     = serverutils::GetServerVar("[GUILD]pattern_update") != jstDayOfYear;
 
     uint8 pattern = xirand::GetRandomNumber(8);

@@ -693,7 +693,7 @@ void CLuaBaseEntity::setCharVar(const std::string& varName, int32 value, const s
     {
         uint32 varTimestamp = expiry.is<uint32>() ? expiry.as<uint32>() : 0;
 
-        if (varTimestamp > 0 && varTimestamp <= earth_time::timestamp())
+        if (varTimestamp > 0 && varTimestamp <= earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             ShowWarning(fmt::format("Attempting to set variable '{}' with an expired time: {}", varName, varTimestamp));
             return;
@@ -714,7 +714,7 @@ void CLuaBaseEntity::setCharVarExpiration(const std::string& varName, uint32 exp
 {
     if (auto* PChar = dynamic_cast<CCharEntity*>(m_PBaseEntity))
     {
-        if (expiry > 0 && expiry <= earth_time::timestamp())
+        if (expiry > 0 && expiry <= earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             ShowWarning(fmt::format("Attempting to set variable '{}' with an expired time: {}", varName, expiry));
             return;
@@ -754,7 +754,7 @@ void CLuaBaseEntity::setVolatileCharVar(const std::string& varName, int32 value,
     {
         uint32 varTimestamp = expiry.is<uint32>() ? expiry.as<uint32>() : 0;
 
-        if (varTimestamp > 0 && varTimestamp <= earth_time::timestamp())
+        if (varTimestamp > 0 && varTimestamp <= earth_time::game_timestamp()) // CARDIAN: the game clock
         {
             ShowWarning(fmt::format("Attempting to set variable '{}' with an expired time: {}", varName, varTimestamp));
             return;
@@ -921,7 +921,7 @@ uint32 CLuaBaseEntity::getLastOnline()
 
     if (auto* PChar = dynamic_cast<CCharEntity*>(m_PBaseEntity))
     {
-        return earth_time::timestamp(PChar->lastOnline);
+        return earth_time::timestamp(earth_time::to_game(PChar->lastOnline)); // CARDIAN: a real instant, as far back on Lua's clock
     }
 
     return 0;
@@ -7019,7 +7019,7 @@ uint32 CLuaBaseEntity::getTimeCreated()
 
     auto* PChar = static_cast<CCharEntity*>(m_PBaseEntity);
 
-    return earth_time::timestamp(PChar->GetTimeCreated());
+    return earth_time::timestamp(earth_time::to_game(PChar->GetTimeCreated())); // CARDIAN: a real instant, as far back on Lua's clock
 }
 
 /************************************************************************
@@ -12149,7 +12149,7 @@ uint32 CLuaBaseEntity::getPartyLastMemberJoinedTime()
 
     if (PChar->PParty != nullptr)
     {
-        return earth_time::timestamp(timer::to_utc(PChar->PParty->GetTimeLastMemberJoined()));
+        return earth_time::timestamp(timer::to_game_utc(PChar->PParty->GetTimeLastMemberJoined())); // CARDIAN: the game clock
     }
 
     return 0;
@@ -19941,7 +19941,7 @@ uint32 CLuaBaseEntity::getTraverserEpoch()
     }
 
     auto* PChar = static_cast<CCharEntity*>(m_PBaseEntity);
-    return earth_time::timestamp(charutils::getTraverserEpoch(PChar));
+    return earth_time::timestamp(earth_time::to_game(charutils::getTraverserEpoch(PChar))); // CARDIAN: a real instant, as far back on Lua's clock
 }
 
 /************************************************************************

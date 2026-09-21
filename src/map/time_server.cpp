@@ -50,7 +50,7 @@ auto time_server(Scheduler& scheduler, MapConfig config) -> Task<void>
     // Uses the JST equivalent of the current timer tick. (steady_clock -> system_clock)
 
     // Earth time points
-    const auto jstTime    = earth_time::time_point(timer::to_utc(tick));
+    const auto jstTime    = timer::to_game_utc(tick); // CARDIAN: the game clock -- the JST ticks fall when Lua's JST functions say so
     const auto jstHour    = earth_time::jst::get_hour(jstTime);
     const auto jstWeekday = earth_time::jst::get_weekday(jstTime);
 
@@ -102,7 +102,7 @@ auto time_server(Scheduler& scheduler, MapConfig config) -> Task<void>
     //       variance in the tick time.
 
     // Vana'diel time points
-    const auto vanaTime = vanadiel_time::from_earth_time(jstTime);
+    const auto vanaTime = vanadiel_time::from_earth_time(timer::to_utc(tick)); // CARDIAN: the calendar converts a real instant
     const auto vanaTotd = vanadiel_time::get_totd(vanaTime);
     const auto vanaHour = vanadiel_time::get_hour(vanaTime);
 

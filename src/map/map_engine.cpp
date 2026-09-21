@@ -48,8 +48,9 @@
 #include "zone.h"
 #include "zone_entities.h"
 
-#include "pawn/cardian_link.h" // CARDIAN
-#include "pawn/players.h"      // CARDIAN
+#include "pause/calendar_store.h" // CARDIAN
+#include "pawn/cardian_link.h"    // CARDIAN
+#include "pawn/players.h"         // CARDIAN
 
 #include "ai/controllers/automaton_controller.h"
 
@@ -91,6 +92,8 @@ MapEngine::MapEngine(Application& application, MapConfig& config)
 
 MapEngine::~MapEngine()
 {
+    cardian::pause::calendar::save(); // CARDIAN: where the game clock stopped, a hold in progress included
+
     itemutils::FreeItemList();
     battleutils::FreeWeaponSkillsList();
     battleutils::FreeMobSkillList();
@@ -140,6 +143,11 @@ auto MapEngine::init() -> Task<void>
     }
 
     db::checkTriggers();
+
+    if (!config_.isTestServer) // CARDIAN: the saved game clock, before any script or schedule reads the calendar
+    {
+        cardian::pause::calendar::load();
+    }
 
     luautils::init(mapIPP, config_.inCI); // Also calls moduleutils::LoadLuaModules();
 
@@ -255,7 +263,7 @@ auto MapEngine::init() -> Task<void>
     zoneutils::TOTDChange(vanadiel_time::get_totd()); // This tells the zones to spawn stuff based on time of day conditions (such as undead at night)
 
     ShowInfo("do_init: Removing expired database variables");
-    uint32 currentTimestamp = earth_time::timestamp();
+    uint32 currentTimestamp = earth_time::game_timestamp(); // CARDIAN: the game clock
     db::preparedStmt("DELETE FROM char_vars WHERE expiry > 0 AND expiry <= ?", currentTimestamp);
     db::preparedStmt("DELETE FROM server_variables WHERE expiry > 0 AND expiry <= ?", currentTimestamp);
 
@@ -316,7 +324,7 @@ auto MapEngine::watchdogUpdater() -> Task<void>
         // will kill the server from a worker thread.
         // We do this because if the main thread is blocked severely enough to trigger the watchdog,
         // your server is degraded - likely beyond repair.
-        watchdogLastUpdate_ = timer::now();
+        watchdogLastUpdate_ = realtime::now(); // CARDIAN: liveness runs on real time
         co_await scheduler_.yieldFor(kMainThreadBacklogThreshold);
     }
 }
@@ -333,13 +341,13 @@ auto MapEngine::watchdogWatcher() -> Task<void>
 
     const auto periodMs = (period > 0) ? std::chrono::milliseconds(period) : 2000ms;
 
-    watchdogLastUpdate_ = timer::now();
+    watchdogLastUpdate_ = realtime::now(); // CARDIAN: liveness runs on real time
 
     // Run "forever"
     while (!scheduler_.closeRequested())
     {
         const auto lastUpdate = watchdogLastUpdate_.load();
-        if ((timer::now() - lastUpdate) >= periodMs)
+        if ((realtime::now() - lastUpdate) >= periodMs) // CARDIAN: liveness runs on real time
         {
             if (debug::isRunningUnderDebugger())
             {

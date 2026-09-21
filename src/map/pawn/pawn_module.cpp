@@ -35,6 +35,7 @@
 
 #include "ai/ai_container.h"
 #include "entities/char_entity.h"
+#include "pause/pause.h"
 #include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
 #include "item_container.h"
@@ -1190,6 +1191,25 @@ class PawnModule : public CPPModule
             return err;
         };
 
+        // The command window's queue line: what she has waiting ("" with none),
+        // and the player taking it back
+        lua["CBaseEntity"]["cardianQueued"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            auto* PController         = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr ? PController->QueuedOrderLine() : "";
+        };
+        lua["CBaseEntity"]["cardianCancel"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            return PController != nullptr && PController->CancelQueuedOrder() ? "" : "nothing queued";
+        };
+
         lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -1223,6 +1243,12 @@ class PawnModule : public CPPModule
             if (PPawn == nullptr)
             {
                 return "no such cardian";
+            }
+
+            // Refused whole while held, as the use would be: not half of it, the transfer
+            if (cardian::pause::isHeld())
+            {
+                return "not while paused";
             }
 
             uint8 landed = 0;
@@ -1296,8 +1322,16 @@ class PawnModule : public CPPModule
         pawn::tactics::zoneIn(PChar);
     }
 
+    // A held simulation (pause/pause.h) takes no step here either: the world's
+    // bodies, the seat ladder and the tacticians wait, and only the outboxes drain.
     void OnZoneTick(CZone* PZone) override
     {
+        if (cardian::pause::isHeld())
+        {
+            pawn::onZoneTickHeld(PZone);
+            return;
+        }
+
         pawn::onZoneTick(PZone);
     }
 
@@ -1331,7 +1365,20 @@ class PawnModule : public CPPModule
 
     void OnPushPacket(CCharEntity* PChar, const std::unique_ptr<CBasicPacket>& packet) override
     {
-        if (!pawn::isPawn(PChar) || packet->getType() != std::to_underlying(PacketS2C::GP_SERV_COMMAND_GROUP_SOLICIT_REQ))
+        if (!pawn::isPawn(PChar))
+        {
+            return;
+        }
+
+        // What the game tells her in a battle message: the message number at 0x18,
+        // the index of whom it is about at 0x16
+        if (packet->getType() == std::to_underlying(PacketS2C::GP_SERV_COMMAND_BATTLE_MESSAGE))
+        {
+            pawn::noteBattleMessage(PChar, packet->ref<uint16>(0x18), packet->ref<uint16>(0x16));
+            return;
+        }
+
+        if (packet->getType() != std::to_underlying(PacketS2C::GP_SERV_COMMAND_GROUP_SOLICIT_REQ))
         {
             return;
         }

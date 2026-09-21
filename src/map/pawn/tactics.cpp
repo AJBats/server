@@ -552,11 +552,12 @@ namespace pawn::tactics
 
         // A C++ function as the Lua function the event handler stores. The
         // listeners capture nothing, so one function per event serves every
-        // entity
+        // entity. The handle is never destroyed: its destructor releases a
+        // Lua reference, and exit handlers run after the Lua state is gone
         template <typename F>
-        auto asFunction(F&& f) -> sol::function
+        auto asFunction(F&& f) -> const sol::function&
         {
-            return sol::make_object(::lua, sol::as_function(std::forward<F>(f))).template as<sol::function>();
+            return *new sol::function(sol::make_object(::lua, sol::as_function(std::forward<F>(f))).template as<sol::function>());
         }
 
         auto entityOf(CLuaBaseEntity* PLua) -> CBattleEntity*
@@ -588,46 +589,46 @@ namespace pawn::tactics
         }
         // Each lambda takes only the leading arguments it reads; sol ignores
         // the rest. Built once, shared by every hitched entity.
-        static const sol::function onDamage = asFunction([](CLuaBaseEntity* PTarget, const int32 amount, const sol::optional<CLuaBaseEntity*> attacker, const sol::optional<uint16> attackType)
+        static const sol::function& onDamage = asFunction([](CLuaBaseEntity* PTarget, const int32 amount, const sol::optional<CLuaBaseEntity*> attacker, const sol::optional<uint16> attackType)
+                                                          {
+                                                              damaged(entityOf(PTarget), amount, entityOf(attacker), static_cast<xi::AttackType>(attackType.value_or(0)));
+                                                          });
+        static const sol::function& onDeath = asFunction([](CLuaBaseEntity* PDead, const sol::optional<CLuaBaseEntity*> killer)
                                                          {
-                                                             damaged(entityOf(PTarget), amount, entityOf(attacker), static_cast<xi::AttackType>(attackType.value_or(0)));
+                                                             death(entityOf(PDead), entityOf(killer));
                                                          });
-        static const sol::function onDeath = asFunction([](CLuaBaseEntity* PDead, const sol::optional<CLuaBaseEntity*> killer)
-                                                        {
-                                                            death(entityOf(PDead), entityOf(killer));
-                                                        });
-        static const sol::function onTpMove = asFunction([](CLuaBaseEntity* PMob, const sol::optional<uint16> skillId)
-                                                         {
-                                                             tpMove(entityOf(PMob), skillId.value_or(0));
-                                                         });
+        static const sol::function& onTpMove = asFunction([](CLuaBaseEntity* PMob, const sol::optional<uint16> skillId)
+                                                          {
+                                                              tpMove(entityOf(PMob), skillId.value_or(0));
+                                                          });
         // A paralysis proc: the marked line in battleutils::IsParalyzed fires
         // it on whoever was stopped, a mob or one of ours (RESEARCH §12.13)
-        static const sol::function onParalyzed = asFunction([](CLuaBaseEntity* PEntity)
-                                                            {
-                                                                paralyzed(entityOf(PEntity));
-                                                            });
+        static const sol::function& onParalyzed = asFunction([](CLuaBaseEntity* PEntity)
+                                                             {
+                                                                 paralyzed(entityOf(PEntity));
+                                                             });
         // MAGIC_START fires from the magic state's init, before that state
         // is current: the spell comes from the event's own argument
-        static const sol::function onMagicStart = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target, CLuaSpell* PSpell)
-                                                             {
-                                                                 magicStart(entityOf(PCaster), entityOf(target), PSpell);
-                                                             });
-        static const sol::function onMagicUse = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target, CLuaSpell* PSpell, CLuaAction* PAction)
-                                                           {
-                                                               magicUse(entityOf(PCaster), entityOf(target), PSpell, PAction);
-                                                           });
-        static const sol::function onMagicInterrupted = asFunction([](CLuaBaseEntity* PCaster)
-                                                                   {
-                                                                       magicInterrupted(entityOf(PCaster));
-                                                                   });
-        static const sol::function onAttacked = asFunction([](CLuaBaseEntity* PTarget, const sol::optional<CLuaBaseEntity*> attacker)
-                                                           {
-                                                               attacked(entityOf(PTarget), entityOf(attacker));
-                                                           });
-        static const sol::function onEngage = asFunction([](CLuaBaseEntity* PMember, const sol::optional<CLuaBaseEntity*> target)
-                                                         {
-                                                             engage(entityOf(PMember), entityOf(target));
-                                                         });
+        static const sol::function& onMagicStart = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target, CLuaSpell* PSpell)
+                                                              {
+                                                                  magicStart(entityOf(PCaster), entityOf(target), PSpell);
+                                                              });
+        static const sol::function& onMagicUse = asFunction([](CLuaBaseEntity* PCaster, const sol::optional<CLuaBaseEntity*> target, CLuaSpell* PSpell, CLuaAction* PAction)
+                                                            {
+                                                                magicUse(entityOf(PCaster), entityOf(target), PSpell, PAction);
+                                                            });
+        static const sol::function& onMagicInterrupted = asFunction([](CLuaBaseEntity* PCaster)
+                                                                    {
+                                                                        magicInterrupted(entityOf(PCaster));
+                                                                    });
+        static const sol::function& onAttacked = asFunction([](CLuaBaseEntity* PTarget, const sol::optional<CLuaBaseEntity*> attacker)
+                                                            {
+                                                                attacked(entityOf(PTarget), entityOf(attacker));
+                                                            });
+        static const sol::function& onEngage = asFunction([](CLuaBaseEntity* PMember, const sol::optional<CLuaBaseEntity*> target)
+                                                          {
+                                                              engage(entityOf(PMember), entityOf(target));
+                                                          });
 
         auto&      handler = PEntity->PAI->EventHandler;
         const bool mob     = PEntity->objtype == TYPE_MOB;

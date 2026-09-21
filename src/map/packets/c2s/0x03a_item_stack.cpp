@@ -39,7 +39,7 @@ void GP_CLI_COMMAND_ITEM_STACK::process(MapSession* PSession, CCharEntity* PChar
 
     const uint8 size = PItemContainer->GetSize();
 
-    if (timer::now() < PItemContainer->LastSortingTime + 1s)
+    if (realtime::now() < PItemContainer->LastSortingTime + 1s) // CARDIAN: the sort guard runs on real time
     {
         if (settings::get<uint8>("map.LIGHTLUGGAGE_BLOCK") == static_cast<int32>(++PItemContainer->SortingPacket))
         {
@@ -51,7 +51,7 @@ void GP_CLI_COMMAND_ITEM_STACK::process(MapSession* PSession, CCharEntity* PChar
     }
 
     PItemContainer->SortingPacket   = 0;
-    PItemContainer->LastSortingTime = timer::now();
+    PItemContainer->LastSortingTime = realtime::now(); // CARDIAN
     for (uint8 slotId = 1; slotId <= size; ++slotId)
     {
         const CItem* PItem = PItemContainer->GetItem(slotId);

@@ -16,6 +16,7 @@
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/timer.h"
 
 #include "entities/char_entity.h"
 #include "utils/charutils.h"
@@ -40,8 +41,8 @@ namespace
     // her tier when the cap is full of them. Cleared when she joins (the
     // party carries her from there), when the stand is refused, and when
     // she leaves the ladder; a declined or lapsed invite runs it out
-    std::unordered_map<uint32, std::chrono::steady_clock::time_point> invited;
-    constexpr auto                                                    kInviteHold = std::chrono::seconds(60);
+    std::unordered_map<uint32, timer::time_point> invited;
+    constexpr auto                                kInviteHold = std::chrono::seconds(60);
 
     auto invitedNow(const uint32 charid) -> bool
     {
@@ -50,7 +51,7 @@ namespace
         {
             return false;
         }
-        if (std::chrono::steady_clock::now() - it->second >= kInviteHold)
+        if (timer::now() - it->second >= kInviteHold)
         {
             invited.erase(it);
             return false;
@@ -62,8 +63,8 @@ namespace
     uint32 standingOverride = 0;
     uint32 fadedOverride    = 0;
 
-    std::chrono::steady_clock::time_point lastRun{};
-    constexpr auto                        kRunEvery = std::chrono::milliseconds(500);
+    timer::time_point lastRun{};
+    constexpr auto    kRunEvery = std::chrono::milliseconds(500);
 
     auto standingCap() -> uint32
     {
@@ -276,7 +277,7 @@ namespace pawn::seats
 
     void tick()
     {
-        const auto now = std::chrono::steady_clock::now();
+        const auto now = timer::now();
         if (now - lastRun < kRunEvery)
         {
             return;
@@ -290,9 +291,9 @@ namespace pawn::seats
         {
             return;
         }
-        lastRun = std::chrono::steady_clock::now();
+        lastRun = timer::now();
         ladder->setCaps(standingCap(), fadedCap());
-        ladder->run(std::chrono::steady_clock::now());
+        ladder->run(timer::now());
     }
 
     bool isStanding(const uint32 charid)
@@ -391,7 +392,7 @@ namespace pawn::seats
         {
             return true;
         }
-        invited[charid] = std::chrono::steady_clock::now();
+        invited[charid] = timer::now();
         ladder->touch(charid);
         run();
         if (!isStanding(charid))

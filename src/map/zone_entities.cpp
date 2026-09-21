@@ -28,6 +28,7 @@
 #include "instance.h"
 #include "latent_effect_container.h"
 #include "party.h"
+#include "pause/pause.h" // CARDIAN
 #include "recast_container.h"
 #include "spawn_handler.h"
 #include "status_effect_container.h"
@@ -1679,6 +1680,12 @@ auto CZoneEntities::mobTick(CMobEntity* PMob, timer::time_point tick) -> Task<vo
 
     ShowTraceFmt("CZoneEntities::ZoneServer: Mob: {} ({})", PMob->getName(), PMob->id);
 
+    // CARDIAN: a held simulation (pause/pause.h) takes no step; the hold is server-wide.
+    if (cardian::pause::isHeld())
+    {
+        co_return;
+    }
+
     PMob->PRecastContainer->Check();
 
     PMob->StatusEffectContainer->CheckEffectsExpiry(tick);
@@ -1787,6 +1794,12 @@ auto CZoneEntities::npcTick(CNpcEntity* PNpc, timer::time_point tick) -> Task<vo
 
     ShowTraceFmt("CZoneEntities::ZoneServer: NPC: {} ({})", PNpc->getName(), PNpc->id);
 
+    // CARDIAN: a held simulation (pause/pause.h) takes no step; the hold is server-wide.
+    if (cardian::pause::isHeld())
+    {
+        co_return;
+    }
+
     co_await PNpc->PAI->Tick(tick);
 
     // This is only valid for dynamic entities
@@ -1839,6 +1852,12 @@ auto CZoneEntities::petTick(CPetEntity* PPet, timer::time_point tick) -> Task<vo
         co_return;
     }
 
+    // CARDIAN: a held simulation (pause/pause.h) takes no step; the hold is server-wide.
+    if (cardian::pause::isHeld())
+    {
+        co_return;
+    }
+
     PPet->PRecastContainer->Check();
     PPet->StatusEffectContainer->CheckEffectsExpiry(tick);
     if (tick > m_EffectCheckTime)
@@ -1858,6 +1877,12 @@ auto CZoneEntities::trustTick(CTrustEntity* PTrust, timer::time_point tick) -> T
     TracyZoneString(PTrust->getName());
 
     ShowTraceFmt("CZoneEntities::ZoneServer: Trust: {} ({})", PTrust->getName(), PTrust->id);
+
+    // CARDIAN: a held simulation (pause/pause.h) takes no step; the hold is server-wide.
+    if (cardian::pause::isHeld())
+    {
+        co_return;
+    }
 
     PTrust->PRecastContainer->Check();
     PTrust->StatusEffectContainer->CheckEffectsExpiry(tick);
@@ -1898,7 +1923,13 @@ auto CZoneEntities::charTick(CCharEntity* PChar, timer::time_point tick) -> Task
 
     ShowTraceFmt("CZoneEntities::ZoneServer: Char: {} ({})", PChar->getName(), PChar->id);
 
-    if (PChar->status != xi::Status::Shutdown)
+    // CARDIAN: a held simulation (pause/pause.h) takes no step; his pending updates
+    // still go out, and the zoning and logout bookkeeping below still runs.
+    if (cardian::pause::isHeld())
+    {
+        PChar->PostTick();
+    }
+    else if (PChar->status != xi::Status::Shutdown) // CARDIAN
     {
         PChar->PRecastContainer->Check();
 
@@ -2149,14 +2180,16 @@ auto CZoneEntities::ZoneServer(timer::time_point tick) -> Task<void>
     // Processing offsets
     //
 
-    if (tick > m_EffectCheckTime)
+    // CARDIAN: held (pause/pause.h), the effect grid does not move past a round nobody was served.
+    if (!cardian::pause::isHeld() && tick > m_EffectCheckTime)
     {
         m_EffectCheckTime = m_EffectCheckTime + 3s > tick ? m_EffectCheckTime + 3s : tick + 3s;
     }
 
-    if (tick > m_computeTime && !m_charTargIds.empty())
+    // CARDIAN: the player spawn sync is paced on real time, so it runs through a held simulation.
+    if (const auto realNow = realtime::now(); realNow > m_computeTime && !m_charTargIds.empty())
     {
-        m_computeTime = tick + 567ms;
+        m_computeTime = realNow + 567ms; // CARDIAN
 
         std::set<uint16>::iterator charTargIdIter = m_charTargIds.lower_bound(m_lastCharComputeTargId);
         if (charTargIdIter == m_charTargIds.end())

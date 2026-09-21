@@ -42,6 +42,9 @@ class Scheduler;
 //                     | ping <n> | pong <n> | stats | bye
 //   server -> addon   welcome <server build> <charid> <protocol> | bound <charid> <name>
 //                     | you <charid> <name> <zone> | cd <tag> ... | ping <n>
+//                     | cd paused <holder> | cd resumed (to every bound addon, and
+//                     | cd paused after bound when the simulation is held)
+//                     | cd q <character> [<key> <target index>] (a queued command set, replaced or gone)
 //                     | pong <n> | stats k=v ... | err <text>
 //
 // cd carries the cardian management API (scripts/commands/cardian.lua): the
@@ -95,6 +98,10 @@ namespace cardian::link
     // false when no link is bound to them -- the caller decides what that
     // means (the cardian command falls back to chat for a human typing it).
     auto sendToCharacter(uint32 charid, std::string line) -> bool;
+
+    // Push a line to every bound connection: what all the addons must hear at once
+    // (the combat pause taken and let go).
+    void sendToAll(const std::string& line);
 
     // The uplink side store (RESEARCH.md par.7, option B): the freshest
     // client-reported position of a bound character, already converted to

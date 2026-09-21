@@ -71,6 +71,7 @@
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
 #include "party.h"
+#include "pause/pause.h"
 #include "recast_container.h"
 #include "packets/s2c/0x05a_motionmes.h"
 #include "ability.h"
@@ -506,16 +507,16 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
     // waypoint is passed within a yalm and a half; her seat she lands on
     // exactly -- the last stretch is one straight step onto it, so a group's
     // ring is a ring and no two of them overlap
-    const position_t& goal = order.goal;
-    const float       flat = std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z);
-    const bool        near = flat < 1.6f && std::abs(POwner->loc.p.y - goal.y) < 3.0f;
-    if (near && (!order.goalIsSeat || flat < 0.35f))
+    const position_t& goal   = order.goal;
+    const float       flat   = std::hypot(POwner->loc.p.x - goal.x, POwner->loc.p.z - goal.z);
+    const bool        atGoal = flat < 1.6f && std::abs(POwner->loc.p.y - goal.y) < 3.0f;
+    if (atGoal && (!order.goalIsSeat || flat < 0.35f))
     {
         Move(Intent{});
         pawn::world::noteReached(POwner->id);
         return;
     }
-    if (near)
+    if (atGoal)
     {
         Intent hop{};
         hop.kind  = Intent::Kind::Hop;
@@ -1173,10 +1174,18 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         return "KO'd";
     }
 
+    // Held (pause/pause.h), nothing starts: the order goes straight to her queue. Her
+    // tick clock stands still with the simulation, so its grace runs from the release.
     const EntityId target(PTarget);
-    const auto     err = Acting() ? std::string("busy") : TryAction(kind, mode, id, target);
-    if (err != "busy" && err != "recast" && err != "standing up")
+    const auto     err = cardian::pause::isHeld() ? std::string("paused")
+                         : Acting()               ? std::string("busy")
+                                                  : TryAction(kind, mode, id, target);
+    if (err != "paused" && err != "busy" && err != "recast" && err != "standing up")
     {
+        if (err.empty())
+        {
+            OrderStarted(kind, id);
+        }
         return err;
     }
 
@@ -1189,8 +1198,8 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     {
         return fmt::format("{} is {} s away", OrderName(kind, id), wholeSeconds(wait));
     }
-    m_QueuedOrder         = std::make_pair(key, target);
     m_QueuedOrderDeadline = m_Tick + grace;
+    SetQueuedOrder(std::make_pair(key, target));
     ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), err, wholeSeconds(grace));
     return "";
 }
@@ -1242,6 +1251,67 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
         default:
             return "that";
     }
+}
+
+void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order)
+{
+    m_QueuedOrder = std::move(order);
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+    {
+        const auto line = QueuedOrderLine();
+        cardian::link::sendToCharacter(owner, line.empty() ? fmt::format("cd q {}", POwner->getName()) : fmt::format("cd q {} {}", POwner->getName(), line));
+    }
+}
+
+auto CPawnController::QueuedOrderLine() const -> std::string
+{
+    if (!m_QueuedOrder.has_value())
+    {
+        return "";
+    }
+    const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
+    return fmt::format("{} {}", m_QueuedOrder->first, PTarget != nullptr ? PTarget->targid : 0);
+}
+
+auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 formerOwner) -> bool
+{
+    if (!m_QueuedOrder.has_value())
+    {
+        return false;
+    }
+    ShowInfoFmt("pawn: {} drops the queued {} ({})", POwner->getName(), m_QueuedOrder->first, why);
+    SetQueuedOrder(std::nullopt);
+
+    // Out of his party she has no orders owner for SetQueuedOrder to tell: his addon
+    // still shows the line
+    if (formerOwner != 0 && pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)) == 0)
+    {
+        cardian::link::sendToCharacter(formerOwner, fmt::format("cd q {}", POwner->getName()));
+    }
+    return true;
+}
+
+auto CPawnController::CancelQueuedOrder() -> bool
+{
+    return DropQueuedOrder("the player took it back");
+}
+
+void CPawnController::OrderStarted(const unsigned kind, const unsigned id)
+{
+    m_StartedOrder   = OrderName(kind, id);
+    m_StartedOrderAt = m_Tick;
+}
+
+void CPawnController::ToldAfterOrder(const std::string& said)
+{
+    constexpr auto kHeels = 2s;
+    if (m_StartedOrder.empty() || m_Tick - m_StartedOrderAt > kHeels)
+    {
+        return;
+    }
+    ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), m_StartedOrder, said);
+    Note(fmt::format("{} refused: {}", m_StartedOrder, said));
+    m_StartedOrder.clear();
 }
 
 void CPawnController::Note(const std::string& text) const
@@ -1323,14 +1393,14 @@ void CPawnController::FireQueuedOrder()
     unsigned   id            = 0;
     if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
     {
-        m_QueuedOrder.reset();
+        SetQueuedOrder(std::nullopt);
         return;
     }
 
     // The grace ran out: with her still busy, or the timer still running
     if (m_Tick > m_QueuedOrderDeadline)
     {
-        m_QueuedOrder.reset();
+        SetQueuedOrder(std::nullopt);
         const auto wait = OrderWait(kind, id);
         const auto why  = (Acting() || wait <= 0s) ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait));
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
@@ -1345,7 +1415,7 @@ void CPawnController::FireQueuedOrder()
     auto* PTarget = target.resolve<CBattleEntity>();
     if (PTarget == nullptr)
     {
-        m_QueuedOrder.reset();
+        SetQueuedOrder(std::nullopt);
         return;
     }
 
@@ -1356,14 +1426,16 @@ void CPawnController::FireQueuedOrder()
     {
         return; // the timer has not run out: next tick, until the deadline
     }
-    m_QueuedOrder.reset();
+    SetQueuedOrder(std::nullopt);
     if (!err.empty())
     {
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, err);
         Note(fmt::format("{} let go: {}", OrderName(kind, id), err));
         return;
     }
-    ShowInfoFmt("pawn: {} fires the queued {} on {}", POwner->getName(), key, PTarget->getName());
+    // Started, not done: the game may still refuse it on its next step (ToldAfterOrder)
+    OrderStarted(kind, id);
+    ShowInfoFmt("pawn: {} starts the queued {} on {}", POwner->getName(), key, PTarget->getName());
 }
 
 auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool
@@ -2229,16 +2301,16 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     // detail under pawn.WORLD_TICK_DEBUG
     struct BrainClock
     {
-        const CBattleEntity*                  owner;
-        std::chrono::steady_clock::time_point start;
+        const CBattleEntity* owner;
+        realtime::time_point start;
         ~BrainClock()
         {
             if (owner->loc.zone != nullptr)
             {
-                pawn::world::noteBrainTick(static_cast<uint16>(owner->loc.zone->GetID()), std::chrono::steady_clock::now() - start);
+                pawn::world::noteBrainTick(static_cast<uint16>(owner->loc.zone->GetID()), realtime::now() - start);
             }
         }
-    } const brainClock{ POwner, std::chrono::steady_clock::now() };
+    } const brainClock{ POwner, realtime::now() };
     std::ignore = brainClock;
 
     // A zone change meant for the client protocol -- a warp, a teleport --
@@ -4210,16 +4282,16 @@ auto CPawnController::ReachableFormationPoint(const Anchor& a, const float offse
     // the maze to walk either way), and when she stands off the mesh (a
     // push-out, a ledge lip) no walk can be priced and the point stands
     bool             walkedIn = false;
-    const position_t far      = point;
+    const position_t farEnd   = point;
     if (const auto toPlayer = navMesh != nullptr ? WalkLength(from) : std::nullopt; toPlayer.has_value())
     {
-        const float span = distance(from, far);
+        const float span = distance(from, farEnd);
         for (int step = 0; step <= 3; ++step)
         {
             if (step > 0)
             {
                 const float t = std::max(1.0f - step / 3.0f, span > 0.0f ? 1.0f / span : 0.0f);
-                point         = position_t(from.x + (far.x - from.x) * t, from.y + (far.y - from.y) * t, from.z + (far.z - from.z) * t, 0, 0);
+                point         = position_t(from.x + (farEnd.x - from.x) * t, from.y + (farEnd.y - from.y) * t, from.z + (farEnd.z - from.z) * t, 0, 0);
                 if (const auto onMesh = navMesh->findClosestValidPoint(point); onMesh.has_value())
                 {
                     point = *onMesh;

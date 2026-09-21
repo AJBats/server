@@ -65,12 +65,12 @@ inline time_point now()
 inline earth_time::time_point to_earth_time(const time_point& vanadiel_tp = now())
 {
     const earth_time::duration earth_since_epoch = std::chrono::duration_cast<earth_time::duration>(vanadiel_tp.time_since_epoch());
-    return earth_time::time_point(earth_since_epoch + earth_time::vanadiel_epoch);
+    return earth_time::time_point(earth_since_epoch + earth_time::calendar_epoch()); // CARDIAN: the held, drifted calendar
 };
 
 inline time_point from_earth_time(const earth_time::time_point& earth_tp = earth_time::now())
 {
-    const clock::duration vanadiel_since_epoch = std::chrono::duration_cast<clock::duration>(earth_tp - earth_time::vanadiel_epoch);
+    const clock::duration vanadiel_since_epoch = std::chrono::duration_cast<clock::duration>(earth_tp - earth_time::calendar_epoch()); // CARDIAN: the held, drifted calendar
     return time_point(vanadiel_since_epoch);
 };
 

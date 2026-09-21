@@ -48,7 +48,7 @@ bool timersEnabled = false;
 // Emit a slow-query log line on scope exit if the query exceeded the configured thresholds.
 auto makeQueryTimer(const std::string& query) -> xi::final_action<Fn<void()>>
 {
-    const auto start = timer::now();
+    const auto start = realtime::now(); // CARDIAN: a stopwatch measures real time, not simulation time
     return xi::finally<Fn<void()>>(
         [query, start]() -> void
         {
@@ -57,7 +57,7 @@ auto makeQueryTimer(const std::string& query) -> xi::final_action<Fn<void()>>
                 return;
             }
 
-            const auto duration = timer::count_milliseconds(timer::now() - start);
+            const auto duration = timer::count_milliseconds(realtime::now() - start); // CARDIAN: as above
             if (duration > settings::get<uint32>("logging.SQL_SLOW_QUERY_ERROR_TIME"))
             {
                 ShowError(fmt::format("SQL query took {}ms: {}", duration, query));

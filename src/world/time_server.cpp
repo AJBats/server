@@ -21,6 +21,7 @@
 
 #include "time_server.h"
 
+#include "common/cardian_clock_row.h" // CARDIAN
 #include "common/cbasetypes.h"
 #include "common/tracy.h"
 #include "common/vana_time.h"
@@ -33,6 +34,8 @@ auto time_server(const WorldEngine* worldServer) -> Task<void>
 {
     TracyZoneScoped;
 
+    cardian::clock_row::followSaved(); // CARDIAN: this process's calendar follows the map's game clock, by the saved row
+
     const auto tick = timer::now();
     // Track elapsed ticks.
     static auto tickNum = 0;
@@ -42,7 +45,7 @@ auto time_server(const WorldEngine* worldServer) -> Task<void>
     // Uses the JST equivalent of the current timer tick. (steady_clock -> system_clock)
 
     // Earth time points
-    const auto jstTime    = earth_time::time_point(timer::to_utc(tick));
+    const auto jstTime    = timer::to_game_utc(tick); // CARDIAN: the game clock -- the tally and the daily points fall when the map's JST ticks do
     const auto jstHour    = earth_time::jst::get_hour(jstTime);
     const auto jstWeekday = earth_time::jst::get_weekday(jstTime);
 
@@ -97,7 +100,7 @@ auto time_server(const WorldEngine* worldServer) -> Task<void>
     //       variance in the tick time.
 
     // Vana'diel time points
-    const auto vanaTime = vanadiel_time::from_earth_time(jstTime);
+    const auto vanaTime = vanadiel_time::from_earth_time(timer::to_utc(tick)); // CARDIAN: the calendar converts a real instant
     const auto vanaTotd = vanadiel_time::get_totd(vanaTime);
     const auto vanaHour = vanadiel_time::get_hour(vanaTime);
 

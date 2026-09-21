@@ -572,8 +572,8 @@ bool IsAlliance()
 
 uint8 GetNextTally()
 {
-    auto nextWeek   = earth_time::get_next_game_week();
-    auto untilTally = vanadiel_time::from_earth_time(nextWeek) - vanadiel_time::now();
+    auto nextWeek   = earth_time::get_next_game_week(earth_time::game_now()); // CARDIAN: the game clock, as Lua's NextConquestTally()
+    auto untilTally = nextWeek - earth_time::game_now();                      // CARDIAN: both ends on the game clock
 
     auto vanaDaysUntilTally = std::chrono::ceil<xi::vanadiel_clock::days>(untilTally).count();
 

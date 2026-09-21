@@ -330,7 +330,7 @@ void NominateManager::broadcastFinal(const NominateProposal& proposal) const
 void NominateManager::finalize(CCharEntity* PChar, const NominateProposal& proposal) const
 {
     this->broadcastFinal(proposal);
-    PChar->setLastProposalCloseTime(timer::now());
+    PChar->setLastProposalCloseTime(realtime::now()); // CARDIAN: the poll cooldown runs on real time
 }
 
 // /nominate received. Create new poll or close current.
@@ -350,7 +350,7 @@ void NominateManager::onProposal(CCharEntity* PChar, const GP_CLI_COMMAND_SWITCH
         return;
     }
 
-    if (timer::now() - PChar->lastProposalCloseTime() < cooldown) // 60s cooldown on making a new poll
+    if (realtime::now() - PChar->lastProposalCloseTime() < cooldown) // 60s cooldown on making a new poll // CARDIAN
     {
         PChar->pushPacket<GP_SERV_COMMAND_MESSAGE>(MsgStd::CannotUseCommandAtTheMoment);
         return;

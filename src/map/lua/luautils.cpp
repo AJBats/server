@@ -1928,7 +1928,7 @@ uint32 GetSystemTime()
 {
     TracyZoneScoped;
 
-    return earth_time::timestamp();
+    return earth_time::game_timestamp(); // CARDIAN: the game clock
 }
 
 auto LoadLinkshellConciergeSlots(uint16 zoneId) -> sol::table
@@ -2033,7 +2033,7 @@ uint32 JstMidnight()
 {
     TracyZoneScoped;
 
-    auto jstMidnight = earth_time::jst::get_next_midnight();
+    auto jstMidnight = earth_time::jst::get_next_midnight(earth_time::game_now()); // CARDIAN: the game clock
     return earth_time::timestamp(jstMidnight);
 }
 
@@ -2041,14 +2041,14 @@ uint32 JstDayOfTheYear()
 {
     TracyZoneScoped;
 
-    return earth_time::jst::get_yearday();
+    return earth_time::jst::get_yearday(earth_time::game_now()); // CARDIAN: the game clock
 }
 
 uint32 JstDayOfTheMonth()
 {
     TracyZoneScoped;
 
-    return earth_time::jst::get_monthday();
+    return earth_time::jst::get_monthday(earth_time::game_now()); // CARDIAN: the game clock
 }
 
 /************************************************************************
@@ -2061,28 +2061,28 @@ uint32 JstDayOfTheWeek()
 {
     TracyZoneScoped;
 
-    return earth_time::jst::get_weekday();
+    return earth_time::jst::get_weekday(earth_time::game_now()); // CARDIAN: the game clock
 }
 
 int32 JstYear()
 {
     TracyZoneScoped;
 
-    return earth_time::jst::get_year();
+    return earth_time::jst::get_year(earth_time::game_now()); // CARDIAN: the game clock
 }
 
 uint32 JstMonth()
 {
     TracyZoneScoped;
 
-    return earth_time::jst::get_month();
+    return earth_time::jst::get_month(earth_time::game_now()); // CARDIAN: the game clock
 }
 
 uint32 JstHour()
 {
     TracyZoneScoped;
 
-    return earth_time::jst::get_hour();
+    return earth_time::jst::get_hour(earth_time::game_now()); // CARDIAN: the game clock
 }
 
 /************************************************************************
@@ -2108,7 +2108,7 @@ uint32 NextJstWeek()
 {
     TracyZoneScoped;
 
-    return earth_time::timestamp(earth_time::get_next_game_week());
+    return earth_time::timestamp(earth_time::get_next_game_week(earth_time::game_now())); // CARDIAN: the game clock
 }
 
 // NOTE: NextConquestTally exists for clarity, and is bound to the above function
@@ -5228,7 +5228,7 @@ void SetServerVariable(const std::string& name, int32 value, const sol::object& 
 {
     uint32 varTimestamp = expiry.is<uint32>() ? expiry.as<uint32>() : 0;
 
-    if (varTimestamp > 0 && varTimestamp <= earth_time::timestamp())
+    if (varTimestamp > 0 && varTimestamp <= earth_time::game_timestamp()) // CARDIAN: the game clock
     {
         ShowWarning(fmt::format("Attempting to set variable '{}' with an expired time: {}", name, varTimestamp));
         return;
@@ -5246,7 +5246,7 @@ void SetVolatileServerVariable(const std::string& varName, int32 value, const so
 {
     uint32 varTimestamp = expiry.is<uint32>() ? expiry.as<uint32>() : 0;
 
-    if (varTimestamp > 0 && varTimestamp <= earth_time::timestamp())
+    if (varTimestamp > 0 && varTimestamp <= earth_time::game_timestamp()) // CARDIAN: the game clock
     {
         ShowWarning(fmt::format("Attempting to set variable '{}' with an expired time: {}", varName, varTimestamp));
         return;
@@ -5265,7 +5265,7 @@ void SetCharVar(uint32 charId, const std::string& varName, int32 value, const so
 {
     uint32 varTimestamp = expiry.is<uint32>() ? expiry.as<uint32>() : 0;
 
-    if (varTimestamp > 0 && varTimestamp <= earth_time::timestamp())
+    if (varTimestamp > 0 && varTimestamp <= earth_time::game_timestamp()) // CARDIAN: the game clock
     {
         ShowWarning(fmt::format("Attempting to set variable '{}' with an expired time: {}", varName, varTimestamp));
         return;

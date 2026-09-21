@@ -89,6 +89,10 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_rest_tests.cpp # CARDIAN: shared resting lifecycle and recovery arithmetic
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_cure_tests.cpp # CARDIAN: Cure readiness, emergency coordination and quiet-fight budgets
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_spell_movement_tests.cpp # CARDIAN: spell approach, sight recovery and sub-yalm navmesh paths
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_clock_tests.cpp # CARDIAN: the two clock domains (pause P1)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pause_tests.cpp # CARDIAN: the combat pause's manager (pause P2)
+    ${CMAKE_SOURCE_DIR}/src/map/pause/pause_module.cpp # CARDIAN: the pause's real module, so packet tests meet the real input gate (pause P3)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_calendar_tests.cpp # CARDIAN: the calendar's hold and drift (pause P6)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
     ${resource})
 add_dependencies(xi_test data_schema_generate)

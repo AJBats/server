@@ -55,7 +55,9 @@
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
 #include "party.h"
+#include "pause/pause.h"
 #include "enums/char_persist.h"
+#include "enums/msg_basic.h"
 #include "persist_batch.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
@@ -98,7 +100,7 @@ namespace
     std::unordered_map<uint32, timer::time_point> pendingInvites;
 
     // played charid -> arrival time of its last 0x015 position packet
-    std::unordered_map<uint32, timer::time_point> lastPositionPacket;
+    std::unordered_map<uint32, realtime::time_point> lastPositionPacket;
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
@@ -988,6 +990,12 @@ namespace pawn
             {
                 continue;
             }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+
+            // Whose orders she was under, read before the books below forget it
+            const auto   ownerIt   = playerByPawn.find(charid);
+            const uint32 herPlayer = ownerIt != playerByPawn.end() ? ownerIt->second : summonerOf(charid);
+
             if (herself)
             {
                 playerByPawn.erase(charid);
@@ -1016,6 +1024,13 @@ namespace pawn
                 ShowInfoFmt("pawn: {} is out of the party{}: her {} ends where she stands", PPawn->getName(),
                             herself ? "" : fmt::format(" ({} left it)", PMember->getName()), trekking ? "trek" : "walk");
             }
+            // An order still waiting was her player's, like the trek: with her out of his
+            // party, or him, she no longer carries it out (one given in a pause would fire
+            // at the release). Another player's cardian keeps hers when this one leaves.
+            if (PController != nullptr && (herself || herPlayer == PMember->id))
+            {
+                PController->DropQueuedOrder(herself ? "out of the party" : "her player left the party", herPlayer);
+            }
             if (herself)
             {
                 const auto* PLeader = PParty != nullptr ? const_cast<CParty*>(PParty)->GetLeader() : nullptr;
@@ -1026,7 +1041,7 @@ namespace pawn
             // once her player is
             if (summonerOf(charid) == 0 && (herself || playerLeft))
             {
-                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+                if (PController != nullptr)
                 {
                     PController->SetWaiting(false, false, "out of the party");
                     PController->SetHunting(false);
@@ -1511,6 +1526,12 @@ namespace pawn
         if (PPawn->isDead())
         {
             return "KO'd";
+        }
+
+        // A held simulation (pause/pause.h) moves nobody
+        if (cardian::pause::isHeld())
+        {
+            return "not while paused";
         }
 
         const float range = settings::get<float>("pawn.RESCUE_RANGE");
@@ -2078,9 +2099,30 @@ namespace pawn
         pendingInvites.insert_or_assign(PPawn->id, timer::now() + delay);
     }
 
+    void noteBattleMessage(CCharEntity* PPawn, const uint16 message, const uint16 aboutIndex)
+    {
+        const auto  name    = magic_enum::enum_name(static_cast<MsgBasic>(message));
+        const auto  said    = name.empty() ? fmt::format("message {}", message) : std::string(name);
+        const auto* PAbout  = aboutIndex != 0 ? PPawn->GetEntity(aboutIndex) : nullptr;
+        const auto  about   = PAbout != nullptr && PAbout != PPawn ? fmt::format(" (about {})", PAbout->getName()) : std::string();
+        ShowInfoFmt("pawn: {} is told {}{}", PPawn->getName(), said, about);
+
+        // A skill rising is the game's word after an action that worked, not a refusal
+        const auto msg = static_cast<MsgBasic>(message);
+        if (msg == MsgBasic::SkillGain || msg == MsgBasic::SkillLevelUp)
+        {
+            return;
+        }
+
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->ToldAfterOrder(said);
+        }
+    }
+
     void notePositionPacket(const CCharEntity* PChar)
     {
-        lastPositionPacket.insert_or_assign(PChar->id, timer::now());
+        lastPositionPacket.insert_or_assign(PChar->id, realtime::now());
     }
 
     auto positionPacketAge(uint32 charid) -> std::optional<std::chrono::milliseconds>
@@ -2090,7 +2132,7 @@ namespace pawn
         {
             return std::nullopt;
         }
-        return std::chrono::duration_cast<std::chrono::milliseconds>(timer::now() - it->second);
+        return std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second);
     }
 
     // Move a live pawn between zones same-process: the M2 despawn/spawn
@@ -2154,10 +2196,21 @@ namespace pawn
         ShowInfoFmt("pawn: {} ({}) crossed into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
     }
 
+    void onZoneTickHeld(CZone* PZone)
+    {
+        for (const auto& [charid, PPawn] : pawns)
+        {
+            if (PPawn->loc.zone == PZone)
+            {
+                PPawn->clearPacketList();
+            }
+        }
+    }
+
     void onZoneTick(CZone* PZone)
     {
         stakeSweep();
-        const auto started   = std::chrono::steady_clock::now();
+        const auto started   = realtime::now();
         uint32     pawnsHere = 0;
         for (const auto& [charid, PPawn] : pawns)
         {
@@ -2221,6 +2274,6 @@ namespace pawn
 
         world::onZoneTick(PZone);
         seats::tick();
-        world::noteModuleTick(PZone, std::chrono::steady_clock::now() - started, pawnsHere);
+        world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

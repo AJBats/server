@@ -829,6 +829,33 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err despawn not one of yours, or not out')
         end
         sendList(player)
+    elseif verb == 'pause' then
+        -- The pause button. A hold taken or let go is told to every addon by the
+        -- server itself (cd paused / cd resumed); only a refusal is answered here
+        local err = player:cardianPause()
+        if err ~= '' then
+            reply(player, '#cd note ' .. err)
+        end
+    elseif verb == 'queues' then
+        -- The queue lines as they stand, for an addon that has just bound: his own
+        -- queued command and each cardian's. Every later change is pushed (cd q)
+        reply(player, '#cd q ' .. player:getName() .. ' ' .. player:cardianQueuedOwn())
+        for _, cardian in ipairs(player:cardianNames()) do
+            reply(player, '#cd q ' .. cardian .. ' ' .. player:cardianQueued(cardian))
+        end
+    elseif verb == 'cancel' and name then
+        -- Take a queued command back: `me` is the player's own
+        local err = ''
+        if name == 'me' then
+            err = player:cardianCancelOwn() and '' or 'nothing queued'
+        else
+            err = player:cardianCancel(name)
+        end
+        if err ~= '' then
+            reply(player, '#cd err cancel ' .. err)
+        else
+            reply(player, '#cd ok cancel')
+        end
     elseif verb == 'orders' then
         sendOrders(player)
     elseif verb == 'strategy' and args[2] then

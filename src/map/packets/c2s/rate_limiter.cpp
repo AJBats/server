@@ -76,7 +76,7 @@ auto PacketRateLimiter::isLimited(CCharEntity* PChar, uint16 packetId) -> bool
         return false;
     }
 
-    auto timeNow                 = timer::now();
+    auto timeNow                 = realtime::now(); // CARDIAN: flood control runs on real time
     const auto [it, wasInserted] = PChar->m_PacketRecievedTimestamps.emplace(packetId, timeNow);
     if (wasInserted)
     {

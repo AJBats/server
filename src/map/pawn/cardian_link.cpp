@@ -32,6 +32,7 @@
 #include "common/types/position.h"
 #include "entities/char_entity.h"
 #include "map_session.h"
+#include "pause/pause.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -47,7 +48,7 @@ extern sol::state lua;
 // kProtocol) unloads itself when its own differs: both are bumped together
 // whenever a line either side sends changes shape, and no line is kept
 // compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 3; // 3: authoritative stake toggle (RESEARCH §12.16)
+constexpr uint32 kLinkProtocol = 6; // 6: the held calendar (cd paused <holder> <game time>; cd resumed <game time>; cd calendar <game time>)
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>
@@ -90,6 +91,14 @@ namespace
     };
     std::unordered_map<uint32, StoredPosition> g_freshPositions;
 
+    // StoredPosition::at is simulation time, unlike the connection's own liveness
+    // fields, and that serves both of its jobs. Freshness asks how much game has
+    // passed since the addon said where he stands. Velocity divides by the gap
+    // between two samples, and a held simulation takes no simulation time: the last
+    // sample before a pause and the first after it sit a normal step apart, so his
+    // motion carries across the pause unbroken. That holds only while samples that
+    // arrive DURING a hold are not ingested -- they would report a standing player
+    // and a zero gap, and collapse the estimate. handlePos keeps them out.
     constexpr auto FreshPositionMaxAge = std::chrono::seconds(1);
 
     class Connection;
@@ -329,7 +338,7 @@ namespace
         // Returns why the connection ended
         auto serve() -> Task<std::string>
         {
-            lastRx_      = timer::now();
+            lastRx_      = realtime::now();
             windowStart_ = lastRx_;
 
             while (socket_.is_open() && !scheduler_.closeRequested())
@@ -341,7 +350,7 @@ namespace
                 if (!result.has_value())
                 {
                     // Nothing arrived within a ping interval
-                    if (timer::now() - lastRx_ > config_.deadAfter)
+                    if (realtime::now() - lastRx_ > config_.deadAfter)
                     {
                         serverDrop_ = true;
                         co_return fmt::format("silent for {}ms", config_.deadAfter.count());
@@ -365,7 +374,7 @@ namespace
                     co_return ec.message();
                 }
 
-                const auto now = timer::now();
+                const auto now = realtime::now();
                 lastRx_        = now;
 
                 if (now - windowStart_ >= 1s)
@@ -496,6 +505,17 @@ namespace
                 calibrated_              = false;
                 ShowInfoFmt("link: {} bound to {} ({})", peer_, PChar->getName(), id);
                 enqueue(fmt::format("bound {} {}", id, PChar->getName()));
+
+                // An addon that binds into a held simulation shows the banner too
+                if (const auto pause = cardian::pause::status(); pause.held)
+                {
+                    enqueue(fmt::format("cd paused {} {}", pause.holderName, earth_time::vanadiel_timestamp()));
+                }
+                else
+                {
+                    // The calendar runs behind real time by every pause so far: his client is told where it stands
+                    enqueue(fmt::format("cd calendar {}", earth_time::vanadiel_timestamp()));
+                }
                 return true;
             }
             if (verb == "whoami")
@@ -574,6 +594,12 @@ namespace
                 return;
             }
 
+            // A held simulation (pause/pause.h) takes no samples: see StoredPosition::at
+            if (cardian::pause::isHeld())
+            {
+                return;
+            }
+
             float x   = 0.0f;
             float y   = 0.0f;
             float z   = 0.0f;
@@ -645,8 +671,8 @@ namespace
         std::string                 inbox_;
         std::deque<std::string>     outbox_;
         std::string                 writeError_;
-        timer::time_point           lastRx_{};
-        timer::time_point           windowStart_{};
+        realtime::time_point        lastRx_{};
+        realtime::time_point        windowStart_{};
         uint32                      linesThisSecond_ = 0;
         uint32                      pingSeq_         = 0;
         uint32                      boundCharID_     = 0;
@@ -786,6 +812,14 @@ namespace cardian::link
         }
         it->second->push(std::move(line));
         return true;
+    }
+
+    void sendToAll(const std::string& line)
+    {
+        for (const auto& [charid, connection] : g_boundConnections)
+        {
+            connection->push(line);
+        }
     }
 
     auto freshPositionOf(uint32 charid) -> std::optional<FreshPosition>

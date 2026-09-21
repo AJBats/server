@@ -83,8 +83,8 @@ public:
     auto RemoveItem(uint8 slotID) -> std::unique_ptr<CItem>;
     auto MoveItemTo(uint8 fromSlot, CItemContainer& dst, Maybe<uint8> dstSlot = std::nullopt) -> uint8;
 
-    uint32            SortingPacket; // number of sort requests per clock
-    timer::time_point LastSortingTime;
+    uint32               SortingPacket;   // number of sort requests per clock
+    realtime::time_point LastSortingTime; // CARDIAN: real time, the sort guard runs through a held simulation
 
     auto GetItem(uint8 slotID) const -> CItem*;
     void Clear();

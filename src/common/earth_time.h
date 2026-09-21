@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include <atomic> // CARDIAN
 #include <chrono>
 #include <ctime>
 
@@ -43,6 +44,64 @@ static constexpr earth_time::time_point vanadiel_epoch{ 1009810800s };
 inline time_point now()
 {
     return clock::now() + time_offset;
+}
+
+// CARDIAN: the calendar under the combat pause, one atomic so no reader sees it half-written. Even: twice
+// the drift (real time kept out of Vana'diel time). Odd: held, at twice-plus-one the instant since the epoch.
+inline std::atomic<duration::rep> calendar_state{ 0 };
+
+// CARDIAN: the Vana'diel epoch as the calendar reads it; while held it keeps pace with now().
+inline time_point calendar_epoch()
+{
+    const auto state = calendar_state.load();
+    const auto value = duration{ (state - (state & 1)) / 2 };
+    return (state & 1) != 0 ? now() - value : vanadiel_epoch + value;
+}
+
+// CARDIAN: stop the calendar where it stands. Main thread only; no-op if already held.
+inline void hold_calendar()
+{
+    if ((calendar_state.load() & 1) == 0)
+    {
+        calendar_state.store((now() - calendar_epoch()).count() * 2 + 1);
+    }
+}
+
+// CARDIAN: carry the calendar on from where it stopped, the hold's length joining the drift.
+inline void release_calendar()
+{
+    if ((calendar_state.load() & 1) != 0)
+    {
+        calendar_state.store((calendar_epoch() - vanadiel_epoch).count() * 2);
+    }
+}
+
+// CARDIAN: the game clock as Unix time -- the calendar's instant on Earth's scale, which is what Lua is told
+// the time is. It stands still in a hold and lags now() by the drift.
+inline time_point game_now()
+{
+    return vanadiel_epoch + (now() - calendar_epoch());
+}
+
+// CARDIAN: a real instant as far back on the game clock as it is on the real one, so that Lua's GetSystemTime()
+// less it is the real time since. An unset instant (the epoch, or earlier) stays as it is.
+inline time_point to_game(const time_point& tp)
+{
+    return tp <= time_point{} ? tp : tp - (now() - game_now());
+}
+
+// CARDIAN: start the calendar this far behind real time: the drift a saved game carries over a restart.
+// Main thread only, before anything reads the calendar; lets go of a hold.
+inline void set_calendar_drift(const duration drift)
+{
+    calendar_state.store(drift.count() * 2);
+}
+
+// CARDIAN: hold the calendar at this game instant (what game_now() then answers): for a process that follows
+// another's game clock. Main thread only.
+inline void hold_calendar_at(const time_point gameInstant)
+{
+    calendar_state.store((gameInstant - vanadiel_epoch).count() * 2 + 1);
 }
 
 inline std::tm to_utc_tm(const time_point& tp = now())
@@ -323,10 +382,16 @@ inline uint32 timestamp(const time_point& tp = now())
     return static_cast<uint32>(std::chrono::floor<std::chrono::seconds>(tp.time_since_epoch()).count());
 }
 
+// CARDIAN: the game clock as a Unix timestamp: what Lua's GetSystemTime() answers, and what variables expire by.
+inline uint32 game_timestamp()
+{
+    return timestamp(game_now());
+}
+
 // Returns the number of Earth seconds since the Vana'diel epoch.
 inline uint32 vanadiel_timestamp(const time_point& tp = now())
 {
-    return static_cast<uint32>(std::chrono::floor<std::chrono::seconds>(tp - vanadiel_epoch).count());
+    return static_cast<uint32>(std::chrono::floor<std::chrono::seconds>(tp - calendar_epoch()).count()); // CARDIAN: the held, drifted calendar
 }
 
 // Returns an integer 0-6 representing Monday-Sunday JST.
