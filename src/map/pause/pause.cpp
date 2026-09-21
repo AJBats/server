@@ -21,6 +21,7 @@
 
 #include "pause.h"
 
+#include "calendar_store.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "entities/char_entity.h"
@@ -128,6 +129,7 @@ auto release(const std::string_view why) -> Result
 
     timer::release();
     earth_time::release_calendar();
+    calendar::save(); // the drift just grew by this hold
 
     ShowInfoFmt("pause: released after {:.1f}s, {} (held by {})", std::chrono::duration<double>(heldFor).count(), why, book.holderName);
 

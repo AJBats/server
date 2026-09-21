@@ -32,6 +32,7 @@
 
 #include "common/earth_time.h"
 #include "common/vana_time.h"
+#include "map/pause/calendar_store.h"
 
 using namespace std::chrono_literals;
 
@@ -140,6 +141,80 @@ TEST_CASE("calendar: the two calendars still convert into each other, held and d
     const auto inGameSeconds = static_cast<int64>(earth_time::vanadiel_timestamp(earth_time::now() + 144s)) - gameSeconds();
     REQUIRE(inGameSeconds >= 143);
     REQUIRE(inGameSeconds <= 145);
+}
+
+// The game clock as Unix time (pause P7): what Lua is told the time is.
+
+TEST_CASE("calendar: the game clock in Unix seconds is the Vana'diel calendar on Earth's scale", "[cardian][calendar]")
+{
+    const CalendarGuard guard;
+
+    earth_time::hold_calendar();
+    earth_time::add_offset(10min);
+    earth_time::release_calendar();
+
+    // behind real time by the pause
+    const auto behind = earth_time::now() - earth_time::game_now();
+    REQUIRE(behind >= 10min);
+    REQUIRE(behind < 10min + 1s);
+
+    // and the same instant as the game timestamp the client is told
+    const auto sinceEpoch = std::chrono::floor<std::chrono::seconds>(earth_time::game_now() - earth_time::vanadiel_epoch).count();
+    REQUIRE(std::abs(sinceEpoch - gameSeconds()) <= 1);
+
+    // standing still in a hold
+    earth_time::hold_calendar();
+    const auto heldAt = earth_time::game_now();
+    earth_time::add_offset(1h);
+    REQUIRE(std::chrono::abs(earth_time::game_now() - heldAt) < 1s);
+}
+
+TEST_CASE("calendar: a JST midnight of the game clock is a Vana'diel midnight, whatever the drift", "[cardian][calendar]")
+{
+    const CalendarGuard guard;
+
+    earth_time::set_calendar_drift(3h + 17min + 5s);
+
+    const auto midnight = earth_time::jst::get_next_midnight(earth_time::game_now());
+
+    // a whole number of Earth days from the epoch, each of them 25 Vana'diel days
+    REQUIRE((midnight - earth_time::vanadiel_epoch) % std::chrono::days(1) == 0s);
+
+    // and on the Vana'diel clock, which converts from real instants: the game's midnight, the drift later
+    const auto drift = earth_time::now() - earth_time::game_now();
+    const auto vana  = vanadiel_time::from_earth_time(midnight + drift);
+    const auto off   = std::chrono::abs(vana - std::chrono::round<xi::vanadiel_clock::days>(vana));
+    REQUIRE(off < xi::vanadiel_clock::minutes(1));
+}
+
+TEST_CASE("calendar: the saved pair gives the drift at boot under either rule for time off", "[cardian][calendar]")
+{
+    using cardian::pause::calendar::driftAtBoot;
+    using cardian::pause::calendar::Saved;
+
+    // written with the game 10 minutes behind; the server then stayed off for 2 hours
+    const Saved saved{ 1'800'000'600'000, 1'800'000'000'000 };
+    const auto  boot = earth_time::time_point(std::chrono::milliseconds(saved.realMs) + 2h);
+
+    REQUIRE(driftAtBoot(saved, boot, true) == 10min);       // its time went by
+    REQUIRE(driftAtBoot(saved, boot, false) == 2h + 10min); // it carries on from where it stopped
+
+    // a real clock behind the row counts as no time off
+    const auto earlier = earth_time::time_point(std::chrono::milliseconds(saved.realMs) - 1h);
+    REQUIRE(driftAtBoot(saved, earlier, false) == 10min);
+}
+
+TEST_CASE("calendar: a row written in the middle of a hold keeps the hold so far", "[cardian][calendar]")
+{
+    const CalendarGuard guard;
+
+    earth_time::hold_calendar();
+    earth_time::add_offset(30min);
+
+    const auto saved = cardian::pause::calendar::snapshot();
+    const auto drift = cardian::pause::calendar::driftAtBoot(saved, earth_time::now(), true);
+    REQUIRE(drift >= 30min);
+    REQUIRE(drift < 30min + 1s);
 }
 
 TEST_CASE("calendar: real time is never moved", "[cardian][calendar]")

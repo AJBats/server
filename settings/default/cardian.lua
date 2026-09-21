@@ -43,4 +43,9 @@ xi.settings.cardian =
     -- simulation -- combat and movement, nothing else -- until the player who
     -- took it resumes. Off, the button is refused with a note.
     PAUSE_ENABLED = true,
+
+    -- The game clock (Vana'diel time, and every lockout and NM window scripts
+    -- keep) while the server is off. true: its time goes by, as upstream's
+    -- does. false: the game carries on from the second it stopped.
+    CLOCK_RUNS_OFFLINE = true,
 }

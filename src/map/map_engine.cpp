@@ -48,8 +48,9 @@
 #include "zone.h"
 #include "zone_entities.h"
 
-#include "pawn/cardian_link.h" // CARDIAN
-#include "pawn/players.h"      // CARDIAN
+#include "pause/calendar_store.h" // CARDIAN
+#include "pawn/cardian_link.h"    // CARDIAN
+#include "pawn/players.h"         // CARDIAN
 
 #include "ai/controllers/automaton_controller.h"
 
@@ -91,6 +92,8 @@ MapEngine::MapEngine(Application& application, MapConfig& config)
 
 MapEngine::~MapEngine()
 {
+    cardian::pause::calendar::save(); // CARDIAN: where the game clock stopped, a hold in progress included
+
     itemutils::FreeItemList();
     battleutils::FreeWeaponSkillsList();
     battleutils::FreeMobSkillList();
@@ -140,6 +143,11 @@ auto MapEngine::init() -> Task<void>
     }
 
     db::checkTriggers();
+
+    if (!config_.isTestServer) // CARDIAN: the saved game clock, before any script or schedule reads the calendar
+    {
+        cardian::pause::calendar::load();
+    }
 
     luautils::init(mapIPP, config_.inCI); // Also calls moduleutils::LoadLuaModules();
 

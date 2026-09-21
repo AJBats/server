@@ -19,6 +19,7 @@
 ===========================================================================
 */
 
+#include "calendar_store.h"
 #include "input_gate.h"
 #include "pause.h"
 
@@ -67,6 +68,7 @@ class CardianPauseModule : public CPPModule
     void OnTimeServerTick() override
     {
         cardian::pause::letGoIfHolderLeft();
+        cardian::pause::calendar::saveIfDue();
     }
 };
 

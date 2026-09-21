@@ -76,6 +76,20 @@ inline void release_calendar()
     }
 }
 
+// CARDIAN: the game clock as Unix time -- the calendar's instant on Earth's scale, which is what Lua is told
+// the time is. It stands still in a hold and lags now() by the drift.
+inline time_point game_now()
+{
+    return vanadiel_epoch + (now() - calendar_epoch());
+}
+
+// CARDIAN: start the calendar this far behind real time: the drift a saved game carries over a restart.
+// Main thread only, before anything reads the calendar; lets go of a hold.
+inline void set_calendar_drift(const duration drift)
+{
+    calendar_state.store(drift.count() * 2);
+}
+
 inline std::tm to_utc_tm(const time_point& tp = now())
 {
     std::time_t time_t_val = clock::to_time_t(tp);
