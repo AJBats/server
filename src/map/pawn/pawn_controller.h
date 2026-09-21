@@ -243,6 +243,11 @@ public:
     auto QueuedOrderLine() const -> std::string;
     auto CancelQueuedOrder() -> bool;
 
+    // An order waits on the player's behalf: it ends with the tie to him, as a trek
+    // does (pawn::leftParty). Says whether one was queued. `formerOwner` is told her
+    // queue line is empty when she no longer has an orders owner to tell.
+    auto DropQueuedOrder(std::string_view why, uint32 formerOwner = 0) -> bool;
+
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line
     // of sight, its own script's word -- which the player hears as a note.

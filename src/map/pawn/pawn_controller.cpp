@@ -1273,15 +1273,27 @@ auto CPawnController::QueuedOrderLine() const -> std::string
     return fmt::format("{} {}", m_QueuedOrder->first, PTarget != nullptr ? PTarget->targid : 0);
 }
 
-auto CPawnController::CancelQueuedOrder() -> bool
+auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 formerOwner) -> bool
 {
     if (!m_QueuedOrder.has_value())
     {
         return false;
     }
-    ShowInfoFmt("pawn: {} drops the queued {} (the player took it back)", POwner->getName(), m_QueuedOrder->first);
+    ShowInfoFmt("pawn: {} drops the queued {} ({})", POwner->getName(), m_QueuedOrder->first, why);
     SetQueuedOrder(std::nullopt);
+
+    // Out of his party she has no orders owner for SetQueuedOrder to tell: his addon
+    // still shows the line
+    if (formerOwner != 0 && pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)) == 0)
+    {
+        cardian::link::sendToCharacter(formerOwner, fmt::format("cd q {}", POwner->getName()));
+    }
     return true;
+}
+
+auto CPawnController::CancelQueuedOrder() -> bool
+{
+    return DropQueuedOrder("the player took it back");
 }
 
 void CPawnController::OrderStarted(const unsigned kind, const unsigned id)

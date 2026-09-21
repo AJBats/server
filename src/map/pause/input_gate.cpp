@@ -35,6 +35,7 @@
 #include "packets/c2s/0x0e7_reqlogout.h"
 #include "packets/c2s/0x0e8_camp.h"
 #include "packets/s2c/0x017_chat_std.h"
+#include "packets/s2c/0x052_eventucoff.h"
 #include "pawn/cardian_link.h"
 #include "status_effect_container.h"
 #include "utils/zoneutils.h"
@@ -206,6 +207,12 @@ auto startsLogout(const CCharEntity* PChar, const CBasicPacket& packet) -> bool
     return mode != GP_CLI_COMMAND_REQLOGOUT_MODE::Off && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Leavegame);
 }
 
+auto startsFishing(CBasicPacket& packet) -> bool
+{
+    return static_cast<PacketC2S>(packet.getType()) == PacketC2S::GP_CLI_COMMAND_ACTION &&
+           static_cast<GP_CLI_COMMAND_ACTION_ACTIONID>(packet.as<GP_CLI_COMMAND_ACTION>()->ActionID) == GP_CLI_COMMAND_ACTION_ACTIONID::Fish;
+}
+
 } // namespace
 
 auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
@@ -223,6 +230,22 @@ auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
         }
         ShowInfoFmt("pause: {} may not log out of a held game", PChar->getName());
         PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PChar, MESSAGE_SYSTEM_3, "The game is paused. Resume it to log out.");
+        return true;
+    }
+
+    if (static_cast<PacketC2S>(packet.getType()) == PacketC2S::GP_CLI_COMMAND_COMBINE_ASK)
+    {
+        ShowInfoFmt("pause: {} may not start a synthesis in a held game", PChar->getName());
+        PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PChar, MESSAGE_SYSTEM_3, "Cannot perform synthesis while the game is paused.");
+        return true;
+    }
+
+    if (startsFishing(packet))
+    {
+        ShowInfoFmt("pause: {} may not cast a line in a held game", PChar->getName());
+        PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PChar, MESSAGE_SYSTEM_3, "Cannot fish while the game is paused.");
+        // His client waits for an answer to a cast: let it go, as the game's own refusals do
+        PChar->pushPacket<GP_SERV_COMMAND_EVENTUCOFF>(PChar, GP_SERV_COMMAND_EVENTUCOFF_MODE::Fishing);
         return true;
     }
 

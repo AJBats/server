@@ -990,6 +990,12 @@ namespace pawn
             {
                 continue;
             }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+
+            // Whose orders she was under, read before the books below forget it
+            const auto   ownerIt   = playerByPawn.find(charid);
+            const uint32 herPlayer = ownerIt != playerByPawn.end() ? ownerIt->second : summonerOf(charid);
+
             if (herself)
             {
                 playerByPawn.erase(charid);
@@ -1018,6 +1024,13 @@ namespace pawn
                 ShowInfoFmt("pawn: {} is out of the party{}: her {} ends where she stands", PPawn->getName(),
                             herself ? "" : fmt::format(" ({} left it)", PMember->getName()), trekking ? "trek" : "walk");
             }
+            // An order still waiting was her player's, like the trek: with her out of his
+            // party, or him, she no longer carries it out (one given in a pause would fire
+            // at the release). Another player's cardian keeps hers when this one leaves.
+            if (PController != nullptr && (herself || herPlayer == PMember->id))
+            {
+                PController->DropQueuedOrder(herself ? "out of the party" : "her player left the party", herPlayer);
+            }
             if (herself)
             {
                 const auto* PLeader = PParty != nullptr ? const_cast<CParty*>(PParty)->GetLeader() : nullptr;
@@ -1028,7 +1041,7 @@ namespace pawn
             // once her player is
             if (summonerOf(charid) == 0 && (herself || playerLeft))
             {
-                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+                if (PController != nullptr)
                 {
                     PController->SetWaiting(false, false, "out of the party");
                     PController->SetHunting(false);

@@ -28,6 +28,16 @@ ffi.cdef [[
         uint8_t  PropertyItemIndex;
         uint8_t  padding00[2];
     } CARDIAN_TEST_TROPHY_ENTRY;
+
+    typedef struct {
+        uint16_t id : 9;
+        uint16_t size : 7;
+        uint16_t sync;
+        uint32_t UniqueNo;
+        uint16_t ActIndex;
+        uint16_t ActionID;
+        uint32_t buffer[4];
+    } CARDIAN_TEST_ACTION;
 ]]
 
 describe('Combat pause: the release and logging out', function()
@@ -233,5 +243,95 @@ describe('Combat pause: the release and logging out', function()
         local refusal = player:cardianPause()
         assert(refusal ~= '', 'the button answered nothing')
         assert(not pause.isHeld(), 'a player logging out took the hold')
+    end)
+
+    -- A synthesis has a client half, which plays out by itself once begun, and a server
+    -- half on game time: the two only agree if none begins or stands in a held game.
+    describe('a synthesis', function()
+        local crystal = xi.item.WIND_CRYSTAL
+        local log     = xi.item.ARROWWOOD_LOG
+
+        local function isFree(itemId)
+            local item = player:findItem(itemId)
+            return item ~= nil and item:state() == xi.itemState.FREE
+        end
+
+        before_each(function()
+            player:addItem(crystal)
+            player:addItem(log)
+        end)
+
+        it('does not begin while held, and he is told why', function()
+            pause.hold()
+            player.packets:clear()
+            player.actions:craft(crystal, { log })
+            xi.test.world:skipTime(1)
+
+            assert(isFree(crystal) and isFree(log), 'a synthesis began in a held game')
+
+            local told = false
+            for _, packet in pairs(player.packets:getIncoming()) do
+                if packet.type == 0x017 then
+                    told = true
+                end
+            end
+
+            assert(told, 'he was not told why')
+
+            pause.release()
+            xi.test.world:skipTime(17)
+            xi.test.world:skipTime(15)
+            assert(isFree(crystal) and isFree(log), 'the refused synthesis was kept for the release')
+        end)
+
+        it('gives no hold to a player in the middle of one', function()
+            player.actions:craft(crystal, { log })
+            assert(not isFree(log), 'the synthesis did not begin')
+
+            local refusal = player:cardianPause()
+            assert(refusal ~= '', 'the button answered nothing')
+            assert(not pause.isHeld(), 'a player in the middle of a synthesis took the hold')
+        end)
+    end)
+
+    -- Fishing is the same two halves: the client plays the catch by itself.
+    describe('fishing', function()
+        local ACTION = 0x01A
+        local FISH   = 0x0E
+
+        it('casts no line while held, tells him why, and keeps nothing for the release', function()
+            pause.hold()
+            player.packets:clear()
+
+            local p = ffi.new('CARDIAN_TEST_ACTION')
+            p.UniqueNo = player:getID()
+            p.ActIndex = player:getTargID()
+            p.ActionID = FISH
+            player.packets:send(ACTION, p, ffi.sizeof(p))
+            xi.test.world:skipTime(1)
+
+            assert(pause.queued(player:getID()) == nil, 'casting a line was kept for the release')
+
+            -- His client waits for an answer to a cast, and stays locked without one
+            local told, letGo = false, false
+            for _, packet in pairs(player.packets:getIncoming()) do
+                if packet.type == 0x017 then
+                    told = true
+                elseif packet.type == 0x052 then
+                    letGo = true
+                end
+            end
+
+            assert(told, 'he was not told why')
+            assert(letGo, 'his client was not let go of the cast it is waiting on')
+        end)
+
+        it('gives no hold to a player with a line in the water', function()
+            player:setAnimation(xi.animation.FISHING_START)
+
+            local refusal = player:cardianPause()
+            assert(refusal ~= '', 'the button answered nothing')
+            assert(not pause.isHeld(), 'a player who is fishing took the hold')
+        end)
     end)
 end)

@@ -47,6 +47,12 @@ class CCharEntity;
 // (game time, it would never run down) is refused with a line of chat, not queued.
 // Stopping a countdown already running passes.
 //
+// Nobody starts a synthesis or casts a fishing line in a held game either, refused the
+// same way: the client plays those out by itself once told to, while the server's half
+// counts game time and would only begin at the release. Nor is the game held by a
+// player in the middle of one (pause.cpp, toggle). Harvesting, logging, mining and
+// excavation are one trade with an NPC, done when answered: nothing to gate.
+//
 // His body stays where it is: a position packet while held is pinned to where the
 // server has him before its handler reads it (pause P4). Main thread only.
 namespace cardian::pause::input

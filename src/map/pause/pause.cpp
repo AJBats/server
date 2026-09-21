@@ -164,6 +164,18 @@ auto toggle(CCharEntity* PChar) -> std::string
             return "you are logging out";
         }
 
+        // Nor in the middle of a synthesis or with a line in the water: the client plays
+        // those out by itself while the server's half would wait for the release (input_gate.h)
+        if (PChar->isCrafting())
+        {
+            return "Cannot pause while performing synthesis.";
+        }
+
+        if (PChar->isFishing())
+        {
+            return "Cannot pause while fishing.";
+        }
+
         hold(charId, PChar->getName());
         return "";
     }
