@@ -75,7 +75,9 @@ public:
     // is a walk in with her weapon away; Hold is drawn on the player's
     // word, waiting for their strike; Fight is a fight; Attend is a support
     // mage at the party's fight from the perimeter, weapon away (RESEARCH
-    // §12.15); Down is KO'd. The
+    // §12.15); Maneuver is the player driving her himself, her gambits
+    // off, until the finisher he chose fires (docs/maneuvers.md); Down is
+    // KO'd. The
     // server's attack state is an input, not the mode: every tick the two
     // are reconciled, and a fight the server ended is a transition out of
     // Fight with the server's reason -- never a silent one.
@@ -91,6 +93,7 @@ public:
         Fight,
         Attend,
         Retreat,
+        Maneuver,
         Down
     };
     static auto modeName(Mode mode) -> const char*;
@@ -184,6 +187,26 @@ public:
     // module calls it): a fraction of a logic tick's step at her own speed,
     // so a steered walk moves at frame rate, and re-paths as the ring moves
     void WalkStep();
+
+    // A maneuver (docs/maneuvers.md): a bounded episode of live control
+    // over this one cardian by the player looking through her. Her gambits
+    // go off, nothing of the controller's moves her but his walk order, and
+    // it ends the moment an order of his leaves her (DoAction, or the
+    // queued order firing): he is handed back and she carries it out. His
+    // camera leaving her, her leaving his party, her death and his cancel
+    // end it too; every end restores her gambit switch to what it was. One
+    // maneuver per player at a time. Begin answers "" or why not.
+    auto BeginManeuver(CCharEntity* PBy) -> std::string;
+    void EndManeuver(std::string_view why);
+    auto InManeuver() const -> bool;
+    // A paused maneuver (held, docs/maneuvers.md): the ring lays a route
+    // while she stands, and the command given from it is her queued order.
+    // Composed, the maneuver no longer needs his eye on her: at the release
+    // she walks the route, the order fires at its end, and that is the
+    // maneuver's end. ComposeMove is the route with no order: end at its
+    // end, waiting there if `wait`. Answers "" or why not.
+    auto ComposeMove(bool wait) -> std::string;
+    auto ManeuverComposed() const -> bool;
 
     // Wait here / follow me. Waiting, she has nowhere to go by order: no
     // following, hunting or travel, so she idles where she stands -- the
@@ -303,6 +326,27 @@ private:
     void WalkOrderTick(timer::time_point now);
     std::optional<position_t> m_WalkPoint; // the point the current path was made for
     timer::time_point         m_LastWalkStep{}; // the steer tick's last step, for its elapsed-time scale
+
+    // The maneuver's books (BeginManeuver): who drives her, and her gambit
+    // switch before it
+    uint32 m_ManeuverBy          = 0;
+    bool   m_ManeuverPriorMaster = true;
+    bool   m_ManeuverComposed    = false; // held, the order (or the move) given: the route is hers to walk at the release
+    void   ManeuverTick();
+    void   NoteOrderFired(); // an order of his left her: a maneuver ends here
+    auto   RouteWalked() const -> bool; // no walk order, or its route walked and its point reached
+    auto   OrderReach(unsigned kind, unsigned id, const CBattleEntity* PTarget) const -> float; // how close an order needs her, in yalms
+    // The order's walk in: an order whose target is out of its reach is a
+    // walk in first and the action second -- "run to and use", as the gambit
+    // engine's own approach is (the user, 2026-09-22) -- and the walk is an
+    // intent the tick's mover takes like any other (Move), so one rule serves
+    // a plain order, a maneuver's and the engine's. OrderOutOfReach says
+    // whether the queued order needs one, and to whom; OrderApproach is the
+    // intent while it does. The grace waits through it, up to kOrderApproachMax
+    auto   OrderOutOfReach() const -> std::optional<std::pair<CBattleEntity*, float>>;
+    bool              m_OrderApproaching = false;
+    timer::time_point m_OrderApproachSince{};
+    timer::time_point m_DoorSaidAt{}; // the fight door's debug line, once a second
     struct WalkStats
     {
         timer::time_point         since{};
@@ -473,6 +517,7 @@ private:
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
     };
+    auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
     // The tick's danger map, scanned once before the movers run so every
     // one of them can ask IsClear while choosing, and the vet sees the

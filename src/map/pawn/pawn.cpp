@@ -152,10 +152,15 @@ namespace
     std::unordered_map<uint32, xi::ZoneId> travelOrders;
     struct WalkOrder
     {
-        position_t point;
-        uint32     by;
+        position_t              point;
+        uint32                  by;
+        std::vector<position_t> route; // crumbs to walk through before the point, in order (a laid route)
+        std::size_t             next = 0;
     };
+    constexpr std::size_t kRouteMax   = 400;
+    constexpr float       kCrumbEvery = 1.0f;
     std::unordered_map<uint32, WalkOrder> walkOrders;
+    std::unordered_map<uint32, uint32>    maneuvers; // player charid -> the cardian he drives
 
     // Zone transfers awaiting execution on the module tick
     std::unordered_map<uint32, std::optional<pawn::TravelHop>> pendingTransfers;
@@ -1037,6 +1042,8 @@ namespace pawn
             if (PController != nullptr && (herself || herPlayer == PMember->id))
             {
                 PController->DropQueuedOrder(herself ? "out of the party" : "her player left the party", herPlayer);
+                // A maneuver is his hand on her: it ends with the party tie too
+                PController->EndManeuver(herself ? "out of the party, the maneuver ends" : "her player left the party, the maneuver ends");
             }
             if (herself)
             {
@@ -1873,9 +1880,41 @@ namespace pawn
         travelOrders.erase(pawnCharID);
     }
 
-    void setWalkOrder(const uint32 pawnCharID, const position_t& point, const uint32 by)
+    void setWalkOrder(const uint32 pawnCharID, const position_t& point, const uint32 by, const bool laying)
     {
-        walkOrders[pawnCharID] = { point, by };
+        auto it = walkOrders.find(pawnCharID);
+        if (it == walkOrders.end() || !laying)
+        {
+            walkOrders[pawnCharID] = { point, by, {}, 0 };
+            return;
+        }
+        auto& order = it->second;
+        // laying: the old point joins the route once the new one is a crumb's length on
+        const auto& last = order.route.empty() ? order.point : order.route.back();
+        if (distance(last, point) >= kCrumbEvery && order.route.size() < kRouteMax)
+        {
+            order.route.push_back(order.point);
+        }
+        order.point = point;
+        order.by    = by;
+    }
+
+    auto routeFront(const uint32 pawnCharID) -> std::optional<position_t>
+    {
+        const auto it = walkOrders.find(pawnCharID);
+        if (it == walkOrders.end() || it->second.next >= it->second.route.size())
+        {
+            return std::nullopt;
+        }
+        return it->second.route[it->second.next];
+    }
+
+    void popRoute(const uint32 pawnCharID)
+    {
+        if (const auto it = walkOrders.find(pawnCharID); it != walkOrders.end() && it->second.next < it->second.route.size())
+        {
+            ++it->second.next;
+        }
     }
 
     auto walkOrderOf(const uint32 pawnCharID) -> std::optional<position_t>
@@ -1897,10 +1936,33 @@ namespace pawn
 
     void forEachWalkOrder(const std::function<void(uint32)>& fn)
     {
-        for (const auto& [charid, point] : walkOrders)
+        // over a copy of the keys: a step may end its own order (clearWalkOrder)
+        std::vector<uint32> charids;
+        charids.reserve(walkOrders.size());
+        for (const auto& [charid, order] : walkOrders)
+        {
+            charids.push_back(charid);
+        }
+        for (const auto charid : charids)
         {
             fn(charid);
         }
+    }
+
+    void setManeuver(const uint32 playerCharID, const uint32 pawnCharID)
+    {
+        maneuvers[playerCharID] = pawnCharID;
+    }
+
+    auto maneuverOf(const uint32 playerCharID) -> uint32
+    {
+        const auto it = maneuvers.find(playerCharID);
+        return it != maneuvers.end() ? it->second : 0;
+    }
+
+    void clearManeuver(const uint32 playerCharID)
+    {
+        maneuvers.erase(playerCharID);
     }
 
     void playerZoning(const CCharEntity* PPlayer, const xi::ZoneId destination)

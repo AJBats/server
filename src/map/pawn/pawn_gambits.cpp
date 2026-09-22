@@ -1816,7 +1816,7 @@ namespace pawn
             {
                 continue;
             }
-            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget() });
+            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget(), PSpell->getMPCost() });
             if (const auto family = PSpell->getSpellFamily(); family != SPELLFAMILY_NONE && std::find(families.begin(), families.end(), family) == families.end())
             {
                 families.push_back(family);

@@ -384,11 +384,24 @@ namespace pawn
     // every frame the ring moves. Follow, Wait and the approaches yield to
     // it; a fight does not (DoRoamTick is the idle tick), and she comes
     // back to it when the fight ends.
-    void setWalkOrder(uint32 pawnCharID, const position_t& point, uint32 by);
+    // `laying`: the point is a stop on a route being laid (a paused maneuver,
+    // docs/maneuvers.md): the point before it becomes a crumb to walk through
+    // on the way, every yalm or so, and the order is walked crumb by crumb
+    // (routeFront / popRoute) before its point
+    void setWalkOrder(uint32 pawnCharID, const position_t& point, uint32 by, bool laying = false);
     auto walkOrderOf(uint32 pawnCharID) -> std::optional<position_t>;
+    auto routeFront(uint32 pawnCharID) -> std::optional<position_t>; // the next crumb, none when the point is next
+    void popRoute(uint32 pawnCharID);
     auto walkOrderedBy(uint32 pawnCharID) -> uint32; // 0 = no order
     void clearWalkOrder(uint32 pawnCharID);
     void forEachWalkOrder(const std::function<void(uint32)>& fn);
+
+    // The maneuver a player has standing (docs/maneuvers.md,
+    // CPawnController::BeginManeuver): the cardian he drives, one at a time.
+    // The controller keeps the maneuver; this is the one-at-a-time index
+    void setManeuver(uint32 playerCharID, uint32 pawnCharID);
+    auto maneuverOf(uint32 playerCharID) -> uint32; // 0 = none
+    void clearManeuver(uint32 playerCharID);
 
     // Record that a party invite reached this pawn (seen at OnPushPacket,
     // when InvitePending is already stamped on the entity). The pawn accepts

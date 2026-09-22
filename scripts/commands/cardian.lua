@@ -745,12 +745,13 @@ local function sendVocab(player, name)
     chunked('gvc', function (g) return (g ~= '' and g or '-') .. ' ' end, v.conditions, function (e) return e.group end)
     chunked('gvs', function () return '' end, v.statuses)
     chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
-    -- The valid-target mask of every action that has one, key=mask: what
-    -- a command window may aim it at
+    -- The valid-target mask and the MP cost of every action that has a
+    -- mask, key=mask,mp: what a command window may aim it at, and what it
+    -- may grey out
     local masks = {}
     for _, e in ipairs(v.actions) do
         if e.targets ~= nil and e.targets > 0 then
-            masks[#masks + 1] = { key = e.key, label = tostring(e.targets) }
+            masks[#masks + 1] = { key = e.key, label = tostring(e.targets) .. ',' .. tostring(e.mp or 0) }
         end
     end
     chunked('gvx', function () return '' end, masks)
@@ -831,12 +832,22 @@ commandObj.onTrigger = function(player, line)
         sendList(player)
     elseif verb == 'walk' and name then
         -- A walk order: `walk <name> <x> <y> <z>` (the server's x, height, z),
-        -- `walk <name> off` takes it back. Refreshed a few times a second
-        -- by a steered walk, so the reply goes out only for a refusal
+        -- `walk <name> off` takes it back. Refreshed every frame the ring
+        -- moves, so the reply is a refusal, or `ring <x> <y> <z> <ax> <az>` --
+        -- the point as the mesh took it, and the x and z that were asked, so
+        -- the ring can apply the difference to wherever it has got to since --
+        -- only when the mesh moved the point
         local x, y, z = tonumber(args[3]), tonumber(args[4]), tonumber(args[5])
-        local err = (x and y and z) and player:cardianWalk(name, x, y, z) or player:cardianWalk(name)
+        local err, rx, ry, rz
+        if x and y and z then
+            err, rx, ry, rz = player:cardianWalk(name, x, y, z)
+        else
+            err = player:cardianWalk(name)
+        end
         if err ~= '' then
             reply(player, '#cd err walk ' .. err)
+        elseif rx ~= nil and (math.abs(rx - x) > 0.02 or math.abs(ry - y) > 0.02 or math.abs(rz - z) > 0.02) then
+            reply(player, string.format('#cd ring %.2f %.2f %.2f %.2f %.2f', rx, ry, rz, x, z))
         end
     elseif verb == 'view' then
         -- The view origin: the world around this cardian (or, for the
@@ -846,6 +857,23 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err view ' .. err)
         else
             reply(player, '#cd ok view')
+        end
+    elseif verb == 'mv' then
+        -- A maneuver (docs/maneuvers.md): `mv <name>` begins one on her, `mv
+        -- <name> off` cancels; bare `mv` answers the one standing, for an addon
+        -- that has just bound. Every change is pushed by the server itself (`cd
+        -- mv <name> on`, `cd mv <name>` when it ended); only the answer to a
+        -- press is given here
+        if name == nil then
+            local on = player:cardianManeuverOf()
+            reply(player, on ~= '' and ('#cd mv ' .. on .. ' on') or '#cd mv')
+        else
+            local err = player:cardianManeuver(name, args[3] or '')
+            if err ~= '' then
+                reply(player, '#cd err mv ' .. err)
+            else
+                reply(player, '#cd ok mv')
+            end
         end
     elseif verb == 'pause' then
         -- The pause button. A hold taken or let go is told to every addon by the

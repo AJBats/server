@@ -148,6 +148,7 @@ namespace pawn
         std::string label; // as the player reads it; a '*' stands for the number
         std::string group; // actions: Behaviours / Magic / Abilities / WeaponSkills / Ranged; numeric conditions: "min,max,step,default"
         uint16      targets = 0; // actions: the valid-target mask (TARGET_*), so a command window knows which cursor to open
+        uint16      mp      = 0; // spells: the base MP cost, so a command window can grey what she cannot afford
     };
     struct Vocabulary
     {

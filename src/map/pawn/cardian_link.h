@@ -45,6 +45,8 @@ class Scheduler;
 //                     | cd paused <holder> | cd resumed (to every bound addon, and
 //                     | cd paused after bound when the simulation is held)
 //                     | cd q <character> [<key> <target index>] (a queued command set, replaced or gone)
+//                     | cd mv <cardian> on|composed | cd mv <cardian> (his maneuver begun, composed under a hold, or ended)
+//                     | cd ring <x> <y> <z> <asked x> <asked z> (a walk point as the mesh took it, when it differs)
 //                     | pong <n> | stats k=v ... | err <text>
 //
 // cd carries the cardian management API (scripts/commands/cardian.lua): the
