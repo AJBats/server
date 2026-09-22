@@ -302,6 +302,15 @@ private:
     void WalkTick();
     void WalkOrderTick(timer::time_point now);
     std::optional<position_t> m_WalkPoint; // the point the current path was made for
+    timer::time_point         m_LastWalkStep{}; // the steer tick's last step, for its elapsed-time scale
+    struct WalkStats
+    {
+        timer::time_point         since{};
+        uint32                    steps   = 0;
+        float                     moved   = 0.0f;
+        std::chrono::microseconds elapsed = std::chrono::microseconds(0);
+        std::chrono::microseconds lost    = std::chrono::microseconds(0);
+    } m_WalkStats; // the walk's five-second accounting, in the map log
 
     // The lead holds a point ahead of the player; everyone else holds a
     // seat on the ring around them. RingSlot is a Formation row's seat, or

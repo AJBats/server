@@ -3433,7 +3433,8 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
     if (away < 0.2f)
     {
         PPathFind->Clear();
-        m_WalkPoint = *point;
+        m_WalkPoint    = *point;
+        m_LastWalkStep = now; // standing on the ring: the next step is a period's worth, not the time she stood
         return;
     }
     if (PPathFind->IsFollowingPath() && m_WalkPoint.has_value() && distance(*m_WalkPoint, *point) < 0.15f)
@@ -3455,7 +3456,9 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
 
 void CPawnController::WalkStep()
 {
-    if (m_Mode != Mode::Walk || !POwner->PAI->CanFollowPath())
+    // A held game (pause/pause.h) holds her too: the AI tick stands down
+    // under a hold, and so must this timer, which runs on real time
+    if (m_Mode != Mode::Walk || !POwner->PAI->CanFollowPath() || cardian::pause::isHeld())
     {
         return;
     }
@@ -3464,12 +3467,42 @@ void CPawnController::WalkStep()
     auto* PPathFind = POwner->PAI->PathFind.get();
     if (!PPathFind->IsFollowingPath())
     {
+        // A re-path tick (the path is not "following" until the next one)
+        // keeps the clock running, so the next step covers the time
         return;
     }
-    // The fraction of a logic tick's step this period is worth
-    PPathFind->SetStepScale(static_cast<float>(cardian::view::kSteerPeriodMs) / 400.0f);
+    // The fraction of a logic tick's step the time since the last step is
+    // worth, in microseconds (whole milliseconds would truncate a 16 ms
+    // interval): a tick that fires late takes a longer step, so her speed
+    // is exact on average whatever the timer's jitter. Capped at a quarter
+    // step; the first step after a stand is a period's worth.
+    const auto since = m_LastWalkStep == timer::time_point{} ? std::chrono::microseconds(cardian::view::kSteerPeriodMs * 1000) : std::chrono::duration_cast<std::chrono::microseconds>(now - m_LastWalkStep);
+    m_LastWalkStep   = now;
+    const float scale = std::min(0.25f, static_cast<float>(since.count()) / 400000.0f);
+    const auto  before = POwner->loc.p;
+    PPathFind->SetStepScale(scale);
     PPathFind->FollowPath(now);
     PPathFind->SetStepScale(1.0f);
+    // The walk's accounting, every five seconds in the map log while she is
+    // walked: her ground speed (the server's truth, against the client's
+    // meter), the timer's steps, and the time the cap threw away
+    m_WalkStats.steps++;
+    m_WalkStats.elapsed += since;
+    m_WalkStats.lost += std::max(std::chrono::microseconds(0), since - std::chrono::microseconds(100000));
+    m_WalkStats.moved += distance(before, POwner->loc.p);
+    if (m_WalkStats.since == timer::time_point{})
+    {
+        m_WalkStats.since = now;
+    }
+    else if (now - m_WalkStats.since >= 5s)
+    {
+        const float secs = std::chrono::duration<float>(now - m_WalkStats.since).count();
+        ShowInfoFmt("pawn: walk {}: {:.2f} y/s over {:.1f}s, {} steps ({:.1f}/s), elapsed {}ms, {}ms lost to the cap, speed {}",
+                    POwner->getName(), m_WalkStats.moved / secs, secs, m_WalkStats.steps, m_WalkStats.steps / secs,
+                    m_WalkStats.elapsed.count() / 1000, m_WalkStats.lost.count() / 1000, POwner->GetSpeed());
+        m_WalkStats = {};
+        m_WalkStats.since = now;
+    }
     // Her position goes out now, not at the logic tick's PostTick (400 ms):
     // the viewer's client hears every step. The packet LEADS her by what the
     // client takes to ease an entity onto a packet position (STEER_LEAD_MS
