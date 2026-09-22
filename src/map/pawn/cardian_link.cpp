@@ -20,6 +20,7 @@
 */
 
 #include "cardian_link.h"
+#include "view.h"
 #include "formation_math.h"
 
 #include "common/logging.h"
@@ -48,7 +49,7 @@ extern sol::state lua;
 // kProtocol) unloads itself when its own differs: both are bumped together
 // whenever a line either side sends changes shape, and no line is kept
 // compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 6; // 6: the held calendar (cd paused <holder> <game time>; cd resumed <game time>; cd calendar <game time>)
+constexpr uint32 kLinkProtocol = 7; // 7: direct control (view <name>|off, walk <name> <x> <y> <z>|off; cd ok|err view, cd err walk)
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>
@@ -273,6 +274,7 @@ namespace
                 g_boundConnections.erase(it);
             }
             g_freshPositions.erase(boundCharID_);
+            cardian::view::clearById(boundCharID_); // his camera came off her with the addon; her walk ends with the view (WalkOrderTick)
             boundCharID_ = 0;
         }
 
@@ -777,6 +779,7 @@ namespace cardian::link
         {
             return;
         }
+        cardian::view::startTimers(scheduler); // the steer tick (pawn/view.h): the map hands the scheduler to nobody else
 
         if (!settings::get<bool>("cardian.LINK_ENABLED"))
         {

@@ -28,6 +28,7 @@
 #include "common/cbasetypes.h"
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -373,6 +374,21 @@ namespace pawn
 
     auto travelOrderOf(uint32 pawnCharID) -> std::optional<xi::ZoneId>;
     void clearTravelOrder(uint32 pawnCharID);
+
+    // A walk order (ROADMAP C, direct control): a point in her zone she
+    // walks to on the mesh, replacing any earlier one, given by the player
+    // looking through her (`by`) and kept while he does -- arrived, she
+    // stands on it; the order ends with his `off`, with his view of her
+    // (camera off, addon gone, logout), with her leaving his party, or at a
+    // point the mesh cannot reach. A steered walk is this order refreshed
+    // every frame the ring moves. Follow, Wait and the approaches yield to
+    // it; a fight does not (DoRoamTick is the idle tick), and she comes
+    // back to it when the fight ends.
+    void setWalkOrder(uint32 pawnCharID, const position_t& point, uint32 by);
+    auto walkOrderOf(uint32 pawnCharID) -> std::optional<position_t>;
+    auto walkOrderedBy(uint32 pawnCharID) -> uint32; // 0 = no order
+    void clearWalkOrder(uint32 pawnCharID);
+    void forEachWalkOrder(const std::function<void(uint32)>& fn);
 
     // Record that a party invite reached this pawn (seen at OnPushPacket,
     // when InvitePending is already stamped on the entity). The pawn accepts

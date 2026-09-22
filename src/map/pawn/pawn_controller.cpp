@@ -20,6 +20,7 @@
 */
 
 #include "pawn_controller.h"
+#include "view.h"
 
 #include "local_planner.h"
 #include "cardian_link.h"
@@ -168,6 +169,8 @@ auto CPawnController::modeName(const Mode mode) -> const char*
             return "Wait";
         case Mode::Travel:
             return "Travel";
+        case Mode::Walk:
+            return "Walk";
         case Mode::Roam:
             return "Roam";
         case Mode::Approach:
@@ -2848,6 +2851,20 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    if (pawn::walkOrderOf(POwner->id).has_value())
+    {
+        if (m_Mode != Mode::Walk)
+        {
+            Transition(Mode::Walk, "walked by the player");
+        }
+        WalkTick();
+        co_return;
+    }
+    if (m_Mode == Mode::Walk)
+    {
+        Transition(IdleMode(), "the walk is over");
+    }
+
     // A world body on her own, or leading her camp: nobody to follow. Her
     // walk in on a mob is the shared one, anchored on herself and paced by
     // nothing but her own rest; the rest of her idle is Roam (RoamTick). A
@@ -3376,6 +3393,107 @@ auto CPawnController::CourtesyStep(const position_t& point) -> position_t
     // from the goal and not from a point a yalm short of it
     const auto [x, z] = cardian::planner::along(*plan, plan->length <= kReach + 1.5f ? plan->length : kReach);
     return position_t(x, me.y, z, 0, 0);
+}
+
+void CPawnController::WalkTick()
+{
+    WalkOrderTick(m_Tick);
+    if (!cardian::view::timersArmed() && POwner->PAI->PathFind->IsFollowingPath())
+    {
+        POwner->PAI->PathFind->FollowPath(m_Tick);
+    }
+}
+
+// The walk order as it stands: arrived (within 0.2 y) she stands on the
+// point and the order stays, so a steered walk whose ring she has caught
+// resumes the instant the ring moves on; a point she already paths to
+// keeps its path; a new point is pathed now. A point the mesh cannot
+// reach is dropped -- unless she is all but on it (the walker refuses a
+// route with no forward step), which is arrival too. The order lives as
+// long as its giver looks through her: his camera off her, his addon
+// gone, his logout all end it here. Called from the logic tick and, every
+// kSteerPeriodMs, from the steer tick.
+void CPawnController::WalkOrderTick(const timer::time_point now)
+{
+    const auto point = pawn::walkOrderOf(POwner->id);
+    if (!point.has_value())
+    {
+        return;
+    }
+    const auto* PBy = zoneutils::GetChar(pawn::walkOrderedBy(POwner->id));
+    if (PBy == nullptr || cardian::view::origin(PBy) != POwner)
+    {
+        ShowInfoFmt("pawn: walk {}: the player looks away, order ends", POwner->getName());
+        pawn::clearWalkOrder(POwner->id);
+        POwner->PAI->PathFind->Clear();
+        return;
+    }
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    const float away = distance(POwner->loc.p, *point);
+    if (away < 0.2f)
+    {
+        PPathFind->Clear();
+        m_WalkPoint = *point;
+        return;
+    }
+    if (PPathFind->IsFollowingPath() && m_WalkPoint.has_value() && distance(*m_WalkPoint, *point) < 0.15f)
+    {
+        return;
+    }
+    m_WalkPoint = *point;
+    if (!PathToward(*point, 0.0f))
+    {
+        if (away < 1.5f)
+        {
+            PPathFind->Clear();
+            return;
+        }
+        ShowInfoFmt("pawn: walk {}: cannot path to ({:.1f}, {:.1f}, {:.1f}) {:.1f}y away, order dropped", POwner->getName(), point->x, point->y, point->z, away);
+        pawn::clearWalkOrder(POwner->id);
+    }
+}
+
+void CPawnController::WalkStep()
+{
+    if (m_Mode != Mode::Walk || !POwner->PAI->CanFollowPath())
+    {
+        return;
+    }
+    const auto now = timer::now();
+    WalkOrderTick(now);
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    if (!PPathFind->IsFollowingPath())
+    {
+        return;
+    }
+    // The fraction of a logic tick's step this period is worth
+    PPathFind->SetStepScale(static_cast<float>(cardian::view::kSteerPeriodMs) / 400.0f);
+    PPathFind->FollowPath(now);
+    PPathFind->SetStepScale(1.0f);
+    // Her position goes out now, not at the logic tick's PostTick (400 ms):
+    // the viewer's client hears every step. The packet LEADS her by what the
+    // client takes to ease an entity onto a packet position (STEER_LEAD_MS
+    // of her run), along her facing, never past the ring: the ring is where
+    // the player means her to be, and the lead only shows her on the way
+    // there sooner. Her real position -- aggro, range, everything the
+    // server judges -- is untouched; only the packet is built from the led
+    // point, and the position is put back at once.
+    if (POwner->loc.zone != nullptr)
+    {
+        const auto  point   = pawn::walkOrderOf(POwner->id);
+        const float toRing  = point.has_value() ? distance(POwner->loc.p, *point) : 0.0f;
+        const float leadMax = settings::get<float>("pawn.STEER_LEAD_MS") / 1000.0f * static_cast<float>(POwner->GetSpeed()) / 50.0f * 2.5f;
+        const float lead    = std::min(leadMax, toRing);
+        const auto  real    = POwner->loc.p;
+        if (lead > 0.05f)
+        {
+            const float radians = 2.0f * std::numbers::pi_v<float> - rotationToRadian(real.rotation); // the walker's own convention (pathfind_step.cpp)
+            POwner->loc.p.x     = real.x + std::cos(radians) * lead;
+            POwner->loc.p.z     = real.z + std::sin(radians) * lead;
+        }
+        POwner->loc.zone->UpdateEntityPacket(POwner, ENTITY_UPDATE, UPDATE_POS);
+        POwner->loc.p = real;
+    }
 }
 
 void CPawnController::TravelTick()

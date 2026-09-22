@@ -52,7 +52,7 @@ class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
 class CSpell;
-struct position_t;
+#include "common/types/position.h" // m_WalkPoint holds one
 
 // The autonomous controller for pawn characters: CTrustController's physical
 // layer (formation follow, engage-on-the-player's-swing, combat positioning,
@@ -84,6 +84,7 @@ public:
         Follow,
         Wait,
         Travel,
+        Walk,
         Roam,
         Approach,
         Hold,
@@ -174,9 +175,15 @@ public:
     // no trek after the player. Zoning ends the current fight commitment;
     // new fights are what comes within the leash of the stake.
     void SetStake(std::optional<pawn::Stake> stake);
+
     auto Staked() const -> bool;
     // She follows the player through zone lines: not waiting, not staked
     auto Treks() const -> bool;
+
+    // The steer tick's step (pawn/view.h, every kSteerPeriodMs; the pawn
+    // module calls it): a fraction of a logic tick's step at her own speed,
+    // so a steered walk moves at frame rate, and re-paths as the ring moves
+    void WalkStep();
 
     // Wait here / follow me. Waiting, she has nowhere to go by order: no
     // following, hunting or travel, so she idles where she stands -- the
@@ -289,6 +296,12 @@ private:
     // A travel order's zone, or the player in another zone and her party:
     // walk the zone graph toward it, requesting a transfer at each zone line.
     void TravelTick();
+
+    // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
+    // bookkeeping (WalkOrderTick) and, with no steer timer, her step
+    void WalkTick();
+    void WalkOrderTick(timer::time_point now);
+    std::optional<position_t> m_WalkPoint; // the point the current path was made for
 
     // The lead holds a point ahead of the player; everyone else holds a
     // seat on the ring around them. RingSlot is a Formation row's seat, or

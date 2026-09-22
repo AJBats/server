@@ -346,6 +346,11 @@ auto CPathFind::StepTo(const position_t& pos, bool run) -> void
     StepToInternal(pos, run, distanceFromPoint_);
 }
 
+auto CPathFind::SetStepScale(const float scale) -> void // CARDIAN
+{
+    stepScale_ = scale;
+}
+
 auto CPathFind::StepToInternal(const position_t& pos, bool run, float stopShort) -> void
 {
     TracyZoneScoped;
@@ -365,13 +370,13 @@ auto CPathFind::StepToInternal(const position_t& pos, bool run, float stopShort)
         return static_cast<float>(baseSpeed);
     }();
 
-    const float stepDistance = speed / (run ? 50.0f : 40.0f);
+    const float stepDistance = speed / (run ? 50.0f : 40.0f) * stepScale_; // CARDIAN
 
     // Kinematics live in pathfind_step so tests can exercise the exact math; stepTowards() also faces the owner.
     position_t& ownerPos = owner_->position();
     distanceMoved_ += pathfind::stepTowards(ownerPos, pos, stepDistance, stopShort);
 
-    ownerPos.moving += speedChange ? 0x28 : 0x35;
+    ownerPos.moving += static_cast<uint16>((speedChange ? 0x28 : 0x35) * stepScale_); // CARDIAN
     ownerPos.moving %= 0x2000;
     owner_->markPositionDirty();
 }

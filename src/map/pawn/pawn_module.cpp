@@ -30,6 +30,7 @@
 #include "pawn_items.h"
 #include "spell_bank.h"
 #include "tactics.h"
+#include "view.h"
 
 #include "common/logging.h"
 
@@ -52,6 +53,7 @@
 #include "zone.h"
 
 #include <algorithm>
+#include <cctype>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1157,6 +1159,84 @@ class PawnModule : public CPPModule
         {
             const auto* PChar = dynamic_cast<const CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return PChar != nullptr && pawn::isPawn(PChar);
+        };
+
+        // The view origin (ROADMAP C, pawn/view.h): the player's client is
+        // looking through this cardian, so the world around her must reach
+        // him. "" looks through nobody again; a number is a target index in
+        // his zone, any entity, for a GM (a player's eye through any mob
+        // would be a wallhack).
+        lua["CBaseEntity"]["cardianView"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || PChar->loc.zone == nullptr)
+            {
+                return "not in a zone";
+            }
+            if (name.empty())
+            {
+                cardian::view::clear(PChar);
+                return "";
+            }
+            CBaseEntity* PTarget = nullptr;
+            if (std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isdigit(c); }))
+            {
+                if (PChar->m_GMlevel == 0)
+                {
+                    return "a cardian's name";
+                }
+                PTarget = PChar->loc.zone->GetEntity(static_cast<uint16>(std::stoul(name)), TYPE_PC | TYPE_MOB | TYPE_NPC);
+            }
+            else
+            {
+                PTarget = commandPair(PLuaBaseEntity, name).second;
+            }
+            if (PTarget == nullptr || PTarget->loc.zone != PChar->loc.zone)
+            {
+                return "no such entity here";
+            }
+            cardian::view::set(PChar, PTarget);
+            ShowInfoFmt("pawn: {} looks through {}", PChar->getName(), PTarget->getName());
+            return "";
+        };
+
+        // The steer tick (pawn/view.h, every kSteerPeriodMs): every cardian
+        // under a walk order takes her step
+        cardian::view::setSteerTick([]()
+        {
+            pawn::forEachWalkOrder([](const uint32 charid)
+            {
+                auto* PPawn = zoneutils::GetChar(charid);
+                if (PPawn == nullptr || PPawn->PAI == nullptr)
+                {
+                    return;
+                }
+                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
+                {
+                    PController->WalkStep();
+                }
+            });
+        });
+
+        // A walk order (pawn.h): a point in her zone, or none
+        lua["CBaseEntity"]["cardianWalk"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, sol::optional<float> x, sol::optional<float> y, sol::optional<float> z) -> std::string
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            if (PPawn == nullptr)
+            {
+                return "no such cardian";
+            }
+            if (!x.has_value() || !y.has_value() || !z.has_value())
+            {
+                pawn::clearWalkOrder(PPawn->id);
+                return "";
+            }
+            if (PPawn->loc.zone == nullptr || PChar->loc.zone != PPawn->loc.zone)
+            {
+                return "not in your zone";
+            }
+            pawn::setWalkOrder(PPawn->id, position_t{ *x, *y, *z, 0, 0 }, PChar->id);
+            return "";
         };
 
         // The command window: one action now, on a target index in the

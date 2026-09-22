@@ -829,6 +829,24 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err despawn not one of yours, or not out')
         end
         sendList(player)
+    elseif verb == 'walk' and name then
+        -- A walk order: `walk <name> <x> <y> <z>` (the server's x, height, z),
+        -- `walk <name> off` takes it back. Refreshed a few times a second
+        -- by a steered walk, so the reply goes out only for a refusal
+        local x, y, z = tonumber(args[3]), tonumber(args[4]), tonumber(args[5])
+        local err = (x and y and z) and player:cardianWalk(name, x, y, z) or player:cardianWalk(name)
+        if err ~= '' then
+            reply(player, '#cd err walk ' .. err)
+        end
+    elseif verb == 'view' then
+        -- The view origin: the world around this cardian (or, for the
+        -- experiment, this target index) reaches his client too; `off` ends it
+        local err = player:cardianView((name == nil or name == 'off') and '' or name)
+        if err ~= '' then
+            reply(player, '#cd err view ' .. err)
+        else
+            reply(player, '#cd ok view')
+        end
     elseif verb == 'pause' then
         -- The pause button. A hold taken or let go is told to every addon by the
         -- server itself (cd paused / cd resumed); only a refusal is answered here

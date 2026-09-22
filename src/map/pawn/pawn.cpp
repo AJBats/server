@@ -150,6 +150,12 @@ namespace
 
     // pawn charid -> ordered travel destination
     std::unordered_map<uint32, xi::ZoneId> travelOrders;
+    struct WalkOrder
+    {
+        position_t point;
+        uint32     by;
+    };
+    std::unordered_map<uint32, WalkOrder> walkOrders;
 
     // Zone transfers awaiting execution on the module tick
     std::unordered_map<uint32, std::optional<pawn::TravelHop>> pendingTransfers;
@@ -999,6 +1005,7 @@ namespace pawn
             if (herself)
             {
                 playerByPawn.erase(charid);
+                clearWalkOrder(charid); // out of the party, no longer his to walk
             }
             else if (const auto pit = playerByPawn.find(charid); pit != playerByPawn.end() && pit->second == PMember->id)
             {
@@ -1864,6 +1871,36 @@ namespace pawn
     void clearTravelOrder(const uint32 pawnCharID)
     {
         travelOrders.erase(pawnCharID);
+    }
+
+    void setWalkOrder(const uint32 pawnCharID, const position_t& point, const uint32 by)
+    {
+        walkOrders[pawnCharID] = { point, by };
+    }
+
+    auto walkOrderOf(const uint32 pawnCharID) -> std::optional<position_t>
+    {
+        const auto it = walkOrders.find(pawnCharID);
+        return it != walkOrders.end() ? std::optional{ it->second.point } : std::nullopt;
+    }
+
+    auto walkOrderedBy(const uint32 pawnCharID) -> uint32
+    {
+        const auto it = walkOrders.find(pawnCharID);
+        return it != walkOrders.end() ? it->second.by : 0;
+    }
+
+    void clearWalkOrder(const uint32 pawnCharID)
+    {
+        walkOrders.erase(pawnCharID);
+    }
+
+    void forEachWalkOrder(const std::function<void(uint32)>& fn)
+    {
+        for (const auto& [charid, point] : walkOrders)
+        {
+            fn(charid);
+        }
     }
 
     void playerZoning(const CCharEntity* PPlayer, const xi::ZoneId destination)
