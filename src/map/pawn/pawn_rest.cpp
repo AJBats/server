@@ -88,7 +88,9 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool withPlayer = follow && (healing != nullptr || nearLeader);
     const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(POwner));
     const bool support = advice.has_value() && pawn::tactics::supportMage(POwner) && m_Gambits->MasterOn();
-    const bool supportRecovery = support && (advice->recover || POwner->health.hp < POwner->GetMaxHP());
+    // MP alone decides a Support Mage's own rest: her missing HP is her
+    // cures' to mend, as anyone else's is (the user, 2026-09-23)
+    const bool supportRecovery = support && advice->recover;
     // Rest With Player stays an explicit input even when a support role owns
     // autonomous recovery. Do not overwrite it with the role's MP decision.
     const bool want = townKneel || (support && place != nullptr && (supportRecovery || (healing != nullptr && POwner->health.mp < POwner->GetMaxMP())));
