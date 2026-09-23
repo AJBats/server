@@ -190,7 +190,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     if (decision == cardian::rest::Decision::Stand)
     {
         StandFromRest(support && advice->wake ? advice->why : unsafe && !ordered ? "danger" : noRecovery ? "recovery blocked" :
-            HasQueuedOrder() ? "the player's action order" :
+            HasQueuedOrder() && !m_ManeuverResting ? "the player's action order" :
             support && place != nullptr && landed && !supportRecovery && !withPlayer && !campClear ? "recovery tick: pace and reserve ready" : "rest request ended or movement needed");
     }
     else if (decision == cardian::rest::Decision::Kneel)

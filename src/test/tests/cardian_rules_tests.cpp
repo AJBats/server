@@ -112,6 +112,24 @@ TEST_CASE("worthWalkingIn: only distance and the draw's wait are walked off", "[
     REQUIRE_FALSE(worthWalkingIn(dead));
 }
 
+TEST_CASE("onlyCooldown: near enough, and only the draw's wait refuses", "[cardian][rules]")
+{
+    REQUIRE_FALSE(onlyCooldown(fairMob(5.0f))); // no wait: she may draw now
+
+    auto waiting = fairMob(5.0f);
+    waiting.cooldown = true;
+    REQUIRE(onlyCooldown(waiting));
+
+    auto farAndWaiting = fairMob(45.0f);
+    farAndWaiting.cooldown = true;
+    REQUIRE_FALSE(onlyCooldown(farAndWaiting)); // the distance is in the way too
+
+    auto claimedAndWaiting = fairMob(5.0f);
+    claimedAndWaiting.cooldown  = true;
+    claimedAndWaiting.claimable = false;
+    REQUIRE_FALSE(onlyCooldown(claimedAndWaiting));
+}
+
 TEST_CASE("padded: every circle grows by the clearance", "[cardian][rules]")
 {
     const Circles circles{ { 0.0f, 0.0f, 8.0f }, { 20.0f, 0.0f, 15.0f } };

@@ -1239,10 +1239,22 @@ namespace
     {
         return static_cast<int>(std::ceil(std::chrono::duration<double>(d).count()));
     }
+
+    // The command window's Attack and Disengage, as the addon sends them and her queue holds them
+    constexpr std::string_view kAttackOrder    = "attack";
+    constexpr std::string_view kDisengageOrder = "disengage";
 } // namespace
 
 auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string
 {
+    if (key == kAttackOrder)
+    {
+        return AttackOrder(PTarget);
+    }
+    if (key == kDisengageOrder)
+    {
+        return DisengageOrder();
+    }
     unsigned kind = 0;
     unsigned mode = 0;
     unsigned id   = 0;
@@ -1302,7 +1314,9 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         {
             // a live maneuver's order that must wait (the walk in, her recast, her
             // cast under way) is hers to carry out: he is handed back now, and the
-            // tick's mover walks her in, as for any order
+            // tick's mover walks her in, as for any order. It is hers, not the
+            // composed maneuver's, so the maneuver's end must not take it with it
+            m_ManeuverComposed = false;
             EndManeuver("his order is hers to carry out, the maneuver ends");
         }
     }
@@ -1363,6 +1377,13 @@ void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, Entity
     if (order.has_value() && !order->first.starts_with("rest:"))
     {
         EndRestOrder("the player's next order");
+    }
+    // A maneuver's rest lasts exactly as long as its order is queued: met,
+    // replaced, cancelled or dropped with the maneuver, the rest is over
+    if (m_ManeuverResting && !(order.has_value() && order->first.starts_with("rest:")))
+    {
+        m_ManeuverResting = false;
+        EndRestOrder("its maneuver's order is gone");
     }
     m_QueuedOrder = std::move(order);
     if (!m_QueuedOrder.has_value() && m_OrderApproaching)
@@ -1542,15 +1563,56 @@ void CPawnController::FireQueuedOrder()
         }
     }
 
-    // The maneuver's rest (ComposeRest): the route, if one was laid, walked
+    // The maneuver's rest (ComposeRest), the route, if one was laid, walked:
+    // she kneels there and the maneuver lasts, her queued order still, until
+    // the rest order is over -- HP and MP at the percent, or a rest she
+    // cannot carry out (RestTick says which)
     if (int percent = 0; std::sscanf(key.c_str(), "rest:%d", &percent) == 1)
     {
-        SetQueuedOrder(std::nullopt);
-        if (InManeuver())
+        if (!InManeuver())
         {
-            EndManeuver(fmt::format("she rests until {}%: the maneuver ends", percent));
+            SetQueuedOrder(std::nullopt);
+            SetRestOrder(percent, "the player's order");
+            return;
         }
-        SetRestOrder(percent, "the player's maneuver, at the release");
+        if (!m_ManeuverResting)
+        {
+            m_ManeuverResting = true;
+            pawn::clearWalkOrder(POwner->id); // the route's end is where she kneels
+            SetRestOrder(percent, "the player's maneuver");
+            return;
+        }
+        if (!m_RestOrder.active())
+        {
+            SetQueuedOrder(std::nullopt);
+            EndManeuver(fmt::format("her rest until {}% is over, the maneuver ends", percent));
+        }
+        return;
+    }
+
+    // His Attack (AttackOrder), held to the release, the route, if one was
+    // laid, walked: she takes the fight as the party's engage order has her
+    if (key == kAttackOrder)
+    {
+        SetQueuedOrder(std::nullopt);
+        EndManeuver("his attack is away, the maneuver ends");
+        auto* PMob = target.resolve<CMobEntity>();
+        if (PMob == nullptr || PMob->isDead())
+        {
+            ShowInfoFmt("pawn: {} lets the queued attack go (its target is gone)", POwner->getName());
+            Note("the attack let go: its target is gone");
+            return;
+        }
+        ShowInfoFmt("pawn: {} starts the queued attack on {}", POwner->getName(), PMob->getName());
+        EngageOn(PMob);
+        return;
+    }
+    // His Disengage (DisengageOrder), held to the release likewise
+    if (key == kDisengageOrder)
+    {
+        SetQueuedOrder(std::nullopt);
+        EndManeuver("his disengage is away, the maneuver ends");
+        StandDown("the player's order: she sheathes");
         return;
     }
 
@@ -1781,6 +1843,15 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
     // so it starts at once
     if (cardian::rules::worthWalkingIn(facts))
     {
+        // A draw that would hold for his strike, near enough and waiting on
+        // nothing but her own draw cooldown, is not walked into: the hold
+        // keeps her back by him anyway. She stays, and the door draws her
+        // where she stands once the wait is served
+        if (hold && cardian::rules::onlyCooldown(facts))
+        {
+            ShowInfoFmt("pawn: {} waits out her draw cooldown before holding on {}", POwner->getName(), PTarget->getName());
+            return false;
+        }
         if (!m_Approach.has_value() || m_Approach->target.resolve<CBattleEntity>() != PTarget)
         {
             m_Approach = Approach{ EntityId(PTarget), kind };
@@ -3678,6 +3749,7 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
     StandFromRest("a maneuver"); // the ring moves her by path, never through Move's stand
     m_ManeuverBy          = PBy->id;
     m_ManeuverComposed    = false;
+    m_ManeuverResting     = false;
     m_ManeuverPriorMaster = m_Gambits->MasterOn();
     m_Gambits->SetMaster(false);
     pawn::setManeuver(PBy->id, POwner->id);
@@ -3737,9 +3809,9 @@ auto CPawnController::ComposeMove(const bool wait)
     return "";
 }
 
-// A paused maneuver's order is given: composed, it needs his eye no more.
-// His one live maneuver is free again, for the next cardian's: a pause
-// queues one per cardian (the user, 2026-09-23)
+// A maneuver's order is given -- held, or a rest either way: composed, it
+// needs his eye no more. His one live maneuver is free again, for the next
+// cardian's: a pause queues one per cardian (the user, 2026-09-23)
 void CPawnController::MarkComposed(const std::string_view what)
 {
     m_ManeuverComposed = true;
@@ -3769,15 +3841,67 @@ auto CPawnController::ComposeRest(const int percent) -> std::string
     {
         return fmt::format("{} is already at {}% HP and MP", POwner->getName(), percent);
     }
+    // Live, she rests where she stands: the point she was steered toward is let go
+    if (!cardian::pause::isHeld())
+    {
+        pawn::clearWalkOrder(POwner->id);
+    }
+    m_QueuedOrderDeadline = m_Tick + orderGrace();
+    SetQueuedOrder(std::make_pair(fmt::format("rest:{}", percent), EntityId(POwner)));
+    MarkComposed(fmt::format("{}rest until {}%", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", percent));
+    return "";
+}
+
+auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> std::string
+{
+    auto* PMob = dynamic_cast<CMobEntity*>(PTarget);
+    if (PMob == nullptr || PMob->isDead())
+    {
+        return "pick a monster";
+    }
+    if (POwner->isDead())
+    {
+        return "KO'd";
+    }
     if (cardian::pause::isHeld())
     {
-        m_QueuedOrderDeadline = m_Tick + orderGrace();
-        SetQueuedOrder(std::make_pair(fmt::format("rest:{}", percent), EntityId(POwner)));
-        MarkComposed(fmt::format("{}rest until {}%", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", percent));
+        SetQueuedOrder(std::make_pair(std::string(kAttackOrder), EntityId(PMob)));
+        ShowInfoFmt("pawn: {} queues the attack on {} (paused)", POwner->getName(), PMob->getName());
+        if (InManeuver())
+        {
+            MarkComposed(fmt::format("{}attack {}", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", PMob->getName()));
+        }
         return "";
     }
-    EndManeuver(fmt::format("his order is away, rest until {}%: the maneuver ends", percent));
-    SetRestOrder(percent, "the player's maneuver");
+    EndManeuver("his order is away, she attacks: the maneuver ends");
+    DropQueuedOrder("his attack order replaces it"); // her newest order is the one she carries out
+    EngageOn(PMob);
+    return "";
+}
+
+auto CPawnController::DisengageOrder() -> std::string
+{
+    if (POwner->isDead())
+    {
+        return "KO'd";
+    }
+    if (cardian::pause::isHeld())
+    {
+        SetQueuedOrder(std::make_pair(std::string(kDisengageOrder), EntityId(POwner)));
+        ShowInfoFmt("pawn: {} queues the disengage (paused)", POwner->getName());
+        if (InManeuver())
+        {
+            MarkComposed(fmt::format("{}disengage", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : ""));
+        }
+        return "";
+    }
+    const bool fighting = POwner->PAI->IsEngaged() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend;
+    if (!fighting)
+    {
+        return "she is not fighting";
+    }
+    EndManeuver("his order is away, she disengages: the maneuver ends");
+    StandDown("the player's order: she sheathes");
     return "";
 }
 
@@ -3878,6 +4002,12 @@ void CPawnController::ManeuverTick()
         if (!m_QueuedOrder.has_value())
         {
             EndManeuver("nothing left to do, the maneuver ends");
+            return;
+        }
+        // its rest, under way (FireQueuedOrder): down until the percent
+        if (m_ManeuverResting)
+        {
+            RestTick(true);
             return;
         }
         // the route by the walk order; the walk into reach by the mover, as

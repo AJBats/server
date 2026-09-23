@@ -227,11 +227,13 @@ public:
     // maneuver's end. ComposeMove is the route with no order: end at its
     // end, waiting there if `wait`. Answers "" or why not.
     auto ComposeMove(bool wait) -> std::string;
-    // The maneuver's "Rest until N%": live, her rest order at once and the
-    // maneuver's end; paused, her queued order, after the route if one is
-    // laid. Answers "" or why not
+    // The maneuver's "Rest until N%", her queued order either way: live,
+    // composed at once where she stands, his camera handed back; paused,
+    // after the route if one is laid. The maneuver lasts through the rest
+    // until HP and MP both reach N% -- her queued order, and cancelled as
+    // one -- gambits off throughout (the user, 2026-09-23). Answers "" or why not
     auto ComposeRest(int percent) -> std::string;
-    void MarkComposed(std::string_view what); // the paused maneuver's order is given: his live slot frees for the next cardian
+    void MarkComposed(std::string_view what); // the maneuver's order is given, to play out without him: his live slot frees for the next cardian
     auto ManeuverComposed() const -> bool;
     auto ManeuverBy() const -> uint32; // whose maneuver she is on, 0 for none
 
@@ -278,7 +280,8 @@ public:
     // `key` is the vocabulary's action key, kind:mode:id -- the concrete
     // ones only: a spell (2:2:id), an ability (3:2:id), a weapon skill
     // (4:2:id), the ranged attack (1:0:0); the "best of" entries are the
-    // gambit engine's. "" when it fired, else why not.
+    // gambit engine's -- or "attack", her order to fight the mob picked
+    // (AttackOrder), or "disengage" (DisengageOrder). "" when it fired, else why not.
     auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
 
     // The order given a little early -- while she acts, or while the
@@ -359,7 +362,8 @@ private:
     // switch before it
     uint32 m_ManeuverBy          = 0;
     bool   m_ManeuverPriorMaster = true;
-    bool   m_ManeuverComposed    = false; // held, the order (or the move) given: the route is hers to walk at the release
+    bool   m_ManeuverComposed    = false; // its order given (held: after the route, at the release; a rest, live too): it plays out without his eye
+    bool   m_ManeuverResting     = false; // its rest is under way: kept in step with the queue by SetQueuedOrder
     void   ManeuverTick();
     void   NoteOrderFired(); // an order of his left her: a maneuver ends here
     auto   RouteWalked() const -> bool; // no walk order, or its route walked and its point reached
@@ -983,6 +987,17 @@ private:
     auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     void Note(const std::string& text) const; // one line to the player's addon, printed as a complaint
+
+    // The command window's Attack: the party's engage order (EngageOn), given
+    // to her alone, replacing any order she has queued. Held, it waits as her
+    // one queued order -- a paused maneuver's, played out at the end of its
+    // route; live, a maneuver ends as it is given, and she walks in and
+    // fights with her gambits back
+    auto AttackOrder(CBattleEntity* PTarget) -> std::string;
+    // The command window's Disengage: she sheathes, and her gambits may take
+    // her back into the fight after the usual re-engage wait. Held and in a
+    // maneuver, as Attack
+    auto DisengageOrder() -> std::string;
 
     // The one way the queued order changes, so the addon's queue line is never stale
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);

@@ -1268,6 +1268,13 @@ class PawnModule : public CPPModule
             {
                 return { "not in your zone", 0.f, 0.f, 0.f };
             }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            // Composed, her maneuver's way is set: a point still in flight from the ring moves nothing
+            if (PController != nullptr && PController->ManeuverComposed())
+            {
+                const auto at = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
+                return { "", at.x, at.y, at.z };
+            }
             position_t point{ *x, *y, *z, 0, 0 };
             if (auto* PMesh = PPawn->loc.zone->navMesh(); PMesh != nullptr)
             {
@@ -1283,8 +1290,7 @@ class PawnModule : public CPPModule
                 PMesh->snapToValidPosition(point); // the surface's own height
             }
             // Held, in a maneuver, the ring lays a route (docs/maneuvers.md)
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            const bool laying = PController != nullptr && PController->InManeuver() && !PController->ManeuverComposed() && cardian::pause::isHeld();
+            const bool laying = PController != nullptr && PController->InManeuver() && cardian::pause::isHeld();
             pawn::setWalkOrder(PPawn->id, point, PChar->id, laying);
             return { "", point.x, point.y, point.z };
         };
