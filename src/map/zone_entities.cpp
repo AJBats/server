@@ -846,12 +846,12 @@ void CZoneEntities::rebuildSpatialGrid()
     }
 }
 
-void CZoneEntities::tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob)
+auto CZoneEntities::tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob, const bool ask) -> bool // CARDIAN: ask
 {
     // Check to skip aggro routine
     if (PCurrentMob->isDead() || PChar->isDead() || PChar->visibleGmLevel >= 3 || PCurrentMob->PMaster)
     {
-        return;
+        return false; // CARDIAN
     }
 
     // checking monsters night/daytime sleep is already taken into account in the CurrentAction check, because monsters don't move in their sleep
@@ -862,18 +862,23 @@ void CZoneEntities::tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob)
     // Check if this mob follows targets and if so then it should not aggro
     if ((PCurrentMob->m_roamFlags & xi::RoamFlag::Follow) != xi::RoamFlag::None)
     {
-        if (PController->CanFollowTarget(PChar))
+        if (!ask && PController->CanFollowTarget(PChar)) // CARDIAN: ask
         {
             PController->SetFollowTarget(PChar, FollowType::Roam);
         }
-        return;
+        return false; // CARDIAN
     }
 
     bool validAggro = mobCheck > EMobDifficulty::TooWeak || PChar->isSitting() || PCurrentMob->getMobMod(xi::MobMod::AlwaysAggro);
-    if (validAggro && PController->CanAggroTarget(PChar))
+    if (validAggro && PController->CanAggroTarget(PChar, !ask)) // CARDIAN: asked, detection is the danger map's
     {
-        PCurrentMob->PAI->Engage(PChar->entityId());
+        if (!ask) // CARDIAN
+        {
+            PCurrentMob->PAI->Engage(PChar->entityId());
+        }
+        return true; // CARDIAN
     }
+    return false; // CARDIAN
 }
 
 void CZoneEntities::syncSpawnListWithGrid(CCharEntity*                     PChar,

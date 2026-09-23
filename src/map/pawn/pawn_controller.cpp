@@ -1724,7 +1724,7 @@ auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
     // The party's own mob is no danger to the pull (exclude), and the
     // circles are the pick's: every danger, worst case, padded
     const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"),
-                                              pawn::danger::Profile::worstCase(), PMob);
+                                              pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner)), PMob);
     // Only the guards that matter to the way in (forWalk): a mob behind a
     // wall is no company
     const auto seen  = pawn::danger::forWalk(dangers, POwner->loc.p, PMob->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
@@ -1750,8 +1750,8 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // pulled aggressive mob is not fighting anyone yet, and its circle
     // would hold her at the rim of the very mob she is meant to hit, or
     // walk up to
-    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
-    m_Dangers         = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
+    auto* PPawn = static_cast<CCharEntity*>(POwner);
+    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
 }
 
 auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
@@ -4423,7 +4423,7 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
     // circle and every approach from the hunter. Judged for the whole party
     // that will fight beside the target, not for the hunter's own buffs
     const auto dangers = pawn::danger::around(entities, around, radius + std::max(cleanRadius, distance(POwner->loc.p, around)),
-                                              pawn::danger::Profile::worstCase());
+                                              pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner)));
 
     // An idle, unclaimed, ordinary field mob in the band, within the hunt
     // radius of the anchor

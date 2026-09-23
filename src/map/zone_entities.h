@@ -115,6 +115,12 @@ public:
         return spatialGrid_;
     }
 
+    // CARDIAN: the game's aggro test, asked for the pawn danger map: would this mob go for him if it detected him
+    auto wouldAggro(CCharEntity* PChar, CMobEntity* PMob) -> bool
+    {
+        return tapMobAggro(PChar, PMob, true);
+    }
+
     auto GetNewCharTargID() -> uint16;
     void AssignDynamicTargIDandLongID(CBaseEntity* PEntity);
     void EraseStaleDynamicTargIDs();
@@ -129,7 +135,8 @@ private:
     auto charTick(CCharEntity* PChar, timer::time_point tick) -> Task<void>;
 
     // aggro check when a mob becomes visible
-    void tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob);
+    // CARDIAN: ask = would it go for him if it detected him, changing nothing (wouldAggro)
+    auto tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob, bool ask = false) -> bool;
 
     // clear and re-file every entity into the grid
     void rebuildSpatialGrid();

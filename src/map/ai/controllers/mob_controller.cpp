@@ -506,7 +506,7 @@ auto CMobController::CanFollowTarget(CBattleEntity* PTarget) const -> bool
     return !PMob->m_neutral && ((PMob->m_roamFlags & xi::RoamFlag::Follow) != xi::RoamFlag::None) && PFollowTarget == nullptr && m_followType == FollowType::None && CanAggroTarget(PTarget);
 }
 
-auto CMobController::CanAggroTarget(CBattleEntity* PTarget) const -> bool
+auto CMobController::CanAggroTarget(CBattleEntity* PTarget, const bool detect) const -> bool // CARDIAN: detect
 {
     TracyZoneScoped;
     TracyZoneString(PMob->getName());
@@ -555,7 +555,7 @@ auto CMobController::CanAggroTarget(CBattleEntity* PTarget) const -> bool
         return false;
     }
 
-    return PMob->PMaster == nullptr && PMob->PAI->IsSpawned() && !PMob->PAI->IsEngaged() && CanDetectTarget(PTarget);
+    return PMob->PMaster == nullptr && PMob->PAI->IsSpawned() && !PMob->PAI->IsEngaged() && (!detect || CanDetectTarget(PTarget)); // CARDIAN: detect
 }
 
 void CMobController::TapDeaggroTime()
