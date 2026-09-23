@@ -330,7 +330,11 @@ namespace
     // world's clocks -- a town seat's dwell, the KO fade -- do not run on
     // her while she is with him. When he dismisses her they resume where
     // they stand. "With him" is his session's word, not his body's: a zone
-    // line destroys the body for seconds, and the clocks must not notice
+    // line destroys the body for seconds, and the clocks must not notice.
+    // Her Body stays as it was -- present, at her seat, in that seat's zone
+    // -- so the seat is hers to come back to; anything that acts on a body
+    // as part of the crowd (the chat, a facing, the Signet top-up, the GM
+    // verbs' "all") asks this first, or it reaches her wherever she is
     auto withPlayer(const uint32 charid) -> bool
     {
         return pawn::withRealPlayer(charid);
@@ -429,8 +433,9 @@ namespace
                 body.levelSeen = actual;
             }
             // Signet lapses after three hours; a body standing that long
-            // takes it again, as she does at every fade-in
-            if (settings::get<bool>("pawn.WORLD_SIGNET") && !PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Signet))
+            // takes it again, as she does at every fade-in. With a player she
+            // shares his instead (ShareSignet), and the world gives her none
+            if (settings::get<bool>("pawn.WORLD_SIGNET") && !withPlayer(body.charid) && !PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Signet))
             {
                 PPawn->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Signet, static_cast<uint16>(xi::StatusEffect::Signet), 0, 0s, std::chrono::hours(3));
                 PPawn->clearPacketList();
@@ -2030,13 +2035,14 @@ namespace
         }
         const auto zoneId = static_cast<uint16>(PZone->GetID());
         const auto gap    = [&]() { return std::chrono::seconds(xirand::GetRandomNumber(std::min(gapMin, gapMax), gapMax + 1)); };
-        // Turned to a listener a while ago: back to the middle
+        // Turned to a listener a while ago: back to the middle. A body with a
+        // player keeps her seat, but she is not sitting in it: her facing is his
         for (auto& [charid, body] : bodies)
         {
             if (body.zone == zoneId && body.faceBackAt.has_value() && now >= *body.faceBackAt)
             {
                 body.faceBackAt.reset();
-                if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && body.face.has_value() && body.present && body.atSeat && !body.leaving)
+                if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && body.face.has_value() && body.present && body.atSeat && !body.leaving && !withPlayer(charid))
                 {
                     face(PPawn, *body.face);
                 }
@@ -2061,8 +2067,10 @@ namespace
                 {
                     continue;
                 }
+                // Only those sitting there talk: a seat kept for a body away
+                // with a player (withPlayer) is held, not sat in
                 const auto bit = bodies.find(it->second);
-                if (bit == bodies.end() || !bit->second.present || !bit->second.atSeat || bit->second.leaving)
+                if (bit == bodies.end() || !bit->second.present || !bit->second.atSeat || bit->second.leaving || withPlayer(it->second))
                 {
                     continue;
                 }
@@ -2358,8 +2366,14 @@ namespace pawn::world
         uint32 faded = 0;
         if (rawName == "all")
         {
+            // All of the crowd: a body with a player is his party's, not the crowd's
+            std::vector<uint32> dropped;
             for (auto& [charid, body] : bodies)
             {
+                if (withPlayer(charid))
+                {
+                    continue;
+                }
                 faded += body.present ? 1 : 0;
                 if (body.pinned)
                 {
@@ -2369,9 +2383,16 @@ namespace pawn::world
                 {
                     pawn::seats::withdraw(charid);
                 }
+                dropped.push_back(charid);
             }
-            bodies.clear();
-            charidByName.clear();
+            for (const auto charid : dropped)
+            {
+                if (const auto it = bodies.find(charid); it != bodies.end())
+                {
+                    charidByName.erase(it->second.name);
+                    bodies.erase(it);
+                }
+            }
             return faded;
         }
 
@@ -2518,7 +2539,8 @@ namespace pawn::world
         return queued;
     }
 
-    // Every present body the name means: one, or all of them
+    // Every present body the name means: one, or all of the crowd (a body
+    // with a player is his party's, not the crowd's)
     template <typename Fn>
     auto forNamed(const std::string& rawName, Fn&& fn) -> uint32
     {
@@ -2527,7 +2549,7 @@ namespace pawn::world
         {
             for (auto& [charid, body] : bodies)
             {
-                if (body.present && fn(body))
+                if (body.present && !withPlayer(charid) && fn(body))
                 {
                     ++n;
                 }
