@@ -1255,7 +1255,7 @@ namespace pawn
                         case G_SELECT::LOWEST:
                             return familyName(a.select_arg) + " (lowest)";
                         case G_SELECT::RANDOM:
-                            return familyName(a.select_arg) + " (random)";
+                            return "Random damage spell"; // ResolveSpell ignores the family: any damage spell she knows
                         case G_SELECT::MB_ELEMENT:
                             return "Magic burst";
                         case G_SELECT::ENTRUSTED:
