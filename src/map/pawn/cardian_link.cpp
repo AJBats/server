@@ -49,7 +49,7 @@ extern sol::state lua;
 // kProtocol) unloads itself when its own differs: both are bumped together
 // whenever a line either side sends changes shape, and no line is kept
 // compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 10; // 10: the ring on the mesh (cd ring <x> <y> <z> <asked x> <asked z> answers a walk the mesh moved); 8: maneuvers (mv <name> [off], mv; cd mv <name> on | cd mv <name> | cd mv; gvx carries key=mask,mp)
+constexpr uint32 kLinkProtocol = 11; // 11: the maneuver's rest (mv <name> rest:<n>; cd p carries the percent a rest order runs to, whether she kneels, Healing's ticks, next and interval ms); 10: the ring on the mesh (cd ring <x> <y> <z> <asked x> <asked z> answers a walk the mesh moved); 8: maneuvers (mv <name> [off], mv; cd mv <name> on | cd mv <name> | cd mv; gvx carries key=mask,mp)
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read_until.hpp>

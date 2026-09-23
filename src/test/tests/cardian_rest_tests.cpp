@@ -721,3 +721,48 @@ TEST_CASE("Danger and orders still interrupt rest during a deferred seat move", 
                       .moving=true, .routinePosition=true}) == Decision::Stand);
     REQUIRE_FALSE(s.wantsDown);
 }
+
+TEST_CASE("A rest order kneels her with no gambit asking, and no recovery tick stands her", "[cardian][rest][order]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .ordered=true}) == Decision::Kneel);
+    CHECK(s.decide({.now=20, .resting=true, .recovered=true, .tickLanded=true, .ordered=true}) == Decision::StayDown);
+    CHECK_FALSE(s.canAct(20, true));
+}
+
+TEST_CASE("A rest order yields to an emergency cure, or a kneel made impossible, then kneels again", "[cardian][rest][order]")
+{
+    for (const auto& interrupt : {
+        Facts{.now=11, .resting=true, .urgent=true, .ordered=true},
+        Facts{.now=11, .resting=true, .blocked=true, .ordered=true},
+    })
+    {
+        State s;
+        REQUIRE(s.decide({.now=10, .ordered=true}) == Decision::Kneel);
+        CHECK(s.decide(interrupt) == Decision::Stand);
+        CHECK(s.decide({.now=11.5, .ordered=true}) == Decision::StayUp); // the rise finishes first
+        CHECK(s.decide({.now=12, .ordered=true}) == Decision::Kneel);
+    }
+}
+
+TEST_CASE("An ordered rest stays down while the party moves, but walks before it kneels", "[cardian][rest][order]")
+{
+    State s;
+    CHECK(s.decide({.now=10, .moving=true, .routinePosition=true, .ordered=true}) == Decision::StayUp);
+    REQUIRE(s.decide({.now=11, .ordered=true}) == Decision::Kneel);
+    CHECK(s.decide({.now=12, .resting=true, .moving=true, .routinePosition=true, .ordered=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=13, .resting=true, .moving=true, .ordered=true}) == Decision::Stand); // a path, not a routine step
+}
+
+TEST_CASE("Rest until N% needs HP and MP both at N%, and HP alone with no MP", "[cardian][rest][order]")
+{
+    const Order until80{ .percent = 80 };
+    CHECK(until80.metBy(80, 100, 80, 100));
+    CHECK(until80.metBy(100, 100, 90, 100));
+    CHECK_FALSE(until80.metBy(79, 100, 100, 100)); // not the first to arrive: both
+    CHECK_FALSE(until80.metBy(100, 100, 79, 100));
+    CHECK(until80.metBy(80, 100, 0, 0)); // a job with no MP: HP alone
+    CHECK_FALSE(until80.metBy(79, 100, 0, 0));
+    CHECK_FALSE(Order{}.metBy(100, 100, 100, 100)); // no order is never met
+    CHECK_FALSE(Order{}.active());
+}

@@ -1038,10 +1038,12 @@ namespace pawn
             }
             // An order still waiting was her player's, like the trek: with her out of his
             // party, or him, she no longer carries it out (one given in a pause would fire
-            // at the release). Another player's cardian keeps hers when this one leaves.
+            // at the release), and his rest order goes with it. Another player's cardian
+            // keeps hers when this one leaves.
             if (PController != nullptr && (herself || herPlayer == PMember->id))
             {
                 PController->DropQueuedOrder(herself ? "out of the party" : "her player left the party", herPlayer);
+                PController->EndRestOrder(herself ? "out of the party" : "her player left the party");
                 // A maneuver is his hand on her: it ends with the party tie too
                 PController->EndManeuver(herself ? "out of the party, the maneuver ends" : "her player left the party, the maneuver ends");
             }
@@ -1611,6 +1613,21 @@ namespace pawn
         return true;
     }
 
+    namespace
+    {
+        // A body put somewhere else in her own zone: shown there at once, on
+        // no walk she had begun
+        void settleWithinZone(CCharEntity* PPawn)
+        {
+            PPawn->status = xi::Status::Normal;
+            PPawn->updatemask |= UPDATE_ALL_CHAR;
+            if (PPawn->PAI->PathFind)
+            {
+                PPawn->PAI->PathFind->Clear();
+            }
+        }
+    } // namespace
+
     bool carryZoning(CCharEntity* PPawn)
     {
         if (PPawn == nullptr || !pawns.contains(PPawn->id))
@@ -1672,16 +1689,67 @@ namespace pawn
 
             // Within the zone: setPos has moved her already, and only the
             // zone change it asked for is refused
-            PPawn->status = xi::Status::Normal;
-            PPawn->updatemask |= UPDATE_ALL_CHAR;
-            if (PPawn->PAI->PathFind)
-            {
-                PPawn->PAI->PathFind->Clear();
-            }
+            settleWithinZone(PPawn);
             ShowInfoFmt("pawn: {} is moved within zone {}", PPawn->getName(), static_cast<uint16>(PPawn->getZone()));
             return true;
         }
         return false;
+    }
+
+    void landWithPlayer(const CCharEntity* PPlayer, const position_t& landing)
+    {
+        if (PPlayer == nullptr || PPlayer->PParty == nullptr || PPlayer->PBattlefield == nullptr || PPlayer->loc.zone == nullptr)
+        {
+            return;
+        }
+        std::vector<CCharEntity*> landers;
+        for (const auto& [charid, PPawn] : pawns)
+        {
+            if (PPawn->PParty == PPlayer->PParty && PPawn->loc.zone == PPlayer->loc.zone && PPawn->PBattlefield == PPlayer->PBattlefield)
+            {
+                landers.push_back(PPawn.get());
+            }
+        }
+
+        // Fanned out behind him, a step apart; each spot is walked to over
+        // the mesh from his own, so none lands across a wall
+        constexpr float kLandingDistance = 2.0f;
+        constexpr float kLandingFan      = 0.6f; // radians between neighbours
+        const auto*     navMesh          = PPlayer->loc.zone->navMesh();
+        for (std::size_t i = 0; i < landers.size(); ++i)
+        {
+            auto*       PPawn  = landers[i];
+            const float offset = (static_cast<float>(i) - static_cast<float>(landers.size() - 1) / 2.0f) * kLandingFan;
+            position_t  spot   = landing;
+            if (navMesh != nullptr)
+            {
+                if (const auto reached = navMesh->findFurthestValidPoint(landing, nearPosition(landing, kLandingDistance, static_cast<float>(M_PI) + offset));
+                    reached.has_value())
+                {
+                    spot = *reached;
+                }
+            }
+            spot.rotation = landing.rotation;
+
+            // Whatever fight she was in or walking to stays where she was
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController != nullptr)
+            {
+                PController->StandDown("carried with the player");
+            }
+            else if (PPawn->PAI->IsEngaged())
+            {
+                PPawn->PAI->Internal_Disengage();
+            }
+            PPawn->loc.p = spot;
+            PPawn->loc.zone->onEntityMoved(PPawn); // the zone's grid follows the jump, as setPos does
+            settleWithinZone(PPawn);
+            if (PController != nullptr)
+            {
+                PController->ArriveWith(landing);
+            }
+            ShowInfoFmt("pawn: {} lands beside {}, at ({:.1f}, {:.1f}, {:.1f})", PPawn->getName(), PPlayer->getName(), spot.x, spot.y, spot.z);
+        }
     }
 
     namespace

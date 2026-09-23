@@ -143,6 +143,23 @@ public:
     void StandFromRest(std::string_view why);
     // True while the policy keeps her kneeling; defer routine positioning then.
     auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false) -> bool;
+    // The player's rest order (ComposeRest): down until her HP and MP both
+    // reach N%. Only a Support Mage's emergency cure stands her meanwhile;
+    // any order of his, or her leaving his party, ends it first
+    void SetRestOrder(int percent, std::string_view why);
+    void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
+    void EndRestOrder(std::string_view why);
+    auto RestOrderPercent() const -> int; // 0: none
+    // Her kneel as the rest row shows it: Healing's ticks so far, and
+    // seconds to the next and between ticks (zero while standing)
+    struct RestClock
+    {
+        bool   down     = false;
+        int    ticks    = 0;
+        double next     = 0.0;
+        double interval = 0.0;
+    };
+    auto RestNow() const -> RestClock;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -152,6 +169,10 @@ public:
     // One accepted zone change ends the player's current fight commitment.
     // It does not prevent the next idle tick answering a new threat.
     void PlayerZoning();
+    // Out of any fight she was in or on her way to: the draw on its beat,
+    // the walk in, the weapon-skill wait, the path, the weapon. One sequence
+    // for the player zoning, a rest order and a landing beside him
+    void StandDown(std::string_view why);
 
     // This pawn's index among the pawns in its party (formation order)
     auto GetPawnPartyPosition() const -> uint8;
@@ -206,7 +227,13 @@ public:
     // maneuver's end. ComposeMove is the route with no order: end at its
     // end, waiting there if `wait`. Answers "" or why not.
     auto ComposeMove(bool wait) -> std::string;
+    // The maneuver's "Rest until N%": live, her rest order at once and the
+    // maneuver's end; paused, her queued order, after the route if one is
+    // laid. Answers "" or why not
+    auto ComposeRest(int percent) -> std::string;
+    void MarkComposed(std::string_view what); // the paused maneuver's order is given: his live slot frees for the next cardian
     auto ManeuverComposed() const -> bool;
+    auto ManeuverBy() const -> uint32; // whose maneuver she is on, 0 for none
 
     // Wait here / follow me. Waiting, she has nowhere to go by order: no
     // following, hunting or travel, so she idles where she stands -- the
@@ -218,6 +245,7 @@ public:
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
+    void ArriveWith(const position_t& landing); // set down beside the player by an event (pawn::landWithPlayer): she stands until he is seen there
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, after her beat (FireOrderedEngage)
     void ShareSignet(CCharEntity* PPlayer); // the gate guard's Signet, taken with the player for its remaining time
 
@@ -555,6 +583,10 @@ private:
     // it comes round to the place's side). PPlayer, when here, is the
     // formation debug's subject only.
     auto FormationIntent(const Place& place, const CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
+    // Set down beside the player (ArriveWith), she stays put until the place
+    // she follows reads him at the landing, or five seconds pass: his
+    // own position reaches the server a moment after the move
+    auto AwaitsArrival(const Place& place) -> bool;
 
     // The tank's tow at a stake (RESEARCH §12.16): a cardian with the Tank
     // role, staked, receives the party's mob while her rows Provoke it.
@@ -837,6 +869,12 @@ private:
     bool              m_WaitOrdered = false;
     timer::time_point m_PlayerMagicSeen{ timer::time_point::min() }; // the player seen mid-warp or mid-teleport, so their vanishing reads as magic
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
+    struct Arrival
+    {
+        position_t        landing;
+        timer::time_point until;
+    };
+    std::optional<Arrival> m_Arrival; // landed beside the player, waiting to see him there (AwaitsArrival)
 
     // The mob she is walking to, weapon still away (Approach, above): she
     // commits the moment it is chosen and closes; only the draw waits, on
@@ -960,6 +998,7 @@ private:
     timer::time_point m_LastHuntLogTime;
     cardian::rest::State m_Rest;
     cardian::rest::Follow m_RestFollow;
+    cardian::rest::Order m_RestOrder; // the player's "Rest until N%", none by default
     int m_RestTicks = 0;
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;

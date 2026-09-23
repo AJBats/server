@@ -338,15 +338,17 @@ local function cpPrice(entry, buyerNation, guardNation)
 end
 
 -- One roster line: her jobs, health, TP, how far she is from her next
--- level, and whether a gate guard is within the player's reach (the
--- Conquest exchange row on her page). Both the roster list and a single
+-- level, whether a gate guard is within the player's reach (the
+-- Conquest exchange row on her page), and her rest as the command
+-- window shows it. Both the roster list and a single
 -- sync send it, so a screen sees the same fields either way. Experience
 -- comes from the Cardian binding -- upstream has no getter for it or for
 -- the level's cost.
 local function pawnLine(player, name, targ)
     local xp    = player:cardianExp(name)
     local guard = guardNear(player) ~= nil
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s',
+    local rest  = player:cardianRestState(name) or {}
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
@@ -356,7 +358,8 @@ local function pawnLine(player, name, targ)
         xp and xp.exp or 0, xp and xp.tnl or 0,
         guard and 1 or 0,
         player:cardianWaiting(name) and 1 or 0,
-        player:cardianOwns(name) and 1 or 0, targ:getZoneName())
+        player:cardianOwns(name) and 1 or 0, targ:getZoneName(),
+        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0)
 end
 
 local function sendPawnLine(player, name)
@@ -860,11 +863,17 @@ commandObj.onTrigger = function(player, line)
         end
     elseif verb == 'mv' then
         -- A maneuver (docs/maneuvers.md): `mv <name>` begins one on her, `mv
-        -- <name> off` cancels; bare `mv` answers the one standing, for an addon
-        -- that has just bound. Every change is pushed by the server itself (`cd
-        -- mv <name> on`, `cd mv <name>` when it ended); only the answer to a
+        -- <name> off` cancels; bare `mv` answers, for an addon that has just
+        -- bound, each composed one waiting and then the one he drives live.
+        -- Every change is pushed by the server itself (`cd mv <name> on`,
+        -- `composed`, `cd mv <name>` when it ended); only the answer to a
         -- press is given here
         if name == nil then
+            for _, cardian in ipairs(player:cardianNames()) do
+                if player:cardianComposed(cardian) then
+                    reply(player, '#cd mv ' .. cardian .. ' composed')
+                end
+            end
             local on = player:cardianManeuverOf()
             reply(player, on ~= '' and ('#cd mv ' .. on .. ' on') or '#cd mv')
         else

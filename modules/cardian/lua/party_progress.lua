@@ -638,7 +638,9 @@ m:addOverride('CBaseEntity.addFame', function(player, area, fame)
 end)
 
 -- Into the battlefield right behind the player: registered with them by
--- the registration itself, entered here since she cannot touch the circle
+-- the registration itself, entered here since she cannot touch the circle.
+-- The entry's move into the arena then sets her down beside the player
+-- (pawn::landWithPlayer)
 m:addOverride('Battlefield.onEntryEventUpdate', function(self, player, csid, option, npc)
     local result = super(self, player, csid, option, npc)
     if player:getBattlefield() ~= nil then

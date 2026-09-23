@@ -226,6 +226,28 @@ namespace cardian::rest
 
     enum class Decision { Stand, StayUp, Kneel, StayDown };
 
+    // The player's rest order, a maneuver's "Rest until N%": she is down
+    // until her HP and MP both reach N% (MP only when she has any). It is
+    // an order, not a policy: it ends there, or at the player's next order
+    struct Order
+    {
+        int percent = 0; // 0: none
+
+        auto active() const -> bool
+        {
+            return percent > 0;
+        }
+
+        auto metBy(const double hp, const double maxHp, const double mp, const double maxMp) const -> bool
+        {
+            const auto reached = [&](const double value, const double maximum)
+            {
+                return maximum <= 0.0 || value * 100.0 >= percent * maximum;
+            };
+            return active() && reached(hp, maxHp) && reached(mp, maxMp);
+        }
+    };
+
     struct Facts
     {
         double now = 0.0;
@@ -240,6 +262,7 @@ namespace cardian::rest
         bool routinePosition = false; // an ongoing rest may defer this move
         bool recovered = false;
         bool tickLanded = false;
+        bool ordered = false; // the player's rest order: a request no recovery tick ends; the caller blocks it only for what makes a kneel impossible
     };
 
     struct State
@@ -303,8 +326,9 @@ namespace cardian::rest
             // recovery ramp until MP is full. This never starts a new rest or
             // forces a wake when an enemy arrives; ordinary pacing resumes.
             const bool preserveRecovery = f.resting && f.campClear && f.mpMissing;
-            const bool up = standPending || f.urgent || f.blocked || movementRequiresStand || (!f.want && !f.withPlayer) ||
-                            (f.resting && f.recovered && f.tickLanded && !f.withPlayer && !preserveRecovery);
+            const bool up = standPending || f.urgent || f.blocked || movementRequiresStand ||
+                            (!f.want && !f.withPlayer && !f.ordered) ||
+                            (f.resting && f.recovered && f.tickLanded && !f.withPlayer && !f.ordered && !preserveRecovery);
             wantsDown = !up;
             if (f.resting)
             {

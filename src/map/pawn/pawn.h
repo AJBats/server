@@ -272,6 +272,14 @@ namespace pawn
     // a carry was requested.
     bool carryZoning(CCharEntity* PPawn);
 
+    // An event has moved the player while he is in a battlefield -- its
+    // entry into the arena, its exit back out -- at the moment the game
+    // moves his pet with him, and every cardian of his party in the same
+    // battlefield (they entered with him) lands beside him, as if part of
+    // him. Each then stands until he is seen arriving there, so none sets
+    // off toward where he stood a moment ago. No other player is moved.
+    void landWithPlayer(const CCharEntity* PPlayer, const position_t& landing);
+
     // A stuck cardian teleports to her player's side: only from within
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's
@@ -396,9 +404,10 @@ namespace pawn
     void clearWalkOrder(uint32 pawnCharID);
     void forEachWalkOrder(const std::function<void(uint32)>& fn);
 
-    // The maneuver a player has standing (docs/maneuvers.md,
-    // CPawnController::BeginManeuver): the cardian he drives, one at a time.
-    // The controller keeps the maneuver; this is the one-at-a-time index
+    // The maneuver a player is driving live (docs/maneuvers.md,
+    // CPawnController::BeginManeuver): one at a time. A paused maneuver
+    // gives the slot up once composed (MarkComposed), so a pause queues one
+    // per cardian. The controller keeps the maneuver; this is the index
     void setManeuver(uint32 playerCharID, uint32 pawnCharID);
     auto maneuverOf(uint32 playerCharID) -> uint32; // 0 = none
     void clearManeuver(uint32 playerCharID);

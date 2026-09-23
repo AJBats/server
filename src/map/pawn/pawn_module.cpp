@@ -1000,6 +1000,27 @@ class PawnModule : public CPPModule
             return PController != nullptr && PController->IsWaiting();
         };
 
+        // Her rest as the roster line carries it: the percentage her rest
+        // order runs to (0: none), whether she kneels, Healing's ticks so
+        // far, and milliseconds to the next tick and between ticks
+        lua["CBaseEntity"]["cardianRestState"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            if (PController == nullptr)
+            {
+                return sol::lua_nil;
+            }
+            const auto clock = PController->RestNow();
+            auto       table = ::lua.create_table();
+            table["percent"]  = PController->RestOrderPercent();
+            table["down"]     = clock.down;
+            table["ticks"]    = clock.ticks;
+            table["next"]     = static_cast<int>(std::max(0.0, clock.next) * 1000.0);
+            table["interval"] = static_cast<int>(clock.interval * 1000.0);
+            return table;
+        };
+
         lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -1301,7 +1322,8 @@ class PawnModule : public CPPModule
         };
 
         // A maneuver (docs/maneuvers.md, pawn_controller.h): begins one on
-        // her; "off" ends it. Answers "" or why not
+        // her; "off" ends it; "move", "movewait" and "rest:<n>" are its
+        // orders that are no action. Answers "" or why not
         lua["CBaseEntity"]["cardianManeuver"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& what) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -1327,7 +1349,19 @@ class PawnModule : public CPPModule
             {
                 return PController->ComposeMove(what == "movewait");
             }
+            if (int percent = 0; std::sscanf(what.c_str(), "rest:%d", &percent) == 1)
+            {
+                return PController->ComposeRest(percent);
+            }
             return PController->BeginManeuver(PChar);
+        };
+        // A composed maneuver of his waiting on her (a pause queues one per
+        // cardian): told to an addon that has just bound, which starts empty
+        lua["CBaseEntity"]["cardianComposed"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        {
+            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
+            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr && PChar != nullptr && PController->ManeuverComposed() && PController->ManeuverBy() == PChar->id;
         };
         // The cardian this player has a maneuver on, her name, or ""
         lua["CBaseEntity"]["cardianManeuverOf"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string

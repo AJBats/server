@@ -25,7 +25,8 @@
 // into xi_map alone, so here each gets what a server with no cardians
 // does: nobody is a world body, every exp grant lands whole, nobody signs
 // in or out with the player, nobody leaving a party has a trek to end,
-// nobody's followers set out ahead of him, and nobody is a cardian.
+// nobody's followers set out ahead of him, nobody lands beside him in a
+// battlefield, and nobody is a cardian.
 
 #include "map/lua/lua_base_entity.h"
 #include "map/pause/input_gate.h"
@@ -46,6 +47,10 @@ namespace pawn
     }
 
     void playerZoning(const CCharEntity* /* PPlayer */, const xi::ZoneId /* destination */)
+    {
+    }
+
+    void landWithPlayer(const CCharEntity* /* PPlayer */, const position_t& /* landing */)
     {
     }
 } // namespace pawn
