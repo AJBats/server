@@ -202,7 +202,10 @@ namespace pawn
 
         std::size_t count = 0;
         // A world body's brain is data: modules/cardian/world/brains.yaml
-        const auto  rows = pawn::world::hasBody(PPawn->id) ? pawn::world::brainRows(PPawn) : pawn::defaultRows();
+        // ...one of the world's own held by her contract and stood as her
+        // player's has no Body, but her brain is still the world's
+        const bool  worlds = pawn::world::hasBody(PPawn->id) || pawn::world::isCensusBody(PPawn->id);
+        const auto  rows   = worlds ? pawn::world::brainRows(PPawn) : pawn::defaultRows();
         for (const auto& [spec, enabled] : rows)
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
@@ -215,7 +218,7 @@ namespace pawn
                 ShowErrorFmt("pawn: malformed default row '{}'", spec);
             }
         }
-        if (pawn::world::hasBody(PPawn->id))
+        if (worlds)
         {
             ShowInfoFmt("pawn: world brain loaded for {} ({} rows, {})", PPawn->getName(), count, pawn::world::roleName(PPawn->id));
         }
@@ -342,7 +345,7 @@ class PawnModule : public CPPModule
         lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool
         {
             std::ignore = PLuaBaseEntity;
-            return pawn::orderTravelByName(targetName, zoneId);
+            return pawn::orderTravelByName(targetName, zoneId, 0);
         };
 
         // The club signs in with the player (ROADMAP H): the chat line,
@@ -616,6 +619,46 @@ class PawnModule : public CPPModule
             {
                 pawn::finder::bond(PPlayer->id, charutils::getCharIdFromName(name), why.c_str(), mission.value_or(false));
             }
+        };
+        // Your contract (ROADMAP H, the party waits): his open contracts,
+        // each with her job, level, where she is, and whether she stands in
+        // his party, stands waiting, or could not stand ("out")
+        lua["CBaseEntity"]["cardianContracts"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto        rows    = ::lua.create_table();
+            const auto* PPlayer = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PPlayer == nullptr)
+            {
+                return rows;
+            }
+            for (const auto& c : pawn::finder::openContracts(PPlayer->id))
+            {
+                auto        row   = ::lua.create_table();
+                const auto* PPawn = pawn::findPawn(c.charid);
+                row["name"]       = c.name;
+                row["kind"]       = pawn::finder::kindName(c.goal);
+                if (PPawn != nullptr)
+                {
+                    row["job"]   = static_cast<uint8>(PPawn->GetMJob());
+                    row["level"] = PPawn->GetMLevel();
+                    row["zone"]  = static_cast<uint16>(PPawn->getZone());
+                    row["state"] = PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty ? "party" : "standing";
+                }
+                else if (const auto rset = db::preparedStmt("SELECT s.mjob, s.mlvl, c.pos_zone FROM chars c JOIN char_stats s ON s.charid = c.charid WHERE c.charid = ?", c.charid);
+                         rset && rset->next())
+                {
+                    row["job"]   = rset->get<uint8>("mjob");
+                    row["level"] = rset->get<uint8>("mlvl");
+                    row["zone"]  = rset->get<uint16>("pos_zone");
+                    row["state"] = "out";
+                }
+                rows.add(row);
+            }
+            return rows;
+        };
+        lua["CBaseEntity"]["cardianEndContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        {
+            return pawn::finder::release(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
         };
         // Her contract with the given player (the cardian's own entity asks)
         lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 playerCharID) -> std::string
@@ -984,7 +1027,7 @@ class PawnModule : public CPPModule
             else if (PPawn->loc.zone != PChar->loc.zone)
             {
                 ShowInfoFmt("pawn: {} sets out to meet {} in zone {}", PPawn->getName(), PChar->getName(), static_cast<uint16>(PChar->getZone()));
-                pawn::orderTravelByName(name, static_cast<uint16>(PChar->getZone()));
+                pawn::orderTravelByName(name, static_cast<uint16>(PChar->getZone()), PChar->id);
             }
             else
             {

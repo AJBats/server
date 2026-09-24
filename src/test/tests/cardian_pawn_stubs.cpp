@@ -37,7 +37,7 @@
 
 namespace pawn
 {
-    auto signOutClub(const CCharEntity* /* PPlayer */) -> uint32
+    auto signOutClub(CCharEntity* /* PPlayer */) -> uint32
     {
         return 0;
     }

@@ -112,6 +112,21 @@ namespace
     // body goes (despawn, a possession's release)
     std::unordered_map<uint32, uint32> playerByPawn;
 
+    // Signing out with the last human in her party (pawn::carryOut): her
+    // leaving the party is not her leaving it, so leftParty keeps her
+    // contract and the gambits he gave her (ROADMAP H, the party waits)
+    std::unordered_set<uint32> carriedOut;
+
+    // Contract members whose contract ended, stood as their player's: back
+    // to the world from the zone tick, never inside the party's own call,
+    // and once nobody real can see her (pawn::returnToWorld)
+    std::vector<uint32> pendingReturns;
+
+    // Held contract members the game could not place where her player left
+    // her: off the ladder from the zone tick, so it stops loading her again
+    // at every retry (the engine's callbacks never call back into it)
+    std::vector<uint32> pendingWithdraws;
+
     // player charid -> the party's orders (the strategy channel). The hunt
     // rules load from cardian_orders on first use; strategy and retreat
     // are the session's
@@ -149,7 +164,16 @@ namespace
     }
 
     // pawn charid -> ordered travel destination
-    std::unordered_map<uint32, xi::ZoneId> travelOrders;
+    // A travel order: the zone, and whom it meets. A trek to meet her
+    // player -- follow me from another zone, her own city's invite, his zone
+    // change -- follows him, not the zone he was in (meetTrek); a GM's goto
+    // meets nobody and holds its zone
+    struct TravelOrder
+    {
+        xi::ZoneId zone{};
+        uint32     meet = 0; // the player it goes to meet, 0 for a fixed zone
+    };
+    std::unordered_map<uint32, TravelOrder> travelOrders;
     struct WalkOrder
     {
         position_t              point;
@@ -400,6 +424,11 @@ namespace
         const auto&      home  = PPawn->profile.home_point;
         CZone*           PZone = zoneutils::GetZone(PPawn->loc.destination);
         std::string_view why;
+        // One of the world's held by her contract (ROADMAP H) stands where
+        // her player left her, KO'd if she was, so he can raise her; a spot
+        // the game cannot place her at was wrong to begin with, and is said
+        // loudly rather than covered by a home point
+        const bool held = pawn::world::isCensusBody(charid);
         if (PZone == nullptr)
         {
             why = "her zone is not here";
@@ -408,7 +437,7 @@ namespace
         {
             why = "she was in her Mog House";
         }
-        else if (PPawn->health.hp == 0)
+        else if (PPawn->health.hp == 0 && !held)
         {
             why = "she was saved KO'd";
         }
@@ -419,6 +448,12 @@ namespace
         else
         {
             why = "the mesh has no place for her spot";
+        }
+        if (!why.empty() && held)
+        {
+            ShowErrorFmt("pawn: {} ({}) cannot stand where her player left her: {}; she stays signed out", PPawn->getName(), charid, why);
+            pendingWithdraws.push_back(charid); // off the ladder, so it does not load her again every retry
+            return {};
         }
         if (!why.empty())
         {
@@ -481,7 +516,7 @@ namespace
         {
             PController->SetWaiting(false, false, "invited from her own city");
             pawn::applyOrdersTo(PPawn);
-            travelOrders[PPawn->id] = PSummoner->getZone();
+            travelOrders[PPawn->id] = TravelOrder{ PSummoner->getZone(), PSummoner->id };
             ShowInfoFmt("pawn: {} runs to {} in {} (her own city)", PPawn->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
         }
         else
@@ -495,6 +530,12 @@ namespace
 
 namespace pawn
 {
+    // Defined with the club's sign-out, used before it
+    void carryOut(uint32 charid);
+    void saveStake(CCharEntity* PPlayer);
+    void restoreStake(CCharEntity* PPlayer);
+    void placeStake(CCharEntity* POwner, xi::ZoneId zone, const position_t& at, std::string_view how);
+
     // One town: two city zones of one capital's region -- San d'Oria's,
     // Bastok's, Windurst's, Jeuno's (regions 19 to 22, never one
     // another's). Other towns sharing a region are not one street: Kazham
@@ -544,7 +585,8 @@ namespace pawn
         db::preparedStmt("DELETE FROM accounts_sessions WHERE client_addr = 0");
         // A wild cardian's saved gambits are a guest's, and a restart ends
         // every party she was in
-        db::preparedStmt("DELETE g FROM cardian_gambits g JOIN cardian_census x ON x.charid = g.pawn_charid WHERE x.recruited = 0");
+        db::preparedStmt("DELETE g FROM cardian_gambits g JOIN cardian_census x ON x.charid = g.pawn_charid WHERE x.recruited = 0 "
+                         "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = g.pawn_charid AND h.contract <> '')");
     }
 
     bool create(CCharEntity* PSummoner, const std::string& targetName)
@@ -832,37 +874,61 @@ namespace pawn
         // at once: an owned cardian is live wherever she is, so the club
         // stands through the ladder's ration, a few now and the rest on its
         // next passes, each where the game saved her (standOwned)
+        const auto savedZone = [](const uint32 charid) -> uint16
+        {
+            const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid);
+            return rset && rset->next() ? rset->get<uint16>("pos_zone") : 0;
+        };
         const auto members = accountMembers(PPlayer);
         for (const auto& [charid, name] : members)
         {
-            uint16 zone = 0;
-            if (const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid); rset && rset->next())
-            {
-                zone = rset->get<uint16>("pos_zone");
-            }
-            seats::offerOwned(charid, PPlayer->id, zone);
+            seats::offerOwned(charid, PPlayer->id, savedZone(charid));
         }
-        if (members.empty())
+        // His open contracts: each held while he was away stands where he
+        // left her, as his alts do, and waits to be invited (ROADMAP H)
+        std::vector<std::pair<uint32, std::string>> contracted;
+        for (const auto& c : finder::openContracts(PPlayer->id))
+        {
+            if (findPawn(c.charid) == nullptr)
+            {
+                seats::offerOwned(c.charid, PPlayer->id, savedZone(c.charid));
+                contracted.emplace_back(c.charid, c.name);
+            }
+        }
+        // The stake he left waits too
+        restoreStake(PPlayer);
+        if (members.empty() && contracted.empty())
         {
             return {};
         }
         seats::run();
-        std::vector<std::string> stood;
-        uint32                   queued = 0;
-        for (const auto& [charid, name] : members)
+        const auto standingIn = [](const uint32 charid, const std::string& name, std::vector<std::string>& out) -> bool
         {
             if (const auto* PPawn = findPawn(charid); PPawn != nullptr && PPawn->loc.zone != nullptr)
             {
                 std::string zone = PPawn->loc.zone->getName();
                 std::ranges::replace(zone, '_', ' ');
-                stood.push_back(fmt::format("{} ({})", name, zone));
+                out.push_back(fmt::format("{} ({})", name, zone));
+                return true;
             }
-            else
-            {
-                ++queued;
-            }
+            return false;
+        };
+        std::vector<std::string> stood;
+        uint32                   queued = 0;
+        for (const auto& [charid, name] : members)
+        {
+            queued += standingIn(charid, name, stood) ? 0 : 1;
+        }
+        std::vector<std::string> waiting;
+        for (const auto& [charid, name] : contracted)
+        {
+            queued += standingIn(charid, name, waiting) ? 0 : 1;
         }
         auto line = fmt::format("{}", fmt::join(stood, ", "));
+        if (!waiting.empty())
+        {
+            line += fmt::format("{}under your contract: {}", line.empty() ? "" : "; ", fmt::join(waiting, ", "));
+        }
         if (queued > 0)
         {
             line += fmt::format("{}{} on the way", line.empty() ? "" : "; ", queued);
@@ -871,23 +937,179 @@ namespace pawn
         return line;
     }
 
-    auto signOutClub(const CCharEntity* PPlayer) -> uint32
+    auto signOutClub(CCharEntity* PPlayer) -> uint32
     {
         if (PPlayer == nullptr)
         {
             return 0;
         }
-        // His stake goes with him: party state is not kept across a
-        // logout until the relog pass (RESEARCH §12.11)
+        // His stake waits for him: saved on him, set again at his login
+        saveStake(PPlayer);
         clearStake(PPlayer->id, "signed out");
-        // Every entry under her name leaves the ladder, standing or faded:
-        // the body goes with its position saved, and the row goes with it
-        const auto count = seats::withdrawOwnedBy(PPlayer->id);
-        if (count > 0)
+
+        // His party (ROADMAP H): the last human out takes every cardian in
+        // it out with him, where she stands -- his alts, another player's
+        // left in it, and contract members, whose contracts hold. A human
+        // still in the party keeps them all: nobody's partner is left
+        // mid-fight
+        uint32              count = 0;
+        std::vector<uint32> kept;
+        if (PPlayer->PParty != nullptr)
         {
-            ShowInfoFmt("pawn: {}'s club signs out ({} withdrawn where they stood, positions saved)", PPlayer->getName(), count);
+            std::vector<uint32> cardians;
+            bool                anotherHuman = false;
+            for (auto* PMember : PPlayer->PParty->members)
+            {
+                if (PMember == nullptr || PMember == PPlayer || PMember->objtype != TYPE_PC)
+                {
+                    continue;
+                }
+                if (pawns.contains(PMember->id))
+                {
+                    cardians.push_back(PMember->id);
+                }
+                else if (players::online(PMember->id))
+                {
+                    anotherHuman = true;
+                }
+            }
+            for (const uint32 charid : cardians)
+            {
+                if (anotherHuman)
+                {
+                    kept.push_back(charid);
+                }
+                else
+                {
+                    carryOut(charid);
+                    ++count;
+                }
+            }
+        }
+        // His cardians anywhere else sign out with him, as ever, the body
+        // with its position saved and the row with it -- save one another
+        // human keeps in his party, this one's or any
+        for (const uint32 charid : seats::ownedBy(PPlayer->id))
+        {
+            if (std::ranges::find(kept, charid) != kept.end())
+            {
+                continue;
+            }
+            if (const auto* PPawn = findPawn(charid); PPawn != nullptr)
+            {
+                if (const auto* PWith = partyPlayer(PPawn); PWith != nullptr && PWith != PPlayer)
+                {
+                    kept.push_back(charid);
+                    continue;
+                }
+            }
+            seats::withdraw(charid);
+            ++count;
+        }
+        if (count > 0 || !kept.empty())
+        {
+            ShowInfoFmt("pawn: {}'s club signs out ({} withdrawn where they stood, positions saved{})", PPlayer->getName(), count,
+                        kept.empty() ? "" : fmt::format("; {} stay in the party with another player", kept.size()));
         }
         return count;
+    }
+
+    namespace
+    {
+        // The stake as char vars on him (whole centi-yalms), 0 zone for none
+        constexpr auto kStakeZone = "[CD]StakeZone";
+        constexpr auto kStakeX    = "[CD]StakeX";
+        constexpr auto kStakeY    = "[CD]StakeY";
+        constexpr auto kStakeZ    = "[CD]StakeZ";
+        constexpr auto kStakeRot  = "[CD]StakeRot";
+    } // namespace
+
+    void saveStake(CCharEntity* PPlayer)
+    {
+        const auto stake = stakeOf(PPlayer->id);
+        PPlayer->setCharVar(kStakeZone, stake.has_value() ? static_cast<int32>(stake->zone) : 0);
+        if (stake.has_value())
+        {
+            PPlayer->setCharVar(kStakeX, static_cast<int32>(std::lround(stake->at.x * 100.0f)));
+            PPlayer->setCharVar(kStakeY, static_cast<int32>(std::lround(stake->at.y * 100.0f)));
+            PPlayer->setCharVar(kStakeZ, static_cast<int32>(std::lround(stake->at.z * 100.0f)));
+            PPlayer->setCharVar(kStakeRot, stake->at.rotation);
+        }
+    }
+
+    void restoreStake(CCharEntity* PPlayer)
+    {
+        const auto zone = PPlayer->getCharVar(kStakeZone);
+        if (zone == 0)
+        {
+            return;
+        }
+        PPlayer->setCharVar(kStakeZone, 0);
+        // Left in another zone, it would have dissolved as the party left it
+        if (zone != static_cast<int32>(PPlayer->getZone()))
+        {
+            ShowInfoFmt("pawn: {}'s stake stayed in zone {}; he signs in elsewhere, so it is not set again", PPlayer->getName(), zone);
+            return;
+        }
+        const position_t at(PPlayer->getCharVar(kStakeX) / 100.0f, PPlayer->getCharVar(kStakeY) / 100.0f, PPlayer->getCharVar(kStakeZ) / 100.0f, 0,
+                            static_cast<uint8>(PPlayer->getCharVar(kStakeRot)));
+        placeStake(PPlayer, static_cast<xi::ZoneId>(zone), at, "back where he left it");
+    }
+
+    void carryOut(const uint32 charid)
+    {
+        carriedOut.insert(charid);
+        seats::withdraw(charid);
+        if (pawns.contains(charid))
+        {
+            despawnById(charid, false); // a body the ladder never held
+        }
+        world::leaveWithPlayer(charid);
+        carriedOut.erase(charid);
+    }
+
+    void returnToWorld(const uint32 charid, const std::string_view why)
+    {
+        // Still one of the world's bodies (she never signed out with him):
+        // her seat and its clocks simply carry on
+        if (world::hasBody(charid) || !seats::has(charid))
+        {
+            return;
+        }
+        // Never before a player's eyes: a dismissed cardian does not
+        // vanish (ROADMAP H). She waits where she stands until nobody real
+        // is in sight of her, as a world body fades
+        if (const auto* PPawn = findPawn(charid); PPawn != nullptr && PPawn->loc.zone != nullptr)
+        {
+            constexpr float kSight = 50.0f;
+            bool            seen   = false;
+            PPawn->loc.zone->ForEachChar([&](CCharEntity* PChar)
+            {
+                seen |= !pawns.contains(PChar->id) && distance(PChar->loc.p, PPawn->loc.p) <= kSight;
+            });
+            if (seen)
+            {
+                pendingReturns.push_back(charid);
+                return;
+            }
+        }
+        ShowInfoFmt("pawn: {} goes back to the world ({}); the census seats her again", seats::nameOf(charid), why);
+        seats::withdraw(charid);
+    }
+
+    void forgetGuestGambits(const uint32 charid)
+    {
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", charid);
+        if (!rset || !rset->next())
+        {
+            return;
+        }
+        db::preparedStmt("DELETE FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", charid);
+        if (auto* PPawn = findPawn(charid); PPawn != nullptr)
+        {
+            reloadBrain(PPawn);
+        }
+        ShowInfoFmt("pawn: {} leaves the party's gambits behind", seats::nameOf(charid));
     }
 
     // Who owns this cardian: her cardian_pawns row, the world's account for
@@ -1047,15 +1269,25 @@ namespace pawn
                 // A maneuver is his hand on her: it ends with the party tie too
                 PController->EndManeuver(herself ? "out of the party, the maneuver ends" : "her player left the party, the maneuver ends");
             }
-            if (herself)
+            // Signed out with the last human (carryOut), she has not left: her
+            // contract and the gambits he gave her wait for his login
+            const bool withHim = carriedOut.contains(charid);
+            const bool wild    = summonerOf(charid) == 0 || world::isCensusBody(charid);
+            if (herself && !withHim)
             {
-                const auto* PLeader = PParty != nullptr ? const_cast<CParty*>(PParty)->GetLeader() : nullptr;
-                finder::noteLeft(charid, PLeader != nullptr ? PLeader->id : 0);
+                finder::noteLeft(charid);
+                // Stood as his while her contract held her, she goes back to
+                // the world now it has ended, once nobody real can see her go
+                if (summonerOf(charid) != 0 && wild)
+                {
+                    pendingReturns.push_back(charid);
+                }
             }
             // A wild body's orders end with the party: nobody can reach her
             // to lift a wait, a hunt or a retreat once she is out of it, or
-            // once her player is
-            if (summonerOf(charid) == 0 && (herself || playerLeft))
+            // once no real player is left in it
+            const bool nobodyReal = playerLeft && partyPlayer(PPawn.get()) == nullptr;
+            if (wild && (herself || nobodyReal) && !withHim)
             {
                 if (PController != nullptr)
                 {
@@ -1330,22 +1562,28 @@ namespace pawn
                 at = streamed;
             }
         }
+        placeStake(POwner, POwner->getZone(), at, "");
+        return "";
+    }
+
+    void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how)
+    {
         auto&      orders = ordersFor(POwner->id);
         const bool moved  = orders.stake.has_value();
-        orders.stake      = Stake{ POwner->getZone(), at };
+        orders.stake      = Stake{ zone, at };
         // Every change of place leaves them holding: nothing the player does
         // to the camp ever starts him a fight he did not ask for (the user,
         // 2026-09-17). clearStake does the same when the camp comes down
         orders.strategy = 0;
-        ShowInfoFmt("pawn: {} {} the stake {} {} at ({:.1f}, {:.1f}, {:.1f}), facing {} deg; orders Hold{}", POwner->getName(), moved ? "moves" : "sets", moved ? "to" : "in",
-                    zoneNameOf(orders.stake->zone), at.x, at.y, at.z, at.rotation * 360 / 256, orders.retreat ? "; retreat still active" : "");
+        ShowInfoFmt("pawn: {} {} the stake {} {} at ({:.1f}, {:.1f}, {:.1f}), facing {} deg; orders Hold{}{}", POwner->getName(), moved ? "moves" : "sets", moved ? "to" : "in",
+                    zoneNameOf(orders.stake->zone), at.x, at.y, at.z, at.rotation * 360 / 256, orders.retreat ? "; retreat still active" : "",
+                    how.empty() ? "" : fmt::format(" ({})", how));
 
         // CARDIAN TRIAL (stake_flag.h): stand his national banner on the spot,
         // facing the same way. Nothing above this line knows or cares.
         cardian::stakeflag::plant(POwner, at);
 
         applyOrders(POwner->id);
-        return "";
     }
 
     auto clearStake(const uint32 ownerCharID, const std::string_view why) -> bool
@@ -1609,6 +1847,7 @@ namespace pawn
         PPawn->PAI->Accept_Raise();
 
         ShowInfoFmt("pawn: {} home points to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
+        clearTravelOrder(PPawn->id); // she waits at her home point: a trek she was on ends there
         requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
         return true;
     }
@@ -1917,7 +2156,7 @@ namespace pawn
         return true;
     }
 
-    bool orderTravelByName(const std::string& targetName, const uint16 zoneId)
+    bool orderTravelByName(const std::string& targetName, const uint16 zoneId, const uint32 meet)
     {
         const uint32 targetCharID = charutils::getCharIdFromName(targetName);
         if (targetCharID == 0 || !pawns.contains(targetCharID))
@@ -1932,15 +2171,49 @@ namespace pawn
             return false;
         }
 
-        travelOrders[targetCharID] = destination;
-        ShowInfoFmt("pawn: {} ordered to travel to zone {}", targetName, zoneId);
+        travelOrders[targetCharID] = TravelOrder{ destination, meet };
+        ShowInfoFmt("pawn: {} ordered to travel to zone {}{}", targetName, zoneId, meet != 0 ? " to meet her player" : "");
         return true;
+    }
+
+    auto meetTrek(const CCharEntity* PPawn) -> std::optional<xi::ZoneId>
+    {
+        const auto it = travelOrders.find(PPawn->id);
+        if (it == travelOrders.end())
+        {
+            return std::nullopt;
+        }
+        if (it->second.meet == 0)
+        {
+            return it->second.zone;
+        }
+        // Loading between zones he is in none: the trek keeps to where he
+        // was going. His destination is where he stands once landed, and
+        // where he is headed while he zones
+        const auto* PPlayer = zoneutils::GetChar(it->second.meet);
+        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
+        {
+            return it->second.zone;
+        }
+        const auto hisZone = PPlayer->loc.destination;
+        if (hisZone == PPawn->getZone())
+        {
+            ShowInfoFmt("pawn: travel {}: {} is here, the trek ends", PPawn->getName(), PPlayer->getName());
+            clearTravelOrder(PPawn->id);
+            return std::nullopt;
+        }
+        if (hisZone != it->second.zone)
+        {
+            ShowInfoFmt("pawn: travel {}: {} has moved on to zone {}, she heads there", PPawn->getName(), PPlayer->getName(), static_cast<uint16>(hisZone));
+            it->second.zone = hisZone;
+        }
+        return it->second.zone;
     }
 
     auto travelOrderOf(const uint32 pawnCharID) -> std::optional<xi::ZoneId>
     {
         const auto it = travelOrders.find(pawnCharID);
-        return it != travelOrders.end() ? std::optional{ it->second } : std::nullopt;
+        return it != travelOrders.end() ? std::optional{ it->second.zone } : std::nullopt;
     }
 
     void clearTravelOrder(const uint32 pawnCharID)
@@ -2061,7 +2334,7 @@ namespace pawn
             {
                 continue;
             }
-            travelOrders[charid] = destination;
+            travelOrders[charid] = TravelOrder{ destination, PPlayer->id };
             ShowInfoFmt("pawn: {} sets out for zone {} on {}'s heels", PPawn->getName(), static_cast<uint16>(destination), PPlayer->getName());
         }
     }
@@ -2377,6 +2650,21 @@ namespace pawn
     void onZoneTick(CZone* PZone)
     {
         stakeSweep();
+        if (!pendingReturns.empty())
+        {
+            const auto due = std::exchange(pendingReturns, {});
+            for (const uint32 charid : due)
+            {
+                returnToWorld(charid, "her contract ended"); // one still in sight queues again
+            }
+        }
+        if (!pendingWithdraws.empty())
+        {
+            for (const uint32 charid : std::exchange(pendingWithdraws, {}))
+            {
+                seats::withdraw(charid);
+            }
+        }
         const auto started   = realtime::now();
         uint32     pawnsHere = 0;
         for (const auto& [charid, PPawn] : pawns)

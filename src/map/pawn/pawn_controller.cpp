@@ -3138,8 +3138,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Resting on his order she finishes before she sets out after him
-    if (pawn::travelOrderOf(POwner->id).has_value() && !m_RestOrder.active())
+    // Resting on his order she finishes before she sets out after him. A
+    // trek to meet him follows him, and ends where he already is (meetTrek)
+    if (!m_RestOrder.active() && pawn::meetTrek(static_cast<const CCharEntity*>(POwner)).has_value())
     {
         if (m_Mode != Mode::Travel)
         {

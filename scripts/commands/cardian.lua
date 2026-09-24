@@ -1056,6 +1056,21 @@ commandObj.onTrigger = function(player, line)
             end
             reply(player, '#cd pk.e ' .. p.name)
         end
+    elseif verb == 'contracts' then
+        -- Your contract: each open contract of his (ct <name> <kind> <job>
+        -- <level> <zone id> <party|standing|out>), framed ct.b / ct.e
+        reply(player, '#cd ct.b')
+        for _, c in ipairs(player:cardianContracts()) do
+            reply(player, string.format('#cd ct %s %s %d %d %d %s', c.name, c.kind, c.job or 0, c.level or 0, c.zone or 0, c.state or 'out'))
+        end
+        reply(player, '#cd ct.e')
+    elseif verb == 'endcontract' and name then
+        local err = player:cardianEndContract(name)
+        if err ~= '' then
+            reply(player, '#cd err endcontract ' .. err)
+        else
+            reply(player, '#cd ok endcontract')
+        end
     elseif verb == 'invite' and name then
         local err = player:cardianInvite(name, args[3] or 'exp', tonumber(args[4]) or 0)
         if err ~= '' then

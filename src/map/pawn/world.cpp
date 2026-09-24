@@ -1646,8 +1646,10 @@ namespace
         std::vector<Candidate>         shown; // recent faces, taken only when nobody else fits
         // minted bodies only, at the level their character rows say: a name
         // without a body waits for the census tool's mint
+        // ...and none held for a player by an open contract (ROADMAP H)
         if (const auto rset = db::preparedStmt("SELECT c.name, c.cohort, c.seed, c.job FROM cardian_census c JOIN char_stats s ON s.charid = c.charid "
-                                               "WHERE c.anchor <> 'bank' AND c.recruited = 0 AND s.mlvl BETWEEN ? AND ?",
+                                               "WHERE c.anchor <> 'bank' AND c.recruited = 0 AND s.mlvl BETWEEN ? AND ? "
+                                               "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '')",
                                                spec.band[0], spec.band[1]);
             rset)
         {
@@ -2294,7 +2296,13 @@ namespace pawn::world
     auto isBody(const uint32 charid) -> bool
     {
         const auto it = bodies.find(charid);
-        return it != bodies.end() && it->second.present;
+        if (it != bodies.end())
+        {
+            return it->second.present;
+        }
+        // Held by her contract and stood as her player's, she has no Body
+        // but is the world's all the same
+        return pawn::findPawn(charid) != nullptr && isCensusBody(charid);
     }
 
     auto isLeaving(const uint32 charid) -> bool
@@ -2462,19 +2470,39 @@ namespace pawn::world
         }
     }
 
+    namespace
+    {
+        // Out of the world's pool: her seat released and refilling, her Body
+        // erased (unseat erases the map element, so the name is read first
+        // and nothing touches it afterwards)
+        bool leavePool(const uint32 charid, const std::string_view why, const std::string_view line)
+        {
+            const auto it = bodies.find(charid);
+            if (it == bodies.end())
+            {
+                return false;
+            }
+            const auto name = it->second.name;
+            unseat(it->second, why);
+            ShowInfoFmt("world: {} {}", name, line);
+            return true;
+        }
+    } // namespace
+
     bool leaveWorld(const uint32 charid)
     {
-        const auto it = bodies.find(charid);
-        if (it == bodies.end())
-        {
-            return false;
-        }
-        // unseat erases the map element, so the name is read first and
-        // nothing touches it afterwards
-        const auto name = it->second.name;
-        unseat(it->second, "recruited");
-        ShowInfoFmt("world: {} is recruited and leaves the world's pool; her seat refills", name);
-        return true;
+        return leavePool(charid, "recruited", "is recruited and leaves the world's pool; her seat refills");
+    }
+
+    bool leaveWithPlayer(const uint32 charid)
+    {
+        return leavePool(charid, "signed out with her player", "signs out with her player; her seat refills, and her contract holds her out of the pool");
+    }
+
+    auto isCensusBody(const uint32 charid) -> bool
+    {
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_census WHERE charid = ? AND recruited = 0", charid);
+        return rset && rset->next();
     }
 
     auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
@@ -2705,18 +2733,23 @@ namespace pawn::world
         {
             return exp;
         }
-        const auto it = bodies.find(PChar->id);
-        if (it == bodies.end() || !it->second.present)
+        // In a real player's party she levels as the party does: the
+        // game's own caps only, and her exp counts toward her affinity
+        // (the user, 2026-09-13) -- a Body's or one held by her contract
+        const auto it       = bodies.find(PChar->id);
+        const bool standing = it != bodies.end() ? it->second.present : isCensusBody(PChar->id);
+        if (!standing)
         {
             return exp;
         }
-        // In a real player's party she levels as the party does: the
-        // game's own caps only, and her exp counts toward her affinity
-        // (the user, 2026-09-13)
         if (pawn::partyPlayer(PChar) != nullptr)
         {
             pawn::finder::noteExp(PChar, exp);
             return exp;
+        }
+        if (it == bodies.end())
+        {
+            return exp; // held and waiting: no cap to read, and nothing to earn
         }
         const Body&  body  = it->second;
         const uint8  level = PChar->GetMLevel();

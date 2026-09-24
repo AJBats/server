@@ -65,6 +65,13 @@ namespace pawn::world
     bool fadeBody(uint32 charid);
     void signInBody(uint32 charid);
     bool leaveWorld(uint32 charid);
+    // Signed out with her player while her contract is open (ROADMAP H):
+    // her seat is released and her Body erased, as for a recruit, and she
+    // stays out of the pool until the contract ends
+    bool leaveWithPlayer(uint32 charid);
+    // One of the world's own by the census (minted, never recruited),
+    // whatever the ladder holds her as while a contract keeps her
+    auto isCensusBody(uint32 charid) -> bool;
 
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued
