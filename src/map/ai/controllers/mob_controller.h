@@ -53,7 +53,7 @@ public:
     auto         TryCastSpell() -> bool;
     auto         TrySpecialSkill() -> bool;
     auto         CanFollowTarget(CBattleEntity*) const -> bool;
-    auto         CanAggroTarget(CBattleEntity*) const -> bool;
+    auto         CanAggroTarget(CBattleEntity*, bool detect = true) const -> bool; // CARDIAN: detect off, all but detection (tapMobAggro's ask)
     void         TapDeaggroTime();
     void         TapDeclaimTime();
     auto         Cast(EntityId target, SpellID spellid) -> bool override;

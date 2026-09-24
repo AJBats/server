@@ -146,6 +146,19 @@ namespace cardian::rules
         return mayFight(there).ok;
     }
 
+    // A refusal the draw's own wait alone makes: she is near enough, and
+    // nothing but the cooldown stands in the way
+    inline auto onlyCooldown(const EngageFacts& f) -> bool
+    {
+        if (!f.cooldown || mayFight(f))
+        {
+            return false;
+        }
+        EngageFacts ready = f;
+        ready.cooldown    = false;
+        return mayFight(ready).ok;
+    }
+
     // ------------------------------------------------------------------
     // Is this pull clean?
     // ------------------------------------------------------------------

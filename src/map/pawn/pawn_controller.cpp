@@ -20,6 +20,7 @@
 */
 
 #include "pawn_controller.h"
+#include "view.h"
 
 #include "local_planner.h"
 #include "cardian_link.h"
@@ -134,6 +135,11 @@ auto CPawnController::IsWorld() const -> bool
 void CPawnController::SetWaiting(const bool on, const bool ordered, const std::string_view why)
 {
     const bool was = m_Waiting;
+    if (ordered && !on)
+    {
+        EndRestOrder("the player's follow order");
+        DropQueuedRest("the player's follow order");
+    }
     m_Waiting      = on;
     m_WaitOrdered  = on && ordered;
     if (on)
@@ -168,6 +174,8 @@ auto CPawnController::modeName(const Mode mode) -> const char*
             return "Wait";
         case Mode::Travel:
             return "Travel";
+        case Mode::Walk:
+            return "Walk";
         case Mode::Roam:
             return "Roam";
         case Mode::Approach:
@@ -180,6 +188,8 @@ auto CPawnController::modeName(const Mode mode) -> const char*
             return "Attend";
         case Mode::Retreat:
             return "Retreat";
+        case Mode::Maneuver:
+            return "Maneuver";
         case Mode::Down:
             return "Down";
     }
@@ -339,6 +349,35 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_SaidNoSpotFor    = 0;
         m_AttendVerdict    = 0;
     }
+    // Leaving a maneuver by whatever door (its finisher, his cancel, his
+    // camera off her, her leaving his party, her death) hands her back:
+    // her gambit switch as it was, his walk order gone, and his addon
+    // told (`cd mv <name>`, no finisher) so it lets go of the camera
+    if (from == Mode::Maneuver && to != Mode::Maneuver)
+    {
+        // A composed maneuver ended before its order fired (his cancel, her
+        // death) takes the order with it: an order without its route would
+        // fire from wherever she stands. The flag drops first, so the drop
+        // does not end the maneuver again
+        if (m_ManeuverComposed && m_QueuedOrder.has_value())
+        {
+            m_ManeuverComposed = false;
+            DropQueuedOrder("the maneuver ended first");
+        }
+        m_Gambits->SetMaster(m_ManeuverPriorMaster);
+        pawn::clearWalkOrder(POwner->id);
+        if (POwner->PAI->PathFind)
+        {
+            POwner->PAI->PathFind->Clear();
+        }
+        if (pawn::maneuverOf(m_ManeuverBy) == POwner->id) // a composed one gave his live slot up already
+        {
+            pawn::clearManeuver(m_ManeuverBy);
+        }
+        cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {}", POwner->getName()));
+        m_ManeuverBy       = 0;
+        m_ManeuverComposed = false;
+    }
     // A pending act belongs to the mode it was scheduled in; only the
     // player's order outlives a change
     if (from != to && m_Pending.has_value() && m_Pending->act != Pending::Act::Order)
@@ -351,6 +390,11 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
 }
 
 void CPawnController::PlayerZoning()
+{
+    StandDown("the player is zoning; stands down");
+}
+
+void CPawnController::StandDown(const std::string_view why)
 {
     // Cancel delayed joins/orders before changing mode. Otherwise an Order,
     // which normally survives a transition, could restart the old fight.
@@ -368,7 +412,15 @@ void CPawnController::PlayerZoning()
     }
     if (m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend)
     {
-        Transition(IdleMode(), "the player is zoning; stands down");
+        Transition(IdleMode(), why);
+    }
+}
+
+void CPawnController::DropQueuedRest(const std::string_view why)
+{
+    if (m_QueuedOrder.has_value() && m_QueuedOrder->first.starts_with("rest:"))
+    {
+        DropQueuedOrder(why);
     }
 }
 
@@ -417,6 +469,35 @@ void CPawnController::Carried(const bool withPlayer)
         SetWaiting(true, false);
         ShowInfoFmt("pawn: {} will wait where she lands", POwner->getName());
     }
+}
+
+void CPawnController::ArriveWith(const position_t& landing)
+{
+    constexpr auto kArrivalWait = 5s;
+    m_Arrival                   = Arrival{ .landing = landing, .until = timer::now() + kArrivalWait };
+}
+
+auto CPawnController::AwaitsArrival(const Place& place) -> bool
+{
+    if (!m_Arrival.has_value())
+    {
+        return false;
+    }
+    constexpr float kArrivedWithin = 6.0f;
+    if (distance(place.position(), m_Arrival->landing) <= kArrivedWithin)
+    {
+        ShowInfoFmt("pawn: {} sees her player arrive beside her, and follows", POwner->getName());
+        m_Arrival.reset();
+        return false;
+    }
+    if (m_Tick >= m_Arrival->until)
+    {
+        ShowInfoFmt("pawn: {} never saw her player arrive at ({:.1f}, {:.1f}, {:.1f}), and follows where he is", POwner->getName(),
+                    m_Arrival->landing.x, m_Arrival->landing.y, m_Arrival->landing.z);
+        m_Arrival.reset();
+        return false;
+    }
+    return true;
 }
 
 void CPawnController::NotePlayerMagic(const CCharEntity* PPlayer)
@@ -901,6 +982,8 @@ void CPawnController::SetRetreat(const bool on)
         m_Retreat = on;
         if (on)
         {
+            EndRestOrder("retreat");
+            DropQueuedRest("retreat");
             m_Approach.reset();
             Transition(Mode::Retreat, "retreat called");
         }
@@ -1043,6 +1126,8 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     }
     // The beat: the order is taken now, her draw comes a beat later -- the
     // front row first, so the party never draws on one tick
+    EndRestOrder("the player's engage order");
+    DropQueuedRest("the player's engage order");
     Schedule(Pending::Act::Order, PMob, JoinBeat());
 }
 
@@ -1154,10 +1239,22 @@ namespace
     {
         return static_cast<int>(std::ceil(std::chrono::duration<double>(d).count()));
     }
+
+    // The command window's Attack and Disengage, as the addon sends them and her queue holds them
+    constexpr std::string_view kAttackOrder    = "attack";
+    constexpr std::string_view kDisengageOrder = "disengage";
 } // namespace
 
 auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string
 {
+    if (key == kAttackOrder)
+    {
+        return AttackOrder(PTarget);
+    }
+    if (key == kDisengageOrder)
+    {
+        return DisengageOrder();
+    }
     unsigned kind = 0;
     unsigned mode = 0;
     unsigned id   = 0;
@@ -1176,15 +1273,20 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
 
     // Held (pause/pause.h), nothing starts: the order goes straight to her queue. Her
     // tick clock stands still with the simulation, so its grace runs from the release.
+    // Out of the action's reach, the order is queued too: she walks in first
+    // (OrderApproach) and the queue's grace waits for her
     const EntityId target(PTarget);
+    const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
     const auto     err = cardian::pause::isHeld() ? std::string("paused")
                          : Acting()               ? std::string("busy")
+                         : outOfReach             ? std::string("out of reach")
                                                   : TryAction(kind, mode, id, target);
-    if (err != "paused" && err != "busy" && err != "recast" && err != "standing up")
+    if (err != "paused" && err != "busy" && err != "recast" && err != "standing up" && err != "out of reach")
     {
         if (err.empty())
         {
             OrderStarted(kind, id);
+            NoteOrderFired();
         }
         return err;
     }
@@ -1201,6 +1303,23 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     m_QueuedOrderDeadline = m_Tick + grace;
     SetQueuedOrder(std::make_pair(key, target));
     ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), err, wholeSeconds(grace));
+    if (InManeuver())
+    {
+        if (cardian::pause::isHeld())
+        {
+            // the paused maneuver has its order: walk the route, then this
+            MarkComposed(fmt::format("{} at the end of the route", OrderName(kind, id)));
+        }
+        else
+        {
+            // a live maneuver's order that must wait (the walk in, her recast, her
+            // cast under way) is hers to carry out: he is handed back now, and the
+            // tick's mover walks her in, as for any order. It is hers, not the
+            // composed maneuver's, so the maneuver's end must not take it with it
+            m_ManeuverComposed = false;
+            EndManeuver("his order is hers to carry out, the maneuver ends");
+        }
+    }
     return "";
 }
 
@@ -1255,7 +1374,26 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
 
 void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order)
 {
+    if (order.has_value() && !order->first.starts_with("rest:"))
+    {
+        EndRestOrder("the player's next order");
+    }
+    // A maneuver's rest lasts exactly as long as its order is queued: met,
+    // replaced, cancelled or dropped with the maneuver, the rest is over
+    if (m_ManeuverResting && !(order.has_value() && order->first.starts_with("rest:")))
+    {
+        m_ManeuverResting = false;
+        EndRestOrder("its maneuver's order is gone");
+    }
     m_QueuedOrder = std::move(order);
+    if (!m_QueuedOrder.has_value() && m_OrderApproaching)
+    {
+        m_OrderApproaching = false;
+        if (POwner->PAI->PathFind)
+        {
+            POwner->PAI->PathFind->Clear();
+        }
+    }
     if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
         const auto line = QueuedOrderLine();
@@ -1281,6 +1419,10 @@ auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 f
     }
     ShowInfoFmt("pawn: {} drops the queued {} ({})", POwner->getName(), m_QueuedOrder->first, why);
     SetQueuedOrder(std::nullopt);
+    if (InManeuver() && m_ManeuverComposed)
+    {
+        EndManeuver(fmt::format("its order is gone ({}), the maneuver ends", why));
+    }
 
     // Out of his party she has no orders owner for SetQueuedOrder to tell: his addon
     // still shows the line
@@ -1388,13 +1530,137 @@ void CPawnController::FireQueuedOrder()
         return;
     }
     const auto [key, target] = *m_QueuedOrder;
-    unsigned   kind          = 0;
-    unsigned   mode          = 0;
-    unsigned   id            = 0;
+
+    // A composed maneuver walks its route first: the order waits at the end of it,
+    // its grace running from there. Then, as the gambit engine does, she closes
+    // on the target until the order is in reach (the user, 2026-09-22: the
+    // route's end is a waypoint; the order is "run to and use")
+    if (InManeuver() && m_ManeuverComposed)
+    {
+        if (cardian::pause::isHeld())
+        {
+            return;
+        }
+        if (!RouteWalked())
+        {
+            m_QueuedOrderDeadline = m_Tick + orderGrace();
+            return;
+        }
+        // The move orders (ComposeMove): the route was the order
+        if (key == "move" || key == "movewait")
+        {
+            SetQueuedOrder(std::nullopt);
+            ShowInfoFmt("pawn: {} has walked the route", POwner->getName());
+            if (key == "movewait")
+            {
+                SetWaiting(true, true, "the route walked, waiting there: the maneuver ends");
+            }
+            else
+            {
+                EndManeuver("the route walked, the maneuver ends");
+            }
+            return;
+        }
+    }
+
+    // The maneuver's rest (ComposeRest), the route, if one was laid, walked:
+    // she kneels there and the maneuver lasts, her queued order still, until
+    // the rest order is over -- HP and MP at the percent, or a rest she
+    // cannot carry out (RestTick says which)
+    if (int percent = 0; std::sscanf(key.c_str(), "rest:%d", &percent) == 1)
+    {
+        if (!InManeuver())
+        {
+            SetQueuedOrder(std::nullopt);
+            SetRestOrder(percent, "the player's order");
+            return;
+        }
+        if (!m_ManeuverResting)
+        {
+            m_ManeuverResting = true;
+            pawn::clearWalkOrder(POwner->id); // the route's end is where she kneels
+            SetRestOrder(percent, "the player's maneuver");
+            return;
+        }
+        if (!m_RestOrder.active())
+        {
+            SetQueuedOrder(std::nullopt);
+            EndManeuver(fmt::format("her rest until {}% is over, the maneuver ends", percent));
+        }
+        return;
+    }
+
+    // His Attack (AttackOrder), held to the release, the route, if one was
+    // laid, walked: she takes the fight as the party's engage order has her
+    if (key == kAttackOrder)
+    {
+        SetQueuedOrder(std::nullopt);
+        EndManeuver("his attack is away, the maneuver ends");
+        auto* PMob = target.resolve<CMobEntity>();
+        if (PMob == nullptr || PMob->isDead())
+        {
+            ShowInfoFmt("pawn: {} lets the queued attack go (its target is gone)", POwner->getName());
+            Note("the attack let go: its target is gone");
+            return;
+        }
+        ShowInfoFmt("pawn: {} starts the queued attack on {}", POwner->getName(), PMob->getName());
+        EngageOn(PMob);
+        return;
+    }
+    // His Disengage (DisengageOrder), held to the release likewise
+    if (key == kDisengageOrder)
+    {
+        SetQueuedOrder(std::nullopt);
+        EndManeuver("his disengage is away, the maneuver ends");
+        StandDown("the player's order: she sheathes");
+        return;
+    }
+
+    unsigned kind = 0;
+    unsigned mode = 0;
+    unsigned id   = 0;
     if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
     {
         SetQueuedOrder(std::nullopt);
         return;
+    }
+
+    // Out of the action's reach: the walk in first (OrderApproach, taken by the
+    // tick's mover), the grace waiting, up to kOrderApproachMax of walking
+    if (const auto beyond = OrderOutOfReach(); beyond.has_value())
+    {
+        constexpr auto kOrderApproachMax = 30s;
+        if (!m_OrderApproaching)
+        {
+            m_OrderApproaching    = true;
+            m_OrderApproachSince  = m_Tick;
+            if (m_ManeuverComposed)
+            {
+                pawn::clearWalkOrder(POwner->id); // the route is walked: the target is the goal now
+            }
+            ShowInfoFmt("pawn: {} walks in on {} for {} ({:.1f} y, reach {:.1f})", POwner->getName(), beyond->first->getName(), OrderName(kind, id),
+                        distance(POwner->loc.p, beyond->first->loc.p), beyond->second);
+        }
+        else if (m_Tick - m_OrderApproachSince > kOrderApproachMax)
+        {
+            const auto name = OrderName(kind, id);
+            ShowInfoFmt("pawn: {} lets the queued {} go (could not get in reach of {})", POwner->getName(), key, beyond->first->getName());
+            SetQueuedOrder(std::nullopt);
+            Note(fmt::format("{} let go: could not get in reach of {}", name, beyond->first->getName()));
+            if (InManeuver() && m_ManeuverComposed)
+            {
+                m_ManeuverComposed = false;
+                EndManeuver("could not get in reach, the maneuver ends");
+            }
+            return;
+        }
+        m_QueuedOrderDeadline = m_Tick + orderGrace();
+        return;
+    }
+    if (m_OrderApproaching)
+    {
+        m_OrderApproaching = false; // in reach: the walk in is over, the order fires below
+        POwner->PAI->PathFind->Clear();
     }
 
     // The grace ran out: with her still busy, or the timer still running
@@ -1436,6 +1702,7 @@ void CPawnController::FireQueuedOrder()
     // Started, not done: the game may still refuse it on its next step (ToldAfterOrder)
     OrderStarted(kind, id);
     ShowInfoFmt("pawn: {} starts the queued {} on {}", POwner->getName(), key, PTarget->getName());
+    NoteOrderFired();
 }
 
 auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool
@@ -1502,6 +1769,13 @@ auto CPawnController::Refusal(CBattleEntity* PTarget, const cardian::rules::Enga
 
 auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, const std::string_view how, const bool hold) -> bool
 {
+    // Resting on his order she takes no fight, the party's or her own
+    // defence: only his own engage order ends it (EngageOn)
+    if (m_RestOrder.active() && kind != ApproachKind::Order)
+    {
+        SayRefusal(PTarget, fmt::format("resting until {}% on the player's order", m_RestOrder.percent));
+        return false;
+    }
     const auto facts = EngageFactsFor(PTarget);
     if (const auto why = Refusal(PTarget, facts); !why.empty())
     {
@@ -1569,6 +1843,15 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
     // so it starts at once
     if (cardian::rules::worthWalkingIn(facts))
     {
+        // A draw that would hold for his strike, near enough and waiting on
+        // nothing but her own draw cooldown, is not walked into: the hold
+        // keeps her back by him anyway. She stays, and the door draws her
+        // where she stands once the wait is served
+        if (hold && cardian::rules::onlyCooldown(facts))
+        {
+            ShowInfoFmt("pawn: {} waits out her draw cooldown before holding on {}", POwner->getName(), PTarget->getName());
+            return false;
+        }
         if (!m_Approach.has_value() || m_Approach->target.resolve<CBattleEntity>() != PTarget)
         {
             m_Approach = Approach{ EntityId(PTarget), kind };
@@ -1587,7 +1870,7 @@ auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
     // The party's own mob is no danger to the pull (exclude), and the
     // circles are the pick's: every danger, worst case, padded
     const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"),
-                                              pawn::danger::Profile::worstCase(), PMob);
+                                              pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner)), PMob);
     // Only the guards that matter to the way in (forWalk): a mob behind a
     // wall is no company
     const auto seen  = pawn::danger::forWalk(dangers, POwner->loc.p, PMob->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
@@ -1613,8 +1896,8 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // pulled aggressive mob is not fighting anyone yet, and its circle
     // would hold her at the rim of the very mob she is meant to hit, or
     // walk up to
-    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
-    m_Dangers         = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
+    auto* PPawn = static_cast<CCharEntity*>(POwner);
+    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
 }
 
 auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
@@ -1983,6 +2266,12 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
         return AvoidAction::None;
     }
 
+    // The player's order walks her in ahead of everything (OrderApproach)
+    if (auto order = OrderApproach(); order.has_value())
+    {
+        return Walk(std::move(*order));
+    }
+
     // Spell approaches seek range and line of sight through the shared
     // avoidance checks. They may leave the camp's formation boundary.
     if (!m_Retreat && !m_Waiting && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
@@ -2339,7 +2628,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
             Transition(IdleMode(), ServerExitReason());
         }
     }
-    else if (!thinksEngaged && engaged && m_Mode != Mode::Down && POwner->GetBattleTarget() != nullptr)
+    else if (!thinksEngaged && engaged && m_Mode != Mode::Down && m_Mode != Mode::Maneuver && POwner->GetBattleTarget() != nullptr)
     {
         Transition(Mode::Fight, fmt::format("engaged on {} by a hand not hers", POwner->GetBattleTarget()->getName()));
     }
@@ -2379,6 +2668,17 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     if (!POwner->isDead() && POwner->PAI->PathFind && POwner->PAI->PathFind->IsFollowingPath())
     {
         pawn::doors::openAhead(static_cast<CCharEntity*>(POwner), settings::get<float>("pawn.DOOR_REACH"), 2.0f);
+    }
+
+    // A maneuver (docs/maneuvers.md): the player drives her, so neither
+    // tick runs -- no fight door, no formation, no perimeter; her walk
+    // order alone moves her. A finisher that engaged her (a weapon skill,
+    // a Provoke) leaves her engaged for the tick after the maneuver, which
+    // reconciles it into a fight as any hand not hers
+    if (m_Mode == Mode::Maneuver)
+    {
+        ManeuverTick();
+        co_return;
     }
 
     if (engaged)
@@ -2838,7 +3138,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    if (pawn::travelOrderOf(POwner->id).has_value())
+    // Resting on his order she finishes before she sets out after him. A
+    // trek to meet him follows him, and ends where he already is (meetTrek)
+    if (!m_RestOrder.active() && pawn::meetTrek(static_cast<const CCharEntity*>(POwner)).has_value())
     {
         if (m_Mode != Mode::Travel)
         {
@@ -2846,6 +3148,20 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
         TravelTick();
         co_return;
+    }
+
+    if (pawn::walkOrderOf(POwner->id).has_value())
+    {
+        if (m_Mode != Mode::Walk)
+        {
+            Transition(Mode::Walk, "walked by the player");
+        }
+        WalkTick();
+        co_return;
+    }
+    if (m_Mode == Mode::Walk)
+    {
+        Transition(IdleMode(), "the walk is over");
     }
 
     // A world body on her own, or leading her camp: nobody to follow. Her
@@ -2910,7 +3226,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             m_NoPlayerSince = tick;
         }
         const bool loading = PPlayer == nullptr && m_Mode == Mode::Travel && tick - m_NoPlayerSince < 20s;
-        if (Treks() && PParty != nullptr && (elsewhere || loading))
+        if (Treks() && PParty != nullptr && (elsewhere || loading) && !m_RestOrder.active())
         {
             if (m_Mode != Mode::Travel)
             {
@@ -2972,6 +3288,22 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
     CBattleEntity* PPartyTarget = party.target;
     const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
+    // The door's state, once a second, while a fight is on around her and she
+    // has not passed it: what stands in the way of this tick
+    if (settings::get<bool>("pawn.FORMATION_DEBUG") && m_Tick - m_DoorSaidAt >= 1s)
+    {
+        const bool fightAround = (PPlayer != nullptr && PPlayer->PAI->IsEngaged()) || PPartyTarget != nullptr;
+        if (fightAround)
+        {
+            m_DoorSaidAt = m_Tick;
+            ShowInfoFmt("pawn: door {}: target {}{}, walking in {}, held off {}, pending {}{}", POwner->getName(),
+                        PPartyTarget != nullptr ? PPartyTarget->getName() : "none",
+                        PPartyTarget != nullptr ? fmt::format(" ({})", party.why) : "",
+                        walkingIn, PPartyTarget != nullptr && HoldingOff(PPartyTarget),
+                        PPartyTarget != nullptr && PendingIs(Pending::Act::Join, PPartyTarget) ? (Due(Pending::Act::Join, PPartyTarget) ? "due" : "waiting") : "none",
+                        PPartyTarget != nullptr ? fmt::format(", leash {:.0f} y from ({:.0f}, {:.0f})", settings::get<float>("pawn.HUNT_LEASH"), (place != nullptr ? place->position() : POwner->loc.p).x, (place != nullptr ? place->position() : POwner->loc.p).z) : "");
+        }
+    }
     if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget) && !(Attending(PPartyTarget) && IsPerimeterMage()))
     {
         const auto facts = EngageFactsFor(PPartyTarget);
@@ -3071,7 +3403,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // A hunter picks the party's next fight itself, the moment it is free
     // to: the choice is never throttled, only the draw
-    if (hunting && !m_Approach.has_value())
+    if (hunting && !m_Approach.has_value() && !m_RestOrder.active())
     {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
@@ -3130,7 +3462,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         proposal = AttendIntent(PAttended, place);
     }
-    else if (somewhereToGo)
+    else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, she stays where she kneels
     {
         proposal = FormationIntent(*place, PPlayer, nullptr);
     }
@@ -3376,6 +3708,480 @@ auto CPawnController::CourtesyStep(const position_t& point) -> position_t
     // from the goal and not from a point a yalm short of it
     const auto [x, z] = cardian::planner::along(*plan, plan->length <= kReach + 1.5f ? plan->length : kReach);
     return position_t(x, me.y, z, 0, 0);
+}
+
+auto CPawnController::InManeuver() const -> bool
+{
+    return m_Mode == Mode::Maneuver;
+}
+
+auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
+{
+    if (PBy == nullptr)
+    {
+        return "no player";
+    }
+    if (InManeuver())
+    {
+        if (m_ManeuverBy != PBy->id)
+        {
+            return "another player's maneuver";
+        }
+        return m_ManeuverComposed ? fmt::format("{} has a maneuver waiting: cancel it first", POwner->getName()) : "";
+    }
+    if (POwner->isDead())
+    {
+        return "KO'd";
+    }
+    // A fight is no bar (docs/maneuvers.md: the boss pull that went
+    // sideways). She stays engaged through it, the tick leaves an engaged
+    // maneuver alone, and its end hands her straight back to the fight
+    if (cardian::view::origin(PBy) != POwner)
+    {
+        return "not looking through her";
+    }
+    if (const auto other = pawn::maneuverOf(PBy->id); other != 0 && other != POwner->id)
+    {
+        const auto* POther = zoneutils::GetChar(other);
+        return fmt::format("one maneuver at a time ({})", POther != nullptr ? POther->getName() : "another");
+    }
+
+    EndRestOrder("a maneuver");
+    StandFromRest("a maneuver"); // the ring moves her by path, never through Move's stand
+    m_ManeuverBy          = PBy->id;
+    m_ManeuverComposed    = false;
+    m_ManeuverResting     = false;
+    m_ManeuverPriorMaster = m_Gambits->MasterOn();
+    m_Gambits->SetMaster(false);
+    pawn::setManeuver(PBy->id, POwner->id);
+    Transition(Mode::Maneuver, fmt::format("{} takes the wheel", PBy->getName()));
+    cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {} on", POwner->getName()));
+    return "";
+}
+
+void CPawnController::EndManeuver(const std::string_view why)
+{
+    if (InManeuver())
+    {
+        Transition(IdleMode(), why);
+    }
+}
+
+// His order has left her: the maneuver's end, and his hand-back. What the
+// game makes of the order from here is hers to carry out (the user,
+// 2026-09-22: "she does the rest"); a refusal reaches him as a note
+void CPawnController::NoteOrderFired()
+{
+    EndManeuver("his order is away, the maneuver ends");
+}
+
+auto CPawnController::ManeuverComposed() const -> bool
+{
+    return InManeuver() && m_ManeuverComposed;
+}
+
+auto CPawnController::ManeuverBy() const -> uint32
+{
+    return InManeuver() ? m_ManeuverBy : 0;
+}
+
+auto CPawnController::ComposeMove(const bool wait)
+    -> std::string
+{
+    if (!InManeuver())
+    {
+        return "no maneuver";
+    }
+    if (!cardian::pause::isHeld())
+    {
+        return "a move is a paused maneuver's order";
+    }
+    if (m_ManeuverComposed)
+    {
+        return "her maneuver is composed already: cancel it first";
+    }
+    if (!pawn::walkOrderOf(POwner->id).has_value())
+    {
+        return "no route laid";
+    }
+    m_QueuedOrderDeadline = m_Tick + orderGrace();
+    SetQueuedOrder(std::make_pair(std::string(wait ? "movewait" : "move"), EntityId(POwner)));
+    MarkComposed(fmt::format("walk the route{}", wait ? ", then wait there" : ""));
+    return "";
+}
+
+// A maneuver's order is given -- held, or a rest either way: composed, it
+// needs his eye no more. His one live maneuver is free again, for the next
+// cardian's: a pause queues one per cardian (the user, 2026-09-23)
+void CPawnController::MarkComposed(const std::string_view what)
+{
+    m_ManeuverComposed = true;
+    if (pawn::maneuverOf(m_ManeuverBy) == POwner->id)
+    {
+        pawn::clearManeuver(m_ManeuverBy);
+    }
+    ShowInfoFmt("pawn: {}'s maneuver is composed: {}", POwner->getName(), what);
+    cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {} composed", POwner->getName()));
+}
+
+auto CPawnController::ComposeRest(const int percent) -> std::string
+{
+    if (!InManeuver())
+    {
+        return "no maneuver";
+    }
+    if (m_ManeuverComposed)
+    {
+        return "her maneuver is composed already: cancel it first";
+    }
+    if (percent < 1 || percent > 100)
+    {
+        return "rest takes 1 to 100 percent";
+    }
+    if (cardian::rest::Order{ .percent = percent }.metBy(POwner->health.hp, POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP()))
+    {
+        return fmt::format("{} is already at {}% HP and MP", POwner->getName(), percent);
+    }
+    // Live, she rests where she stands: the point she was steered toward is let go
+    if (!cardian::pause::isHeld())
+    {
+        pawn::clearWalkOrder(POwner->id);
+    }
+    m_QueuedOrderDeadline = m_Tick + orderGrace();
+    SetQueuedOrder(std::make_pair(fmt::format("rest:{}", percent), EntityId(POwner)));
+    MarkComposed(fmt::format("{}rest until {}%", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", percent));
+    return "";
+}
+
+auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> std::string
+{
+    auto* PMob = dynamic_cast<CMobEntity*>(PTarget);
+    if (PMob == nullptr || PMob->isDead())
+    {
+        return "pick a monster";
+    }
+    if (POwner->isDead())
+    {
+        return "KO'd";
+    }
+    if (cardian::pause::isHeld())
+    {
+        SetQueuedOrder(std::make_pair(std::string(kAttackOrder), EntityId(PMob)));
+        ShowInfoFmt("pawn: {} queues the attack on {} (paused)", POwner->getName(), PMob->getName());
+        if (InManeuver())
+        {
+            MarkComposed(fmt::format("{}attack {}", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", PMob->getName()));
+        }
+        return "";
+    }
+    EndManeuver("his order is away, she attacks: the maneuver ends");
+    DropQueuedOrder("his attack order replaces it"); // her newest order is the one she carries out
+    EngageOn(PMob);
+    return "";
+}
+
+auto CPawnController::DisengageOrder() -> std::string
+{
+    if (POwner->isDead())
+    {
+        return "KO'd";
+    }
+    if (cardian::pause::isHeld())
+    {
+        SetQueuedOrder(std::make_pair(std::string(kDisengageOrder), EntityId(POwner)));
+        ShowInfoFmt("pawn: {} queues the disengage (paused)", POwner->getName());
+        if (InManeuver())
+        {
+            MarkComposed(fmt::format("{}disengage", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : ""));
+        }
+        return "";
+    }
+    const bool fighting = POwner->PAI->IsEngaged() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend;
+    if (!fighting)
+    {
+        return "she is not fighting";
+    }
+    EndManeuver("his order is away, she disengages: the maneuver ends");
+    StandDown("the player's order: she sheathes");
+    return "";
+}
+
+// How close an order needs her: the spell's or ability's own range, melee
+// reach for a weapon skill, the ranged attack's distance; a shade inside
+// each, the game's own check being the judge
+auto CPawnController::OrderReach(const unsigned kind, const unsigned id, const CBattleEntity* PTarget) const -> float
+{
+    switch (kind)
+    {
+        case 1:
+            return 24.0f;
+        case 2:
+        {
+            const auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
+            return PSpell != nullptr && PSpell->getRange() > 0.0f ? PSpell->getRange() - 0.5f : 19.5f;
+        }
+        case 3:
+        {
+            const auto* PAbility = ability::GetAbility(static_cast<uint16>(id));
+            const float range    = PAbility != nullptr ? PAbility->getRange() : 0.0f;
+            return range > 0.0f ? range - 0.5f : POwner->GetMeleeRange(PTarget) - 0.3f;
+        }
+        default:
+            return POwner->GetMeleeRange(PTarget) - 0.3f;
+    }
+}
+
+auto CPawnController::OrderOutOfReach() const -> std::optional<std::pair<CBattleEntity*, float>>
+{
+    if (!m_QueuedOrder.has_value())
+    {
+        return std::nullopt;
+    }
+    unsigned kind = 0;
+    unsigned mode = 0;
+    unsigned id   = 0;
+    if (std::sscanf(m_QueuedOrder->first.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    {
+        return std::nullopt;
+    }
+    auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
+    if (PTarget == nullptr || PTarget == POwner || PTarget->loc.zone != POwner->loc.zone || PTarget->isDead())
+    {
+        return std::nullopt; // a dead target is the action's own rules' to refuse, not a walk
+    }
+    const float reach = OrderReach(kind, id, PTarget);
+    if (distance(POwner->loc.p, PTarget->loc.p) <= reach)
+    {
+        return std::nullopt;
+    }
+    return std::make_pair(PTarget, reach);
+}
+
+auto CPawnController::OrderApproach() -> std::optional<Intent>
+{
+    if (!m_OrderApproaching)
+    {
+        return std::nullopt;
+    }
+    const auto beyond = OrderOutOfReach();
+    if (!beyond.has_value())
+    {
+        return std::nullopt;
+    }
+    // The player's word walks her up to the mob he named: the vet has no say
+    // over the company he chose for her
+    Intent intent;
+    intent.kind      = Intent::Kind::Path;
+    intent.point     = beyond->first->loc.p;
+    intent.arrive    = std::max(1.0f, beyond->second - 1.0f);
+    intent.tolerance = 0.0f;
+    intent.target    = beyond->first;
+    intent.vet       = false;
+    intent.fallback  = beyond->first->loc.p;
+    return intent;
+}
+
+auto CPawnController::RouteWalked() const -> bool
+{
+    const auto point = pawn::walkOrderOf(POwner->id);
+    if (!point.has_value())
+    {
+        return true;
+    }
+    // 1.6 y: past the walker's "no forward step" arrival (1.5 y), so a point
+    // beside a wall she stops short of still counts as reached
+    return !pawn::routeFront(POwner->id).has_value() && distance(POwner->loc.p, *point) < 1.6f;
+}
+
+// The maneuver's tick: it lives as long as its driver looks through her --
+// or, composed under a hold, as long as its order waits -- and his walk
+// order is all that moves her
+void CPawnController::ManeuverTick()
+{
+    if (m_ManeuverComposed)
+    {
+        if (!m_QueuedOrder.has_value())
+        {
+            EndManeuver("nothing left to do, the maneuver ends");
+            return;
+        }
+        // its rest, under way (FireQueuedOrder): down until the percent
+        if (m_ManeuverResting)
+        {
+            RestTick(true);
+            return;
+        }
+        // the route by the walk order; the walk into reach by the mover, as
+        // any order's (OrderApproach) -- neither tick runs here to call it
+        if (auto order = OrderApproach(); order.has_value())
+        {
+            Move(std::move(*order));
+            return;
+        }
+        WalkTick();
+        return;
+    }
+    const auto* PBy = zoneutils::GetChar(m_ManeuverBy);
+    if (PBy == nullptr || cardian::view::origin(PBy) != POwner)
+    {
+        EndManeuver("the player looks away, the maneuver ends");
+        return;
+    }
+    WalkTick();
+}
+
+void CPawnController::WalkTick()
+{
+    WalkOrderTick(m_Tick);
+    if (!cardian::view::timersArmed() && POwner->PAI->PathFind->IsFollowingPath())
+    {
+        POwner->PAI->PathFind->FollowPath(m_Tick);
+    }
+}
+
+// The walk order as it stands: arrived (within 0.2 y) she stands on the
+// point and the order stays, so a steered walk whose ring she has caught
+// resumes the instant the ring moves on; a point she already paths to
+// keeps its path; a new point is pathed now. A point the mesh cannot
+// reach is dropped -- unless she is all but on it (the walker refuses a
+// route with no forward step), which is arrival too. The order lives as
+// long as its giver looks through her: his camera off her, his addon
+// gone, his logout all end it here. Called from the logic tick and, every
+// kSteerPeriodMs, from the steer tick.
+void CPawnController::WalkOrderTick(const timer::time_point now)
+{
+    const auto endPoint = pawn::walkOrderOf(POwner->id);
+    if (!endPoint.has_value())
+    {
+        return;
+    }
+    const auto* PBy = zoneutils::GetChar(pawn::walkOrderedBy(POwner->id));
+    if (!m_ManeuverComposed && (PBy == nullptr || cardian::view::origin(PBy) != POwner))
+    {
+        ShowInfoFmt("pawn: walk {}: the player looks away, order ends", POwner->getName());
+        pawn::clearWalkOrder(POwner->id);
+        POwner->PAI->PathFind->Clear();
+        return;
+    }
+    // Kneeling, she rises before she walks: the path moves her, and only
+    // Move's stand would otherwise lift her off her knees
+    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    {
+        EndRestOrder("a walk order");
+        StandFromRest("a walk order");
+    }
+    if (!RestAllowsAction())
+    {
+        return;
+    }
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    // A laid route is walked crumb by crumb, each let go as she comes near
+    auto crumb = pawn::routeFront(POwner->id);
+    while (crumb.has_value() && distance(POwner->loc.p, *crumb) < 0.6f)
+    {
+        pawn::popRoute(POwner->id);
+        crumb = pawn::routeFront(POwner->id);
+    }
+    const auto  goal  = crumb.has_value() ? crumb : endPoint;
+    const auto  point = &*goal;
+    const float away  = distance(POwner->loc.p, *point);
+    if (away < 0.2f)
+    {
+        PPathFind->Clear();
+        m_WalkPoint    = *point;
+        m_LastWalkStep = now; // standing on the ring: the next step is a period's worth, not the time she stood
+        return;
+    }
+    if (PPathFind->IsFollowingPath() && m_WalkPoint.has_value() && distance(*m_WalkPoint, *point) < 0.15f)
+    {
+        return;
+    }
+    m_WalkPoint = *point;
+    if (!PathToward(*point, 0.0f))
+    {
+        if (away < 1.5f)
+        {
+            PPathFind->Clear();
+            return;
+        }
+        ShowInfoFmt("pawn: walk {}: cannot path to ({:.1f}, {:.1f}, {:.1f}) {:.1f}y away, order dropped", POwner->getName(), point->x, point->y, point->z, away);
+        pawn::clearWalkOrder(POwner->id);
+    }
+}
+
+void CPawnController::WalkStep()
+{
+    // A held game (pause/pause.h) holds her too: the AI tick stands down
+    // under a hold, and so must this timer, which runs on real time
+    if ((m_Mode != Mode::Walk && m_Mode != Mode::Maneuver) || !POwner->PAI->CanFollowPath() || cardian::pause::isHeld())
+    {
+        return;
+    }
+    const auto now = timer::now();
+    WalkOrderTick(now);
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    if (!PPathFind->IsFollowingPath())
+    {
+        // A re-path tick (the path is not "following" until the next one)
+        // keeps the clock running, so the next step covers the time
+        return;
+    }
+    // The fraction of a logic tick's step the time since the last step is
+    // worth, in microseconds (whole milliseconds would truncate a 16 ms
+    // interval): a tick that fires late takes a longer step, so her speed
+    // is exact on average whatever the timer's jitter. Capped at a quarter
+    // step; the first step after a stand is a period's worth.
+    const auto since = m_LastWalkStep == timer::time_point{} ? std::chrono::microseconds(cardian::view::kSteerPeriodMs * 1000) : std::chrono::duration_cast<std::chrono::microseconds>(now - m_LastWalkStep);
+    m_LastWalkStep   = now;
+    const float scale = std::min(0.25f, static_cast<float>(since.count()) / 400000.0f);
+    const auto  before = POwner->loc.p;
+    PPathFind->SetStepScale(scale);
+    PPathFind->FollowPath(now);
+    PPathFind->SetStepScale(1.0f);
+    // The walk's accounting, every five seconds in the map log while she is
+    // walked: her ground speed (the server's truth, against the client's
+    // meter), the timer's steps, and the time the cap threw away
+    m_WalkStats.steps++;
+    m_WalkStats.elapsed += since;
+    m_WalkStats.lost += std::max(std::chrono::microseconds(0), since - std::chrono::microseconds(100000));
+    m_WalkStats.moved += distance(before, POwner->loc.p);
+    if (m_WalkStats.since == timer::time_point{})
+    {
+        m_WalkStats.since = now;
+    }
+    else if (now - m_WalkStats.since >= 5s)
+    {
+        const float secs = std::chrono::duration<float>(now - m_WalkStats.since).count();
+        ShowInfoFmt("pawn: walk {}: {:.2f} y/s over {:.1f}s, {} steps ({:.1f}/s), elapsed {}ms, {}ms lost to the cap, speed {}",
+                    POwner->getName(), m_WalkStats.moved / secs, secs, m_WalkStats.steps, m_WalkStats.steps / secs,
+                    m_WalkStats.elapsed.count() / 1000, m_WalkStats.lost.count() / 1000, POwner->GetSpeed());
+        m_WalkStats = {};
+        m_WalkStats.since = now;
+    }
+    // Her position goes out now, not at the logic tick's PostTick (400 ms):
+    // the viewer's client hears every step. The packet LEADS her by what the
+    // client takes to ease an entity onto a packet position (STEER_LEAD_MS
+    // of her run), along her facing, never past the ring: the ring is where
+    // the player means her to be, and the lead only shows her on the way
+    // there sooner. Her real position -- aggro, range, everything the
+    // server judges -- is untouched; only the packet is built from the led
+    // point, and the position is put back at once.
+    if (POwner->loc.zone != nullptr)
+    {
+        const auto  point   = pawn::walkOrderOf(POwner->id);
+        const float toRing  = point.has_value() ? distance(POwner->loc.p, *point) : 0.0f;
+        const float leadMax = settings::get<float>("pawn.STEER_LEAD_MS") / 1000.0f * static_cast<float>(POwner->GetSpeed()) / 50.0f * 2.5f;
+        const float lead    = std::min(leadMax, toRing);
+        const auto  real    = POwner->loc.p;
+        if (lead > 0.05f)
+        {
+            const float radians = 2.0f * std::numbers::pi_v<float> - rotationToRadian(real.rotation); // the walker's own convention (pathfind_step.cpp)
+            POwner->loc.p.x     = real.x + std::cos(radians) * lead;
+            POwner->loc.p.z     = real.z + std::sin(radians) * lead;
+        }
+        POwner->loc.zone->UpdateEntityPacket(POwner, ENTITY_UPDATE, UPDATE_POS);
+        POwner->loc.p = real;
+    }
 }
 
 void CPawnController::TravelTick()
@@ -3891,7 +4697,7 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
     // circle and every approach from the hunter. Judged for the whole party
     // that will fight beside the target, not for the hunter's own buffs
     const auto dangers = pawn::danger::around(entities, around, radius + std::max(cleanRadius, distance(POwner->loc.p, around)),
-                                              pawn::danger::Profile::worstCase());
+                                              pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner)));
 
     // An idle, unclaimed, ordinary field mob in the band, within the hunt
     // radius of the anchor

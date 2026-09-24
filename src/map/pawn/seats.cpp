@@ -227,18 +227,9 @@ namespace pawn::seats
         }
     }
 
-    auto withdrawOwnedBy(const uint32 ownerCharID) -> uint32
+    auto ownedBy(const uint32 ownerCharID) -> std::vector<uint32>
     {
-        if (!ladder || ownerCharID == 0)
-        {
-            return 0;
-        }
-        const auto hers = ladder->ownedBy(ownerCharID);
-        for (const uint32 charid : hers)
-        {
-            withdraw(charid);
-        }
-        return static_cast<uint32>(hers.size());
+        return ladder && ownerCharID != 0 ? ladder->ownedBy(ownerCharID) : std::vector<uint32>{};
     }
 
     bool has(const uint32 charid)

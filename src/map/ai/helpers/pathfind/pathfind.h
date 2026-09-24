@@ -79,6 +79,9 @@ public:
 
     // Move the mob toward the next point.
     auto FollowPath(timer::time_point tick) -> void;
+    // CARDIAN: a fraction of a step per FollowPath, so a steered cardian steps
+    // many times a logic tick at her own speed (ROADMAP C); 1 = upstream's whole step
+    auto SetStepScale(float scale) -> void;
 
     // True if the entity is on a waypoint.
     auto OnPoint() const -> bool;
@@ -161,6 +164,7 @@ private:
     std::vector<pathpoint_t> patrol_;
     std::vector<position_t>  turnPoints_;
     float                    distanceFromPoint_;
+    float                    stepScale_ = 1.0f; // CARDIAN
 
     uint8        pathFlags_;
     uint8        patrolFlags_;

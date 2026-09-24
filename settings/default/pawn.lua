@@ -25,6 +25,13 @@ xi.settings.pawn =
     -- above the catch-up speed or the pawn runs at the limit instead.
     PAWN_SPEED = 100,
 
+    -- Direct control (ROADMAP C): a steered cardian's position packet leads
+    -- her by this much of her run, along her facing and never past the ring
+    -- -- what the client takes to ease an entity onto a packet position, so
+    -- it shows her where she is rather than where she was. Her real
+    -- position is never moved. 0 = no lead.
+    STEER_LEAD_MS = 250,
+
     -- Doors: a closed door within this many yalms ahead of a walking
     -- cardian opens as she approaches, the way the client opens one for a
     -- player (the collision data has no door slabs, so her path runs

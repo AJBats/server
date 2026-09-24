@@ -52,7 +52,7 @@ class CBattleEntity;
 class CCharEntity;
 class CMobEntity;
 class CSpell;
-struct position_t;
+#include "common/types/position.h" // m_WalkPoint holds one
 
 // The autonomous controller for pawn characters: CTrustController's physical
 // layer (formation follow, engage-on-the-player's-swing, combat positioning,
@@ -75,7 +75,9 @@ public:
     // is a walk in with her weapon away; Hold is drawn on the player's
     // word, waiting for their strike; Fight is a fight; Attend is a support
     // mage at the party's fight from the perimeter, weapon away (RESEARCH
-    // §12.15); Down is KO'd. The
+    // §12.15); Maneuver is the player driving her himself, her gambits
+    // off, until the finisher he chose fires (docs/maneuvers.md); Down is
+    // KO'd. The
     // server's attack state is an input, not the mode: every tick the two
     // are reconciled, and a fight the server ended is a transition out of
     // Fight with the server's reason -- never a silent one.
@@ -84,12 +86,14 @@ public:
         Follow,
         Wait,
         Travel,
+        Walk,
         Roam,
         Approach,
         Hold,
         Fight,
         Attend,
         Retreat,
+        Maneuver,
         Down
     };
     static auto modeName(Mode mode) -> const char*;
@@ -139,6 +143,23 @@ public:
     void StandFromRest(std::string_view why);
     // True while the policy keeps her kneeling; defer routine positioning then.
     auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false) -> bool;
+    // The player's rest order (ComposeRest): down until her HP and MP both
+    // reach N%. Only a Support Mage's emergency cure stands her meanwhile;
+    // any order of his, or her leaving his party, ends it first
+    void SetRestOrder(int percent, std::string_view why);
+    void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
+    void EndRestOrder(std::string_view why);
+    auto RestOrderPercent() const -> int; // 0: none
+    // Her kneel as the rest row shows it: Healing's ticks so far, and
+    // seconds to the next and between ticks (zero while standing)
+    struct RestClock
+    {
+        bool   down     = false;
+        int    ticks    = 0;
+        double next     = 0.0;
+        double interval = 0.0;
+    };
+    auto RestNow() const -> RestClock;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -148,6 +169,10 @@ public:
     // One accepted zone change ends the player's current fight commitment.
     // It does not prevent the next idle tick answering a new threat.
     void PlayerZoning();
+    // Out of any fight she was in or on her way to: the draw on its beat,
+    // the walk in, the weapon-skill wait, the path, the weapon. One sequence
+    // for the player zoning, a rest order and a landing beside him
+    void StandDown(std::string_view why);
 
     // This pawn's index among the pawns in its party (formation order)
     auto GetPawnPartyPosition() const -> uint8;
@@ -174,9 +199,43 @@ public:
     // no trek after the player. Zoning ends the current fight commitment;
     // new fights are what comes within the leash of the stake.
     void SetStake(std::optional<pawn::Stake> stake);
+
     auto Staked() const -> bool;
     // She follows the player through zone lines: not waiting, not staked
     auto Treks() const -> bool;
+
+    // The steer tick's step (pawn/view.h, every kSteerPeriodMs; the pawn
+    // module calls it): a fraction of a logic tick's step at her own speed,
+    // so a steered walk moves at frame rate, and re-paths as the ring moves
+    void WalkStep();
+
+    // A maneuver (docs/maneuvers.md): a bounded episode of live control
+    // over this one cardian by the player looking through her. Her gambits
+    // go off, nothing of the controller's moves her but his walk order, and
+    // it ends the moment an order of his leaves her (DoAction, or the
+    // queued order firing): he is handed back and she carries it out. His
+    // camera leaving her, her leaving his party, her death and his cancel
+    // end it too; every end restores her gambit switch to what it was. One
+    // maneuver per player at a time. Begin answers "" or why not.
+    auto BeginManeuver(CCharEntity* PBy) -> std::string;
+    void EndManeuver(std::string_view why);
+    auto InManeuver() const -> bool;
+    // A paused maneuver (held, docs/maneuvers.md): the ring lays a route
+    // while she stands, and the command given from it is her queued order.
+    // Composed, the maneuver no longer needs his eye on her: at the release
+    // she walks the route, the order fires at its end, and that is the
+    // maneuver's end. ComposeMove is the route with no order: end at its
+    // end, waiting there if `wait`. Answers "" or why not.
+    auto ComposeMove(bool wait) -> std::string;
+    // The maneuver's "Rest until N%", her queued order either way: live,
+    // composed at once where she stands, his camera handed back; paused,
+    // after the route if one is laid. The maneuver lasts through the rest
+    // until HP and MP both reach N% -- her queued order, and cancelled as
+    // one -- gambits off throughout (the user, 2026-09-23). Answers "" or why not
+    auto ComposeRest(int percent) -> std::string;
+    void MarkComposed(std::string_view what); // the maneuver's order is given, to play out without him: his live slot frees for the next cardian
+    auto ManeuverComposed() const -> bool;
+    auto ManeuverBy() const -> uint32; // whose maneuver she is on, 0 for none
 
     // Wait here / follow me. Waiting, she has nowhere to go by order: no
     // following, hunting or travel, so she idles where she stands -- the
@@ -188,6 +247,7 @@ public:
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
+    void ArriveWith(const position_t& landing); // set down beside the player by an event (pawn::landWithPlayer): she stands until he is seen there
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, after her beat (FireOrderedEngage)
     void ShareSignet(CCharEntity* PPlayer); // the gate guard's Signet, taken with the player for its remaining time
 
@@ -220,7 +280,8 @@ public:
     // `key` is the vocabulary's action key, kind:mode:id -- the concrete
     // ones only: a spell (2:2:id), an ability (3:2:id), a weapon skill
     // (4:2:id), the ranged attack (1:0:0); the "best of" entries are the
-    // gambit engine's. "" when it fired, else why not.
+    // gambit engine's -- or "attack", her order to fight the mob picked
+    // (AttackOrder), or "disengage" (DisengageOrder). "" when it fired, else why not.
     auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
 
     // The order given a little early -- while she acts, or while the
@@ -289,6 +350,43 @@ private:
     // A travel order's zone, or the player in another zone and her party:
     // walk the zone graph toward it, requesting a transfer at each zone line.
     void TravelTick();
+
+    // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
+    // bookkeeping (WalkOrderTick) and, with no steer timer, her step
+    void WalkTick();
+    void WalkOrderTick(timer::time_point now);
+    std::optional<position_t> m_WalkPoint; // the point the current path was made for
+    timer::time_point         m_LastWalkStep{}; // the steer tick's last step, for its elapsed-time scale
+
+    // The maneuver's books (BeginManeuver): who drives her, and her gambit
+    // switch before it
+    uint32 m_ManeuverBy          = 0;
+    bool   m_ManeuverPriorMaster = true;
+    bool   m_ManeuverComposed    = false; // its order given (held: after the route, at the release; a rest, live too): it plays out without his eye
+    bool   m_ManeuverResting     = false; // its rest is under way: kept in step with the queue by SetQueuedOrder
+    void   ManeuverTick();
+    void   NoteOrderFired(); // an order of his left her: a maneuver ends here
+    auto   RouteWalked() const -> bool; // no walk order, or its route walked and its point reached
+    auto   OrderReach(unsigned kind, unsigned id, const CBattleEntity* PTarget) const -> float; // how close an order needs her, in yalms
+    // The order's walk in: an order whose target is out of its reach is a
+    // walk in first and the action second -- "run to and use", as the gambit
+    // engine's own approach is (the user, 2026-09-22) -- and the walk is an
+    // intent the tick's mover takes like any other (Move), so one rule serves
+    // a plain order, a maneuver's and the engine's. OrderOutOfReach says
+    // whether the queued order needs one, and to whom; OrderApproach is the
+    // intent while it does. The grace waits through it, up to kOrderApproachMax
+    auto   OrderOutOfReach() const -> std::optional<std::pair<CBattleEntity*, float>>;
+    bool              m_OrderApproaching = false;
+    timer::time_point m_OrderApproachSince{};
+    timer::time_point m_DoorSaidAt{}; // the fight door's debug line, once a second
+    struct WalkStats
+    {
+        timer::time_point         since{};
+        uint32                    steps   = 0;
+        float                     moved   = 0.0f;
+        std::chrono::microseconds elapsed = std::chrono::microseconds(0);
+        std::chrono::microseconds lost    = std::chrono::microseconds(0);
+    } m_WalkStats; // the walk's five-second accounting, in the map log
 
     // The lead holds a point ahead of the player; everyone else holds a
     // seat on the ring around them. RingSlot is a Formation row's seat, or
@@ -451,6 +549,7 @@ private:
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
     };
+    auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
     // The tick's danger map, scanned once before the movers run so every
     // one of them can ask IsClear while choosing, and the vet sees the
@@ -488,6 +587,10 @@ private:
     // it comes round to the place's side). PPlayer, when here, is the
     // formation debug's subject only.
     auto FormationIntent(const Place& place, const CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent;
+    // Set down beside the player (ArriveWith), she stays put until the place
+    // she follows reads him at the landing, or five seconds pass: his
+    // own position reaches the server a moment after the move
+    auto AwaitsArrival(const Place& place) -> bool;
 
     // The tank's tow at a stake (RESEARCH §12.16): a cardian with the Tank
     // role, staked, receives the party's mob while her rows Provoke it.
@@ -770,6 +873,12 @@ private:
     bool              m_WaitOrdered = false;
     timer::time_point m_PlayerMagicSeen{ timer::time_point::min() }; // the player seen mid-warp or mid-teleport, so their vanishing reads as magic
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
+    struct Arrival
+    {
+        position_t        landing;
+        timer::time_point until;
+    };
+    std::optional<Arrival> m_Arrival; // landed beside the player, waiting to see him there (AwaitsArrival)
 
     // The mob she is walking to, weapon still away (Approach, above): she
     // commits the moment it is chosen and closes; only the draw waits, on
@@ -879,6 +988,17 @@ private:
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     void Note(const std::string& text) const; // one line to the player's addon, printed as a complaint
 
+    // The command window's Attack: the party's engage order (EngageOn), given
+    // to her alone, replacing any order she has queued. Held, it waits as her
+    // one queued order -- a paused maneuver's, played out at the end of its
+    // route; live, a maneuver ends as it is given, and she walks in and
+    // fights with her gambits back
+    auto AttackOrder(CBattleEntity* PTarget) -> std::string;
+    // The command window's Disengage: she sheathes, and her gambits may take
+    // her back into the fight after the usual re-engage wait. Held and in a
+    // maneuver, as Attack
+    auto DisengageOrder() -> std::string;
+
     // The one way the queued order changes, so the addon's queue line is never stale
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
 
@@ -893,6 +1013,7 @@ private:
     timer::time_point m_LastHuntLogTime;
     cardian::rest::State m_Rest;
     cardian::rest::Follow m_RestFollow;
+    cardian::rest::Order m_RestOrder; // the player's "Rest until N%", none by default
     int m_RestTicks = 0;
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;

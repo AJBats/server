@@ -205,11 +205,29 @@ namespace pawn::finder
     // Her contract with this player: "exp", "quest", "mission", or "" for
     // none -- an owned cardian, nobody's party, or another player's
     // recruit. Set on her yes from the shout's goal, kept in her memory
-    // row with that player across a map restart, ended when she leaves
-    // the party (the party's leader named, so no other player's row is
-    // touched)
+    // row with that player across a restart and across his logout (the
+    // party waits for him, ROADMAP H), ended when she leaves his party
+    // while a human is in it (noteLeft) or he releases her
     auto contractWith(uint32 charid, uint32 playerCharID) -> const char*;
-    void noteLeft(uint32 charid, uint32 leaderCharID);
+    void noteLeft(uint32 charid); // her contract ends, whoever leads the party she left
+
+    // An open contract: a wild cardian held for her player. Out of the
+    // world's pool and every shout while it lasts; she signs in with him
+    // and waits to be invited, and his invite needs no shout
+    struct OpenContract
+    {
+        uint32      charid       = 0;
+        uint32      playerCharID = 0;
+        std::string name;
+        Goal        goal;
+    };
+    auto openContractOf(uint32 charid) -> std::optional<OpenContract>;
+    auto openContracts(uint32 playerCharID) -> std::vector<OpenContract>; // his, by name
+
+    // Her Party Finder page's Release: the contract ends and she is the
+    // world's again where she stands, taken out of his party first when she
+    // is in it. "" on success, else why not
+    auto release(CCharEntity* PPlayer, const std::string& name) -> std::string;
 
     // Exp she was granted in the party of the player who recruited her,
     // under an exp contract: banked toward her affinity, the player told

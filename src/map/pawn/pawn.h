@@ -28,6 +28,7 @@
 #include "common/cbasetypes.h"
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -100,9 +101,17 @@ namespace pawn
     bool standOwned(uint32 charid, uint32 ownerCharID);
     bool standBeside(uint32 charid, CCharEntity* PPlayer);
 
-    // ...and signs out with her: every pawn under her name despawned where
-    // she stands, position saved (charutils, at logout). How many
-    auto signOutClub(const CCharEntity* PPlayer) -> uint32;
+    // ...and signs out with him (charutils, at logout or disconnect): as
+    // the last human in his party, every cardian in it goes out with him
+    // where she stands, contract members keeping their contracts (ROADMAP
+    // H, the party waits); a human still in it keeps them. His cardians
+    // elsewhere go too, positions saved, and his stake is saved on him. How
+    // many signed out
+    auto signOutClub(CCharEntity* PPlayer) -> uint32;
+
+    // The gambits a player gave a wild cardian (set 0), gone with his
+    // contract: her own brain again, standing or not
+    void forgetGuestGambits(uint32 charid);
 
     // A party membership ended for good (CParty: a kick, a leave, a disband
     // -- never a zoning). A cardian no longer in the player's party has no
@@ -152,7 +161,9 @@ namespace pawn
     // else: her job, level, skills, gear and spells are what the census
     // tool wrote (world::ensureReady refuses a body it never finished).
     // False with no side effects if she is unknown, online or already a pawn.
-    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job);
+    // A body that fell stands whole, save one standing asLeft: where her
+    // player left her, as he left her (ROADMAP H, the party waits)
+    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, bool asLeft = false);
 
     // Presence without a body: the session row (search, the lobby's
     // already-online check) and a position in a zone, written for an
@@ -271,6 +282,14 @@ namespace pawn
     // a carry was requested.
     bool carryZoning(CCharEntity* PPawn);
 
+    // An event has moved the player while he is in a battlefield -- its
+    // entry into the arena, its exit back out -- at the moment the game
+    // moves his pet with him, and every cardian of his party in the same
+    // battlefield (they entered with him) lands beside him, as if part of
+    // him. Each then stands until he is seen arriving there, so none sets
+    // off toward where he stood a moment ago. No other player is moved.
+    void landWithPlayer(const CCharEntity* PPlayer, const position_t& landing);
+
     // A stuck cardian teleports to her player's side: only from within
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's
@@ -367,12 +386,49 @@ namespace pawn
     // for unroutable or unloaded destinations).
     void requestTransfer(uint32 pawnCharID, std::optional<TravelHop> hop);
 
-    // Order the named pawn to travel to a zone, independent of its summoner.
-    // The order takes precedence over follow behavior and clears on arrival.
-    bool orderTravelByName(const std::string& targetName, uint16 zoneId);
+    // Order the named pawn to travel to a zone. The order takes precedence
+    // over follow behavior and clears on arrival. `meet`: the trek is to
+    // meet her player (follow me from another zone), so it follows him
+    // rather than holding to this zone (meetTrek); a GM's goto is fixed
+    bool orderTravelByName(const std::string& targetName, uint16 zoneId, uint32 meet); // meet: the player's charid, 0 for a fixed zone
 
     auto travelOrderOf(uint32 pawnCharID) -> std::optional<xi::ZoneId>;
     void clearTravelOrder(uint32 pawnCharID);
+
+    // Her travel order as it stands, followed through: a trek to meet her
+    // player ends once he is in her zone and heads for where he is now
+    // (his destination while he zones) when he has moved on; any other
+    // order holds. None once there is none, or it has ended here
+    auto meetTrek(const CCharEntity* PPawn) -> std::optional<xi::ZoneId>;
+
+    // A walk order (ROADMAP C, direct control): a point in her zone she
+    // walks to on the mesh, replacing any earlier one, given by the player
+    // looking through her (`by`) and kept while he does -- arrived, she
+    // stands on it; the order ends with his `off`, with his view of her
+    // (camera off, addon gone, logout), with her leaving his party, or at a
+    // point the mesh cannot reach. A steered walk is this order refreshed
+    // every frame the ring moves. Follow, Wait and the approaches yield to
+    // it; a fight does not (DoRoamTick is the idle tick), and she comes
+    // back to it when the fight ends.
+    // `laying`: the point is a stop on a route being laid (a paused maneuver,
+    // docs/maneuvers.md): the point before it becomes a crumb to walk through
+    // on the way, every yalm or so, and the order is walked crumb by crumb
+    // (routeFront / popRoute) before its point
+    void setWalkOrder(uint32 pawnCharID, const position_t& point, uint32 by, bool laying = false);
+    auto walkOrderOf(uint32 pawnCharID) -> std::optional<position_t>;
+    auto routeFront(uint32 pawnCharID) -> std::optional<position_t>; // the next crumb, none when the point is next
+    void popRoute(uint32 pawnCharID);
+    auto walkOrderedBy(uint32 pawnCharID) -> uint32; // 0 = no order
+    void clearWalkOrder(uint32 pawnCharID);
+    void forEachWalkOrder(const std::function<void(uint32)>& fn);
+
+    // The maneuver a player is driving live (docs/maneuvers.md,
+    // CPawnController::BeginManeuver): one at a time. A paused maneuver
+    // gives the slot up once composed (MarkComposed), so a pause queues one
+    // per cardian. The controller keeps the maneuver; this is the index
+    void setManeuver(uint32 playerCharID, uint32 pawnCharID);
+    auto maneuverOf(uint32 playerCharID) -> uint32; // 0 = none
+    void clearManeuver(uint32 playerCharID);
 
     // Record that a party invite reached this pawn (seen at OnPushPacket,
     // when InvitePending is already stamped on the entity). The pawn accepts

@@ -136,10 +136,14 @@ namespace pawn::finder
             return readFacts(rset);
         }
 
+        // The shout's pool: a body with an open contract is held for her
+        // player (his Your contract rows, never a shout's), his or another's
+        constexpr auto kNotHeld = " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')";
+
         auto allFacts(const uint32 playerCharID) -> std::vector<Facts>
         {
             std::vector<Facts> out;
-            const auto         rset = db::preparedStmt(kFactsQuery, playerCharID);
+            const auto         rset = db::preparedStmt(std::string(kFactsQuery) + kNotHeld, playerCharID);
             while (rset && rset->next())
             {
                 out.push_back(readFacts(rset));
@@ -781,8 +785,11 @@ namespace pawn::finder
         {
             return std::nullopt;
         }
-        const auto* held = currentShout(PPlayer->id);
-        if (held == nullptr || !std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.name == facts->name; }))
+        // Someone in his current shout, or held by his own open contract
+        const auto* held       = currentShout(PPlayer->id);
+        const bool  shouted    = held != nullptr && std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.name == facts->name; });
+        const auto  contracted = openContractOf(charid);
+        if (!shouted && !(contracted.has_value() && contracted->playerCharID == PPlayer->id))
         {
             return std::nullopt;
         }
@@ -886,23 +893,35 @@ namespace pawn::finder
         {
             return "she is not one of the world's adventurers";
         }
-        if (currentShout(PPlayer->id) == nullptr)
-        {
-            return "your shout has faded (a shout lives ten minutes); shout again";
-        }
-        if (shoutedYes(PPlayer, facts->name, goal) == nullptr)
-        {
-            return "she did not answer your shout for that";
-        }
         auto* PPawn = pawn::findPawn(charid);
-        if (!inReach(PPlayer, zoneOf(PPawn, facts->posZone)))
+        // Her open contract with him is her yes, to its own goal: no shout,
+        // and nothing asked again of what she agreed to. From another zone
+        // the club's rule holds her until gathered (gatherOrHold)
+        const auto held  = openContractOf(charid);
+        const auto asked = held.has_value() ? held->goal : goal;
+        if (held.has_value() && held->playerCharID != PPlayer->id)
         {
-            return "she is not in your city";
+            return "she is under contract with another player";
         }
-        const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, *facts, PPawn, goal) : MissionFit::Free;
-        if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal, fit); hard.has_value())
+        if (!held.has_value())
         {
-            return hard->line;
+            if (currentShout(PPlayer->id) == nullptr)
+            {
+                return "your shout has faded (a shout lives ten minutes); shout again";
+            }
+            if (shoutedYes(PPlayer, facts->name, goal) == nullptr)
+            {
+                return "she did not answer your shout for that";
+            }
+            if (!inReach(PPlayer, zoneOf(PPawn, facts->posZone)))
+            {
+                return "she is not in your city";
+            }
+            const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, *facts, PPawn, goal) : MissionFit::Free;
+            if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal, fit); hard.has_value())
+            {
+                return hard->line;
+            }
         }
         if (PPawn == nullptr)
         {
@@ -930,11 +949,11 @@ namespace pawn::finder
             return "she already has an invite";
         }
 
-        consented[charid] = Consent{ PPlayer->id, goal, timer::now() };
+        consented[charid] = Consent{ PPlayer->id, asked, timer::now() };
         PPawn->InvitePending.UniqueNo = PPlayer->id;
         PPawn->InvitePending.ActIndex = PPlayer->targid;
         PPawn->pushPacket<GP_SERV_COMMAND_GROUP_SOLICIT_REQ>(PPawn->id, PPawn->targid, PPlayer->getName(), PartyKind::Party);
-        ShowInfoFmt("pawn: {} invites {} from the party finder, for {}", PPlayer->getName(), PPawn->getName(), kindName(goal));
+        ShowInfoFmt("pawn: {} invites {} from the party finder, for {}{}", PPlayer->getName(), PPawn->getName(), kindName(asked), held.has_value() ? ", her open contract" : "");
         return "";
     }
 
@@ -945,13 +964,22 @@ namespace pawn::finder
             return false;
         }
         const auto* PInviter = zoneutils::GetCharFromWorld(PPawn->InvitePending.UniqueNo, PPawn->InvitePending.ActIndex);
-        const auto  it       = consented.find(PPawn->id);
-        const bool  wild     = pawn::seats::isWorlds(PPawn->id);
+        // Held for her player while her contract is open: his invite alone
+        // (by id: he may be mid-zone as she answers)
+        const auto held = openContractOf(PPawn->id);
+        if (held.has_value() && PPawn->InvitePending.UniqueNo != held->playerCharID)
+        {
+            ShowInfoFmt("pawn: {} declines {}'s invite: she is under contract with another player", PPawn->getName(), PInviter != nullptr ? PInviter->getName() : "someone");
+            consented.erase(PPawn->id);
+            return false;
+        }
+        const auto it   = consented.find(PPawn->id);
+        const bool wild = pawn::seats::isWorlds(PPawn->id);
         if (it == consented.end())
         {
-            if (!wild)
+            if (!wild || held.has_value())
             {
-                return true; // hers to accept: an alt or a recruit
+                return true; // hers to accept: an alt, a recruit, or her contract's player
             }
             ShowInfoFmt("pawn: {} declines {}'s invite: nobody shouted for her", PPawn->getName(), PInviter != nullptr ? PInviter->getName() : "someone");
             return false;
@@ -965,6 +993,7 @@ namespace pawn::finder
         // Her contract starts on the yes, and the two of you have partied
         contracts[PPawn->id] = consent;
         noContract.erase(PPawn->id);
+        db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND player_charid <> ? AND contract <> ''", PPawn->id, consent.playerCharID);
         db::preparedStmt("INSERT INTO cardian_party_memory (player_charid, pawn_charid, last_partied, contract) VALUES (?, ?, NOW(), ?) "
                          "ON DUPLICATE KEY UPDATE contract = VALUES(contract), last_partied = NOW()",
                          consent.playerCharID, PPawn->id, kindName(consent.goal));
@@ -978,19 +1007,75 @@ namespace pawn::finder
         return c != nullptr ? kindName(c->goal) : "";
     }
 
-    void noteLeft(const uint32 charid, const uint32 leaderCharID)
+    void noteLeft(const uint32 charid)
     {
         contracts.erase(charid);
         noContract.erase(charid);
         expBank.erase(charid);
-        if (leaderCharID != 0)
+        if (const auto held = openContractOf(charid); held.has_value())
         {
-            db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND player_charid = ?", charid, leaderCharID);
+            db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND contract <> ''", charid);
+            ShowInfoFmt("pawn: {}'s {} contract with {} ends", held->name, kindName(held->goal), pawn::seats::nameOf(held->playerCharID));
         }
-        else
+        pawn::world::endHold(charid);
+    }
+
+    auto openContractOf(const uint32 charid) -> std::optional<OpenContract>
+    {
+        const auto rset = db::preparedStmt("SELECT m.player_charid, m.contract, c.charname FROM cardian_party_memory m JOIN chars c ON c.charid = m.pawn_charid "
+                                           "JOIN cardian_census x ON x.charid = m.pawn_charid "
+                                           "WHERE m.pawn_charid = ? AND m.contract <> '' AND x.recruited = 0 ORDER BY m.last_partied DESC LIMIT 1",
+                                           charid);
+        if (!rset || !rset->next())
         {
-            db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ?", charid);
+            return std::nullopt;
         }
+        return OpenContract{ .charid       = charid,
+                             .playerCharID = rset->get<uint32>("player_charid"),
+                             .name         = rset->get<std::string>("charname"),
+                             .goal         = goalFrom(rset->get<std::string>("contract"), 0) };
+    }
+
+    auto openContracts(const uint32 playerCharID) -> std::vector<OpenContract>
+    {
+        std::vector<OpenContract> out;
+        const auto rset = db::preparedStmt("SELECT m.pawn_charid, m.contract, c.charname FROM cardian_party_memory m JOIN chars c ON c.charid = m.pawn_charid "
+                                           "JOIN cardian_census x ON x.charid = m.pawn_charid "
+                                           "WHERE m.player_charid = ? AND m.contract <> '' AND x.recruited = 0 ORDER BY c.charname",
+                                           playerCharID);
+        while (rset && rset->next())
+        {
+            out.push_back(OpenContract{ .charid       = rset->get<uint32>("pawn_charid"),
+                                        .playerCharID = playerCharID,
+                                        .name         = rset->get<std::string>("charname"),
+                                        .goal         = goalFrom(rset->get<std::string>("contract"), 0) });
+        }
+        return out;
+    }
+
+    auto release(CCharEntity* PPlayer, const std::string& name) -> std::string
+    {
+        if (PPlayer == nullptr)
+        {
+            return "no such player";
+        }
+        const uint32 charid = charutils::getCharIdFromName(name);
+        const auto   held   = charid != 0 ? openContractOf(charid) : std::nullopt;
+        if (!held.has_value() || held->playerCharID != PPlayer->id)
+        {
+            return "she holds no contract with you";
+        }
+        // In his party, Release takes her out of it as well: one step, no
+        // kick to remember (the user, 2026-09-24). Leaving ends the contract
+        // on its own (leftParty); the lines below find nothing left to do
+        if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty)
+        {
+            ShowInfoFmt("pawn: {} releases {} from the party and her contract", PPlayer->getName(), PPawn->getName());
+            PPawn->PParty->RemoveMember(PPawn);
+        }
+        noteLeft(charid);
+        pawn::forgetGuestGambits(charid);
+        return "";
     }
 
     void noteExp(const CCharEntity* PPawn, const uint32 exp)
@@ -1068,7 +1153,10 @@ namespace pawn::finder
         {
             return false;
         }
-        if (pawn::seats::isWorlds(charid))
+        // One of the world's is the Party Finder's to recruit, save one his
+        // own open contract holds: she is his to invite by name
+        const auto held = openContractOf(charid);
+        if (pawn::seats::isWorlds(charid) && !(held.has_value() && held->playerCharID == PPlayer->id))
         {
             const auto name = pawn::seats::nameOf(charid);
             PPlayer->pushPacket<GP_SERV_COMMAND_MESSAGE>(PPlayer, 0, 0, MsgStd::InvitationDeclined);
@@ -1076,7 +1164,7 @@ namespace pawn::finder
             ShowInfoFmt("pawn: {} invites {} by name; refused, she is the world's (the Party Finder recruits her)", PPlayer->getName(), name);
             return true;
         }
-        // The player's own, faded: stood so the handler finds her
+        // The player's own, or his contract's, faded: stood so the handler finds her
         if (pawn::findPawn(charid) == nullptr)
         {
             if (const auto* why = standFaded(PPlayer, charid); why != nullptr && pawn::findPawn(charid) == nullptr)

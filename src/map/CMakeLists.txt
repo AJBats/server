@@ -95,6 +95,9 @@ set(MAP_CORE_SOURCES
     # CARDIAN: the map's real players as the pawn code asks after them, core because map_engine hands it the sessions
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.h
+    # CARDIAN: a player's view origin (the cardian his camera is on), core because the zone's spawn checks ask it
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/view.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/view.h
     # CARDIAN: the combat pause's manager, core because the AI tick and packet handlers ask it
     ${CMAKE_CURRENT_SOURCE_DIR}/pause/calendar_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pause/calendar_store.h

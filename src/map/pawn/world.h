@@ -53,8 +53,9 @@ namespace pawn::world
     // The seat waterfall's side of the world (ROADMAP H, seats.cpp). The
     // ladder's lookups: a zone is warm with a real player in it or next
     // door, or within WORLD_FADE_DELAY of one; and a player in the zone
-    // itself. Its engine for one of the world's own: stand her at her seat
-    // (false when she is not the world's, standing, or on her way out),
+    // itself. Its engine for one of the world's own: stand her at her seat,
+    // or where her player left her while her contract holds her (false when
+    // she is not the world's, standing, or on her way out),
     // take her body keeping her row, write her row with no body. And a
     // recruit: she stops being one of the world's -- her seat is released
     // and refills, her Body erased -- for the caller to offer under the
@@ -65,6 +66,19 @@ namespace pawn::world
     bool fadeBody(uint32 charid);
     void signInBody(uint32 charid);
     bool leaveWorld(uint32 charid);
+
+    // The party waits for its player (ROADMAP H). hold: signed out with the
+    // last human in her party while her contract with playerCharID is open,
+    // she keeps her Body and her seat, out of the ladder, noting where she
+    // stood; false when she has no Body (not one of the world's). comeBack:
+    // at his login she is the world's again for the ladder, at the spot she
+    // was left -- a seatless Body made first when the map has restarted
+    // since -- and stands there, KO'd if she fell, when he is near or
+    // invites her; false, said loudly, when the spot cannot hold her.
+    // endHold: her contract has ended; the world's clocks run on her again
+    bool hold(uint32 charid, uint32 playerCharID);
+    bool comeBack(uint32 charid, uint32 playerCharID);
+    void endHold(uint32 charid);
 
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued

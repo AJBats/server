@@ -338,15 +338,17 @@ local function cpPrice(entry, buyerNation, guardNation)
 end
 
 -- One roster line: her jobs, health, TP, how far she is from her next
--- level, and whether a gate guard is within the player's reach (the
--- Conquest exchange row on her page). Both the roster list and a single
+-- level, whether a gate guard is within the player's reach (the
+-- Conquest exchange row on her page), and her rest as the command
+-- window shows it. Both the roster list and a single
 -- sync send it, so a screen sees the same fields either way. Experience
 -- comes from the Cardian binding -- upstream has no getter for it or for
 -- the level's cost.
 local function pawnLine(player, name, targ)
     local xp    = player:cardianExp(name)
     local guard = guardNear(player) ~= nil
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s',
+    local rest  = player:cardianRestState(name) or {}
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
@@ -356,7 +358,8 @@ local function pawnLine(player, name, targ)
         xp and xp.exp or 0, xp and xp.tnl or 0,
         guard and 1 or 0,
         player:cardianWaiting(name) and 1 or 0,
-        player:cardianOwns(name) and 1 or 0, targ:getZoneName())
+        player:cardianOwns(name) and 1 or 0, targ:getZoneName(),
+        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0)
 end
 
 local function sendPawnLine(player, name)
@@ -745,12 +748,13 @@ local function sendVocab(player, name)
     chunked('gvc', function (g) return (g ~= '' and g or '-') .. ' ' end, v.conditions, function (e) return e.group end)
     chunked('gvs', function () return '' end, v.statuses)
     chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
-    -- The valid-target mask of every action that has one, key=mask: what
-    -- a command window may aim it at
+    -- The valid-target mask and the MP cost of every action that has a
+    -- mask, key=mask,mp: what a command window may aim it at, and what it
+    -- may grey out
     local masks = {}
     for _, e in ipairs(v.actions) do
         if e.targets ~= nil and e.targets > 0 then
-            masks[#masks + 1] = { key = e.key, label = tostring(e.targets) }
+            masks[#masks + 1] = { key = e.key, label = tostring(e.targets) .. ',' .. tostring(e.mp or 0) }
         end
     end
     chunked('gvx', function () return '' end, masks)
@@ -829,6 +833,57 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err despawn not one of yours, or not out')
         end
         sendList(player)
+    elseif verb == 'walk' and name then
+        -- A walk order: `walk <name> <x> <y> <z>` (the server's x, height, z),
+        -- `walk <name> off` takes it back. Refreshed every frame the ring
+        -- moves, so the reply is a refusal, or `ring <x> <y> <z> <ax> <az>` --
+        -- the point as the mesh took it, and the x and z that were asked, so
+        -- the ring can apply the difference to wherever it has got to since --
+        -- only when the mesh moved the point
+        local x, y, z = tonumber(args[3]), tonumber(args[4]), tonumber(args[5])
+        local err, rx, ry, rz
+        if x and y and z then
+            err, rx, ry, rz = player:cardianWalk(name, x, y, z)
+        else
+            err = player:cardianWalk(name)
+        end
+        if err ~= '' then
+            reply(player, '#cd err walk ' .. err)
+        elseif rx ~= nil and (math.abs(rx - x) > 0.02 or math.abs(ry - y) > 0.02 or math.abs(rz - z) > 0.02) then
+            reply(player, string.format('#cd ring %.2f %.2f %.2f %.2f %.2f', rx, ry, rz, x, z))
+        end
+    elseif verb == 'view' then
+        -- The view origin: the world around this cardian (or, for the
+        -- experiment, this target index) reaches his client too; `off` ends it
+        local err = player:cardianView((name == nil or name == 'off') and '' or name)
+        if err ~= '' then
+            reply(player, '#cd err view ' .. err)
+        else
+            reply(player, '#cd ok view')
+        end
+    elseif verb == 'mv' then
+        -- A maneuver (docs/maneuvers.md): `mv <name>` begins one on her, `mv
+        -- <name> off` cancels; bare `mv` answers, for an addon that has just
+        -- bound, each composed one waiting and then the one he drives live.
+        -- Every change is pushed by the server itself (`cd mv <name> on`,
+        -- `composed`, `cd mv <name>` when it ended); only the answer to a
+        -- press is given here
+        if name == nil then
+            for _, cardian in ipairs(player:cardianNames()) do
+                if player:cardianComposed(cardian) then
+                    reply(player, '#cd mv ' .. cardian .. ' composed')
+                end
+            end
+            local on = player:cardianManeuverOf()
+            reply(player, on ~= '' and ('#cd mv ' .. on .. ' on') or '#cd mv')
+        else
+            local err = player:cardianManeuver(name, args[3] or '')
+            if err ~= '' then
+                reply(player, '#cd err mv ' .. err)
+            else
+                reply(player, '#cd ok mv')
+            end
+        end
     elseif verb == 'pause' then
         -- The pause button. A hold taken or let go is told to every addon by the
         -- server itself (cd paused / cd resumed); only a refusal is answered here
@@ -1000,6 +1055,21 @@ commandObj.onTrigger = function(player, line)
                 reply(player, '#cd pks ' .. p.name .. ' ' .. p.stats .. ' 0')
             end
             reply(player, '#cd pk.e ' .. p.name)
+        end
+    elseif verb == 'contracts' then
+        -- Your contract: each open contract of his (ct <name> <kind> <job>
+        -- <level> <zone id> <party|standing|out>), framed ct.b / ct.e
+        reply(player, '#cd ct.b')
+        for _, c in ipairs(player:cardianContracts()) do
+            reply(player, string.format('#cd ct %s %s %d %d %d %s', c.name, c.kind, c.job or 0, c.level or 0, c.zone or 0, c.state or 'out'))
+        end
+        reply(player, '#cd ct.e')
+    elseif verb == 'endcontract' and name then
+        local err = player:cardianEndContract(name)
+        if err ~= '' then
+            reply(player, '#cd err endcontract ' .. err)
+        else
+            reply(player, '#cd ok endcontract')
         end
     elseif verb == 'invite' and name then
         local err = player:cardianInvite(name, args[3] or 'exp', tonumber(args[4]) or 0)

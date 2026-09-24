@@ -34,7 +34,7 @@ namespace pawn::seats
     void moved(uint32 charid, uint16 zone);
     void touch(uint32 charid);
     void withdraw(uint32 charid);
-    auto withdrawOwnedBy(uint32 ownerCharID) -> uint32;
+    auto ownedBy(uint32 ownerCharID) -> std::vector<uint32>; // every entry held under his name
     bool has(uint32 charid);
 
     // The party memory: the two of them were in a party, most recently

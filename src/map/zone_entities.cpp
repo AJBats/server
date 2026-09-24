@@ -67,6 +67,8 @@
 #include "utils/synthutils.h"
 #include "utils/zoneutils.h"
 
+#include "pawn/view.h" // CARDIAN
+
 #include <map/ximesh/ximesh.h>
 
 namespace
@@ -90,6 +92,28 @@ inline bool isWithinVerticalDistance(CBaseEntity* source, CBaseEntity* target)
 {
     const float verticalDistance = target->loc.p.y - source->loc.p.y - VERTICAL_RENDER_DISTANCE_OFFSET;
     return std::abs(verticalDistance) <= ENTITY_VERTICAL_RENDER_DISTANCE;
+}
+
+// CARDIAN: a player sees what is within range of his body OR of his view origin
+// (the cardian his camera is on, pawn/view.h); `sees` is the entity test, `seesPoint` the distance alone
+inline bool seesPoint(CCharEntity* PChar, const position_t& p, float range)
+{
+    if (isWithinDistance(PChar->loc.p, p, range))
+    {
+        return true;
+    }
+    const auto* origin = cardian::view::origin(PChar);
+    return origin != nullptr && isWithinDistance(origin->loc.p, p, range);
+}
+
+inline bool sees(CCharEntity* PChar, CBaseEntity* target, float range = ENTITY_RENDER_DISTANCE)
+{
+    if (isWithinVerticalDistance(PChar, target) && isWithinDistance(PChar->loc.p, target->loc.p, range))
+    {
+        return true;
+    }
+    auto* origin = cardian::view::origin(PChar);
+    return origin != nullptr && isWithinVerticalDistance(origin, target) && isWithinDistance(origin->loc.p, target->loc.p, range);
 }
 
 } // namespace
@@ -169,7 +193,7 @@ void CZoneEntities::TryAddToNearbySpawnLists(CBaseEntity* PEntity)
 
     FOR_EACH_PAIR_CAST_SECOND(CCharEntity*, PCurrentChar, m_charList)
     {
-        const auto isInRange = isWithinDistance(PEntity->loc.p, PCurrentChar->loc.p, ENTITY_RENDER_DISTANCE);
+        const auto isInRange = seesPoint(PCurrentChar, PEntity->loc.p, ENTITY_RENDER_DISTANCE); // CARDIAN: his view origin too
 
         if (isInRange)
         {
@@ -822,12 +846,12 @@ void CZoneEntities::rebuildSpatialGrid()
     }
 }
 
-void CZoneEntities::tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob)
+auto CZoneEntities::tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob, const bool ask) -> bool // CARDIAN: ask
 {
     // Check to skip aggro routine
     if (PCurrentMob->isDead() || PChar->isDead() || PChar->visibleGmLevel >= 3 || PCurrentMob->PMaster)
     {
-        return;
+        return false; // CARDIAN
     }
 
     // checking monsters night/daytime sleep is already taken into account in the CurrentAction check, because monsters don't move in their sleep
@@ -838,18 +862,23 @@ void CZoneEntities::tapMobAggro(CCharEntity* PChar, CMobEntity* PCurrentMob)
     // Check if this mob follows targets and if so then it should not aggro
     if ((PCurrentMob->m_roamFlags & xi::RoamFlag::Follow) != xi::RoamFlag::None)
     {
-        if (PController->CanFollowTarget(PChar))
+        if (!ask && PController->CanFollowTarget(PChar)) // CARDIAN: ask
         {
             PController->SetFollowTarget(PChar, FollowType::Roam);
         }
-        return;
+        return false; // CARDIAN
     }
 
     bool validAggro = mobCheck > EMobDifficulty::TooWeak || PChar->isSitting() || PCurrentMob->getMobMod(xi::MobMod::AlwaysAggro);
-    if (validAggro && PController->CanAggroTarget(PChar))
+    if (validAggro && PController->CanAggroTarget(PChar, !ask)) // CARDIAN: asked, detection is the danger map's
     {
-        PCurrentMob->PAI->Engage(PChar->entityId());
+        if (!ask) // CARDIAN
+        {
+            PCurrentMob->PAI->Engage(PChar->entityId());
+        }
+        return true; // CARDIAN
     }
+    return false; // CARDIAN
 }
 
 void CZoneEntities::syncSpawnListWithGrid(CCharEntity*                     PChar,
@@ -910,6 +939,12 @@ void CZoneEntities::syncSpawnListWithGrid(CCharEntity*                     PChar
     // range query can't reach (run through the same filter, so they're added only when appropriate).
     spatialGrid_.forEachInRange(PChar->loc.p, ENTITY_RENDER_DISTANCE, tryAdd);
 
+    // CARDIAN: and the cells around his view origin (tryAdd skips what is already shown)
+    if (const auto* origin = cardian::view::origin(PChar))
+    {
+        spatialGrid_.forEachInRange(origin->loc.p, ENTITY_RENDER_DISTANCE, tryAdd);
+    }
+
     if (alwaysInclude != nullptr)
     {
         for (CBaseEntity* entity : *alwaysInclude)
@@ -931,8 +966,7 @@ void CZoneEntities::SpawnMOBs(CCharEntity* PChar)
         /*Fn: visible*/ [&](CBaseEntity* entity)
         {
             return entity->status != xi::Status::Disappear &&
-                   isWithinVerticalDistance(PChar, entity) &&
-                   isWithinDistance(PChar->loc.p, entity->loc.p, ENTITY_RENDER_DISTANCE);
+                   sees(PChar, entity); // CARDIAN: his view origin too
         },
         /*Fn: onAdd*/ [&](CBaseEntity* entity)
         {
@@ -958,8 +992,7 @@ void CZoneEntities::SpawnPETs(CCharEntity* PChar)
         /*Fn: visible*/ [&](CBaseEntity* entity)
         {
             return (entity->status == xi::Status::Normal || entity->status == xi::Status::Update) &&
-                   isWithinVerticalDistance(PChar, entity) &&
-                   isWithinDistance(PChar->loc.p, entity->loc.p, ENTITY_RENDER_DISTANCE);
+                   sees(PChar, entity); // CARDIAN: his view origin too
         });
 }
 
@@ -987,11 +1020,11 @@ void CZoneEntities::SpawnNPCs(CCharEntity* PChar)
             if (PEntity->look.size == MODEL_SHIP)
             {
                 return !static_cast<CNpcEntity*>(PEntity)->alwaysRelevant() &&
-                       isWithinDistance(PChar->loc.p, PEntity->loc.p, ENTITY_RENDER_DISTANCE);
+                       seesPoint(PChar, PEntity->loc.p, ENTITY_RENDER_DISTANCE); // CARDIAN: his view origin too
             }
 
             const bool visibleStatus = PEntity->status == xi::Status::Normal || PEntity->status == xi::Status::Update;
-            const bool inRange       = isWithinDistance(PChar->loc.p, PEntity->loc.p, ENTITY_RENDER_DISTANCE);
+            const bool inRange       = seesPoint(PChar, PEntity->loc.p, ENTITY_RENDER_DISTANCE); // CARDIAN: his view origin too
             const bool alwaysRel     = static_cast<CNpcEntity*>(PEntity)->alwaysRelevant();
             return visibleStatus && (inRange || alwaysRel);
         },
@@ -1012,8 +1045,7 @@ void CZoneEntities::SpawnTRUSTs(CCharEntity* PChar)
         /*Fn: visible*/ [&](CBaseEntity* entity)
         {
             return (entity->status == xi::Status::Normal || entity->status == xi::Status::Update) &&
-                   isWithinVerticalDistance(PChar, entity) &&
-                   isWithinDistance(PChar->loc.p, entity->loc.p, ENTITY_RENDER_DISTANCE);
+                   sees(PChar, entity); // CARDIAN: his view origin too
         });
 }
 
@@ -1077,8 +1109,7 @@ void CZoneEntities::SpawnPCs(CCharEntity* PChar)
     {
         // Despawn character if it's a hidden GM that isn't PChar, is in a different mog house, or if player is in a conflict while other is not, or too far up/down
         if (((PChar != PCurrentChar) && PCurrentChar->m_isGMHidden) ||
-            PChar->m_moghouseID != PCurrentChar->m_moghouseID ||
-            !isWithinVerticalDistance(PChar, PCurrentChar))
+            PChar->m_moghouseID != PCurrentChar->m_moghouseID)
         {
             toRemove.emplace_back(PCurrentChar);
             continue;
@@ -1086,7 +1117,7 @@ void CZoneEntities::SpawnPCs(CCharEntity* PChar)
 
         // Despawn character if it's currently spawned and is far away
         float charDistance = distance(PChar->loc.p, PCurrentChar->loc.p);
-        if (charDistance >= CHARACTER_DESPAWN_DISTANCE)
+        if (!sees(PChar, PCurrentChar, CHARACTER_DESPAWN_DISTANCE)) // CARDIAN: the vertical test moved down here, his view origin too
         {
             toRemove.emplace_back(PCurrentChar);
             continue;
@@ -1133,7 +1164,7 @@ void CZoneEntities::SpawnPCs(CCharEntity* PChar)
             }
 
             float charDistance = distance(PChar->loc.p, PCurrentChar->loc.p);
-            if (charDistance > CHARACTER_SYNC_DISTANCE || !isWithinVerticalDistance(PChar, PCurrentChar))
+            if (!sees(PChar, PCurrentChar, CHARACTER_SYNC_DISTANCE)) // CARDIAN: his view origin too
             {
                 return;
             }
@@ -1170,6 +1201,21 @@ void CZoneEntities::SpawnPCs(CCharEntity* PChar)
                 considerCandidate(static_cast<CCharEntity*>(entity));
             }
         });
+
+    // CARDIAN: and the cells around his view origin (considerCandidate skips what is already shown)
+    if (const auto* origin = cardian::view::origin(PChar))
+    {
+        spatialGrid_.forEachInRange(
+            origin->loc.p,
+            CHARACTER_SYNC_DISTANCE,
+            [&](CBaseEntity* entity)
+            {
+                if (entity->objtype == TYPE_PC)
+                {
+                    considerCandidate(static_cast<CCharEntity*>(entity));
+                }
+            });
+    }
 
     // Check if any of the candidates can/should be spawned
     if (!candidateCharacters.empty())
@@ -1468,6 +1514,16 @@ void CZoneEntities::UpdateEntityPacket(CBaseEntity* PEntity, ENTITYUPDATE type, 
                 }
             });
 
+        // CARDIAN: and the players looking through something near it, whom the grid query around it cannot find
+        cardian::view::forEachViewer(m_zone, [&](CCharEntity* PCurrentChar, const CBaseEntity* origin)
+        {
+            if (PCurrentChar != PEntity && isWithinDistance(origin->loc.p, PEntity->loc.p, ENTITY_RENDER_DISTANCE) &&
+                !isWithinDistance(PCurrentChar->loc.p, PEntity->loc.p, ENTITY_RENDER_DISTANCE) && charutils::hasEntitySpawned(PCurrentChar, PEntity))
+            {
+                PCurrentChar->updateEntityPacket(PEntity, type, updatemask);
+            }
+        });
+
         return;
     }
 
@@ -1532,7 +1588,7 @@ void CZoneEntities::PushPacket(CBaseEntity* PEntity, GLOBAL_MESSAGE_TYPE message
                 {
                     if (PEntity != PCurrentChar)
                     {
-                        if (isWithinDistance(PEntity->loc.p, PCurrentChar->loc.p, checkDistance) &&
+                        if (seesPoint(PCurrentChar, PEntity->loc.p, checkDistance) && // CARDIAN: his view origin too
                             (PEntity->objtype != TYPE_PC || static_cast<CCharEntity*>(PEntity)->m_moghouseID == PCurrentChar->m_moghouseID))
                         {
                             uint16 packetType = packet->getType();

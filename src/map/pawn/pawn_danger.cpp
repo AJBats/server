@@ -30,6 +30,7 @@
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "instance.h"
+#include "party.h"
 #include "status_effect_container.h"
 #include "zone.h"
 #include "zone_entities.h"
@@ -48,7 +49,7 @@ namespace pawn::danger
         }
     } // namespace
 
-    auto Profile::of(const CCharEntity* PPawn) -> Profile
+    auto Profile::of(CCharEntity* PPawn) -> Profile
     {
         Profile p;
         p.sneak     = PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Sneak);
@@ -60,6 +61,25 @@ namespace pawn::danger
         // elemental a wider no-go zone than a sight mob
         p.casting = PPawn->PAI->IsCurrentState<CMagicState>();
         p.tailed  = PPawn;
+        p.aggroes = { PPawn };
+        return p;
+    }
+
+    auto Profile::party(CCharEntity* PPawn) -> Profile
+    {
+        Profile p = worstCase();
+        if (PPawn->PParty == nullptr)
+        {
+            p.aggroes = { PPawn };
+            return p;
+        }
+        for (auto* PMember : PPawn->PParty->members)
+        {
+            if (PMember->objtype == TYPE_PC && PMember->loc.zone == PPawn->loc.zone && PMember->PInstance == PPawn->PInstance)
+            {
+                p.aggroes.push_back(static_cast<CCharEntity*>(PMember));
+            }
+        }
         return p;
     }
 
@@ -110,8 +130,10 @@ namespace pawn::danger
                 return;
             }
 
-            const bool aggressive = (PMob->getMobMod(xi::MobMod::AlwaysAggro) != 0 || PMob->m_Aggro) &&
-                                    PMob->getMobMod(xi::MobMod::NoAggro) == 0;
+            // The game's own answer, detection aside: would it go for anyone
+            // the profile stands for (the circles below are detection)
+            const bool aggressive = std::any_of(profile.aggroes.begin(), profile.aggroes.end(), [&](CCharEntity* PChar)
+                                                { return entities->wouldAggro(PChar, PMob); });
 
             // Its kin are on her: it links the way CanLink allows -- not
             // flagged no-link, not an underground worm or antlion

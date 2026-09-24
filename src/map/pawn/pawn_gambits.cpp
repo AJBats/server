@@ -1255,7 +1255,7 @@ namespace pawn
                         case G_SELECT::LOWEST:
                             return familyName(a.select_arg) + " (lowest)";
                         case G_SELECT::RANDOM:
-                            return familyName(a.select_arg) + " (random)";
+                            return "Random damage spell"; // ResolveSpell ignores the family: any damage spell she knows
                         case G_SELECT::MB_ELEMENT:
                             return "Magic burst";
                         case G_SELECT::ENTRUSTED:
@@ -1816,7 +1816,7 @@ namespace pawn
             {
                 continue;
             }
-            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget() });
+            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget(), PSpell->getMPCost() });
             if (const auto family = PSpell->getSpellFamily(); family != SPELLFAMILY_NONE && std::find(families.begin(), families.end(), family) == families.end())
             {
                 families.push_back(family);

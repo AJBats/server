@@ -36,16 +36,20 @@ class CMobEntity;
 class CZoneEntities;
 
 // The danger map (M3.87): every mob near a cardian that could turn on it,
-// as a circle it must stay out of. Each detection type an idle aggressive
-// mob has -- sight, sound, magic, low-HP, ambush -- is a circle of that
-// type's range plus pawn.AVOID_BUFFER; the idle kin of a mob already
-// fighting the cardian is a circle of its link range plus the tail the mob
-// keeps behind her (pawn.AVOID_TAIL) -- she is the one it follows, so she is
-// the one who leads it away; the largest circle wins. The cardian's own
-// Sneak and Invisible shrink the map the way the game's own detection
-// honours them (unless the mob has true sight/sound). Mobs already
-// fighting, owned by someone, neutral, dead or flagged no-aggro are not
-// dangers, and neither is `exclude` (the hunter's chosen pull).
+// as a circle it must stay out of. Whether an idle mob would go for her at
+// all is the game's own aggro test, asked (CZoneEntities::tapMobAggro with
+// `ask`: everything but detection) -- her level against the mob's (a Too
+// Weak mob leaves her be unless she rests), AlwaysAggro, neutral, the
+// battlefield, the follow roamers and whatever else the server decides by.
+// Each detection type such a mob has -- sight, sound, magic, low-HP,
+// ambush -- is a circle of that type's range plus pawn.AVOID_BUFFER; the
+// idle kin of a mob already fighting the cardian is a circle of its link
+// range plus the tail the mob keeps behind her (pawn.AVOID_TAIL) -- she is
+// the one it follows, so she is the one who leads it away; the largest
+// circle wins. The cardian's own Sneak and Invisible shrink the map the way
+// the game's own detection honours them (unless the mob has true
+// sight/sound). Mobs already fighting, owned by someone, dead or neutral
+// are not dangers, and neither is `exclude` (the hunter's chosen pull).
 namespace pawn::danger
 {
     // Ranges CMobController::CanDetectTarget hard-codes for the detections
@@ -114,8 +118,8 @@ namespace pawn::danger
     // What the mobs can detect about the one asking: a cardian's own
     // concealment, health and casting state shrink or grow the map the way
     // CanDetectTarget reads them. worstCase() assumes none of the
-    // protections and all of the triggers -- the profile for judging a pull
-    // the whole party will fight beside.
+    // protections and all of the triggers; party() is that, for judging a
+    // pull the whole party will fight beside.
     struct Profile
     {
         bool sneak     = false;
@@ -129,7 +133,12 @@ namespace pawn::danger
         // its own.
         const CBattleEntity* tailed = nullptr;
 
-        static auto of(const CCharEntity* PPawn) -> Profile;
+        // Whom the game's aggro test is asked about: a mob is a danger when
+        // it would go for any of them. None, and only linking makes one.
+        std::vector<CCharEntity*> aggroes;
+
+        static auto of(CCharEntity* PPawn) -> Profile;
+        static auto party(CCharEntity* PPawn) -> Profile; // worst case, asked about every party member in her zone
         static auto worstCase() -> Profile
         {
             return {};

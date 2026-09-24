@@ -1,4 +1,4 @@
-// Cardian: one lifecycle for Support Mage, Rest With Player and town kneeling.
+// Cardian: one lifecycle for Support Mage, Rest With Player, town kneeling and the player's rest order.
 #include "pawn_controller.h"
 #include "pawn.h"
 #include "role_support.h"
@@ -19,6 +19,44 @@ namespace
     {
         return std::chrono::duration<double>(time.time_since_epoch()).count();
     }
+
+    // Healing's own clock: ticks so far, seconds to the next, seconds between
+    auto healingClock(const CStatusEffect* healing, const double now) -> CPawnController::RestClock
+    {
+        const double interval = std::chrono::duration<double>(healing->GetTickTime()).count();
+        const int ticks = healing->GetElapsedTickCount();
+        return {.down = true, .ticks = ticks,
+                .next = restSeconds(healing->GetStartTime()) + (ticks + 1) * interval - now, .interval = interval};
+    }
+}
+
+void CPawnController::SetRestOrder(const int percent, const std::string_view why)
+{
+    m_RestOrder = cardian::rest::Order{ .percent = std::clamp(percent, 1, 100) };
+    // An order to rest leaves whatever fight she was in or walking to
+    StandDown(fmt::format("rests until {}% on the player's order", m_RestOrder.percent));
+    ShowInfoFmt("rest: {} is ordered to rest until {}% HP and MP ({})", POwner->getName(), m_RestOrder.percent, why);
+}
+
+void CPawnController::EndRestOrder(const std::string_view why)
+{
+    if (!m_RestOrder.active())
+    {
+        return;
+    }
+    ShowInfoFmt("rest: {}'s order to rest until {}% ends ({})", POwner->getName(), m_RestOrder.percent, why);
+    m_RestOrder = {};
+}
+
+auto CPawnController::RestOrderPercent() const -> int
+{
+    return m_RestOrder.percent;
+}
+
+auto CPawnController::RestNow() const -> RestClock
+{
+    const auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
+    return healing != nullptr ? healingClock(healing, restSeconds(timer::now())) : RestClock{};
 }
 
 auto CPawnController::RestAllowsAction() const -> bool
@@ -33,10 +71,8 @@ auto CPawnController::RestInterruptionCost() const -> double
     {
         return 0.0;
     }
-    const double interval = std::chrono::duration<double>(healing->GetTickTime()).count();
-    const int ticks = healing->GetElapsedTickCount();
-    const double next = restSeconds(healing->GetStartTime()) + (ticks + 1) * interval - restSeconds(timer::now());
-    return cardian::rest::interruptionCost(ticks, next, interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
+    const auto clock = healingClock(healing, restSeconds(timer::now()));
+    return cardian::rest::interruptionCost(clock.ticks, clock.next, clock.interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
 }
 
 auto CPawnController::RestReadyIn(const double now) const -> double
@@ -66,6 +102,7 @@ auto CPawnController::PrepareRestAction(const bool ordered) -> bool
 {
     if (ordered)
     {
+        EndRestOrder("the player's action order");
         StandFromRest("the player's action order");
     }
     if (!RestAllowsAction())
@@ -79,6 +116,11 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
 {
     const double now = restSeconds(timer::now());
     auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
+    if (m_RestOrder.metBy(POwner->health.hp, POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP()))
+    {
+        EndRestOrder(fmt::format("HP and MP at {}%, her gambits take over", m_RestOrder.percent));
+    }
+    bool ordered = m_RestOrder.active();
     auto* leader = GetAnchor();
     const auto* place = CurrentPlace(leader);
     const bool followEnabled = m_Gambits->MasterOn() && RestsWithPlayer() && leader != nullptr;
@@ -88,7 +130,9 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool withPlayer = follow && (healing != nullptr || nearLeader);
     const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(POwner));
     const bool support = advice.has_value() && pawn::tactics::supportMage(POwner) && m_Gambits->MasterOn();
-    const bool supportRecovery = support && (advice->recover || POwner->health.hp < POwner->GetMaxHP());
+    // MP alone decides a Support Mage's own rest: her missing HP is her
+    // cures' to mend, as anyone else's is (the user, 2026-09-23)
+    const bool supportRecovery = support && advice->recover;
     // Rest With Player stays an explicit input even when a support role owns
     // autonomous recovery. Do not overwrite it with the role's MP decision.
     const bool want = townKneel || (support && place != nullptr && (supportRecovery || (healing != nullptr && POwner->health.mp < POwner->GetMaxMP())));
@@ -118,21 +162,35 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         POwner->StatusEffectContainer->HasPreventActionEffect() ||
         POwner->StatusEffectContainer->HasStatusEffect({xi::StatusEffect::Helix, xi::StatusEffect::Bio,
             xi::StatusEffect::Disease, xi::StatusEffect::Plague, xi::StatusEffect::CurseIi});
-    const bool blocked = Acting() || unsafe || noRecovery || POwner->isDead() ||
-        m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || POwner->PAI->IsEngaged();
-    // An ongoing support rest defers formation and seat requests every tick,
-    // even while the player moves. The rest policy decides when to stand.
-    const bool deferPosition = routinePosition && support && place != nullptr;
+    // An order she cannot carry out ends, and he is told: held down by
+    // nothing but a reason she cannot recover, she would stand idle for good
+    if (ordered && (noRecovery || POwner->isDead()))
+    {
+        const auto why = POwner->isDead() ? std::string("KO'd") : std::string("she cannot recover right now");
+        Note(fmt::format("{}'s rest ends: {}", POwner->getName(), why));
+        EndRestOrder(why);
+        ordered = false;
+    }
+    // The player's rest order stands down for nothing but the emergency cure
+    // (urgent, below): a maneuver walks into aggro by design. Only what makes
+    // a kneel impossible blocks it; his other orders end it before they act
+    const bool impossible = Acting() || noRecovery || POwner->isDead() || POwner->PAI->IsEngaged();
+    const bool blocked = impossible || (!ordered && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder()));
+    // An ongoing support rest, or one the player ordered, defers formation
+    // and seat requests every tick, even while the player moves. The rest
+    // policy decides when to stand.
+    const bool deferPosition = routinePosition && ((support && place != nullptr) || ordered);
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
         .campClear = campClear, .mpMissing = mpMissing,
         .urgent = support && advice->wake, .blocked = blocked,
         .moving = !stationary, .routinePosition = deferPosition,
-        .recovered = support && place != nullptr && !supportRecovery, .tickLanded = landed});
+        .recovered = support && place != nullptr && !supportRecovery, .tickLanded = landed,
+        .ordered = ordered});
     if (decision == cardian::rest::Decision::Stand)
     {
-        StandFromRest(support && advice->wake ? advice->why : unsafe ? "danger" : noRecovery ? "recovery blocked" :
-            HasQueuedOrder() ? "the player's action order" :
+        StandFromRest(support && advice->wake ? advice->why : unsafe && !ordered ? "danger" : noRecovery ? "recovery blocked" :
+            HasQueuedOrder() && !m_ManeuverResting ? "the player's action order" :
             support && place != nullptr && landed && !supportRecovery && !withPlayer && !campClear ? "recovery tick: pace and reserve ready" : "rest request ended or movement needed");
     }
     else if (decision == cardian::rest::Decision::Kneel)
@@ -141,7 +199,8 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, interval, 0s);
         m_RestTicks = 0;
         ShowInfoFmt("rest: {} kneels ({}, hp {}%, mp {}%)", POwner->getName(),
-                    townKneel ? "town" : withPlayer ? "with the player" : "support recovery", POwner->GetHPP(), POwner->GetMPP());
+                    ordered ? "the player's rest order" : townKneel ? "town" : withPlayer ? "with the player" : "support recovery",
+                    POwner->GetHPP(), POwner->GetMPP());
     }
     else if (decision == cardian::rest::Decision::StayDown && campClear && landed && !supportRecovery && !withPlayer)
     {
@@ -153,11 +212,9 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         m_RestChatAt = now + 60.0;
         if (advice->knownCost && POwner->health.mp < advice->readyMp)
         {
-            const auto* current = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
-            const double interval = std::chrono::duration<double>(current->GetTickTime()).count();
-            const double next = restSeconds(current->GetStartTime()) + (current->GetElapsedTickCount() + 1) * interval - now;
-            const double wait = cardian::rest::timeToReady(advice->readyMp - POwner->health.mp, current->GetElapsedTickCount(), next,
-                                                         interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
+            const auto clock = healingClock(POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing), now);
+            const double wait = cardian::rest::timeToReady(advice->readyMp - POwner->health.mp, clock.ticks, clock.next,
+                                                         clock.interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
             const auto line = advice->readyMp > POwner->GetMaxMP() ? std::string("A fight and link reserve here need more MP than I can hold.") :
                 fmt::format("Recovering: ready in about {:.0f} seconds, with a link reserve.", std::ceil(wait));
             pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), line);

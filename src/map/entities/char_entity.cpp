@@ -53,6 +53,7 @@
 #include "packets/s2c/0x0df_group_attr.h"
 
 #include "ai/ai_container.h"
+#include "pawn/view.h" // CARDIAN
 #include "ai/controllers/player_controller.h"
 #include "ai/helpers/targetfind.h"
 #include "ai/states/ability_state.h"
@@ -1189,7 +1190,7 @@ void CCharEntity::PostTick()
 
     if (updatemask && now > m_nextUpdateRealTime) // CARDIAN
     {
-        m_nextUpdateRealTime = now + 250ms; // CARDIAN
+        m_nextUpdateRealTime = now + (cardian::view::isViewed(this) ? 100ms : 250ms); // CARDIAN: 100 ms while a player looks through this character
 
         if (loc.zone && !m_isGMHidden)
         {
