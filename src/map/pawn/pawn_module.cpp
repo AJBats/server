@@ -202,9 +202,7 @@ namespace pawn
 
         std::size_t count = 0;
         // A world body's brain is data: modules/cardian/world/brains.yaml
-        // ...one of the world's own held by her contract and stood as her
-        // player's has no Body, but her brain is still the world's
-        const bool  worlds = pawn::world::hasBody(PPawn->id) || pawn::world::isCensusBody(PPawn->id);
+        const bool  worlds = pawn::world::hasBody(PPawn->id);
         const auto  rows   = worlds ? pawn::world::brainRows(PPawn) : pawn::defaultRows();
         for (const auto& [spec, enabled] : rows)
         {
@@ -650,7 +648,7 @@ class PawnModule : public CPPModule
                     row["job"]   = rset->get<uint8>("mjob");
                     row["level"] = rset->get<uint8>("mlvl");
                     row["zone"]  = rset->get<uint16>("pos_zone");
-                    row["state"] = "out";
+                    row["state"] = pawn::seats::has(c.charid) ? "faded" : "out";
                 }
                 rows.add(row);
             }

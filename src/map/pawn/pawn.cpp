@@ -117,16 +117,6 @@ namespace
     // contract and the gambits he gave her (ROADMAP H, the party waits)
     std::unordered_set<uint32> carriedOut;
 
-    // Contract members whose contract ended, stood as their player's: back
-    // to the world from the zone tick, never inside the party's own call,
-    // and once nobody real can see her (pawn::returnToWorld)
-    std::vector<uint32> pendingReturns;
-
-    // Held contract members the game could not place where her player left
-    // her: off the ladder from the zone tick, so it stops loading her again
-    // at every retry (the engine's callbacks never call back into it)
-    std::vector<uint32> pendingWithdraws;
-
     // player charid -> the party's orders (the strategy channel). The hunt
     // rules load from cardian_orders on first use; strategy and retreat
     // are the session's
@@ -424,11 +414,6 @@ namespace
         const auto&      home  = PPawn->profile.home_point;
         CZone*           PZone = zoneutils::GetZone(PPawn->loc.destination);
         std::string_view why;
-        // One of the world's held by her contract (ROADMAP H) stands where
-        // her player left her, KO'd if she was, so he can raise her; a spot
-        // the game cannot place her at was wrong to begin with, and is said
-        // loudly rather than covered by a home point
-        const bool held = pawn::world::isCensusBody(charid);
         if (PZone == nullptr)
         {
             why = "her zone is not here";
@@ -437,7 +422,7 @@ namespace
         {
             why = "she was in her Mog House";
         }
-        else if (PPawn->health.hp == 0 && !held)
+        else if (PPawn->health.hp == 0)
         {
             why = "she was saved KO'd";
         }
@@ -448,12 +433,6 @@ namespace
         else
         {
             why = "the mesh has no place for her spot";
-        }
-        if (!why.empty() && held)
-        {
-            ShowErrorFmt("pawn: {} ({}) cannot stand where her player left her: {}; she stays signed out", PPawn->getName(), charid, why);
-            pendingWithdraws.push_back(charid); // off the ladder, so it does not load her again every retry
-            return {};
         }
         if (!why.empty())
         {
@@ -874,24 +853,23 @@ namespace pawn
         // at once: an owned cardian is live wherever she is, so the club
         // stands through the ladder's ration, a few now and the rest on its
         // next passes, each where the game saved her (standOwned)
-        const auto savedZone = [](const uint32 charid) -> uint16
-        {
-            const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid);
-            return rset && rset->next() ? rset->get<uint16>("pos_zone") : 0;
-        };
         const auto members = accountMembers(PPlayer);
         for (const auto& [charid, name] : members)
         {
-            seats::offerOwned(charid, PPlayer->id, savedZone(charid));
+            uint16 zone = 0;
+            if (const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid); rset && rset->next())
+            {
+                zone = rset->get<uint16>("pos_zone");
+            }
+            seats::offerOwned(charid, PPlayer->id, zone);
         }
-        // His open contracts: each held while he was away stands where he
-        // left her, as his alts do, and waits to be invited (ROADMAP H)
+        // His open contracts: each held while he was away is the world's
+        // again where he left her, and waits there to be invited (ROADMAP H)
         std::vector<std::pair<uint32, std::string>> contracted;
         for (const auto& c : finder::openContracts(PPlayer->id))
         {
-            if (findPawn(c.charid) == nullptr)
+            if (findPawn(c.charid) == nullptr && world::comeBack(c.charid, PPlayer->id))
             {
-                seats::offerOwned(c.charid, PPlayer->id, savedZone(c.charid));
                 contracted.emplace_back(c.charid, c.name);
             }
         }
@@ -951,7 +929,9 @@ namespace pawn
         // it out with him, where she stands -- his alts, another player's
         // left in it, and contract members, whose contracts hold. A human
         // still in the party keeps them all: nobody's partner is left
-        // mid-fight
+        // mid-fight. One of the world's under no contract is not his to
+        // take: she leaves the party here, before his own leaving hands its
+        // lead to a cardian, and is the world's where she stands
         uint32              count = 0;
         std::vector<uint32> kept;
         if (PPlayer->PParty != nullptr)
@@ -979,6 +959,13 @@ namespace pawn
                 {
                     kept.push_back(charid);
                 }
+                else if (world::hasBody(charid) && !finder::openContractOf(charid).has_value())
+                {
+                    if (auto* PPawn = findPawn(charid); PPawn != nullptr && PPawn->PParty != nullptr)
+                    {
+                        PPawn->PParty->RemoveMember(PPawn);
+                    }
+                }
                 else
                 {
                     carryOut(charid);
@@ -1005,6 +992,23 @@ namespace pawn
             }
             seats::withdraw(charid);
             ++count;
+        }
+        // His contract members waiting for his invite since his login,
+        // standing or faded, are held again where they are; one another
+        // human has in a party stays with her
+        for (const auto& c : finder::openContracts(PPlayer->id))
+        {
+            if (std::ranges::find(kept, c.charid) != kept.end())
+            {
+                continue;
+            }
+            const auto* PPawn   = findPawn(c.charid);
+            const bool  waiting = PPawn != nullptr ? partyPlayer(PPawn) == nullptr : seats::has(c.charid);
+            if (waiting)
+            {
+                carryOut(c.charid);
+                ++count;
+            }
         }
         if (count > 0 || !kept.empty())
         {
@@ -1059,42 +1063,19 @@ namespace pawn
     void carryOut(const uint32 charid)
     {
         carriedOut.insert(charid);
-        seats::withdraw(charid);
-        if (pawns.contains(charid))
+        // One of the world's under contract keeps her record, held for the
+        // player her contract is with (world::hold); anyone else is his or
+        // another player's, and simply signs out
+        const auto contract = finder::openContractOf(charid);
+        if (!contract.has_value() || !world::hold(charid, contract->playerCharID))
         {
-            despawnById(charid, false); // a body the ladder never held
-        }
-        world::leaveWithPlayer(charid);
-        carriedOut.erase(charid);
-    }
-
-    void returnToWorld(const uint32 charid, const std::string_view why)
-    {
-        // Still one of the world's bodies (she never signed out with him):
-        // her seat and its clocks simply carry on
-        if (world::hasBody(charid) || !seats::has(charid))
-        {
-            return;
-        }
-        // Never before a player's eyes: a dismissed cardian does not
-        // vanish (ROADMAP H). She waits where she stands until nobody real
-        // is in sight of her, as a world body fades
-        if (const auto* PPawn = findPawn(charid); PPawn != nullptr && PPawn->loc.zone != nullptr)
-        {
-            constexpr float kSight = 50.0f;
-            bool            seen   = false;
-            PPawn->loc.zone->ForEachChar([&](CCharEntity* PChar)
+            seats::withdraw(charid);
+            if (pawns.contains(charid))
             {
-                seen |= !pawns.contains(PChar->id) && distance(PChar->loc.p, PPawn->loc.p) <= kSight;
-            });
-            if (seen)
-            {
-                pendingReturns.push_back(charid);
-                return;
+                despawnById(charid, false); // a body the ladder never held
             }
         }
-        ShowInfoFmt("pawn: {} goes back to the world ({}); the census seats her again", seats::nameOf(charid), why);
-        seats::withdraw(charid);
+        carriedOut.erase(charid);
     }
 
     void forgetGuestGambits(const uint32 charid)
@@ -1272,16 +1253,10 @@ namespace pawn
             // Signed out with the last human (carryOut), she has not left: her
             // contract and the gambits he gave her wait for his login
             const bool withHim = carriedOut.contains(charid);
-            const bool wild    = summonerOf(charid) == 0 || world::isCensusBody(charid);
+            const bool wild    = summonerOf(charid) == 0;
             if (herself && !withHim)
             {
                 finder::noteLeft(charid);
-                // Stood as his while her contract held her, she goes back to
-                // the world now it has ended, once nobody real can see her go
-                if (summonerOf(charid) != 0 && wild)
-                {
-                    pendingReturns.push_back(charid);
-                }
             }
             // A wild body's orders end with the party: nobody can reach her
             // to lift a wait, a hunt or a retreat once she is out of it, or
@@ -1334,7 +1309,7 @@ namespace pawn
         db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", charid);
     }
 
-    bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job)
+    bool spawnAt(const uint32 charid, CZone* PZone, const position_t& point, const uint8 job, const bool asLeft)
     {
         if (!isEnabled() || PZone == nullptr || charid == 0 || pawns.contains(charid))
         {
@@ -1354,8 +1329,8 @@ namespace pawn
         }
 
         // A body that fell and faded stands whole again: the void takes her
-        // death as it takes her drops
-        if (PPawn->health.hp == 0)
+        // death as it takes her drops. One her player left stands as he left her
+        if (PPawn->health.hp == 0 && !asLeft)
         {
             PPawn->health.hp = PPawn->GetMaxHP();
             PPawn->health.mp = PPawn->GetMaxMP();
@@ -2650,21 +2625,6 @@ namespace pawn
     void onZoneTick(CZone* PZone)
     {
         stakeSweep();
-        if (!pendingReturns.empty())
-        {
-            const auto due = std::exchange(pendingReturns, {});
-            for (const uint32 charid : due)
-            {
-                returnToWorld(charid, "her contract ended"); // one still in sight queues again
-            }
-        }
-        if (!pendingWithdraws.empty())
-        {
-            for (const uint32 charid : std::exchange(pendingWithdraws, {}))
-            {
-                seats::withdraw(charid);
-            }
-        }
         const auto started   = realtime::now();
         uint32     pawnsHere = 0;
         for (const auto& [charid, PPawn] : pawns)

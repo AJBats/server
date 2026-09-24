@@ -224,9 +224,9 @@ namespace pawn::finder
     auto openContractOf(uint32 charid) -> std::optional<OpenContract>;
     auto openContracts(uint32 playerCharID) -> std::vector<OpenContract>; // his, by name
 
-    // Her Party Finder page's Release: the contract ends and she goes back
-    // to the world. Not for a member of his party: the party is how she
-    // leaves it. "" on success, else why not
+    // Her Party Finder page's Release: the contract ends and she is the
+    // world's again where she stands, taken out of his party first when she
+    // is in it. "" on success, else why not
     auto release(CCharEntity* PPlayer, const std::string& name) -> std::string;
 
     // Exp she was granted in the party of the player who recruited her,

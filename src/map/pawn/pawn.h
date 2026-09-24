@@ -109,13 +109,6 @@ namespace pawn
     // many signed out
     auto signOutClub(CCharEntity* PPlayer) -> uint32;
 
-    // A contract member whose contract has ended goes back to the world:
-    // stood as her player's while it held her, her body and her ladder
-    // entry go -- once nobody real can see her, never before his eyes --
-    // and the census seats her again. One still a world body (she never
-    // signed out with him) needs nothing
-    void returnToWorld(uint32 charid, std::string_view why);
-
     // The gambits a player gave a wild cardian (set 0), gone with his
     // contract: her own brain again, standing or not
     void forgetGuestGambits(uint32 charid);
@@ -168,7 +161,9 @@ namespace pawn
     // else: her job, level, skills, gear and spells are what the census
     // tool wrote (world::ensureReady refuses a body it never finished).
     // False with no side effects if she is unknown, online or already a pawn.
-    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job);
+    // A body that fell stands whole, save one standing asLeft: where her
+    // player left her, as he left her (ROADMAP H, the party waits)
+    bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, bool asLeft = false);
 
     // Presence without a body: the session row (search, the lobby's
     // already-online check) and a position in a zone, written for an

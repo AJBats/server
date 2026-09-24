@@ -72,6 +72,12 @@ using namespace std::chrono_literals;
 
 namespace
 {
+    struct Spot
+    {
+        uint16     zone = 0;
+        position_t point{};
+    };
+
     struct Body
     {
         uint32      charid  = 0;
@@ -80,6 +86,24 @@ namespace
         position_t  point{};
         bool        present = false;
         bool        pinned  = false;
+
+        // Her contract holds her (ROADMAP H, the party waits): signed out
+        // with the last human in her party, she keeps this record and her
+        // seat, out of the ladder until the player she is held for signs in,
+        // then stands where she was left (leftAt) and waits for his invite.
+        // Every clock of the crowd leaves her be while held (withPlayer)
+        uint32              holder = 0;
+        std::optional<Spot> leftAt;
+
+        // Faded away from her seat's zone (a player took her there): the
+        // ladder is told her seat's zone on the next zone tick, so she stands
+        // there when a player is near it (the engine's callbacks never call
+        // back into the ladder)
+        bool homeward = false;
+        // A seatless body her contract has let go (the map restarted while
+        // she was held): back to the pool once she has faded, unseen, so the
+        // census seats her again
+        bool toPool = false;
 
         bool farming = false;
 
@@ -326,18 +350,39 @@ namespace
         return count;
     }
 
-    // A cardian in a real player's party is his until he lets her go: the
-    // world's clocks -- a town seat's dwell, the KO fade -- do not run on
-    // her while she is with him. When he dismisses her they resume where
-    // they stand. "With him" is his session's word, not his body's: a zone
-    // line destroys the body for seconds, and the clocks must not notice.
-    // Her Body stays as it was -- present, at her seat, in that seat's zone
-    // -- so the seat is hers to come back to; anything that acts on a body
-    // as part of the crowd (the chat, a facing, the Signet top-up, the GM
-    // verbs' "all") asks this first, or it reaches her wherever she is
+    // A cardian in a real player's party is his until he lets her go, and
+    // one his contract holds is his while he is away: the world's clocks --
+    // a town seat's dwell, the KO fade -- do not run on her, and her camp
+    // does not count her. When he dismisses her they resume where she
+    // stands. "With him" is his session's word, not his body's: a zone line
+    // destroys the body for seconds, and the clocks must not notice. Her
+    // Body keeps her seat, in that seat's zone, so the seat is hers to come
+    // back to; anything that acts on a body as part of the crowd (the chat,
+    // a facing, the Signet top-up, the GM verbs' "all") asks this first, or
+    // it reaches her wherever she is
     auto withPlayer(const uint32 charid) -> bool
     {
-        return pawn::withRealPlayer(charid);
+        if (pawn::withRealPlayer(charid))
+        {
+            return true;
+        }
+        const auto it = bodies.find(charid);
+        return it != bodies.end() && it->second.holder != 0;
+    }
+
+    // Her seat's pulls -- the town walk, a camp's home -- reach her only
+    // where they mean something: not while her contract holds her where her
+    // player left her, nor in another zone, where a player she has left took
+    // her. There she idles until the ladder fades her, and she stands again
+    // at her seat
+    auto atHome(const Body& body) -> bool
+    {
+        if (body.holder != 0)
+        {
+            return false;
+        }
+        const auto* PPawn = pawn::findPawn(body.charid);
+        return PPawn == nullptr || static_cast<uint16>(PPawn->getZone()) == body.zone;
     }
 
     auto isLive(CZone* PZone, const uint32 realHere) -> bool
@@ -799,9 +844,10 @@ namespace
         {
             return out;
         }
+        // One with a player is his party's, not her camp's
         for (auto& [charid, other] : bodies)
         {
-            if (other.zone == body.zone && other.slot == body.slot && other.party > 1)
+            if (other.zone == body.zone && other.slot == body.slot && other.party > 1 && !withPlayer(charid))
             {
                 out.push_back(&other);
             }
@@ -891,7 +937,10 @@ namespace
 
     bool fadeIn(Body& body)
     {
-        auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(body.zone));
+        // Held by her contract she stands where her player left her, as she
+        // was there: KO'd if she fell, so he can raise her (ROADMAP H)
+        const bool held  = body.holder != 0 && body.leftAt.has_value();
+        auto*      PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(held ? body.leftAt->zone : body.zone));
         if (PZone == nullptr)
         {
             return false;
@@ -903,9 +952,9 @@ namespace
         }
         // A town body not yet at her seat comes in at her exit point and walks
         // (TownTick); anyone else stands where she stood
-        const bool        walksIn = body.cameFrom.has_value() && !body.atSeat && !body.leaving;
-        const position_t& at      = walksIn ? *body.cameFrom : body.point;
-        if (!pawn::spawnAt(row->charid, PZone, at, row->job))
+        const bool        walksIn = !held && body.cameFrom.has_value() && !body.atSeat && !body.leaving;
+        const position_t& at      = held ? body.leftAt->point : walksIn ? *body.cameFrom : body.point;
+        if (!pawn::spawnAt(row->charid, PZone, at, row->job, held))
         {
             return false;
         }
@@ -918,7 +967,7 @@ namespace
         body.seed        = row->seed;
         body.levelSeen   = 0;
         body.returnAt.reset();
-        if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
+        if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr && !held)
         {
             // She stands whole. Her row keeps the HP she was minted with, a
             // level 1's, and dealt a seat at level 8 she would show a quarter
@@ -928,7 +977,10 @@ namespace
             PPawn->health.mp = PPawn->GetMaxMP();
             PPawn->updatemask |= UPDATE_HP;
         }
-        joinCampParty(body);
+        if (!held)
+        {
+            joinCampParty(body);
+        }
         if (pawn::world::tickDebug())
         {
             if (const auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr)
@@ -940,8 +992,9 @@ namespace
 
         // Her nation's Signet, as the gate guard would give it: her kills in
         // a conquest region then count for her nation as any player's do,
-        // and the farmers round the player feed real influence (ROADMAP F)
-        if (settings::get<bool>("pawn.WORLD_SIGNET"))
+        // and the farmers round the player feed real influence (ROADMAP F).
+        // One held for her player shares his (ShareSignet) once she is with him
+        if (settings::get<bool>("pawn.WORLD_SIGNET") && !held)
         {
             if (auto* PPawn = pawn::findPawn(row->charid); PPawn != nullptr && !PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Signet))
             {
@@ -950,7 +1003,9 @@ namespace
             }
         }
         ShowInfoFmt("world: {} fades in at {} ({:.1f}, {:.1f}, {:.1f}){}", body.name, PZone->getName(), at.x, at.y, at.z,
-                    walksIn ? fmt::format(" and walks to her seat ({:.1f}, {:.1f}, {:.1f})", body.point.x, body.point.y, body.point.z) : "");
+                    held      ? fmt::format(", where {} left her{}", pawn::seats::nameOf(body.holder), static_cast<uint16>(PZone->GetID()) == body.zone ? "" : " (her seat is in another zone)")
+                    : walksIn ? fmt::format(" and walks to her seat ({:.1f}, {:.1f}, {:.1f})", body.point.x, body.point.y, body.point.z)
+                              : "");
         return true;
     }
 
@@ -962,8 +1017,15 @@ namespace
         }
         // Out of the zone, not offline: her session row stays, so search
         // still lists her where she stood, at her job and level; her numbers
-        // as she stood are kept for the finder's look at her
-        pawn::finder::snapshot(pawn::findPawn(body.charid));
+        // as she stood are kept for the finder's look at her. Held, where
+        // she stood is where she stands again
+        auto* PPawn = pawn::findPawn(body.charid);
+        if (body.holder != 0 && PPawn != nullptr && PPawn->loc.zone != nullptr)
+        {
+            body.leftAt = Spot{ static_cast<uint16>(PPawn->getZone()), PPawn->loc.p };
+        }
+        body.homeward = body.holder == 0 && PPawn != nullptr && PPawn->loc.zone != nullptr && static_cast<uint16>(PPawn->getZone()) != body.zone;
+        pawn::finder::snapshot(PPawn);
         pawn::despawnById(body.charid, true);
         body.present = false;
         body.downSince.reset();
@@ -2167,7 +2229,7 @@ namespace
         std::vector<uint32> due;
         for (auto& [charid, body] : bodies)
         {
-            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= table.specs.size() || !table.specs[body.slot].timed())
+            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= table.specs.size() || !table.specs[body.slot].timed() || withPlayer(charid))
             {
                 continue;
             }
@@ -2175,7 +2237,7 @@ namespace
             {
                 gone.push_back(charid);
             }
-            else if (!body.leaving && !withPlayer(charid) && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))) && !pawn::finder::shoutedFor(body.name))
+            else if (!body.leaving && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))) && !pawn::finder::shoutedFor(body.name))
             {
                 due.push_back(charid);
             }
@@ -2207,7 +2269,9 @@ namespace
     }
 
     // The census moves (a recut, the player levelled): a seated body whose
-    // level has left her slot's band gives the seat up, and the seat refills
+    // level has left her slot's band gives the seat up, and the seat refills.
+    // A standing body keeps it until she fades, so nobody watches her vanish
+    // -- one a player has just let go of has often outgrown hers with him
     auto reseatOutgrown(CZone* PZone) -> uint32
     {
         const auto zoneId = static_cast<uint16>(PZone->GetID());
@@ -2219,17 +2283,12 @@ namespace
         std::vector<uint32> outgrown;
         for (const auto& [charid, body] : bodies)
         {
-            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= tit->second.specs.size() || withPlayer(charid))
+            if (body.zone != zoneId || body.slot < 0 || static_cast<size_t>(body.slot) >= tit->second.specs.size() || withPlayer(charid) || body.present)
             {
                 continue;
             }
-            // her level: the body's own when she stands, her character row's when faded
             uint8 level = 0;
-            if (const auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
-            {
-                level = PPawn->GetMLevel();
-            }
-            else if (const auto rset = db::preparedStmt("SELECT mlvl FROM char_stats WHERE charid = ?", charid); rset && rset->next())
+            if (const auto rset = db::preparedStmt("SELECT mlvl FROM char_stats WHERE charid = ?", charid); rset && rset->next())
             {
                 level = rset->get<uint8>("mlvl");
             }
@@ -2262,7 +2321,8 @@ namespace
     }
 
     // Everything the zone holds returns to the pool: bodies fade, presences
-    // go, the table is dropped for a fresh read; the ring's pinned bodies stay
+    // go, the table is dropped for a fresh read; the ring's pinned bodies
+    // stay, and so does one with a player, seatless now: she is his
     auto clearZone(CZone* PZone) -> uint32
     {
         const auto zoneId  = static_cast<uint16>(PZone->GetID());
@@ -2272,6 +2332,29 @@ namespace
             auto& body = it->second;
             if (body.zone != zoneId || body.pinned)
             {
+                ++it;
+                continue;
+            }
+            if (withPlayer(body.charid))
+            {
+                body.slot    = -1;
+                body.seat    = -1;
+                body.party   = 1;
+                body.roam    = 0.0f;
+                body.dwell   = {};
+                body.viaNext = 0;
+                body.outNext = 0;
+                body.atSeat  = false;
+                body.leaving = false;
+                body.gone    = false;
+                body.face.reset();
+                body.cameFrom.reset();
+                body.exitAt.reset();
+                body.leaveAt.reset();
+                body.faceBackAt.reset();
+                body.via.clear();
+                body.wayOut.clear();
+                body.pose.clear();
                 ++it;
                 continue;
             }
@@ -2296,13 +2379,7 @@ namespace pawn::world
     auto isBody(const uint32 charid) -> bool
     {
         const auto it = bodies.find(charid);
-        if (it != bodies.end())
-        {
-            return it->second.present;
-        }
-        // Held by her contract and stood as her player's, she has no Body
-        // but is the world's all the same
-        return pawn::findPawn(charid) != nullptr && isCensusBody(charid);
+        return it != bodies.end() && it->second.present;
     }
 
     auto isLeaving(const uint32 charid) -> bool
@@ -2444,7 +2521,7 @@ namespace pawn::world
     bool standBody(const uint32 charid)
     {
         const auto it = bodies.find(charid);
-        if (it == bodies.end() || it->second.present || it->second.leaving)
+        if (it == bodies.end() || it->second.present || (it->second.leaving && it->second.holder == 0))
         {
             return false;
         }
@@ -2466,43 +2543,137 @@ namespace pawn::world
     {
         if (const auto it = bodies.find(charid); it != bodies.end())
         {
-            pawn::markPresent(charid, it->second.zone, it->second.point);
+            const auto& body = it->second;
+            const Spot  at   = body.holder != 0 && body.leftAt.has_value() ? *body.leftAt : Spot{ body.zone, body.point };
+            pawn::markPresent(charid, at.zone, at.point);
         }
     }
-
-    namespace
-    {
-        // Out of the world's pool: her seat released and refilling, her Body
-        // erased (unseat erases the map element, so the name is read first
-        // and nothing touches it afterwards)
-        bool leavePool(const uint32 charid, const std::string_view why, const std::string_view line)
-        {
-            const auto it = bodies.find(charid);
-            if (it == bodies.end())
-            {
-                return false;
-            }
-            const auto name = it->second.name;
-            unseat(it->second, why);
-            ShowInfoFmt("world: {} {}", name, line);
-            return true;
-        }
-    } // namespace
 
     bool leaveWorld(const uint32 charid)
     {
-        return leavePool(charid, "recruited", "is recruited and leaves the world's pool; her seat refills");
+        const auto it = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            return false;
+        }
+        // unseat erases the map element, so the name is read first and
+        // nothing touches it afterwards
+        const auto name = it->second.name;
+        unseat(it->second, "recruited");
+        ShowInfoFmt("world: {} is recruited and leaves the world's pool; her seat refills", name);
+        return true;
     }
 
-    bool leaveWithPlayer(const uint32 charid)
+    bool hold(const uint32 charid, const uint32 playerCharID)
     {
-        return leavePool(charid, "signed out with her player", "signs out with her player; her seat refills, and her contract holds her out of the pool");
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || playerCharID == 0)
+        {
+            return false;
+        }
+        Body& body = it->second;
+        body.holder   = playerCharID;
+        body.homeward = false;
+        body.toPool   = false;
+        body.downSince.reset();
+        body.returnAt.reset();
+        // Signed out where she stands, as his alts are: the ladder takes her
+        // body (fadeOut notes the spot) and her session row. A body the
+        // ladder did not stand goes the same way
+        pawn::seats::withdraw(charid);
+        fadeOut(body, "signed out with her player");
+        pawn::markAbsent(charid);
+        ShowInfoFmt("world: {} signs out with {}; her contract holds her{}", body.name, pawn::seats::nameOf(playerCharID),
+                    body.leftAt.has_value() ? fmt::format(" at ({:.0f}, {:.0f}, {:.0f}) in zone {}", body.leftAt->point.x, body.leftAt->point.y, body.leftAt->point.z, body.leftAt->zone) : "");
+        return true;
     }
 
-    auto isCensusBody(const uint32 charid) -> bool
+    bool comeBack(const uint32 charid, const uint32 playerCharID)
     {
-        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_census WHERE charid = ? AND recruited = 0", charid);
-        return rset && rset->next();
+        if (!isEnabled() || charid == 0 || playerCharID == 0)
+        {
+            return false;
+        }
+        auto it = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            // The map has restarted since he left her, and the record with
+            // it: a new one without a seat, where her character was saved
+            const auto name = pawn::seats::nameOf(charid);
+            const auto row  = readCensus(name);
+            const auto rset = db::preparedStmt("SELECT pos_zone, pos_x, pos_y, pos_z, pos_rot FROM chars WHERE charid = ?", charid);
+            if (!row.has_value() || row->charid != charid || !rset || !rset->next())
+            {
+                ShowErrorFmt("world: {} ({}) is held by a contract but is not a census body with a saved spot", name, charid);
+                return false;
+            }
+            const Spot saved{ rset->get<uint16>("pos_zone"),
+                              position_t(rset->get<float>("pos_x"), rset->get<float>("pos_y"), rset->get<float>("pos_z"), 0, rset->get<uint8>("pos_rot")) };
+            Body& body         = bodies[charid];
+            body.charid        = charid;
+            body.name          = name;
+            body.zone          = saved.zone;
+            body.point         = saved.point;
+            body.leftAt        = saved;
+            body.target        = row->target;
+            body.seed          = row->seed;
+            charidByName[name] = charid;
+            it                 = bodies.find(charid);
+            ShowInfoFmt("world: {} has no seat since the map restarted; she waits where she was saved", name);
+        }
+        Body& body = it->second;
+        if (body.present)
+        {
+            return true;
+        }
+        body.holder   = playerCharID;
+        body.homeward = false;
+        body.toPool   = false;
+        const Spot at = body.leftAt.value_or(Spot{ body.zone, body.point });
+        body.leftAt   = at;
+        // Her spot was the game's own, a body standing on the mesh; one the
+        // mesh has no place for was wrong to begin with, and is said loudly
+        // rather than covered by a home point (the user's rule)
+        constexpr float kLeftSpotSnap = 30.0f;
+        auto*           PZone         = zoneutils::GetZone(static_cast<xi::ZoneId>(at.zone));
+        const auto*     navMesh       = PZone != nullptr ? PZone->navMesh() : nullptr;
+        const auto      snapped       = navMesh != nullptr ? navMesh->findClosestValidPoint(at.point) : std::optional<position_t>(at.point);
+        if (PZone == nullptr || !snapped.has_value() || distance(*snapped, at.point) > kLeftSpotSnap)
+        {
+            ShowErrorFmt("world: {} ({}) cannot stand where {} left her ({:.1f}, {:.1f}, {:.1f} in zone {}): {}; she stays signed out", body.name, charid,
+                         pawn::seats::nameOf(playerCharID), at.point.x, at.point.y, at.point.z, at.zone, PZone == nullptr ? "the zone is not here" : "the mesh has no place for the spot");
+            return false;
+        }
+        // The world's again for the ladder, at the front of her tier: she
+        // stands when he is near her or invites her, as any body does
+        pawn::seats::offerWorld(charid, at.zone);
+        pawn::seats::touch(charid);
+        return true;
+    }
+
+    void endHold(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || it->second.holder == 0)
+        {
+            return;
+        }
+        Body& body = it->second;
+        body.holder = 0;
+        body.leftAt.reset();
+        // Seatless, she has nothing to go back to: the pool takes her once
+        // she has faded (the zone tick). Else, standing, she is the world's
+        // where she stands and her seat's clocks run again; faded or out,
+        // her next stand is at her seat
+        body.toPool = body.slot < 0 && !body.pinned;
+        if (!body.present && !body.toPool)
+        {
+            pawn::seats::offerWorld(charid, body.zone);
+        }
+        ShowInfoFmt("world: {}'s contract no longer holds her; {}", body.name,
+                    body.toPool      ? "seatless, she goes back to the pool once she has faded"
+                    : body.present   ? "the world's again where she stands"
+                                     : "she stands next at her seat");
     }
 
     auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
@@ -2612,7 +2783,7 @@ namespace pawn::world
     auto isFarming(const uint32 charid) -> bool
     {
         const auto it = bodies.find(charid);
-        return it != bodies.end() && it->second.farming;
+        return it != bodies.end() && it->second.farming && it->second.holder == 0;
     }
 
     auto brainRows(const CCharEntity* PPawn) -> std::vector<std::pair<std::string, bool>>
@@ -2648,7 +2819,7 @@ namespace pawn::world
     auto campLeaderOf(const uint32 charid) -> uint32
     {
         const auto it = bodies.find(charid);
-        if (it == bodies.end() || it->second.party <= 1)
+        if (it == bodies.end() || it->second.party <= 1 || withPlayer(charid))
         {
             return 0;
         }
@@ -2659,13 +2830,13 @@ namespace pawn::world
     auto campSizeOf(const uint32 charid) -> uint32
     {
         const auto it = bodies.find(charid);
-        return it != bodies.end() ? std::max<uint32>(1, it->second.party) : 1;
+        return it != bodies.end() && !withPlayer(charid) ? std::max<uint32>(1, it->second.party) : 1;
     }
 
     auto homeOf(const uint32 charid) -> std::optional<std::pair<position_t, float>>
     {
         const auto it = bodies.find(charid);
-        if (it == bodies.end() || it->second.roam <= 0.0f || it->second.slot < 0)
+        if (it == bodies.end() || it->second.roam <= 0.0f || it->second.slot < 0 || !atHome(it->second))
         {
             return std::nullopt;
         }
@@ -2686,7 +2857,7 @@ namespace pawn::world
     auto townOrder(const uint32 charid) -> std::optional<TownOrder>
     {
         const auto it = bodies.find(charid);
-        if (it == bodies.end() || !it->second.present)
+        if (it == bodies.end() || !it->second.present || !atHome(it->second))
         {
             return std::nullopt;
         }
@@ -2733,23 +2904,18 @@ namespace pawn::world
         {
             return exp;
         }
-        // In a real player's party she levels as the party does: the
-        // game's own caps only, and her exp counts toward her affinity
-        // (the user, 2026-09-13) -- a Body's or one held by her contract
-        const auto it       = bodies.find(PChar->id);
-        const bool standing = it != bodies.end() ? it->second.present : isCensusBody(PChar->id);
-        if (!standing)
+        const auto it = bodies.find(PChar->id);
+        if (it == bodies.end() || !it->second.present)
         {
             return exp;
         }
+        // In a real player's party she levels as the party does: the
+        // game's own caps only, and her exp counts toward her affinity
+        // (the user, 2026-09-13)
         if (pawn::partyPlayer(PChar) != nullptr)
         {
             pawn::finder::noteExp(PChar, exp);
             return exp;
-        }
-        if (it == bodies.end())
-        {
-            return exp; // held and waiting: no cap to read, and nothing to earn
         }
         const Body&  body  = it->second;
         const uint8  level = PChar->GetMLevel();
@@ -3017,13 +3183,43 @@ namespace pawn::world
             }
         }
 
-        // KO'd: she lies there WORLD_KO_FADE seconds, then the ladder is
-        // told she is down and takes her body; up again, it stands her
-        // whole (spawnAt)
+        // One pass over the zone's bodies:
+        // - faded away from her seat's zone, her next stand is at her seat,
+        //   and the ladder judges it by that zone from now on (stood there
+        //   again already, it is where she is);
+        // - seatless and let go by her contract, faded: back to the pool;
+        // - KO'd, she lies there WORLD_KO_FADE seconds, then the ladder is
+        //   told she is down and takes her body, and once WORLD_KO_RETURN
+        //   has passed she is up again: the ladder stands her whole
+        //   (spawnAt) at her seat, or where she stood without one, when
+        //   someone is there to see her
+        std::vector<uint32> toPool;
         for (auto& [charid, body] : bodies)
         {
-            if (body.zone != zoneId || !body.present)
+            if (body.zone != zoneId)
             {
+                continue;
+            }
+            if (body.homeward)
+            {
+                body.homeward = false;
+                if (body.holder == 0)
+                {
+                    pawn::seats::moved(charid, body.zone);
+                }
+            }
+            if (!body.present)
+            {
+                if (body.toPool)
+                {
+                    toPool.push_back(charid);
+                }
+                else if (body.returnAt.has_value() && now >= *body.returnAt)
+                {
+                    ShowInfoFmt("world: {} is due back after her KO", body.name);
+                    body.returnAt.reset();
+                    pawn::seats::setDown(charid, false);
+                }
                 continue;
             }
             if (++body.sweepTick % 5 == 0)
@@ -3051,21 +3247,20 @@ namespace pawn::world
                 {
                     pawn::seats::setDown(charid, true);
                 }
-                if (body.slot >= 0 && !body.returnAt.has_value())
+                if (!body.pinned && !body.returnAt.has_value())
                 {
                     body.returnAt = now + std::chrono::seconds(settings::get<uint32>("pawn.WORLD_KO_RETURN"));
                 }
             }
         }
-        // A KO'd seat-holder is up again once the return has passed: the
-        // ladder stands her when someone is there to see her
-        for (auto& [charid, body] : bodies)
+        for (const auto charid : toPool)
         {
-            if (body.zone == zoneId && !body.present && body.returnAt.has_value() && now >= *body.returnAt)
+            if (const auto it = bodies.find(charid); it != bodies.end())
             {
-                ShowInfoFmt("world: {} is due back at her seat after her KO", body.name);
-                body.returnAt.reset();
-                pawn::seats::setDown(charid, false);
+                ShowInfoFmt("world: {} goes back to the pool (seatless, her contract over)", it->second.name);
+                pawn::seats::withdraw(charid);
+                charidByName.erase(it->second.name);
+                bodies.erase(it);
             }
         }
 
