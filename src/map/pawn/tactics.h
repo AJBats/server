@@ -73,6 +73,10 @@ namespace pawn::tactics
 
     // Her Role row says Support Mage (a real player never does)
     auto supportMage(CBattleEntity* PMember) -> bool;
+    // She attends the fight on this mob from the perimeter rather than
+    // fighting it: a Support Mage no Attack row of hers sends onto it
+    // (CPawnController::AttendsFight; a real player never does)
+    auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool;
 
     // The conveyor's doors (RESEARCH §12.12 item 2; conveyor.h), for the
     // gambit engine. A scope no tactician watches has no conveyor, and its

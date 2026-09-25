@@ -262,8 +262,9 @@ xi.settings.pawn =
     -- and itself outside those circles, and is pushed away as a mob roams
     -- toward it. Cardians move on the server with the mobs, so nothing
     -- surprises them: they stand boldly just outside. Avoidance is a gambit
-    -- row (on in every cardian's default rows; !pawnavoid checks and
-    -- unchecks it). AVOID_SCAN is how far around itself a cardian looks.
+    -- row: the world's layer runs it for a world body out in the wild, a
+    -- job's default rows do not carry it, and !pawnavoid checks and
+    -- unchecks it. AVOID_SCAN is how far around itself a cardian looks.
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
 
@@ -327,9 +328,9 @@ xi.settings.pawn =
     -- playtest variable (RESEARCH §12.12 item 2).
     TACTICS_REQUEST_LIFE = 4,
 
-    -- The perimeter (RESEARCH §12.15): a support mage attends the party's
-    -- fight from outside the mob's TP reach, read off its own skill list,
-    -- plus this many yalms.
+    -- The perimeter (RESEARCH §12.15): a Support Mage attends a fight that
+    -- no Attack row of hers claims, standing outside the mob's TP reach,
+    -- read off its own skill list, plus this many yalms.
     PERIMETER_MARGIN = 2,
 
     -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a

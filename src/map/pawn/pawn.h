@@ -110,7 +110,9 @@ namespace pawn
     auto signOutClub(CCharEntity* PPlayer) -> uint32;
 
     // The gambits a player gave a wild cardian (set 0), gone with his
-    // contract: her own brain again, standing or not
+    // contract: standing, she is seeded again with her census job's
+    // defaults; in the wild the world's layer runs ahead of them again,
+    // since she is no longer with him (world.h inTheWild)
     void forgetGuestGambits(uint32 charid);
 
     // A party membership ended for good (CParty: a kick, a leave, a disband
@@ -296,15 +298,25 @@ namespace pawn
     // cardians. "" on success, else why not.
     auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string;
 
-    // Replace the pawn's gambits with the set xi.pawn.brain selects for it
-    // (its job's default brain today). The controller calls this on its
-    // first tick and whenever the pawn's job changes; !pawnbrain forces it.
-    // Implemented in pawn_module.cpp.
+    // Replace the pawn's gambits with her own rows: her saved set, else her
+    // job's defaults (gambit_defaults.h) with her gambits on, saved at once
+    // for anyone who is not a world body -- an owned cardian, an alt, the
+    // main character while the player drives someone else -- so a job
+    // change leaves them in place. A world body's own rows are seeded from
+    // her census job and not saved: a set she has is a guest's
+    // (forgetGuestGambits). Her world layer (world.h brainRows) is not among
+    // them and is left as it is: it runs ahead of them while she is in the
+    // wild, and rebuilds by itself when the world's file, her job or her
+    // role changes. The controller calls this once, on its first tick; a
+    // reset (greset) calls it again, and !pawnbrain after a look at the
+    // world's file (world.h rereadBrains). Implemented in pawn_module.cpp.
     void loadBrain(CCharEntity* PPawn);
 
     // The saved gambit set (cardian_gambits, M3.85): the rows in the row
-    // grammar, one "on spec" line each, and the master switch. Saved after
-    // every edit; loaded at spawn instead of the defaults when present.
+    // grammar, one "on spec" line each, and her own master switch
+    // (CPawnController::OwnMaster). Saved after every edit and when her
+    // defaults are seeded; loaded at spawn instead of the defaults when
+    // present.
     void saveGambits(CCharEntity* PPawn);
     bool loadSavedGambits(CCharEntity* PPawn);
     void forgetGambits(CCharEntity* PPawn);

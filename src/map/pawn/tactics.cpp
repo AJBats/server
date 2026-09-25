@@ -723,6 +723,16 @@ namespace pawn::tactics
         return PController != nullptr && PController->Behavior(pawn::Behavior::Role).value_or(0) == static_cast<uint16>(pawn::Role::SupportMage);
     }
 
+    auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
+        {
+            return false;
+        }
+        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
+        return PController != nullptr && PController->AttendsFight(PMob);
+    }
+
     auto has(const CCharEntity* PPawn) -> bool
     {
         return PPawn != nullptr && find(PPawn) != nullptr;

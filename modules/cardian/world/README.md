@@ -111,18 +111,35 @@ the same place each time.
 
 ## The brains: `brains.yaml`
 
-What a world body does is data too. `brains.yaml` holds gambit rows you can
-read -- `party: hp < 60 -> cast best cure` -- compiled on load to the numeric
-form the addon saves for your own cardians (the file's header has the
-grammar): a `common` block every body runs (avoid aggro, rest with the
-leader, rest under 60 % HP), a block per `role` and a block per `job`. A body's rows are common, then her job's,
-then her role's, top to bottom; the first row whose conditions hold acts,
+What a world body does in the wild is data too. `brains.yaml` holds gambit
+rows you can read -- `party: hp < 60 -> cast best cure` -- compiled on load
+to the numeric form the addon saves for your own cardians (the file's header
+has the grammar): a `world` block every body runs (avoid aggro, rest with
+the leader), a block per `role` and a block per `job`.
+
+These rows are a **layer**, not her rows (ROADMAP K5). Every character has
+her own rows -- a saved set, else her job's defaults -- the same list
+wherever she is and the only one the gambit editor shows; a world body's
+are seeded from her census job and never saved. While she is out in the
+wild (not in a player's party, not held by his contract) the world's layer
+runs ahead of them: the `world` block, then her job's, then her role's,
+then her own rows, top to bottom; the first row whose conditions hold acts,
 and a row she cannot use (a spell she doesn't know, an ability on recast)
-is passed over. Roles: a Warrior is the **tank** when she is the highest
-Warrior of her party and leads the camp; other Warriors and the fighters
-are **melee**; White, Black and Red Mage are **mages**. The file is re-read
-when it changes; a body picks it up on `!pawnreloadbrain <name>` or her
-next stand. The header of the file explains the grammar's numbers.
+is passed over. Invited into a player's party she runs her own rows alone,
+so none of this file -- Avoid aggro included -- goes with her; released,
+the layer runs again. Joining or leaving changes only whether the layer
+runs, with one exception: rows the player edited while she was his guest
+are forgotten as she leaves, and she is seeded again with her job's
+defaults.
+
+Roles: a Warrior or Paladin is the **tank** when she is the highest of them
+in her party and leads the camp; the others and the fighters are **melee**;
+White, Black and Red Mage, Summoner, Scholar and Geomancer are **mages**
+(the jobs whose own defaults make them a Support Mage). No block carries a
+`role` row: her role is her own row. Her role is worked out afresh as her
+camp changes. The file is re-read within seconds of a change (at once on
+`!pawnbrain`), and every world body's layer picks it up; the header of the
+file explains the grammar's numbers.
 
 ## Candidate camps from the mob spawn data (2026-09-07)
 

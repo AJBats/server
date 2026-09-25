@@ -25,11 +25,40 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "map/pawn/engage_math.h"
+#include "map/pawn/gambit_ids.h"
 #include "map/pawn/gambit_text.h"
 
+#include <array>
+#include <string>
+
 using namespace gambits;
+using cardian::engage::isEngageRow;
+using cardian::engage::isFoeTarget;
+using cardian::engage::pairingError;
 using pawn::text::formatRow;
 using pawn::text::parseRow;
+
+namespace
+{
+    // The editor's verdict on a row in the grammar: "" when it may stand
+    auto pairing(const std::string& spec) -> std::string
+    {
+        const auto g = parseRow(spec);
+        REQUIRE(g.has_value());
+        return std::string(pairingError(*g));
+    }
+
+    // An Attack row on the party leader's target under one condition
+    auto attackWhen(const G_CONDITION condition, const uint32 arg) -> Gambit_t
+    {
+        Gambit_t g;
+        g.target_selector = pawn::G_TARGET_LEADERS_TARGET;
+        g.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(condition, arg) });
+        g.actions.emplace_back(G_REACTION::ATTACK, static_cast<G_SELECT>(0), 0);
+        return g;
+    }
+} // namespace
 
 TEST_CASE("row grammar: a one-condition, one-action row round-trips", "[cardian][gambits]")
 {
@@ -100,4 +129,134 @@ TEST_CASE("row grammar: retired rest actions cannot return through numeric impor
     REQUIRE(parseRow("0|0:0|100:11:1|0").has_value());
     REQUIRE(parseRow("1|1:50|2:2:8|0").has_value());
     REQUIRE(parseRow("1|1:50|2:2:10|0").has_value());
+}
+
+TEST_CASE("row grammar: the retired melee mage switch cannot return", "[cardian][gambits]")
+{
+    REQUIRE_FALSE(parseRow("0|0:0|100:12:1|0").has_value());
+    REQUIRE_FALSE(parseRow("0|0:0|100:12:0|0").has_value());
+    REQUIRE_FALSE(parseRow("0|0:0|100:6:1+100:12:1|0").has_value());
+    REQUIRE(parseRow("1|1:50|2:2:12|0").has_value()); // spell 12 is a spell, not the behaviour
+}
+
+TEST_CASE("row grammar: the foe targets with Attack round-trip", "[cardian][gambits]")
+{
+    constexpr std::array targets{
+        pawn::G_TARGET_LEADERS_TARGET,
+        pawn::G_TARGET_TARGETED_BY_ALLY,
+        pawn::G_TARGET_TARGETING_ALLY,
+        pawn::G_TARGET_TARGETING_SELF,
+    };
+    for (const auto target : targets)
+    {
+        Gambit_t g;
+        g.target_selector = target;
+        g.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::ALWAYS, 0) });
+        g.actions.emplace_back(G_REACTION::ATTACK, G_SELECT::HIGHEST, 0);
+
+        const auto text = formatRow(g);
+        INFO("row " << text);
+        REQUIRE(text == std::to_string(static_cast<uint16>(target)) + "|0:0|0:0:0|0");
+
+        const auto back = parseRow(text);
+        REQUIRE(back.has_value());
+        REQUIRE(back->target_selector == target);
+        REQUIRE(back->actions.size() == 1);
+        REQUIRE(back->actions[0].reaction == G_REACTION::ATTACK);
+        REQUIRE(static_cast<uint16>(back->actions[0].select) == 0);
+        REQUIRE(back->actions[0].select_arg == 0);
+        REQUIRE(formatRow(*back) == text);
+    }
+    REQUIRE(parseRow("100|0:0|0:0:0|0").has_value());
+    REQUIRE(parseRow("103|0:0|0:0:0|0").has_value());
+}
+
+TEST_CASE("row grammar: the tactician's choice condition round-trips", "[cardian][gambits]")
+{
+    Gambit_t g;
+    g.target_selector = G_TARGET::PARTY;
+    g.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(pawn::G_CONDITION_TACTICIANS_CHOICE, 0) });
+    g.actions.emplace_back(G_REACTION::MA, G_SELECT::HIGHEST, 1);
+
+    const auto text = formatRow(g);
+    REQUIRE(text == "1|101:0|2:0:1|0");
+
+    const auto back = parseRow(text);
+    REQUIRE(back.has_value());
+    REQUIRE(back->predicate_groups.size() == 1);
+    REQUIRE(back->predicate_groups[0].predicates.size() == 1);
+    REQUIRE(back->predicate_groups[0].predicates[0].condition == pawn::G_CONDITION_TACTICIANS_CHOICE);
+    REQUIRE(back->predicate_groups[0].predicates[0].condition_arg == 0);
+    REQUIRE(formatRow(*back) == text);
+}
+
+TEST_CASE("row pairing: the foe targets are 100 to 103, and an engage row is one with Attack", "[cardian][gambits][engage]")
+{
+    CHECK_FALSE(isFoeTarget(static_cast<G_TARGET>(99)));
+    CHECK(isFoeTarget(pawn::G_TARGET_LEADERS_TARGET));
+    CHECK(isFoeTarget(pawn::G_TARGET_TARGETED_BY_ALLY));
+    CHECK(isFoeTarget(pawn::G_TARGET_TARGETING_ALLY));
+    CHECK(isFoeTarget(pawn::G_TARGET_TARGETING_SELF));
+    CHECK_FALSE(isFoeTarget(static_cast<G_TARGET>(104)));
+    CHECK_FALSE(isFoeTarget(G_TARGET::SELF));
+    CHECK_FALSE(isFoeTarget(G_TARGET::TARGET)); // her fight, not a foe she has yet to take
+
+    CHECK(isEngageRow(*parseRow("100|0:0|0:0:0|0")));
+    CHECK_FALSE(isEngageRow(*parseRow("1|1:50|2:0:1|0")));
+    CHECK_FALSE(isEngageRow(*parseRow("0|0:0|100:6:1|0")));
+}
+
+TEST_CASE("row pairing: a foe target with Attack stands, under any condition that keeps no clock", "[cardian][gambits][engage]")
+{
+    CHECK(pairing("100|0:0|0:0:0|0").empty());
+    CHECK(pairing("101|0:0|0:0:0|0").empty());
+    CHECK(pairing("102|0:0|0:0:0|0").empty());
+    CHECK(pairing("103|0:0|0:0:0|0").empty());
+    CHECK(pairing("102|2:50|0:0:0|0").empty());        // HP at least 50%
+    CHECK(pairing("100|?1:50,2:90|0:0:0|0").empty());  // an OR group
+    CHECK(pairing("101|0:0|0:0:0+0:0:0|0").empty());   // Attack twice is still Attack alone
+}
+
+TEST_CASE("row pairing: a foe target goes with Attack only", "[cardian][gambits][engage]")
+{
+    CHECK_FALSE(pairing("102|0:0|2:0:1|0").empty());         // Cure (best)
+    CHECK_FALSE(pairing("100|0:0|3:2:35|0").empty());        // an ability
+    CHECK_FALSE(pairing("101|0:0|100:6:1|0").empty());       // a behaviour
+    CHECK_FALSE(pairing("103|0:0|4:0:0|0").empty());         // a weapon skill
+    CHECK_FALSE(pairing("100|0:0|0:0:0+2:0:1|0").empty());   // Attack, then a spell
+}
+
+TEST_CASE("row pairing: Attack needs a foe target", "[cardian][gambits][engage]")
+{
+    CHECK_FALSE(pairing("0|0:0|0:0:0|0").empty()); // Self
+    CHECK_FALSE(pairing("1|0:0|0:0:0|0").empty()); // a party member
+    CHECK_FALSE(pairing("2|0:0|0:0:0|0").empty()); // her own fight
+    CHECK_FALSE(pairing("3|0:0|0:0:0|0").empty()); // the player
+}
+
+TEST_CASE("row pairing: an Attack row refuses a timer or a chance, which other rows keep", "[cardian][gambits][engage]")
+{
+    CHECK_FALSE(pairingError(attackWhen(G_CONDITION::TIMER, 30)).empty());
+    CHECK_FALSE(pairingError(attackWhen(G_CONDITION::RANDOM, 50)).empty());
+
+    // In a second group, or beside another condition, it is refused just the same
+    auto g = attackWhen(G_CONDITION::ALWAYS, 0);
+    g.predicate_groups.emplace_back(G_LOGIC::OR, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::HPP_LT, 50), Predicate_t(G_CONDITION::RANDOM, 10) });
+    CHECK_FALSE(pairingError(g).empty());
+
+    // Any other row keeps them
+    auto cure            = attackWhen(G_CONDITION::TIMER, 30);
+    cure.target_selector = G_TARGET::PARTY;
+    cure.actions         = { Action_t(G_REACTION::MA, G_SELECT::HIGHEST, 1) };
+    CHECK(pairingError(cure).empty());
+}
+
+TEST_CASE("row pairing: every other row stands as it did", "[cardian][gambits][engage]")
+{
+    CHECK(pairing("1|1:50|2:0:1|0").empty());      // Party member: HP below 50% -> Cure (best)
+    CHECK(pairing("0|0:0|100:6:1|0").empty());     // Self -> Rest with the player
+    CHECK(pairing("0|0:0|100:11:1|0").empty());    // Self -> Role: Support Mage
+    CHECK(pairing("1|101:0|2:0:1|0").empty());     // Party member: Tactician's choice -> Cure (best)
+    CHECK(pairing("2|2:60|4:0:0|0").empty());      // Target: HP at least 60% -> Best weapon skill
+    CHECK(pairing("2|0:0|1:0:0|0").empty());       // Target -> Ranged attack
 }

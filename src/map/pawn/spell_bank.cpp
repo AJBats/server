@@ -373,16 +373,17 @@ namespace pawn::tactics
                 }
                 sampled = sampled || (!before && r.meleeCache.contains({ PMob->id, PTarget->id }));
             }
-            // The party's melee: whoever is not a support mage, who stands
-            // back by design; the measured rate replaces the guess at ten
-            // seconds either way
+            // The party's melee: whoever does not attend this fight from the
+            // perimeter (a Support Mage no Attack row of hers sends onto
+            // the mob), who stands back by design; the measured rate
+            // replaces the guess at ten seconds either way
             if (wantDealt && members != nullptr)
             {
                 double dealt    = 0.0;
                 bool   complete = true;
                 for (auto* PMember : *members)
                 {
-                    if (PMember == nullptr || PMember->isDead() || PMember->loc.zone != PMob->loc.zone || supportMage(PMember))
+                    if (PMember == nullptr || PMember->isDead() || PMember->loc.zone != PMob->loc.zone || attendsFight(PMember, PMob))
                     {
                         continue;
                     }

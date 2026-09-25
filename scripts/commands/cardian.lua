@@ -51,7 +51,7 @@
 --                                        avoid nothing, hunting pauses, until it clears
 --       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
---       greset <name>                    back to the job's default rows
+--       greset <name>                    back to the default rows of the job she holds now
 -----------------------------------
 ---@type TCommand
 local commandObj = {}

@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "engage_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
 #include "pawn_gambits.h"
@@ -59,8 +60,9 @@ class CSpell;
 // declumping, rest regen) rebuilt around party membership instead of the
 // trust master/minion model, mounted on CPlayerController so the pawn keeps
 // a real character's action surface. Decisions come from the pawn gambit
-// interpreter, fed by a Lua brain that is reloaded whenever the pawn's job
-// changes; an engaged pawn also auto-attacks via the stock battle engine.
+// interpreter over her rows (seeded once from her job's defaults), and the
+// fights she takes from her Attack rows (the engage door, engage_math.h);
+// an engaged pawn also auto-attacks via the stock battle engine.
 class CPawnController : public CPlayerController
 {
 public:
@@ -107,15 +109,27 @@ public:
     // camp's leader when she is not it; nobody for a solo body or the leader
     auto GetAnchor() const -> CCharEntity*;
 
-    // The perimeter (RESEARCH §12.15). A perimeter mage holds the Support
-    // Mage role and no Melee mage row: she attends the party's fight instead
-    // of drawing, from the nearest safe spot outside the mob's TP reach and
-    // inside cure range of the tank (AttendIntent). She may act offensively
-    // once the mob is engaged
-    auto IsPerimeterMage() const -> bool;
-    // The beat before she takes the party's fight: the reaction beat for a
-    // draw or a walk in, none for a perimeter mage, who is not walking in
-    auto JoinBeat() const -> timer::duration;
+    // The perimeter (RESEARCH §12.15). She attends the fight on this mob
+    // instead of drawing on it when she holds the Support Mage role and no
+    // Attack row of hers claims the mob (engage_math.h attendsFight): from
+    // the nearest safe spot outside the mob's TP reach and inside cure range
+    // of the tank (AttendIntent). She may act offensively once the mob is
+    // engaged. An Attack row that claims the mob makes her fight it, and so
+    // "Foe: targeting ally", which claims nearly every fight, makes her a
+    // melee mage. The player's own Attack on the mob (PlayersOrderOn) is his,
+    // not her tactician's: she fights it
+    auto AttendsFight(CBattleEntity* PTarget) const -> bool;
+    // The player's own Attack, from her command window: the mob he named.
+    // She draws on it and closes, whatever her role and her rows say, and
+    // nothing of her tactician's (the attend, her own rest) takes it back
+    // while it lives. It ends with that fight, and on his Disengage, a new
+    // order, retreat or zoning. The party's engage chord is not his own
+    // order to her and sets nothing here (RESEARCH §14.12 decision 16)
+    auto PlayersOrderOn(const CBattleEntity* PTarget) const -> bool;
+    auto HasPlayersOrder() const -> bool;
+    // The beat before she takes a fight: the reaction beat for a draw or a
+    // walk in, none for a fight she attends, since she is not walking in
+    auto JoinBeat(CBattleEntity* PTarget) const -> timer::duration;
     auto AttendedTarget() const -> CBattleEntity*;
     auto Attending(const CBattleEntity* PTarget) const -> bool;
     auto AttendedEngaged() const -> bool;
@@ -236,6 +250,12 @@ public:
     void MarkComposed(std::string_view what); // the maneuver's order is given, to play out without him: his live slot frees for the next cardian
     auto ManeuverComposed() const -> bool;
     auto ManeuverBy() const -> uint32; // whose maneuver she is on, 0 for none
+    // Her gambit master switch as her own setting: while a maneuver holds
+    // her gambits off, the value its end restores. Seeding or loading her
+    // rows sets it through SetOwnMaster, so a reload during a maneuver
+    // never turns her gambits on under it; a saved set records OwnMaster
+    auto OwnMaster() const -> bool;
+    void SetOwnMaster(bool on);
 
     // Wait here / follow me. Waiting, she has nowhere to go by order: no
     // following, hunting or travel, so she idles where she stands -- the
@@ -321,8 +341,10 @@ public:
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
     // by pawn::Behavior. Cleared at the start of every think; the first row,
-    // top down, to speak for a behaviour wins; a switch no row speaks for
-    // is off, a parameter takes its default. Rows are the only source.
+    // top down in the running order (the world's layer first in the wild,
+    // gambit_layers.h), to speak for a behaviour wins; a switch no row
+    // speaks for is off, a parameter takes its default. Rows are the only
+    // source.
     void ClearGambitBehaviors();
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
@@ -671,27 +693,66 @@ private:
 
     void FaceTarget(EntityId target) const;
 
-    // Reload the Lua brain when the pawn's main or support job changed
+    // Seed her gambit rows once, on her first living tick (pawn::loadBrain);
+    // a job change leaves them as they are
     void CheckBrain();
 
     // Another party member is already casting something that makes this
     // cast redundant (same buff family, a cure on the same healthy target...)
     auto PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool;
 
-    // The mob this pawn should join on, and why: the player's engaged
-    // target first (gated by the swing/TrustEngageType convention), else
-    // any pawn party member's living target -- how a hunter's pull
-    // propagates -- else a mob that has chosen her or one of her party.
-    // Every one of them within the leash (pawn.HUNT_LEASH) of `from`, the
+    // The engage door (ROADMAP K3; the rules are engage_math.h). The foes
+    // around the party are the leader's engaged target, the fights of the
+    // party's other cardians, and the engaged mobs on her or on a member of
+    // her party, each within the leash (pawn.HUNT_LEASH) of `from`, the
     // party's place: a pull is not the party's fight until it is dragged
-    // inside. No player (nullptr): the party's own fights and self-defence
-    // alone
-    struct PartyFight
+    // inside. PLeader is the one she follows (GetAnchor: the player, or her
+    // camp's leader); with none, the party's own fights alone. A foe below
+    // ground with no fight on, or one her door holds off, is absent, and
+    // the next one gets its turn. Nothing while she retreats.
+    //  - PartyFightScan: the party's fight whatever her rows say -- the
+    //    leader's target, else another cardian's fight (how a hunter's
+    //    pull propagates), else a mob on one of us. What a Support Mage
+    //    attends, what her rest watches for, and what a camp leader joins.
+    //  - EngageChoice: the fight her rows take -- her enabled Attack rows
+    //    top down (none with her gambits off), each row's foe the first of
+    //    its kind whose conditions hold on it. `row` numbers the row, and
+    //    the why line names it with its layer.
+    struct FightPick
     {
         CBattleEntity* target = nullptr;
         std::string    why;
+        // The Attack row that took it, numbered within its layer (the
+        // editor's number for one of her own); 0 for the party's fight
+        std::size_t row = 0;
     };
-    auto PartyEngageTarget(CCharEntity* PPlayer, const position_t& from) const -> PartyFight;
+    auto PartyFightScan(CCharEntity* PLeader, const position_t& from) const -> FightPick;
+    auto EngageChoice(CCharEntity* PLeader, const position_t& from) const -> FightPick;
+    // The first of her Attack rows that claims this mob, wherever it
+    // stands (engage_math.h claimingRow), and its finder: nothing when none
+    // does
+    struct RowClaim
+    {
+        cardian::engage::Finder   finder = cardian::engage::Finder::LeadersTarget;
+        pawn::CGambits::EngageRow row;
+    };
+    auto ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>;
+
+    // The foes around the party this tick (as above), gathered once a tick
+    // for the place asked about, in the finders' order; and what a foe is
+    // to the party (the finders' facts, engage_math.h Foe) and the words
+    // for how a finder found it
+    auto FoesAround(CCharEntity* PLeader, const position_t& from) const -> std::vector<CBattleEntity*>;
+    auto FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe;
+    auto FoeWhy(cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string;
+    struct FoesMemo
+    {
+        timer::time_point     tick{ timer::time_point::min() };
+        uint32                leader = 0;
+        position_t            from{};
+        std::vector<EntityId> foes;
+    };
+    mutable FoesMemo m_FoesMemo;
 
     // A world body's idle tick (ROADMAP D1): rest when low, answer a mob on
     // her, and farming, pick a mob in her band within reach or head toward
@@ -902,6 +963,7 @@ private:
     // safe spot" for
     std::optional<EntityId> m_Attended;
     bool                    m_AttendedOrdered = false; // an explicit Engage is held until ended or replaced
+    std::optional<EntityId> m_PlayersOrder;            // the mob his own Attack named (PlayersOrderOn)
     uint32                  m_SaidNoSpotFor   = 0;
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
     uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change
@@ -994,9 +1056,11 @@ private:
     // route; live, a maneuver ends as it is given, and she walks in and
     // fights with her gambits back
     auto AttackOrder(CBattleEntity* PTarget) -> std::string;
-    // The command window's Disengage: she sheathes, and her gambits may take
-    // her back into the fight after the usual re-engage wait. Held and in a
-    // maneuver, as Attack
+    // The command window's Disengage: she sheathes. An Attack row of hers
+    // that claims the mob takes her back into the fight once her draw
+    // cooldown (the usual re-engage wait) is served, and a Support Mage
+    // whose rows take no fight attends it again; with her gambits off she
+    // stays out. Held and in a maneuver, as Attack
     auto DisengageOrder() -> std::string;
 
     // The one way the queued order changes, so the addon's queue line is never stale

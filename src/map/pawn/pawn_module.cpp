@@ -20,6 +20,7 @@
 */
 
 #include "cardian_link.h"
+#include "engage_math.h"
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
@@ -54,6 +55,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <utility>
 #include <vector>
@@ -192,19 +194,23 @@ namespace pawn
             return;
         }
 
+        // Her own rows, the same list wherever she is. A world body's world
+        // layer is not among them and is left as it is: it runs ahead of them
+        // while she is in the wild (CGambits, gambit_layers.h), and rebuilds
+        // by itself when the world's file, her job or her role changes
         auto& gambits = PController->Gambits();
         gambits.RemoveAllGambits();
 
+        // The set she has, else her job's defaults (gambit_defaults.h),
+        // seeded once. A job change leaves them as they are; a reset
+        // (greset) seeds them again from the job she holds then.
         if (pawn::loadSavedGambits(PPawn))
         {
             return;
         }
 
         std::size_t count = 0;
-        // A world body's brain is data: modules/cardian/world/brains.yaml
-        const bool  worlds = pawn::world::hasBody(PPawn->id);
-        const auto  rows   = worlds ? pawn::world::brainRows(PPawn) : pawn::defaultRows();
-        for (const auto& [spec, enabled] : rows)
+        for (const auto& [spec, enabled] : pawn::defaultRowsFor(PPawn->GetMJob()))
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
             {
@@ -216,13 +222,25 @@ namespace pawn
                 ShowErrorFmt("pawn: malformed default row '{}'", spec);
             }
         }
-        if (worlds)
+
+        // A seeded set has her gambits on, whatever they were before it:
+        // a guest the player switched off is herself again once she leaves
+        PController->SetOwnMaster(true);
+
+        const auto job = magic_enum::enum_name(PPawn->GetMJob());
+        if (pawn::world::hasBody(PPawn->id))
         {
-            ShowInfoFmt("pawn: world brain loaded for {} ({} rows, {})", PPawn->getName(), count, pawn::world::roleName(PPawn->id));
+            // Nothing of a world body's is saved: she seeds at every stand
+            // from the job the census gave her, which she keeps, and a set
+            // she has is a guest's -- the player's edits while she was in
+            // his party -- which goes with her contract (forgetGuestGambits)
+            ShowInfoFmt("pawn: {} default gambits seeded for {} ({} rows, a world body's: not saved)", job, PPawn->getName(), count);
         }
         else
         {
-            ShowInfoFmt("pawn: default gambits loaded for {} ({} rows)", PPawn->getName(), count);
+            // Saved at once, so a job change leaves her rows in place
+            pawn::saveGambits(PPawn);
+            ShowInfoFmt("pawn: {} default gambits seeded for {} ({} rows, saved)", job, PPawn->getName(), count);
         }
     }
 } // namespace pawn
@@ -439,6 +457,22 @@ class PawnModule : public CPPModule
             if (behaviors != 0 && static_cast<std::size_t>(behaviors) != gambit.actions.size())
             {
                 ShowWarningFmt("pawn: malformed gambit for {} (target {}): a BEHAVIOR action cannot share a row with other actions", PLuaBaseEntity->GetBaseEntity()->getName(), target);
+                return {};
+            }
+
+            // The grammar's and the editor's refusals hold here too: a
+            // retired behaviour never comes back, and no row is silently dead
+            if (std::ranges::any_of(gambit.actions, [](const Action_t& a)
+                                    {
+                                        return a.reaction == pawn::G_REACTION_BEHAVIOR && pawn::isRetiredBehavior(static_cast<uint32>(a.select));
+                                    }))
+            {
+                ShowWarningFmt("pawn: malformed gambit for {} (target {}): a retired behaviour", PLuaBaseEntity->GetBaseEntity()->getName(), target);
+                return {};
+            }
+            if (const auto why = cardian::engage::pairingError(gambit); !why.empty())
+            {
+                ShowWarningFmt("pawn: malformed gambit for {} (target {}): {}", PLuaBaseEntity->GetBaseEntity()->getName(), target, why);
                 return {};
             }
 
@@ -858,6 +892,10 @@ class PawnModule : public CPPModule
             {
                 return "malformed row";
             }
+            if (const auto why = cardian::engage::pairingError(*gambit); !why.empty())
+            {
+                return std::string(why);
+            }
             if (!PGambits->Insert(index, std::move(*gambit)))
             {
                 return "no such row";
@@ -877,6 +915,10 @@ class PawnModule : public CPPModule
             if (!gambit.has_value())
             {
                 return "malformed row";
+            }
+            if (const auto why = cardian::engage::pairingError(*gambit); !why.empty())
+            {
+                return std::string(why);
             }
             if (!PGambits->Replace(index, std::move(*gambit)))
             {

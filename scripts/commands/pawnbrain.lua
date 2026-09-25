@@ -1,7 +1,9 @@
 -----------------------------------
 -- func: pawnbrain <charname>
--- desc: Cardian pawns - reload a spawned pawn's gambit brain from disk
---       (edit modules/cardian/lua/pawn/brains/<job>.lua, then run this).
+-- desc: Cardian pawns - reload a spawned pawn's gambit rows: her saved set,
+--       else her job's defaults. modules/cardian/world/brains.yaml is read
+--       again first if it changed, so every world body's world layer follows
+--       it at once rather than at the next poll.
 -----------------------------------
 ---@type TCommand
 local commandObj = {}

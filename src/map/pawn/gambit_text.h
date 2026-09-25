@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "gambit_ids.h"
+
 #include "ai/helpers/gambits_container.h"
 
 #include <charconv>
@@ -104,7 +106,8 @@ namespace pawn::text
     } // namespace detail
 
     // nullopt for anything malformed: a missing field, a non-number, no
-    // conditions, no actions, or a value outside 16 bits where one is needed
+    // conditions, no actions, a value outside 16 bits where one is needed,
+    // or a retired behaviour
     inline auto parseRow(std::string_view text) -> std::optional<gambits::Gambit_t>
     {
         const auto fields = detail::split(text, '|');
@@ -160,8 +163,8 @@ namespace pawn::text
                 return std::nullopt;
             }
             g.actions.emplace_back(static_cast<gambits::G_REACTION>(reaction), static_cast<gambits::G_SELECT>(select), arg);
-            // CARDIAN: the old rest switches are retired, including numeric imports.
-            if (reaction == 100 && (select == 8 || select == 10))
+            // A retired behaviour never returns, saved or imported (gambit_ids.h)
+            if (reaction == static_cast<uint16>(G_REACTION_BEHAVIOR) && isRetiredBehavior(select))
             {
                 return std::nullopt;
             }
