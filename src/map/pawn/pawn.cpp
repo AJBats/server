@@ -1273,7 +1273,9 @@ namespace pawn
                 }
                 // A wild cardian's saved gambits are only ever a guest's --
                 // the player's edits while she was in the party (the user,
-                // 2026-09-14) -- so they end with it: her own brain again
+                // 2026-09-14) -- so they end with it: her census job's
+                // defaults again. The world's layer needs nothing here: it
+                // runs again because she is no longer with him
                 if (const auto rset = db::preparedStmt("SELECT 1 FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", charid); rset && rset->next())
                 {
                     forgetGambits(PPawn.get());
@@ -1968,47 +1970,48 @@ namespace pawn
 
     namespace
     {
-        auto gambitsOf(CCharEntity* PPawn) -> CGambits*
+        auto controllerOf(CCharEntity* PPawn) -> CPawnController*
         {
-            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr ? &PController->Gambits() : nullptr;
+            return PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
         }
     } // namespace
 
     void saveGambits(CCharEntity* PPawn)
     {
-        auto* PGambits = gambitsOf(PPawn);
-        if (PGambits == nullptr)
+        auto* PController = controllerOf(PPawn);
+        if (PController == nullptr)
         {
             return;
         }
         std::string blob;
-        for (const auto& row : PGambits->Rows())
+        for (const auto& row : PController->Gambits().Rows())
         {
             blob += row.enabled ? "1 " : "0 ";
             blob += text::formatRow(row.gambit);
             blob += '\n';
         }
+        // Her own switch, never a maneuver's hold on it (OwnMaster)
         db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, 0, ?, ?) "
                          "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
-                         PPawn->id, static_cast<uint8>(PGambits->MasterOn() ? 1 : 0), blob);
+                         PPawn->id, static_cast<uint8>(PController->OwnMaster() ? 1 : 0), blob);
     }
 
     bool loadSavedGambits(CCharEntity* PPawn)
     {
-        auto* PGambits = gambitsOf(PPawn);
-        if (PGambits == nullptr)
+        auto* PController = controllerOf(PPawn);
+        if (PController == nullptr)
         {
             return false;
         }
-        const auto rset = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
+        auto*      PGambits = &PController->Gambits();
+        const auto rset     = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
         if (!rset || !rset->next())
         {
             return false;
         }
 
         PGambits->RemoveAllGambits();
-        PGambits->SetMaster(rset->get<uint8>("master_on") != 0);
+        PController->SetOwnMaster(rset->get<uint8>("master_on") != 0);
 
         const auto  blob  = rset->get<std::string>("set_rows");
         std::size_t count = 0;
@@ -2070,6 +2073,9 @@ namespace pawn
         {
             return false;
         }
+        // A GM's reload (!pawnbrain) takes the world's file as it stands,
+        // not as the zone tick's poll last saw it
+        world::rereadBrains();
         loadBrain(it->second.get());
         return true;
     }

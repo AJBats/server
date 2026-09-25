@@ -42,14 +42,15 @@ class CZoneEntities;
 // Weak mob leaves her be unless she rests), AlwaysAggro, neutral, the
 // battlefield, the follow roamers and whatever else the server decides by.
 // Each detection type such a mob has -- sight, sound, magic, low-HP,
-// ambush -- is a circle of that type's range plus pawn.AVOID_BUFFER; the
-// idle kin of a mob already fighting the cardian is a circle of its link
-// range plus the tail the mob keeps behind her (pawn.AVOID_TAIL) -- she is
-// the one it follows, so she is the one who leads it away; the largest
-// circle wins. The cardian's own Sneak and Invisible shrink the map the way
-// the game's own detection honours them (unless the mob has true
-// sight/sound). Mobs already fighting, owned by someone, dead or neutral
-// are not dangers, and neither is `exclude` (the hunter's chosen pull).
+// ambush -- is a circle of that type's range plus pawn.AVOID_BUFFER (her
+// Avoid aggro row); the idle kin of a mob already fighting the cardian is a
+// circle of its link range plus the tail the mob keeps behind her
+// (pawn.AVOID_TAIL; her Avoid links row) -- she is the one it follows, so
+// she is the one who leads it away; the largest circle wins. The
+// cardian's own Sneak and Invisible shrink the map the way the game's own
+// detection honours them (unless the mob has true sight/sound). Mobs
+// already fighting, owned by someone, dead or neutral are not dangers, and
+// neither is `exclude` (the hunter's chosen pull).
 namespace pawn::danger
 {
     // Ranges CMobController::CanDetectTarget hard-codes for the detections
@@ -137,7 +138,14 @@ namespace pawn::danger
         // it would go for any of them. None, and only linking makes one.
         std::vector<CCharEntity*> aggroes;
 
-        static auto of(CCharEntity* PPawn) -> Profile;
+        // Her two avoidance rows, each on its own (ROADMAP K6): Avoid aggro
+        // counts the circles of an idle mob that would go for her, Avoid
+        // links the circle of an idle kin of a mob fighting her (counts)
+        bool aggro = true;
+        bool links = true;
+
+        // A cardian's own profile, with her Avoid aggro and Avoid links rows
+        static auto of(CCharEntity* PPawn, bool avoidAggro, bool avoidLinks) -> Profile;
         static auto party(CCharEntity* PPawn) -> Profile; // worst case, asked about every party member in her zone
         static auto worstCase() -> Profile
         {
@@ -161,6 +169,23 @@ namespace pawn::danger
         bool  links               = false; // its kin are fighting the one asking
         float linkRange           = 0.0f;
     };
+
+    // Which of an idle mob's circles count, her two avoidance rows each on
+    // its own: its detection circles when it would go for her and she
+    // avoids aggro; its link circle when its kin fight her and she avoids
+    // links. Avoid aggro off and Avoid links on, she walks past idle mobs
+    // but keeps clear of her own fight's kin; the other way round, she keeps
+    // out of every circle but pays linking kin no mind
+    struct Counts
+    {
+        bool aggressive = false;
+        bool links      = false;
+    };
+
+    constexpr auto counts(const bool avoidAggro, const bool avoidLinks, const bool wouldAggro, const bool kinFightHer) -> Counts
+    {
+        return { avoidAggro && wouldAggro, avoidLinks && kinFightHer };
+    }
 
     // The radius rule: every detection the profile does not hide from is a
     // candidate, linking (link range plus the tail) is one more, the largest

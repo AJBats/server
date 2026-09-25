@@ -49,9 +49,11 @@ namespace pawn::danger
         }
     } // namespace
 
-    auto Profile::of(CCharEntity* PPawn) -> Profile
+    auto Profile::of(CCharEntity* PPawn, const bool avoidAggro, const bool avoidLinks) -> Profile
     {
         Profile p;
+        p.aggro     = avoidAggro;
+        p.links     = avoidLinks;
         p.sneak     = PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Sneak);
         p.invisible = PPawn->StatusEffectContainer->HasStatusEffectByFlag(xi::StatusEffectFlag::Invisible);
         p.illusion  = PPawn->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Illusion);
@@ -105,7 +107,7 @@ namespace pawn::danger
         // distance only when a kin is engaged -- TryLink). A mob on her is
         // at her, so the coarse cut bounds this pass too.
         std::vector<const CParty*> fighting;
-        if (profile.tailed != nullptr && settings::get<bool>("pawn.AVOID_LINKS"))
+        if (profile.tailed != nullptr && profile.links)
         {
             const auto noteFighting = [&](CMobEntity* PMob)
             {
@@ -131,16 +133,19 @@ namespace pawn::danger
             }
 
             // The game's own answer, detection aside: would it go for anyone
-            // the profile stands for (the circles below are detection)
-            const bool aggressive = std::any_of(profile.aggroes.begin(), profile.aggroes.end(), [&](CCharEntity* PChar)
-                                                { return entities->wouldAggro(PChar, PMob); });
+            // the profile stands for (the circles below are detection). Only
+            // asked when her Avoid aggro row would count the answer
+            const bool wouldAggro = profile.aggro && std::any_of(profile.aggroes.begin(), profile.aggroes.end(), [&](CCharEntity* PChar)
+                                                                 { return entities->wouldAggro(PChar, PMob); });
 
             // Its kin are on her: it links the way CanLink allows -- not
-            // flagged no-link, not an underground worm or antlion
+            // flagged no-link, not an underground worm or antlion. The kin are
+            // gathered only when her Avoid links row counts them
             const bool underground = (hasFlag(PMob->m_roamFlags, xi::RoamFlag::Worm) || hasFlag(PMob->m_roamFlags, xi::RoamFlag::Ambush)) &&
                                      PMob->IsNameHidden();
-            const bool links = !fighting.empty() && PMob->PParty != nullptr && PMob->getMobMod(xi::MobMod::NoLink) == 0 && !underground &&
-                               std::find(fighting.begin(), fighting.end(), PMob->PParty) != fighting.end();
+            const bool kin = !fighting.empty() && PMob->PParty != nullptr && PMob->getMobMod(xi::MobMod::NoLink) == 0 && !underground &&
+                             std::find(fighting.begin(), fighting.end(), PMob->PParty) != fighting.end();
+            const auto [aggressive, links] = counts(profile.aggro, profile.links, wouldAggro, kin);
             if (!aggressive && !links)
             {
                 return;

@@ -140,10 +140,12 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
     m_RestTicks = ticks;
     const bool mpMissing = POwner->health.mp < POwner->GetMaxMP();
-    // Use the same targets and place-centered HUNT_LEASH as party engagement.
-    // A distant pull or untouched wildlife does not end a useful rest.
+    // The party's fight as the engage door scans it, whatever her rows say:
+    // the same foes and place-centered HUNT_LEASH, and the same foes counted
+    // absent (below ground, held off). A distant pull or untouched wildlife
+    // does not end a useful rest.
     const bool campClear = support && place != nullptr && healing != nullptr && mpMissing &&
-        PartyEngageTarget(leader, place->position()).target == nullptr;
+        PartyFightScan(leader, place->position()).target == nullptr;
 
     bool unsafe = false;
     if (want || withPlayer || healing != nullptr)
@@ -175,7 +177,8 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // (urgent, below): a maneuver walks into aggro by design. Only what makes
     // a kneel impossible blocks it; his other orders end it before they act
     const bool impossible = Acting() || noRecovery || POwner->isDead() || POwner->PAI->IsEngaged();
-    const bool blocked = impossible || (!ordered && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder()));
+    // The player's own Attack keeps her up until the fight it named is over
+    const bool blocked = impossible || (!ordered && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || HasPlayersOrder()));
     // An ongoing support rest, or one the player ordered, defers formation
     // and seat requests every tick, even while the player moves. The rest
     // policy decides when to stand.

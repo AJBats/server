@@ -84,6 +84,17 @@
 #include "utils/zoneutils.h"
 #include "zone.h"
 
+namespace
+{
+    // An engage row as the why lines name it: "row N" for one of her own,
+    // the number the editor shows it under; "world row N" for the world's;
+    // and a row below her tactician line said to be her tactician's melee
+    auto rowLabel(const pawn::CGambits::EngageRow& row) -> std::string
+    {
+        return fmt::format("{}row {}{}", row.world ? "world " : "", row.index, row.below ? ", her tactician's melee" : "");
+    }
+} // namespace
+
 CPawnController::CPawnController(CCharEntity* PPawn)
 : CPlayerController(PPawn)
 , m_Gambits(std::make_unique<pawn::CGambits>(PPawn, this))
@@ -97,10 +108,7 @@ void CPawnController::ClearGambitBehaviors()
 
 void CPawnController::SetGambitBehavior(const uint16 behavior, const uint16 arg)
 {
-    if (behavior < pawn::BehaviorCount && !m_Behaviors[behavior].has_value())
-    {
-        m_Behaviors[behavior] = arg;
-    }
+    cardian::layers::speak(m_Behaviors, behavior, arg);
 }
 
 auto CPawnController::Behavior(const pawn::Behavior behavior) const -> std::optional<uint16>
@@ -220,14 +228,31 @@ auto CPawnController::GetAnchor() const -> CCharEntity*
     return PLeader != nullptr && PLeader->loc.zone == POwner->loc.zone && !PLeader->isDead() ? PLeader : nullptr;
 }
 
-auto CPawnController::IsPerimeterMage() const -> bool
+auto CPawnController::AttendsFight(CBattleEntity* PTarget) const -> bool
 {
-    return pawn::tactics::supportMage(POwner) && Behavior(pawn::Behavior::MeleeMage).value_or(0) == 0;
+    if (PlayersOrderOn(PTarget))
+    {
+        return false;
+    }
+    const bool supportMage = pawn::tactics::supportMage(POwner);
+    return cardian::engage::attendsFight(supportMage, supportMage && ClaimingRow(PTarget).has_value());
 }
 
-auto CPawnController::JoinBeat() const -> timer::duration
+auto CPawnController::PlayersOrderOn(const CBattleEntity* PTarget) const -> bool
 {
-    return IsPerimeterMage() ? timer::duration::zero() : ReactionBeat();
+    return PTarget != nullptr && !PTarget->isDead() && m_PlayersOrder.has_value() && m_PlayersOrder->resolve<CBattleEntity>() == PTarget;
+}
+
+auto CPawnController::HasPlayersOrder() const -> bool
+{
+    const auto* PMob = m_PlayersOrder.has_value() ? m_PlayersOrder->resolve<CBattleEntity>() : nullptr;
+    return PMob != nullptr && !PMob->isDead();
+}
+
+auto CPawnController::JoinBeat(CBattleEntity* PTarget) const -> timer::duration
+{
+    const auto how = AttendsFight(PTarget) ? cardian::engage::How::Attend : cardian::engage::How::Draw;
+    return cardian::engage::waitsBeat(how) ? ReactionBeat() : timer::duration::zero();
 }
 
 auto CPawnController::AttendedTarget() const -> CBattleEntity*
@@ -341,6 +366,12 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_KeepCampFightSpot = false;
         m_CampSettlement = {};
         m_ClosingWithoutHate = false;
+    }
+    // His own Attack lasts the fight it named: leaving that fight, or the
+    // walk in to it, for anything but a fight ends it
+    if ((wasEngaged && !nowEngaged) || (from == Mode::Approach && to != Mode::Approach && !nowEngaged))
+    {
+        m_PlayersOrder.reset();
     }
     if (from == Mode::Attend && to != Mode::Attend)
     {
@@ -732,10 +763,11 @@ void CPawnController::RoamTick()
         return;
     }
     // Leading a camp, her party's fight is hers too: a member already
-    // fighting, or a mob that has come for one of them (D5)
+    // fighting, or a mob that has come for one of them (D5). The world's
+    // own engagement, not her rows': the party's fight as the door scans it
     if (pawn::world::campSizeOf(POwner->id) > 1 && !m_Approach.has_value())
     {
-        if (const auto party = PartyEngageTarget(nullptr, POwner->loc.p); party.target != nullptr && !HoldingOff(party.target))
+        if (const auto party = PartyFightScan(nullptr, POwner->loc.p); party.target != nullptr && !HoldingOff(party.target))
         {
             if (!Draw(party.target, ApproachKind::Join, party.why, false) && !m_Approach.has_value())
             {
@@ -1128,7 +1160,7 @@ void CPawnController::EngageOn(CMobEntity* PMob)
     // front row first, so the party never draws on one tick
     EndRestOrder("the player's engage order");
     DropQueuedRest("the player's engage order");
-    Schedule(Pending::Act::Order, PMob, JoinBeat());
+    Schedule(Pending::Act::Order, PMob, JoinBeat(PMob));
 }
 
 void CPawnController::Schedule(const Pending::Act act, const CBattleEntity* PTarget, const timer::duration beat)
@@ -1175,6 +1207,13 @@ void CPawnController::FireOrderedEngage()
     m_HoldForPlayer = false;
     m_Approach.reset();
     Draw(PMob, ApproachKind::Order, "ordered");
+    // Refused outright, neither drawn nor walking in, his own order came to
+    // nothing and holds her back from nothing
+    const bool taken = m_Mode == Mode::Fight || m_Mode == Mode::Hold || (m_Approach.has_value() && m_Approach->target.resolve<CBattleEntity>() == PMob);
+    if (!taken && PlayersOrderOn(PMob))
+    {
+        m_PlayersOrder.reset();
+    }
 }
 
 // A cardian cannot talk to the gate guard, so she takes Signet from the
@@ -1604,6 +1643,7 @@ void CPawnController::FireQueuedOrder()
             return;
         }
         ShowInfoFmt("pawn: {} starts the queued attack on {}", POwner->getName(), PMob->getName());
+        m_PlayersOrder = EntityId(PMob);
         EngageOn(PMob);
         return;
     }
@@ -1792,12 +1832,18 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         m_KeepCampFightSpot = false;
         m_CampSettlement = {};
     }
-    // A perimeter mage takes the party's fight the way her role says,
-    // attending, whatever brought her to the door: distance and the draw
-    // cooldown are the fight ring's business, not hers. Attending needs an
-    // place to keep cure range to, the player or a stake; alone, or leading
-    // a camp, she draws like anyone. Already drawn, she sheathes first
-    if (IsPerimeterMage() && (GetAnchor() != nullptr || Staked()))
+    // A fight she attends (AttendsFight: the Support Mage role, no Attack
+    // row of hers claims the mob, and it is not the mob the player's own
+    // Attack named) is taken the way her role says, attending, whatever
+    // else brought her to the door, the party's engage chord included:
+    // distance and the draw cooldown are the fight ring's
+    // business, not hers. Attending needs a place to keep cure range to,
+    // the player or a stake; without one she draws like anyone on what
+    // reaches this door -- an order, the world's own engagement, a row of
+    // hers (the engage door hands her no party's fight then). A pull she
+    // chose (the hunt) is hers, and she draws on it: an attend there would
+    // let it go again. Already drawn, she sheathes first
+    if (kind != ApproachKind::Hunt && AttendsFight(PTarget) && (GetAnchor() != nullptr || Staked()))
     {
         m_RefusedTarget = 0;
         m_Approach.reset();
@@ -1888,7 +1934,7 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
 {
     m_Dangers.clear();
     m_SightMemo.clear();
-    if (!IsAvoidingAggro())
+    if (!IsAvoiding())
     {
         return;
     }
@@ -1897,7 +1943,7 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // would hold her at the rim of the very mob she is meant to hit, or
     // walk up to
     auto* PPawn = static_cast<CCharEntity*>(POwner);
-    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
+    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks()), PIgnore);
 }
 
 auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
@@ -2319,7 +2365,7 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     // (aggressive company allowed) is not vetted at all
     const bool  proposes = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
     AvoidAction action   = AvoidAction::None;
-    if (intent.vet && IsAvoidingAggro() && (proposes || InsideDanger()))
+    if (intent.vet && IsAvoiding() && (proposes || InsideDanger()))
     {
         if (!proposes)
         {
@@ -2555,6 +2601,16 @@ auto CPawnController::IsAvoidingAggro() const -> bool
     return !m_Retreat && Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
 }
 
+auto CPawnController::IsAvoidingLinks() const -> bool
+{
+    return !m_Retreat && Behavior(pawn::Behavior::AvoidLinks).value_or(0) != 0;
+}
+
+auto CPawnController::IsAvoiding() const -> bool
+{
+    return IsAvoidingAggro() || IsAvoidingLinks();
+}
+
 auto CPawnController::RestsWithPlayer() const -> bool
 {
     return Behavior(pawn::Behavior::RestWithPlayer).value_or(0) != 0;
@@ -2730,7 +2786,7 @@ void CPawnController::WatchPlayerHomePoint()
 
 void CPawnController::CheckBrain()
 {
-    // The default rows once; a job change keeps the player's edits
+    // Her rows once; a job change leaves them as they are
     if (!m_BrainLoaded)
     {
         m_BrainLoaded = true;
@@ -2776,24 +2832,35 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Holding for the player's strike, she drew on their word alone: their
-    // target switched, the hold follows it when the rules let her draw on
-    // it outright, and holds on the new one until they strike or it comes.
-    // A fight that has begun is not called off by a switch -- it runs until
-    // the mob dies or the player zones, and only the chord's engage
-    // moves the party (M3.9; the user, 2026-09-17)
+    // Holding for the player's strike, she drew on their word alone. Their
+    // target moved: the hold follows it when her rows take the new one now
+    // (EngageChoice) and the rules let her draw on it outright, and holds
+    // on the new one until they strike or it comes; otherwise she stands
+    // down, and the door takes her next fight, the hold worked out again
+    // from the mob -- a hold is not a begun fight, and she never holds on
+    // a mob they have left (engage_math.h holdStep). A fight that has begun
+    // is not called off by a switch -- it runs until the mob dies or the
+    // player zones, and only the chord's engage moves the party (M3.9; the
+    // user, 2026-09-17)
     if (m_HoldForPlayer && PPlayer != nullptr && PPlayer->PAI->IsEngaged())
     {
-        if (auto* PSwitched = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget());
-            PSwitched != nullptr && PSwitched != PTarget && !PSwitched->isDead() && !pawn::isUnderground(PSwitched))
+        auto*      PSwitched = PPlayer->GetBattleTarget();
+        const bool moved     = PSwitched != nullptr && PSwitched != PTarget;
+        if (moved)
         {
-            const auto facts = EngageFactsFor(PSwitched);
-            const bool hold  = !playerHasEnmity(PPlayer, PSwitched) && !PSwitched->PAI->IsEngaged();
-            if (cardian::rules::mayFight(facts) && Refusal(PSwitched, facts).empty() &&
-                Draw(PSwitched, ApproachKind::Join, fmt::format("{} switched to it", PPlayer->getName()), hold))
+            const auto rows    = EngageChoice(PPlayer, place != nullptr ? place->position() : POwner->loc.p);
+            const auto facts   = EngageFactsFor(PSwitched);
+            const bool mayDraw = cardian::rules::mayFight(facts) && Refusal(PSwitched, facts).empty();
+            const auto step    = cardian::engage::holdStep(moved, rows.target == PSwitched, mayDraw);
+            const bool hold    = !playerHasEnmity(PPlayer, PSwitched) && !PSwitched->PAI->IsEngaged();
+            if (step == cardian::engage::HoldStep::Follow &&
+                Draw(PSwitched, ApproachKind::Join, fmt::format("{} switched to it; {}", PPlayer->getName(), rows.why), hold))
             {
                 co_return;
             }
+            Transition(IdleMode(), fmt::format("stands down ({}'s target moved to {})", PPlayer->getName(), PSwitched->getName()));
+            POwner->PAI->Internal_Disengage();
+            co_return;
         }
     }
 
@@ -2802,6 +2869,19 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     {
         Transition(IdleMode(), fmt::format("lets {} go (underground)", PTarget->getName()));
         POwner->PAI->Internal_Disengage();
+        co_return;
+    }
+
+    // Her tactician's melee -- a row below her Support Mage row took this
+    // fight, and none above it claims the mob -- gives way to her rest the
+    // moment her recovery is due: she leaves the fight, the door has her
+    // attend it, and she rests as her rest policy says until it stands her
+    // (tactician_line.h leavesToRest; RESEARCH §14.12 decision 19). An order
+    // above the line, or the player's own Attack, keeps her in
+    if (const bool runs = TacticianRuns(), due = runs && pawn::tactics::recoveryDue(static_cast<CCharEntity*>(POwner));
+        due && cardian::tactician::leavesToRest(runs, due, ClaimingRowAs(PTarget, false).has_value(), ClaimingRowAs(PTarget, true).has_value(), PlayersOrderOn(PTarget)))
+    {
+        StandDown(fmt::format("leaves the fight on {} to rest (her recovery is due)", PTarget->getName()));
         co_return;
     }
 
@@ -3265,26 +3345,72 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // Somewhere to go: her place in formation round the party's place --
     // the player, or the stake -- and the hunt round the player. Waiting,
-    // she has neither, whatever the party's plan. A perimeter mage never
-    // pulls (RESEARCH §12.15)
+    // she has neither, whatever the party's plan. The hunt is the party's
+    // strategy, not a gambit, so her gambit switch does not gate it; a
+    // Support Mage whose rows take no fight never pulls, since she attends
+    // (RESEARCH §12.15), and one with an Attack row fights her own pull
     const Place* place         = CurrentPlace(PPlayer);
     const bool   somewhereToGo = place != nullptr && !m_Waiting;
-    const bool   hunting       = somewhereToGo && PPlayer != nullptr && IsHunting() && !IsPerimeterMage();
+    const bool   hunting       = somewhereToGo && PPlayer != nullptr && IsHunting() &&
+                         cardian::engage::huntsForParty(pawn::tactics::supportMage(POwner), TakesFights());
 
     TidyBag();
     m_Gambits->TickBehaviors();
 
-    // The party's fight -- the player's target, a pawn's, or a mob on one
-    // of us -- through the one door (Draw): the rules, then the draw, or
-    // the walk in when it is farther than she may draw from. A walk in
+    // The engage door (engage_math.h): the fight her Attack rows take
+    // (EngageChoice), drawn on through the one door (Draw) -- the rules,
+    // then the draw, or the walk in when it is farther than she may draw
+    // from; with none, a Support Mage with a place to keep cure range to
+    // attends the party's fight (PartyFightScan) from the perimeter, so by
+    // default she attends without engaging monsters. With her gambits off
+    // neither is hers: she takes no fight of her own, and only an order
+    // (EngageOn, the command window's Attack) sends her in. A walk in
     // already under way passed the door once; the approach below draws.
-    auto party = PartyEngageTarget(PPlayer, place != nullptr ? place->position() : POwner->loc.p);
-    // Like a drawn fighter, she keeps an accepted fight until it ends or
-    // an order changes it. The leash chooses new fights, not this one's
-    // continued attendance. PlayerZoning explicitly ends the commitment.
-    if (AttendedEngaged() || (m_AttendedOrdered && AttendedTarget() != nullptr))
+    namespace engage             = cardian::engage;
+    const position_t from        = place != nullptr ? place->position() : POwner->loc.p;
+    const bool       supportMage = pawn::tactics::supportMage(POwner);
+    FightPick        party;
+    engage::How      how = engage::How::Draw;
+    // An attendance she has committed to -- the mob engaged, or the
+    // player's order -- is kept until it ends or an order changes it, as a
+    // drawn fighter keeps hers, while she still attends it. The leash
+    // chooses new fights, not this one's continued attendance, and
+    // PlayerZoning explicitly ends the commitment. A row that now claims
+    // the same mob draws her onto it (the melee-mage upgrade); no role and
+    // no row -- her gambits switched off mid-fight -- and she stops
+    // attending, rather than drawing on it
+    if (auto* PAttended = AttendedTarget(); PAttended != nullptr && (AttendedEngaged() || m_AttendedOrdered))
     {
-        party = { AttendedTarget(), "the fight she is attending" };
+        const auto claim = ClaimingRow(PAttended);
+        switch (engage::keptAttendance(supportMage, claim.has_value()))
+        {
+            case engage::Kept::Attend:
+                party = { PAttended, "the fight she is attending" };
+                how   = engage::How::Attend;
+                break;
+            case engage::Kept::Draw:
+                party = { PAttended, fmt::format("{}, {}", FoeWhy(claim->finder, PAttended, PPlayer), rowLabel(claim->row)), claim->row.index };
+                how   = engage::How::Draw;
+                break;
+            case engage::Kept::Stop:
+                Transition(IdleMode(), fmt::format("stops attending {} (her gambits no longer make her a Support Mage)", PAttended->getName()));
+                break;
+        }
+    }
+    if (party.target == nullptr)
+    {
+        // A camp member in the wild follows her camp's leader (GetAnchor);
+        // the party's fight backs up her own rows there, so her camp never
+        // stands idle through a fight (engage_math.h doorAnswer)
+        const bool campMember = m_World && PPlayer != nullptr && pawn::world::campLeaderOf(POwner->id) == PPlayer->id;
+        party                 = EngageChoice(PPlayer, from);
+        const auto fight      = party.target == nullptr && (supportMage || campMember) ? PartyFightScan(PPlayer, from) : FightPick{};
+        const auto answer     = engage::doorAnswer(party.target != nullptr, fight.target != nullptr, supportMage, place != nullptr, campMember);
+        if (party.target == nullptr && answer.has_value())
+        {
+            party = fight;
+        }
+        how = answer.value_or(engage::How::Draw);
     }
     CBattleEntity* PPartyTarget = party.target;
     const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
@@ -3292,19 +3418,22 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // has not passed it: what stands in the way of this tick
     if (settings::get<bool>("pawn.FORMATION_DEBUG") && m_Tick - m_DoorSaidAt >= 1s)
     {
-        const bool fightAround = (PPlayer != nullptr && PPlayer->PAI->IsEngaged()) || PPartyTarget != nullptr;
+        const auto around      = PartyFightScan(PPlayer, from);
+        const bool fightAround = (PPlayer != nullptr && PPlayer->PAI->IsEngaged()) || around.target != nullptr || PPartyTarget != nullptr;
         if (fightAround)
         {
             m_DoorSaidAt = m_Tick;
-            ShowInfoFmt("pawn: door {}: target {}{}, walking in {}, held off {}, pending {}{}", POwner->getName(),
+            ShowInfoFmt("pawn: door {}: target {}{}{}, party's fight {}, walking in {}, held off {}, pending {}{}", POwner->getName(),
                         PPartyTarget != nullptr ? PPartyTarget->getName() : "none",
                         PPartyTarget != nullptr ? fmt::format(" ({})", party.why) : "",
+                        PPartyTarget != nullptr && how == engage::How::Attend ? ", attends" : "",
+                        around.target != nullptr ? around.target->getName() : "none",
                         walkingIn, PPartyTarget != nullptr && HoldingOff(PPartyTarget),
                         PPartyTarget != nullptr && PendingIs(Pending::Act::Join, PPartyTarget) ? (Due(Pending::Act::Join, PPartyTarget) ? "due" : "waiting") : "none",
-                        PPartyTarget != nullptr ? fmt::format(", leash {:.0f} y from ({:.0f}, {:.0f})", settings::get<float>("pawn.HUNT_LEASH"), (place != nullptr ? place->position() : POwner->loc.p).x, (place != nullptr ? place->position() : POwner->loc.p).z) : "");
+                        PPartyTarget != nullptr ? fmt::format(", leash {:.0f} y from ({:.0f}, {:.0f})", settings::get<float>("pawn.HUNT_LEASH"), from.x, from.z) : "");
         }
     }
-    if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget) && !(Attending(PPartyTarget) && IsPerimeterMage()))
+    if (PPartyTarget != nullptr && !walkingIn && !HoldingOff(PPartyTarget) && !(Attending(PPartyTarget) && how == engage::How::Attend))
     {
         const auto facts = EngageFactsFor(PPartyTarget);
         if (const auto why = Refusal(PPartyTarget, facts); !why.empty())
@@ -3318,12 +3447,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         else
         {
             // The beat: the party's fight is seen now, her draw comes a
-            // beat later, her eyes on it in the meantime. Due, the rules
-            // run again at the door (Draw): a refusal then is said and
-            // holds the target off
+            // beat later, her eyes on it in the meantime; a fight she
+            // attends waits none. Due, the rules run again at the door
+            // (Draw): a refusal then is said and holds the target off
             if (!PendingIs(Pending::Act::Join, PPartyTarget))
             {
-                Schedule(Pending::Act::Join, PPartyTarget, JoinBeat());
+                Schedule(Pending::Act::Join, PPartyTarget, engage::waitsBeat(how) ? ReactionBeat() : timer::duration::zero());
             }
             if (!Due(Pending::Act::Join, PPartyTarget))
             {
@@ -3346,8 +3475,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
     }
 
-    // Attending, her exit is her mob's end -- dead or gone -- or the party
-    // having no fight at all, said with what became of the mob
+    // Attending, her exit is her mob's end -- dead or gone -- or the door
+    // having no fight for her at all, said with what became of the mob, or
+    // that she no longer attends fights
     if (m_Mode == Mode::Attend)
     {
         auto* PAttended = m_Attended.has_value() ? m_Attended->resolve<CBattleEntity>() : nullptr;
@@ -3362,7 +3492,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 ShowInfoFmt("pawn: {} keeps her spot at ({:.1f}, {:.1f}) after the fight ({:.1f} y from her seat)", POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, distance(POwner->loc.p, held.point, true));
                 held.point = POwner->loc.p;
             }
-            Transition(IdleMode(), AttendExitReason());
+            Transition(IdleMode(), !supportMage && PAttended != nullptr && !PAttended->isDead()
+                                       ? fmt::format("stops attending {} (her gambits no longer make her a Support Mage)", PAttended->getName())
+                                       : AttendExitReason());
         }
     }
 
@@ -3785,6 +3917,21 @@ auto CPawnController::ManeuverBy() const -> uint32
     return InManeuver() ? m_ManeuverBy : 0;
 }
 
+auto CPawnController::OwnMaster() const -> bool
+{
+    return InManeuver() ? m_ManeuverPriorMaster : m_Gambits->MasterOn();
+}
+
+void CPawnController::SetOwnMaster(const bool on)
+{
+    if (InManeuver())
+    {
+        m_ManeuverPriorMaster = on; // the maneuver's end restores it
+        return;
+    }
+    m_Gambits->SetMaster(on);
+}
+
 auto CPawnController::ComposeMove(const bool wait)
     -> std::string
 {
@@ -3876,6 +4023,7 @@ auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> std::string
     }
     EndManeuver("his order is away, she attacks: the maneuver ends");
     DropQueuedOrder("his attack order replaces it"); // her newest order is the one she carries out
+    m_PlayersOrder = EntityId(PMob);
     EngageOn(PMob);
     return "";
 }
@@ -4495,85 +4643,270 @@ auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* P
     return redundant;
 }
 
-auto CPawnController::PartyEngageTarget(CCharEntity* PPlayer, const position_t& from) const -> PartyFight
+namespace
+{
+    // Her engage rows as the pure door reads them (engage_math.h Row), in
+    // the accessor's order. Each is numbered by its 1-based position in
+    // `rows`, so the row a pick or a claim names is rows[row - 1]. A row
+    // below her tactician line reads as unchecked unless `melee`
+    auto doorRows(const std::vector<pawn::CGambits::EngageRow>& rows, const bool melee) -> std::vector<cardian::engage::Row>
+    {
+        std::vector<cardian::engage::Row> view;
+        view.reserve(rows.size());
+        for (std::size_t i = 0; i < rows.size(); ++i)
+        {
+            view.push_back({ i + 1, rows[i].gambit->target_selector, !rows[i].below || melee });
+        }
+        return view;
+    }
+
+    // Another cardian of her party in her zone, engaged on this foe
+    auto cardianOn(const CCharEntity* PPawn, const CBattleEntity* PFoe) -> const CCharEntity*
+    {
+        if (PPawn->PParty == nullptr)
+        {
+            return nullptr;
+        }
+        for (auto* PMember : PPawn->PParty->members)
+        {
+            const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
+            if (PChar != nullptr && PChar != PPawn && pawn::isPawn(PChar) && PChar->loc.zone == PPawn->loc.zone && PChar->PAI->IsEngaged() &&
+                PChar->GetBattleTarget() == PFoe)
+            {
+                return PChar;
+            }
+        }
+        return nullptr;
+    }
+} // namespace
+
+auto CPawnController::FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe
+{
+    cardian::engage::Foe f;
+    if (PFoe == nullptr)
+    {
+        return f;
+    }
+    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
+    auto*       PMob  = dynamic_cast<CMobEntity*>(PFoe);
+    f.leadersTarget   = PMob != nullptr && PLeader != nullptr && PLeader->PAI->IsEngaged() && PLeader->GetBattleTarget() == PFoe;
+    f.allysFight      = cardianOn(PPawn, PFoe) != nullptr;
+    if (PMob != nullptr && PMob->PAI->IsEngaged())
+    {
+        // The departing player's old aggro is not a new fight here
+        auto*       PVictim = PMob->GetBattleTarget();
+        const auto* PChar   = dynamic_cast<const CCharEntity*>(PVictim);
+        if (PVictim != nullptr && (PChar == nullptr || !PChar->requestedZoneChange))
+        {
+            f.onSelf  = PVictim == POwner;
+            f.onParty = f.onSelf || (PPawn->PParty != nullptr && PVictim->PParty == PPawn->PParty);
+        }
+    }
+    // Underground with no fight on, it is not a fight yet: the party waits,
+    // weapons away, and takes it when it surfaces (the combat tick lets such
+    // a target go)
+    f.underground = PMob != nullptr && pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged();
+    f.heldOff     = HoldingOff(PFoe);
+    return f;
+}
+
+auto CPawnController::FoeWhy(const cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string
+{
+    switch (finder)
+    {
+        case cardian::engage::Finder::LeadersTarget:
+            return fmt::format("{}'s target", PLeader != nullptr ? PLeader->getName() : std::string("the leader"));
+        case cardian::engage::Finder::AllysFight:
+        {
+            const auto* PChar = cardianOn(static_cast<const CCharEntity*>(POwner), PFoe);
+            return fmt::format("with {}", PChar != nullptr ? PChar->getName() : std::string("a cardian of the party"));
+        }
+        case cardian::engage::Finder::OnAlly:
+        case cardian::engage::Finder::OnSelf:
+        {
+            const auto* PVictim = PFoe->GetBattleTarget();
+            return fmt::format("answering it on {}", PVictim != nullptr ? PVictim->getName() : std::string("one of us"));
+        }
+    }
+    return "";
+}
+
+auto CPawnController::FoesAround(CCharEntity* PLeader, const position_t& from) const -> std::vector<CBattleEntity*>
+{
+    // Gathered once a tick for the place asked about: the door, her rest and
+    // the hold-follow all ask, and the mob scan is the dear part. Only the
+    // entities are kept; what each is to the party is read fresh (FoeFacts)
+    const uint32 leader = PLeader != nullptr ? PLeader->id : 0;
+    const bool   fresh  = m_FoesMemo.tick == m_Tick && m_FoesMemo.leader == leader && m_FoesMemo.from.x == from.x && m_FoesMemo.from.y == from.y &&
+                       m_FoesMemo.from.z == from.z;
+    if (!fresh)
+    {
+        m_FoesMemo.tick   = m_Tick;
+        m_FoesMemo.leader = leader;
+        m_FoesMemo.from   = from;
+        m_FoesMemo.foes.clear();
+
+        // The leash: nothing farther than this from the party's place is the
+        // party's fight yet -- a pull is dragged inside first
+        const float leash = settings::get<float>("pawn.HUNT_LEASH");
+        const auto  add   = [&](CBattleEntity* PFoe)
+        {
+            if (PFoe != nullptr && !PFoe->isDead() && isWithinDistance(from, PFoe->loc.p, leash) &&
+                std::ranges::none_of(m_FoesMemo.foes, [PFoe](const EntityId& id)
+                                     {
+                                         return id == PFoe;
+                                     }))
+            {
+                m_FoesMemo.foes.emplace_back(PFoe);
+            }
+        };
+
+        // In the finders' order. The leader's engagement first: a weapon
+        // drawn on a mob commits the party. The cardians draw too, and hold
+        // their ground until he has struck or the mob comes to them
+        // (m_HoldForPlayer, set where they engage)
+        if (PLeader != nullptr && PLeader->PAI->IsEngaged())
+        {
+            add(dynamic_cast<CMobEntity*>(PLeader->GetBattleTarget()));
+        }
+
+        // A cardian already fighting pulls the rest of the party in -- how a
+        // hunter's pull propagates without the player tagging anything
+        if (const auto* PParty = static_cast<CCharEntity*>(POwner)->PParty; PParty != nullptr)
+        {
+            for (auto* PMember : PParty->members)
+            {
+                auto* PChar = dynamic_cast<CCharEntity*>(PMember);
+                if (PChar != nullptr && PChar != POwner && pawn::isPawn(PChar) && PChar->loc.zone == POwner->loc.zone && PChar->PAI->IsEngaged())
+                {
+                    add(PChar->GetBattleTarget());
+                }
+            }
+        }
+
+        // Self-defence: a mob that has chosen her, or a member of her party,
+        // whether or not anyone has swung yet -- aggro on a cardian, or on
+        // the player. Out of a party she is a party of one
+        pawn::forEachMobNear(pawn::entitiesAround(POwner), from, leash, [&](CMobEntity* PMob)
+                             {
+                                 if (PMob->PAI->IsEngaged() && !PMob->isDead() && FoeFacts(PMob, PLeader).onParty)
+                                 {
+                                     add(PMob);
+                                 }
+                             });
+    }
+
+    std::vector<CBattleEntity*> foes;
+    foes.reserve(m_FoesMemo.foes.size());
+    for (const auto& id : m_FoesMemo.foes)
+    {
+        if (auto* PFoe = id.resolve<CBattleEntity>(); PFoe != nullptr && !PFoe->isDead())
+        {
+            foes.push_back(PFoe);
+        }
+    }
+    return foes;
+}
+
+auto CPawnController::PartyFightScan(CCharEntity* PLeader, const position_t& from) const -> FightPick
 {
     // Retreat: the party's fight is nobody's, whoever swings or aggroes
     if (m_Retreat)
     {
         return {};
     }
-
-    // The leash: nothing farther than this from the party's place is the
-    // party's fight yet -- a pull is dragged inside first
-    const float leash   = settings::get<float>("pawn.HUNT_LEASH");
-    const auto  inLeash = [&](const CBattleEntity* PMob)
+    const auto                        foes = FoesAround(PLeader, from);
+    std::vector<cardian::engage::Foe> facts;
+    facts.reserve(foes.size());
+    for (auto* PFoe : foes)
     {
-        return isWithinDistance(from, PMob->loc.p, leash);
-    };
-
-    // The player's engagement comes first: a weapon drawn on a mob commits
-    // the party. The cardians draw too, and hold their ground until the
-    // player has struck or the mob comes to them (m_HoldForPlayer, set
-    // where they engage)
-    if (PPlayer != nullptr && PPlayer->PAI->IsEngaged())
-    {
-        if (auto* PMob = dynamic_cast<CMobEntity*>(PPlayer->GetBattleTarget()); PMob != nullptr && !PMob->isDead() && inLeash(PMob))
-        {
-            // Underground with no fight on, it is not the party's fight yet:
-            // the party waits, weapons away, and draws when it surfaces (the
-            // combat tick lets such a target go)
-            if (pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged())
-            {
-                return {};
-            }
-            return { PMob, fmt::format("{}'s target", PPlayer->getName()) };
-        }
+        facts.push_back(FoeFacts(PFoe, PLeader));
     }
-
-    // A pawn already fighting pulls the rest of the party in -- how a
-    // hunter's pull propagates without the player tagging anything
-    const auto* PPawn = static_cast<CCharEntity*>(POwner);
-    if (PPawn->PParty != nullptr)
+    const auto pick = cardian::engage::partyFight(m_Retreat, facts);
+    if (!pick.has_value())
     {
-        for (auto* PMember : PPawn->PParty->members)
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-            if (PChar == nullptr || PChar == POwner || !pawn::isPawn(PChar) ||
-                PChar->loc.zone != POwner->loc.zone || !PChar->PAI->IsEngaged())
-            {
-                continue;
-            }
-
-            if (auto* PTarget = PChar->GetBattleTarget(); PTarget != nullptr && !PTarget->isDead() && inLeash(PTarget))
-            {
-                return { PTarget, fmt::format("with {}", PChar->getName()) };
-            }
-        }
+        return {};
     }
+    return { foes[pick->foe], FoeWhy(pick->finder, foes[pick->foe], PLeader) };
+}
 
-    // Self-defence: a mob that has chosen her, or a member of her party, is
-    // the party's fight, whether or not anyone has swung yet -- aggro on a
-    // cardian, or on the player, is answered. Out of a party she is a party
-    // of one
-    PartyFight answer;
-    const auto answers = [&](CMobEntity* PMob)
+auto CPawnController::EngageChoice(CCharEntity* PLeader, const position_t& from) const -> FightPick
+{
+    // No row to read -- none enabled, or her gambits off -- or the retreat:
+    // no fight of her own
+    const auto rows = m_Gambits->EngageRows();
+    if (rows.empty() || m_Retreat)
     {
-        if (answer.target != nullptr || !PMob->PAI->IsEngaged() || PMob->isDead() || !inLeash(PMob))
-        {
-            return;
-        }
-        auto* PVictim = PMob->GetBattleTarget();
-        if (const auto* PChar = dynamic_cast<const CCharEntity*>(PVictim); PChar != nullptr && PChar->requestedZoneChange)
-        {
-            return; // the departing player's old aggro is not a new fight here
-        }
-        if (PVictim != nullptr && (PVictim == POwner || (PPawn->PParty != nullptr && PVictim->PParty == PPawn->PParty)))
-        {
-            answer = { PMob, fmt::format("answering it on {}", PVictim->getName()) };
-        }
-    };
-    pawn::forEachMobNear(pawn::entitiesAround(POwner), from, leash, answers);
-    return answer;
+        return {};
+    }
+    const auto                        foes = FoesAround(PLeader, from);
+    std::vector<cardian::engage::Foe> facts;
+    facts.reserve(foes.size());
+    for (auto* PFoe : foes)
+    {
+        facts.push_back(FoeFacts(PFoe, PLeader));
+    }
+    const auto view = doorRows(rows, TacticianMelee());
+    const auto pick = cardian::engage::chooseRow(m_Gambits->MasterOn(), m_Retreat, view, facts, [&](const std::size_t row, const std::size_t foe)
+                                                 {
+                                                     return m_Gambits->EngageConditionsHold(*rows[row].gambit, foes[foe]);
+                                                 });
+    if (!pick.has_value())
+    {
+        return {};
+    }
+    auto*       PFoe  = foes[pick->foe];
+    const auto& taken = rows[pick->row - 1];
+    return { PFoe, fmt::format("{}, {}", FoeWhy(pick->finder, PFoe, PLeader), rowLabel(taken)), taken.index };
+}
+
+auto CPawnController::ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>
+{
+    return ClaimingRowAs(PTarget, TacticianMelee());
+}
+
+auto CPawnController::TakesFights() const -> bool
+{
+    const bool melee = TacticianMelee();
+    return std::ranges::any_of(m_Gambits->EngageRows(), [melee](const pawn::CGambits::EngageRow& row)
+                               {
+                                   return !row.below || melee;
+                               });
+}
+
+auto CPawnController::TacticianRuns() const -> bool
+{
+    return m_Gambits->MasterOn() && pawn::tactics::supportMage(POwner) && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
+}
+
+auto CPawnController::TacticianMelee() const -> bool
+{
+    const auto* PChar = static_cast<const CCharEntity*>(POwner);
+    return cardian::tactician::meleeAllowed(TacticianRuns(), pawn::tactics::recoveryDue(PChar),
+                                            POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+}
+
+auto CPawnController::ClaimingRowAs(CBattleEntity* PTarget, const bool melee) const -> std::optional<RowClaim>
+{
+    if (PTarget == nullptr)
+    {
+        return std::nullopt;
+    }
+    const auto rows = m_Gambits->EngageRows();
+    if (rows.empty())
+    {
+        return std::nullopt;
+    }
+    const auto view  = doorRows(rows, melee);
+    const auto claim = cardian::engage::claimingRow(m_Gambits->MasterOn(), view, FoeFacts(PTarget, GetAnchor()), [&](const std::size_t row)
+                                                    {
+                                                        return m_Gambits->EngageConditionsHold(*rows[row].gambit, PTarget);
+                                                    });
+    if (!claim.has_value())
+    {
+        return std::nullopt;
+    }
+    return RowClaim{ claim->finder, rows[claim->row - 1] };
 }
 
 auto CPawnController::HuntBlocker(const CCharEntity* PPlayer) const -> std::string

@@ -83,6 +83,49 @@ TEST_CASE("radiusFor: a mob that only links is a circle only while its kin are o
     REQUIRE_THAT(radiusFor(d, p, kBuffer, kTail), WithinAbs(14.5f, 0.001f));
 }
 
+TEST_CASE("counts: Avoid aggro and Avoid links each count their own circles", "[cardian][avoid]")
+{
+    // Both rows: a mob that would go for her, and an idle kin of her fight
+    CHECK(counts(true, true, true, false).aggressive);
+    CHECK(counts(true, true, false, true).links);
+
+    // Avoid aggro alone: detection circles, and linking kin paid no mind
+    CHECK(counts(true, false, true, true).aggressive);
+    CHECK_FALSE(counts(true, false, true, true).links);
+    CHECK_FALSE(counts(true, false, false, true).links);
+
+    // Avoid links alone: idle mobs walked past, her own fight's kin kept clear of
+    CHECK_FALSE(counts(false, true, true, false).aggressive);
+    CHECK(counts(false, true, false, true).links);
+    CHECK_FALSE(counts(false, true, true, true).aggressive);
+
+    // Neither: nothing counts
+    const auto none = counts(false, false, true, true);
+    CHECK_FALSE(none.aggressive);
+    CHECK_FALSE(none.links);
+}
+
+TEST_CASE("counts: an aggressive mob that also links is only its link circle when she avoids links alone", "[cardian][avoid]")
+{
+    const Profile p = Profile::worstCase();
+
+    // As the map builds it: detections are counted only when they count
+    const auto circle = [&](const bool avoidAggro, const bool avoidLinks)
+    {
+        const auto c = counts(avoidAggro, avoidLinks, true, true);
+        Detection  d = sightAndSound(15.0f, 0.0f);
+        d.sight      = c.aggressive;
+        d.hearing    = c.aggressive;
+        d.links      = c.links;
+        d.linkRange  = 10.0f;
+        return radiusFor(d, p, kBuffer, kTail);
+    };
+    REQUIRE_THAT(circle(true, true), WithinAbs(16.5f, 0.001f));  // sight 15 beats link 10 + tail 3
+    REQUIRE_THAT(circle(true, false), WithinAbs(16.5f, 0.001f)); // sight alone
+    REQUIRE_THAT(circle(false, true), WithinAbs(14.5f, 0.001f)); // link 10 + tail 3 alone
+    REQUIRE_THAT(circle(false, false), WithinAbs(0.0f, 0.001f));
+}
+
 TEST_CASE("radiusFor: sneak and invisible hide from sound and sight unless the mob truly detects", "[cardian][avoid]")
 {
     Profile p   = Profile::worstCase();

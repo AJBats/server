@@ -6,6 +6,7 @@
 #include "rest_math.h"
 #include "role_support.h"
 #include "spell_bank.h"
+#include "tactics.h"
 
 #include "ai/ai_container.h"
 #include "common/logging.h"
@@ -124,11 +125,13 @@ namespace pawn::tactics
                     }
                 }
             }
+            // Her pacing counts on the cheapest cure her allow-list names
+            // (tactician_line.h): a tier she may not cast is no reserve
             auto tiers = bank::cureTiers(body, bank::CureAvailability::Eligible);
             double cheapestCure = 0.0;
             for (const auto& tier : tiers)
             {
-                if (tier.option.mp > 0)
+                if (tier.option.mp > 0 && allows(body, tier.id))
                 {
                     cheapestCure = cheapestCure == 0.0 ? tier.option.mp : std::min(cheapestCure, static_cast<double>(tier.option.mp));
                 }

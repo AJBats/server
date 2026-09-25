@@ -39,6 +39,12 @@ namespace pawn::world
     auto isBody(uint32 charid) -> bool;
     // A world body standing or faded: a seat, a stand, the ring
     auto hasBody(uint32 charid) -> bool;
+    // A world body out in the wild: she has a Body and is neither with a
+    // real player nor held by his contract (the test the world's clocks
+    // use, so a zone line never flips it). The world's layer runs only while
+    // this holds (gambit_layers.h); leaving a player's party also forgets
+    // the rows he edited on her as his guest
+    auto inTheWild(uint32 charid) -> bool;
     // A world body who has left her seat and is on her way out of town
     auto isLeaving(uint32 charid) -> bool;
 
@@ -134,11 +140,31 @@ namespace pawn::world
     auto campLeaderOf(uint32 charid) -> uint32;
     auto campSizeOf(uint32 charid) -> uint32;
 
-    // Her brain from modules/cardian/world/brains.yaml (re-read when the file
-    // changes): common rows, her job's, her role's -- tank (the highest
-    // Warrior of her party), melee or mage -- in the row grammar
-    auto brainRows(const CCharEntity* PPawn) -> std::vector<std::pair<std::string, bool>>;
-    auto roleName(uint32 charid) -> std::string;
+    // The world's layer of her rows (gambit_layers.h), from
+    // modules/cardian/world/brains.yaml: the `world` block, then her job's
+    // block, then her role's -- tank (the highest Warrior or Paladin of her
+    // party), melee or mage (pawn::isMageJob) -- in the row grammar, every
+    // row checked. Her own rows carry her Role row, so no block has one.
+    // The key says what the rows were compiled for: the file's generation
+    // (it moves when the file is read anew; the zone tick looks at the file
+    // every few seconds), her job and her role, worked out now from her
+    // party as it stands. A layer is rebuilt when its key changes, and
+    // reading the key never touches the file
+    struct BrainKey
+    {
+        uint32      generation = 0;
+        uint8       job        = 0;
+        std::string role;
+
+        auto operator==(const BrainKey&) const -> bool = default;
+    };
+    auto brainKey(const CCharEntity* PPawn) -> BrainKey;
+    auto brainRows(const CCharEntity* PPawn) -> std::vector<std::string>;
+    // Look at the file now, as the zone tick's poll does, for a reload that
+    // cannot wait for the poll (!pawnbrain): an edit since the last look is
+    // read and moves the generation, so every world layer rebuilds from it
+    // at its next use
+    void rereadBrains();
 
     // The zone's slot table: one line per slot with its occupants; refill
     // the zone from a fresh read of its file (its bodies fade and return to

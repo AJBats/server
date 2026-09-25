@@ -9,6 +9,7 @@
 #include "world.h"
 #include "pawn_items.h"
 
+#include "gambit_defaults.h"
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
@@ -494,11 +495,12 @@ namespace
 // a type with external linkage: the file shapes live in a named namespace
 namespace pawn::world::files
 {
-    // -- Brains (ROADMAP D5): modules/cardian/world/brains.yaml ------------------------
-    // Rows in the gambit grammar: common, then her job's, then her role's.
+    // -- Brains (ROADMAP D5, K5): modules/cardian/world/brains.yaml ------------------
+    // The world's layer of a body's rows, in the gambit grammar: the `world`
+    // block every body runs in the wild, then her job's, then her role's.
     struct BrainFile
     {
-        std::vector<std::string>                        common;
+        std::vector<std::string>                        world;
         std::map<std::string, std::vector<std::string>> roles;
         std::map<std::string, std::vector<std::string>> jobs;
     };
@@ -513,15 +515,18 @@ namespace
     BrainFile                       brainFile;
     std::filesystem::file_time_type brainWritten{};
     bool                            brainLoaded = false;
+    uint32                          brainGeneration = 0; // moves each time brainFile is replaced, so a world layer knows to rebuild
+    realtime::time_point            brainPolledAt{};     // the zone tick's last look at the file
+    constexpr auto                  kBrainPoll = std::chrono::seconds(10);
 
     // The readable row: "<who>: <condition> -> <action> [every <n>s]", compiled
     // to the numeric grammar the gambit engine and the saved sets speak.
     //   who        self | party | mob
     //   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n |
     //              has <status> | lacks <status> | top enmity | not top enmity
-    //   action     avoid aggro | rest with leader | melee mage | home point
-    //              with leader | boost before weapon skills | formation <lead|flank left|flank right|
-    //              rear left|rear right|behind> | role <support mage|tank|melee damage> | cast best <spell>
+    //   action     avoid aggro | avoid links | rest with leader | home point with leader |
+    //              boost before weapon skills | formation <lead|flank left|flank right|
+    //              rear left|rear right|behind> | role <support mage|tank|damage> | cast best <spell>
     //              (the best of its family) | cast <spell> | cast random damage |
     //              ability <name> | best weapon skill | random weapon skill
     // Names are the game's own (spell_list, abilities, the status enum), spaces
@@ -667,9 +672,8 @@ namespace
         // the action
         std::string actSpec;
         static const std::unordered_map<std::string, std::string> switches{
-            { "avoid aggro", "100:1:1" }, { "rest with leader", "100:6:1" }, { "home point with leader", "100:7:1" },
-            { "boost before weapon skills", "100:9:1" },
-            { "melee mage", "100:12:1" }
+            { "avoid aggro", "100:1:1" }, { "avoid links", "100:13:1" }, { "rest with leader", "100:6:1" }, { "home point with leader", "100:7:1" },
+            { "boost before weapon skills", "100:9:1" }
         };
         static const std::unordered_map<std::string, int> seats{
             { "lead", 1 }, { "flank left", 2 }, { "flank right", 3 }, { "rear left", 4 }, { "rear right", 5 }, { "behind", 6 }
@@ -690,7 +694,8 @@ namespace
         }
         else if (act.starts_with("role "))
         {
-            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 }, { "tank", 2 }, { "melee damage", 3 } };
+            // "damage" names the Damage role, and "melee damage" reads the same
+            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 }, { "tank", 2 }, { "damage", 3 }, { "melee damage", 3 } };
             const auto                                        role = roles.find(trim(act.substr(5)));
             if (role == roles.end())
             {
@@ -761,8 +766,9 @@ namespace
         brainWritten = written;
         if (!std::filesystem::exists(kBrainPath))
         {
-            ShowWarningFmt("world: {} missing; world bodies run the bare defaults", kBrainPath.string());
+            ShowWarningFmt("world: {} missing; world bodies run their own rows alone", kBrainPath.string());
             brainFile = {};
+            ++brainGeneration;
             return brainFile;
         }
         std::ifstream     in(kBrainPath);
@@ -786,7 +792,7 @@ namespace
             }
             rows = std::move(out);
         };
-        compile(parsed.common);
+        compile(parsed.world);
         for (auto& [role, rows] : parsed.roles)
         {
             compile(rows);
@@ -796,20 +802,27 @@ namespace
             compile(rows);
         }
         brainFile = std::move(parsed);
-        ShowInfoFmt("world: brains read from {} ({} common, {} roles, {} jobs)", kBrainPath.string(), brainFile.common.size(), brainFile.roles.size(), brainFile.jobs.size());
+        ++brainGeneration;
+        ShowInfoFmt("world: brains read from {} ({} world, {} roles, {} jobs)", kBrainPath.string(), brainFile.world.size(), brainFile.roles.size(), brainFile.jobs.size());
         return brainFile;
     }
 
-    // Her role: the tank is the highest Warrior of her party (ties by name),
-    // any other Warrior and the fighters are melee, the casters mages
-    auto isMage(const xi::Job job) -> bool
+    // The brains as last read, read now only if never read. The zone tick's
+    // poll is the one caller that looks at the file for a change, so a
+    // body's world layer never touches the disk, and the generation never
+    // moves while a body is walking her rows
+    auto loadedBrains() -> const BrainFile&
     {
-        return job == xi::Job::WHM || job == xi::Job::BLM || job == xi::Job::RDM || job == xi::Job::SMN || job == xi::Job::BRD || job == xi::Job::SCH;
+        return brainLoaded ? brainFile : brains();
     }
 
+    // Her role: the tank is the highest Warrior or Paladin of her party (ties
+    // by name), any other of them and the fighters are melee, and the mages
+    // are the jobs that take the mage defaults (pawn::isMageJob), so her
+    // world layer and her own Role row agree
     auto roleOf(const CCharEntity* PPawn) -> std::string
     {
-        if (isMage(PPawn->GetMJob()))
+        if (pawn::isMageJob(PPawn->GetMJob()))
         {
             return "mage";
         }
@@ -2780,40 +2793,40 @@ namespace pawn::world
         return bodies.contains(charid);
     }
 
+    auto inTheWild(const uint32 charid) -> bool
+    {
+        return bodies.contains(charid) && !withPlayer(charid);
+    }
+
     auto isFarming(const uint32 charid) -> bool
     {
         const auto it = bodies.find(charid);
         return it != bodies.end() && it->second.farming && it->second.holder == 0;
     }
 
-    auto brainRows(const CCharEntity* PPawn) -> std::vector<std::pair<std::string, bool>>
+    auto brainKey(const CCharEntity* PPawn) -> BrainKey
     {
-        const auto& file = brains();
-        std::vector<std::pair<std::string, bool>> rows;
-        const auto add = [&](const std::vector<std::string>& specs)
-        {
-            for (const auto& spec : specs)
-            {
-                rows.emplace_back(spec, true);
-            }
-        };
-        add(file.common);
+        return { brainGeneration, static_cast<uint8>(PPawn->GetMJob()), roleOf(PPawn) };
+    }
+
+    auto brainRows(const CCharEntity* PPawn) -> std::vector<std::string>
+    {
+        const auto&              file = loadedBrains();
+        std::vector<std::string> rows = file.world;
         if (const auto it = file.jobs.find(std::string(magic_enum::enum_name(PPawn->GetMJob()))); it != file.jobs.end())
         {
-            add(it->second);
+            rows.insert(rows.end(), it->second.begin(), it->second.end());
         }
-        const auto role = roleOf(PPawn);
-        if (const auto it = file.roles.find(role); it != file.roles.end())
+        if (const auto it = file.roles.find(roleOf(PPawn)); it != file.roles.end())
         {
-            add(it->second);
+            rows.insert(rows.end(), it->second.begin(), it->second.end());
         }
         return rows;
     }
 
-    auto roleName(const uint32 charid) -> std::string
+    void rereadBrains()
     {
-        const auto* PPawn = pawn::findPawn(charid);
-        return PPawn != nullptr ? roleOf(PPawn) : std::string();
+        brains();
     }
 
     auto campLeaderOf(const uint32 charid) -> uint32
@@ -3088,6 +3101,15 @@ namespace pawn::world
         if (!isEnabled())
         {
             return;
+        }
+
+        // The brains: one look at the file every few seconds, whichever zone
+        // is ticking, so an edit reaches every body's world layer (its key's
+        // generation moves) and no body's think ever touches the file
+        if (const auto polled = realtime::now(); polled - brainPolledAt >= kBrainPoll)
+        {
+            brainPolledAt = polled;
+            brains();
         }
 
         // The slot tables: on a zone's first tick its occupants are chosen

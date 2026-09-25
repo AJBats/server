@@ -51,7 +51,7 @@
 --                                        avoid nothing, hunting pauses, until it clears
 --       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
---       greset <name>                    back to the job's default rows
+--       greset <name>                    back to the default rows of the job she holds now
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -697,8 +697,10 @@ local function sendList(player)
     reply(player, '#cd list.e')
 end
 
--- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <spec> <label>'
--- per row, 'gb.e <name>'. The label is the rest of the line.
+-- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <state> <spec> <label>'
+-- per row, 'gb.e <name>'. The state is what the row means where it sits (o an order,
+-- t her Support Mage row, a her tactician's to use, x-below / x-clock / x-choice struck
+-- out; Link protocol 13). The label is the rest of the line.
 local function sendGambits(player, name)
     local g = player:cardianGambits(name)
     if g == nil then
@@ -707,7 +709,7 @@ local function sendGambits(player, name)
     end
     reply(player, string.format('#cd gb.b %s %d', name, g.master and 1 or 0))
     for _, row in ipairs(g.rows) do
-        reply(player, string.format('#cd g %s %d %d %s %s', name, row.index, row.on and 1 or 0, row.spec, row.label))
+        reply(player, string.format('#cd g %s %d %d %s %s %s', name, row.index, row.on and 1 or 0, row.state, row.spec, row.label))
     end
     reply(player, '#cd gb.e ' .. name)
 end
