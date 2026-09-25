@@ -114,8 +114,8 @@ the same place each time.
 What a world body does in the wild is data too. `brains.yaml` holds gambit
 rows you can read -- `party: hp < 60 -> cast best cure` -- compiled on load
 to the numeric form the addon saves for your own cardians (the file's header
-has the grammar): a `world` block every body runs (avoid aggro, rest with
-the leader), a block per `role` and a block per `job`.
+has the grammar): a `world` block every body runs (avoid aggro, avoid
+links, rest with the leader), a block per `role` and a block per `job`.
 
 These rows are a **layer**, not her rows (ROADMAP K5). Every character has
 her own rows -- a saved set, else her job's defaults -- the same list

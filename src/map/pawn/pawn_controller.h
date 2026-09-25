@@ -356,6 +356,8 @@ public:
     auto FightSeatOn(uint32 mobId) const -> std::optional<pawn::Slot>;
     auto HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>;
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
+    auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
+    auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
     auto RestsWithPlayer() const -> bool;
     auto HomePointsWithPlayer() const -> bool;
 

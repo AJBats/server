@@ -139,6 +139,22 @@ TEST_CASE("row grammar: the retired melee mage switch cannot return", "[cardian]
     REQUIRE(parseRow("1|1:50|2:2:12|0").has_value()); // spell 12 is a spell, not the behaviour
 }
 
+TEST_CASE("row grammar: Avoid links is its own switch, beside Avoid aggro", "[cardian][gambits][avoid]")
+{
+    for (const auto* spec : { "0|0:0|100:13:1|0", "0|0:0|100:1:1|0" })
+    {
+        INFO("row " << spec);
+        const auto g = parseRow(spec);
+        REQUIRE(g.has_value());
+        CHECK(formatRow(*g) == spec);
+    }
+    const auto links = parseRow("0|0:0|100:13:1|0");
+    REQUIRE(links.has_value());
+    CHECK(static_cast<uint16>(links->actions[0].select) == static_cast<uint16>(pawn::Behavior::AvoidLinks));
+    CHECK(pawn::isSwitch(pawn::Behavior::AvoidLinks));
+    CHECK_FALSE(pawn::isRetiredBehavior(static_cast<uint16>(pawn::Behavior::AvoidLinks)));
+}
+
 TEST_CASE("row grammar: the foe targets with Attack round-trip", "[cardian][gambits]")
 {
     constexpr std::array targets{

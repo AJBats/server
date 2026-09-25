@@ -85,9 +85,9 @@ namespace
         return out;
     }
 
-    // The world's block as brains.yaml compiles it: avoid aggro, rest with
-    // leader
-    const std::vector<std::string> kWorldBlock{ "0|0:0|100:1:1|0", "0|0:0|100:6:1|0" };
+    // The world's block as brains.yaml compiles it: avoid aggro, avoid
+    // links, rest with leader
+    const std::vector<std::string> kWorldBlock{ "0|0:0|100:1:1|0", "0|0:0|100:13:1|0", "0|0:0|100:6:1|0" };
 
     // The ids in the running order
     auto order(const Layers<Row>& layers) -> std::vector<std::string>
@@ -138,7 +138,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
     const auto wild  = layersFor<Row>(true, world, own);
     const auto party = layersFor<Row>(false, world, own);
 
-    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "1", "2", "3", "4", "5" });
+    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5" });
     CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5" });
 
     // The place is 1-based across both layers: the conveyor's order
@@ -148,7 +148,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
                    places.push_back(place);
                    return false;
                });
-    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7 });
+    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8 });
 
     // The first row to answer true ends the walk, in either layer
     std::vector<std::string> seen;
@@ -157,7 +157,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
                          seen.push_back(row.id);
                          return row.id == "2";
                      }));
-    CHECK(seen == std::vector<std::string>{ "w1", "w2", "1", "2" });
+    CHECK(seen == std::vector<std::string>{ "w1", "w2", "w3", "1", "2" });
     CHECK_FALSE(forEachRow(party, [](const Row&, std::size_t)
                            {
                                return false;
@@ -175,15 +175,17 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     // A mage's own rows: rest with the player and the Support Mage role
     auto own = ownRows(pawn::defaultRowsFor(xi::Job::WHM));
 
-    // In the wild she avoids aggro (the world's) and plays her own role
+    // In the wild she avoids aggro and links (the world's) and plays her own role
     const auto wild = behaviorsOf(layersFor<Row>(true, world, own));
     CHECK(behavior(wild, pawn::Behavior::AvoidAggro) == uint16{ 1 });
+    CHECK(behavior(wild, pawn::Behavior::AvoidLinks) == uint16{ 1 });
     CHECK(behavior(wild, pawn::Behavior::RestWithPlayer) == uint16{ 1 });
     CHECK(behavior(wild, pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
 
-    // With a player the world's rows are gone: no Avoid aggro
+    // With a player the world's rows are gone: no Avoid aggro, no Avoid links
     const auto party = behaviorsOf(layersFor<Row>(false, world, own));
     CHECK_FALSE(behavior(party, pawn::Behavior::AvoidAggro).has_value());
+    CHECK_FALSE(behavior(party, pawn::Behavior::AvoidLinks).has_value());
     CHECK(behavior(party, pawn::Behavior::RestWithPlayer) == uint16{ 1 });
     CHECK(behavior(party, pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
 

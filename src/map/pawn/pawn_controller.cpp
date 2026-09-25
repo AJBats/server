@@ -1934,7 +1934,7 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
 {
     m_Dangers.clear();
     m_SightMemo.clear();
-    if (!IsAvoidingAggro())
+    if (!IsAvoiding())
     {
         return;
     }
@@ -1943,7 +1943,7 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // would hold her at the rim of the very mob she is meant to hit, or
     // walk up to
     auto* PPawn = static_cast<CCharEntity*>(POwner);
-    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn), PIgnore);
+    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks()), PIgnore);
 }
 
 auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
@@ -2365,7 +2365,7 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     // (aggressive company allowed) is not vetted at all
     const bool  proposes = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
     AvoidAction action   = AvoidAction::None;
-    if (intent.vet && IsAvoidingAggro() && (proposes || InsideDanger()))
+    if (intent.vet && IsAvoiding() && (proposes || InsideDanger()))
     {
         if (!proposes)
         {
@@ -2599,6 +2599,16 @@ auto CPawnController::FormationSlot() const -> pawn::Slot
 auto CPawnController::IsAvoidingAggro() const -> bool
 {
     return !m_Retreat && Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
+}
+
+auto CPawnController::IsAvoidingLinks() const -> bool
+{
+    return !m_Retreat && Behavior(pawn::Behavior::AvoidLinks).value_or(0) != 0;
+}
+
+auto CPawnController::IsAvoiding() const -> bool
+{
+    return IsAvoidingAggro() || IsAvoidingLinks();
 }
 
 auto CPawnController::RestsWithPlayer() const -> bool

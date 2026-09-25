@@ -1221,7 +1221,7 @@ namespace pawn
     {
         // One name per behaviour value, "?" for the gaps and the retired
         // values; the assert keeps the list in step with the enum
-        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "boost before weapon skills", "?", "role", "?" });
+        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "boost before weapon skills", "?", "role", "?", "avoid links" });
         static_assert(names.size() == pawn::BehaviorCount);
         const auto name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool sw   = pawn::isSwitch(behavior);
@@ -1494,6 +1494,8 @@ namespace pawn
             {
                 case pawn::Behavior::AvoidAggro:
                     return fmt::format("Avoid aggro{}", off);
+                case pawn::Behavior::AvoidLinks:
+                    return fmt::format("Avoid links{}", off);
                 case pawn::Behavior::Formation:
                     return fmt::format("Formation: {}", cardian::formation::slotName(static_cast<pawn::Slot>(a.select_arg)));
                 case pawn::Behavior::RestWithPlayer:
@@ -2073,6 +2075,7 @@ namespace pawn
         v.actions = {
             { "0:0:0", "Attack", "Fight", TARGET_ENEMY },
             { "100:1:1", "Avoid aggro", "Behaviours" },
+            { "100:13:1", "Avoid links", "Behaviours" },
             { "100:6:1", "Rest with the player", "Behaviours" },
             { "100:7:1", "Home point with the player", "Behaviours" },
         };

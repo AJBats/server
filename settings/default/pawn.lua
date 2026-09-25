@@ -261,22 +261,24 @@ xi.settings.pawn =
     -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
     -- and itself outside those circles, and is pushed away as a mob roams
     -- toward it. Cardians move on the server with the mobs, so nothing
-    -- surprises them: they stand boldly just outside. Avoidance is a gambit
-    -- row: the world's layer runs it for a world body out in the wild, a
-    -- job's default rows do not carry it, and !pawnavoid checks and
-    -- unchecks it. AVOID_SCAN is how far around itself a cardian looks.
+    -- surprises them: they stand boldly just outside. Avoidance is two
+    -- gambit rows, each on its own: Avoid aggro (these circles) and Avoid
+    -- links (below). The world's layer runs both for a world body out in the
+    -- wild, a job's default rows carry neither, and !pawnavoid checks and
+    -- unchecks Avoid aggro. AVOID_SCAN is how far around itself a cardian
+    -- looks.
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
 
-    -- Linking: the idle kin of any mob fighting a cardian are circles for
-    -- that cardian alone -- link range plus AVOID_TAIL, the distance the mob
-    -- keeps behind her as it follows -- so she leads her fight away from the
-    -- kin and no one else has to. A kin that joins is a fight, not a danger,
-    -- and drops out on its own. A mob that both aggroes and links is the
-    -- larger of its two circles. The same pass runs mid-fight: a target
-    -- parked inside another mob's circle is not approached; she waits at
-    -- the rim for the tank to bring it.
-    AVOID_LINKS = true,
+    -- Linking, her Avoid links row: the idle kin of any mob fighting a
+    -- cardian are circles for that cardian alone -- link range plus
+    -- AVOID_TAIL, the distance the mob keeps behind her as it follows -- so
+    -- she leads her fight away from the kin and no one else has to. A kin
+    -- that joins is a fight, not a danger, and drops out on its own. A mob
+    -- that both aggroes and links is the larger of its two circles when she
+    -- avoids both. The same pass runs mid-fight: a target parked inside
+    -- another mob's circle is not approached; she waits at the rim for the
+    -- tank to bring it.
     AVOID_TAIL  = 3.0,
 
     -- The settle rule (the itch): a cardian whose spot lies inside a circle

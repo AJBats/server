@@ -263,6 +263,7 @@ class PawnModule : public CPPModule
         lua["xi"]["pawn"]["r"]        = lua.create_table_with("BEHAVIOR", static_cast<uint16>(pawn::G_REACTION_BEHAVIOR));
         lua["xi"]["pawn"]["c"]        = lua.create_table_with("STRATEGY", static_cast<uint16>(pawn::G_CONDITION_STRATEGY));
         lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro),
+                                                              "AVOID_LINKS", static_cast<uint16>(pawn::Behavior::AvoidLinks),
                                                               "FORMATION", static_cast<uint16>(pawn::Behavior::Formation),
                                                               "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
                                                               "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));

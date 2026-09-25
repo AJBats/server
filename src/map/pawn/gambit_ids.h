@@ -70,7 +70,7 @@ namespace pawn
     // for a behaviour wins, and a switch no row speaks for is off.
     enum class Behavior : uint16
     {
-        AvoidAggro          = 1, // switch
+        AvoidAggro          = 1, // switch: keep out of the detection circles of every idle mob that would go for her
         Formation           = 4, // a Slot
         RestWithPlayer      = 6, // switch: kneel when the player kneels
         HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
@@ -80,8 +80,9 @@ namespace pawn
         Role                = 11, // a parameter: the role she plays (pawn::Role); the tactician's conveyor assigns her casts (RESEARCH §12.12 item 2)
         // 12: retired MeleeMage; an Attack row that claims the mob decides whether a
         // Support Mage fights it. The grammar refuses 12, so no row carries it.
+        AvoidLinks          = 13, // switch: keep clear of the idle kin of every mob fighting her, whatever AvoidAggro says
     };
-    constexpr uint16 BehaviorCount = 13; // one past the highest value ever given, retired ones included
+    constexpr uint16 BehaviorCount = 14; // one past the highest value ever given, retired ones included
 
     // The retired behaviour values: the grammar refuses a row that names
     // one, saved or imported, so an old meaning never comes back
@@ -138,11 +139,13 @@ namespace pawn
     static_assert(static_cast<uint16>(Behavior::HomePointWithPlayer) == 7);
     static_assert(static_cast<uint16>(Behavior::BoostBeforeWs) == 9);
     static_assert(static_cast<uint16>(Behavior::Role) == 11);
-    static_assert(BehaviorCount == 13);
+    static_assert(static_cast<uint16>(Behavior::AvoidLinks) == 13);
+    static_assert(BehaviorCount == 14);
     static_assert(isRetiredBehavior(8) && isRetiredBehavior(10) && isRetiredBehavior(12));
     static_assert(!isRetiredBehavior(static_cast<uint16>(Behavior::AvoidAggro)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Formation)) &&
                   !isRetiredBehavior(static_cast<uint16>(Behavior::RestWithPlayer)) && !isRetiredBehavior(static_cast<uint16>(Behavior::HomePointWithPlayer)) &&
-                  !isRetiredBehavior(static_cast<uint16>(Behavior::BoostBeforeWs)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Role)));
+                  !isRetiredBehavior(static_cast<uint16>(Behavior::BoostBeforeWs)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Role)) &&
+                  !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)));
 
     static_assert(static_cast<uint16>(Role::None) == 0);
     static_assert(static_cast<uint16>(Role::SupportMage) == 1);

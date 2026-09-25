@@ -186,7 +186,7 @@ TEST_CASE("gambit defaults: every default row parses, round-trips through the gr
     }
 }
 
-TEST_CASE("gambit defaults: no default row avoids aggro or uses a weapon skill", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: no default row avoids aggro or links, or uses a weapon skill", "[cardian][gambits][defaults]")
 {
     for (const auto* rows : { &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
     {
@@ -198,6 +198,7 @@ TEST_CASE("gambit defaults: no default row avoids aggro or uses a weapon skill",
             for (const auto& action : g->actions)
             {
                 CHECK_FALSE((action.reaction == kBehavior && static_cast<uint16>(action.select) == static_cast<uint16>(pawn::Behavior::AvoidAggro)));
+                CHECK_FALSE((action.reaction == kBehavior && static_cast<uint16>(action.select) == static_cast<uint16>(pawn::Behavior::AvoidLinks)));
                 CHECK(action.reaction != G_REACTION::WS);
             }
         }

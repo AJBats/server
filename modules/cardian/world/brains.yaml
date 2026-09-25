@@ -6,7 +6,7 @@
 #   who        self, party (a party member), mob (the mob)
 #   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n
 #              | has <status> | lacks <status> | top enmity | not top enmity
-#   action     avoid aggro | rest with leader | home point with
+#   action     avoid aggro | avoid links | rest with leader | home point with
 #              leader | boost before weapon skills | formation <lead|flank left|flank
 #              right|rear left|rear right|behind> | role <support mage|tank|damage> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
@@ -28,7 +28,7 @@
 # The first row whose conditions hold acts, and a row she cannot use (a
 # spell she doesn't know, an ability on recast) is passed over. Invited
 # into a player's party, she runs her own rows alone: nothing here --
-# avoid aggro, a weapon skill, a cure -- goes with her.
+# avoid aggro or links, a weapon skill, a cure -- goes with her.
 #
 # Roles: a Warrior or Paladin is the tank when she is the highest of them
 # in her party, and the tank leads the camp; the others and the fighters
@@ -43,6 +43,7 @@
 
 world:
   - "self: always -> avoid aggro"
+  - "self: always -> avoid links"
   - "self: always -> rest with leader"
 
 roles:
