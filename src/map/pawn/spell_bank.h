@@ -29,6 +29,7 @@
 #include "data/enums/status_effect.h"
 #include "spell.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -131,8 +132,11 @@ namespace pawn::tactics
         // spends one a call and gets the rest as they come
         auto melee(FightRecord& r, CBattleEntity* PActor, CBattleEntity* PTarget, bool allowSample) -> std::optional<FightRecord::MeleeGuess>;
 
-        // Every priced debuff one member could cast on the mob, priced now
-        auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<DebuffPrice>;
+        // Every priced debuff one member could cast on the mob, priced now;
+        // with `admitted`, only those it passes, asked before the pricing
+        // spends its samples (her allow-list, tactician_line.h)
+        auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob,
+                       const std::function<bool(SpellID)>& admitted = {}) -> std::vector<DebuffPrice>;
 
         // The same, as the lines printed when the fight opens
         auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>;

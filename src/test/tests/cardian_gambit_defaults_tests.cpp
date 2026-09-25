@@ -57,10 +57,10 @@ namespace
     };
 
     const Rows kMage{
-        { "102|0:0|0:0:0|0", false },
         { "0|0:0|100:6:1|0", true },
         { "0|0:0|100:11:1|0", true },
         { "1|101:0|2:0:1|0", true },
+        { "102|0:0|0:0:0|0", false },
     };
 
     const std::set<xi::Job> kMageJobs{ xi::Job::WHM, xi::Job::BLM, xi::Job::RDM, xi::Job::SMN, xi::Job::SCH, xi::Job::GEO };
@@ -154,21 +154,21 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, rest with the play
     requireRow(rows[4].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRole, static_cast<uint32>(pawn::Role::MeleeDamage) });
 }
 
-TEST_CASE("gambit defaults: the mage set is a Support Mage who cures, with her Attack row off", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the mage set is a Support Mage who cures, with her Attack row below her line and off", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::WHM);
     REQUIRE(rows == kMage);
 
     // Checking the Attack row is what makes her a melee mage, so it ships off
-    CHECK_FALSE(rows[0].second);
+    CHECK(rows[0].second);
     CHECK(rows[1].second);
     CHECK(rows[2].second);
-    CHECK(rows[3].second);
+    CHECK_FALSE(rows[3].second);
 
-    requireRow(rows[0].first, { pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS, kAttack, 0, 0 });
-    requireRow(rows[1].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
-    requireRow(rows[2].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRole, static_cast<uint32>(pawn::Role::SupportMage) });
-    requireRow(rows[3].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_CURE) });
+    requireRow(rows[0].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
+    requireRow(rows[1].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRole, static_cast<uint32>(pawn::Role::SupportMage) });
+    requireRow(rows[2].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_CURE) });
+    requireRow(rows[3].first, { pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS, kAttack, 0, 0 });
 }
 
 TEST_CASE("gambit defaults: every default row parses, round-trips through the grammar and pairs as the editor asks", "[cardian][gambits][defaults]")

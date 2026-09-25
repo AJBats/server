@@ -3,6 +3,7 @@
 
 #include "pawn_controller.h"
 #include "fight_log.h"
+#include "tactics.h"
 #include "ai/ai_container.h"
 #include "ai/states/magic_state.h"
 #include "ai/states/ability_state.h"
@@ -98,6 +99,10 @@ namespace pawn::tactics
                 for (const auto& tier : tiers)
                 {
                     const auto id = tier.id;
+                    // First aid is her tactician's choice like any other
+                    // cure: only a tier her allow-list lets her cast on this
+                    // member (tactician_line.h)
+                    if (!admittedBy(body, id, target).has_value()) continue;
                     cardian::cure::Option option{.caster = body->id, .target = target->id, .spell = static_cast<uint16>(id)};
                     auto* spell = spell::GetSpell(id);
                     option.heals = bank::expectedCure(body, spell, target).value_or(tier.option.heals);

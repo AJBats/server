@@ -26,6 +26,7 @@
 #include "gambit_ids.h"
 #include "gambit_layers.h"
 #include "pawn_spellbook.h"
+#include "tactician_line.h"
 #include "world.h"
 
 #include "data/enums/job.h"
@@ -127,6 +128,12 @@ namespace pawn
     // world's, compiled from brains.yaml, never saved, shown or sent, and
     // run ahead of hers by the think, the behaviours, the conveyor's
     // requests and the engage door alike. Both follow her master switch.
+    //
+    // Her own first Support Mage row is the tactician line
+    // (tactician_line.h): the rows below it are her tactician's allow-list
+    // (Admits, and the engage door's melee rows), never orders, and a row
+    // with no meaning where it sits is struck out. The world's layer has no
+    // line: its rows are orders.
     class CGambits
     {
     public:
@@ -179,6 +186,26 @@ namespace pawn
             return m_gambits.size();
         }
 
+        // The tactician line: the 1-based place of her first Support Mage
+        // row among her own rows, whatever its checkbox; none without one
+        auto Line() const -> std::optional<std::size_t>;
+        // What her own row at a 1-based place means where it sits, as the
+        // editor draws it
+        auto StateOf(std::size_t index) const -> cardian::tactician::State;
+
+        // Her allow-list, for her tactician: the id of the first enabled row
+        // below the line that lets her cast this spell on this target now --
+        // the spell is the row's, the target is one the row names, its retry
+        // has run, and its conditions hold, Tactician's choice among them,
+        // with no timer spent. Nothing when no row does, or her master switch
+        // is off. Only her tactician reads it: the rows above the line cast
+        // as the orders they are
+        auto Admits(uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>;
+        // Whether any enabled row below the line names this spell, whoever
+        // it is for and whatever its conditions: what her rest pacing may
+        // count on having
+        auto AllowsSpell(uint16 spell) const -> bool;
+
         // The rows that decide which fight she takes (engage_math.h), read
         // by the engage door: the enabled Attack rows in the running order
         // (the world's layer first while she is in the wild), and none while
@@ -186,13 +213,17 @@ namespace pawn
         // numbered within its own layer, so one of her own carries the
         // number the editor shows it under. The think never runs them. A row
         // the editor would refuse (pairingError; only a hand-edited saved
-        // set can hold one) is passed over. The pointers hold until her
+        // set can hold one) is passed over, and so is one struck out where
+        // it sits. One below the line is her tactician's melee (`below`):
+        // the door reads it only while her tactician lets her melee
+        // (tactician_line.h meleeAllowed). The pointers hold until her
         // rows, or her world layer, next change, so a reader uses them
         // within the tick it asked in.
         struct EngageRow
         {
             std::size_t              index  = 0;     // 1-based within its layer
             bool                     world  = false; // a row of the world's layer
+            bool                     below  = false; // below her tactician line
             const gambits::Gambit_t* gambit = nullptr;
         };
         auto EngageRows() -> std::vector<EngageRow>;
@@ -212,11 +243,20 @@ namespace pawn
         auto RunningLayers() -> cardian::layers::Layers<GambitRow>;
         void RebuildWorldLayer();
         auto Candidates(gambits::G_TARGET selector) -> std::vector<CBattleEntity*>;
+        // Whether a target is one a row's selector names: Candidates as a
+        // question about one entity, over her whole alliance for the party
+        // selectors, a mob for `Target`
+        auto Names(gambits::G_TARGET selector, const CBattleEntity* PTarget) const -> bool;
         auto SelectTarget(const gambits::Gambit_t& gambit) -> CBattleEntity*;
         // What her rows call "the mob": her battle target, else the party's
         // fight she attends or walks in on (RESEARCH §12.15)
         auto FightTarget() -> CBattleEntity*;
-        auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex, bool pending = false) -> bool;
+        // pending: a timer already passed, not spent again. gate: the row is
+        // an allow-list entry, so Tactician's choice holds
+        auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex, bool pending = false, bool gate = false) -> bool;
+        // The states of the running layers' rows, in forEachRow's order:
+        // the world's first (orders, no line), then her own
+        auto RunningStates(const cardian::layers::Layers<GambitRow>& layers) const -> std::vector<cardian::tactician::State>;
         auto ResolveSpell(const gambits::Action_t& action, CBattleEntity* PTarget) -> Maybe<SpellID>;
         // Behaviour rows (G_REACTION_BEHAVIOR only) flip controller switches
         // and never consume the think; engage rows (Attack) are the door's

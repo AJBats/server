@@ -78,6 +78,15 @@ namespace pawn::tactics
     // (CPawnController::AttendsFight; a real player never does)
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool;
 
+    // Her allow-list (tactician_line.h; CGambits::Admits): the id of the row
+    // below her Support Mage row that lets her tactician cast this spell on
+    // this target now. Nothing when no row does, or she is no cardian. Every
+    // cast her tactician chooses asks it first: without a row it is not hers
+    // to cast, emergency aid included
+    auto admittedBy(CBattleEntity* PHolder, SpellID spell, CBattleEntity* PTarget) -> std::optional<std::string>;
+    // Whether a row below her line names this spell at all (CGambits::AllowsSpell)
+    auto allows(CBattleEntity* PHolder, SpellID spell) -> bool;
+
     // The conveyor's doors (RESEARCH §12.12 item 2; conveyor.h), for the
     // gambit engine. A scope no tactician watches has no conveyor, and its
     // rows cast as they always have
@@ -132,6 +141,10 @@ namespace pawn::tactics
     };
     auto restAdvice(CCharEntity* PPawn) -> std::optional<RestAdvice>;
     void resetRestMemory(CCharEntity* PPawn);
+    // Her recovery is due, as the rest planner last said, read without
+    // sampling her MP again (restAdvice samples): what her tactician's
+    // melee gives way to (tactician_line.h)
+    auto recoveryDue(const CCharEntity* PPawn) -> bool;
 
     // The !tactics command: the caller's scope, its open and recent fights,
     // this zone's spot averages, the members' cure figures, this zone's

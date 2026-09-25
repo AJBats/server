@@ -802,7 +802,8 @@ class PawnModule : public CPPModule
         };
 
         // The gambit editor's view of a cardian's rows (M3.85): index, on,
-        // the row in the grammar, and the label as the player reads it
+        // what the row means where it sits (tactician_line.h token), the row
+        // in the grammar, and the label as the player reads it
         const auto gambitsOf = [](CCharEntity* PPawn) -> pawn::CGambits*
         {
             auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
@@ -825,6 +826,7 @@ class PawnModule : public CPPModule
                 auto entry     = ::lua.create_table();
                 entry["index"] = n;
                 entry["on"]    = row.enabled;
+                entry["state"] = std::string(cardian::tactician::token(PGambits->StateOf(n)));
                 entry["spec"]  = pawn::text::formatRow(row.gambit);
                 entry["label"] = pawn::labelGambit(row.gambit);
                 rows.add(entry);

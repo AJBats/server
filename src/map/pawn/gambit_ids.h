@@ -48,8 +48,9 @@ namespace pawn
     // No strategy exists yet, so a row with it never fires.
     constexpr auto G_CONDITION_STRATEGY = static_cast<gambits::G_CONDITION>(100);
 
-    // Cardian-only gambit condition, reserved for the tactician (RESEARCH
-    // §14.12): the row leaves the when to her judgement. As an ordinary
+    // Cardian-only gambit condition for the tactician (RESEARCH §14.12): the
+    // row leaves the when to her judgement. Below her Support Mage row
+    // (tactician_line.h) it holds, and her tactician decides; as an ordinary
     // condition it never holds, so a row carrying it never fires as an order.
     constexpr auto G_CONDITION_TACTICIANS_CHOICE = static_cast<gambits::G_CONDITION>(101);
 

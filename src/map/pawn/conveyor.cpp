@@ -47,6 +47,39 @@ namespace pawn::tactics
             return PChar != nullptr && PChar->PAI != nullptr ? dynamic_cast<CPawnController*>(PChar->PAI->GetController()) : nullptr;
         }
 
+        // Her tactician's own proposal still has an allow-list row behind it
+        // (tactician_line.h): a named spell one for that spell on that
+        // target, a Cure left to the bank one for some tier on that member
+        auto stillAdmitted(CCharEntity* PCaster, const Need& n, const Request& r, CBattleEntity* PTarget) -> bool
+        {
+            if (PTarget == nullptr)
+            {
+                return false;
+            }
+            if (r.spell != 0)
+            {
+                return admittedBy(PCaster, static_cast<SpellID>(r.spell), PTarget).has_value();
+            }
+            if (n.key.kind != NeedKind::Cure)
+            {
+                return true;
+            }
+            return std::ranges::any_of(cardian::tactician::kCureTiers, [&](const uint16 tier)
+                                       {
+                                           return admittedBy(PCaster, static_cast<SpellID>(tier), PTarget).has_value();
+                                       });
+        }
+
+        // She fed this need from a row of her own above her line: her order,
+        // with every tier and spell she has
+        auto hersToOrder(const Need& n, const uint32 caster) -> bool
+        {
+            return std::ranges::any_of(n.requests, [caster](const Request& r)
+                                       {
+                                           return r.source == Source::Row && r.caster == caster;
+                                       });
+        }
+
         auto nameOf(const Conveyor::Scope& scope, const uint32 id) -> std::string
         {
             const auto* PEntity = Conveyor::resolve(scope, id);
@@ -201,20 +234,32 @@ namespace pawn::tactics
 
         // A queued row is still the player's condition, not a four-second
         // promise to cast after the condition or the editor has changed.
+        // So is her tactician's own proposal: the allow-list row that let it
+        // is asked again, so a row deleted mid-fight stops her at once
         for (auto& n : m_needs.needs)
         {
             if (n.lockedBy != 0)
             {
                 continue;
             }
+            auto* PTarget = resolve(scope, n.key.target);
             std::erase_if(n.requests, [&](const Request& r)
             {
-                if (r.source != Source::Row)
+                if (r.source == Source::Reflex)
                 {
                     return false;
                 }
-                auto* controller = controllerOf(zoneutils::GetChar(r.caster));
-                return controller == nullptr || !controller->Gambits().RequestValid(r.rowId, n.key.target, r.spell);
+                auto* PCaster    = zoneutils::GetChar(r.caster);
+                auto* controller = controllerOf(PCaster);
+                if (controller == nullptr)
+                {
+                    return true;
+                }
+                if (r.source == Source::Row)
+                {
+                    return !controller->Gambits().RequestValid(r.rowId, n.key.target, r.spell);
+                }
+                return !stillAdmitted(PCaster, n, r, PTarget);
             });
         }
         m_needs.expire(now, life);
@@ -276,10 +321,12 @@ namespace pawn::tactics
         }
         if (landed)
         {
-            // The rows that asked start their retry clocks now, whoever cast it
+            // The rows that asked start their retry clocks now, whoever cast
+            // it: the orders that fed it, and the allow-list rows that let
+            // her tactician's own proposals
             for (const auto& r : n->requests)
             {
-                if (r.source != Source::Row)
+                if (r.source == Source::Reflex || r.rowId.empty())
                 {
                     continue;
                 }
@@ -394,6 +441,15 @@ namespace pawn::tactics
 
     auto Conveyor::spellFor(const Need& n, CCharEntity* PCaster, CBattleEntity* PTarget) -> SpellID
     {
+        // Her own row fed it: an order, cast with anything she has. Anything
+        // else is her tactician's choice -- her role's own proposal, or
+        // another mage's row she takes over -- and only what her allow-list
+        // lets her cast on this target (tactician_line.h)
+        const bool order   = hersToOrder(n, PCaster->id);
+        const auto allowed = [&](const SpellID id)
+        {
+            return order || admittedBy(PCaster, id, PTarget).has_value();
+        };
         if (n.key.kind == NeedKind::Cure)
         {
             // Explicit rows may cure a whole member, asleep or awake. The
@@ -405,9 +461,24 @@ namespace pawn::tactics
             const uint16 asked = n.askedSpell();
             if (asked != 0)
             {
-                return bank::usable(PCaster, static_cast<SpellID>(asked)) ? static_cast<SpellID>(asked) : static_cast<SpellID>(0);
+                const auto id = static_cast<SpellID>(asked);
+                return bank::usable(PCaster, id) && allowed(id) ? id : static_cast<SpellID>(0);
             }
-            return bank::pickTier(tiersOf(PCaster), PTarget, n.rowFed());
+            if (order)
+            {
+                return bank::pickTier(tiersOf(PCaster), PTarget, n.rowFed());
+            }
+            // The per-caster cache stays whole; the tiers she may cast on this
+            // member are picked from it here
+            std::vector<bank::CureTier> tiers;
+            for (const auto& tier : tiersOf(PCaster))
+            {
+                if (allowed(tier.id))
+                {
+                    tiers.push_back(tier);
+                }
+            }
+            return bank::pickTier(tiers, PTarget, n.rowFed());
         }
         // A row's named spell takes precedence, including when another
         // mage casts it. With no row, use this role holder's own proposal.
@@ -424,7 +495,8 @@ namespace pawn::tactics
         {
             id = n.askedSpell();
         }
-        return id != 0 && bank::usable(PCaster, static_cast<SpellID>(id)) ? static_cast<SpellID>(id) : static_cast<SpellID>(0);
+        const auto spell = static_cast<SpellID>(id);
+        return id != 0 && bank::usable(PCaster, spell) && allowed(spell) ? spell : static_cast<SpellID>(0);
     }
 
     auto Conveyor::describe(const Need& n, const Scope& scope) const -> std::string

@@ -24,6 +24,7 @@
 #include "conveyor.h"
 #include "fight_log.h"
 #include "spell_bank.h"
+#include "tactics.h"
 
 #include "common/logging.h"
 
@@ -120,40 +121,52 @@ namespace pawn::tactics::role
     {
         const bool inFight = fighting(log);
 
-        // Her line: the missing HP a cure is worth casting at -- the biggest
-        // tier she has in a fight, the smallest between. What she has, not
-        // what she can afford this moment: a need she cannot serve is still
-        // a need another mage can. A known tier waits for a quarter more
-        // than it heals, so no cure is ever capped (the user's rule,
-        // 2026-09-15); a tier known only by its floor waits for twice that,
-        // so the first cure lands whole and teaches the number
-        int32 line = 0;
-        for (const auto& tier : bank::cureTiers(PHolder, bank::CureAvailability::Eligible))
+        // Her line, per member: the missing HP a cure is worth casting at --
+        // the biggest tier she has in a fight, the smallest between, among
+        // the tiers her allow-list lets her cast on that member
+        // (tactician_line.h). What she has, not what she can afford this
+        // moment: a need she cannot serve is still a need another mage can.
+        // A known tier waits for a quarter more than it heals, so no cure is
+        // ever capped (the user's rule, 2026-09-15); a tier known only by its
+        // floor waits for twice that, so the first cure lands whole and
+        // teaches the number
+        const auto tiers = bank::cureTiers(PHolder, bank::CureAvailability::Eligible);
+        for (auto* PMember : scope.members)
         {
-            const int32 heals = tier.option.known ? static_cast<int32>(std::lround(tier.option.heals * 1.25)) : 2 * tier.option.heals;
-            line              = line == 0 ? heals : (inFight ? std::max(line, heals) : std::min(line, heals));
-        }
-        if (line > 0)
-        {
-            for (auto* PMember : scope.members)
+            if (!curable(PHolder, PMember))
             {
-                if (!curable(PHolder, PMember))
-                {
-                    continue;
-                }
-                const int32 missing = PMember->GetMaxHP() - PMember->health.hp;
-                if (!cardian::tactics::cureWanted(missing, line))
-                {
-                    continue;
-                }
-                conveyor.feed({ NeedKind::Cure, 0, PMember->id },
-                              Request{ .source = Source::Role, .caster = PHolder->id, .fedAt = now, .score = -static_cast<double>(missing), .why = fmt::format("{} missing", missing) },
-                              scope);
+                continue;
             }
+            int32       line = 0;
+            std::string row;
+            for (const auto& tier : tiers)
+            {
+                const auto by = admittedBy(PHolder, tier.id, PMember);
+                if (!by.has_value())
+                {
+                    continue;
+                }
+                if (row.empty())
+                {
+                    row = *by;
+                }
+                const int32 heals = tier.option.known ? static_cast<int32>(std::lround(tier.option.heals * 1.25)) : 2 * tier.option.heals;
+                line              = line == 0 ? heals : (inFight ? std::max(line, heals) : std::min(line, heals));
+            }
+            const int32 missing = PMember->GetMaxHP() - PMember->health.hp;
+            if (line == 0 || !cardian::tactics::cureWanted(missing, line))
+            {
+                continue;
+            }
+            conveyor.feed({ NeedKind::Cure, 0, PMember->id },
+                          Request{ .source = Source::Role, .caster = PHolder->id, .rowId = row, .fedAt = now, .score = -static_cast<double>(missing), .why = fmt::format("{} missing", missing) },
+                          scope);
         }
 
         // The debuffs worth their MP on the mobs the party is on, once she
-        // is in the fight (a first cast on a mob nobody has struck is a pull)
+        // is in the fight (a first cast on a mob nobody has struck is a pull),
+        // among those her allow-list lets her cast on the mob, asked before
+        // the pricing spends its samples
         if (!engaged)
         {
             return;
@@ -169,15 +182,21 @@ namespace pawn::tactics::role
             {
                 continue;
             }
-            for (const auto& p : bank::pricesFor(r, spotAverages(r.zone, r.mobName), log.exchange(), scope.members, PHolder, PMob))
+            const auto admitted = [&](const SpellID id)
             {
-                if (!p.go() || !bank::usable(PHolder, static_cast<SpellID>(p.id)))
+                return admittedBy(PHolder, id, PMob).has_value();
+            };
+            for (const auto& p : bank::pricesFor(r, spotAverages(r.zone, r.mobName), log.exchange(), scope.members, PHolder, PMob, admitted))
+            {
+                const auto by = admittedBy(PHolder, static_cast<SpellID>(p.id), PMob);
+                if (!p.go() || !by.has_value() || !bank::usable(PHolder, static_cast<SpellID>(p.id)))
                 {
                     continue;
                 }
                 conveyor.feed(Conveyor::keyFor(spell::GetSpell(static_cast<SpellID>(p.id)), PMob->id, PHolder->id),
                               Request{ .source     = Source::Role,
                                        .caster     = PHolder->id,
+                                       .rowId      = *by,
                                        .spell      = p.id,
                                        .fedAt      = now,
                                        .score      = p.noData ? 0.0 : p.mp - p.mpWorth,

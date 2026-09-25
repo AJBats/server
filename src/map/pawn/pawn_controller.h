@@ -717,7 +717,9 @@ private:
     //  - EngageChoice: the fight her rows take -- her enabled Attack rows
     //    top down (none with her gambits off), each row's foe the first of
     //    its kind whose conditions hold on it. `row` numbers the row, and
-    //    the why line names it with its layer.
+    //    the why line names it with its layer. A row below her tactician
+    //    line counts only while her tactician lets her melee
+    //    (TacticianMelee).
     struct FightPick
     {
         CBattleEntity* target = nullptr;
@@ -737,6 +739,18 @@ private:
         pawn::CGambits::EngageRow row;
     };
     auto ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>;
+    // The same, with the rows below her tactician line counted or not
+    auto ClaimingRowAs(CBattleEntity* PTarget, bool melee) const -> std::optional<RowClaim>;
+    // Whether any of her Attack rows takes fights now: one above the line,
+    // or one below it while her tactician lets her melee
+    auto TakesFights() const -> bool;
+
+    // Her tactician (tactician_line.h): it runs while her Support Mage row
+    // speaks, her gambits are on, and a tactician watches her scope; and it
+    // lets her melee a fight a row below the line claims while her recovery
+    // is not due and she is not down resting (RESEARCH §14.12 decision 19)
+    auto TacticianRuns() const -> bool;
+    auto TacticianMelee() const -> bool;
 
     // The foes around the party this tick (as above), gathered once a tick
     // for the place asked about, in the finders' order; and what a foe is

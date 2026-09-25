@@ -195,7 +195,7 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     CHECK(behavior(behaviorsOf(layersFor<Row>(false, worldRole, own)), pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
 
     // An unchecked row of hers does not speak; the next one does
-    own[1].enabled  = false; // rest with the player
+    own[0].enabled  = false; // rest with the player
     const auto some = behaviorsOf(layersFor<Row>(false, world, own));
     CHECK_FALSE(behavior(some, pawn::Behavior::RestWithPlayer).has_value());
     CHECK(behavior(behaviorsOf(layersFor<Row>(true, world, own)), pawn::Behavior::RestWithPlayer) == uint16{ 1 });

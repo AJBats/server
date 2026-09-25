@@ -87,10 +87,11 @@
 namespace
 {
     // An engage row as the why lines name it: "row N" for one of her own,
-    // the number the editor shows it under; "world row N" for the world's
+    // the number the editor shows it under; "world row N" for the world's;
+    // and a row below her tactician line said to be her tactician's melee
     auto rowLabel(const pawn::CGambits::EngageRow& row) -> std::string
     {
-        return fmt::format("{}row {}", row.world ? "world " : "", row.index);
+        return fmt::format("{}row {}{}", row.world ? "world " : "", row.index, row.below ? ", her tactician's melee" : "");
     }
 } // namespace
 
@@ -2861,6 +2862,19 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // Her tactician's melee -- a row below her Support Mage row took this
+    // fight, and none above it claims the mob -- gives way to her rest the
+    // moment her recovery is due: she leaves the fight, the door has her
+    // attend it, and she rests as her rest policy says until it stands her
+    // (tactician_line.h leavesToRest; RESEARCH §14.12 decision 19). An order
+    // above the line, or the player's own Attack, keeps her in
+    if (const bool runs = TacticianRuns(), due = runs && pawn::tactics::recoveryDue(static_cast<CCharEntity*>(POwner));
+        due && cardian::tactician::leavesToRest(runs, due, ClaimingRowAs(PTarget, false).has_value(), ClaimingRowAs(PTarget, true).has_value(), PlayersOrderOn(PTarget)))
+    {
+        StandDown(fmt::format("leaves the fight on {} to rest (her recovery is due)", PTarget->getName()));
+        co_return;
+    }
+
     // Whoever she is fighting is the mob the draw cooldown will measure
     // against once this fight ends, and the one the server's exit reason
     // is read from
@@ -3328,7 +3342,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const Place* place         = CurrentPlace(PPlayer);
     const bool   somewhereToGo = place != nullptr && !m_Waiting;
     const bool   hunting       = somewhereToGo && PPlayer != nullptr && IsHunting() &&
-                         cardian::engage::huntsForParty(pawn::tactics::supportMage(POwner), !m_Gambits->EngageRows().empty());
+                         cardian::engage::huntsForParty(pawn::tactics::supportMage(POwner), TakesFights());
 
     TidyBag();
     m_Gambits->TickBehaviors();
@@ -4623,14 +4637,15 @@ namespace
 {
     // Her engage rows as the pure door reads them (engage_math.h Row), in
     // the accessor's order. Each is numbered by its 1-based position in
-    // `rows`, so the row a pick or a claim names is rows[row - 1]
-    auto doorRows(const std::vector<pawn::CGambits::EngageRow>& rows) -> std::vector<cardian::engage::Row>
+    // `rows`, so the row a pick or a claim names is rows[row - 1]. A row
+    // below her tactician line reads as unchecked unless `melee`
+    auto doorRows(const std::vector<pawn::CGambits::EngageRow>& rows, const bool melee) -> std::vector<cardian::engage::Row>
     {
         std::vector<cardian::engage::Row> view;
         view.reserve(rows.size());
         for (std::size_t i = 0; i < rows.size(); ++i)
         {
-            view.push_back({ i + 1, rows[i].gambit->target_selector, true });
+            view.push_back({ i + 1, rows[i].gambit->target_selector, !rows[i].below || melee });
         }
         return view;
     }
@@ -4821,7 +4836,7 @@ auto CPawnController::EngageChoice(CCharEntity* PLeader, const position_t& from)
     {
         facts.push_back(FoeFacts(PFoe, PLeader));
     }
-    const auto view = doorRows(rows);
+    const auto view = doorRows(rows, TacticianMelee());
     const auto pick = cardian::engage::chooseRow(m_Gambits->MasterOn(), m_Retreat, view, facts, [&](const std::size_t row, const std::size_t foe)
                                                  {
                                                      return m_Gambits->EngageConditionsHold(*rows[row].gambit, foes[foe]);
@@ -4837,6 +4852,32 @@ auto CPawnController::EngageChoice(CCharEntity* PLeader, const position_t& from)
 
 auto CPawnController::ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>
 {
+    return ClaimingRowAs(PTarget, TacticianMelee());
+}
+
+auto CPawnController::TakesFights() const -> bool
+{
+    const bool melee = TacticianMelee();
+    return std::ranges::any_of(m_Gambits->EngageRows(), [melee](const pawn::CGambits::EngageRow& row)
+                               {
+                                   return !row.below || melee;
+                               });
+}
+
+auto CPawnController::TacticianRuns() const -> bool
+{
+    return m_Gambits->MasterOn() && pawn::tactics::supportMage(POwner) && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
+}
+
+auto CPawnController::TacticianMelee() const -> bool
+{
+    const auto* PChar = static_cast<const CCharEntity*>(POwner);
+    return cardian::tactician::meleeAllowed(TacticianRuns(), pawn::tactics::recoveryDue(PChar),
+                                            POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+}
+
+auto CPawnController::ClaimingRowAs(CBattleEntity* PTarget, const bool melee) const -> std::optional<RowClaim>
+{
     if (PTarget == nullptr)
     {
         return std::nullopt;
@@ -4846,7 +4887,7 @@ auto CPawnController::ClaimingRow(CBattleEntity* PTarget) const -> std::optional
     {
         return std::nullopt;
     }
-    const auto view  = doorRows(rows);
+    const auto view  = doorRows(rows, melee);
     const auto claim = cardian::engage::claimingRow(m_Gambits->MasterOn(), view, FoeFacts(PTarget, GetAnchor()), [&](const std::size_t row)
                                                     {
                                                         return m_Gambits->EngageConditionsHold(*rows[row].gambit, PTarget);

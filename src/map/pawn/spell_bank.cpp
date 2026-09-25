@@ -72,6 +72,29 @@ namespace pawn::tactics
             { SpellID::Bio, Model::Dot, xi::StatusEffect::Bio, 2, xi::Mod::INT, 0, 60, 3.0 }, // the ticks only
         };
 
+        // Her allow-list's lists (tactician_line.h) are the bank's own, in
+        // its order, with spell.h's numbers
+        static_assert(std::size(kPriced) == cardian::tactician::kPricedDebuffs.size());
+        static_assert([]
+                      {
+                          for (std::size_t i = 0; i < std::size(kPriced); ++i)
+                          {
+                              if (static_cast<uint16>(kPriced[i].id) != cardian::tactician::kPricedDebuffs[i].id)
+                              {
+                                  return false;
+                              }
+                          }
+                          return true;
+                      }());
+        static_assert(cardian::tactician::kPricedDebuffs[0].family == SPELLFAMILY_PARALYZE && cardian::tactician::kPricedDebuffs[1].family == SPELLFAMILY_SLOW &&
+                      cardian::tactician::kPricedDebuffs[2].family == SPELLFAMILY_BLIND && cardian::tactician::kPricedDebuffs[3].family == SPELLFAMILY_DIA &&
+                      cardian::tactician::kPricedDebuffs[4].family == SPELLFAMILY_DIAGA && cardian::tactician::kPricedDebuffs[5].family == SPELLFAMILY_POISON &&
+                      cardian::tactician::kPricedDebuffs[6].family == SPELLFAMILY_POISONGA && cardian::tactician::kPricedDebuffs[7].family == SPELLFAMILY_BIO);
+        static_assert(cardian::tactician::kCureFamily == SPELLFAMILY_CURE);
+        static_assert(cardian::tactician::kCureTiers[0] == static_cast<uint16>(SpellID::Cure) && cardian::tactician::kCureTiers[1] == static_cast<uint16>(SpellID::Cure_II) &&
+                      cardian::tactician::kCureTiers[2] == static_cast<uint16>(SpellID::Cure_III) && cardian::tactician::kCureTiers[3] == static_cast<uint16>(SpellID::Cure_IV) &&
+                      cardian::tactician::kCureTiers[4] == static_cast<uint16>(SpellID::Cure_V) && cardian::tactician::kCureTiers[5] == static_cast<uint16>(SpellID::Cure_VI));
+
         constexpr int         kResistRolls = 100;
         constexpr int         kPdifRolls   = 300;
         constexpr std::size_t kPdifCacheCap = 4096; // entries; cleared when full, a cache and not a leak
@@ -820,8 +843,9 @@ namespace pawn::tactics
         auto cureTiers(CBattleEntity* PCaster, const CureAvailability availability) -> std::vector<CureTier>
         {
             std::vector<CureTier> out;
-            for (const auto id : { SpellID::Cure, SpellID::Cure_II, SpellID::Cure_III, SpellID::Cure_IV, SpellID::Cure_V, SpellID::Cure_VI })
+            for (const auto tier : cardian::tactician::kCureTiers)
             {
+                const auto id = static_cast<SpellID>(tier);
                 CSpell* PTier = spell::GetSpell(id);
                 if (!(availability == CureAvailability::Ready ? usable(PCaster, id) : CSpellBook::Eligible(PCaster, PTier)))
                 {
@@ -934,13 +958,14 @@ namespace pawn::tactics
             return g;
         }
 
-        auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<DebuffPrice>
+        auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob,
+                       const std::function<bool(SpellID)>& admitted) -> std::vector<DebuffPrice>
         {
             std::vector<DebuffPrice> out;
             for (const auto& p : kPriced)
             {
                 CSpell* PSpell = spell::GetSpell(p.id);
-                if (!CSpellBook::Eligible(PMember, PSpell))
+                if (!CSpellBook::Eligible(PMember, PSpell) || (admitted && !admitted(p.id)))
                 {
                     continue;
                 }

@@ -733,6 +733,18 @@ namespace pawn::tactics
         return PController != nullptr && PController->AttendsFight(PMob);
     }
 
+    auto admittedBy(CBattleEntity* PHolder, const SpellID spell, CBattleEntity* PTarget) -> std::optional<std::string>
+    {
+        auto* PController = PHolder != nullptr && PHolder->objtype == TYPE_PC && PHolder->PAI != nullptr ? dynamic_cast<CPawnController*>(PHolder->PAI->GetController()) : nullptr;
+        return PController != nullptr ? PController->Gambits().Admits(static_cast<uint16>(spell), PTarget) : std::nullopt;
+    }
+
+    auto allows(CBattleEntity* PHolder, const SpellID spell) -> bool
+    {
+        auto* PController = PHolder != nullptr && PHolder->objtype == TYPE_PC && PHolder->PAI != nullptr ? dynamic_cast<CPawnController*>(PHolder->PAI->GetController()) : nullptr;
+        return PController != nullptr && PController->Gambits().AllowsSpell(static_cast<uint16>(spell));
+    }
+
     auto has(const CCharEntity* PPawn) -> bool
     {
         return PPawn != nullptr && find(PPawn) != nullptr;
@@ -820,6 +832,13 @@ namespace pawn::tactics
             tactician->resting().observe(PPawn, seconds(timer::now()));
         }
         return tactician != nullptr ? tactician->resting().advice(PPawn->id) : std::nullopt;
+    }
+
+    auto recoveryDue(const CCharEntity* PPawn) -> bool
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        const auto advice = tactician != nullptr ? tactician->resting().advice(PPawn->id) : std::nullopt;
+        return advice.has_value() && advice->recover;
     }
 
     void resetRestMemory(CCharEntity* PPawn)

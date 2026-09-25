@@ -290,12 +290,16 @@ namespace pawn
         m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
 
         // Her rows in the running order (the world's first in the wild),
-        // top down; the first to act ends the think
-        cardian::layers::forEachRow(RunningLayers(), [&](GambitRow& row, const std::size_t index)
+        // top down; the first to act ends the think. Only an order acts: a
+        // row below her tactician line is her tactician's to read, and a
+        // struck-out row does nothing (tactician_line.h)
+        const auto layers = RunningLayers();
+        const auto states = RunningStates(layers);
+        cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t index)
                                     {
                                         auto& gambit = row.gambit;
-                                        if (!row.enabled || IsBehavior(gambit) || cardian::engage::isEngageRow(gambit) ||
-                                            tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
+                                        if (!row.enabled || states[index - 1] != cardian::tactician::State::Order || IsBehavior(gambit) ||
+                                            cardian::engage::isEngageRow(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
                                         {
                                             return false;
                                         }
@@ -374,8 +378,17 @@ namespace pawn
         {
             return false;
         }
-        const auto* row = cardian::layers::findRow(RunningLayers(), rowId, rowIdOf);
+        // A request a row fed is an order's: a row that has since moved below
+        // her tactician line, or been struck out, no longer asks
+        const auto layers = RunningLayers();
+        const auto* row   = cardian::layers::findRow(layers, rowId, rowIdOf);
         if (row == nullptr || !row->enabled || IsBehavior(row->gambit))
+        {
+            return false;
+        }
+        const bool own   = !cardian::layers::isWorldRowId(rowId);
+        const auto state = own ? StateOf(static_cast<std::size_t>(row - m_gambits.data()) + 1) : cardian::tactician::stateOf(row->gambit, 1, std::nullopt);
+        if (state != cardian::tactician::State::Order)
         {
             return false;
         }
@@ -551,6 +564,40 @@ namespace pawn
         return out;
     }
 
+    auto CGambits::Names(const G_TARGET selector, const CBattleEntity* PTarget) const -> bool
+    {
+        if (PTarget == nullptr || PTarget->isDead())
+        {
+            return false;
+        }
+        // Her tactician asks only about its scope, her alliance, so a party
+        // selector names any character alive in it
+        const bool member = PTarget->objtype == TYPE_PC;
+        switch (selector)
+        {
+            case G_TARGET::SELF:
+                return PTarget == POwner;
+            case G_TARGET::TARGET:
+                return PTarget->objtype == TYPE_MOB;
+            case G_TARGET::MASTER:
+                return PTarget == m_PController->GetLivePlayer();
+            case G_TARGET::PARTY:
+                return member;
+            case G_TARGET::TANK:
+                return member && (PTarget->GetMJob() == xi::Job::PLD || PTarget->GetMJob() == xi::Job::RUN);
+            case G_TARGET::MELEE:
+                return member && kMeleeJobs.contains(PTarget->GetMJob());
+            case G_TARGET::RANGED:
+                return member && (PTarget->GetMJob() == xi::Job::RNG || PTarget->GetMJob() == xi::Job::COR);
+            case G_TARGET::CASTER:
+                return member && kCasterJobs.contains(PTarget->GetMJob());
+            case G_TARGET::TOP_ENMITY:
+                return member && PTarget == m_PController->GetTopEnmity();
+            default:
+                return false;
+        }
+    }
+
     auto CGambits::SelectTarget(const Gambit_t& gambit) -> CBattleEntity*
     {
         for (auto* PCandidate : Candidates(gambit.target_selector))
@@ -614,7 +661,7 @@ namespace pawn
         }
     } // namespace
 
-    auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex, const bool pending) -> bool
+    auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex, const bool pending, const bool gate) -> bool
     {
         TracyZoneScoped;
 
@@ -903,11 +950,12 @@ namespace pawn
                     break;
                 case pawn::G_CONDITION_TACTICIANS_CHOICE:
                     // Tactician's choice leaves the when to her tactician's
-                    // judgement (gambit_ids.h). As an ordinary condition it
-                    // never holds, so a row carrying it never acts on its
-                    // own: a Cure left to her judgement is never an "always
-                    // cure"
-                    results.push_back(false);
+                    // judgement (gambit_ids.h). On an allow-list entry, below
+                    // her tactician line, it holds: her tactician decides.
+                    // As an ordinary condition it never holds, so a row
+                    // carrying it never acts on its own: a Cure left to her
+                    // judgement is never an "always cure"
+                    results.push_back(gate);
                     break;
                 default:
                     // VAL_URIEL_CHECK and anything newer: trust-NPC specific
@@ -1010,9 +1058,15 @@ namespace pawn
         {
             return;
         }
-        cardian::layers::forEachRow(RunningLayers(), [&](const GambitRow& row, std::size_t)
+        // An order speaks, and so does her Support Mage row, the line
+        // itself; a behaviour row below the line is struck out and silent
+        const auto layers = RunningLayers();
+        const auto states = RunningStates(layers);
+        cardian::layers::forEachRow(layers, [&](const GambitRow& row, const std::size_t place)
                                     {
-                                        if (row.enabled && IsBehavior(row.gambit) && SelectTarget(row.gambit) != nullptr)
+                                        const auto state = states[place - 1];
+                                        if (row.enabled && (state == cardian::tactician::State::Order || state == cardian::tactician::State::Line) &&
+                                            IsBehavior(row.gambit) && SelectTarget(row.gambit) != nullptr)
                                         {
                                             ApplyBehavior(row.gambit);
                                         }
@@ -1027,19 +1081,105 @@ namespace pawn
         {
             return out;
         }
-        // forEachRow numbers across both layers, the world's first
+        // forEachRow numbers across both layers, the world's first. An
+        // order is read; below the line, an Attack row her tactician may
+        // melee on (tactician_line.h Allowance::Melee) is read as hers
         const auto        layers    = RunningLayers();
+        const auto        states    = RunningStates(layers);
         const std::size_t worldRows = layers.world.size();
         cardian::layers::forEachRow(layers, [&](const GambitRow& row, const std::size_t place)
                                     {
-                                        if (cardian::engage::doorReads(m_masterOn, row.enabled, row.gambit))
+                                        const auto state = states[place - 1];
+                                        const bool below = state == cardian::tactician::State::Allows;
+                                        if ((state == cardian::tactician::State::Order || below) && cardian::engage::doorReads(m_masterOn, row.enabled, row.gambit))
                                         {
                                             const bool world = place <= worldRows;
-                                            out.push_back({ world ? place : place - worldRows, world, &row.gambit });
+                                            out.push_back({ world ? place : place - worldRows, world, below, &row.gambit });
                                         }
                                         return false;
                                     });
         return out;
+    }
+
+    auto CGambits::RunningStates(const cardian::layers::Layers<GambitRow>& layers) const -> std::vector<cardian::tactician::State>
+    {
+        std::vector<cardian::tactician::State> out;
+        out.reserve(layers.world.size() + layers.own.size());
+        for (const auto& row : layers.world)
+        {
+            out.push_back(cardian::tactician::stateOf(row.gambit, 1, std::nullopt));
+        }
+        const auto line = cardian::tactician::lineOf(layers.own, [](const GambitRow& row) -> const Gambit_t& { return row.gambit; });
+        std::size_t place = 0;
+        for (const auto& row : layers.own)
+        {
+            out.push_back(cardian::tactician::stateOf(row.gambit, ++place, line));
+        }
+        return out;
+    }
+
+    auto CGambits::Line() const -> std::optional<std::size_t>
+    {
+        return cardian::tactician::lineOf(m_gambits, [](const GambitRow& row) -> const Gambit_t& { return row.gambit; });
+    }
+
+    auto CGambits::StateOf(const std::size_t index) const -> cardian::tactician::State
+    {
+        if (index == 0 || index > m_gambits.size())
+        {
+            return cardian::tactician::State::Order;
+        }
+        return cardian::tactician::stateOf(m_gambits[index - 1].gambit, index, Line());
+    }
+
+    auto CGambits::Admits(const uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>
+    {
+        const auto line = Line();
+        if (!m_masterOn || !line.has_value() || PTarget == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto now = timer::now();
+        for (std::size_t place = *line + 1; place <= m_gambits.size(); ++place)
+        {
+            const auto& row = m_gambits[place - 1];
+            const auto& g   = row.gambit;
+            if (!row.enabled || cardian::tactician::stateOf(g, place, line) != cardian::tactician::State::Allows ||
+                !cardian::tactician::allowsSpell(g, spell) || !Names(g.target_selector, PTarget) ||
+                now < g.last_used + std::chrono::seconds(g.retry_delay))
+            {
+                continue;
+            }
+            bool holds = true;
+            for (std::size_t group = 0; holds && group < g.predicate_groups.size(); ++group)
+            {
+                holds = CheckTrigger(PTarget, g, group, true, true);
+            }
+            if (holds)
+            {
+                return g.identifier;
+            }
+        }
+        return std::nullopt;
+    }
+
+    auto CGambits::AllowsSpell(const uint16 spell) const -> bool
+    {
+        const auto line = Line();
+        if (!line.has_value())
+        {
+            return false;
+        }
+        for (std::size_t place = *line + 1; place <= m_gambits.size(); ++place)
+        {
+            const auto& row = m_gambits[place - 1];
+            if (row.enabled && cardian::tactician::stateOf(row.gambit, place, line) == cardian::tactician::State::Allows &&
+                cardian::tactician::allowsSpell(row.gambit, spell))
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     auto CGambits::EngageConditionsHold(const Gambit_t& gambit, CBattleEntity* PFoe) -> bool
@@ -1100,10 +1240,18 @@ namespace pawn
                    g.predicate_groups.size() == 1 && g.predicate_groups[0].predicates.size() == 1 &&
                    g.predicate_groups[0].predicates[0].condition == G_CONDITION::ALWAYS;
         };
+        // A behaviour row is an order, so it sits above her tactician line:
+        // a new one goes in just above it, and one found below it, struck
+        // out there, moves up to it
+        const auto line = Line();
         if (const auto it = std::find_if(m_gambits.begin(), m_gambits.end(), unconditional); it != m_gambits.end())
         {
             it->gambit.actions[0].select_arg = sw ? 1 : arg;
             it->enabled                      = sw ? arg != 0 : true;
+            if (const auto place = static_cast<std::size_t>(it - m_gambits.begin()) + 1; line.has_value() && place > *line)
+            {
+                Move(place, *line);
+            }
         }
         else
         {
@@ -1111,7 +1259,15 @@ namespace pawn
             row.target_selector = G_TARGET::SELF;
             row.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::ALWAYS, 0) });
             row.actions.emplace_back(G_REACTION_BEHAVIOR, static_cast<G_SELECT>(behavior), sw ? 1 : arg);
-            AddGambit(std::move(row), sw ? arg != 0 : true);
+            if (line.has_value())
+            {
+                Insert(*line, std::move(row));
+                m_gambits[*line - 1].enabled = sw ? arg != 0 : true;
+            }
+            else
+            {
+                AddGambit(std::move(row), sw ? arg != 0 : true);
+            }
         }
         if (sw)
         {
