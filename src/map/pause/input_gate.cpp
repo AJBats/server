@@ -165,7 +165,7 @@ auto lineOf(const Queued& what, const uint16 itemId, const CBasicPacket& packet)
 // back, or gone at the release.
 void tell(const CCharEntity* PChar, const std::string& line)
 {
-    cardian::link::sendToCharacter(PChar->id, line.empty() ? fmt::format("cd q {}", PChar->getName()) : fmt::format("cd q {} {}", PChar->getName(), line));
+    cardian::link::sendLegacy(PChar->id, line.empty() ? fmt::format("q {}", PChar->getName()) : fmt::format("q {} {}", PChar->getName(), line));
 }
 
 // The dispatcher's own two steps: the command is judged as of now, not as of when

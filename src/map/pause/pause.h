@@ -44,7 +44,7 @@ class CCharEntity;
 // Taking and letting go tell the players: each real player's client gets his status
 // packet again, which carries speed 0 while held (packets/char_status.cpp) -- that is
 // the movement lock, derived from the hold, so there is nothing to restore -- and
-// every bound addon gets `cd paused <holder>` or `cd resumed` for its banner. The
+// every bound addon gets the Link's PAUSED or RESUMED message for its banner. The
 // release also tells each client again what is left of his ability recasts and buff
 // timers, which it counted down on its own clock while the server stood still.
 // Everything here is for the main thread except isHeld(), which is safe from anywhere.

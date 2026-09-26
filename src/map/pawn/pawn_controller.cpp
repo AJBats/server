@@ -409,7 +409,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         {
             pawn::clearManeuver(m_ManeuverBy);
         }
-        cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {}", POwner->getName()));
+        cardian::link::sendLegacy(m_ManeuverBy, fmt::format("mv {}", POwner->getName()));
         m_ManeuverBy       = 0;
         m_ManeuverComposed = false;
     }
@@ -1486,7 +1486,7 @@ void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, Entity
     if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
         const auto line = QueuedOrderLine();
-        cardian::link::sendToCharacter(owner, line.empty() ? fmt::format("cd q {}", POwner->getName()) : fmt::format("cd q {} {}", POwner->getName(), line));
+        cardian::link::sendLegacy(owner, line.empty() ? fmt::format("q {}", POwner->getName()) : fmt::format("q {} {}", POwner->getName(), line));
     }
 }
 
@@ -1517,7 +1517,7 @@ auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 f
     // still shows the line
     if (formerOwner != 0 && pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)) == 0)
     {
-        cardian::link::sendToCharacter(formerOwner, fmt::format("cd q {}", POwner->getName()));
+        cardian::link::sendLegacy(formerOwner, fmt::format("q {}", POwner->getName()));
     }
     return true;
 }
@@ -1549,7 +1549,7 @@ void CPawnController::Note(const std::string& text) const
 {
     if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
-        cardian::link::sendToCharacter(owner, "cd note " + text);
+        cardian::link::sendLegacy(owner, "note " + text);
     }
 }
 
@@ -3948,7 +3948,7 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
     m_Gambits->SetMaster(false);
     pawn::setManeuver(PBy->id, POwner->id);
     Transition(Mode::Maneuver, fmt::format("{} takes the wheel", PBy->getName()));
-    cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {} on", POwner->getName()));
+    cardian::link::sendLegacy(m_ManeuverBy, fmt::format("mv {} on", POwner->getName()));
     return "";
 }
 
@@ -4029,7 +4029,7 @@ void CPawnController::MarkComposed(const std::string_view what)
         pawn::clearManeuver(m_ManeuverBy);
     }
     ShowInfoFmt("pawn: {}'s maneuver is composed: {}", POwner->getName(), what);
-    cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {} composed", POwner->getName()));
+    cardian::link::sendLegacy(m_ManeuverBy, fmt::format("mv {} composed", POwner->getName()));
 }
 
 auto CPawnController::ComposeRest(const int percent) -> std::string

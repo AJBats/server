@@ -319,8 +319,8 @@ public:
 
     // The queued order for the command window's queue line: its action key and
     // its target's index, "2:2:1 1024"; "" with none. The addon words it from the
-    // list it holds. It is told whenever this changes (`cd q <her name> <key>
-    // <target index>`), and the player can take the order back.
+    // list it holds. It is told whenever this changes (the queue line, `q <her
+    // name> <key> <target index>`), and the player can take the order back.
     auto QueuedOrderLine() const -> std::string;
     auto CancelQueuedOrder() -> bool;
 

@@ -1,11 +1,12 @@
 -----------------------------------
 -- func: cardian <verb> [args]
--- desc: Cardian companion-addon API. Requests arrive over the Cardian Link
---       ('cd <verb> ...' lines run this command for the bound character) and
---       structured replies go back the same way as 'cd ...' lines; with no
---       link bound (a human typing !cardian in chat) the replies print to
---       chat channel 31 instead. Machine-facing -- humans get terse errors,
---       the addon gets data.
+-- desc: Cardian companion-addon API, the verbs not yet converted to Cardian
+--       Link messages (src/map/pawn/cardian_link_protocol.h). A LEGACY_CD
+--       message runs this command for the bound character, and its replies
+--       go back the same way; with no link bound (a human typing !cardian in
+--       chat) the replies print to chat channel 31 instead. Machine-facing --
+--       humans get terse errors, the addon gets data. A verb that gains its own
+--       message leaves this file.
 --
 --       list                             roster of your live cardians
 --       sync <name>                      one cardian: stats + gear + inventory
@@ -14,7 +15,6 @@
 --                                        Wardrobes, Satchel and Sack when she has them
 --       move <name> <from> <slot> <to> <qty>  a stack between her inventory and a bag, either way
 --       gear <name>                      a cardian's equipment
---       give <name> <slot> <qty>         your inventory slot -> cardian
 --       take <name> <slot> <qty>         cardian inventory slot -> you
 --       givegil <name> <amount>          your gil -> cardian (the trade window's gil line)
 --       takegil <name> <amount>          cardian's gil -> you
@@ -341,16 +341,16 @@ end
 
 -- One roster line: her jobs, health, TP, how far she is from her next
 -- level, whether a gate guard is within the player's reach (the
--- Conquest exchange row on her page), and her rest as the command
--- window shows it. Both the roster list and a single
--- sync send it, so a screen sees the same fields either way. Experience
--- comes from the Cardian binding -- upstream has no getter for it or for
--- the level's cost.
+-- Conquest exchange row on her page), her rest as the command window
+-- shows it, and last her charid, which the Link's messages name her by.
+-- Both the roster list and a single sync send it, so a screen sees the
+-- same fields either way. Experience comes from the Cardian binding --
+-- upstream has no getter for it or for the level's cost.
 local function pawnLine(player, name, targ)
     local xp    = player:cardianExp(name)
     local guard = guardNear(player) ~= nil
     local rest  = player:cardianRestState(name) or {}
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d',
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d %d',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
@@ -361,7 +361,8 @@ local function pawnLine(player, name, targ)
         guard and 1 or 0,
         player:cardianWaiting(name) and 1 or 0,
         player:cardianOwns(name) and 1 or 0, targ:getZoneName(),
-        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0)
+        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0,
+        targ:getID())
 end
 
 local function sendPawnLine(player, name)
@@ -1101,14 +1102,6 @@ commandObj.onTrigger = function(player, line)
         sendSkills(player, name)
     elseif verb == 'mskills' and name then
         sendMagicSkills(player, name)
-    elseif verb == 'give' and name then
-        local err = player:cardianGive(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
-        if err ~= '' then
-            reply(player, '#cd err give ' .. err)
-        else
-            reply(player, '#cd ok give')
-            sendInv(player, name)
-        end
     elseif verb == 'take' and name then
         local err = player:cardianTake(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
         if err ~= '' then
@@ -1239,7 +1232,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
     end
 end
 

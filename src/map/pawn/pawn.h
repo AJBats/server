@@ -365,6 +365,8 @@ namespace pawn
     // invited along takes orders and shows what /check would show, and
     // nothing else.
     auto findManagedPawn(const CCharEntity* PSummoner, const std::string& targetName) -> CCharEntity*;
+    // The same by charid, as the Cardian Link names her: no name to look up
+    auto findManagedPawn(const CCharEntity* PSummoner, uint32 pawnCharID) -> CCharEntity*;
     auto findCommandablePawn(const CCharEntity* PPlayer, const std::string& targetName) -> CCharEntity*;
 
     // Names of every live pawn this character commands, sorted by name: the

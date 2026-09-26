@@ -27,6 +27,7 @@
 #include "world.h"
 #include "pawn_controller.h"
 #include "gambit_text.h"
+#include "link_api.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 #include "spell_bank.h"
@@ -252,6 +253,8 @@ class PawnModule : public CPPModule
     void OnInit() override
     {
         pawn::cleanupStaleRows();
+        // The cardian API's messages on the Cardian Link (link_api.cpp)
+        pawn::linkapi::registerHandlers();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
         // The MP bank's samplers, a Lua library (RESEARCH §12.13)
@@ -523,9 +526,10 @@ class PawnModule : public CPPModule
         };
 
         // The !cardian command's replies, over the Cardian Link when this
-        // character's addon is bound to one: '#cd tag ...' chat lines become
-        // 'cd tag ...' link lines. false = no link; the command then prints
-        // to chat for a human typing it.
+        // character's addon is bound to one: a '#cd tag ...' chat line goes
+        // as the text of a LEGACY_CD message until its own message exists.
+        // false = no link; the command then prints to chat for a human
+        // typing it.
         lua["CBaseEntity"]["cardianLinkSend"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& line) -> bool
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -533,8 +537,7 @@ class PawnModule : public CPPModule
             {
                 return false;
             }
-            const std::string wire = line.rfind("#cd ", 0) == 0 ? "cd " + line.substr(4) : line;
-            return cardian::link::sendToCharacter(PChar->id, wire);
+            return cardian::link::sendLegacy(PChar->id, line.rfind("#cd ", 0) == 0 ? std::string_view(line).substr(4) : std::string_view(line));
         };
 
         lua["CBaseEntity"]["cardianAccountPawns"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
@@ -724,12 +727,6 @@ class PawnModule : public CPPModule
         lua["CBaseEntity"]["cardianOwns"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
             return managedPair(PLuaBaseEntity, name).second != nullptr;
-        };
-
-        lua["CBaseEntity"]["cardianGive"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::giveToPawn(PChar, PPawn, slot, qty) : "no such cardian";
         };
 
         lua["CBaseEntity"]["cardianTake"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
@@ -1537,9 +1534,9 @@ class PawnModule : public CPPModule
             }
 
             uint8 landed = 0;
-            if (auto err = pawn::items::giveToPawn(PChar, PPawn, slot, qty, &landed); !err.empty())
+            if (const auto status = pawn::items::giveToPawn(PChar, PPawn, slot, qty, &landed); status != CL_S_OK)
             {
-                return err;
+                return pawn::items::legacyReason(status, PChar, PPawn);
             }
             return pawn::items::useItem(PPawn, landed);
         };

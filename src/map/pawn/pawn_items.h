@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "cardian_link_messages.h"
 #include "common/cbasetypes.h"
 
 #include <string>
@@ -36,17 +37,23 @@ class CCharEntity;
 // charutils path the client's own equip request runs, so job, level and
 // slot rules hold for pawns exactly as they do for players.
 //
-// Every function returns an empty string on success or a short lowercase
-// reason ("no space", "not equippable", ...) the command layer forwards to
-// the addon verbatim.
+// A function with its own Cardian Link message returns the outcome that
+// message carries (CL_S_*, cardian_link_protocol.h), which the addon words.
+// The rest return an empty string on success or a short lowercase reason
+// ("no space", "not equippable", ...) the command layer forwards to the
+// addon verbatim, until they have messages of their own.
 namespace pawn::items
 {
     // Move qty from the player's LOC_INVENTORY slot into the pawn's
-    // inventory, or back. The item must be idle (not equipped, not in a
-    // bazaar, not mid-transaction); rare/stack rules on the receiving side
-    // are the transaction layer's. landedSlot, when given, receives the
-    // pawn-side slot the stack arrived in (for give-and-use chaining).
-    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> std::string;
+    // inventory. The item must be idle (not equipped, not in a bazaar, not
+    // mid-transaction); rare/stack rules on the receiving side are the
+    // transaction layer's. landedSlot, when given, receives the pawn-side
+    // slot the stack arrived in (for give-and-use chaining). CL_S_OK or why not.
+    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> uint16;
+
+    // A transfer's outcome in the old protocol's words, for the verbs still
+    // on it (take, giveuse). Leaves with the text protocol.
+    auto legacyReason(uint16 status, const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string;
 
     // Retail's auto-sort is a client option: the client asks for a stack
     // merge whenever an item lands. A cardian has no client, so the server
@@ -56,6 +63,7 @@ namespace pawn::items
     // its anti-cheat and its refresh packet.
     auto tidyStacks(CCharEntity* PPawn) -> uint8;
     auto tidyContainer(CCharEntity* PPawn, uint8 location) -> uint8;
+    // The same move back, from her inventory slot to the player's
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
     // Gil across, as the trade window's gil line moves it: to the pawn, or
     // back from her. Within trading reach, both sides or neither

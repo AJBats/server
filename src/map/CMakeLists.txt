@@ -54,6 +54,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rest_policy.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cure_readiness.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/spell_movement.h # CARDIAN: spell range and sight approach
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/link_api.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/link_api.h
 )
 
 set(MAP_CORE_SOURCES
@@ -92,6 +94,8 @@ set(MAP_CORE_SOURCES
     # CARDIAN: addon link listener, core because map_engine starts it
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link_messages.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cardian_link_protocol.h
     # CARDIAN: the map's real players as the pawn code asks after them, core because map_engine hands it the sessions
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/players.h

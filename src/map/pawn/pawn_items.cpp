@@ -20,6 +20,7 @@
 */
 
 #include "pawn_items.h"
+#include "cardian_link_messages.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 
@@ -66,37 +67,37 @@ namespace
         uint8  landedSlot   = 0;
         uint16 landedItemId = 0;
 
-        auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> std::string
+        auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> uint16
         {
             auto* storage = PSender->getStorage(LOC_INVENTORY);
             CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
 
             if (PItem == nullptr || PItem->getQuantity() == 0)
             {
-                return "no item in that slot";
+                return CL_S_NO_ITEM;
             }
             if (PItem->isType(ITEM_CURRENCY))
             {
-                return "gil cannot be transferred";
+                return CL_S_GIL_NOT_AN_ITEM;
             }
             this->landedItemId = PItem->getID();
             if (PItem->state() == ItemState::Equipped)
             {
-                return "item is equipped";
+                return CL_S_ITEM_EQUIPPED;
             }
             if (qty == 0 || qty > PItem->getQuantity())
             {
-                return "bad quantity";
+                return CL_S_BAD_QUANTITY;
             }
             if (!this->claim(PSender, PItem).isSet())
             {
-                return "item is busy";
+                return CL_S_ITEM_BUSY;
             }
 
             auto stack = xi::items::clone(*PItem);
             if (!stack)
             {
-                return "item cannot move";
+                return CL_S_ITEM_CANNOT_MOVE;
             }
             stack->setQuantity(qty);
 
@@ -106,20 +107,20 @@ namespace
             if (!landed.has_value())
             {
                 this->rollback();
-                return "no space";
+                return CL_S_NO_SPACE;
             }
             this->landedSlot = *landed;
             if (!this->take(PSender, LOC_INVENTORY, slot, qty))
             {
                 this->rollback();
-                return "item slipped away";
+                return CL_S_ITEM_SLIPPED_AWAY;
             }
             if (!this->commit())
             {
                 this->rollback();
-                return "transfer refused";
+                return CL_S_REFUSED;
             }
-            return {};
+            return CL_S_OK;
         }
 
         // Gil between the same two, as the trade window's gil line moves it:
@@ -190,20 +191,58 @@ namespace pawn::items
     {
         // No item teleportation: a trade reaches pawn.TRADE_RANGE yalms, in
         // the same zone
-        auto outOfReach(const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string
+        auto reach(const CCharEntity* PPlayer, const CCharEntity* PPawn) -> uint16
         {
             if (PPlayer->loc.zone != PPawn->loc.zone)
             {
-                return fmt::format("{} is in another zone", PPawn->getName());
+                return CL_S_OTHER_ZONE;
             }
-            const float range = settings::get<float>("pawn.TRADE_RANGE");
-            if (const float away = distance(PPlayer->loc.p, PPawn->loc.p); away > range)
+            if (distance(PPlayer->loc.p, PPawn->loc.p) > settings::get<float>("pawn.TRADE_RANGE"))
             {
-                return fmt::format("{} is {:.0f} y away, out of trading reach ({:.0f})", PPawn->getName(), away, range);
+                return CL_S_OUT_OF_REACH;
             }
-            return "";
+            return CL_S_OK;
+        }
+
+        // The same refusal worded, for the verbs still on the text protocol
+        auto outOfReach(const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string
+        {
+            const auto status = reach(PPlayer, PPawn);
+            return status == CL_S_OK ? "" : legacyReason(status, PPlayer, PPawn);
         }
     } // namespace
+
+    auto legacyReason(const uint16 status, const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string
+    {
+        switch (status)
+        {
+            case CL_S_OK:
+                return "";
+            case CL_S_OTHER_ZONE:
+                return fmt::format("{} is in another zone", PPawn->getName());
+            case CL_S_OUT_OF_REACH:
+                return fmt::format("{} is {:.0f} y away, out of trading reach ({:.0f})", PPawn->getName(), distance(PPlayer->loc.p, PPawn->loc.p),
+                                   settings::get<float>("pawn.TRADE_RANGE"));
+            case CL_S_NO_ITEM:
+                return "no item in that slot";
+            case CL_S_GIL_NOT_AN_ITEM:
+                return "gil cannot be transferred";
+            case CL_S_ITEM_EQUIPPED:
+                return "item is equipped";
+            case CL_S_BAD_QUANTITY:
+                return "bad quantity";
+            case CL_S_ITEM_BUSY:
+                return "item is busy";
+            case CL_S_ITEM_CANNOT_MOVE:
+                return "item cannot move";
+            case CL_S_NO_SPACE:
+                return "no space";
+            case CL_S_ITEM_SLIPPED_AWAY:
+                return "item slipped away";
+            default:
+                return "transfer refused";
+        }
+    }
 
     namespace
     {
@@ -303,17 +342,17 @@ namespace pawn::items
         }
     } // namespace
 
-    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> std::string
+    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> uint16
     {
-        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
+        if (const auto status = reach(PPlayer, PPawn); status != CL_S_OK)
         {
-            return tooFar;
+            return status;
         }
 
         CardianTransfer transfer;
 
-        auto result = transfer.move(PPlayer, PPawn, slot, qty);
-        if (!result.empty())
+        const auto result = transfer.move(PPlayer, PPawn, slot, qty);
+        if (result != CL_S_OK)
         {
             return result;
         }
@@ -541,7 +580,7 @@ namespace pawn::items
         {
             return tooFar;
         }
-        return CardianTransfer().move(PPawn, PPlayer, slot, qty);
+        return legacyReason(CardianTransfer().move(PPawn, PPlayer, slot, qty), PPlayer, PPawn);
     }
 
     auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, const uint32 amount, const bool toPawn) -> std::string

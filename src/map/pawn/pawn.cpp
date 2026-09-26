@@ -2374,12 +2374,16 @@ namespace pawn
             return nullptr;
         }
 
-        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
-        if (targetCharID == 0 || summonerOf(targetCharID) != PSummoner->id)
+        return findManagedPawn(PSummoner, charutils::getCharIdFromName(targetName));
+    }
+
+    auto findManagedPawn(const CCharEntity* PSummoner, const uint32 pawnCharID) -> CCharEntity*
+    {
+        if (PSummoner == nullptr || pawnCharID == 0 || summonerOf(pawnCharID) != PSummoner->id)
         {
             return nullptr;
         }
-        return findPawn(targetCharID);
+        return findPawn(pawnCharID);
     }
 
     namespace
