@@ -54,6 +54,9 @@
 --       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the default rows of the job she holds now
+--       ahlist <name> <eqslot>           the Auction House screen: what is on sale that the player
+--                                        (by his own name) or a cardian of his could wear in the slot
+--                                        (ahl.b <name> <eqslot>, ahl chunks, ahl.e)
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -188,39 +191,92 @@ for name, g in pairs(guards) do
     table.insert(guardsByZone[g.zone], name)
 end
 
-local kGuardReach = 8 -- yalms
-
--- The nearest guard within reach of the player, or nil: { npc, name,
--- nation, type } -- nearest, because a consulate stands its guards
--- together. Asked once a second by the roster line, so the answer is kept
--- for two seconds per player; the zone resolves names from a cache of
--- its own.
-local nearCache = {}
-local function guardNear(player)
+-- The nearest NPC of a kind within reach of the player, or nil: { npc,
+-- name }. namesIn(zone name) lists the names to look for in his zone, nil
+-- for none: the zone's query warns in the map log at every miss, so only
+-- names that live there are asked for. Every roster line asks, so the
+-- answer is kept for two seconds per player in `cache`; the zone resolves
+-- names from a cache of its own.
+local function nearestNpc(player, cache, namesIn, reach)
     local id  = player:getID()
     local now = os.time()
-    local c   = nearCache[id]
+    local c   = cache[id]
     if c ~= nil and now - c.at < 2 then
-        return c.guard
+        return c.found
     end
 
-    local found, nearest = nil, kGuardReach
-    local names = guardsByZone[player:getZoneName()]
-    if names ~= nil then
-        local zone = player:getZone()
+    local found, nearest = nil, reach
+    local names = namesIn(player:getZoneName())
+    local zone  = player:getZone()
+    if names ~= nil and zone ~= nil then
         for _, name in ipairs(names) do
             for _, npc in pairs(zone:queryEntitiesByName(name)) do
                 local away = player:checkDistance(npc)
                 if away <= nearest then
-                    local g = guards[name]
-                    found   = { npc = npc, name = name, nation = g.nation, type = g.type }
+                    found   = { npc = npc, name = name }
                     nearest = away
                 end
             end
         end
     end
-    nearCache[id] = { at = now, guard = found }
+    cache[id] = { at = now, found = found }
     return found
+end
+
+local kGuardReach = 8 -- yalms
+
+-- The nearest guard within reach of the player, or nil: { npc, name,
+-- nation, type } -- nearest, because a consulate stands its guards together
+local guardCache = {}
+local function guardNear(player)
+    local near = nearestNpc(player, guardCache, function (zoneName) return guardsByZone[zoneName] end, kGuardReach)
+    if near == nil then
+        return nil
+    end
+    local g = guards[near.name]
+    return { npc = near.npc, name = near.name, nation = g.nation, type = g.type }
+end
+
+-- The Auction House screen's reach (ROADMAP L) ------------------------------
+-- The player opens the screen standing by an auction counter, as he opens
+-- the game's own; a member of his party shops only while she stands by
+-- the same counter. Every auction house is counters of one name.
+local kCounterReach = 8  -- yalms, the player to a counter (a gate guard's reach)
+local kShopReach    = 15 -- yalms, a member to the counter the player stands at
+
+-- The zones with an auction house, found once each: those with a script
+-- for its counters
+local kCounterNames = { 'Auction_Counter' }
+local counterZones  = {}
+local function countersIn(zoneName)
+    if counterZones[zoneName] == nil then
+        local f = io.open(string.format('scripts/zones/%s/npcs/Auction_Counter.lua', zoneName), 'r')
+        counterZones[zoneName] = f ~= nil
+        if f ~= nil then
+            f:close()
+        end
+    end
+    return counterZones[zoneName] and kCounterNames or nil
+end
+
+-- The nearest counter within reach of the player, or nil
+local counterCache = {}
+local function counterNear(player)
+    local near = nearestNpc(player, counterCache, countersIn, kCounterReach)
+    return near ~= nil and near.npc or nil
+end
+
+-- Is this member by the counter the player stands at? The player himself
+-- is, by being within reach of one
+local function byCounter(player, targ)
+    local counter = counterNear(player)
+    if counter == nil then
+        return false
+    end
+    if targ:getID() == player:getID() then
+        return true
+    end
+    return targ:getZoneID() == player:getZoneID() and targ:checkDistance(counter) <= kShopReach
 end
 
 -- The guard's stock tables, as conquest.lua writes them: one entry per
@@ -341,8 +397,9 @@ end
 
 -- One roster line: her jobs, health, TP, how far she is from her next
 -- level, whether a gate guard is within the player's reach (the
--- Conquest exchange row on her page), and her rest as the command
--- window shows it. Both the roster list and a single
+-- Conquest exchange row on her page), her rest as the command window
+-- shows it, and whether she stands by the auction counter the player
+-- stands at (the Auction House screen's names). Both the roster list and a single
 -- sync send it, so a screen sees the same fields either way. Experience
 -- comes from the Cardian binding -- upstream has no getter for it or for
 -- the level's cost.
@@ -350,7 +407,7 @@ local function pawnLine(player, name, targ)
     local xp    = player:cardianExp(name)
     local guard = guardNear(player) ~= nil
     local rest  = player:cardianRestState(name) or {}
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d',
+    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d %d',
         name,
         targ:getMainJob(), targ:getMainLvl(),
         targ:getSubJob(), targ:getSubLvl(),
@@ -361,7 +418,8 @@ local function pawnLine(player, name, targ)
         guard and 1 or 0,
         player:cardianWaiting(name) and 1 or 0,
         player:cardianOwns(name) and 1 or 0, targ:getZoneName(),
-        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0)
+        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0,
+        byCounter(player, targ) and 1 or 0)
 end
 
 local function sendPawnLine(player, name)
@@ -492,6 +550,51 @@ local function cpBuy(player, name, option)
             or 'the guard would not sell that to her'
     end
     return ''
+end
+
+-- The Auction House screen's list for one member and one slot: 'ahl.b
+-- <name> <eqslot>', 'ahl <name> <eqslot> id:level:stock:going:category,...'
+-- chunks, 'ahl.e <name> <eqslot>'; refused, 'err ahlist <name> <eqslot>
+-- <why>', so the screen shows why under that member and slot. The player
+-- asks for himself by his own name.
+local function sendAuctionList(player, name, eqslot)
+    local function refuse(why)
+        reply(player, string.format('#cd err ahlist %s %d %s', name, eqslot, why))
+    end
+
+    local targ = name == player:getName() and player or ownedCardian(player, name)
+    if targ == nil then
+        refuse('no such cardian')
+        return
+    end
+    if counterNear(player) == nil then
+        refuse('not by an auction counter')
+        return
+    end
+    if not byCounter(player, targ) then
+        refuse(string.format('%s is too far away to shop at the auction house', name))
+        return
+    end
+
+    local list = player:cardianAuctionList(name, eqslot) or {}
+    reply(player, string.format('#cd ahl.b %s %d', name, eqslot))
+    local buf, size = {}, 0
+    local function flush()
+        if #buf > 0 then
+            reply(player, string.format('#cd ahl %s %d %s', name, eqslot, table.concat(buf, ',')))
+        end
+        buf, size = {}, 0
+    end
+    for _, l in ipairs(list) do
+        local entry = string.format('%d:%d:%d:%d:%d', l.id, l.level, l.stock, l.going, l.category)
+        if size + #entry > 1700 then
+            flush()
+        end
+        buf[#buf + 1] = entry
+        size = size + #entry + 1
+    end
+    flush()
+    reply(player, string.format('#cd ahl.e %s %d', name, eqslot))
 end
 
 -- The three read-only pages under the cardian's menu: her profile, her
@@ -687,9 +790,11 @@ local function applyEquipSet(player, name, manifest)
     sendTouchedWardrobes(player, name, before, extra)
 end
 
+-- 'list.b <count> <by a counter>': the player's own reach rides on the
+-- roster's head, so the Menu's Auction House row shows with no cardian
 local function sendList(player)
     local names = player:cardianNames()
-    reply(player, '#cd list.b ' .. #names)
+    reply(player, string.format('#cd list.b %d %d', #names, counterNear(player) ~= nil and 1 or 0))
     for _, name in ipairs(names) do
         local targ = GetPlayerByName(name)
         if targ then
@@ -1082,6 +1187,8 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd ok invite')
         end
+    elseif verb == 'ahlist' and name and args[3] then
+        sendAuctionList(player, name, tonumber(args[3]) or 0)
     elseif verb == 'cpshop' and name then
         sendCpShop(player, name)
     elseif verb == 'cpbuy' and name and args[3] then
@@ -1239,7 +1346,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <eqslot> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
     end
 end
 

@@ -19,6 +19,7 @@
 ===========================================================================
 */
 
+#include "auction.h"
 #include "cardian_link.h"
 #include "engage_math.h"
 #include "pawn.h"
@@ -798,6 +799,34 @@ class PawnModule : public CPPModule
                 entry["loc"]  = bag.location;
                 entry["size"] = bag.size;
                 entry["used"] = bag.used;
+                result.add(entry);
+            }
+            return result;
+        };
+
+        // The Auction House screen (ROADMAP L): what the auction house has,
+        // in stock or sold out, that a member of his party could wear in an
+        // equipment slot -- the player
+        // himself, or a cardian of his to manage (a wild one's gear is the
+        // world's) -- each { id, level, stock, going, category }; nil for anyone else
+        lua["CBaseEntity"]["cardianAuctionList"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
+        {
+            auto*        PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            CCharEntity* PWho  = PChar != nullptr && PChar->getName() == name ? PChar : managedPair(PLuaBaseEntity, name).second;
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto result = ::lua.create_table();
+            for (const auto& listing : pawn::auction::wearableAtAuction(PWho, equipSlot))
+            {
+                auto entry        = ::lua.create_table();
+                entry["id"]       = listing.itemId;
+                entry["level"]    = listing.level;
+                entry["stock"]    = listing.stock;
+                entry["going"]    = listing.going;
+                entry["category"] = listing.category;
                 result.add(entry);
             }
             return result;
