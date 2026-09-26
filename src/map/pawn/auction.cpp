@@ -23,6 +23,7 @@
 #include "pawn_items.h"
 
 #include "common/database.h"
+#include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
 
@@ -32,6 +33,7 @@
 #include "item_container.h"
 #include "items/item_equipment.h"
 #include "items/item_weapon.h"
+#include "items/transaction.h"
 #include "items/transactions/item_claim.h"
 #include "packets/c2s/0x04e_auc.h"
 #include "trait.h"
@@ -134,16 +136,79 @@ namespace pawn::auction
             return PGil != nullptr ? PGil->getQuantity() : 0;
         }
 
-        // Is there a listing at or under the bid? Asked only after a purchase
-        // came to nothing, to tell a bid too low from a purchase that failed;
-        // the answer is never shown as a price
+        // The shared purchase's work in one transaction across both
+        // characters, as pawn_items' CardianTransfer moves gil between two:
+        // her share and his paid, her piece given, one commit or one rollback
+        class SharedPurchase final : public Transaction
+        {
+        public:
+            ~SharedPurchase() override
+            {
+                this->rollbackIfOpen();
+            }
+
+            auto settle(CCharEntity* PChar, CCharEntity* PPurse, const uint32 hers, const uint32 his, const uint16 itemId, const uint32 quantity) -> bool
+            {
+                return (hers == 0 || this->pay(PChar, hers)) &&
+                       (his == 0 || this->pay(PPurse, his)) &&
+                       this->give(PChar, LOC_INVENTORY, itemId, quantity).has_value();
+            }
+
+        protected:
+            // give and pay above already applied and recorded the work
+            auto doCommit() -> bool override
+            {
+                return true;
+            }
+
+            void doRollback() override
+            {
+            }
+        };
+
+        // A cardian's purchase with the player's purse behind hers (the user,
+        // 2026-09-26: gil moves only on a won bid): the game's own purchase
+        // copied (auctionutils::PurchasingItems) -- the cheapest listing at or
+        // under the bid marked sold to her at the bid, the payment and her
+        // piece in one database transaction -- with the payment split, hers
+        // first and `fromPurse` of it his. All of it, or none. A copy, so
+        // compare it with PurchasingItems at every merge from base
+        auto purchaseShared(CCharEntity* PChar, CCharEntity* PPurse, const uint16 itemId, const bool stack, const uint32 quantity, const uint32 price, const uint32 fromPurse) -> bool
+        {
+            SharedPurchase transaction;
+            const auto     success = db::transaction(
+                [&]()
+                {
+                    const auto rset = db::preparedStmt("UPDATE auction_house SET buyer = ?, buyer_name = ?, sale = ?, sell_date = ? WHERE itemid = ? AND buyer_name IS NULL "
+                                                       "AND stack = ? AND price <= ? ORDER BY price LIMIT 1",
+                                                       PChar->id,
+                                                       PChar->getName(),
+                                                       price,
+                                                       earth_time::timestamp(),
+                                                       itemId,
+                                                       stack ? 1 : 0,
+                                                       price);
+                    if (rset && rset->rowsAffected() && transaction.settle(PChar, PPurse, price - fromPurse, fromPurse, itemId, quantity))
+                    {
+                        return;
+                    }
+                    throw std::runtime_error(fmt::format("auction: {} could not buy item {} at {}", PChar->getName(), itemId, price));
+                });
+            return success && transaction.commit();
+        }
+
+        // Is there a listing at or under the bid? Asked before a purchase is
+        // tried, and never shown as a price: the answer to a bid is the same
+        // either way (the blind auction house), only no purchase is tried
+        // that cannot win -- the game's own logs every failed one as critical.
+        // A query that fails says yes: the purchase is tried and answers
         auto listedAtOrUnder(const uint16 itemId, const bool stack, const uint32 price) -> bool
         {
             const auto rset = db::preparedStmt("SELECT 1 FROM auction_house WHERE itemid = ? AND stack = ? AND buyer_name IS NULL AND price <= ? LIMIT 1",
                                                itemId,
                                                stack ? 1 : 0,
                                                price);
-            return rset && rset->next();
+            return !rset || rset->next();
         }
     } // namespace
 
@@ -364,36 +429,32 @@ namespace pawn::auction
             return refuse("it is Rare, and one is already owned");
         }
 
-        // The shared purse: what she lacks, from his gil to hers, just
-        // before the purchase and back if it is not won
-        if (shortfall > 0)
+        if (!listedAtOrUnder(itemId, stack, price))
         {
-            if (const auto err = pawn::items::handGil(PPurse, PChar, shortfall); !err.empty())
-            {
-                return refuse("the purse: " + err);
-            }
+            return refuse("nothing at that price or less");
         }
 
         const auto before = slotsWith(PChar, LOC_INVENTORY, itemId);
 
-        GP_AUC_PARAM_BID param{};
-        param.BidPrice   = price;
-        param.ItemNo     = itemId;
-        param.ItemStacks = stack ? 0 : 1; // the purchase reads 0 as a whole stack, 1 as one piece
-        if (!auctionutils::PurchasingItems(PChar, param))
+        // A cardian buys with the purse behind her in one transaction; the
+        // player through the game's own purchase, its packets to his client
+        // and all
+        bool bought = false;
+        if (shared)
         {
-            // A bid too low is the usual answer; with a listing there at or
-            // under it, the purchase itself failed (busy gil, the database)
-            std::string why = listedAtOrUnder(itemId, stack, price) ? "the purchase failed; try again" : "nothing at that price or less";
-            if (shortfall > 0)
-            {
-                if (const auto err = pawn::items::handGil(PChar, PPurse, shortfall); !err.empty())
-                {
-                    ShowErrorFmt("auction: {} could not hand back {} gil to {} after a lost bid: {}", PChar->getName(), shortfall, PPurse->getName(), err);
-                    why += fmt::format("; the {} gil from your purse stayed with {} ({})", shortfall, PChar->getName(), err);
-                }
-            }
-            return refuse(why);
+            bought = purchaseShared(PChar, PPurse, itemId, stack, quantity, price, shortfall);
+        }
+        else
+        {
+            GP_AUC_PARAM_BID param{};
+            param.BidPrice   = price;
+            param.ItemNo     = itemId;
+            param.ItemStacks = stack ? 0 : 1; // the purchase reads 0 as a whole stack, 1 as one piece
+            bought           = auctionutils::PurchasingItems(PChar, param);
+        }
+        if (!bought)
+        {
+            return refuse("the purchase failed; try again"); // a listing was there: busy gil, the database, or another buyer first
         }
         result.fromPurse = shortfall;
 

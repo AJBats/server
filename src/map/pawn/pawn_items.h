@@ -61,10 +61,6 @@ namespace pawn::items
     // back from her. Within trading reach, both sides or neither
     auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, uint32 amount, bool toPawn) -> std::string;
 
-    // The same move, reach already judged by the caller (the Auction House's
-    // shared purse: both by the same counter): both sides or neither
-    auto handGil(CCharEntity* PFrom, CCharEntity* PTo, uint32 amount) -> std::string;
-
     // Sort one of her containers: partial stacks merged, then every stack
     // compacted from slot 1 in item-id order, fuller stacks first. The
     // item objects move, so worn gear stays worn; the saved equip rows and

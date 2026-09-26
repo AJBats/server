@@ -103,15 +103,18 @@ namespace pawn::auction
         uint32      fromPurse = 0;
     };
 
-    // PChar bids `price` for one piece, or one stack, through the game's
-    // own purchase (auctionutils::PurchasingItems): the cheapest listing at
-    // or under the bid is hers, and she pays the bid, as on retail. Won, the
+    // PChar bids `price` for one piece, or one stack, as the game's own
+    // purchase does (auctionutils::PurchasingItems): the cheapest listing at
+    // or under the bid is hers, and she pays the bid, as on retail. The
+    // player buys through PurchasingItems itself; a cardian with his purse
+    // behind hers through a copy of it that pays from both. Won, the
     // piece goes on from her inventory to `location` (the inventory, or a
     // bag she carries into the field), and with `equip` she wears it in
     // equipSlot -- from the inventory or a wardrobe only. What would refuse
     // the purchase is judged first, so the refusal says why. PPurse, when
     // it is not PChar (the player, for a cardian of his), is the shared
-    // purse: her gil first, and what she lacks is handed from his just
-    // before the purchase, and handed back if it is not won.
+    // purse: her gil first, the rest his, paid in the purchase's own
+    // transaction, so no gil moves unless the piece is won. With nothing
+    // listed at or under the bid, no purchase is tried.
     auto bid(CCharEntity* PChar, CCharEntity* PPurse, uint16 itemId, bool stack, uint32 price, uint8 location, uint8 equipSlot, bool equip) -> BidResult;
 } // namespace pawn::auction

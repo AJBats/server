@@ -554,12 +554,7 @@ namespace pawn::items
         {
             return tooFar;
         }
-        return toPawn ? handGil(PPlayer, PPawn, amount) : handGil(PPawn, PPlayer, amount);
-    }
-
-    auto handGil(CCharEntity* PFrom, CCharEntity* PTo, const uint32 amount) -> std::string
-    {
-        return CardianTransfer().moveGil(PFrom, PTo, amount);
+        return toPawn ? CardianTransfer().moveGil(PPlayer, PPawn, amount) : CardianTransfer().moveGil(PPawn, PPlayer, amount);
     }
 
     auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string
