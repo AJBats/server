@@ -221,27 +221,31 @@ namespace pawn::items
             LOC_MOGSATCHEL,
             LOC_MOGSACK,
         };
+    } // namespace
 
-        auto isWardrobe(const uint8 location) -> bool
+    auto isWardrobe(const uint8 location) -> bool
+    {
+        return location == LOC_WARDROBE || (location >= LOC_WARDROBE2 && location <= LOC_WARDROBE8);
+    }
+
+    auto usableContainer(CCharEntity* PPawn, const uint8 location) -> bool
+    {
+        if (location == LOC_INVENTORY)
         {
-            return location == LOC_WARDROBE || (location >= LOC_WARDROBE2 && location <= LOC_WARDROBE8);
+            return true;
         }
-
-        auto usableContainer(CCharEntity* PPawn, const uint8 location) -> bool
+        for (const auto& bag : bags(PPawn))
         {
-            if (location == LOC_INVENTORY)
+            if (bag.location == location)
             {
                 return true;
             }
-            for (const auto& bag : bags(PPawn))
-            {
-                if (bag.location == location)
-                {
-                    return true;
-                }
-            }
-            return false;
         }
+        return false;
+    }
+
+    namespace
+    {
 
         // An enchanted item's recast is keyed by the slot and container it
         // was equipped from; a worn piece that changes slots takes the entry
@@ -550,7 +554,12 @@ namespace pawn::items
         {
             return tooFar;
         }
-        return toPawn ? CardianTransfer().moveGil(PPlayer, PPawn, amount) : CardianTransfer().moveGil(PPawn, PPlayer, amount);
+        return toPawn ? handGil(PPlayer, PPawn, amount) : handGil(PPawn, PPlayer, amount);
+    }
+
+    auto handGil(CCharEntity* PFrom, CCharEntity* PTo, const uint32 amount) -> std::string
+    {
+        return CardianTransfer().moveGil(PFrom, PTo, amount);
     }
 
     auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string

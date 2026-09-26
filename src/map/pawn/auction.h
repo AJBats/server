@@ -23,6 +23,7 @@
 
 #include "common/cbasetypes.h"
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -34,23 +35,28 @@ class CCharEntity;
 // price is never told, only how many are listed and what the last sales paid.
 namespace pawn::auction
 {
-    // One piece of gear the auction house has listed singly
+    // One piece of gear in one form the auction house lists it in: singly,
+    // or by the stack (ammunition), each a row of its own as on the game's
+    // own auction house
     struct Listing
     {
-        uint16 itemId   = 0;
-        uint8  level    = 0; // the level it asks for
-        uint32 stock    = 0; // how many are listed now; 0 when sold out
-        uint32 going    = 0; // the going rate; 0 when nothing has sold
-        uint8  category = 0; // the auction house's own category (xi.itemAHCategory)
+        uint16 itemId    = 0;
+        uint8  level     = 0; // the level it asks for
+        uint32 stock     = 0; // how many are listed now in this form; 0 when sold out
+        uint32 going     = 0; // the going rate in this form; 0 when nothing has sold
+        uint8  category  = 0; // the auction house's own category (xi.itemAHCategory)
+        bool   stack     = false;
+        uint32 stackSize = 1; // how many pieces the form buys
     };
 
     // What PChar could wear in equipSlot now -- her main job, her level,
     // her race, as the equip handler weighs them -- among every item the
-    // auction house has ever listed singly, in stock or sold out, the shelf
-    // its own browse shows (search.OMIT_NO_HISTORY). By the auction house's
-    // categories in its own order (a slot like Ammo mixes ammunition with
-    // fishing gear), and within one the highest level first, then the
-    // dearest (the census wardrobe's order, ROADMAP D2).
+    // auction house has ever listed, in stock or sold out, the shelf its own
+    // browse shows (search.OMIT_NO_HISTORY), one row per form it has been
+    // listed in. By the auction house's categories in its own order (a slot
+    // like Ammo mixes ammunition with fishing gear), and within one the
+    // highest level first, then the dearest by the piece (the census
+    // wardrobe's order, ROADMAP D2), an item's single row before its stack.
     auto wearableAtAuction(CCharEntity* PChar, uint8 equipSlot) -> std::vector<Listing>;
 
     // The crowd's going rate for each item (tools/economy/market.py,
@@ -60,4 +66,52 @@ namespace pawn::auction
     // `seed_history`). An item with no sale is absent. Copied, not shared:
     // tech debt to pay back if the two drift (the user, 2026-09-26).
     auto goingRates(const std::vector<uint16>& itemIds, bool stack) -> std::unordered_map<uint16, uint32>;
+
+    // One sale off an item's history
+    struct Sale
+    {
+        uint32      date  = 0; // when it sold, Unix time
+        uint32      price = 0; // what the buyer paid (his bid)
+        std::string seller;
+        std::string buyer;
+    };
+
+    // What the game's own auction house shows of an item in one form,
+    // singly or by the stack: its stock and its last ten sales, newest
+    // first; and the going rate they make
+    struct History
+    {
+        uint32            stock = 0;
+        uint32            going = 0;
+        std::vector<Sale> sales;
+    };
+
+    auto history(uint16 itemId, bool stack) -> History;
+
+    // What a bid came to. Won: where the piece is and whether she wears
+    // it, how much of the price the purse gave, and `note` says what fell
+    // short of the asking (it stayed in the inventory, she could not wear
+    // it). Not won: `refused` says why -- "nothing at that price or less"
+    // when the auction house had no listing at or under the bid.
+    struct BidResult
+    {
+        bool        won = false;
+        std::string refused;
+        std::string note;
+        uint8       location  = 0;
+        bool        equipped  = false;
+        uint32      fromPurse = 0;
+    };
+
+    // PChar bids `price` for one piece, or one stack, through the game's
+    // own purchase (auctionutils::PurchasingItems): the cheapest listing at
+    // or under the bid is hers, and she pays the bid, as on retail. Won, the
+    // piece goes on from her inventory to `location` (the inventory, or a
+    // bag she carries into the field), and with `equip` she wears it in
+    // equipSlot -- from the inventory or a wardrobe only. What would refuse
+    // the purchase is judged first, so the refusal says why. PPurse, when
+    // it is not PChar (the player, for a cardian of his), is the shared
+    // purse: her gil first, and what she lacks is handed from his just
+    // before the purchase, and handed back if it is not won.
+    auto bid(CCharEntity* PChar, CCharEntity* PPurse, uint16 itemId, bool stack, uint32 price, uint8 location, uint8 equipSlot, bool equip) -> BidResult;
 } // namespace pawn::auction

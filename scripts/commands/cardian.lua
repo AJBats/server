@@ -57,6 +57,11 @@
 --       ahlist <name> <eqslot>           the Auction House screen: what is on sale that the player
 --                                        (by his own name) or a cardian of his could wear in the slot
 --                                        (ahl.b <name> <eqslot>, ahl chunks, ahl.e)
+--       ahhist <itemid> <0|1>            an item's stock and last ten sales, singly or by the stack
+--                                        (ahh.b, ahh, ahh.e)
+--       ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq>  bid for one piece (or one
+--                                        stack), send it to a bag (loc), and wear it in eqslot -- ahb
+--                                        <seq> when won, err ahbid <seq> when not
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -553,8 +558,9 @@ local function cpBuy(player, name, option)
 end
 
 -- The Auction House screen's list for one member and one slot: 'ahl.b
--- <name> <eqslot>', 'ahl <name> <eqslot> id:level:stock:going:category,...'
--- chunks, 'ahl.e <name> <eqslot>'; refused, 'err ahlist <name> <eqslot>
+-- <name> <eqslot>', 'ahl <name> <eqslot> id:level:stock:going:category:stack:size,...'
+-- chunks (one entry per form an item is listed in, stack 1 a stack of
+-- `size`), 'ahl.e <name> <eqslot>'; refused, 'err ahlist <name> <eqslot>
 -- <why>', so the screen shows why under that member and slot. The player
 -- asks for himself by his own name.
 local function sendAuctionList(player, name, eqslot)
@@ -586,7 +592,7 @@ local function sendAuctionList(player, name, eqslot)
         buf, size = {}, 0
     end
     for _, l in ipairs(list) do
-        local entry = string.format('%d:%d:%d:%d:%d', l.id, l.level, l.stock, l.going, l.category)
+        local entry = string.format('%d:%d:%d:%d:%d:%d:%d', l.id, l.level, l.stock, l.going, l.category, l.stack and 1 or 0, l.size)
         if size + #entry > 1700 then
             flush()
         end
@@ -595,6 +601,59 @@ local function sendAuctionList(player, name, eqslot)
     end
     flush()
     reply(player, string.format('#cd ahl.e %s %d', name, eqslot))
+end
+
+-- An item's history in one form on the Auction House screen's buy panel:
+-- 'ahh.b <itemid> <stack> <stock> <going>', 'ahh <itemid> <stack>
+-- date:price:seller:buyer,...' (newest first), 'ahh.e <itemid> <stack>'
+local function sendAuctionHistory(player, itemId, stack)
+    local form = stack and 1 or 0
+    local h    = player:cardianAuctionHistory(itemId, stack)
+    reply(player, string.format('#cd ahh.b %d %d %d %d', itemId, form, h.stock, h.going))
+    local parts = {}
+    for _, sale in ipairs(h.sales) do
+        parts[#parts + 1] = string.format('%d:%d:%s:%s', sale.date, sale.price, sale.seller, sale.buyer)
+    end
+    if #parts > 0 then
+        reply(player, string.format('#cd ahh %d %d %s', itemId, form, table.concat(parts, ',')))
+    end
+    reply(player, string.format('#cd ahh.e %d %d', itemId, form))
+end
+
+-- A bid from the buy panel, the player's own or one he places for a
+-- cardian of his (her gil first, then his: the shared purse), for a piece
+-- or a stack: 'ahb <seq> <name> <itemid> <stack> <price> <loc> <equipped>
+-- <from purse> [note]' when won -- where it went, whether it is worn, how
+-- much of the price was his, and what fell short of the asking -- else
+-- 'err ahbid <seq> <why>'. The seq is the addon's number for the bid, so
+-- an answer is never taken for another bid's
+local function auctionBid(player, name, eqslot, itemId, stack, price, loc, equip, seq)
+    local function refuse(why)
+        reply(player, string.format('#cd err ahbid %d %s', seq, why))
+    end
+
+    local targ = name == player:getName() and player or ownedCardian(player, name)
+    if targ == nil then
+        refuse('no such cardian')
+        return
+    end
+    if counterNear(player) == nil then
+        refuse('not by an auction counter')
+        return
+    end
+    if not byCounter(player, targ) then
+        refuse(string.format('%s is too far away to shop at the auction house', name))
+        return
+    end
+
+    local r = player:cardianAuctionBid(name, itemId, stack, price, loc, eqslot, equip)
+    if r == nil then
+        refuse('no such member')
+    elseif not r.won then
+        refuse(r.refused)
+    else
+        reply(player, string.format('#cd ahb %d %s %d %d %d %d %d %d %s', seq, name, itemId, stack and 1 or 0, price, r.location, r.equipped and 1 or 0, r.from_purse, r.note))
+    end
 end
 
 -- The three read-only pages under the cardian's menu: her profile, her
@@ -1197,6 +1256,16 @@ commandObj.onTrigger = function(player, line)
         end
     elseif verb == 'ahlist' and name and args[3] then
         sendAuctionList(player, name, tonumber(args[3]) or 0)
+    elseif verb == 'ahhist' and tonumber(args[2]) then
+        sendAuctionHistory(player, tonumber(args[2]), args[3] == '1')
+    elseif verb == 'ahbid' and name and args[9] then
+        local price = math.floor(tonumber(args[6]) or 0)
+        local seq   = math.floor(tonumber(args[9]) or 0)
+        if price < 1 or price > 999999999 then
+            reply(player, string.format('#cd err ahbid %d no such price', seq))
+        else
+            auctionBid(player, name, tonumber(args[3]) or 0, tonumber(args[4]) or 0, args[5] == '1', price, tonumber(args[7]) or 0, args[8] == '1', seq)
+        end
     elseif verb == 'cpshop' and name then
         sendCpShop(player, name)
     elseif verb == 'cpbuy' and name and args[3] then
@@ -1354,7 +1423,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <eqslot> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <eqslot> | ahhist <itemid> <0|1> | ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
     end
 end
 

@@ -804,15 +804,23 @@ class PawnModule : public CPPModule
             return result;
         };
 
-        // The Auction House screen (ROADMAP L): what the auction house has,
-        // in stock or sold out, that a member of his party could wear in an
-        // equipment slot -- the player
-        // himself, or a cardian of his to manage (a wild one's gear is the
-        // world's) -- each { id, level, stock, going, category }; nil for anyone else
-        lua["CBaseEntity"]["cardianAuctionList"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
+        // The Auction House screen (ROADMAP L) shops for a member of his
+        // party: the player himself, by his own name, or a cardian of his to
+        // manage (a wild one's gear and gil are the world's); nullptr for
+        // anyone else
+        const auto shopper = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> CCharEntity*
         {
-            auto*        PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            CCharEntity* PWho  = PChar != nullptr && PChar->getName() == name ? PChar : managedPair(PLuaBaseEntity, name).second;
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return PChar != nullptr && PChar->getName() == name ? PChar : managedPair(PLuaBaseEntity, name).second;
+        };
+
+        // What the auction house has, in stock or sold out, that the member
+        // could wear in an equipment slot, one entry per form an item is
+        // listed in, each { id, level, stock, going, category, stack, size };
+        // nil for anyone not his to shop for
+        lua["CBaseEntity"]["cardianAuctionList"] = [shopper](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
             if (PWho == nullptr)
             {
                 return sol::lua_nil;
@@ -827,8 +835,57 @@ class PawnModule : public CPPModule
                 entry["stock"]    = listing.stock;
                 entry["going"]    = listing.going;
                 entry["category"] = listing.category;
+                entry["stack"]    = listing.stack;
+                entry["size"]     = listing.stackSize;
                 result.add(entry);
             }
+            return result;
+        };
+
+        // An item's history in one form (singly or by the stack) as the game's
+        // own auction house shows it: { stock, going, sales = { { date,
+        // price, seller, buyer } } }, newest first
+        lua["CBaseEntity"]["cardianAuctionHistory"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 itemId, const bool stack) -> sol::table
+        {
+            const auto h      = pawn::auction::history(itemId, stack);
+            auto       result = ::lua.create_table();
+            result["stock"]   = h.stock;
+            result["going"]   = h.going;
+            auto sales        = ::lua.create_table();
+            for (const auto& sale : h.sales)
+            {
+                auto entry      = ::lua.create_table();
+                entry["date"]   = sale.date;
+                entry["price"]  = sale.price;
+                entry["seller"] = sale.seller;
+                entry["buyer"]  = sale.buyer;
+                sales.add(entry);
+            }
+            result["sales"] = sales;
+            return result;
+        };
+
+        // The member bids for one piece or one stack (pawn::auction::bid), a
+        // cardian with the player's purse behind hers: { won, refused, note,
+        // location, equipped, from_purse }; nil for anyone not his to shop for
+        lua["CBaseEntity"]["cardianAuctionBid"] = [shopper](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint16 itemId, const bool stack,
+                                                            const uint32 price, const uint8 location, const uint8 equipSlot, const bool equip) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto*      PPlayer   = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            const auto r         = pawn::auction::bid(PWho, PPlayer, itemId, stack, price, location, equipSlot, equip);
+            auto       result    = ::lua.create_table();
+            result["won"]        = r.won;
+            result["refused"]    = r.refused;
+            result["note"]       = r.note;
+            result["location"]   = r.location;
+            result["equipped"]   = r.equipped;
+            result["from_purse"] = r.fromPurse;
             return result;
         };
 
