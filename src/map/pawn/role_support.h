@@ -50,10 +50,9 @@ namespace pawn::tactics::role
     // what she can cast and what the bank says it is worth. It feeds the
     // conveyor; the conveyor decides who casts.
 
-    // On her think: cures where the missing HP has piled up to a tier she
-    // has (the biggest in a fight, the smallest between, so nothing
-    // overcures), and the debuffs the bank prices as worth it, while she
-    // is in the fight
+    // On her think: cures where the missing HP has piled up to where her
+    // smallest tier lands whole, and the debuffs the bank prices as worth
+    // it, while she is in the fight
     void think(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, bool engaged, double now);
 
     // Her pace at the spot, one cycle per stretch of fighting: what the

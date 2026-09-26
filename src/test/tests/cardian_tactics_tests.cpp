@@ -242,6 +242,37 @@ namespace
     }
 } // namespace
 
+TEST_CASE("wholeAt: a known heal waits for a quarter more, a floor for twice", "[cardian][tactics][bank]")
+{
+    const auto options = tiers();
+    CHECK(wholeAt(options[0]) == 28);  // 22 x 1.25 = 27.5, rounded
+    CHECK(wholeAt(options[1]) == 79);  // 63 x 1.25 = 78.75
+    CHECK(wholeAt(options[2]) == 260); // a floor of 130, doubled
+}
+
+TEST_CASE("pickWhole: the biggest tier that lands whole, none under the smallest's line", "[cardian][tactics][bank]")
+{
+    auto options = tiers();
+    CHECK(pickWhole(options, 0) == kNoPick);
+    CHECK(pickWhole(options, 27) == kNoPick); // under Cure's line
+    CHECK(pickWhole(options, 28) == 0);
+    CHECK(pickWhole(options, 45) == 0);       // a top-up: Cure, never Cure II's 18 over
+    CHECK(options[0].lands == 22);
+    CHECK(options[0].over == 0);
+    CHECK(pickWhole(options, 78) == 0);
+    CHECK(pickWhole(options, 79) == 1);
+    CHECK(pickWhole(options, 200) == 1);      // Cure III's floor is not yet whole here
+    CHECK(pickWhole(options, 260) == 2);
+
+    // a top-up judges the gap the cures in flight leave: 120 missing, a
+    // Cure II of 63 in the air, 57 left -- Cure fits, Cure II would not
+    CHECK(pickWhole(options, 120 - 63) == 0);
+    CHECK(pickWhole(options, 80 - 63) == kNoPick); // 17 left: nothing lands whole
+
+    std::vector<CureOption> none;
+    CHECK(pickWhole(none, 100) == kNoPick);
+}
+
 TEST_CASE("pickCure: the cheapest tier that covers, else the biggest heal, none when nothing is missing", "[cardian][tactics][bank]")
 {
     auto options = tiers();

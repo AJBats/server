@@ -49,7 +49,9 @@ namespace pawn::tactics
     // referee: rows and the role feed requests, requests merge into needs,
     // a cast in flight is a locked need whether or not anyone fed it (a
     // real player's too), and each need is assigned one caster, who reads
-    // it in her slot's order. It decides who; the caster's controller does
+    // it in her slot's order. A cure need is the one exception to the
+    // lock: another mage tops it up when her cure still lands whole after
+    // the cures in flight (the user, 2026-09-25). It decides who; the caster's controller does
     // the casting. Nothing here outlives a call: the scope's members and
     // role holders are handed in fresh each time, derived from the party
     // pointers the game holds.
@@ -78,8 +80,9 @@ namespace pawn::tactics
         auto feed(const NeedKey& key, Request r, const Scope& scope) -> const Need&;
 
         // Once a tick: the casts in flight read off the members' magic
-        // states (each its own locked need), stale requests withdrawn,
-        // every unlocked need assigned afresh
+        // states (each its own locked need, a cure's heal counted against
+        // its target's gap), stale requests withdrawn, every unlocked need
+        // assigned afresh, then every locked cure need offered as a top-up
         void tick(double now, double life, const Scope& scope);
         void emergency(std::vector<cardian::cure::Choice> choices) { m_emergency = std::move(choices); }
         auto emergencies() const -> std::span<const cardian::cure::Choice> { return m_emergency; }
@@ -123,7 +126,9 @@ namespace pawn::tactics
 
         cardian::tactics::Needs                                m_needs;
         std::vector<cardian::cure::Choice>                      m_emergency;
-        std::unordered_map<uint32, NeedKey>                    m_pending; // caster -> the need her cast in flight is for
-        std::unordered_map<uint32, std::vector<bank::CureTier>> m_tiers;   // caster -> her tiers this tick
+        std::unordered_map<uint32, NeedKey>                    m_pending;  // caster -> the need her cast in flight is for
+        std::unordered_map<uint32, std::vector<bank::CureTier>> m_tiers;    // caster -> her tiers this tick
+        std::unordered_map<uint32, int32>                      m_incoming; // member -> the HP of the cures in flight on her, and the emergency cures chosen for her, this tick
+        std::unordered_map<uint32, std::pair<uint32, int32>>   m_inFlight; // caster -> the member her cure in flight is on, and its HP
     };
 } // namespace pawn::tactics

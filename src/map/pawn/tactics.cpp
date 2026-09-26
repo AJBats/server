@@ -789,7 +789,7 @@ namespace pawn::tactics
                                                              .fedAt  = seconds(timer::now()) },
                                                     scopeOf(PPawn));
         Fed fed;
-        fed.mine = n.assigned == PPawn->id && n.lockedBy == 0;
+        fed.mine = n.assigned == PPawn->id; // a locked need is assigned only as a cure's top-up
         if (fed.mine)
         {
             fed.spell  = static_cast<SpellID>(n.spell);
