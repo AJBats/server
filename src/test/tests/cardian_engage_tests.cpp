@@ -99,8 +99,9 @@ TEST_CASE("engage door: each foe target names its finder", "[cardian][engage]")
     CHECK(finderOf(pawn::G_TARGET_TARGETED_BY_ALLY) == Finder::AllysFight);
     CHECK(finderOf(pawn::G_TARGET_TARGETING_ALLY) == Finder::OnAlly);
     CHECK(finderOf(pawn::G_TARGET_TARGETING_SELF) == Finder::OnSelf);
+    CHECK(finderOf(gambits::G_TARGET::TARGET) == Finder::Any); // `Foe: any` and the foe conditions
     CHECK_FALSE(finderOf(gambits::G_TARGET::SELF).has_value());
-    CHECK_FALSE(finderOf(gambits::G_TARGET::TARGET).has_value());
+    CHECK_FALSE(finderOf(gambits::G_TARGET::PARTY).has_value());
 }
 
 TEST_CASE("engage door: a finder accepts its own kind; targeting ally includes a mob on her", "[cardian][engage]")
@@ -114,6 +115,45 @@ TEST_CASE("engage door: a finder accepts its own kind; targeting ally includes a
     CHECK(accepts(Finder::OnSelf, onSelf()));
     CHECK_FALSE(accepts(Finder::OnSelf, onAlly()));
     CHECK_FALSE(accepts(Finder::OnAlly, Foe{}));
+}
+
+TEST_CASE("engage door: Foe: any accepts every foe of the party's fight, and nothing else", "[cardian][engage]")
+{
+    CHECK(accepts(Finder::Any, leadersTarget()));
+    CHECK(accepts(Finder::Any, allysFight()));
+    CHECK(accepts(Finder::Any, onAlly()));
+    CHECK(accepts(Finder::Any, onSelf()));
+    CHECK_FALSE(accepts(Finder::Any, Foe{}));
+
+    // Its why line borrows the words of the finder that would have found it
+    CHECK(finderFor(leadersTarget()) == Finder::LeadersTarget);
+    CHECK(finderFor(allysFight()) == Finder::AllysFight);
+    CHECK(finderFor(onSelf()) == Finder::OnAlly);
+    CHECK(finderFor(Foe{}) == Finder::Any);
+}
+
+TEST_CASE("engage door: a Foe condition with Attack takes the first foe of the party's fight it holds on", "[cardian][engage]")
+{
+    // `Foe: HP >= 75% -> Attack`: the leader's target is below 75%, the
+    // mob on an ally is fresh; the row takes the fresh one
+    const std::vector<Row> rows{ { 1, gambits::G_TARGET::TARGET, true } };
+    const std::vector<Foe> foes{ leadersTarget(), onAlly() };
+    const auto fresh = [](std::size_t, const std::size_t foe)
+    {
+        return foe == 1;
+    };
+    const auto pick = chooseRow(true, false, rows, foes, fresh);
+    REQUIRE(pick.has_value());
+    CHECK(pick->foe == 1);
+    CHECK(pick->finder == Finder::Any);
+
+    // No foe it holds on: nothing, and a foe outside the party's fight is never one
+    CHECK_FALSE(chooseRow(true, false, rows, std::vector<Foe>{ Foe{} }, always).has_value());
+    CHECK_FALSE(chooseRow(true, false, rows, foes, [](std::size_t, std::size_t) { return false; }).has_value());
+
+    // It claims the mob she is at on the same terms
+    CHECK(claimingRow(true, rows, onSelf(), [](std::size_t) { return true; }).has_value());
+    CHECK_FALSE(claimingRow(true, rows, onSelf(), [](std::size_t) { return false; }).has_value());
 }
 
 TEST_CASE("engage door: the door reads enabled Attack rows only, and none with the master off", "[cardian][engage]")

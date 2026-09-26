@@ -138,20 +138,24 @@ TEST_CASE("tactician line: below the line only her cures, her priced debuffs and
     // Her cures, for someone on the party's side
     CHECK(below(kCureBest) == State::Allows);
     CHECK(below("0|1:50|2:2:2|0") == State::Allows);  // Self: HP < 50% -> Cure II
-    CHECK(below("4|101:0|2:0:1|0") == State::Allows); // Tank: Tactician's choice -> Cure (best)
+    CHECK(below("4|101:0|2:0:1|0") == State::Allows); // Ally: tank, tactician's choice -> Cure (best)
     CHECK(below("3|0:0|2:2:1|0") == State::Allows);   // The player -> Cure
     CHECK(below("2|101:0|2:0:1|0") == State::NotBelow); // a Cure on the mob is no cure of hers
     CHECK(below("10|0:0|2:2:1|0") == State::NotBelow);  // nor one on the dead
 
     // Her priced debuffs, on the mob, by id or by family
-    CHECK(below("2|101:0|2:2:58|0") == State::Allows); // Target: Tactician's choice -> Paralyze
-    CHECK(below("2|1:50|2:2:23|0") == State::Allows);  // Target: HP < 50% -> Dia
-    CHECK(below("2|101:0|2:0:6|0") == State::Allows);  // Target: Tactician's choice -> Dia (best)
+    CHECK(below("2|101:0|2:2:58|0") == State::Allows); // Foe: tactician's choice -> Paralyze
+    CHECK(below("2|1:50|2:2:23|0") == State::Allows);  // Foe: HP < 50% -> Dia
+    CHECK(below("2|101:0|2:0:6|0") == State::Allows);  // Foe: tactician's choice -> Dia (best)
     CHECK(below("1|101:0|2:2:58|0") == State::NotBelow); // Paralyze on a party member
 
-    // The melee of a fight a Foe target finds (decision 19)
+    // Any Foe row's debuff, on her fight when it is of the row's kind
+    CHECK(below("100|0:0|2:2:58|0") == State::Allows); // Foe: party leader's target -> Paralyze
+
+    // The melee of a fight a Foe row finds (decision 19)
     CHECK(below("102|0:0|0:0:0|0") == State::Allows);
     CHECK(below("100|0:0|0:0:0|0") == State::Allows);
+    CHECK(below("2|2:75|0:0:0|0") == State::Allows); // Foe: HP >= 75% -> Attack
 
     // Everything else is struck out there
     CHECK(below("1|0:0|2:2:43|0") == State::NotBelow);  // Protect
@@ -161,6 +165,38 @@ TEST_CASE("tactician line: below the line only her cures, her priced debuffs and
     CHECK(below("2|0:0|1:0:0|0") == State::NotBelow);   // a ranged attack
     CHECK(below(kRest) == State::NotBelow);               // a behaviour row
     CHECK(below("1|0:0|2:0:1+2:2:58|0") == State::NotBelow); // two actions
+}
+
+TEST_CASE("tactician line: an action aimed at the wrong side is a misfit, struck out wherever it sits", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::fitsSide;
+    using cardian::tactician::kTargetEnemy;
+    constexpr uint16 self = 0x0001, party = 0x0002;
+
+    // A Foe condition wants an action for an enemy; Self and Ally one for her side
+    CHECK(fitsSide(gambits::G_TARGET::TARGET, kTargetEnemy));
+    CHECK(fitsSide(pawn::G_TARGET_LEADERS_TARGET, kTargetEnemy));
+    CHECK_FALSE(fitsSide(gambits::G_TARGET::TARGET, self | party));      // Foe: any -> Protect (Cure also carries the enemy flag, for the undead, so it fits)
+    CHECK_FALSE(fitsSide(gambits::G_TARGET::PARTY, kTargetEnemy));       // Ally: status = Sleep -> a weapon skill
+    CHECK_FALSE(fitsSide(gambits::G_TARGET::SELF, kTargetEnemy));        // Self -> Attack
+    CHECK(fitsSide(gambits::G_TARGET::PARTY, self | party));             // Ally: HP < 50% -> Cure
+    CHECK(fitsSide(gambits::G_TARGET::SELF, self));                      // Self -> Stoneskin
+    CHECK(fitsSide(gambits::G_TARGET::PARTY, 0));                        // a behaviour: nothing to judge
+    CHECK(fitsSide(gambits::G_TARGET::TRIGGER_SELF_ACTION_TARGET, kTargetEnemy)); // reads her, acts on the foe
+    CHECK(fitsSide(gambits::G_TARGET::TRIGGER_TARGET_ACTION_SELF, self));         // reads the foe, acts on her
+
+    // A weapon skill or an enemy ability lands on her fight whatever the
+    // row names: under Self that is the row's meaning, under Ally a misfit
+    CHECK(fitsSide(gambits::G_TARGET::SELF, kTargetEnemy, true));        // Self: TP >= 1000 -> a weapon skill
+    CHECK_FALSE(fitsSide(gambits::G_TARGET::PARTY, kTargetEnemy, true)); // Ally: status = Sleep -> a weapon skill
+    CHECK_FALSE(fitsSide(gambits::G_TARGET::SELF, kTargetEnemy));        // Self -> Dia: a spell goes where the row names
+
+    // A misfit is struck out above the line, below it, and as no line at all
+    const auto g = row("1|9:2|0:0:0|0");
+    CHECK(cardian::tactician::stateOf(g, 1, std::nullopt, false) == State::Misfit);
+    CHECK(cardian::tactician::stateOf(g, 3, std::optional<std::size_t>(1), false) == State::Misfit);
+    CHECK(cardian::tactician::struck(State::Misfit));
+    CHECK(cardian::tactician::token(State::Misfit) == "x-side");
 }
 
 TEST_CASE("tactician line: a timer or a chance below the line is struck out", "[cardian][gambits][tactician]")

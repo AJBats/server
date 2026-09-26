@@ -206,7 +206,7 @@ TEST_CASE("row grammar: the tactician's choice condition round-trips", "[cardian
     REQUIRE(formatRow(*back) == text);
 }
 
-TEST_CASE("row pairing: the foe targets are 100 to 103, and an engage row is one with Attack", "[cardian][gambits][engage]")
+TEST_CASE("row pairing: the Foe targets are the foe conditions and the finders 100 to 103, and an engage row is one with Attack", "[cardian][gambits][engage]")
 {
     CHECK_FALSE(isFoeTarget(static_cast<G_TARGET>(99)));
     CHECK(isFoeTarget(pawn::G_TARGET_LEADERS_TARGET));
@@ -215,7 +215,8 @@ TEST_CASE("row pairing: the foe targets are 100 to 103, and an engage row is one
     CHECK(isFoeTarget(pawn::G_TARGET_TARGETING_SELF));
     CHECK_FALSE(isFoeTarget(static_cast<G_TARGET>(104)));
     CHECK_FALSE(isFoeTarget(G_TARGET::SELF));
-    CHECK_FALSE(isFoeTarget(G_TARGET::TARGET)); // her fight, not a foe she has yet to take
+    CHECK_FALSE(isFoeTarget(G_TARGET::PARTY));
+    CHECK(isFoeTarget(G_TARGET::TARGET)); // `Foe: any` and the foe conditions: Target is Foe (RESEARCH §14.13)
 
     CHECK(isEngageRow(*parseRow("100|0:0|0:0:0|0")));
     CHECK_FALSE(isEngageRow(*parseRow("1|1:50|2:0:1|0")));
@@ -233,21 +234,31 @@ TEST_CASE("row pairing: a foe target with Attack stands, under any condition tha
     CHECK(pairing("101|0:0|0:0:0+0:0:0|0").empty());   // Attack twice is still Attack alone
 }
 
-TEST_CASE("row pairing: a foe target goes with Attack only", "[cardian][gambits][engage]")
+TEST_CASE("row pairing: a Foe target takes any action, which then names her fight", "[cardian][gambits][engage]")
 {
-    CHECK_FALSE(pairing("102|0:0|2:0:1|0").empty());         // Cure (best)
-    CHECK_FALSE(pairing("100|0:0|3:2:35|0").empty());        // an ability
-    CHECK_FALSE(pairing("101|0:0|100:6:1|0").empty());       // a behaviour
-    CHECK_FALSE(pairing("103|0:0|4:0:0|0").empty());         // a weapon skill
-    CHECK_FALSE(pairing("100|0:0|0:0:0+2:0:1|0").empty());   // Attack, then a spell
+    CHECK(pairing("102|0:0|2:2:23|0").empty());   // Foe: targeting ally -> Dia
+    CHECK(pairing("100|0:0|3:2:35|0").empty());   // Foe: party leader's target -> Provoke
+    CHECK(pairing("101|0:0|100:6:1|0").empty());  // a behaviour
+    CHECK(pairing("103|0:0|4:0:0|0").empty());    // a weapon skill
+    CHECK(pairing("2|13:0|3:2:35|0").empty());    // Foe: not targeting self -> Provoke
 }
 
-TEST_CASE("row pairing: Attack needs a foe target", "[cardian][gambits][engage]")
+TEST_CASE("row pairing: Attack goes alone on its row; on herself or an ally it stands, and the door never reads it", "[cardian][gambits][engage]")
 {
-    CHECK_FALSE(pairing("0|0:0|0:0:0|0").empty()); // Self
-    CHECK_FALSE(pairing("1|0:0|0:0:0|0").empty()); // a party member
-    CHECK_FALSE(pairing("2|0:0|0:0:0|0").empty()); // her own fight
-    CHECK_FALSE(pairing("3|0:0|0:0:0|0").empty()); // the player
+    CHECK(pairing("2|0:0|0:0:0|0").empty());  // Foe: any
+    CHECK(pairing("2|2:75|0:0:0|0").empty()); // Foe: HP >= 75%, the row the old words refused
+    CHECK_FALSE(pairing("100|0:0|0:0:0+2:0:1|0").empty()); // Attack, then a spell
+
+    // FFXII takes any row: Attack on Self or an Ally is kept (struck out
+    // as a misfit, tactician_line.h), never read by the door
+    for (const auto* spec : { "0|0:0|0:0:0|0", "1|9:2|0:0:0|0", "3|0:0|0:0:0|0" })
+    {
+        const auto g = parseRow(spec);
+        REQUIRE(g.has_value());
+        CHECK(pairingError(*g).empty());
+        CHECK_FALSE(cardian::engage::doorReads(true, true, *g));
+    }
+    CHECK(cardian::engage::doorReads(true, true, *parseRow("2|2:75|0:0:0|0")));
 }
 
 TEST_CASE("row pairing: an Attack row refuses a timer or a chance, which other rows keep", "[cardian][gambits][engage]")
@@ -269,10 +280,10 @@ TEST_CASE("row pairing: an Attack row refuses a timer or a chance, which other r
 
 TEST_CASE("row pairing: every other row stands as it did", "[cardian][gambits][engage]")
 {
-    CHECK(pairing("1|1:50|2:0:1|0").empty());      // Party member: HP below 50% -> Cure (best)
+    CHECK(pairing("1|1:50|2:0:1|0").empty());      // Ally: HP < 50% -> Cure (best)
     CHECK(pairing("0|0:0|100:6:1|0").empty());     // Self -> Rest with the player
     CHECK(pairing("0|0:0|100:11:1|0").empty());    // Self -> Role: Support Mage
-    CHECK(pairing("1|101:0|2:0:1|0").empty());     // Party member: Tactician's choice -> Cure (best)
-    CHECK(pairing("2|2:60|4:0:0|0").empty());      // Target: HP at least 60% -> Best weapon skill
-    CHECK(pairing("2|0:0|1:0:0|0").empty());       // Target -> Ranged attack
+    CHECK(pairing("1|101:0|2:0:1|0").empty());     // Ally: tactician's choice -> Cure (best)
+    CHECK(pairing("2|2:60|4:0:0|0").empty());      // Foe: HP >= 60% -> Weapon skill (best)
+    CHECK(pairing("2|0:0|1:0:0|0").empty());       // Foe: any -> Ranged Attack
 }

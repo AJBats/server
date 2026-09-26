@@ -957,11 +957,16 @@ class PawnModule : public CPPModule
                     entry["group"]   = e.group;
                     entry["targets"] = e.targets;
                     entry["mp"]      = e.mp;
+                    entry["page"]    = e.page;
+                    entry["usable"]  = e.usable;
                     list.add(entry);
                 }
                 return list;
             };
-            result["targets"]    = pack(vocab.targets);
+            result["mjob"]       = vocab.mjob;
+            result["mlvl"]       = vocab.mlvl;
+            result["sjob"]       = vocab.sjob;
+            result["slvl"]       = vocab.slvl;
             result["conditions"] = pack(vocab.conditions);
             result["statuses"]   = pack(vocab.statuses);
             result["actions"]    = pack(vocab.actions);

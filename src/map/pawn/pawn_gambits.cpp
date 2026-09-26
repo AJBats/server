@@ -60,6 +60,15 @@
 #include <list>
 #include <set>
 
+// Spell families run past magic_enum's default range (127): read them all,
+// or familyName says "family 130"
+template <>
+struct magic_enum::customize::enum_range<SPELLFAMILY>
+{
+    static constexpr int min = 0;
+    static constexpr int max = 255;
+};
+
 using namespace gambits;
 
 namespace pawn
@@ -93,6 +102,89 @@ namespace pawn
             xi::Job::GEO,
             xi::Job::RUN,
         };
+
+        static_assert(cardian::tactician::kTargetEnemy == TARGET_ENEMY);
+        static_assert(cardian::tactician::kTargetFriendly == (TARGET_SELF | TARGET_PLAYER_PARTY | TARGET_PLAYER_ALLIANCE | TARGET_PLAYER | TARGET_PLAYER_DEAD |
+                                                              TARGET_PLAYER_PARTY_PIANISSIMO | TARGET_PET | TARGET_PLAYER_PARTY_ENTRUST));
+
+        // A spell family's target flags: its first spell's, read once --
+        // the spell table never changes while the map runs
+        auto familyFlags(const uint32 family) -> uint16
+        {
+            static const auto flags = []
+            {
+                std::array<uint16, 1024> out{};
+                for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
+                {
+                    auto*      PSpell = spell::GetSpell(static_cast<SpellID>(id));
+                    const auto f      = PSpell != nullptr ? static_cast<uint32>(PSpell->getSpellFamily()) : 0;
+                    if (f != 0 && f < out.size() && out[f] == 0)
+                    {
+                        out[f] = PSpell->getValidTarget();
+                    }
+                }
+                return out;
+            }();
+            return family < flags.size() ? flags[family] : 0;
+        }
+
+        // What an action may be aimed at, as its spell, ability or kind says:
+        // 0 when it names nothing fixed (a behaviour, Entrust, an item)
+        auto actionFlags(const Action_t& a) -> uint16
+        {
+            switch (a.reaction)
+            {
+                case G_REACTION::ATTACK:
+                case G_REACTION::RATTACK:
+                case G_REACTION::WS:
+                    return TARGET_ENEMY;
+                case G_REACTION::MA:
+                    switch (a.select)
+                    {
+                        case G_SELECT::SPECIFIC:
+                        {
+                            auto* PSpell = spell::GetSpell(static_cast<SpellID>(a.select_arg));
+                            return PSpell != nullptr ? PSpell->getValidTarget() : 0;
+                        }
+                        case G_SELECT::HIGHEST:
+                        case G_SELECT::LOWEST:
+                            return familyFlags(a.select_arg);
+                        case G_SELECT::RANDOM:
+                        case G_SELECT::MB_ELEMENT:
+                        case G_SELECT::BEST_AGAINST_TARGET:
+                            return TARGET_ENEMY;
+                        case G_SELECT::BEST_INDI:
+                            return TARGET_SELF;
+                        default:
+                            return 0;
+                    }
+                case G_REACTION::JA:
+                {
+                    auto* PAbility = a.select == G_SELECT::SPECIFIC ? ability::GetAbility(static_cast<uint16>(a.select_arg)) : nullptr;
+                    return PAbility != nullptr ? PAbility->getValidTarget() : 0;
+                }
+                default:
+                    return 0;
+            }
+        }
+
+        // Whether every action of a row can be aimed at the side its
+        // condition names (tactician_line.h fitsSide): a misfit is kept,
+        // struck out, and does nothing. Attack is the door's, which reads a
+        // Foe condition alone: on any other it never acts
+        auto rowFits(const Gambit_t& g) -> bool
+        {
+            if (cardian::engage::isEngageRow(g) && !cardian::engage::isFoeTarget(g.target_selector))
+            {
+                return false;
+            }
+            return std::ranges::all_of(g.actions, [&g](const Action_t& a)
+                                       {
+                                           const auto flags      = actionFlags(a);
+                                           const bool onHerFight = a.reaction == G_REACTION::WS || (a.reaction == G_REACTION::JA && (flags & TARGET_ENEMY) != 0);
+                                           return cardian::tactician::fitsSide(g.target_selector, flags, onHerFight);
+                                       });
+        }
 
         auto resonanceOf(const CStatusEffect* PSCEffect) -> std::list<SKILLCHAIN_ELEMENT>
         {
@@ -387,7 +479,7 @@ namespace pawn
             return false;
         }
         const bool own   = !cardian::layers::isWorldRowId(rowId);
-        const auto state = own ? StateOf(static_cast<std::size_t>(row - m_gambits.data()) + 1) : cardian::tactician::stateOf(row->gambit, 1, std::nullopt);
+        const auto state = own ? StateOf(static_cast<std::size_t>(row - m_gambits.data()) + 1) : cardian::tactician::stateOf(row->gambit, 1, std::nullopt, rowFits(row->gambit));
         if (state != cardian::tactician::State::Order)
         {
             return false;
@@ -556,7 +648,16 @@ namespace pawn
             }
             default:
             {
-                // CURILLA is a trust NPC special; PARTY_MULTI is unimplemented upstream too
+                // A finder with any action but Attack (the door's) names her
+                // fight, when her fight is of its kind. CURILLA is a trust NPC
+                // special; PARTY_MULTI is unimplemented upstream too
+                if (const auto finder = cardian::engage::finderOf(selector); finder.has_value())
+                {
+                    if (auto* PMob = FightTarget(); m_PController->FoeOfKind(*finder, PMob))
+                    {
+                        out.push_back(PMob);
+                    }
+                }
                 break;
             }
         }
@@ -594,7 +695,11 @@ namespace pawn
             case G_TARGET::TOP_ENMITY:
                 return member && PTarget == m_PController->GetTopEnmity();
             default:
-                return false;
+            {
+                // A finder names a mob of its kind (FoeOfKind reads, never writes)
+                const auto finder = cardian::engage::finderOf(selector);
+                return finder.has_value() && m_PController->FoeOfKind(*finder, const_cast<CBattleEntity*>(PTarget));
+            }
         }
     }
 
@@ -799,15 +904,25 @@ namespace pawn
                     results.push_back(!PartyHasTank());
                     break;
                 case G_CONDITION::HAS_TOP_ENMITY:
-                {
-                    const auto* PTop = m_PController->GetTopEnmity();
-                    results.push_back(PTop != nullptr && PTop->targid == POwner->targid);
-                    break;
-                }
                 case G_CONDITION::NOT_HAS_TOP_ENMITY:
                 {
-                    const auto* PTop = m_PController->GetTopEnmity();
-                    results.push_back(PTop != nullptr && PTop->targid != POwner->targid);
+                    // On a foe, `Foe: targeting self` / `not targeting self`:
+                    // whether the engaged mob's target is her, as the finder
+                    // reads it. On her own side, whether the member the row
+                    // reads (herself, or an ally) tops her fight's enmity.
+                    // Nothing when nobody is its target
+                    const CBattleEntity* PHated = nullptr;
+                    if (PTrigger->objtype == TYPE_MOB)
+                    {
+                        PHated = PTrigger->PAI->IsEngaged() ? PTrigger->GetBattleTarget() : nullptr;
+                    }
+                    else
+                    {
+                        PHated = m_PController->GetTopEnmity();
+                    }
+                    const auto* PWho = PTrigger->objtype == TYPE_MOB ? static_cast<const CBattleEntity*>(POwner) : PTrigger;
+                    const bool  her  = PHated != nullptr && PHated->targid == PWho->targid;
+                    results.push_back(PHated != nullptr && (predicate.condition == G_CONDITION::HAS_TOP_ENMITY) == her);
                     break;
                 }
                 case G_CONDITION::SC_AVAILABLE:
@@ -1107,13 +1222,13 @@ namespace pawn
         out.reserve(layers.world.size() + layers.own.size());
         for (const auto& row : layers.world)
         {
-            out.push_back(cardian::tactician::stateOf(row.gambit, 1, std::nullopt));
+            out.push_back(cardian::tactician::stateOf(row.gambit, 1, std::nullopt, rowFits(row.gambit)));
         }
         const auto line = cardian::tactician::lineOf(layers.own, [](const GambitRow& row) -> const Gambit_t& { return row.gambit; });
         std::size_t place = 0;
         for (const auto& row : layers.own)
         {
-            out.push_back(cardian::tactician::stateOf(row.gambit, ++place, line));
+            out.push_back(cardian::tactician::stateOf(row.gambit, ++place, line, rowFits(row.gambit)));
         }
         return out;
     }
@@ -1129,7 +1244,7 @@ namespace pawn
         {
             return cardian::tactician::State::Order;
         }
-        return cardian::tactician::stateOf(m_gambits[index - 1].gambit, index, Line());
+        return cardian::tactician::stateOf(m_gambits[index - 1].gambit, index, Line(), rowFits(m_gambits[index - 1].gambit));
     }
 
     auto CGambits::Admits(const uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>
@@ -1144,7 +1259,7 @@ namespace pawn
         {
             const auto& row = m_gambits[place - 1];
             const auto& g   = row.gambit;
-            if (!row.enabled || cardian::tactician::stateOf(g, place, line) != cardian::tactician::State::Allows ||
+            if (!row.enabled || cardian::tactician::stateOf(g, place, line, rowFits(g)) != cardian::tactician::State::Allows ||
                 !cardian::tactician::allowsSpell(g, spell) || !Names(g.target_selector, PTarget) ||
                 now < g.last_used + std::chrono::seconds(g.retry_delay))
             {
@@ -1173,7 +1288,7 @@ namespace pawn
         for (std::size_t place = *line + 1; place <= m_gambits.size(); ++place)
         {
             const auto& row = m_gambits[place - 1];
-            if (row.enabled && cardian::tactician::stateOf(row.gambit, place, line) == cardian::tactician::State::Allows &&
+            if (row.enabled && cardian::tactician::stateOf(row.gambit, place, line, rowFits(row.gambit)) == cardian::tactician::State::Allows &&
                 cardian::tactician::allowsSpell(row.gambit, spell))
             {
                 return true;
@@ -1387,11 +1502,14 @@ namespace pawn
             return out;
         }
 
-        // The target names, by G_TARGET; the vocabulary and the row labels
-        // read from the same table so a picker never renames a row.
+        // A row's target in the words of the gambit review (RESEARCH §14.13),
+        // FFXII's: a side -- Self, Ally or Foe -- then one clause. The four
+        // finders are Foe clauses of their own, and upstream's trust targets,
+        // which the pickers no longer offer, keep a clause naming them so an
+        // older row still reads
         auto targetName(const std::size_t target) -> std::string_view
         {
-            static constexpr std::array<std::string_view, 14> names{ "Self", "Party member", "Target", "The player", "Tank", "Melee", "Ranged", "Casters", "Top enmity", "Curilla", "Dead ally", "Party member", "Self", "Target" };
+            static constexpr std::array<std::string_view, 14> names{ "Self", "Ally", "Foe", "Ally: the player", "Ally: tank", "Ally: melee", "Ally: ranged", "Ally: caster", "Ally: hate holder", "Ally: Curilla", "Ally: status = KO", "Ally", "Self", "Foe" };
             // Cardian's foes around the party (gambit_ids.h)
             switch (target)
             {
@@ -1408,39 +1526,76 @@ namespace pawn
             }
         }
 
-        auto conditionText(const Predicate_t& p) -> std::string
+        // A target that is a side alone, whose clause is the condition's:
+        // Self, Ally, Foe (the old Target), and upstream's aliases of them
+        auto isSide(const std::size_t target) -> bool
         {
-            const auto arg = p.condition_arg;
-            switch (p.condition)
+            switch (static_cast<G_TARGET>(target))
+            {
+                case G_TARGET::SELF:
+                case G_TARGET::PARTY:
+                case G_TARGET::TARGET:
+                case G_TARGET::PARTY_MULTI:
+                case G_TARGET::TRIGGER_SELF_ACTION_TARGET:
+                case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        // A Foe target: its condition's clause is about the foe
+        auto onFoe(const std::size_t target) -> bool
+        {
+            return cardian::engage::isFoeTarget(static_cast<G_TARGET>(target)) || target == static_cast<std::size_t>(G_TARGET::TRIGGER_TARGET_ACTION_SELF);
+        }
+
+        auto statusName(const uint16 id) -> std::string
+        {
+            return id == static_cast<uint16>(xi::StatusEffect::Ko) ? std::string("KO") : titleCase(effects::GetEffectName(id));
+        }
+
+        // A condition's clause, its value given as text: the number or the
+        // status on a row, '*' for the number in a picker entry, nothing for
+        // the status a picker entry leaves to the row's next cell.
+        // Comparisons are FFXII's signs. On a foe, holding hate reads from
+        // the foe's side: whether its target is her
+        auto conditionWords(const G_CONDITION condition, const std::string& value, const bool foe) -> std::string
+        {
+            const auto with = [&value](const std::string_view words)
+            {
+                return value.empty() ? std::string(words) : fmt::format("{} {}", words, value);
+            };
+            switch (condition)
             {
                 case G_CONDITION::ALWAYS:
-                    return "always";
+                    return "any";
                 case G_CONDITION::HPP_LT:
-                    return fmt::format("HP below {}%", arg);
+                    return fmt::format("HP < {}%", value);
                 case G_CONDITION::HPP_GTE:
-                    return fmt::format("HP at least {}%", arg);
+                    return fmt::format("HP ≥ {}%", value);
                 case G_CONDITION::MPP_LT:
-                    return fmt::format("MP below {}%", arg);
+                    return fmt::format("MP < {}%", value);
                 case G_CONDITION::MPP_GTE:
-                    return fmt::format("MP at least {}%", arg);
+                    return fmt::format("MP ≥ {}%", value);
                 case G_CONDITION::TP_LT:
-                    return fmt::format("TP below {}", arg);
+                    return fmt::format("TP < {}", value);
                 case G_CONDITION::TP_GTE:
-                    return fmt::format("TP at least {}", arg);
+                    return fmt::format("TP ≥ {}", value);
                 case G_CONDITION::LVL_LT:
-                    return fmt::format("level < {}", arg);
+                    return fmt::format("level < {}", value);
                 case G_CONDITION::LVL_GTE:
-                    return fmt::format("level >= {}", arg);
+                    return fmt::format("level ≥ {}", value);
                 case G_CONDITION::STATUS:
-                    return fmt::format("has {}", titleCase(effects::GetEffectName(static_cast<uint16>(arg))));
+                    return with("status =");
                 case G_CONDITION::NOT_STATUS:
-                    return fmt::format("no {}", titleCase(effects::GetEffectName(static_cast<uint16>(arg))));
+                    return with("status ≠");
                 case G_CONDITION::STATUS_FLAG:
-                    return fmt::format("status flag {}", arg);
+                    return with("status flag");
                 case G_CONDITION::HAS_TOP_ENMITY:
-                    return "holds hate";
+                    return foe ? "targeting self" : "holds hate";
                 case G_CONDITION::NOT_HAS_TOP_ENMITY:
-                    return "does not hold hate";
+                    return foe ? "not targeting self" : "doesn't hold hate";
                 case G_CONDITION::SC_AVAILABLE:
                     return "skillchain open";
                 case G_CONDITION::NOT_SC_AVAILABLE:
@@ -1458,30 +1613,64 @@ namespace pawn
                 case G_CONDITION::CASTING_DEBUFF:
                     return "casting a debuff";
                 case G_CONDITION::RANDOM:
-                    return fmt::format("{}% of the time", arg);
+                    return fmt::format("{}% of the time", value);
                 case G_CONDITION::NO_SAMBA:
                     return "no samba up";
                 case G_CONDITION::NO_STORM:
                     return "no storm up";
                 case G_CONDITION::PT_HAS_TANK:
-                    return "party has a tank";
+                    return "tank in party";
                 case G_CONDITION::NOT_PT_HAS_TANK:
-                    return "no tank in the party";
+                    return "no tank in party";
                 case G_CONDITION::IS_ECOSYSTEM:
-                    return fmt::format("ecosystem {}", arg);
+                    return with("ecosystem");
                 case G_CONDITION::HP_MISSING:
-                    return fmt::format("missing {} HP", arg);
+                    return fmt::format("missing {} HP", value);
                 case G_CONDITION::JA_ON_COOLDOWN:
-                    return fmt::format("{} on cooldown", ability::GetAbility(static_cast<uint16>(arg)) != nullptr ? ability::GetAbility(static_cast<uint16>(arg))->getName() : std::to_string(arg));
+                    return fmt::format("{} on cooldown", value);
                 case G_CONDITION::TIMER:
-                    return fmt::format("every {}s", arg);
+                    return fmt::format("every {}s", value);
                 case pawn::G_CONDITION_STRATEGY:
-                    return fmt::format("strategy {}", arg);
+                    return with("strategy");
                 case pawn::G_CONDITION_TACTICIANS_CHOICE:
-                    return "Tactician's choice";
+                    return "tactician's choice";
                 default:
-                    return fmt::format("condition {}:{}", static_cast<uint16>(p.condition), arg);
+                    return fmt::format("condition {}:{}", static_cast<uint16>(condition), value);
             }
+        }
+
+        // A condition's clause on a row, its value read from the row
+        auto conditionText(const Predicate_t& p, const bool foe) -> std::string
+        {
+            const auto arg = p.condition_arg;
+            switch (p.condition)
+            {
+                case G_CONDITION::STATUS:
+                case G_CONDITION::NOT_STATUS:
+                    return conditionWords(p.condition, statusName(static_cast<uint16>(arg)), foe);
+                case G_CONDITION::JA_ON_COOLDOWN:
+                {
+                    auto* PAbility = ability::GetAbility(static_cast<uint16>(arg));
+                    return conditionWords(p.condition, PAbility != nullptr ? titleCase(PAbility->getName()) : std::to_string(arg), foe);
+                }
+                default:
+                    return conditionWords(p.condition, std::to_string(arg), foe);
+            }
+        }
+
+        // A row's head: its target, then its conditions ("" for none). A
+        // side alone takes the conditions as its clause ("Ally: HP < 50%";
+        // none is "Ally: any", and "Self" alone); a target with a clause of
+        // its own takes them after it ("Foe: party leader's target, HP ≥ 50%")
+        auto headText(const std::size_t target, const std::string& conditions) -> std::string
+        {
+            const auto name = targetName(target);
+            const bool self = target == static_cast<std::size_t>(G_TARGET::SELF) || target == static_cast<std::size_t>(G_TARGET::TRIGGER_SELF_ACTION_TARGET);
+            if (conditions.empty())
+            {
+                return isSide(target) && !self ? fmt::format("{}: any", name) : std::string(name);
+            }
+            return isSide(target) ? fmt::format("{}: {}", name, conditions) : fmt::format("{}, {}", name, conditions);
         }
 
         // A switch row reads as its name; only an explicit "off" (a
@@ -1533,13 +1722,13 @@ namespace pawn
                         case G_SELECT::LOWEST:
                             return familyName(a.select_arg) + " (lowest)";
                         case G_SELECT::RANDOM:
-                            return "Random damage spell"; // ResolveSpell ignores the family: any damage spell she knows
+                            return "Damage spell (any)"; // ResolveSpell ignores the family: any damage spell she knows
                         case G_SELECT::MB_ELEMENT:
                             return "Magic burst";
                         case G_SELECT::ENTRUSTED:
                             return "Entrust " + familyName(a.select_arg);
                         case G_SELECT::BEST_INDI:
-                            return "Best indi";
+                            return "Indi (best)";
                         case G_SELECT::BEST_AGAINST_TARGET:
                             return familyName(a.select_arg) + " (best against target)";
                         default:
@@ -1562,10 +1751,10 @@ namespace pawn
                         auto* PSkill = battleutils::GetWeaponSkill(static_cast<uint16>(a.select_arg));
                         return PSkill != nullptr ? titleCase(PSkill->getName()) : fmt::format("weapon skill {}", a.select_arg);
                     }
-                    return a.select == G_SELECT::RANDOM ? "Any weapon skill" : "Best weapon skill";
+                    return a.select == G_SELECT::RANDOM ? "Weapon skill (any)" : "Weapon skill (best)";
                 }
                 case G_REACTION::RATTACK:
-                    return "Ranged attack";
+                    return "Ranged Attack";
                 case G_REACTION::ATTACK:
                     return "Attack";
                 default:
@@ -1576,6 +1765,29 @@ namespace pawn
 
     auto familyName(const uint32 family) -> std::string
     {
+        // The families whose enum name reads badly as words (one is
+        // misspelt upstream)
+        switch (static_cast<SPELLFAMILY>(family))
+        {
+            case SPELLFAMILY_NA:
+                return "-na";
+            case SPELLFAMILY_JA:
+                return "-ja";
+            case SPELLFMAILY_TELEPORT:
+                return "Teleport";
+            case SPELLFAMILY_ELE_BAR:
+                return "Bar-element";
+            case SPELLFAMILY_ELE_BAR_RA:
+                return "Bar-element-ra";
+            case SPELLFAMILY_STATUS_BAR:
+                return "Bar-status";
+            case SPELLFAMILY_STATUS_BAR_RA:
+                return "Bar-status-ra";
+            case SPELLFAMILY_ELE_DOT:
+                return "Elemental DoT";
+            default:
+                break;
+        }
         auto name = std::string(magic_enum::enum_name(static_cast<SPELLFAMILY>(family)));
         if (name.rfind("SPELLFAMILY_", 0) == 0)
         {
@@ -1586,23 +1798,33 @@ namespace pawn
 
     auto labelGambit(const Gambit_t& g) -> std::string
     {
-        std::string out(targetName(static_cast<std::size_t>(g.target_selector)));
+        // "Always" says nothing beside another condition, and alone is the
+        // side's "any"; an OR group that holds it is always true, so says
+        // nothing either
+        const auto  target = static_cast<std::size_t>(g.target_selector);
         std::string conditions;
         for (const auto& group : g.predicate_groups)
         {
-            for (std::size_t i = 0; i < group.predicates.size(); ++i)
+            if (group.logic == G_LOGIC::OR && std::ranges::any_of(group.predicates, [](const Predicate_t& p) { return p.condition == G_CONDITION::ALWAYS; }))
             {
+                continue;
+            }
+            bool first = true;
+            for (const auto& predicate : group.predicates)
+            {
+                if (predicate.condition == G_CONDITION::ALWAYS)
+                {
+                    continue;
+                }
                 if (!conditions.empty())
                 {
-                    conditions += (i != 0 && group.logic == G_LOGIC::OR) ? " or " : ", ";
+                    conditions += (!first && group.logic == G_LOGIC::OR) ? " or " : ", ";
                 }
-                conditions += conditionText(group.predicates[i]);
+                conditions += conditionText(predicate, onFoe(target));
+                first = false;
             }
         }
-        if (conditions != "always")
-        {
-            out += ": " + conditions;
-        }
+        std::string out = headText(target, conditions);
         out += " -> ";
         for (std::size_t i = 0; i < g.actions.size(); ++i)
         {
@@ -2004,7 +2226,7 @@ namespace pawn
                         PTarget != nullptr && PTarget != POwner ? fmt::format(" ({:.1f} y)", distance(POwner->loc.p, PTarget->loc.p)) : "");
         }
     }
-    auto abilitiesFor(CCharEntity* PChar) -> std::vector<CAbility*>
+    auto jobAbilities(CCharEntity* PChar) -> std::vector<CAbility*>
     {
         std::vector<CAbility*> out;
         if (PChar == nullptr)
@@ -2021,13 +2243,22 @@ namespace pawn
             {
                 // Job lists also contain pet abilities outside the character bitfield.
                 if (PAbility != nullptr && PAbility->getID() < sizeof(PChar->m_Abilities) * 8 &&
-                    charutils::hasAbility(PChar, PAbility->getID()) &&
                     std::find(out.begin(), out.end(), PAbility) == out.end())
                 {
                     out.push_back(PAbility);
                 }
             }
         }
+        return out;
+    }
+
+    auto abilitiesFor(CCharEntity* PChar) -> std::vector<CAbility*>
+    {
+        auto out = jobAbilities(PChar);
+        std::erase_if(out, [PChar](CAbility* PAbility)
+                      {
+                          return !charutils::hasAbility(PChar, PAbility->getID());
+                      });
         return out;
     }
 
@@ -2039,35 +2270,84 @@ namespace pawn
             return v;
         }
 
-        // The allies and her fight, then the foes around the party that an
-        // Attack row names (gambit_ids.h)
-        for (const std::size_t id : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 10u, 100u, 101u, 102u, 103u })
+        // The conditions, FFXII's way (the gambit review, RESEARCH §14.13):
+        // each entry one clause that names its side and when, on the page
+        // of that side, stored as one target and one condition. An entry
+        // that takes a number carries '*' for it in its key and label, and
+        // its range as min,max,step,default; a status entry carries 's',
+        // the status picked in the row's next cell. Upstream's trust
+        // targets (tank, melee, caster...) are two conditions in one and
+        // are not offered; a row that holds one still reads (headText)
+        enum class Takes : uint8
         {
-            v.targets.push_back({ fmt::format("{}", id), std::string(targetName(id)), "" });
+            Nothing,
+            Number,
+            Status,
+        };
+        struct Clause
+        {
+            const char*  page;
+            G_TARGET     target;
+            G_CONDITION  condition;
+            Takes        takes = Takes::Nothing;
+            const char*  range = "";
+        };
+        const auto self  = G_TARGET::SELF;
+        const auto ally  = G_TARGET::PARTY;
+        const auto foe   = G_TARGET::TARGET;
+        const auto clauses = std::to_array<Clause>({
+            { "self", self, G_CONDITION::ALWAYS },
+            { "self", self, G_CONDITION::HPP_LT, Takes::Number, "10,90,10,50" },
+            { "self", self, G_CONDITION::HPP_GTE, Takes::Number, "10,100,10,75" },
+            { "self", self, G_CONDITION::MPP_LT, Takes::Number, "10,90,10,30" },
+            { "self", self, G_CONDITION::TP_GTE, Takes::Number, "500,3000,500,1000" },
+            { "self", self, pawn::G_CONDITION_TACTICIANS_CHOICE },
+            { "self", self, G_CONDITION::HAS_TOP_ENMITY },
+            { "self", self, G_CONDITION::NOT_HAS_TOP_ENMITY },
+            { "self", self, G_CONDITION::PT_HAS_TANK },
+            { "self", self, G_CONDITION::NOT_PT_HAS_TANK },
+            { "self", self, G_CONDITION::STATUS, Takes::Status },
+            { "self", self, G_CONDITION::NOT_STATUS, Takes::Status },
+            { "ally", ally, G_CONDITION::ALWAYS },
+            { "ally", ally, G_CONDITION::HPP_LT, Takes::Number, "10,90,10,50" },
+            { "ally", ally, G_CONDITION::HPP_GTE, Takes::Number, "10,100,10,75" },
+            { "ally", ally, G_CONDITION::MPP_LT, Takes::Number, "10,90,10,30" },
+            { "ally", ally, G_CONDITION::TP_GTE, Takes::Number, "500,3000,500,1000" },
+            { "ally", ally, pawn::G_CONDITION_TACTICIANS_CHOICE },
+            { "ally", ally, G_CONDITION::STATUS, Takes::Status },
+            { "ally", ally, G_CONDITION::NOT_STATUS, Takes::Status },
+            { "ally", G_TARGET::PARTY_DEAD, G_CONDITION::ALWAYS },
+            { "foe", foe, G_CONDITION::ALWAYS },
+            { "foe", pawn::G_TARGET_LEADERS_TARGET, G_CONDITION::ALWAYS },
+            { "foe", pawn::G_TARGET_TARGETED_BY_ALLY, G_CONDITION::ALWAYS },
+            { "foe", pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS },
+            { "foe", pawn::G_TARGET_TARGETING_SELF, G_CONDITION::ALWAYS },
+            { "foe", foe, G_CONDITION::NOT_HAS_TOP_ENMITY },
+            { "foe", foe, G_CONDITION::HPP_LT, Takes::Number, "10,90,10,50" },
+            { "foe", foe, G_CONDITION::HPP_GTE, Takes::Number, "10,100,10,75" },
+            { "foe", foe, G_CONDITION::TP_GTE, Takes::Number, "500,3000,500,1000" },
+            { "foe", foe, pawn::G_CONDITION_TACTICIANS_CHOICE },
+            { "foe", foe, G_CONDITION::SC_AVAILABLE },
+            { "foe", foe, G_CONDITION::MB_AVAILABLE },
+            { "foe", foe, G_CONDITION::STATUS, Takes::Status },
+            { "foe", foe, G_CONDITION::NOT_STATUS, Takes::Status },
+        });
+        for (const auto& c : clauses)
+        {
+            const auto target = static_cast<std::size_t>(c.target);
+            const auto value  = c.takes == Takes::Number ? std::string("*") : std::string();
+            const auto words  = c.condition == G_CONDITION::ALWAYS ? std::string() : conditionWords(c.condition, value, onFoe(target));
+            const auto arg    = c.takes == Takes::Number ? "*" : (c.takes == Takes::Status ? "s" : "0");
+            v.conditions.push_back({ fmt::format("{}|{}:{}", target, static_cast<uint16>(c.condition), arg), headText(target, words), c.range, 0, 0, c.page });
         }
 
-        // Numeric conditions are one entry per comparator: the key and label
-        // carry a '*' where the number goes, and group carries its range as
-        // min,max,step,default. The number itself is picked on the row.
-        v.conditions.push_back({ "0:0", "Always", "" });
-        v.conditions.push_back({ fmt::format("{}:0", static_cast<uint16>(pawn::G_CONDITION_TACTICIANS_CHOICE)), "Tactician's choice", "" });
-        v.conditions.push_back({ "1:*", "HP below *%", "10,90,10,50" });
-        v.conditions.push_back({ "2:*", "HP at least *%", "10,100,10,75" });
-        v.conditions.push_back({ "3:*", "MP below *%", "10,90,10,30" });
-        v.conditions.push_back({ "6:*", "TP at least *", "500,3000,500,1000" });
-        v.conditions.push_back({ "12:0", "Holds hate", "" });
-        v.conditions.push_back({ "13:0", "Does not hold hate", "" });
-        v.conditions.push_back({ "25:0", "Party has a tank", "" });
-        v.conditions.push_back({ "26:0", "No tank in the party", "" });
-        v.conditions.push_back({ "14:0", "Skillchain open", "" });
-        v.conditions.push_back({ "16:0", "Magic burst open", "" });
-
-        // The statuses "has X" / "no X" can name: the ones a party fights
-        // and buffs with. Ids are xi::StatusEffect.
-        for (const uint16 id : { 0u, 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 15u, 16u, 28u, 31u,
+        // The statuses "status =" and "status ≠" can name: the ones a party
+        // fights and buffs with (KO is the ally's own entry). Ids are
+        // xi::StatusEffect.
+        for (const uint16 id : { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 15u, 16u, 28u, 31u,
                                  33u, 36u, 37u, 40u, 41u, 42u, 43u, 56u, 57u, 58u, 66u, 68u, 158u })
         {
-            v.statuses.push_back({ fmt::format("{}", id), titleCase(effects::GetEffectName(id)), "" });
+            v.statuses.push_back({ fmt::format("{}", id), statusName(id), "" });
         }
 
         // Attack: which fight she takes, with a Foe target (engage_math.h).
@@ -2091,30 +2371,72 @@ namespace pawn
             v.actions.push_back({ fmt::format("100:{}:{}", static_cast<uint16>(pawn::Behavior::Role), static_cast<uint16>(role)), fmt::format("Role: {}", pawn::roleName(role)), "Behaviours" });
         }
 
-        // Magic she knows and can cast now, plus "best of the family" for
-        // every family she has a spell in
-        std::vector<SPELLFAMILY> families;
+        // The actions of her main job and her support job, at every level, in
+        // a fixed order, each marked whether she can use it now (RESEARCH
+        // §14.13): what she has not learned yet reads greyed. The command
+        // window lists only what she can use.
+        v.mjob = static_cast<uint8>(PPawn->GetMJob());
+        v.mlvl = PPawn->GetMLevel();
+        v.sjob = static_cast<uint8>(PPawn->GetSJob());
+        v.slvl = PPawn->GetSLevel();
+        const auto ofHerJobs = [PPawn](auto* PAction)
+        {
+            for (const auto job : { PPawn->GetMJob(), PPawn->GetSJob() })
+            {
+                const auto level = job != xi::Job::NONE ? PAction->getJob(job) : 0;
+                if (level != 0 && level != 255)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        // Magic in spell order, a family's "(best)" just before its first
+        // spell when she has more than one spell of it to choose among
+        std::vector<CSpell*> spells;
+        std::vector<SPELLFAMILY> hers;
         for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
         {
             auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
-            if (!CSpellBook::Eligible(PPawn, PSpell))
+            if (PSpell == nullptr || PSpell->getSpellGroup() == SPELLGROUP_TRUST || PSpell->getName().empty() || !ofHerJobs(PSpell))
             {
                 continue;
             }
-            v.actions.push_back({ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget(), PSpell->getMPCost() });
-            if (const auto family = PSpell->getSpellFamily(); family != SPELLFAMILY_NONE && std::find(families.begin(), families.end(), family) == families.end())
+            spells.push_back(PSpell);
+            if (PSpell->getSpellFamily() != SPELLFAMILY_NONE && CSpellBook::Eligible(PPawn, PSpell))
             {
-                families.push_back(family);
+                hers.push_back(PSpell->getSpellFamily());
             }
         }
-        for (const auto family : families)
+        std::vector<SPELLFAMILY> named;
+        for (auto* PSpell : spells)
         {
-            v.actions.push_back({ fmt::format("2:0:{}", static_cast<uint32>(family)), familyName(static_cast<uint32>(family)) + " (best)", "Magic" });
+            const auto family = PSpell->getSpellFamily();
+            const auto kin    = std::ranges::count_if(spells, [family](CSpell* PKin)
+                                                      {
+                                                          return PKin->getSpellFamily() == family;
+                                                      });
+            if (family != SPELLFAMILY_NONE && kin > 1 && std::ranges::find(named, family) == named.end())
+            {
+                named.push_back(family);
+                VocabEntry best{ fmt::format("2:0:{}", static_cast<uint32>(family)), familyName(static_cast<uint32>(family)) + " (best)", "Magic" };
+                best.usable = std::ranges::find(hers, family) != hers.end();
+                v.actions.push_back(std::move(best));
+            }
+            const auto id = static_cast<uint16>(PSpell->getID());
+            VocabEntry spell{ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget(), PSpell->getMPCost() };
+            spell.usable = CSpellBook::Eligible(PPawn, PSpell);
+            v.actions.push_back(std::move(spell));
         }
 
-        for (auto* PAbility : abilitiesFor(PPawn))
+        // Abilities, her main job's then her support job's, as each job's
+        // list orders them
+        for (auto* PAbility : jobAbilities(PPawn))
         {
-            v.actions.push_back({ fmt::format("3:2:{}", PAbility->getID()), titleCase(PAbility->getName()), "Abilities", PAbility->getValidTarget() });
+            VocabEntry ability{ fmt::format("3:2:{}", PAbility->getID()), titleCase(PAbility->getName()), "Abilities", PAbility->getValidTarget() };
+            ability.usable = charutils::hasAbility(PPawn, PAbility->getID());
+            v.actions.push_back(std::move(ability));
         }
 
         // A level-up rebuilds her learned-weapon-skill bitfield, and a
@@ -2124,18 +2446,21 @@ namespace pawn
         // so the list is rebuilt here, where it is about to be read.
         charutils::BuildingCharWeaponSkills(PPawn);
 
-        v.actions.push_back({ "4:0:0", "Best weapon skill", "WeaponSkills" });
-        v.actions.push_back({ "4:3:0", "Any weapon skill", "WeaponSkills" });
+        v.actions.push_back({ "4:0:0", "Weapon skill (best)", "WeaponSkills" });
+        v.actions.push_back({ "4:3:0", "Weapon skill (any)", "WeaponSkills" });
         for (uint16 id = 1; id < MAX_WEAPONSKILL_ID; ++id)
         {
             auto* PWeaponSkill = battleutils::GetWeaponSkill(id);
-            if (PWeaponSkill != nullptr && charutils::hasWeaponSkill(PPawn, id) && charutils::canUseWeaponSkill(PPawn, id))
+            if (PWeaponSkill == nullptr || PWeaponSkill->getName().empty() || !ofHerJobs(PWeaponSkill))
             {
-                v.actions.push_back({ fmt::format("4:2:{}", id), titleCase(PWeaponSkill->getName()), "WeaponSkills", TARGET_ENEMY });
+                continue;
             }
+            VocabEntry skill{ fmt::format("4:2:{}", id), titleCase(PWeaponSkill->getName()), "WeaponSkills", TARGET_ENEMY };
+            skill.usable = charutils::hasWeaponSkill(PPawn, id) && charutils::canUseWeaponSkill(PPawn, id);
+            v.actions.push_back(std::move(skill));
         }
 
-        v.actions.push_back({ "1:0:0", "Ranged attack", "Ranged", TARGET_ENEMY });
+        v.actions.push_back({ "1:0:0", "Ranged Attack", "Ranged", TARGET_ENEMY });
         return v;
     }
 auto isMeleeJob(const xi::Job job) -> bool

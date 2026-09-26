@@ -79,29 +79,39 @@ namespace pawn
     // A spell family as a label: "Cure", or "family 37" when unnamed
     auto familyName(uint32 family) -> std::string;
 
-    // The catalogue the editor's pickers offer for one cardian: targets,
-    // conditions (thresholds pre-expanded, FFXII-style: "HP < 50%" and
-    // "HP < 60%" are two entries), statuses (for "has X" / "no X"), and
-    // the actions she can take right now -- her spells, abilities and
-    // weapon skills, plus the behaviours. Keys are row-grammar fragments.
+    // The catalogue the editor's pickers offer for one cardian: the
+    // conditions, FFXII's way -- one clause each, naming its side, a number
+    // it takes left to the row ("Ally: HP < *%") -- the statuses a status
+    // condition names, and the actions she can take right now -- her
+    // spells, abilities and weapon skills, plus the behaviours. Keys are
+    // row-grammar fragments.
     struct VocabEntry
     {
-        std::string key;   // "target", "cond:arg" ("cond:*" when numeric), "status id", or "reaction:select:arg"
+        std::string key;   // "target|cond:arg" ('*' for the number, 's' for the status), "status id", or "reaction:select:arg"
         std::string label; // as the player reads it; a '*' stands for the number
         std::string group; // actions: Behaviours / Magic / Abilities / WeaponSkills / Ranged; numeric conditions: "min,max,step,default"
         uint16      targets = 0; // actions: the valid-target mask (TARGET_*), so a command window knows which cursor to open
         uint16      mp      = 0; // spells: the base MP cost, so a command window can grey what she cannot afford
+        std::string page;        // conditions: the side's page, self / ally / foe
+        bool        usable = true; // actions: whether she can use it now (the pickers grey the rest)
     };
     struct Vocabulary
     {
-        std::vector<VocabEntry> targets;
+        uint8                   mjob = 0; // her jobs and levels, which the actions follow
+        uint8                   mlvl = 0;
+        uint8                   sjob = 0;
+        uint8                   slvl = 0;
         std::vector<VocabEntry> conditions;
         std::vector<VocabEntry> statuses;
         std::vector<VocabEntry> actions;
     };
     auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary;
 
-    // Current character abilities, shared by the action catalogue and cooldowns.
+    // Her main and support job's abilities at every level (a pet's command,
+    // outside the character bitfield, left out), and of those the ones she
+    // has now: the catalogue lists the first, the command window and the
+    // cooldowns the second.
+    auto jobAbilities(CCharEntity* PChar) -> std::vector<CAbility*>;
     auto abilitiesFor(CCharEntity* PChar) -> std::vector<CAbility*>;
 
     // The pawn gambit interpreter: CGambitsContainer's decision loop rebuilt
