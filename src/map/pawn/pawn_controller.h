@@ -194,6 +194,11 @@ public:
     // Whoever the pawn's current battle target hates most
     auto GetTopEnmity() const -> CBattleEntity*;
 
+    // Whether a foe is of a finder's kind, as the door reads it (FoeFacts
+    // against the one she is with): how a Foe row with another action than
+    // Attack names her fight
+    auto FoeOfKind(cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool;
+
     auto Gambits() -> pawn::CGambits&;
 
     // Hunt mode: pull for the party while it is idle and healthy. The

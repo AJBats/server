@@ -78,15 +78,15 @@ namespace pawn
             { "100|0:0|0:0:0|0", true },  // Foe: party leader's target -> Attack
             { "101|0:0|0:0:0|0", true },  // Foe: targeted by ally -> Attack
             { "102|0:0|0:0:0|0", true },  // Foe: targeting ally -> Attack
-            { "2|2:50|4:0:0|0", true },   // Target: HP at least 50% -> Best weapon skill
+            { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
             { "0|0:0|100:11:3|0", true }, // Self -> Role: Damage
         };
         static const std::vector<std::pair<std::string, bool>> mage{
-            { "2|2:50|4:0:0|0", true },   // Target: HP at least 50% -> Best weapon skill
+            { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
             { "0|0:0|100:11:1|0", true }, // Self -> Role: Support Mage
-            { "1|101:0|2:0:1|0", true },  // Party member: Tactician's choice -> Cure (best)
+            { "1|101:0|2:0:1|0", true },  // Ally: tactician's choice -> Cure (best)
             { "102|0:0|0:0:0|0", false }, // Foe: targeting ally -> Attack
         };
         return isMageJob(job) ? mage : melee;

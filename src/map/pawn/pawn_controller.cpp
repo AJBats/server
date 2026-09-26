@@ -4771,10 +4771,22 @@ auto CPawnController::FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) 
     return f;
 }
 
+auto CPawnController::FoeOfKind(const cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool
+{
+    return PFoe != nullptr && PFoe->objtype == TYPE_MOB && cardian::engage::accepts(finder, FoeFacts(PFoe, GetAnchor()));
+}
+
 auto CPawnController::FoeWhy(const cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string
 {
     switch (finder)
     {
+        case cardian::engage::Finder::Any:
+        {
+            // `Foe: any` and the foe conditions: in the words of the finder
+            // that would have found it
+            const auto kind = cardian::engage::finderFor(FoeFacts(PFoe, PLeader));
+            return kind != cardian::engage::Finder::Any ? FoeWhy(kind, PFoe, PLeader) : std::string("a foe of the party");
+        }
         case cardian::engage::Finder::LeadersTarget:
             return fmt::format("{}'s target", PLeader != nullptr ? PLeader->getName() : std::string("the leader"));
         case cardian::engage::Finder::AllysFight:

@@ -98,11 +98,43 @@ namespace cardian::tactician
         NotBelow, // below the line, and nothing her tactician uses: struck out
         Clock,    // below the line on a timer or a chance, which her judgement has no use for: struck out
         NoChoice, // Tactician's choice with no tactician above it: struck out
+        Misfit,   // an action that cannot be aimed at the side its condition names: struck out, wherever it sits
     };
 
     constexpr auto struck(const State state) -> bool
     {
-        return state == State::NotBelow || state == State::Clock || state == State::NoChoice;
+        return state == State::NotBelow || state == State::Clock || state == State::NoChoice || state == State::Misfit;
+    }
+
+    // An action's target flags, as upstream's TARGETTYPE writes them
+    // (battle_entity.h; pinned against it in pawn_gambits.cpp): the enemy,
+    // and every flag on the party's side
+    constexpr uint16 kTargetEnemy    = 0x0004;
+    constexpr uint16 kTargetFriendly = 0x0001 | 0x0002 | 0x0008 | 0x0010 | 0x0020 | 0x0080 | 0x0100 | 0x0200;
+
+    // Whether an action with these target flags can be aimed at the side
+    // a row's condition names (RESEARCH §14.13): a Foe condition wants an
+    // action for an enemy, a Self or Ally one an action for her side. A row
+    // that fails is kept, struck out, and does nothing -- FFXII takes any
+    // row. No flags (a behaviour, Entrust) is nothing to judge. Upstream's
+    // trigger targets split the two: 12 reads her and acts on the foe, 13
+    // reads the foe and acts on her. `onHerFight`: a weapon skill or an
+    // ability aimed at the enemy, which lands on her fight whatever the row
+    // names; under a Self condition that is the row's meaning, as in
+    // upstream's trust brains (Self: TP >= 1000 -> a weapon skill)
+    constexpr auto fitsSide(const gambits::G_TARGET target, const uint16 flags, const bool onHerFight = false) -> bool
+    {
+        if (flags == 0)
+        {
+            return true;
+        }
+        if (onHerFight && target == gambits::G_TARGET::SELF && (flags & kTargetEnemy) != 0)
+        {
+            return true;
+        }
+        const bool onFoe = target == gambits::G_TARGET::TRIGGER_SELF_ACTION_TARGET ||
+                           (target != gambits::G_TARGET::TRIGGER_TARGET_ACTION_SELF && engage::isFoeTarget(target));
+        return (flags & (onFoe ? kTargetEnemy : kTargetFriendly)) != 0;
     }
 
     // The state as the editor reads it on a row's line (Link protocol 13):
@@ -123,6 +155,8 @@ namespace cardian::tactician
                 return "x-clock";
             case State::NoChoice:
                 return "x-choice";
+            case State::Misfit:
+                return "x-side";
         }
         return "o";
     }
@@ -193,8 +227,8 @@ namespace cardian::tactician
 
     // What a row below the line lets her tactician do: one action, and
     // that one hers -- a Cure for someone on the party's side, a debuff she
-    // prices on the foe (`Target`), or the melee of a fight a Foe target
-    // finds (decision 19)
+    // prices on a Foe row's foe, or the melee of a fight a Foe row finds
+    // (decision 19)
     enum class Allowance : uint8
     {
         None,
@@ -229,7 +263,7 @@ namespace cardian::tactician
                             (a.select == G_SELECT::HIGHEST && isPricedFamily(a.select_arg));
         if (debuff)
         {
-            return g.target_selector == gambits::G_TARGET::TARGET ? Allowance::Debuff : Allowance::None;
+            return engage::isFoeTarget(g.target_selector) ? Allowance::Debuff : Allowance::None;
         }
         return Allowance::None;
     }
@@ -238,8 +272,15 @@ namespace cardian::tactician
     // row means one thing or nothing (decision 14): what it lets her
     // tactician do, or struck out. Tactician's choice needs a tactician
     // above it, so outside the line's rows it is struck out
-    inline auto stateOf(const gambits::Gambit_t& g, const std::size_t place, const std::optional<std::size_t> line) -> State
+    // `fits`: whether every action fits the row's side (fitsSide, read off
+    // the spell and ability tables by the caller); a misfit is struck out
+    // wherever it sits
+    inline auto stateOf(const gambits::Gambit_t& g, const std::size_t place, const std::optional<std::size_t> line, const bool fits = true) -> State
     {
+        if (!fits)
+        {
+            return State::Misfit;
+        }
         if (line.has_value() && place == *line)
         {
             return State::Line;

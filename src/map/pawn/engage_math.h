@@ -40,12 +40,15 @@
 // the foes and asks.
 namespace cardian::engage
 {
-    // A foe around the party that is not her fight yet: the targets only an
-    // engage row names
+    // A Foe target: `Foe: any` and the foe conditions (stored as upstream's
+    // TARGET), or one of the four finders. With Attack it finds a fight
+    // among the party's foes; with any other action it names her fight when
+    // her fight is of its kind (RESEARCH §14.13)
     constexpr auto isFoeTarget(const gambits::G_TARGET target) -> bool
     {
         const auto id = static_cast<uint16>(target);
-        return id >= static_cast<uint16>(pawn::G_TARGET_LEADERS_TARGET) && id <= static_cast<uint16>(pawn::G_TARGET_TARGETING_SELF);
+        return target == gambits::G_TARGET::TARGET ||
+               (id >= static_cast<uint16>(pawn::G_TARGET_LEADERS_TARGET) && id <= static_cast<uint16>(pawn::G_TARGET_TARGETING_SELF));
     }
 
     // An engage row: one whose action is Attack
@@ -57,23 +60,20 @@ namespace cardian::engage
                                    });
     }
 
-    // Why the editor refuses a row, "" when it may stand. A foe target goes
-    // with Attack alone, and Attack with a foe target alone: a foe target
-    // on any other action, or Attack on an ally or her own fight, would
-    // never act. An engage row is read on every roam tick, so a condition
-    // that keeps a clock (TIMER) or rolls a die (RANDOM) would run down or
-    // reroll there; it is refused on one.
+    // Why the editor refuses a row, "" when it may stand. Attack takes its
+    // row alone: a row that is the door's never reaches her think, so a
+    // second action on it would never act. An engage row is read on every
+    // roam tick, so a condition that keeps a clock (TIMER) or rolls a die
+    // (RANDOM) would run down or reroll there; it is refused on one. Attack
+    // on herself or an ally is not refused: like any action aimed at the
+    // wrong side it stands, struck out (tactician_line.h fitsSide), and the
+    // door never reads it
     inline auto pairingError(const gambits::Gambit_t& g) -> std::string_view
     {
-        const bool foe    = isFoeTarget(g.target_selector);
         const bool attack = isEngageRow(g);
-        if (foe && !std::ranges::all_of(g.actions, [](const gambits::Action_t& a) { return a.reaction == gambits::G_REACTION::ATTACK; }))
+        if (attack && !std::ranges::all_of(g.actions, [](const gambits::Action_t& a) { return a.reaction == gambits::G_REACTION::ATTACK; }))
         {
-            return "a Foe target goes with Attack only";
-        }
-        if (attack && !foe)
-        {
-            return "Attack needs a Foe target";
+            return "Attack goes alone on its row";
         }
         if (attack)
         {
@@ -91,28 +91,31 @@ namespace cardian::engage
         return "";
     }
 
-    // The rows the door reads: an enabled engage row the editor would let
-    // stand, and none while her master switch is off. A row that fails the
-    // pairing (only a hand-edited saved set holds one) is passed over
+    // The rows the door reads: an enabled engage row on a Foe condition that
+    // the editor would let stand, and none while her master switch is off.
+    // Attack on herself or an ally, or a row that fails the pairing (only a
+    // hand-edited saved set holds one), is passed over
     inline auto doorReads(const bool master, const bool enabled, const gambits::Gambit_t& g) -> bool
     {
-        return master && enabled && isEngageRow(g) && pairingError(g).empty();
+        return master && enabled && isEngageRow(g) && isFoeTarget(g.target_selector) && pairingError(g).empty();
     }
 
     // ------------------------------------------------------------------
     // The foes around the party, and the finders that name them
     // ------------------------------------------------------------------
 
-    // One finder per foe target. Each says which foes are its kind
-    // (accepts), which is how a row claims a mob she is already at, and
-    // picks, for a new fight, the first foe of its kind in the order the
-    // foes were gathered (firstFound)
+    // One finder per Foe target. Each says which foes are its kind
+    // (accepts), which is how a row claims a mob she is already at and how
+    // a row with another action names her fight, and picks, for a new
+    // fight, the first foe of its kind in the order the foes were gathered
+    // (firstFound)
     enum class Finder : uint8
     {
         LeadersTarget, // the party leader's battle target, while he is engaged
         AllysFight,    // a mob another cardian of her party is engaged on
         OnAlly,        // an engaged mob whose target is her or a member of her party
         OnSelf,        // an engaged mob whose target is her
+        Any,           // any foe in the party's fight: `Foe: any` and the foe conditions under Attack
     };
 
     // The party's fight is scanned in this order: the leader's weapon
@@ -125,6 +128,8 @@ namespace cardian::engage
     {
         switch (static_cast<uint16>(target))
         {
+            case static_cast<uint16>(gambits::G_TARGET::TARGET):
+                return Finder::Any;
             case static_cast<uint16>(pawn::G_TARGET_LEADERS_TARGET):
                 return Finder::LeadersTarget;
             case static_cast<uint16>(pawn::G_TARGET_TARGETED_BY_ALLY):
@@ -164,8 +169,24 @@ namespace cardian::engage
                 return foe.onParty || foe.onSelf;
             case Finder::OnSelf:
                 return foe.onSelf;
+            case Finder::Any:
+                return foe.leadersTarget || foe.allysFight || foe.onParty || foe.onSelf;
         }
         return false;
+    }
+
+    // The finder whose words say why a foe of the party's fight is one: the
+    // first in scan order that accepts it (the why line of a `Foe: any` pick)
+    constexpr auto finderFor(const Foe& foe) -> Finder
+    {
+        for (const auto finder : kScanOrder)
+        {
+            if (accepts(finder, foe))
+            {
+                return finder;
+            }
+        }
+        return Finder::Any;
     }
 
     // Whether a foe counts when a fight is chosen: one below ground with no

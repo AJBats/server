@@ -37,7 +37,7 @@
 --       gvocab <name>                    the pickers' catalogue for the cardian
 --       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
 --       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
---                                        (gv.b, gvt/gvc/gvs/gva chunks, gv.e)
+--                                        (gv.b, gvc/gvs/gva/gvx chunks, gv.e)
 --       finder [exp|mission <log>|quest <area>]  the party finder: who is in reach and what each says to the goal
 --       goals                            what the player could recruit for: current missions, quests under way
 --       shout <kind> <log> [again]       the shout: up to eight adventurers in reach and their answers, timed
@@ -701,7 +701,7 @@ end
 
 -- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <state> <spec> <label>'
 -- per row, 'gb.e <name>'. The state is what the row means where it sits (o an order,
--- t her Support Mage row, a her tactician's to use, x-below / x-clock / x-choice struck
+-- t her Support Mage row, a her tactician's to use, x-below / x-clock / x-choice / x-side struck
 -- out; Link protocol 13). The label is the rest of the line.
 local function sendGambits(player, name)
     local g = player:cardianGambits(name)
@@ -716,17 +716,19 @@ local function sendGambits(player, name)
     reply(player, '#cd gb.e ' .. name)
 end
 
--- The pickers' catalogue: 'gv.b <name>', then chunked 'gvt|gvs <name> k=label;...',
--- 'gvc <name> <range|-> k=label;...' (range = min,max,step,default for a numeric
--- condition) and 'gva <name> <group> k=label;...' lines under the link's line cap,
--- then 'gv.e <name>'
+-- The pickers' catalogue: 'gv.b <name> <mjob> <mlvl> <sjob> <slvl>', then chunked 'gvs <name> k=label;...',
+-- 'gvc <name> <page>:<range|-> k=label;...' (the condition's side, self, ally or
+-- foe, and range = min,max,step,default for a numeric one) and
+-- 'gva <name> <group> k=label;...' lines under the link's line cap, then
+-- 'gv.e <name>'
 local function sendVocab(player, name)
     local v = player:cardianGambitVocab(name)
     if v == nil then
         reply(player, '#cd err gvocab no such cardian')
         return
     end
-    reply(player, '#cd gv.b ' .. name)
+    -- Her jobs and levels head the catalogue: the actions are theirs
+    reply(player, string.format('#cd gv.b %s %d %d %d %d', name, v.mjob, v.mlvl, v.sjob, v.slvl))
     local function chunked(tag, prefix, entries, groupOf)
         local buf, bufGroup = {}, nil
         local size = 0
@@ -748,16 +750,22 @@ local function sendVocab(player, name)
         end
         flush()
     end
-    chunked('gvt', function () return '' end, v.targets)
-    chunked('gvc', function (g) return (g ~= '' and g or '-') .. ' ' end, v.conditions, function (e) return e.group end)
+    -- A condition's page and its number's range, 'foe:10,90,10,50' or 'ally:-'
+    chunked('gvc', function (g) return g .. ' ' end, v.conditions, function (e) return e.page .. ':' .. (e.group ~= '' and e.group or '-') end)
     chunked('gvs', function () return '' end, v.statuses)
-    chunked('gva', function (g) return g .. ' ' end, v.actions, function (e) return e.group end)
+    -- An action she cannot use now carries '!' after its key: the pickers
+    -- grey it, the command window leaves it out
+    local actions = {}
+    for _, e in ipairs(v.actions) do
+        actions[#actions + 1] = { key = e.usable and e.key or (e.key .. '!'), label = e.label, group = e.group }
+    end
+    chunked('gva', function (g) return g .. ' ' end, actions, function (e) return e.group end)
     -- The valid-target mask and the MP cost of every action that has a
     -- mask, key=mask,mp: what a command window may aim it at, and what it
     -- may grey out
     local masks = {}
     for _, e in ipairs(v.actions) do
-        if e.targets ~= nil and e.targets > 0 then
+        if e.usable and e.targets ~= nil and e.targets > 0 then
             masks[#masks + 1] = { key = e.key, label = tostring(e.targets) .. ',' .. tostring(e.mp or 0) }
         end
     end
