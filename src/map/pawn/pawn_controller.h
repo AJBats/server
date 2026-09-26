@@ -230,8 +230,10 @@ public:
     // queued order firing): he is handed back and she carries it out. His
     // camera leaving her, her leaving his party, her death and his cancel
     // end it too; every end restores her gambit switch to what it was. One
-    // maneuver per player at a time. Begin answers "" or why not.
-    auto BeginManeuver(CCharEntity* PBy) -> std::string;
+    // maneuver per player at a time. Begin answers CL_S_OK or why not (the
+    // Link's outcomes, cardian_link_protocol.h); other receives the cardian he
+    // drives already, on CL_S_ONE_MANEUVER.
+    auto BeginManeuver(CCharEntity* PBy, uint32* other = nullptr) -> uint16;
     void EndManeuver(std::string_view why);
     auto InManeuver() const -> bool;
     // A paused maneuver (held, docs/maneuvers.md): the ring lays a route
@@ -239,15 +241,16 @@ public:
     // Composed, the maneuver no longer needs his eye on her: at the release
     // she walks the route, the order fires at its end, and that is the
     // maneuver's end. ComposeMove is the route with no order: end at its
-    // end, waiting there if `wait`. Answers "" or why not.
-    auto ComposeMove(bool wait) -> std::string;
+    // end, waiting there if `wait`. Answers CL_S_OK or why not.
+    auto ComposeMove(bool wait) -> uint16;
     // The maneuver's "Rest until N%", her queued order either way: live,
     // composed at once where she stands, his camera handed back; paused,
     // after the route if one is laid. The maneuver lasts through the rest
     // until HP and MP both reach N% -- her queued order, and cancelled as
-    // one -- gambits off throughout (the user, 2026-09-23). Answers "" or why not
-    auto ComposeRest(int percent) -> std::string;
+    // one -- gambits off throughout (the user, 2026-09-23). Answers CL_S_OK or why not
+    auto ComposeRest(int percent) -> uint16;
     void MarkComposed(std::string_view what); // the maneuver's order is given, to play out without him: his live slot frees for the next cardian
+    void TellManeuver(uint8 state) const;     // his addon hears the change (MANEUVER_STATE, CL_MS_*)
     auto ManeuverComposed() const -> bool;
     auto ManeuverBy() const -> uint32; // whose maneuver she is on, 0 for none
     // Her gambit master switch as her own setting: while a maneuver holds

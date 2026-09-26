@@ -368,10 +368,13 @@ namespace pawn
     // The same by charid, as the Cardian Link names her: no name to look up
     auto findManagedPawn(const CCharEntity* PSummoner, uint32 pawnCharID) -> CCharEntity*;
     auto findCommandablePawn(const CCharEntity* PPlayer, const std::string& targetName) -> CCharEntity*;
+    auto findCommandablePawn(const CCharEntity* PPlayer, uint32 pawnCharID) -> CCharEntity*;
 
     // Names of every live pawn this character commands, sorted by name: the
     // roster the command window walks.
     auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>;
+    // The same pawns themselves, in no particular order
+    auto commandablePawns(const CCharEntity* PPlayer) -> std::vector<CCharEntity*>;
 
     // Possession support --------------------------------------------------
 

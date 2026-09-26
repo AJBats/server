@@ -34,9 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 15: binary messages, this file; 14 and
+// compatible, the user, 2026-09-14). 16: WALK, VIEW and the maneuver messages
+// (their lines leave LEGACY_CD); 15: binary messages, this file; 14 and
 // earlier were newline text.
-enum { CL_PROTOCOL = 15 };
+enum { CL_PROTOCOL = 16 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -87,6 +88,17 @@ enum
     CL_S_NO_SPACE          = 0x0109, // she has no room for it
     CL_S_ITEM_SLIPPED_AWAY = 0x010A, // the stack changed while it moved
     CL_S_REFUSED           = 0x010B, // the game refused it; the map log says why
+
+    // Maneuvers
+    CL_S_NO_MANEUVER       = 0x0110, // she has no maneuver
+    CL_S_ANOTHER_PLAYERS   = 0x0111, // another player drives her
+    CL_S_MANEUVER_COMPOSED = 0x0112, // hers is composed already: cancel it first
+    CL_S_KNOCKED_OUT       = 0x0113,
+    CL_S_NOT_LOOKING       = 0x0114, // his camera is not on her
+    CL_S_ONE_MANEUVER      = 0x0115, // one maneuver at a time: he drives another (the answer's other)
+    CL_S_NOT_PAUSED        = 0x0116, // a move is a paused maneuver's order
+    CL_S_NO_ROUTE          = 0x0117, // no route laid
+    CL_S_ALREADY_RESTED    = 0x0118, // she is at that percent of HP and MP already
 };
 
 // ---- 0x00xx: the link itself ----------------------------------------------
@@ -240,14 +252,116 @@ typedef struct cl_give
     uint8_t   spare[3];
 } cl_give;
 
+// ---- 0x04xx: orders and control -------------------------------------------
+
+enum
+{
+    CL_T_WALK      = 0x0401,
+    CL_T_VIEW      = 0x0402,
+    CL_T_MANEUVER  = 0x0403,
+    CL_T_MANEUVERS = 0x0404,
+};
+
+// One-way, a stream like pos: direct control's walk order (pawn.h), walk her
+// to a point in the server's axes (x, height, z), sent every frame the
+// player's ring moves; off takes the order back. The point is slid along her
+// zone's mesh from the last one toward the one asked, so it never leaves floor
+// she can walk. The server says nothing unless the mesh moved the point or
+// the order was refused (WALK_TAKEN).
+typedef struct cl_walk
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    float     x;
+    float     y;
+    float     z;
+    uint8_t   off;     // 1: take the walk order back
+    uint8_t   spare[3];
+} cl_walk;
+
+// Direct control's view origin (pawn/view.h): the player looks through this
+// cardian, so the world around her reaches his client even far from him.
+// cardian 0 looks through nobody again.
+typedef struct cl_view
+{
+    cl_header h;
+    uint32_t  cardian; // charid, 0 = off
+} cl_view;
+
+enum
+{
+    CL_MV_BEGIN     = 0, // he takes the wheel: her maneuver begins, live
+    CL_MV_OFF       = 1, // it ends
+    CL_MV_MOVE      = 2, // a paused maneuver's order: walk the route the ring laid
+    CL_MV_MOVE_WAIT = 3, // the same, then wait at its end
+    CL_MV_REST      = 4, // rest until percent of HP and MP
+};
+
+// A maneuver (docs/maneuvers.md): the player drives one cardian live, or
+// composes her order under a pause. Answered by the outcome alone; what the
+// maneuver becomes is told by MANEUVER_STATE.
+typedef struct cl_maneuver
+{
+    cl_header h;
+    uint32_t  cardian;
+    uint8_t   action;  // CL_MV_*
+    uint8_t   percent; // CL_MV_REST: 1 to 100
+    uint16_t  spare;
+    uint32_t  other;   // answered with CL_S_ONE_MANEUVER: the cardian he drives already
+} cl_maneuver;
+
+// His maneuvers as they stand, for an addon that has just bound: each
+// composed one comes as a MANEUVER_STATE answer (CL_F_MORE), then this, naming
+// the one he drives live
+typedef struct cl_maneuvers
+{
+    cl_header h;
+    uint32_t  live; // answered: charid, 0 for none
+} cl_maneuvers;
+
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 
 enum
 {
-    CL_T_PAUSED   = 0x0501,
-    CL_T_RESUMED  = 0x0502,
-    CL_T_CALENDAR = 0x0503,
+    CL_T_PAUSED         = 0x0501,
+    CL_T_RESUMED        = 0x0502,
+    CL_T_CALENDAR       = 0x0503,
+    CL_T_MANEUVER_STATE = 0x0504,
+    CL_T_WALK_TAKEN     = 0x0505,
 };
+
+// One-way, to the player steering her, when a walk order (WALK) was not taken
+// as asked: the mesh moved the point (a wall, a ledge, the floor's height),
+// so the ring follows it -- with the x and z asked, so the ring can apply the
+// difference to wherever it has got to since; or the order was refused, and
+// status says why.
+typedef struct cl_walk_taken
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    float     x;       // the point as the mesh took it
+    float     y;
+    float     z;
+    float     askedX;
+    float     askedZ;
+} cl_walk_taken;
+
+enum
+{
+    CL_MS_ENDED    = 0, // hers ended: by his order leaving her, or any other door
+    CL_MS_LIVE     = 1, // he drives it live, the camera on her
+    CL_MS_COMPOSED = 2, // its order is given: it plays out without him
+};
+
+// One-way, to the player whose maneuver it is, at every change of it; and an
+// answer to MANEUVERS. His camera follows the live one alone.
+typedef struct cl_maneuver_state
+{
+    cl_header h;
+    uint32_t  cardian;
+    uint8_t   state; // CL_MS_*
+    uint8_t   spare[3];
+} cl_maneuver_state;
 
 // One-way, to every bound addon as the simulation is held, and to an addon
 // that binds while it is. gametime is Vana'diel's clock in seconds

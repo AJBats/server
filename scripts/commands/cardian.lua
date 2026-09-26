@@ -838,60 +838,19 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err despawn not one of yours, or not out')
         end
         sendList(player)
-    elseif verb == 'walk' and name then
-        -- A walk order: `walk <name> <x> <y> <z>` (the server's x, height, z),
-        -- `walk <name> off` takes it back. Refreshed every frame the ring
-        -- moves, so the reply is a refusal, or `ring <x> <y> <z> <ax> <az>` --
-        -- the point as the mesh took it, and the x and z that were asked, so
-        -- the ring can apply the difference to wherever it has got to since --
-        -- only when the mesh moved the point
-        local x, y, z = tonumber(args[3]), tonumber(args[4]), tonumber(args[5])
-        local err, rx, ry, rz
-        if x and y and z then
-            err, rx, ry, rz = player:cardianWalk(name, x, y, z)
-        else
-            err = player:cardianWalk(name)
-        end
-        if err ~= '' then
-            reply(player, '#cd err walk ' .. err)
-        elseif rx ~= nil and (math.abs(rx - x) > 0.02 or math.abs(ry - y) > 0.02 or math.abs(rz - z) > 0.02) then
-            reply(player, string.format('#cd ring %.2f %.2f %.2f %.2f %.2f', rx, ry, rz, x, z))
-        end
     elseif verb == 'view' then
-        -- The view origin: the world around this cardian (or, for the
-        -- experiment, this target index) reaches his client too; `off` ends it
+        -- The view origin, typed: a GM's target index (the experiment), or a
+        -- cardian's name; `off` ends it. The addon sends the Link's VIEW
+        -- message instead
         local err = player:cardianView((name == nil or name == 'off') and '' or name)
         if err ~= '' then
             reply(player, '#cd err view ' .. err)
         else
             reply(player, '#cd ok view')
         end
-    elseif verb == 'mv' then
-        -- A maneuver (docs/maneuvers.md): `mv <name>` begins one on her, `mv
-        -- <name> off` cancels; bare `mv` answers, for an addon that has just
-        -- bound, each composed one waiting and then the one he drives live.
-        -- Every change is pushed by the server itself (`cd mv <name> on`,
-        -- `composed`, `cd mv <name>` when it ended); only the answer to a
-        -- press is given here
-        if name == nil then
-            for _, cardian in ipairs(player:cardianNames()) do
-                if player:cardianComposed(cardian) then
-                    reply(player, '#cd mv ' .. cardian .. ' composed')
-                end
-            end
-            local on = player:cardianManeuverOf()
-            reply(player, on ~= '' and ('#cd mv ' .. on .. ' on') or '#cd mv')
-        else
-            local err = player:cardianManeuver(name, args[3] or '')
-            if err ~= '' then
-                reply(player, '#cd err mv ' .. err)
-            else
-                reply(player, '#cd ok mv')
-            end
-        end
     elseif verb == 'pause' then
         -- The pause button. A hold taken or let go is told to every addon by the
-        -- server itself (cd paused / cd resumed); only a refusal is answered here
+        -- server itself (the Link's PAUSED / RESUMED); only a refusal is answered here
         local err = player:cardianPause()
         if err ~= '' then
             reply(player, '#cd note ' .. err)

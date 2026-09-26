@@ -1273,11 +1273,12 @@ class PawnModule : public CPPModule
             return PChar != nullptr && pawn::isPawn(PChar);
         };
 
-        // The view origin (ROADMAP C, pawn/view.h): the player's client is
-        // looking through this cardian, so the world around her must reach
-        // him. "" looks through nobody again; a number is a target index in
-        // his zone, any entity, for a GM (a player's eye through any mob
-        // would be a wallhack).
+        // The view origin (ROADMAP C, pawn/view.h) as a typed !cardian verb:
+        // the addon sends the Link's VIEW message instead (link_api.cpp), so
+        // this stays only for a GM's number -- a target index in his zone, any
+        // entity (a player's eye through any mob would be a wallhack) -- until
+        // it is decided which !cardian verbs stay typeable. "" looks through
+        // nobody again.
         lua["CBaseEntity"]["cardianView"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -1330,61 +1331,6 @@ class PawnModule : public CPPModule
             });
         });
 
-        // A walk order (pawn.h): a point in her zone, or none. The point is
-        // the player's ring, which is its own thing on his client (no mesh
-        // there): it is slid along the mesh from the last point toward the
-        // one asked -- a wall or a ledge stops it, so it never leaves the
-        // floor she can walk -- and its height is the mesh's. Answers the
-        // error, then the point as taken (x, y, z), for the ring to follow
-        lua["CBaseEntity"]["cardianWalk"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, sol::optional<float> x, sol::optional<float> y, sol::optional<float> z) -> std::tuple<std::string, float, float, float>
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return { "no such cardian", 0.f, 0.f, 0.f };
-            }
-            if (!x.has_value() || !y.has_value() || !z.has_value())
-            {
-                // A composed maneuver's route is its order's, not the ring's: the ring
-                // going (the camera home) leaves it for her to walk at the release
-                const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
-                if (PController == nullptr || !PController->ManeuverComposed())
-                {
-                    pawn::clearWalkOrder(PPawn->id);
-                }
-                return { "", 0.f, 0.f, 0.f };
-            }
-            if (PPawn->loc.zone == nullptr || PChar->loc.zone != PPawn->loc.zone)
-            {
-                return { "not in your zone", 0.f, 0.f, 0.f };
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            // Composed, her maneuver's way is set: a point still in flight from the ring moves nothing
-            if (PController != nullptr && PController->ManeuverComposed())
-            {
-                const auto at = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
-                return { "", at.x, at.y, at.z };
-            }
-            position_t point{ *x, *y, *z, 0, 0 };
-            if (auto* PMesh = PPawn->loc.zone->navMesh(); PMesh != nullptr)
-            {
-                const auto from = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
-                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
-                {
-                    point = *slid;
-                }
-                else
-                {
-                    point = from; // nowhere to slide from: the ring stays where it was
-                }
-                PMesh->snapToValidPosition(point); // the surface's own height
-            }
-            // Held, in a maneuver, the ring lays a route (docs/maneuvers.md)
-            const bool laying = PController != nullptr && PController->InManeuver() && cardian::pause::isHeld();
-            pawn::setWalkOrder(PPawn->id, point, PChar->id, laying);
-            return { "", point.x, point.y, point.z };
-        };
-
         // The command window: one action now, on a target index in the
         // zone (0 = herself)
         lua["CBaseEntity"]["cardianDo"] = [commandPair, managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
@@ -1420,57 +1366,6 @@ class PawnModule : public CPPModule
                 ShowInfoFmt("pawn: {} is ordered {} on {} by {}", PPawn->getName(), key, PTarget->getName(), PChar->getName());
             }
             return err;
-        };
-
-        // A maneuver (docs/maneuvers.md, pawn_controller.h): begins one on
-        // her; "off" ends it; "move", "movewait" and "rest:<n>" are its
-        // orders that are no action. Answers "" or why not
-        lua["CBaseEntity"]["cardianManeuver"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& what) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr)
-            {
-                return "no controller";
-            }
-            if (what == "off")
-            {
-                if (!PController->InManeuver())
-                {
-                    return "no maneuver";
-                }
-                PController->EndManeuver(fmt::format("{} cancels the maneuver", PChar->getName()));
-                return "";
-            }
-            if (what == "move" || what == "movewait")
-            {
-                return PController->ComposeMove(what == "movewait");
-            }
-            if (int percent = 0; std::sscanf(what.c_str(), "rest:%d", &percent) == 1)
-            {
-                return PController->ComposeRest(percent);
-            }
-            return PController->BeginManeuver(PChar);
-        };
-        // A composed maneuver of his waiting on her (a pause queues one per
-        // cardian): told to an addon that has just bound, which starts empty
-        lua["CBaseEntity"]["cardianComposed"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr && PChar != nullptr && PController->ManeuverComposed() && PController->ManeuverBy() == PChar->id;
-        };
-        // The cardian this player has a maneuver on, her name, or ""
-        lua["CBaseEntity"]["cardianManeuverOf"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
-        {
-            const auto* PChar       = dynamic_cast<const CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            const auto* PPawn       = PChar != nullptr ? zoneutils::GetChar(pawn::maneuverOf(PChar->id)) : nullptr;
-            const auto* PController = PPawn != nullptr && PPawn->PAI != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr && PController->InManeuver() ? PPawn->getName() : std::string();
         };
 
         // The command window's queue line: what she has waiting ("" with none),

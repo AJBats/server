@@ -52,6 +52,12 @@ namespace cardian::link
     X(LEGACY_CD, cl_legacy_cd)   \
     X(INVENTORY, cl_inventory)   \
     X(GIVE, cl_give)             \
+    X(WALK, cl_walk)             \
+    X(VIEW, cl_view)             \
+    X(MANEUVER, cl_maneuver)     \
+    X(MANEUVERS, cl_maneuvers)   \
+    X(MANEUVER_STATE, cl_maneuver_state) \
+    X(WALK_TAKEN, cl_walk_taken) \
     X(PAUSED, cl_paused)         \
     X(RESUMED, cl_resumed)       \
     X(CALENDAR, cl_calendar)

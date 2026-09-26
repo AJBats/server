@@ -2402,7 +2402,16 @@ namespace pawn
             return nullptr;
         }
 
-        auto* PPawn = findPawn(charutils::getCharIdFromName(targetName));
+        return findCommandablePawn(PPlayer, charutils::getCharIdFromName(targetName));
+    }
+
+    auto findCommandablePawn(const CCharEntity* PPlayer, const uint32 pawnCharID) -> CCharEntity*
+    {
+        if (PPlayer == nullptr || pawnCharID == 0)
+        {
+            return nullptr;
+        }
+        auto* PPawn = findPawn(pawnCharID);
         return PPawn != nullptr && commands(PPlayer, PPawn) ? PPawn : nullptr;
     }
 
@@ -2416,19 +2425,29 @@ namespace pawn
         return names;
     }
 
-    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>
+    auto commandablePawns(const CCharEntity* PPlayer) -> std::vector<CCharEntity*>
     {
-        std::vector<std::string> names;
+        std::vector<CCharEntity*> out;
         if (PPlayer == nullptr)
         {
-            return names;
+            return out;
         }
         for (const auto& [charid, PPawn] : pawns)
         {
             if (commands(PPlayer, PPawn.get()))
             {
-                names.emplace_back(PPawn->getName());
+                out.push_back(PPawn.get());
             }
+        }
+        return out;
+    }
+
+    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>
+    {
+        std::vector<std::string> names;
+        for (const auto* PPawn : commandablePawns(PPlayer))
+        {
+            names.emplace_back(PPawn->getName());
         }
         std::ranges::sort(names);
         return names;

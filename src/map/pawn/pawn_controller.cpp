@@ -387,7 +387,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     // Leaving a maneuver by whatever door (its finisher, his cancel, his
     // camera off her, her leaving his party, her death) hands her back:
     // her gambit switch as it was, his walk order gone, and his addon
-    // told (`cd mv <name>`, no finisher) so it lets go of the camera
+    // told (MANEUVER_STATE, ended) so it lets go of the camera
     if (from == Mode::Maneuver && to != Mode::Maneuver)
     {
         // A composed maneuver ended before its order fired (his cancel, her
@@ -409,7 +409,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         {
             pawn::clearManeuver(m_ManeuverBy);
         }
-        cardian::link::sendLegacy(m_ManeuverBy, fmt::format("mv {}", POwner->getName()));
+        TellManeuver(CL_MS_ENDED);
         m_ManeuverBy       = 0;
         m_ManeuverComposed = false;
     }
@@ -3908,35 +3908,38 @@ auto CPawnController::InManeuver() const -> bool
     return m_Mode == Mode::Maneuver;
 }
 
-auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
+auto CPawnController::BeginManeuver(CCharEntity* PBy, uint32* other) -> uint16
 {
     if (PBy == nullptr)
     {
-        return "no player";
+        return CL_S_REFUSED;
     }
     if (InManeuver())
     {
         if (m_ManeuverBy != PBy->id)
         {
-            return "another player's maneuver";
+            return CL_S_ANOTHER_PLAYERS;
         }
-        return m_ManeuverComposed ? fmt::format("{} has a maneuver waiting: cancel it first", POwner->getName()) : "";
+        return m_ManeuverComposed ? CL_S_MANEUVER_COMPOSED : CL_S_OK;
     }
     if (POwner->isDead())
     {
-        return "KO'd";
+        return CL_S_KNOCKED_OUT;
     }
     // A fight is no bar (docs/maneuvers.md: the boss pull that went
     // sideways). She stays engaged through it, the tick leaves an engaged
     // maneuver alone, and its end hands her straight back to the fight
     if (cardian::view::origin(PBy) != POwner)
     {
-        return "not looking through her";
+        return CL_S_NOT_LOOKING;
     }
-    if (const auto other = pawn::maneuverOf(PBy->id); other != 0 && other != POwner->id)
+    if (const auto driven = pawn::maneuverOf(PBy->id); driven != 0 && driven != POwner->id)
     {
-        const auto* POther = zoneutils::GetChar(other);
-        return fmt::format("one maneuver at a time ({})", POther != nullptr ? POther->getName() : "another");
+        if (other != nullptr)
+        {
+            *other = driven;
+        }
+        return CL_S_ONE_MANEUVER;
     }
 
     EndRestOrder("a maneuver");
@@ -3948,8 +3951,17 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
     m_Gambits->SetMaster(false);
     pawn::setManeuver(PBy->id, POwner->id);
     Transition(Mode::Maneuver, fmt::format("{} takes the wheel", PBy->getName()));
-    cardian::link::sendLegacy(m_ManeuverBy, fmt::format("mv {} on", POwner->getName()));
-    return "";
+    TellManeuver(CL_MS_LIVE);
+    return CL_S_OK;
+}
+
+// The player whose maneuver it is hears every change of it
+void CPawnController::TellManeuver(const uint8 state) const
+{
+    auto msg    = cardian::link::make<cl_maneuver_state>();
+    msg.cardian = POwner->id;
+    msg.state   = state;
+    cardian::link::send(m_ManeuverBy, msg);
 }
 
 void CPawnController::EndManeuver(const std::string_view why)
@@ -3993,29 +4005,28 @@ void CPawnController::SetOwnMaster(const bool on)
     m_Gambits->SetMaster(on);
 }
 
-auto CPawnController::ComposeMove(const bool wait)
-    -> std::string
+auto CPawnController::ComposeMove(const bool wait) -> uint16
 {
     if (!InManeuver())
     {
-        return "no maneuver";
+        return CL_S_NO_MANEUVER;
     }
     if (!cardian::pause::isHeld())
     {
-        return "a move is a paused maneuver's order";
+        return CL_S_NOT_PAUSED;
     }
     if (m_ManeuverComposed)
     {
-        return "her maneuver is composed already: cancel it first";
+        return CL_S_MANEUVER_COMPOSED;
     }
     if (!pawn::walkOrderOf(POwner->id).has_value())
     {
-        return "no route laid";
+        return CL_S_NO_ROUTE;
     }
     m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(std::string(wait ? "movewait" : "move"), EntityId(POwner)));
     MarkComposed(fmt::format("walk the route{}", wait ? ", then wait there" : ""));
-    return "";
+    return CL_S_OK;
 }
 
 // A maneuver's order is given -- held, or a rest either way: composed, it
@@ -4029,26 +4040,26 @@ void CPawnController::MarkComposed(const std::string_view what)
         pawn::clearManeuver(m_ManeuverBy);
     }
     ShowInfoFmt("pawn: {}'s maneuver is composed: {}", POwner->getName(), what);
-    cardian::link::sendLegacy(m_ManeuverBy, fmt::format("mv {} composed", POwner->getName()));
+    TellManeuver(CL_MS_COMPOSED);
 }
 
-auto CPawnController::ComposeRest(const int percent) -> std::string
+auto CPawnController::ComposeRest(const int percent) -> uint16
 {
     if (!InManeuver())
     {
-        return "no maneuver";
+        return CL_S_NO_MANEUVER;
     }
     if (m_ManeuverComposed)
     {
-        return "her maneuver is composed already: cancel it first";
+        return CL_S_MANEUVER_COMPOSED;
     }
     if (percent < 1 || percent > 100)
     {
-        return "rest takes 1 to 100 percent";
+        return CL_S_MALFORMED;
     }
     if (cardian::rest::Order{ .percent = percent }.metBy(POwner->health.hp, POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP()))
     {
-        return fmt::format("{} is already at {}% HP and MP", POwner->getName(), percent);
+        return CL_S_ALREADY_RESTED;
     }
     // Live, she rests where she stands: the point she was steered toward is let go
     if (!cardian::pause::isHeld())
@@ -4058,7 +4069,7 @@ auto CPawnController::ComposeRest(const int percent) -> std::string
     m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(fmt::format("rest:{}", percent), EntityId(POwner)));
     MarkComposed(fmt::format("{}rest until {}%", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", percent));
-    return "";
+    return CL_S_OK;
 }
 
 auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> std::string

@@ -123,6 +123,15 @@ namespace cardian::link
             }
         }
 
+        // A one-way notice to the same connection, answering nothing: what a
+        // stream sent one-way (WALK) hears when it must hear something
+        template <typename T>
+        void notify(T msg, const uint16 status = CL_S_OK)
+        {
+            stamp(msg, 0, 0, status);
+            send_(bytesOf(msg));
+        }
+
     private:
         cl_header                        asked_;
         std::function<void(std::string)> send_;
