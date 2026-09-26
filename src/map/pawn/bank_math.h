@@ -65,7 +65,7 @@ namespace cardian::tactics
         return {};
     }
 
-    // --- cures: the smallest tier that covers the gap -------------------
+    // --- cures: which tier for the gap ----------------------------------
 
     struct CureOption
     {
@@ -85,10 +85,9 @@ namespace cardian::tactics
 
     constexpr std::size_t kNoPick = static_cast<std::size_t>(-1);
 
-    // Each option against the missing HP; the pick is the cheapest tier
-    // that covers it, else the one that heals most. A row may explicitly
-    // request a cure with nothing missing; then the cheapest tier wins.
-    inline auto pickCure(std::vector<CureOption>& options, const int32 missing, const bool requested = false) -> std::size_t
+    // Each option against the missing HP: what lands, what the cap would
+    // waste, and whether it fills the gap
+    inline void against(std::vector<CureOption>& options, const int32 missing, const bool requested)
     {
         const int32 gap = std::max(0, missing);
         for (auto& o : options)
@@ -97,6 +96,42 @@ namespace cardian::tactics
             o.over   = std::max(0, o.heals - gap);
             o.covers = (gap > 0 || requested) && o.heals >= gap;
         }
+    }
+
+    // The missing HP a tier waits for so that it lands whole: a quarter
+    // more than it heals when the heal is known, so no cure is ever capped
+    // (the user's rule, 2026-09-15); twice its floor when only that is
+    // known, so the first lands whole and teaches the number
+    inline auto wholeAt(const CureOption& o) -> int32
+    {
+        return o.known ? static_cast<int32>(std::lround(o.heals * 1.25)) : 2 * o.heals;
+    }
+
+    // The Support Mage's own pick (the user, 2026-09-25): the biggest tier
+    // that lands whole on the gap, so she tops up with the small cures and
+    // never overcures; none while the gap is under her smallest tier's line
+    inline auto pickWhole(std::vector<CureOption>& options, const int32 missing) -> std::size_t
+    {
+        against(options, missing, false);
+        std::size_t pick = kNoPick;
+        for (std::size_t i = 0; i < options.size(); ++i)
+        {
+            const auto& o = options[i];
+            if (o.heals > 0 && missing >= wholeAt(o) && (pick == kNoPick || o.heals > options[pick].heals))
+            {
+                pick = i;
+            }
+        }
+        return pick;
+    }
+
+    // A row's or an order's pick: the cheapest tier that covers the gap,
+    // else the one that heals most. A row may explicitly request a cure
+    // with nothing missing; then the cheapest tier wins.
+    inline auto pickCure(std::vector<CureOption>& options, const int32 missing, const bool requested = false) -> std::size_t
+    {
+        const int32 gap = std::max(0, missing);
+        against(options, missing, requested);
         if (gap == 0 && !requested)
         {
             return kNoPick;

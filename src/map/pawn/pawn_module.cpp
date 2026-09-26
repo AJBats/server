@@ -738,6 +738,13 @@ class PawnModule : public CPPModule
             return PPawn != nullptr ? pawn::items::takeFromPawn(PChar, PPawn, slot, qty) : "no such cardian";
         };
 
+        // The trade window's gil line: to her, or back from her
+        lua["CBaseEntity"]["cardianGil"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 amount, const bool toPawn) -> std::string
+        {
+            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
+            return PPawn != nullptr ? pawn::items::moveGil(PChar, PPawn, amount, toPawn) : "no such cardian";
+        };
+
         // location: the inventory (0) or a wardrobe the piece is worn from
         lua["CBaseEntity"]["cardianWear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string
         {
@@ -1383,12 +1390,17 @@ class PawnModule : public CPPModule
 
         // The command window: one action now, on a target index in the
         // zone (0 = herself)
-        lua["CBaseEntity"]["cardianDo"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
+        lua["CBaseEntity"]["cardianDo"] = [commandPair, managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
             {
                 return "no such cardian";
+            }
+            // Her items are hers to use only when she is his: use is a manage verb
+            if (key.starts_with("item:") && managedPair(PLuaBaseEntity, name).second == nullptr)
+            {
+                return name + " is not yours to manage";
             }
             if (PPawn->loc.zone == nullptr)
             {

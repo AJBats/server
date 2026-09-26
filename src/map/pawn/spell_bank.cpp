@@ -732,7 +732,8 @@ namespace pawn::tactics
                 {
                     options.push_back(tier.option);
                 }
-                const auto  pick = pickCure(options, missing);
+                // the pick is the role's own: the biggest tier that lands whole
+                const auto  pick = cardian::tactics::pickWhole(options, missing);
                 std::string line = cureLine(PCaster->getName(), PTarget->getName(), missing, options, pick);
                 if (pick != kNoPick)
                 {
@@ -741,6 +742,10 @@ namespace pawn::tactics
                 else if (missing <= 0)
                 {
                     line += fmt::format("; cast {} on a full target", PSpell->getName());
+                }
+                else
+                {
+                    line += fmt::format("; cast {} under the line", PSpell->getName());
                 }
                 return line;
             }
@@ -868,19 +873,38 @@ namespace pawn::tactics
             return out;
         }
 
+        // The tiers' options for a pick, and the pick back as the tier's spell
+        template <typename Pick>
+        auto pickAmong(const std::vector<CureTier>& tiers, Pick pick) -> SpellID
+        {
+            std::vector<CureOption> options;
+            for (const auto& tier : tiers)
+            {
+                options.push_back(tier.option);
+            }
+            const auto picked = pick(options);
+            return picked == kNoPick ? static_cast<SpellID>(0) : tiers[picked].id;
+        }
+
         auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget, const bool requested) -> SpellID
         {
             if (PTarget == nullptr || PTarget->isDead())
             {
                 return static_cast<SpellID>(0);
             }
-            std::vector<CureOption> options;
-            for (const auto& tier : tiers)
-            {
-                options.push_back(tier.option);
-            }
-            const auto pick = pickCure(options, PTarget->GetMaxHP() - PTarget->health.hp, requested);
-            return pick == kNoPick ? static_cast<SpellID>(0) : tiers[pick].id;
+            const int32 missing = PTarget->GetMaxHP() - PTarget->health.hp;
+            return pickAmong(tiers, [&](std::vector<CureOption>& options)
+                             {
+                                 return pickCure(options, missing, requested);
+                             });
+        }
+
+        auto pickTierWhole(const std::vector<CureTier>& tiers, const int32 gap) -> SpellID
+        {
+            return pickAmong(tiers, [gap](std::vector<CureOption>& options)
+                             {
+                                 return cardian::tactics::pickWhole(options, gap);
+                             });
         }
 
         auto melee(FightRecord& r, CBattleEntity* PActor, CBattleEntity* PTarget, const bool allowSample) -> std::optional<FightRecord::MeleeGuess>

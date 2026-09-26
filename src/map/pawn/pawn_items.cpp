@@ -122,6 +122,41 @@ namespace
             return {};
         }
 
+        // Gil between the same two, as the trade window's gil line moves it:
+        // the sender pays, the receiver earns, both or neither
+        auto moveGil(CCharEntity* PSender, CCharEntity* PReceiver, const uint32 amount) -> std::string
+        {
+            const CItem* PSent = PSender->getStorage(LOC_INVENTORY)->GetItem(0);
+            const CItem* PHeld = PReceiver->getStorage(LOC_INVENTORY)->GetItem(0);
+            if (PSent == nullptr || !PSent->isType(ITEM_CURRENCY) || PHeld == nullptr || !PHeld->isType(ITEM_CURRENCY))
+            {
+                return "no gil slot";
+            }
+            if (amount == 0)
+            {
+                return "bad amount";
+            }
+            if (PSent->getQuantity() < amount)
+            {
+                return "not enough gil";
+            }
+            if (static_cast<uint64>(PHeld->getQuantity()) + amount > PHeld->getStackSize())
+            {
+                return fmt::format("{} cannot hold that much gil", PReceiver->getName());
+            }
+            if (!this->pay(PSender, amount) || !this->earn(PReceiver, amount))
+            {
+                this->rollback();
+                return "gil is busy";
+            }
+            if (!this->commit())
+            {
+                this->rollback();
+                return "transfer refused";
+            }
+            return {};
+        }
+
     protected:
         // give/take above already applied and recorded the work
         auto doCommit() -> bool override
@@ -507,6 +542,15 @@ namespace pawn::items
             return tooFar;
         }
         return CardianTransfer().move(PPawn, PPlayer, slot, qty);
+    }
+
+    auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, const uint32 amount, const bool toPawn) -> std::string
+    {
+        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
+        {
+            return tooFar;
+        }
+        return toPawn ? CardianTransfer().moveGil(PPlayer, PPawn, amount) : CardianTransfer().moveGil(PPawn, PPlayer, amount);
     }
 
     auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string

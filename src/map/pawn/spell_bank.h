@@ -126,6 +126,10 @@ namespace pawn::tactics
         // it, else the biggest heal; 0 when nothing is missing or no tier fits
         auto pickTier(const std::vector<CureTier>& tiers, CBattleEntity* PTarget, bool requested = false) -> SpellID;
 
+        // The Support Mage's tier for a gap: the biggest that lands whole
+        // on it (bank_math.h pickWhole); 0 while the gap is under her line
+        auto pickTierWhole(const std::vector<CureTier>& tiers, int32 gap) -> SpellID;
+
         // What one entity's ordinary melee does to another, by the formulas:
         // cached on the record per pair, a miss too. The pDIF sampler's 300
         // rolls are spent only when allowed: a caller pricing a whole party

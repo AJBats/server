@@ -133,6 +133,49 @@ namespace pawn::tactics
             }
             return Conveyor::keyFor(PSpell, PTarget != nullptr ? PTarget->id : 0, PMember->id);
         }
+
+        // What a member's cure in flight is expected to heal: the cure
+        // formula run on its caster, else what she is known to heal with it,
+        // a floor counted double as the line counts one (bank_math.h wholeAt),
+        // so a top-up errs towards not overcuring
+        auto inFlightHeal(CBattleEntity* PMember) -> int32
+        {
+            auto*   PState  = static_cast<CMagicState*>(PMember->PAI->GetCurrentState());
+            CSpell* PSpell  = PState->GetSpell();
+            auto*   PTarget = PState->target().resolve<CBattleEntity>();
+            if (PSpell == nullptr || PTarget == nullptr)
+            {
+                return 0;
+            }
+            if (const auto heals = bank::expectedCure(PMember, PSpell, PTarget); heals.has_value())
+            {
+                return *heals;
+            }
+            const auto [heals, exact] = cureEstimate(PMember->id, PSpell);
+            return exact ? heals : 2 * heals;
+        }
+
+        // A request still stands: a row the player has not changed or
+        // deleted since it fed, a proposal whose allow-list row is still
+        // there, and the reflex always
+        auto requestStands(const Need& n, const Request& r, CBattleEntity* PTarget) -> bool
+        {
+            if (r.source == Source::Reflex)
+            {
+                return true;
+            }
+            auto* PCaster    = zoneutils::GetChar(r.caster);
+            auto* controller = controllerOf(PCaster);
+            if (controller == nullptr)
+            {
+                return false;
+            }
+            if (r.source == Source::Row)
+            {
+                return controller->Gambits().RequestValid(r.rowId, n.key.target, r.spell);
+            }
+            return stillAdmitted(PCaster, n, r, PTarget);
+        }
     } // namespace
 
     auto Conveyor::keyFor(CSpell* PSpell, uint32 target, const uint32 caster) -> NeedKey
@@ -216,15 +259,32 @@ namespace pawn::tactics
             n.lockedBy = 0;
         }
         std::unordered_set<uint32> casting;
+        m_incoming.clear();
+        m_inFlight.clear();
         for (auto* PMember : scope.members)
         {
             if (const auto key = castingKey(PMember); key.has_value())
             {
                 auto& n    = m_needs.open(*key);
                 n.lockedBy = PMember->id;
-                n.assigned = 0;
+                n.assigned = 0; // a locked need is assigned again only by the top-up pass
                 casting.insert(PMember->id);
                 m_pending[PMember->id] = *key;
+                if (key->kind == NeedKind::Cure)
+                {
+                    const int32 heals = inFlightHeal(PMember);
+                    m_incoming[key->target] += heals;
+                    m_inFlight[PMember->id] = { key->target, heals };
+                }
+            }
+        }
+        // And the emergency cures chosen for this tick, not yet begun: a
+        // top-up must not land on top of one
+        for (const auto& choice : m_emergency)
+        {
+            if (choice.cast && !casting.contains(choice.cure.caster))
+            {
+                m_incoming[choice.cure.target] += static_cast<int32>(choice.cure.heals);
             }
         }
         std::erase_if(m_pending, [&](const auto& kv)
@@ -245,21 +305,7 @@ namespace pawn::tactics
             auto* PTarget = resolve(scope, n.key.target);
             std::erase_if(n.requests, [&](const Request& r)
             {
-                if (r.source == Source::Reflex)
-                {
-                    return false;
-                }
-                auto* PCaster    = zoneutils::GetChar(r.caster);
-                auto* controller = controllerOf(PCaster);
-                if (controller == nullptr)
-                {
-                    return true;
-                }
-                if (r.source == Source::Row)
-                {
-                    return !controller->Gambits().RequestValid(r.rowId, n.key.target, r.spell);
-                }
-                return !stillAdmitted(PCaster, n, r, PTarget);
+                return !requestStands(n, r, PTarget);
             });
         }
         m_needs.expire(now, life);
@@ -278,6 +324,27 @@ namespace pawn::tactics
             {
                 schedule(n, scope, loads);
             }
+        }
+        // Then the top-ups: a cure already in flight leaves its need open to
+        // another mage whose own cure still lands whole on what it leaves.
+        // A locked need keeps every request for the retry stamps it owes
+        // (Needs::expire), so the top-up is scheduled on the requests that
+        // still stand: a row deleted mid-cast names nobody
+        for (auto& n : m_needs.needs)
+        {
+            if (n.lockedBy == 0 || n.key.kind != NeedKind::Cure)
+            {
+                continue;
+            }
+            auto* PTarget = resolve(scope, n.key.target);
+            Need  standing = n;
+            std::erase_if(standing.requests, [&](const Request& r)
+                          {
+                              return !requestStands(n, r, PTarget);
+                          });
+            schedule(standing, scope, loads);
+            n.assigned = standing.assigned;
+            n.spell    = standing.spell;
         }
     }
 
@@ -299,6 +366,14 @@ namespace pawn::tactics
         if (PCaster == nullptr)
         {
             return;
+        }
+        // Her cure is no longer in flight: its heal leaves the gap it was
+        // counted against, before anything is fed again this tick
+        if (const auto it = m_inFlight.find(PCaster->id); it != m_inFlight.end())
+        {
+            auto& incoming = m_incoming[it->second.first];
+            incoming       = std::max(0, incoming - it->second.second);
+            m_inFlight.erase(it);
         }
         std::optional<NeedKey> key;
         if (const auto it = m_pending.find(PCaster->id); it != m_pending.end())
@@ -450,6 +525,20 @@ namespace pawn::tactics
         {
             return order || admittedBy(PCaster, id, PTarget).has_value();
         };
+        // The per-caster cache stays whole; the tiers she may cast on this
+        // member are picked from it here
+        const auto allowedTiers = [&]
+        {
+            std::vector<bank::CureTier> tiers;
+            for (const auto& tier : tiersOf(PCaster))
+            {
+                if (allowed(tier.id))
+                {
+                    tiers.push_back(tier);
+                }
+            }
+            return tiers;
+        };
         if (n.key.kind == NeedKind::Cure)
         {
             // Explicit rows may cure a whole member, asleep or awake. The
@@ -459,26 +548,30 @@ namespace pawn::tactics
                 return static_cast<SpellID>(0);
             }
             const uint16 asked = n.askedSpell();
+            // The role's own cure, and any mage's top-up of a cure in flight:
+            // the biggest tier she may cast that lands whole on the gap the
+            // cures in flight leave (bank_math.h pickWhole). A top-up of a
+            // row that names its spell casts that spell only if it lands whole
+            if (n.lockedBy != 0 || !n.rowFed())
+            {
+                const auto  in    = m_incoming.find(PTarget->id);
+                const int32 gap   = PTarget->GetMaxHP() - PTarget->health.hp - (in != m_incoming.end() ? in->second : 0);
+                auto        tiers = allowedTiers();
+                if (asked != 0)
+                {
+                    std::erase_if(tiers, [asked](const bank::CureTier& tier)
+                                  {
+                                      return static_cast<uint16>(tier.id) != asked;
+                                  });
+                }
+                return bank::pickTierWhole(tiers, gap);
+            }
             if (asked != 0)
             {
                 const auto id = static_cast<SpellID>(asked);
                 return bank::usable(PCaster, id) && allowed(id) ? id : static_cast<SpellID>(0);
             }
-            if (order)
-            {
-                return bank::pickTier(tiersOf(PCaster), PTarget, n.rowFed());
-            }
-            // The per-caster cache stays whole; the tiers she may cast on this
-            // member are picked from it here
-            std::vector<bank::CureTier> tiers;
-            for (const auto& tier : tiersOf(PCaster))
-            {
-                if (allowed(tier.id))
-                {
-                    tiers.push_back(tier);
-                }
-            }
-            return bank::pickTier(tiers, PTarget, n.rowFed());
+            return bank::pickTier(allowedTiers(), PTarget, true); // a row's: every tier when it is her order
         }
         // A row's named spell takes precedence, including when another
         // mage casts it. With no row, use this role holder's own proposal.
@@ -501,15 +594,17 @@ namespace pawn::tactics
 
     auto Conveyor::describe(const Need& n, const Scope& scope) const -> std::string
     {
+        // a top-up says whose cure is already in flight
+        const auto after = n.lockedBy != 0 ? fmt::format(", after {}'s cure", nameOf(scope, n.lockedBy)) : std::string();
         const auto& lead = n.lead();
         switch (lead.source)
         {
             case Source::Reflex:
-                return fmt::format("the reflex: {}", lead.why);
+                return fmt::format("the reflex: {}{}", lead.why, after);
             case Source::Row:
-                return lead.caster == n.assigned ? fmt::format("her row {}", lead.row) : fmt::format("{}'s row {}", nameOf(scope, lead.caster), lead.row);
+                return (lead.caster == n.assigned ? fmt::format("her row {}", lead.row) : fmt::format("{}'s row {}", nameOf(scope, lead.caster), lead.row)) + after;
             case Source::Role:
-                return fmt::format("the role: {}", lead.why);
+                return fmt::format("the role: {}{}", lead.why, after);
         }
         return "";
     }
@@ -570,7 +665,12 @@ namespace pawn::tactics
                 voices += (voices.empty() ? "" : ", ") + voice(scope, r);
             }
             std::string state;
-            if (n.lockedBy != 0)
+            if (n.lockedBy != 0 && n.assigned != 0)
+            {
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(n.spell));
+                state        = fmt::format("{} is casting it, {} tops up with {}", nameOf(scope, n.lockedBy), nameOf(scope, n.assigned), PSpell != nullptr ? PSpell->getName() : "?");
+            }
+            else if (n.lockedBy != 0)
             {
                 state = fmt::format("{} is casting it", nameOf(scope, n.lockedBy));
             }

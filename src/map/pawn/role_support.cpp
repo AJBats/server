@@ -41,18 +41,6 @@
 
 namespace pawn::tactics::role
 {
-    namespace
-    {
-        auto fighting(const FightLog& log) -> bool
-        {
-            return std::any_of(log.open().begin(), log.open().end(), [](const FightRecord& r)
-                               {
-                                   return !r.settling();
-                               });
-        }
-
-    } // namespace
-
     // What the open fights threaten one member with: the biggest hit
     // any has landed on anyone (a switch can bring it to her), the
     // spot's memory of it, or the formulas' guess before either; and
@@ -119,17 +107,13 @@ namespace pawn::tactics::role
 
     void think(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, const bool engaged, const double now)
     {
-        const bool inFight = fighting(log);
-
         // Her line, per member: the missing HP a cure is worth casting at --
-        // the biggest tier she has in a fight, the smallest between, among
+        // where her smallest tier lands whole (bank_math.h wholeAt), in a
+        // fight and between (the user, 2026-09-25: a healer tops up), among
         // the tiers her allow-list lets her cast on that member
         // (tactician_line.h). What she has, not what she can afford this
         // moment: a need she cannot serve is still a need another mage can.
-        // A known tier waits for a quarter more than it heals, so no cure is
-        // ever capped (the user's rule, 2026-09-15); a tier known only by its
-        // floor waits for twice that, so the first cure lands whole and
-        // teaches the number
+        // Which tier she casts is the conveyor's (pickWhole)
         const auto tiers = bank::cureTiers(PHolder, bank::CureAvailability::Eligible);
         for (auto* PMember : scope.members)
         {
@@ -150,8 +134,8 @@ namespace pawn::tactics::role
                 {
                     row = *by;
                 }
-                const int32 heals = tier.option.known ? static_cast<int32>(std::lround(tier.option.heals * 1.25)) : 2 * tier.option.heals;
-                line              = line == 0 ? heals : (inFight ? std::max(line, heals) : std::min(line, heals));
+                const int32 whole = cardian::tactics::wholeAt(tier.option);
+                line              = line == 0 ? whole : std::min(line, whole);
             }
             const int32 missing = PMember->GetMaxHP() - PMember->health.hp;
             if (line == 0 || !cardian::tactics::cureWanted(missing, line))

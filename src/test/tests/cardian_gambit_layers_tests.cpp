@@ -138,8 +138,8 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
     const auto wild  = layersFor<Row>(true, world, own);
     const auto party = layersFor<Row>(false, world, own);
 
-    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5" });
-    CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5" });
+    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5", "6" });
+    CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5", "6" });
 
     // The place is 1-based across both layers: the conveyor's order
     std::vector<std::size_t> places;
@@ -148,7 +148,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
                    places.push_back(place);
                    return false;
                });
-    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8, 9 });
 
     // The first row to answer true ends the walk, in either layer
     std::vector<std::string> seen;
@@ -172,7 +172,7 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     uint32 next = 0;
     auto   world = worldRows(kWorldBlock, next);
 
-    // A mage's own rows: rest with the player and the Support Mage role
+    // A mage's own rows: her weapon skill, rest with the player and the Support Mage role
     auto own = ownRows(pawn::defaultRowsFor(xi::Job::WHM));
 
     // In the wild she avoids aggro and links (the world's) and plays her own role
@@ -197,7 +197,7 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     CHECK(behavior(behaviorsOf(layersFor<Row>(false, worldRole, own)), pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
 
     // An unchecked row of hers does not speak; the next one does
-    own[0].enabled  = false; // rest with the player
+    own[1].enabled  = false; // rest with the player
     const auto some = behaviorsOf(layersFor<Row>(false, world, own));
     CHECK_FALSE(behavior(some, pawn::Behavior::RestWithPlayer).has_value());
     CHECK(behavior(behaviorsOf(layersFor<Row>(true, world, own)), pawn::Behavior::RestWithPlayer) == uint16{ 1 });

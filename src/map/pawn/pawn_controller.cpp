@@ -81,8 +81,12 @@
 #include "utils/battleutils.h"
 #include "weapon_skill.h"
 #include "utils/charutils.h"
+#include "utils/itemutils.h"
 #include "utils/zoneutils.h"
+#include "item_container.h"
 #include "zone.h"
+
+#include <optional>
 
 namespace
 {
@@ -1282,6 +1286,38 @@ namespace
     // The command window's Attack and Disengage, as the addon sends them and her queue holds them
     constexpr std::string_view kAttackOrder    = "attack";
     constexpr std::string_view kDisengageOrder = "disengage";
+
+    // An order's key: the catalogue's kind:mode:id, or item:<id> for an item
+    // she uses on herself -- the queue line's own word for an item, read here
+    // as kind 5 so it rides the same queue, grace and maneuver ending. Kind 5
+    // is reached through item:<id> alone: the item gate (cardianDo) reads that
+    // word, so the catalogue's form may not name it
+    constexpr unsigned kItemOrder = 5;
+    auto parseOrderKey(const std::string& key, unsigned& kind, unsigned& mode, unsigned& id) -> bool
+    {
+        if (std::sscanf(key.c_str(), "item:%u", &id) == 1)
+        {
+            kind = kItemOrder;
+            mode = 2;
+            return true;
+        }
+        return std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) == 3 && kind != kItemOrder;
+    }
+
+    // The first stack of an item in her inventory that nothing else holds
+    // (a stack in a give or take is busy); nothing when she has none free
+    auto inventorySlotOf(CCharEntity* PChar, const uint16 itemId) -> std::optional<uint8>
+    {
+        const auto* storage = PChar->getStorage(LOC_INVENTORY);
+        for (uint8 slot = 1; storage != nullptr && slot <= storage->GetSize(); ++slot)
+        {
+            if (const CItem* PItem = storage->GetItem(slot); PItem != nullptr && PItem->getID() == itemId && PItem->getQuantity() > 0 && !PItem->isBusy())
+            {
+                return slot;
+            }
+        }
+        return std::nullopt;
+    }
 } // namespace
 
 auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string
@@ -1297,9 +1333,18 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     unsigned kind = 0;
     unsigned mode = 0;
     unsigned id   = 0;
-    if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    if (!parseOrderKey(key, kind, mode, id))
     {
         return "bad action";
+    }
+    if (kind == kItemOrder)
+    {
+        // an item is used on herself, and only one she carries
+        PTarget = POwner;
+        if (!inventorySlotOf(static_cast<CCharEntity*>(POwner), static_cast<uint16>(id)).has_value())
+        {
+            return fmt::format("she has no {}", OrderName(kind, id));
+        }
     }
     if (PTarget == nullptr)
     {
@@ -1405,6 +1450,11 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
         {
             auto* PSkill = battleutils::GetWeaponSkill(static_cast<uint16>(id));
             return PSkill != nullptr ? PSkill->getName() : "that weapon skill";
+        }
+        case kItemOrder:
+        {
+            const auto* PItem = xi::items::lookup(static_cast<uint16>(id));
+            return PItem != nullptr ? PItem->getName() : "that item";
         }
         default:
             return "that";
@@ -1556,6 +1606,17 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             }
             fired = WeaponSkill(target, static_cast<uint16>(id));
             break;
+        case kItemOrder:
+        {
+            // the first stack she carries, through the game's own item use
+            auto*      PChar = static_cast<CCharEntity*>(POwner);
+            const auto slot  = inventorySlotOf(PChar, static_cast<uint16>(id));
+            if (!slot.has_value())
+            {
+                return fmt::format("she has no {}", OrderName(kind, id));
+            }
+            return pawn::items::useItem(PChar, *slot, LOC_INVENTORY);
+        }
         default:
             return "bad action";
     }
@@ -1659,7 +1720,7 @@ void CPawnController::FireQueuedOrder()
     unsigned kind = 0;
     unsigned mode = 0;
     unsigned id   = 0;
-    if (std::sscanf(key.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    if (!parseOrderKey(key, kind, mode, id))
     {
         SetQueuedOrder(std::nullopt);
         return;
@@ -4088,7 +4149,7 @@ auto CPawnController::OrderOutOfReach() const -> std::optional<std::pair<CBattle
     unsigned kind = 0;
     unsigned mode = 0;
     unsigned id   = 0;
-    if (std::sscanf(m_QueuedOrder->first.c_str(), "%u:%u:%u", &kind, &mode, &id) != 3)
+    if (!parseOrderKey(m_QueuedOrder->first, kind, mode, id))
     {
         return std::nullopt;
     }

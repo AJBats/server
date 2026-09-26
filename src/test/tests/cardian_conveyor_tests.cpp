@@ -322,12 +322,14 @@ TEST_CASE("rankFor and slotOrder: the reflex, her rows in order, others' rows, t
     needs.push_back(needWith(1, { reflexRequest(0.0) })); // 3: D
     needs.push_back(needWith(1, { row(9, 2) }));         // 4: E, another's row
     needs.push_back(needWith(1, { role(-2.0) }));        // 5: F
-    needs.push_back(needWith(1, { row(1, 0) }));         // 6: G, a cast in flight
+    needs.push_back(needWith(0, { row(1, 0) }));         // 6: G, a cast in flight
     needs.back().lockedBy = 9;
     needs.push_back(needWith(2, { row(2, 1) }));         // 7: H, another caster's
+    needs.push_back(needWith(1, { role(-1.0) }));        // 8: I, her top-up of another's cure in flight
+    needs.back().lockedBy = 9;
 
     const auto order = slotOrder(needs, 1);
-    CHECK(order == std::vector<std::size_t>{ 3, 2, 1, 4, 5, 0 });
+    CHECK(order == std::vector<std::size_t>{ 3, 2, 1, 4, 5, 8, 0 });
 
     CHECK(slotOrder(needs, 0).empty()); // nothing for nobody
 

@@ -57,6 +57,9 @@ namespace pawn::items
     auto tidyStacks(CCharEntity* PPawn) -> uint8;
     auto tidyContainer(CCharEntity* PPawn, uint8 location) -> uint8;
     auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
+    // Gil across, as the trade window's gil line moves it: to the pawn, or
+    // back from her. Within trading reach, both sides or neither
+    auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, uint32 amount, bool toPawn) -> std::string;
 
     // Sort one of her containers: partial stacks merged, then every stack
     // compacted from slot 1 in item-id order, fuller stacks first. The

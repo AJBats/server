@@ -102,7 +102,7 @@ namespace cardian::tactics
         std::vector<Request> requests;
 
         // The schedule's word
-        uint32 lockedBy = 0; // a cast in flight matches: nobody is assigned meanwhile
+        uint32 lockedBy = 0; // a cast in flight matches: nobody is assigned meanwhile, but a cure's top-up
         uint32 assigned = 0;
         uint16 spell    = 0; // what the assigned caster casts
 
@@ -369,7 +369,8 @@ namespace cardian::tactics
     }
 
     // The needs assigned to her, as indices, in her slot's order; nothing
-    // for nobody
+    // for nobody. A locked need is assigned only as a top-up: another
+    // mage's cure is in flight and hers still lands whole after it
     inline auto slotOrder(const std::vector<Need>& needs, const uint32 caster) -> std::vector<std::size_t>
     {
         std::vector<std::size_t> out;
@@ -379,7 +380,7 @@ namespace cardian::tactics
         }
         for (std::size_t i = 0; i < needs.size(); ++i)
         {
-            if (needs[i].assigned == caster && needs[i].lockedBy == 0)
+            if (needs[i].assigned == caster)
             {
                 out.push_back(i);
             }
@@ -401,9 +402,8 @@ namespace cardian::tactics
         return hp - biggestHit - takenPerSecond * secondsToLand;
     }
 
-    // The role's efficiency line: the missing HP has piled up to what the
-    // tier heals, so nothing overcures. In a fight the tier is the biggest
-    // she has; between fights the smallest, a top-up
+    // The role's efficiency line: the missing HP has piled up to where her
+    // smallest tier lands whole (bank_math.h wholeAt), so nothing overcures
     inline auto cureWanted(const int32 missing, const int32 tierHeals) -> bool
     {
         return tierHeals > 0 && missing >= tierHeals;
