@@ -245,7 +245,7 @@ TEST_CASE("tactician line: the default sets mean what they say where they sit", 
     {
         mage.push_back(spec);
     }
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Order, State::Line, State::Allows, State::Allows });
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Order, State::Order, State::Line, State::Allows, State::Allows });
 
     std::vector<std::string> melee;
     for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::WAR))
