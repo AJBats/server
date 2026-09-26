@@ -16,6 +16,8 @@
 --       gear <name>                      a cardian's equipment
 --       give <name> <slot> <qty>         your inventory slot -> cardian
 --       take <name> <slot> <qty>         cardian inventory slot -> you
+--       givegil <name> <amount>          your gil -> cardian (the trade window's gil line)
+--       takegil <name> <amount>          cardian's gil -> you
 --       wear <name> <invslot> <eqslot> [loc]  equip from the cardian's inventory, or a wardrobe (loc)
 --       strip <name> <eqslot>            unequip
 --       equipset <name> <eq:slot[:loc],...>   apply a whole loadout in one pass
@@ -1115,6 +1117,19 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok take')
             sendInv(player, name)
         end
+    elseif (verb == 'givegil' or verb == 'takegil') and name then
+        -- her gil rides the stats line; yours your client already shows. An
+        -- amount past the gil cap is refused here: the binding's uint32 would
+        -- wrap it into another amount
+        local amount = math.floor(tonumber(args[3]) or 0)
+        local err    = (amount ~= amount or amount < 1 or amount > 999999999) and 'bad amount'
+            or player:cardianGil(name, amount, verb == 'givegil')
+        if err ~= '' then
+            reply(player, '#cd err ' .. verb .. ' ' .. err)
+        else
+            reply(player, '#cd ok ' .. verb)
+            sendStatsLine(player, name)
+        end
     elseif verb == 'do' and name and args[3] then
         local err = player:cardianDo(name, args[3], tonumber(args[4]) or 0)
         if err ~= '' then
@@ -1224,7 +1239,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
     end
 end
 
