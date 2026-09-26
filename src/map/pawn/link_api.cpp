@@ -284,6 +284,97 @@ namespace pawn::linkapi
             }
             reply.finish(answer, CL_S_OK);
         }
+        // The party's standing orders as they stand (pawn.h, M3.9)
+        auto ordersOf(const CCharEntity* PChar) -> cl_orders
+        {
+            const auto rules = pawn::huntRulesOf(PChar->id);
+            const auto stake = pawn::stakeOf(PChar->id);
+
+            auto msg       = make<cl_orders>();
+            msg.strategy   = static_cast<uint8_t>(pawn::strategyOf(PChar->id));
+            msg.strategies = static_cast<uint8_t>(pawn::kStrategyCount);
+            msg.retreat    = pawn::isRetreating(PChar->id) ? 1 : 0;
+            msg.huntMin    = rules.minCheck;
+            msg.huntMax    = rules.maxCheck;
+            msg.pull       = rules.pullFirst;
+            msg.aggressive = rules.aggressive ? 1 : 0;
+            msg.links      = rules.links ? 1 : 0;
+            msg.staked     = stake.has_value() ? 1 : 0;
+            msg.stakeZone  = stake.has_value() ? static_cast<uint16_t>(stake->zone) : 0;
+            return msg;
+        }
+
+        void orders(CCharEntity* PChar, const cl_orders& /* ask */, Reply& reply)
+        {
+            reply.finish(ordersOf(PChar), CL_S_OK);
+        }
+
+        // A change to the orders: they come back as they now stand, then its
+        // outcome, refused or not, so the card never keeps a guess
+        template <typename T>
+        void ordersChanged(CCharEntity* PChar, const T& ask, Reply& reply, const uint16 status)
+        {
+            reply.more(ordersOf(PChar));
+            reply.finish(ask, status);
+        }
+
+        void setStrategy(CCharEntity* PChar, const cl_set_strategy& ask, Reply& reply)
+        {
+            const uint16 want = ask.mode == CL_STRATEGY_NEXT ? (pawn::strategyOf(PChar->id) + 1) % pawn::kStrategyCount : ask.strategy;
+            if (ask.mode > CL_STRATEGY_NEXT || want >= pawn::kStrategyCount)
+            {
+                ordersChanged(PChar, ask, reply, CL_S_MALFORMED);
+                return;
+            }
+            pawn::setStrategy(PChar, want);
+            ordersChanged(PChar, ask, reply, CL_S_OK);
+        }
+
+        void setHunt(CCharEntity* PChar, const cl_set_hunt& ask, Reply& reply)
+        {
+            ordersChanged(PChar, ask, reply, pawn::setHuntRule(PChar, ask.rule, ask.value));
+        }
+
+        // "On me": set, cleared, or the other way round from how it stands
+        void retreat(CCharEntity* PChar, const cl_retreat& ask, Reply& reply)
+        {
+            if (ask.mode > CL_SWITCH_TOGGLE)
+            {
+                ordersChanged(PChar, ask, reply, CL_S_MALFORMED);
+                return;
+            }
+            const bool on = ask.mode == CL_SWITCH_ON || (ask.mode == CL_SWITCH_TOGGLE && !pawn::isRetreating(PChar->id));
+            pawn::setRetreat(PChar, on);
+            ordersChanged(PChar, ask, reply, CL_S_OK);
+        }
+
+        // The camp: set or moved where he stands, cleared, or toggled -- the
+        // toggle decided here, so two presses before the first answer still
+        // alternate
+        void stake(CCharEntity* PChar, const cl_stake& ask, Reply& reply)
+        {
+            const bool clear = ask.mode == CL_STAKE_CLEAR || (ask.mode == CL_STAKE_TOGGLE && pawn::stakeOf(PChar->id).has_value());
+            uint16     status = CL_S_OK;
+            if (ask.mode > CL_STAKE_TOGGLE)
+            {
+                status = CL_S_MALFORMED;
+            }
+            else if (clear)
+            {
+                status = pawn::clearStake(PChar->id, "cleared") ? CL_S_OK : CL_S_NO_STAKE;
+            }
+            else
+            {
+                status = pawn::setStake(PChar);
+            }
+            ordersChanged(PChar, ask, reply, status);
+        }
+
+        // Every cardian of his in his zone fights his target
+        void engage(CCharEntity* PChar, const cl_engage& ask, Reply& reply)
+        {
+            reply.finish(ask, pawn::partyEngage(PChar, ask.target));
+        }
     } // namespace
 
     void registerHandlers()
@@ -293,5 +384,11 @@ namespace pawn::linkapi
         handle<cl_view>(lookThrough);
         handle<cl_maneuver>(maneuver);
         handle<cl_maneuvers>(maneuvers);
+        handle<cl_orders>(orders);
+        handle<cl_set_strategy>(setStrategy);
+        handle<cl_set_hunt>(setHunt);
+        handle<cl_retreat>(retreat);
+        handle<cl_stake>(stake);
+        handle<cl_engage>(engage);
     }
 } // namespace pawn::linkapi

@@ -1519,11 +1519,11 @@ namespace pawn
         }
     } // namespace
 
-    auto setStake(CCharEntity* POwner) -> std::string
+    auto setStake(CCharEntity* POwner) -> uint16
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr)
         {
-            return "no character";
+            return CL_S_REFUSED;
         }
         // Where he stands, facing his way: the Link's streamed position
         // when it has one (fresher than the last position packet), the
@@ -1540,7 +1540,7 @@ namespace pawn
             }
         }
         placeStake(POwner, POwner->getZone(), at, "");
-        return "";
+        return CL_S_OK;
     }
 
     void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how)
@@ -1635,41 +1635,41 @@ namespace pawn
         return ordersFor(ownerCharID).rules;
     }
 
-    auto setHuntRule(CCharEntity* POwner, const std::string_view field, const int value) -> std::string
+    auto setHuntRule(CCharEntity* POwner, const uint8 rule, const int value) -> uint16
     {
         if (POwner == nullptr)
         {
-            return "no character";
+            return CL_S_REFUSED;
         }
         auto&          o     = ordersFor(POwner->id);
         auto&          r     = o.rules;
         constexpr int  top   = static_cast<int>(EMobDifficulty::MAX) - 1;
         const auto     check = [&](const int v, const int lo, const int hi) { return v >= lo && v <= hi; };
-        if (field == "min" && check(value, 0, top))
+        if (rule == CL_HUNT_MIN && check(value, 0, top))
         {
             r.minCheck = static_cast<uint8>(value);
             r.maxCheck = std::max(r.maxCheck, r.minCheck);
         }
-        else if (field == "max" && check(value, 0, top))
+        else if (rule == CL_HUNT_MAX && check(value, 0, top))
         {
             r.maxCheck = static_cast<uint8>(value);
             r.minCheck = std::min(r.minCheck, r.maxCheck);
         }
-        else if (field == "pull" && check(value, 0, static_cast<int>(kPullFirstNames.size()) - 1))
+        else if (rule == CL_HUNT_PULL && check(value, 0, static_cast<int>(kPullFirstNames.size()) - 1))
         {
             r.pullFirst = static_cast<uint8>(value);
         }
-        else if (field == "aggressive" && check(value, 0, 1))
+        else if (rule == CL_HUNT_AGGRESSIVE && check(value, 0, 1))
         {
             r.aggressive = value != 0;
         }
-        else if (field == "links" && check(value, 0, 1))
+        else if (rule == CL_HUNT_LINKS && check(value, 0, 1))
         {
             r.links = value != 0;
         }
         else
         {
-            return "no such rule or value";
+            return CL_S_MALFORMED;
         }
         db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links) VALUES (?, ?, ?, ?, ?, ?) "
                          "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
@@ -1678,7 +1678,7 @@ namespace pawn
         ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}", POwner->getName(),
                     magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
                     kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided");
-        return "";
+        return CL_S_OK;
     }
 
     auto isUnderground(const CMobEntity* PMob) -> bool
@@ -1691,37 +1691,37 @@ namespace pawn
         return PMob->GetUntargetable() || (worm && PMob->IsNameHidden());
     }
 
-    auto partyEngage(CCharEntity* POwner, const uint16 targid) -> std::string
+    auto partyEngage(CCharEntity* POwner, const uint16 targid) -> uint16
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr)
         {
-            return "no zone";
+            return CL_S_REFUSED;
         }
         if (targid == 0)
         {
-            return "no target";
+            return CL_S_NO_TARGET;
         }
         if (isRetreating(POwner->id))
         {
-            return "retreating";
+            return CL_S_RETREATING;
         }
         auto* PEntity = POwner->loc.zone->GetEntity(targid, TYPE_MOB | TYPE_PC);
         if (PEntity == nullptr)
         {
-            return "no target";
+            return CL_S_NO_TARGET;
         }
-        if (auto* PChar = dynamic_cast<CCharEntity*>(PEntity); PChar != nullptr)
+        if (dynamic_cast<CCharEntity*>(PEntity) != nullptr)
         {
-            return isPawn(PChar) ? "talk comes later" : "that is a player";
+            return CL_S_NOT_A_MONSTER; // a player, or a cardian (talk comes later)
         }
         auto* PMob = dynamic_cast<CMobEntity*>(PEntity);
         if (PMob == nullptr || PMob->isDead())
         {
-            return "no target";
+            return CL_S_NO_TARGET;
         }
         if (isUnderground(PMob))
         {
-            return "underground";
+            return CL_S_UNDERGROUND;
         }
 
         uint32 sent = 0;
@@ -1738,7 +1738,7 @@ namespace pawn
             }
         }
         ShowInfoFmt("pawn: {} sends {} cardian(s) at {}", POwner->getName(), sent, PMob->getName());
-        return sent > 0 ? "" : "no cardians out";
+        return sent > 0 ? CL_S_OK : CL_S_NO_CARDIANS_OUT;
     }
 
     auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string

@@ -56,6 +56,12 @@ namespace cardian::link
     X(VIEW, cl_view)             \
     X(MANEUVER, cl_maneuver)     \
     X(MANEUVERS, cl_maneuvers)   \
+    X(ORDERS, cl_orders)         \
+    X(SET_STRATEGY, cl_set_strategy) \
+    X(SET_HUNT, cl_set_hunt)     \
+    X(RETREAT, cl_retreat)       \
+    X(STAKE, cl_stake)           \
+    X(ENGAGE, cl_engage)         \
     X(MANEUVER_STATE, cl_maneuver_state) \
     X(WALK_TAKEN, cl_walk_taken) \
     X(PAUSED, cl_paused)         \

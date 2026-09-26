@@ -999,7 +999,10 @@ class PawnModule : public CPPModule
         };
 
         // The party strategy channel: orders live on the player and every
-        // cardian of theirs, and every wild cardian in their party, follows them
+        // cardian of theirs, and every wild cardian in their party, follows
+        // them. The addon reads and changes them with the Link's ORDERS family
+        // (link_api.cpp); this and the two stake bindings below stay for the
+        // typed !cardian stake until it is decided which verbs stay typeable
         lua["CBaseEntity"]["cardianOrders"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -1027,29 +1030,6 @@ class PawnModule : public CPPModule
             }
             result["names"] = names;
             return result;
-        };
-        lua["CBaseEntity"]["cardianSetStrategy"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 strategy) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            if (strategy >= pawn::kStrategyCount)
-            {
-                return "no such strategy";
-            }
-            pawn::setStrategy(PChar, strategy);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianSetHunt"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& field, const int value) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::setHuntRule(PChar, field, value);
         };
         // Wait here / follow me. Follow from another zone is a travel order
         // to the player's: she treks the world to meet them
@@ -1111,18 +1091,8 @@ class PawnModule : public CPPModule
             return table;
         };
 
-        lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            pawn::setRetreat(PChar, on);
-            return "";
-        };
         // The stake (RESEARCH §12.16): set or move it here, facing his way;
-        // clear it. The chord's left arm and !cardian stake are this path
+        // clear it. The typed !cardian stake is this path; the addon's is STAKE
         lua["CBaseEntity"]["cardianStake"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -1130,7 +1100,7 @@ class PawnModule : public CPPModule
             {
                 return "no character";
             }
-            return pawn::setStake(PChar);
+            return pawn::setStake(PChar) == CL_S_OK ? "" : "no character";
         };
         lua["CBaseEntity"]["cardianStakeClear"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
@@ -1140,15 +1110,6 @@ class PawnModule : public CPPModule
                 return "no character";
             }
             return pawn::clearStake(PChar->id, "cleared") ? "" : "no stake";
-        };
-        lua["CBaseEntity"]["cardianEngage"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 targid) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::partyEngage(PChar, targid);
         };
 
         lua["CBaseEntity"]["cardianAvoid"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string

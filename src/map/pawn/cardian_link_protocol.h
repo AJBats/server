@@ -34,10 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 16: WALK, VIEW and the maneuver messages
-// (their lines leave LEGACY_CD); 15: binary messages, this file; 14 and
-// earlier were newline text.
-enum { CL_PROTOCOL = 16 };
+// compatible, the user, 2026-09-14). 17: the party's orders (ORDERS and the
+// messages that change them) and ENGAGE; 16: WALK, VIEW and the maneuver
+// messages (their lines leave LEGACY_CD); 15: binary messages, this file; 14
+// and earlier were newline text.
+enum { CL_PROTOCOL = 17 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -99,6 +100,14 @@ enum
     CL_S_NOT_PAUSED        = 0x0116, // a move is a paused maneuver's order
     CL_S_NO_ROUTE          = 0x0117, // no route laid
     CL_S_ALREADY_RESTED    = 0x0118, // she is at that percent of HP and MP already
+
+    // The party's orders
+    CL_S_NO_STAKE          = 0x0120, // no camp stands to clear
+    CL_S_NO_TARGET         = 0x0121, // nothing at that target index
+    CL_S_RETREATING        = 0x0122, // the party is retreating: call it off first
+    CL_S_NOT_A_MONSTER     = 0x0123, // a player or a cardian, not a monster
+    CL_S_UNDERGROUND       = 0x0124, // the monster is out of reach underground
+    CL_S_NO_CARDIANS_OUT   = 0x0125, // none of his cardians is out in his zone
 };
 
 // ---- 0x00xx: the link itself ----------------------------------------------
@@ -258,8 +267,14 @@ enum
 {
     CL_T_WALK      = 0x0401,
     CL_T_VIEW      = 0x0402,
-    CL_T_MANEUVER  = 0x0403,
-    CL_T_MANEUVERS = 0x0404,
+    CL_T_MANEUVER     = 0x0403,
+    CL_T_MANEUVERS    = 0x0404,
+    CL_T_ORDERS       = 0x0405,
+    CL_T_SET_STRATEGY = 0x0406,
+    CL_T_SET_HUNT     = 0x0407,
+    CL_T_RETREAT      = 0x0408,
+    CL_T_STAKE        = 0x0409,
+    CL_T_ENGAGE       = 0x040A,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -318,6 +333,94 @@ typedef struct cl_maneuvers
     cl_header h;
     uint32_t  live; // answered: charid, 0 for none
 } cl_maneuvers;
+
+// The party's standing orders (M3.9, RESEARCH §12.16): the player's, for every
+// cardian he commands. Asked for by the orders card, and sent as an answer
+// (CL_F_MORE) ahead of the outcome of every change to them, refused or not.
+typedef struct cl_orders
+{
+    cl_header h;
+    uint8_t   strategy;   // answered: 0 Hold, 1 Pull (the addon words them)
+    uint8_t   strategies; // answered: how many the server has
+    uint8_t   retreat;    // answered: 1 while "on me" holds
+    uint8_t   huntMin;    // answered: the /check, 0 Too Weak .. 7 Incredibly Tough
+    uint8_t   huntMax;
+    uint8_t   pull;       // answered: 0 nearest, 1 easiest, 2 toughest first
+    uint8_t   aggressive; // answered: 1 when aggressive company is allowed
+    uint8_t   links;      // answered: 1 when links are allowed
+    uint8_t   staked;     // answered: 1 while a camp stands
+    uint8_t   spare;
+    uint16_t  stakeZone;  // answered: the camp's zone id
+} cl_orders;
+
+enum
+{
+    CL_STRATEGY_SET  = 0, // to strategy
+    CL_STRATEGY_NEXT = 1, // the next one round
+};
+
+typedef struct cl_set_strategy
+{
+    cl_header h;
+    uint8_t   mode;     // CL_STRATEGY_*
+    uint8_t   strategy;
+    uint16_t  spare;
+} cl_set_strategy;
+
+enum
+{
+    CL_HUNT_MIN        = 0, // value: the /check, 0..7
+    CL_HUNT_MAX        = 1,
+    CL_HUNT_PULL       = 2, // value: 0 nearest, 1 easiest, 2 toughest
+    CL_HUNT_AGGRESSIVE = 3, // value: 0 or 1
+    CL_HUNT_LINKS      = 4, // value: 0 or 1
+};
+
+typedef struct cl_set_hunt
+{
+    cl_header h;
+    uint8_t   rule;  // CL_HUNT_*
+    uint8_t   value;
+    uint16_t  spare;
+} cl_set_hunt;
+
+enum
+{
+    CL_SWITCH_OFF    = 0,
+    CL_SWITCH_ON     = 1,
+    CL_SWITCH_TOGGLE = 2,
+};
+
+// "On me": every cardian disengages, engages nobody and avoids nothing, and
+// hunting pauses, until it clears
+typedef struct cl_retreat
+{
+    cl_header h;
+    uint8_t   mode; // CL_SWITCH_*
+    uint8_t   spare[3];
+} cl_retreat;
+
+enum
+{
+    CL_STAKE_SET    = 0, // set it, or move it, where he stands, facing his way
+    CL_STAKE_CLEAR  = 1,
+    CL_STAKE_TOGGLE = 2, // decided by the server, so two presses before the first answer still alternate
+};
+
+typedef struct cl_stake
+{
+    cl_header h;
+    uint8_t   mode; // CL_STAKE_*
+    uint8_t   spare[3];
+} cl_stake;
+
+// Every cardian of his in his zone fights his target. Answered by the outcome alone.
+typedef struct cl_engage
+{
+    cl_header h;
+    uint16_t  target; // a target index in his zone
+    uint16_t  spare;
+} cl_engage;
 
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 

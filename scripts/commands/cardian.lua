@@ -43,15 +43,8 @@
 --       shout <kind> <log> [again]       the shout: up to eight adventurers in reach and their answers, timed
 --       peek <name>                      one of the shout's responders: jobs, nation, rank, affinity, gear
 --       invite <name> [kind] [log]       the party invite, sent for you; she answers it herself
---       orders                           the party's orders: st <strategy> <retreat> <min> <max> <pull>
---                                        <aggressive> <links> <staked> <stake_zone> <name;name>
---       stake [clear|toggle]             set/move, clear, or toggle camp using server state
---       hunt <rule> <n>                  a hunt rule: min|max (check 0 Too Weak .. 7 Incredibly Tough),
---                                        pull (0 nearest, 1 easiest, 2 toughest), aggressive|links (0/1)
---       strategy next|<n>                the standing order (0 Hold, 1 Pull); independent of camp
---       retreat [on|off]                 the "on me" switch, no arg toggles: disengage, engage nobody,
---                                        avoid nothing, hunting pauses, until it clears
---       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
+--       stake [clear|toggle]             typed only (the addon sends STAKE): set/move, clear, or toggle
+--                                        camp using server state; answered with the orders line, st
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the default rows of the job she holds now
 -----------------------------------
@@ -875,39 +868,12 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd ok cancel')
         end
-    elseif verb == 'orders' then
-        sendOrders(player)
-    elseif verb == 'strategy' and args[2] then
-        local o    = player:cardianOrders()
-        local want = args[2] == 'next' and ((o.strategy + 1) % #o.names) or tonumber(args[2])
-        local err  = want ~= nil and player:cardianSetStrategy(want) or 'usage: strategy next|<n>'
-        if err == '' then
-            reply(player, '#cd ok strategy')
-        else
-            reply(player, '#cd err strategy ' .. err)
-        end
-        sendOrders(player)
-    elseif verb == 'hunt' and args[2] and args[3] then
-        local err = player:cardianSetHunt(args[2], tonumber(args[3]) or -1)
-        if err == '' then
-            reply(player, '#cd ok hunt')
-        else
-            reply(player, '#cd err hunt ' .. err)
-        end
-        sendOrders(player)
-    elseif verb == 'retreat' then
-        local o   = player:cardianOrders()
-        local on  = (args[2] == nil and not o.retreat) or args[2] == 'on'
-        local err = player:cardianRetreat(on)
-        if err == '' then
-            reply(player, '#cd ok retreat')
-        else
-            reply(player, '#cd err retreat ' .. err)
-        end
-        sendOrders(player)
     elseif verb == 'stake' then
-        -- The server owns the toggle decision, including two presses before
-        -- the first reply reaches the addon. Bare stake still sets/moves it.
+        -- Typed only: the addon sends the Link's STAKE. Kept, with its spec
+        -- (addon/tests/stake_command_spec.lua), until it is decided which
+        -- verbs stay typeable. The server owns the toggle decision, including
+        -- two presses before the first reply reaches the addon. Bare stake
+        -- still sets/moves it.
         local action = args[2]
         local err
         if args[3] ~= nil or (action ~= nil and action ~= 'clear' and action ~= 'toggle') then
@@ -923,13 +889,6 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err stake ' .. err)
         end
         sendOrders(player)
-    elseif verb == 'engage' and args[2] then
-        local err = player:cardianEngage(tonumber(args[2]) or 0)
-        if err == '' then
-            reply(player, '#cd ok engage')
-        else
-            reply(player, '#cd err engage ' .. err)
-        end
     elseif verb == 'gmaster' and name and args[3] then
         gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then

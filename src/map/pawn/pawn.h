@@ -229,13 +229,13 @@ namespace pawn
         position_t at{}; // where, and facing: rotation is the heading
     };
     auto stakeOf(uint32 ownerCharID) -> std::optional<Stake>;
-    auto setStake(CCharEntity* POwner) -> std::string; // "" when set or moved; otherwise why not
+    auto setStake(CCharEntity* POwner) -> uint16; // CL_S_OK when set or moved (the Link's outcomes); otherwise why not
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 
     // Every cardian of the owner's in the zone fights the entity with this
-    // targid. "" when they go; otherwise why not, as the player reads it.
-    auto partyEngage(CCharEntity* POwner, uint16 targid) -> std::string;
+    // targid. CL_S_OK when they go; otherwise why not.
+    auto partyEngage(CCharEntity* POwner, uint16 targid) -> uint16;
 
     // A mob nobody can hit right now: a worm underground (the game's own
     // test -- the worm roam flag with its name hidden), or anything the
@@ -263,9 +263,10 @@ namespace pawn
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
-    // field: min | max | pull | aggressive | links. "" or the reason not.
-    // A band end pushed past the other drags it along.
-    auto setHuntRule(CCharEntity* POwner, std::string_view field, int value) -> std::string;
+    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS. CL_S_OK, or
+    // CL_S_MALFORMED for a rule or value out of range. A band end pushed past
+    // the other drags it along.
+    auto setHuntRule(CCharEntity* POwner, uint8 rule, int value) -> uint16;
 
 
     // A dead pawn home points: revived the way a home point revives a
