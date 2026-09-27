@@ -19,6 +19,7 @@
 ===========================================================================
 */
 
+#include "auction.h"
 #include "cardian_link.h"
 #include "engage_math.h"
 #include "pawn.h"
@@ -800,6 +801,124 @@ class PawnModule : public CPPModule
                 entry["used"] = bag.used;
                 result.add(entry);
             }
+            return result;
+        };
+
+        // The Auction House screen (ROADMAP L) shops for a member of his
+        // party: the player himself, by his own name, or a cardian of his to
+        // manage (a wild one's gear and gil are the world's); nullptr for
+        // anyone else
+        const auto shopper = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> CCharEntity*
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            return PChar != nullptr && PChar->getName() == name ? PChar : managedPair(PLuaBaseEntity, name).second;
+        };
+
+        // A list's rows for Lua, one entry per form an item is listed in,
+        // each { id, level, stock, going, category, stack, size }
+        const auto auctionRows = [](const std::vector<pawn::auction::Listing>& listings) -> sol::object
+        {
+            auto result = ::lua.create_table();
+            for (const auto& listing : listings)
+            {
+                auto entry        = ::lua.create_table();
+                entry["id"]       = listing.itemId;
+                entry["level"]    = listing.level;
+                entry["stock"]    = listing.stock;
+                entry["going"]    = listing.going;
+                entry["category"] = listing.category;
+                entry["stack"]    = listing.stack;
+                entry["size"]     = listing.stackSize;
+                result.add(entry);
+            }
+            return result;
+        };
+
+        // What the auction house has, in stock or sold out, that the member
+        // could wear in an equipment slot; nil for anyone not his to shop for
+        lua["CBaseEntity"]["cardianAuctionList"] = [shopper, auctionRows](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            return auctionRows(pawn::auction::wearableAtAuction(PWho, equipSlot));
+        };
+
+        // What the auction house has ever listed in a set of its categories,
+        // in the order given (a group under her grid, a category of Browse),
+        // the same entries; with `learnable`, only the spell scrolls the
+        // member can learn now and has not
+        lua["CBaseEntity"]["cardianAuctionShelf"] = [shopper, auctionRows](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const sol::table& categories, const bool learnable) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            // a category is 1..255 (xi.itemAHCategory); anything else, typed
+            // by hand, is left out rather than wrapped onto another
+            std::vector<uint8> cats;
+            for (std::size_t i = 1; i <= categories.size(); ++i)
+            {
+                if (categories[i].get_type() == sol::type::number)
+                {
+                    if (const double cat = categories[i].get<double>(); cat >= 1 && cat <= 255)
+                    {
+                        cats.push_back(static_cast<uint8>(cat));
+                    }
+                }
+            }
+            return auctionRows(pawn::auction::inCategories(PWho, cats, learnable));
+        };
+
+        // An item's history in one form (singly or by the stack) as the game's
+        // own auction house shows it: { stock, going, sales = { { date,
+        // price, seller, buyer } } }, newest first
+        lua["CBaseEntity"]["cardianAuctionHistory"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 itemId, const bool stack) -> sol::table
+        {
+            const auto h      = pawn::auction::history(itemId, stack);
+            auto       result = ::lua.create_table();
+            result["stock"]   = h.stock;
+            result["going"]   = h.going;
+            auto sales        = ::lua.create_table();
+            for (const auto& sale : h.sales)
+            {
+                auto entry      = ::lua.create_table();
+                entry["date"]   = sale.date;
+                entry["price"]  = sale.price;
+                entry["seller"] = sale.seller;
+                entry["buyer"]  = sale.buyer;
+                sales.add(entry);
+            }
+            result["sales"] = sales;
+            return result;
+        };
+
+        // The member bids for one piece or one stack (pawn::auction::bid), a
+        // cardian with the player's purse behind hers: { won, refused, note,
+        // location, equipped, from_purse }; nil for anyone not his to shop for
+        lua["CBaseEntity"]["cardianAuctionBid"] = [shopper](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint16 itemId, const bool stack,
+                                                            const uint32 price, const uint8 location, const uint8 equipSlot, const bool equip) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            auto*      PPlayer   = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            const auto r         = pawn::auction::bid(PWho, PPlayer, itemId, stack, price, location, equipSlot, equip);
+            auto       result    = ::lua.create_table();
+            result["won"]        = r.won;
+            result["refused"]    = r.refused;
+            result["note"]       = r.note;
+            result["location"]   = r.location;
+            result["equipped"]   = r.equipped;
+            result["from_purse"] = r.fromPurse;
             return result;
         };
 

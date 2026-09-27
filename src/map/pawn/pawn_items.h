@@ -100,6 +100,13 @@ namespace pawn::items
     };
     auto bags(CCharEntity* PPawn) -> std::vector<Bag>;
 
+    // The Mog Wardrobes: gear is worn from the inventory and these only
+    auto isWardrobe(uint8 location) -> bool;
+
+    // The inventory, or one of the bags above: a container she reaches
+    // from the field
+    auto usableContainer(CCharEntity* PPawn, uint8 location) -> bool;
+
     // Move qty of the stack in fromLoc/slot into toLoc, between her own
     // inventory and one of her bags either way: the item-move handler's
     // path (a same-item partial stack in the destination is topped up
