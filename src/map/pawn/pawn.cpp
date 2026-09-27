@@ -2190,14 +2190,16 @@ namespace pawn
             return it->second.zone;
         }
         // Loading between zones he is in none: the trek keeps to where he
-        // was going. His destination is where he stands once landed, and
-        // where he is headed while he zones
+        // was going. While he zones his destination is where he is headed;
+        // otherwise it names no zone (Unknown once the zone-in has landed
+        // him, ZONE_NO_DESTINATION as he logs out) and he is where he stands
         const auto* PPlayer = zoneutils::GetChar(it->second.meet);
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
         {
             return it->second.zone;
         }
-        const auto hisZone = PPlayer->loc.destination;
+        const auto headed  = PPlayer->loc.destination;
+        const auto hisZone = headed != xi::ZoneId::Unknown && headed != ZONE_NO_DESTINATION ? headed : PPlayer->getZone();
         if (hisZone == PPawn->getZone())
         {
             ShowInfoFmt("pawn: travel {}: {} is here, the trek ends", PPawn->getName(), PPlayer->getName());
