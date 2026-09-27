@@ -35,7 +35,9 @@
 #include "items/item_weapon.h"
 #include "items/transaction.h"
 #include "items/transactions/item_claim.h"
+#include "lua/luautils.h"
 #include "packets/c2s/0x04e_auc.h"
+#include "spell.h"
 #include "trait.h"
 #include "utils/auctionutils.h"
 #include "utils/charutils.h"
@@ -46,6 +48,7 @@
 #include <set>
 
 #include <algorithm>
+#include <optional>
 
 namespace pawn::auction
 {
@@ -210,6 +213,101 @@ namespace pawn::auction
                                                price);
             return !rset || rset->next();
         }
+
+        // The level at which she learns the scroll's spell -- her main job's,
+        // else her sub job's unless the spell is the main job's alone -- when
+        // she can learn it now and has not; none for a spell she knows, one
+        // above her levels, one of an expansion switched off, and anything
+        // that is not a spell scroll. The level test of a scroll's own check
+        // (CLuaBaseEntity::canLearnSpell), without its tests of a status
+        // being up (a scholar's Addendum)
+        auto learnLevel(CCharEntity* PChar, const CItem* PItem) -> std::optional<uint8>
+        {
+            // subid is the spell a scroll teaches, but for Haste II's, which
+            // names Atomos (its script teaches Haste II); three scrolls have
+            // no script to use them by: Comet, Meteor, Breakga
+            constexpr uint16 kHasteII = 4692;
+            const uint16     itemId   = PItem->getID();
+            if (itemId == 4827 || itemId == 4851 || itemId == 4889 || !PItem->hasFlag(ItemFlag::Scroll) || PItem->getSubID() == 0)
+            {
+                return std::nullopt;
+            }
+            const auto spellId = itemId == kHasteII ? SpellID::Haste_II : static_cast<SpellID>(PItem->getSubID());
+            CSpell*    PSpell  = spell::GetSpell(spellId);
+            if (PSpell == nullptr || PSpell->getSpellGroup() == SPELLGROUP_BLUE || PSpell->getSpellGroup() == SPELLGROUP_TRUST ||
+                charutils::hasSpell(PChar, static_cast<uint16>(spellId)) || !luautils::IsContentEnabled(PSpell->getContentTag()))
+            {
+                return std::nullopt;
+            }
+            // getJob answers 255 for a job that never learns it
+            if (const uint8 main = PSpell->getJob(PChar->GetMJob()); PChar->GetMLevel() >= main)
+            {
+                return main;
+            }
+            if ((PSpell->getRequirements() & SPELLREQ_MAIN_JOB_ONLY) == 0)
+            {
+                if (const uint8 sub = PSpell->getJob(PChar->GetSJob()); PChar->GetSLevel() >= sub)
+                {
+                    return sub;
+                }
+            }
+            return std::nullopt;
+        }
+
+        // Every row's stock and going rate in its form, told in three
+        // queries whatever the rows. Returns each item's price by the piece,
+        // from whichever form has sold, so an item's two rows sort together
+        auto priced(std::vector<Listing>& out) -> std::unordered_map<uint16, uint32>
+        {
+            std::unordered_map<uint16, uint32> perPiece;
+            if (out.empty())
+            {
+                return perPiece;
+            }
+
+            std::vector<uint16> itemIds;
+            std::vector<uint16> singles;
+            std::vector<uint16> stacks;
+            for (const auto& listing : out)
+            {
+                itemIds.push_back(listing.itemId);
+                (listing.stack ? stacks : singles).push_back(listing.itemId);
+            }
+
+            // An item and its form as one key
+            const auto keyOf = [](const uint16 itemId, const bool stack) -> uint32
+            {
+                return (static_cast<uint32>(itemId) << 1) | (stack ? 1 : 0);
+            };
+            std::unordered_map<uint32, uint32> stock;
+            {
+                const auto rset = db::preparedStmt(fmt::format("SELECT itemid, stack, COUNT(*) AS stock FROM auction_house "
+                                                               "WHERE buyer_name IS NULL AND itemid IN ({}) GROUP BY itemid, stack",
+                                                               fmt::join(itemIds, ",")));
+                while (rset && rset->next())
+                {
+                    stock[keyOf(rset->get<uint16>("itemid"), rset->get<uint8>("stack") != 0)] = rset->get<uint32>("stock");
+                }
+            }
+            const auto goingSingle = goingRates(singles, false);
+            const auto goingStack  = goingRates(stacks, true);
+
+            for (auto& listing : out)
+            {
+                if (const auto it = stock.find(keyOf(listing.itemId, listing.stack)); it != stock.end())
+                {
+                    listing.stock = it->second;
+                }
+                const auto& going = listing.stack ? goingStack : goingSingle;
+                if (const auto it = going.find(listing.itemId); it != going.end())
+                {
+                    listing.going = it->second;
+                }
+                auto& piece = perPiece[listing.itemId];
+                piece       = std::max(piece, listing.going / listing.stackSize);
+            }
+            return perPiece;
+        }
     } // namespace
 
     auto goingRates(const std::vector<uint16>& itemIds, const bool stack) -> std::unordered_map<uint16, uint32>
@@ -264,51 +362,7 @@ namespace pawn::auction
             return out;
         }
 
-        std::vector<uint16> itemIds;
-        std::vector<uint16> singles;
-        std::vector<uint16> stacks;
-        for (const auto& listing : out)
-        {
-            itemIds.push_back(listing.itemId);
-            (listing.stack ? stacks : singles).push_back(listing.itemId);
-        }
-
-        // An item and its form as one key
-        const auto keyOf = [](const uint16 itemId, const bool stack) -> uint32
-        {
-            return (static_cast<uint32>(itemId) << 1) | (stack ? 1 : 0);
-        };
-        std::unordered_map<uint32, uint32> stock;
-        {
-            const auto rset = db::preparedStmt(fmt::format("SELECT itemid, stack, COUNT(*) AS stock FROM auction_house "
-                                                           "WHERE buyer_name IS NULL AND itemid IN ({}) GROUP BY itemid, stack",
-                                                           fmt::join(itemIds, ",")));
-            while (rset && rset->next())
-            {
-                stock[keyOf(rset->get<uint16>("itemid"), rset->get<uint8>("stack") != 0)] = rset->get<uint32>("stock");
-            }
-        }
-        const auto goingSingle = goingRates(singles, false);
-        const auto goingStack  = goingRates(stacks, true);
-
-        // An item's price by the piece, from whichever form has sold, so its
-        // two rows sort together
-        std::unordered_map<uint16, uint32> perPiece;
-        for (auto& listing : out)
-        {
-            if (const auto it = stock.find(keyOf(listing.itemId, listing.stack)); it != stock.end())
-            {
-                listing.stock = it->second;
-            }
-            const auto& going = listing.stack ? goingStack : goingSingle;
-            if (const auto it = going.find(listing.itemId); it != going.end())
-            {
-                listing.going = it->second;
-            }
-            auto& piece = perPiece[listing.itemId];
-            piece       = std::max(piece, listing.going / listing.stackSize);
-        }
-
+        auto perPiece = priced(out);
         std::sort(out.begin(), out.end(), [&perPiece](const Listing& a, const Listing& b)
                   {
                       if (a.category != b.category)
@@ -326,6 +380,76 @@ namespace pawn::auction
                       if (a.itemId != b.itemId)
                       {
                           return a.itemId < b.itemId;
+                      }
+                      return !a.stack && b.stack;
+                  });
+        return out;
+    }
+
+    auto inCategories(CCharEntity* PChar, const std::vector<uint8>& categories, const bool learnable) -> std::vector<Listing>
+    {
+        std::vector<Listing> out;
+        if (PChar == nullptr || categories.empty())
+        {
+            return out;
+        }
+
+        // A category's place in the order asked for
+        std::unordered_map<uint8, size_t> order;
+        for (size_t i = 0; i < categories.size(); ++i)
+        {
+            order.try_emplace(categories[i], i);
+        }
+
+        std::unordered_map<uint16, std::string> names;
+        {
+            const auto rset = db::preparedStmt(fmt::format("SELECT DISTINCT ah.itemid, ah.stack FROM auction_house AS ah "
+                                                           "INNER JOIN item_basic AS ib ON ib.itemid = ah.itemid WHERE ib.aH IN ({})",
+                                                           fmt::join(categories, ",")));
+            while (rset && rset->next())
+            {
+                const auto  itemId = rset->get<uint16>("itemid");
+                const bool  stack  = rset->get<uint8>("stack") != 0;
+                const auto* PItem  = xi::items::lookup(itemId);
+                if (PItem == nullptr || (stack && PItem->getStackSize() <= 1))
+                {
+                    continue;
+                }
+                uint8 level = 0;
+                if (learnable)
+                {
+                    const auto needs = learnLevel(PChar, PItem);
+                    if (!needs)
+                    {
+                        continue;
+                    }
+                    level = *needs;
+                }
+                else if (const auto* PEquip = dynamic_cast<const CItemEquipment*>(PItem))
+                {
+                    level = PEquip->getReqLvl();
+                }
+                out.push_back({ itemId, level, 0, 0, PItem->getAHCat(), stack, stack ? PItem->getStackSize() : 1 });
+                names.try_emplace(itemId, PItem->getName());
+            }
+        }
+
+        priced(out);
+        std::sort(out.begin(), out.end(), [&order, &names](const Listing& a, const Listing& b)
+                  {
+                      if (a.category != b.category)
+                      {
+                          return order[a.category] < order[b.category];
+                      }
+                      if (a.level != b.level)
+                      {
+                          return a.level > b.level;
+                      }
+                      if (a.itemId != b.itemId)
+                      {
+                          const auto& nameA = names[a.itemId];
+                          const auto& nameB = names[b.itemId];
+                          return nameA != nameB ? nameA < nameB : a.itemId < b.itemId; // names are not unique
                       }
                       return !a.stack && b.stack;
                   });
@@ -361,7 +485,7 @@ namespace pawn::auction
     auto bid(CCharEntity* PChar, CCharEntity* PPurse, const uint16 itemId, const bool stack, const uint32 price, const uint8 location, const uint8 equipSlot, const bool equip) -> BidResult
     {
         BidResult   result;
-        const auto* PItem  = xi::items::lookup<CItemEquipment>(itemId);
+        const auto* PItem  = xi::items::lookup(itemId);
         const auto  job    = PChar != nullptr ? static_cast<uint8>(PChar->GetMJob()) : 0;
         const auto  refuse = [&result](std::string why) -> BidResult
         {
@@ -371,7 +495,7 @@ namespace pawn::auction
 
         if (PItem == nullptr || job == 0)
         {
-            return refuse("that is not gear");
+            return refuse("no such item");
         }
         if (stack && PItem->getStackSize() <= 1)
         {
@@ -401,11 +525,15 @@ namespace pawn::auction
         {
             return refuse("no such bag");
         }
+        if (pawn::items::isWardrobe(location) && dynamic_cast<const CItemEquipment*>(PItem) == nullptr)
+        {
+            return refuse("only gear goes in a wardrobe"); // the game's own item move's rule
+        }
         if (equip && location != LOC_INVENTORY && !pawn::items::isWardrobe(location))
         {
             return refuse("gear is worn from the inventory or a wardrobe");
         }
-        if (equip && (equipSlot > SLOT_BACK || !wearable(PChar, PItem, equipSlot, job, equipLevel(PChar))))
+        if (equip && (equipSlot > SLOT_BACK || !wearable(PChar, dynamic_cast<const CItemEquipment*>(PItem), equipSlot, job, equipLevel(PChar))))
         {
             return refuse("that cannot be worn there");
         }

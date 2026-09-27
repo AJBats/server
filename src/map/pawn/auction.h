@@ -30,18 +30,18 @@
 class CCharEntity;
 
 // The Auction House screen's server half (ROADMAP L): what the auction
-// house has for a member of the party to wear, and what the crowd expects
-// it to cost. The auction house stays blind, as retail's: a listing's
+// house has for a member of the party -- to wear, to learn, or anything on
+// its shelves -- and what the crowd expects it to cost. The auction house stays blind, as retail's: a listing's
 // price is never told, only how many are listed and what the last sales paid.
 namespace pawn::auction
 {
-    // One piece of gear in one form the auction house lists it in: singly,
-    // or by the stack (ammunition), each a row of its own as on the game's
+    // One item in one form the auction house lists it in: singly, or by the
+    // stack (ammunition, medicine), each a row of its own as on the game's
     // own auction house
     struct Listing
     {
         uint16 itemId    = 0;
-        uint8  level     = 0; // the level it asks for
+        uint8  level     = 0; // the level it asks for: gear's, a scroll's to learn; else 0
         uint32 stock     = 0; // how many are listed now in this form; 0 when sold out
         uint32 going     = 0; // the going rate in this form; 0 when nothing has sold
         uint8  category  = 0; // the auction house's own category (xi.itemAHCategory)
@@ -58,6 +58,15 @@ namespace pawn::auction
     // highest level first, then the dearest by the piece (the census
     // wardrobe's order, ROADMAP D2), an item's single row before its stack.
     auto wearableAtAuction(CCharEntity* PChar, uint8 equipSlot) -> std::vector<Listing>;
+
+    // Every item the auction house has ever listed in the categories, in
+    // stock or sold out, one row per form (ROADMAP L step 4: a group under
+    // her grid, a category of Browse), whoever asks. With `learnable`, only
+    // the spell scrolls PChar can learn now and has not, each at the level
+    // she learns it by. By category in the order given, then the highest
+    // level first (gear's level, a scroll's), then by name, an item's single
+    // row before its stack.
+    auto inCategories(CCharEntity* PChar, const std::vector<uint8>& categories, bool learnable) -> std::vector<Listing>;
 
     // The crowd's going rate for each item (tools/economy/market.py,
     // `going`): the median of its last ten sales, single or stack. xi_map
@@ -103,9 +112,9 @@ namespace pawn::auction
         uint32      fromPurse = 0;
     };
 
-    // PChar bids `price` for one piece, or one stack, as the game's own
-    // purchase does (auctionutils::PurchasingItems): the cheapest listing at
-    // or under the bid is hers, and she pays the bid, as on retail. The
+    // PChar bids `price` for one piece, or one stack, of any item, as the
+    // game's own purchase does (auctionutils::PurchasingItems): the cheapest
+    // listing at or under the bid is hers, and she pays the bid, as on retail. The
     // player buys through PurchasingItems itself; a cardian with his purse
     // behind hers through a copy of it that pays from both. Won, the
     // piece goes on from her inventory to `location` (the inventory, or a

@@ -54,9 +54,12 @@
 --       engage <targid>                  every cardian fights your target (a cardian: talk comes later)
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the default rows of the job she holds now
---       ahlist <name> <eqslot>           the Auction House screen: what is on sale that the player
---                                        (by his own name) or a cardian of his could wear in the slot
---                                        (ahl.b <name> <eqslot>, ahl chunks, ahl.e)
+--       ahlist <name> <shelf>            the Auction House screen: what is on a shelf for the player
+--                                        (by his own name) or a cardian of his -- an equipment slot's
+--                                        number, what she could wear in it; c<cat>.<cat>..., all ever
+--                                        listed in those categories; s<cat>..., the spell scrolls in
+--                                        them she can learn now and has not (ahl.b <name> <shelf>, ahl
+--                                        chunks, ahl.e)
 --       ahhist <itemid> <0|1>            an item's stock and last ten sales, singly or by the stack
 --                                        (ahh.b, ahh, ahh.e)
 --       ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq>  bid for one piece (or one
@@ -557,15 +560,22 @@ local function cpBuy(player, name, option)
     return ''
 end
 
--- The Auction House screen's list for one member and one slot: 'ahl.b
--- <name> <eqslot>', 'ahl <name> <eqslot> id:level:stock:going:category:stack:size,...'
--- chunks (one entry per form an item is listed in, stack 1 a stack of
--- `size`), 'ahl.e <name> <eqslot>'; refused, 'err ahlist <name> <eqslot>
--- <why>', so the screen shows why under that member and slot. The player
--- asks for himself by his own name.
-local function sendAuctionList(player, name, eqslot)
+-- The Auction House screen's list for one member and one shelf (the
+-- ahlist verb above): 'ahl.b <name> <shelf>', 'ahl <name> <shelf>
+-- id:level:stock:going:category:stack:size,...' chunks (one entry per form
+-- an item is listed in, stack 1 a stack of `size`), 'ahl.e <name> <shelf>';
+-- refused, 'err ahlist <name> <shelf> <why>', so the screen shows why under
+-- that member and shelf. The player asks for himself by his own name.
+local function sendAuctionList(player, name, shelf)
     local function refuse(why)
-        reply(player, string.format('#cd err ahlist %s %d %s', name, eqslot, why))
+        reply(player, string.format('#cd err ahlist %s %s %s', name, shelf, why))
+    end
+
+    local eqslot         = tonumber(shelf)
+    local kind, catsText = shelf:match('^([cs])([%d%.]+)$')
+    if (eqslot == nil and kind == nil) or (eqslot ~= nil and (eqslot < 0 or eqslot > 15 or eqslot ~= math.floor(eqslot))) then
+        refuse('no such shelf')
+        return
     end
 
     local targ = name == player:getName() and player or ownedCardian(player, name)
@@ -582,12 +592,22 @@ local function sendAuctionList(player, name, eqslot)
         return
     end
 
-    local list = player:cardianAuctionList(name, eqslot) or {}
-    reply(player, string.format('#cd ahl.b %s %d', name, eqslot))
+    local list
+    if eqslot ~= nil then
+        list = player:cardianAuctionList(name, eqslot)
+    else
+        local cats = {}
+        for cat in catsText:gmatch('%d+') do
+            cats[#cats + 1] = tonumber(cat)
+        end
+        list = player:cardianAuctionShelf(name, cats, kind == 's')
+    end
+    list = list or {}
+    reply(player, string.format('#cd ahl.b %s %s', name, shelf))
     local buf, size = {}, 0
     local function flush()
         if #buf > 0 then
-            reply(player, string.format('#cd ahl %s %d %s', name, eqslot, table.concat(buf, ',')))
+            reply(player, string.format('#cd ahl %s %s %s', name, shelf, table.concat(buf, ',')))
         end
         buf, size = {}, 0
     end
@@ -600,7 +620,7 @@ local function sendAuctionList(player, name, eqslot)
         size = size + #entry + 1
     end
     flush()
-    reply(player, string.format('#cd ahl.e %s %d', name, eqslot))
+    reply(player, string.format('#cd ahl.e %s %s', name, shelf))
 end
 
 -- An item's history in one form on the Auction House screen's buy panel:
@@ -1255,7 +1275,7 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok invite')
         end
     elseif verb == 'ahlist' and name and args[3] then
-        sendAuctionList(player, name, tonumber(args[3]) or 0)
+        sendAuctionList(player, name, args[3])
     elseif verb == 'ahhist' and tonumber(args[2]) then
         sendAuctionHistory(player, tonumber(args[2]), args[3] == '1')
     elseif verb == 'ahbid' and name and args[9] then
@@ -1423,7 +1443,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <eqslot> | ahhist <itemid> <0|1> | ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <shelf> | ahhist <itemid> <0|1> | ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | give | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
     end
 end
 

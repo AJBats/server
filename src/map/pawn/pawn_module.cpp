@@ -814,20 +814,12 @@ class PawnModule : public CPPModule
             return PChar != nullptr && PChar->getName() == name ? PChar : managedPair(PLuaBaseEntity, name).second;
         };
 
-        // What the auction house has, in stock or sold out, that the member
-        // could wear in an equipment slot, one entry per form an item is
-        // listed in, each { id, level, stock, going, category, stack, size };
-        // nil for anyone not his to shop for
-        lua["CBaseEntity"]["cardianAuctionList"] = [shopper](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
+        // A list's rows for Lua, one entry per form an item is listed in,
+        // each { id, level, stock, going, category, stack, size }
+        const auto auctionRows = [](const std::vector<pawn::auction::Listing>& listings) -> sol::object
         {
-            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
-            if (PWho == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
             auto result = ::lua.create_table();
-            for (const auto& listing : pawn::auction::wearableAtAuction(PWho, equipSlot))
+            for (const auto& listing : listings)
             {
                 auto entry        = ::lua.create_table();
                 entry["id"]       = listing.itemId;
@@ -840,6 +832,47 @@ class PawnModule : public CPPModule
                 result.add(entry);
             }
             return result;
+        };
+
+        // What the auction house has, in stock or sold out, that the member
+        // could wear in an equipment slot; nil for anyone not his to shop for
+        lua["CBaseEntity"]["cardianAuctionList"] = [shopper, auctionRows](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            return auctionRows(pawn::auction::wearableAtAuction(PWho, equipSlot));
+        };
+
+        // What the auction house has ever listed in a set of its categories,
+        // in the order given (a group under her grid, a category of Browse),
+        // the same entries; with `learnable`, only the spell scrolls the
+        // member can learn now and has not
+        lua["CBaseEntity"]["cardianAuctionShelf"] = [shopper, auctionRows](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const sol::table& categories, const bool learnable) -> sol::object
+        {
+            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
+            if (PWho == nullptr)
+            {
+                return sol::lua_nil;
+            }
+
+            // a category is 1..255 (xi.itemAHCategory); anything else, typed
+            // by hand, is left out rather than wrapped onto another
+            std::vector<uint8> cats;
+            for (std::size_t i = 1; i <= categories.size(); ++i)
+            {
+                if (categories[i].get_type() == sol::type::number)
+                {
+                    if (const double cat = categories[i].get<double>(); cat >= 1 && cat <= 255)
+                    {
+                        cats.push_back(static_cast<uint8>(cat));
+                    }
+                }
+            }
+            return auctionRows(pawn::auction::inCategories(PWho, cats, learnable));
         };
 
         // An item's history in one form (singly or by the stack) as the game's
