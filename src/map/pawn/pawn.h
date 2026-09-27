@@ -276,6 +276,9 @@ namespace pawn
     // untouched. false unless the pawn is dead and one of those players is
     // in the world.
     bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer = nullptr);
+    // The player's order to one of his: home points, then waits there as a
+    // warp leaves her (the user, 2026-09-14). CL_S_OK, or CL_S_NOT_KNOCKED_OUT.
+    auto orderHomePoint(const CCharEntity* PPlayer, CCharEntity* PPawn) -> uint16;
 
     // A zone change the server meant to carry through the client protocol
     // -- a warp of her own (a scroll, Warp, Warp II on her) or a party
@@ -296,8 +299,15 @@ namespace pawn
     // A stuck cardian teleports to her player's side: only from within
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's
-    // cardians. "" on success, else why not.
-    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string;
+    // cardians. CL_S_OK when she came (the Link's outcomes), else why not,
+    // with the numbers behind a refusal in `refusal`.
+    struct RescueRefusal
+    {
+        float  away         = 0; // CL_S_TOO_FAR: yalms between them
+        float  range        = 0; // CL_S_TOO_FAR: RESCUE_RANGE
+        uint16 cooldownLeft = 0; // CL_S_COOLING_DOWN: seconds
+    };
+    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn, RescueRefusal& refusal) -> uint16;
 
     // Replace the pawn's gambits with her own rows: her saved set, else her
     // job's defaults (gambit_defaults.h) with her gambits on, saved at once
@@ -408,7 +418,8 @@ namespace pawn
     // over follow behavior and clears on arrival. `meet`: the trek is to
     // meet her player (follow me from another zone), so it follows him
     // rather than holding to this zone (meetTrek); a GM's goto is fixed
-    bool orderTravelByName(const std::string& targetName, uint16 zoneId, uint32 meet); // meet: the player's charid, 0 for a fixed zone
+    bool orderTravel(uint32 pawnCharID, uint16 zoneId, uint32 meet); // meet: the player's charid, 0 for a fixed zone
+    bool orderTravelByName(const std::string& targetName, uint16 zoneId, uint32 meet);
 
     auto travelOrderOf(uint32 pawnCharID) -> std::optional<xi::ZoneId>;
     void clearTravelOrder(uint32 pawnCharID);

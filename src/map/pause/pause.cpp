@@ -155,11 +155,11 @@ auto release(const std::string_view why) -> Result
     return Result::Ok;
 }
 
-auto toggle(CCharEntity* PChar) -> std::string
+auto toggle(CCharEntity* PChar) -> uint16
 {
     if (!settings::get<bool>("cardian.PAUSE_ENABLED"))
     {
-        return "the pause is switched off on this server";
+        return CL_S_PAUSE_OFF;
     }
 
     const uint32 charId = PChar->id;
@@ -169,32 +169,32 @@ auto toggle(CCharEntity* PChar) -> std::string
         // Nobody logs out of a held game (input_gate.h), so nobody holds one on his way out
         if (PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Leavegame))
         {
-            return "you are logging out";
+            return CL_S_LOGGING_OUT;
         }
 
         // Nor in the middle of a synthesis or with a line in the water: the client plays
         // those out by itself while the server's half would wait for the release (input_gate.h)
         if (PChar->isCrafting())
         {
-            return "Cannot pause while performing synthesis.";
+            return CL_S_SYNTHESIZING;
         }
 
         if (PChar->isFishing())
         {
-            return "Cannot pause while fishing.";
+            return CL_S_FISHING;
         }
 
         hold(charId, PChar->getName());
-        return "";
+        return CL_S_OK;
     }
 
     if (book.holder != charId)
     {
-        return fmt::format("{} has the game paused", book.holderName);
+        return CL_S_PAUSED_BY_OTHER;
     }
 
     release("its holder resumed");
-    return "";
+    return CL_S_OK;
 }
 
 auto isHeld() -> bool

@@ -1036,38 +1036,6 @@ class PawnModule : public CPPModule
             result["names"] = names;
             return result;
         };
-        // Wait here / follow me. Follow from another zone is a travel order
-        // to the player's: she treks the world to meet them
-        lua["CBaseEntity"]["cardianWait"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr)
-            {
-                return "she is not herself right now";
-            }
-            PController->SetWaiting(on, true);
-            if (on)
-            {
-                pawn::clearTravelOrder(PPawn->id);
-                ShowInfoFmt("pawn: {} waits here (ordered)", PPawn->getName());
-            }
-            else if (PPawn->loc.zone != PChar->loc.zone)
-            {
-                ShowInfoFmt("pawn: {} sets out to meet {} in zone {}", PPawn->getName(), PChar->getName(), static_cast<uint16>(PChar->getZone()));
-                pawn::orderTravelByName(name, static_cast<uint16>(PChar->getZone()), PChar->id);
-            }
-            else
-            {
-                ShowInfoFmt("pawn: {} follows (ordered)", PPawn->getName());
-            }
-            return "";
-        };
-
         lua["CBaseEntity"]["cardianWaiting"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -1132,8 +1100,8 @@ class PawnModule : public CPPModule
             return "";
         };
 
-        // Sent home alone, to the ordering player's home point, she waits
-        // there as a warp leaves her (the user, 2026-09-14)
+        // Sent home alone, to the ordering player's home point (!pawnhomepoint;
+        // the addon sends the Link's HOMEPOINT)
         lua["CBaseEntity"]["cardianHomePoint"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -1141,15 +1109,7 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
-            if (!pawn::homePoint(PPawn, PChar))
-            {
-                return "not KO'd";
-            }
-            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
-            {
-                PController->SetWaiting(true, true, "waits at her home point");
-            }
-            return "";
+            return pawn::orderHomePoint(PChar, PPawn) == CL_S_OK ? "" : "not KO'd";
         };
 
         // What she cannot do yet and for how long: the seconds left on
@@ -1334,29 +1294,36 @@ class PawnModule : public CPPModule
             return err;
         };
 
-        // The command window's queue line: what she has waiting ("" with none),
-        // and the player taking it back
+        // The command window's queue line: what she has waiting ("" with none)
         lua["CBaseEntity"]["cardianQueued"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             auto* PController         = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
             return PController != nullptr ? PController->QueuedOrderLine() : "";
         };
-        lua["CBaseEntity"]["cardianCancel"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            return PController != nullptr && PController->CancelQueuedOrder() ? "" : "nothing queued";
-        };
 
+        // A typed `!cardian rescue`, worded for a person (the addon sends the Link's RESCUE)
         lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::rescue(PChar, PPawn) : "no such cardian";
+            pawn::RescueRefusal refusal;
+            switch (PPawn != nullptr ? pawn::rescue(PChar, PPawn, refusal) : CL_S_NO_SUCH_CARDIAN)
+            {
+                case CL_S_OK:
+                    return "";
+                case CL_S_OTHER_ZONE:
+                    return "not in your zone";
+                case CL_S_KNOCKED_OUT:
+                    return "KO'd";
+                case CL_S_NOT_WHILE_PAUSED:
+                    return "not while paused";
+                case CL_S_TOO_FAR:
+                    return fmt::format("too far ({:.0f} y; within {:.0f})", refusal.away, refusal.range);
+                case CL_S_COOLING_DOWN:
+                    return fmt::format("cooling down ({} s left)", refusal.cooldownLeft);
+                default:
+                    return "no such cardian";
+            }
         };
 
         lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint8 location) -> std::string

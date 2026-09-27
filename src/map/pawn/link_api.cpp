@@ -34,6 +34,7 @@
 #include "item_container.h"
 #include "items/item.h"
 #include "navmesh/navmesh.h"
+#include "pause/input_gate.h"
 #include "pause/pause.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -375,6 +376,80 @@ namespace pawn::linkapi
         {
             reply.finish(ask, pawn::partyEngage(PChar, ask.target));
         }
+
+        // Wait here, or follow him. Follow from another zone is a travel
+        // order to his: she treks the world to meet him.
+        void wait(CCharEntity* PChar, const cl_wait& ask, Reply& reply)
+        {
+            auto* PPawn       = pawn::findCommandablePawn(PChar, ask.cardian);
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            if (PController == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            const bool on = ask.on != 0;
+            PController->SetWaiting(on, true);
+            if (on)
+            {
+                pawn::clearTravelOrder(PPawn->id);
+                ShowInfoFmt("pawn: {} waits here (ordered)", PPawn->getName());
+            }
+            else if (PPawn->loc.zone != PChar->loc.zone)
+            {
+                ShowInfoFmt("pawn: {} sets out to meet {} in zone {}", PPawn->getName(), PChar->getName(), static_cast<uint16>(PChar->getZone()));
+                pawn::orderTravel(PPawn->id, static_cast<uint16>(PChar->getZone()), PChar->id);
+            }
+            else
+            {
+                ShowInfoFmt("pawn: {} follows (ordered)", PPawn->getName());
+            }
+            reply.finish(ask, CL_S_OK);
+        }
+
+        // A stuck cardian to his side, within reach and off cooldown
+        void rescue(CCharEntity* PChar, const cl_rescue& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            pawn::RescueRefusal refusal;
+            const auto          status = pawn::rescue(PChar, PPawn, refusal);
+            auto                answer = ask;
+            answer.away                = refusal.away;
+            answer.range               = refusal.range;
+            answer.cooldownLeft        = refusal.cooldownLeft;
+            reply.finish(answer, status);
+        }
+
+        // A KO'd cardian to his home point, where she waits
+        void homePoint(CCharEntity* PChar, const cl_homepoint& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            reply.finish(ask, PPawn != nullptr ? pawn::orderHomePoint(PChar, PPawn) : CL_S_NO_SUCH_CARDIAN);
+        }
+
+        // A queued command taken back: hers, or with no cardian named, his own
+        // (the pause's input gate)
+        void cancel(CCharEntity* PChar, const cl_cancel& ask, Reply& reply)
+        {
+            if (ask.cardian == 0)
+            {
+                reply.finish(ask, cardian::pause::input::cancel(PChar) ? CL_S_OK : CL_S_NOTHING_QUEUED);
+                return;
+            }
+            auto* PPawn       = pawn::findCommandablePawn(PChar, ask.cardian);
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            if (PController == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            reply.finish(ask, PController->CancelQueuedOrder() ? CL_S_OK : CL_S_NOTHING_QUEUED);
+        }
     } // namespace
 
     void registerHandlers()
@@ -390,5 +465,9 @@ namespace pawn::linkapi
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);
+        handle<cl_wait>(wait);
+        handle<cl_rescue>(rescue);
+        handle<cl_homepoint>(homePoint);
+        handle<cl_cancel>(cancel);
     }
 } // namespace pawn::linkapi

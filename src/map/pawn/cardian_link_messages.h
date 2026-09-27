@@ -62,8 +62,13 @@ namespace cardian::link
     X(RETREAT, cl_retreat)       \
     X(STAKE, cl_stake)           \
     X(ENGAGE, cl_engage)         \
+    X(WAIT, cl_wait)             \
+    X(RESCUE, cl_rescue)         \
+    X(HOMEPOINT, cl_homepoint)   \
+    X(CANCEL, cl_cancel)         \
     X(MANEUVER_STATE, cl_maneuver_state) \
     X(WALK_TAKEN, cl_walk_taken) \
+    X(PAUSE, cl_pause)           \
     X(PAUSED, cl_paused)         \
     X(RESUMED, cl_resumed)       \
     X(CALENDAR, cl_calendar)

@@ -73,9 +73,9 @@ auto release(std::string_view why) -> Result;
 
 // The pause button: takes the hold, or lets go of the asker's own. Anyone may pause
 // and only the holder may resume (co-op's real rules are a later decision); a player
-// on his way out of the game may not pause. Answers with why not, or with nothing
-// when it did.
-auto toggle(CCharEntity* PChar) -> std::string;
+// on his way out of the game may not pause. CL_S_OK when it did (the Link's
+// outcomes, pawn/cardian_link_protocol.h), else why not.
+auto toggle(CCharEntity* PChar) -> uint16;
 
 auto isHeld() -> bool;
 auto status() -> Status;

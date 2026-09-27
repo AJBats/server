@@ -471,7 +471,7 @@ namespace
     // Invited (ROADMAP H): in the player's zone she simply follows; from her
     // own city she runs to them (the wait ends, a travel order to their
     // zone); from anywhere else she holds where she stands until gathered
-    // ("follow me", cardianWait off), a field route walking past aggro
+    // ("follow me", the Link's WAIT off), a field route walking past aggro
     void gatherOrHold(CCharEntity* PPawn)
     {
         auto*              PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
@@ -1741,43 +1741,46 @@ namespace pawn
         return sent > 0 ? CL_S_OK : CL_S_NO_CARDIANS_OUT;
     }
 
-    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string
+    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn, RescueRefusal& refusal) -> uint16
     {
         // By player, for this process's life: a restart forgives the cooldown
         static std::unordered_map<uint32, timer::time_point> lastRescue;
 
         if (PPawn == nullptr || !pawns.contains(PPawn->id))
         {
-            return "no such cardian";
+            return CL_S_NO_SUCH_CARDIAN;
         }
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr || PPawn->loc.zone != PPlayer->loc.zone)
         {
-            return "not in your zone";
+            return CL_S_OTHER_ZONE;
         }
         if (PPawn->isDead())
         {
-            return "KO'd";
+            return CL_S_KNOCKED_OUT;
         }
 
         // A held simulation (pause/pause.h) moves nobody
         if (cardian::pause::isHeld())
         {
-            return "not while paused";
+            return CL_S_NOT_WHILE_PAUSED;
         }
 
         const float range = settings::get<float>("pawn.RESCUE_RANGE");
         const float away  = distance(PPlayer->loc.p, PPawn->loc.p);
         if (away > range)
         {
-            return fmt::format("too far ({:.0f} y; within {:.0f})", away, range);
+            refusal.away  = away;
+            refusal.range = range;
+            return CL_S_TOO_FAR;
         }
 
         const auto cooldown = std::chrono::seconds(static_cast<int64>(settings::get<float>("pawn.RESCUE_COOLDOWN")));
         const auto now      = timer::now();
         if (const auto it = lastRescue.find(PPlayer->id); it != lastRescue.end() && now - it->second < cooldown)
         {
-            const auto left = std::chrono::duration_cast<std::chrono::seconds>(cooldown - (now - it->second)).count();
-            return fmt::format("cooling down ({} s left)", left);
+            const auto left      = std::chrono::duration_cast<std::chrono::seconds>(cooldown - (now - it->second)).count();
+            refusal.cooldownLeft = static_cast<uint16>(std::clamp<int64>(left, 1, UINT16_MAX));
+            return CL_S_COOLING_DOWN;
         }
         lastRescue[PPlayer->id] = now;
 
@@ -1787,7 +1790,7 @@ namespace pawn
         PPawn->updatemask |= UPDATE_POS;
 
         ShowInfoFmt("pawn: {} rescued to {}'s side ({:.1f} y)", PPawn->getName(), PPlayer->getName(), away);
-        return "";
+        return CL_S_OK;
     }
 
     bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer)
@@ -1827,6 +1830,19 @@ namespace pawn
         clearTravelOrder(PPawn->id); // she waits at her home point: a trek she was on ends there
         requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
         return true;
+    }
+
+    auto orderHomePoint(const CCharEntity* PPlayer, CCharEntity* PPawn) -> uint16
+    {
+        if (!homePoint(PPawn, PPlayer))
+        {
+            return CL_S_NOT_KNOCKED_OUT;
+        }
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->SetWaiting(true, true, "waits at her home point");
+        }
+        return CL_S_OK;
     }
 
     namespace
@@ -2137,10 +2153,10 @@ namespace pawn
         return true;
     }
 
-    bool orderTravelByName(const std::string& targetName, const uint16 zoneId, const uint32 meet)
+    bool orderTravel(const uint32 pawnCharID, const uint16 zoneId, const uint32 meet)
     {
-        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
-        if (targetCharID == 0 || !pawns.contains(targetCharID))
+        const auto it = pawns.find(pawnCharID);
+        if (it == pawns.end())
         {
             return false;
         }
@@ -2148,13 +2164,18 @@ namespace pawn
         const auto destination = static_cast<xi::ZoneId>(zoneId);
         if (zoneutils::GetZone(destination) == nullptr)
         {
-            ShowWarningFmt("pawn: goto {}: zone {} is not loaded", targetName, zoneId);
+            ShowWarningFmt("pawn: goto {}: zone {} is not loaded", it->second->getName(), zoneId);
             return false;
         }
 
-        travelOrders[targetCharID] = TravelOrder{ destination, meet };
-        ShowInfoFmt("pawn: {} ordered to travel to zone {}{}", targetName, zoneId, meet != 0 ? " to meet her player" : "");
+        travelOrders[pawnCharID] = TravelOrder{ destination, meet };
+        ShowInfoFmt("pawn: {} ordered to travel to zone {}{}", it->second->getName(), zoneId, meet != 0 ? " to meet her player" : "");
         return true;
+    }
+
+    bool orderTravelByName(const std::string& targetName, const uint16 zoneId, const uint32 meet)
+    {
+        return orderTravel(charutils::getCharIdFromName(targetName), zoneId, meet);
     }
 
     auto meetTrek(const CCharEntity* PPawn) -> std::optional<xi::ZoneId>

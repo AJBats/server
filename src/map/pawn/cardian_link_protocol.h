@@ -34,14 +34,15 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 18: the gambit review's lines, still on
+// compatible, the user, 2026-09-14). 19: WAIT, RESCUE, HOMEPOINT, CANCEL and
+// PAUSE (their lines leave LEGACY_CD); 18: the gambit review's lines, still on
 // LEGACY_CD (the catalogue by side -- gvc <name> <page>:<range|-> <target>|
 // <cond>:<arg|*|s>=<label>;..., no gvt -- every learnable action, gva keys
 // ending ! not hers now, and the row state x-side; the text protocol's 15);
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 18 };
+enum { CL_PROTOCOL = 19 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -111,6 +112,20 @@ enum
     CL_S_NOT_A_MONSTER     = 0x0123, // a player or a cardian, not a monster
     CL_S_UNDERGROUND       = 0x0124, // the monster is out of reach underground
     CL_S_NO_CARDIANS_OUT   = 0x0125, // none of his cardians is out in his zone
+
+    // One cardian's orders
+    CL_S_NOT_KNOCKED_OUT   = 0x0130, // a home point is for a KO'd cardian
+    CL_S_NOT_WHILE_PAUSED  = 0x0131, // a held simulation moves nobody
+    CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
+    CL_S_COOLING_DOWN      = 0x0133, // the rescue's cooldown: the answer's cooldownLeft
+    CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
+
+    // The pause button
+    CL_S_PAUSE_OFF         = 0x0140, // the pause is switched off on this server
+    CL_S_LOGGING_OUT       = 0x0141, // nobody pauses on his way out of the game
+    CL_S_SYNTHESIZING      = 0x0142, // nor in the middle of a synthesis
+    CL_S_FISHING           = 0x0143, // nor with a line in the water
+    CL_S_PAUSED_BY_OTHER   = 0x0144, // another player holds it, and only its holder resumes
 };
 
 // ---- 0x00xx: the link itself ----------------------------------------------
@@ -278,6 +293,10 @@ enum
     CL_T_RETREAT      = 0x0408,
     CL_T_STAKE        = 0x0409,
     CL_T_ENGAGE       = 0x040A,
+    CL_T_WAIT         = 0x040B,
+    CL_T_RESCUE       = 0x040C,
+    CL_T_HOMEPOINT    = 0x040D,
+    CL_T_CANCEL       = 0x040E,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -425,6 +444,46 @@ typedef struct cl_engage
     uint16_t  spare;
 } cl_engage;
 
+// Wait here, or follow him: from another zone, following is a trek to his.
+// Answered by the outcome alone; her roster line says it next time it is read.
+typedef struct cl_wait
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   on;      // 1 wait here, 0 follow
+    uint8_t   spare[3];
+} cl_wait;
+
+// A stuck cardian to his side: only from within pawn.RESCUE_RANGE yalms, on
+// pawn.RESCUE_COOLDOWN shared by all his cardians. Answered by the outcome,
+// with the numbers behind a refusal.
+typedef struct cl_rescue
+{
+    cl_header h;
+    uint32_t  cardian;      // charid
+    float     away;         // answered with CL_S_TOO_FAR: yalms between them
+    float     range;        // answered with CL_S_TOO_FAR: the rescue's reach
+    uint16_t  cooldownLeft; // answered with CL_S_COOLING_DOWN: seconds
+    uint16_t  spare;
+} cl_rescue;
+
+// A KO'd cardian to his home point, where she waits
+typedef struct cl_homepoint
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_homepoint;
+
+// A queued command taken back: the one a character has waiting -- the
+// player's through a pause, a cardian's through a pause or behind what she is
+// doing. The queue line that changes is told as it always is; this answers
+// with the outcome alone.
+typedef struct cl_cancel
+{
+    cl_header h;
+    uint32_t  cardian; // charid; 0 = the player's own
+} cl_cancel;
+
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 
 enum
@@ -434,7 +493,15 @@ enum
     CL_T_CALENDAR       = 0x0503,
     CL_T_MANEUVER_STATE = 0x0504,
     CL_T_WALK_TAKEN     = 0x0505,
+    CL_T_PAUSE          = 0x0506,
 };
+
+// The pause button: takes the hold, or lets go of his own. Answered by the
+// outcome; the hold itself is told to every addon (PAUSED, RESUMED).
+typedef struct cl_pause
+{
+    cl_header h;
+} cl_pause;
 
 // One-way, to the player steering her, when a walk order (WALK) was not taken
 // as asked: the mesh moved the point (a wall, a ledge, the floor's height),

@@ -27,7 +27,6 @@
 --       sort <name> <loc>                merge and compact a container (0 = inventory)
 --       giveuse <name> <slot> <qty>      give from your inventory, then the
 --                                        cardian uses it (the scroll flow)
---       homepoint <name>                 a KO'd cardian home points (yours)
 --       gambits <name>                   the cardian's gambit rows (gb.b / g / gb.e)
 --       gtoggle <name> <row> <on|off>    a row's switch
 --       gmove <name> <from> <to>         reorder a row (1-based, as shown)
@@ -45,6 +44,9 @@
 --       invite <name> [kind] [log]       the party invite, sent for you; she answers it herself
 --       stake [clear|toggle]             typed only (the addon sends STAKE): set/move, clear, or toggle
 --                                        camp using server state; answered with the orders line, st
+--       pause                            typed only (the addon sends PAUSE): the pause button
+--       rescue <name>                    typed only (the addon sends RESCUE): a stuck cardian to your side
+--       recall <name> | faded            a cardian of yours that faded stands again; who has faded
 --       gmaster <name> <on|off>          the cardian's master gambit switch
 --       greset <name>                    back to the default rows of the job she holds now
 -----------------------------------
@@ -850,8 +852,9 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok view')
         end
     elseif verb == 'pause' then
-        -- The pause button. A hold taken or let go is told to every addon by the
-        -- server itself (the Link's PAUSED / RESUMED); only a refusal is answered here
+        -- Typed only: the addon sends the Link's PAUSE. A hold taken or let go is
+        -- told to every addon by the server itself (PAUSED / RESUMED); only a
+        -- refusal is answered here
         local err = player:cardianPause()
         if err ~= '' then
             reply(player, '#cd note ' .. err)
@@ -862,19 +865,6 @@ commandObj.onTrigger = function(player, line)
         reply(player, '#cd q ' .. player:getName() .. ' ' .. player:cardianQueuedOwn())
         for _, cardian in ipairs(player:cardianNames()) do
             reply(player, '#cd q ' .. cardian .. ' ' .. player:cardianQueued(cardian))
-        end
-    elseif verb == 'cancel' and name then
-        -- Take a queued command back: `me` is the player's own
-        local err = ''
-        if name == 'me' then
-            err = player:cardianCancelOwn() and '' or 'nothing queued'
-        else
-            err = player:cardianCancel(name)
-        end
-        if err ~= '' then
-            reply(player, '#cd err cancel ' .. err)
-        else
-            reply(player, '#cd ok cancel')
         end
     elseif verb == 'stake' then
         -- Typed only: the addon sends the Link's STAKE. Kept, with its spec
@@ -1056,15 +1046,8 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd ok do')
         end
-    elseif (verb == 'wait' or verb == 'follow') and name then
-        local err = player:cardianWait(name, verb == 'wait')
-        if err ~= '' then
-            reply(player, '#cd err ' .. verb .. ' ' .. err)
-        else
-            reply(player, '#cd ok ' .. verb)
-            sendPawnLine(player, name)
-        end
     elseif verb == 'rescue' and name then
+        -- Typed only: the addon sends the Link's RESCUE
         local err = player:cardianRescue(name)
         if err ~= '' then
             reply(player, '#cd err rescue ' .. err)
@@ -1086,13 +1069,6 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok faded')
         else
             reply(player, '#cd ok faded ' .. table.concat(names, ','))
-        end
-    elseif verb == 'homepoint' and name then
-        local err = player:cardianHomePoint(name)
-        if err ~= '' then
-            reply(player, '#cd err homepoint ' .. err)
-        else
-            reply(player, '#cd ok homepoint')
         end
     elseif verb == 'use' and name then
         local err = player:cardianUse(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0)
