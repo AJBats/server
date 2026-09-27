@@ -206,6 +206,29 @@ TEST_CASE("row grammar: the tactician's choice condition round-trips", "[cardian
     REQUIRE(formatRow(*back) == text);
 }
 
+TEST_CASE("row grammar: the Enfeeble status and the Enfeeble action round-trip", "[cardian][gambits]")
+{
+    Gambit_t na;
+    na.target_selector = G_TARGET::PARTY;
+    na.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::STATUS, pawn::G_STATUS_ENFEEBLE) });
+    na.actions.emplace_back(G_REACTION::MA, G_SELECT::HIGHEST, 4);
+    REQUIRE(formatRow(na) == "1|9:10000|2:0:4|0");
+    const auto naBack = parseRow("1|9:10000|2:0:4|0");
+    REQUIRE(naBack.has_value());
+    CHECK(naBack->predicate_groups[0].predicates[0].condition_arg == pawn::G_STATUS_ENFEEBLE);
+    CHECK(formatRow(*naBack) == "1|9:10000|2:0:4|0");
+
+    Gambit_t enfeeble;
+    enfeeble.target_selector = G_TARGET::TARGET;
+    enfeeble.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(pawn::G_CONDITION_TACTICIANS_CHOICE, 0) });
+    enfeeble.actions.emplace_back(G_REACTION::MA, pawn::G_SELECT_ENFEEBLE, 0);
+    REQUIRE(formatRow(enfeeble) == "2|101:0|2:100:0|0");
+    const auto enfeebleBack = parseRow("2|101:0|2:100:0|0");
+    REQUIRE(enfeebleBack.has_value());
+    CHECK(enfeebleBack->actions[0].select == pawn::G_SELECT_ENFEEBLE);
+    CHECK(pairingError(*enfeebleBack).empty());
+}
+
 TEST_CASE("row pairing: the Foe targets are the foe conditions and the finders 100 to 103, and an engage row is one with Attack", "[cardian][gambits][engage]")
 {
     CHECK_FALSE(isFoeTarget(static_cast<G_TARGET>(99)));

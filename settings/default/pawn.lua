@@ -321,9 +321,11 @@ xi.settings.pawn =
     -- Party tactics (RESEARCH §12): the fight log's one summary line per
     -- fight is always logged. TACTICS_DEBUG adds a line per hit, cast and
     -- switch; TACTICS_WORLD watches the world's own fights too (a camp with
-    -- no real player in it), which is a line per rabbit.
+    -- no real player in it), so a wild Support Mage's tactician cures,
+    -- removes ailments and enfeebles as she does in a player's party; the
+    -- map log carries a fight line per rabbit. Read once, at boot.
     TACTICS_DEBUG = false,
-    TACTICS_WORLD = false,
+    TACTICS_WORLD = true,
 
     -- A request a row or the role feeds the conveyor lives this many
     -- seconds unless re-fed (rows are read on her think, every 2-3 s); a

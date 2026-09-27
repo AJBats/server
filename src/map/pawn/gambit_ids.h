@@ -62,6 +62,18 @@ namespace pawn
     constexpr auto G_TARGET_TARGETING_ALLY   = static_cast<gambits::G_TARGET>(102); // a mob on her or on a party member
     constexpr auto G_TARGET_TARGETING_SELF   = static_cast<gambits::G_TARGET>(103); // a mob on her
 
+    // Cardian-only spell select: Enfeeble, the enfeebles her tactician
+    // prices (tactician_line.h). Below her Support Mage row it lets her
+    // tactician cast every one of them; as an order it casts the first of
+    // kEnfeebleOrder she can cast that the foe does not carry yet.
+    constexpr auto G_SELECT_ENFEEBLE = static_cast<gambits::G_SELECT>(100);
+
+    // Cardian-only status a status condition can name: Enfeeble, a group,
+    // any ailment a -na spell cures or anything Erase takes off
+    // (ailments.h). Far past every status id upstream numbers, so no real
+    // status is ever read as it.
+    constexpr uint32 G_STATUS_ENFEEBLE = 10000;
+
     // The behaviours a row can switch -- engine tuning, not what the party
     // is doing right now (hunting is the party's strategy, another channel).
     // Values are frozen: they appear in the row grammar and are persisted
@@ -132,6 +144,8 @@ namespace pawn
     static_assert(static_cast<uint16>(G_TARGET_TARGETED_BY_ALLY) == 101);
     static_assert(static_cast<uint16>(G_TARGET_TARGETING_ALLY) == 102);
     static_assert(static_cast<uint16>(G_TARGET_TARGETING_SELF) == 103);
+    static_assert(static_cast<uint16>(G_SELECT_ENFEEBLE) == 100);
+    static_assert(G_STATUS_ENFEEBLE == 10000);
 
     static_assert(static_cast<uint16>(Behavior::AvoidAggro) == 1);
     static_assert(static_cast<uint16>(Behavior::Formation) == 4);
