@@ -34,11 +34,14 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 17: the party's orders (ORDERS and the
-// messages that change them) and ENGAGE; 16: WALK, VIEW and the maneuver
-// messages (their lines leave LEGACY_CD); 15: binary messages, this file; 14
-// and earlier were newline text.
-enum { CL_PROTOCOL = 17 };
+// compatible, the user, 2026-09-14). 18: the gambit review's lines, still on
+// LEGACY_CD (the catalogue by side -- gvc <name> <page>:<range|-> <target>|
+// <cond>:<arg|*|s>=<label>;..., no gvt -- every learnable action, gva keys
+// ending ! not hers now, and the row state x-side; the text protocol's 15);
+// 17: the party's orders (ORDERS and the messages that change them) and
+// ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
+// LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
+enum { CL_PROTOCOL = 18 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
