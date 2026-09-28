@@ -8,6 +8,8 @@
 --       the addon gets data.
 --
 --       list                             roster of your live cardians
+--       hint                             a cardian in your party gives the hint for your mission step
+--       hints nudge|full|off             how much she volunteers: a nudge (default), everything, or nothing
 --       sync <name>                      one cardian: stats + gear + inventory
 --       inv <name> [loc]                 a cardian's inventory (loc 0), or one of her storage bags
 --       bags <name>                      her storage bags as loc:size:used,... -- Mog Case, the Mog
@@ -991,6 +993,17 @@ commandObj.onTrigger = function(player, line)
 
     if verb == 'list' then
         sendList(player)
+    elseif verb == 'hint' then
+        -- A cardian gives the hint for the player's current mission step
+        -- (modules/cardian/lua/mission_hints.lua)
+        if xi.cardian.hints == nil or not xi.cardian.hints.remind(player) then
+            reply(player, 'No cardian in your party to ask.')
+        end
+    elseif verb == 'hints' and name then
+        -- How much she volunteers: nudge, full or off
+        if xi.cardian.hints == nil or not xi.cardian.hints.setLevel(player, name) then
+            reply(player, 'Usage: !cardian hints nudge|full|off')
+        end
     elseif verb == 'gambits' and name then
         sendGambits(player, name)
     elseif verb == 'gtoggle' and name and args[3] and args[4] then

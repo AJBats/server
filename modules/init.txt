@@ -55,3 +55,5 @@ cardian/lua/linkshell.lua
 cardian/lua/market_unlocks.lua
 # CARDIAN: era vendor stock the era module does not cover (active while WotG is off)
 cardian/lua/era_vendors.lua
+# CARDIAN: a cardian chimes in with a hint at each new mission step
+cardian/lua/mission_hints.lua

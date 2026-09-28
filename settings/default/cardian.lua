@@ -48,4 +48,11 @@ xi.settings.cardian =
     -- keep) while the server is off. true: its time goes by, as upstream's
     -- does. false: the game carries on from the second it stopped.
     CLOCK_RUNS_OFFLINE = true,
+
+    -- Mission hints (modules/cardian/lua/mission_hints.lua): a cardian in
+    -- the player's party says where to go next when he reaches a new
+    -- mission step. Off, she stays quiet for everyone; `!cardian hint`
+    -- still asks her. Each player sets his own amount with
+    -- `!cardian hints nudge|full|off`.
+    MISSION_HINTS = true,
 }
