@@ -101,8 +101,12 @@ namespace pawn::tactics
         // the spell is not one the bank prices
         auto onAlready(CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<double>;
         // What is on the target nullifies a priced spell's effect (a Bio
-        // under a Dia): the game's own rule, asked when the effect is not on
+        // under a Dia), or would be erased by it (a Frost under a Burn): the
+        // game's own rules, asked when the effect is not on
         auto blockedOn(CSpell* PSpell, CBattleEntity* PTarget) -> bool;
+        // The target is immune to what a priced spell writes: the game's own
+        // rule, the one the bank's land chance asks first (tactics_bank.lua)
+        auto immuneTo(CSpell* PSpell, CBattleEntity* PTarget) -> bool;
 
         // What a Cure tier heals before the target's missing HP caps it:
         // the server's own cure formula run on her (the sampler in

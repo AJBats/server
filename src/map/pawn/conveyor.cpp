@@ -93,6 +93,11 @@ namespace pawn::tactics
                 case NeedKind::Cure:
                     return "Cure";
                 case NeedKind::Status:
+                    if ((key.arg & cardian::tactics::kStatusBySpell) != 0)
+                    {
+                        auto* PSpell = spell::GetSpell(static_cast<SpellID>(key.arg & ~cardian::tactics::kStatusBySpell));
+                        return PSpell != nullptr ? PSpell->getName() : fmt::format("spell {}", key.arg & ~cardian::tactics::kStatusBySpell);
+                    }
                     return pawn::familyName(key.arg);
                 case NeedKind::Damage:
                     return "damage";
@@ -192,9 +197,21 @@ namespace pawn::tactics
         {
             return { NeedKind::Cure, 0, target };
         }
-        const auto family = PSpell->getSpellFamily();
-        if (family != SPELLFAMILY_NONE && (PSpell->isDebuff() || PSpell->isBuff() || PSpell->isNa() || PSpell->isHeal()))
+        // A -na, and Erase, by its spell: each takes its own ailment off, so
+        // two mages may take two ailments off one member at once
+        if (PSpell->isNa())
         {
+            return { NeedKind::Na, static_cast<uint32>(PSpell->getID()), target };
+        }
+        const auto family = PSpell->getSpellFamily();
+        if (family != SPELLFAMILY_NONE && (PSpell->isDebuff() || PSpell->isBuff() || PSpell->isHeal()))
+        {
+            // The elemental debuffs share one family, but each writes an
+            // effect of its own: a need per spell
+            if (family == SPELLFAMILY_ELE_DOT)
+            {
+                return { NeedKind::Status, cardian::tactics::kStatusBySpell | static_cast<uint32>(PSpell->getID()), target };
+            }
             return { NeedKind::Status, static_cast<uint32>(family), target };
         }
         if (PSpell->dealsDamage())

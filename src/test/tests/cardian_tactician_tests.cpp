@@ -100,6 +100,8 @@ TEST_CASE("tactician line: her lists are spell.h's numbers", "[cardian][gambits]
         { SpellID::Paralyze, SPELLFAMILY_PARALYZE }, { SpellID::Slow, SPELLFAMILY_SLOW }, { SpellID::Blind, SPELLFAMILY_BLIND },
         { SpellID::Dia, SPELLFAMILY_DIA }, { SpellID::Diaga, SPELLFAMILY_DIAGA }, { SpellID::Poison, SPELLFAMILY_POISON },
         { SpellID::Poisonga, SPELLFAMILY_POISONGA }, { SpellID::Bio, SPELLFAMILY_BIO },
+        { SpellID::Burn, SPELLFAMILY_ELE_DOT }, { SpellID::Frost, SPELLFAMILY_ELE_DOT }, { SpellID::Choke, SPELLFAMILY_ELE_DOT },
+        { SpellID::Rasp, SPELLFAMILY_ELE_DOT }, { SpellID::Shock, SPELLFAMILY_ELE_DOT }, { SpellID::Drown, SPELLFAMILY_ELE_DOT },
     };
     REQUIRE(priced.size() == kPricedDebuffs.size());
     for (std::size_t i = 0; i < priced.size(); ++i)
@@ -262,12 +264,15 @@ TEST_CASE("tactician line: which spells a row below the line lets her cast", "[c
     CHECK(allowsSpell(dia, static_cast<uint16>(SpellID::Dia)));
     CHECK_FALSE(allowsSpell(dia, static_cast<uint16>(SpellID::Diaga)));
 
-    // Enfeeble lets her tactician cast every debuff it prices, and nothing else
+    // Enfeeble lets her tactician cast the single-target debuffs it prices,
+    // and nothing else: never a -ga spell, which reaches the mobs around
     const auto enfeeble = row("2|101:0|2:100:0|0");
-    for (const auto& p : cardian::tactician::kPricedDebuffs)
+    for (const auto id : cardian::tactician::kEnfeebleOrder)
     {
-        CHECK(allowsSpell(enfeeble, p.id));
+        CHECK(allowsSpell(enfeeble, id));
     }
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Diaga)));
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Poisonga)));
     CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Cure)));
     CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Sleep)));
     CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Fire)));
@@ -284,29 +289,37 @@ TEST_CASE("tactician line: an order acts alone, and below the line only a -na or
 {
     using cardian::tactician::actsAlone;
     const auto na = row("1|101:0|2:0:4|0");
-    CHECK(actsAlone(State::Order, row(kRest)));
-    CHECK(actsAlone(State::Order, na));
-    CHECK(actsAlone(State::Allows, na));
-    CHECK(actsAlone(State::Allows, row("1|9:3|2:2:14|0")));   // Ally: status = Poison -> Poisona
-    CHECK(actsAlone(State::Allows, row("0|0:0|2:2:143|0")));  // Self -> Erase
+    CHECK(actsAlone(State::Order, row(kRest), true));
+    CHECK(actsAlone(State::Order, na, true));
+    CHECK(actsAlone(State::Allows, na, true));
+    CHECK(actsAlone(State::Allows, row("1|9:3|2:2:14|0"), true));  // Ally: status = Poison -> Poisona
+    CHECK(actsAlone(State::Allows, row("0|0:0|2:2:143|0"), true)); // Self -> Erase
 
     // Her cures, her enfeebles and her melee wait for her tactician
-    CHECK_FALSE(actsAlone(State::Allows, row(kCureBest)));
-    CHECK_FALSE(actsAlone(State::Allows, row("2|101:0|2:100:0|0")));
-    CHECK_FALSE(actsAlone(State::Allows, row("102|0:0|0:0:0|0")));
+    CHECK_FALSE(actsAlone(State::Allows, row(kCureBest), true));
+    CHECK_FALSE(actsAlone(State::Allows, row("2|101:0|2:100:0|0"), true));
+    CHECK_FALSE(actsAlone(State::Allows, row("102|0:0|0:0:0|0"), true));
+
+    // With her tactician not running (her Support Mage row unchecked, her
+    // gambits off), a -na row below the line waits as her Cure rows do; an
+    // order still acts
+    CHECK_FALSE(actsAlone(State::Allows, na, false));
+    CHECK_FALSE(actsAlone(State::Allows, row("0|0:0|2:2:143|0"), false));
+    CHECK(actsAlone(State::Order, na, false));
 
     // Struck out, or the line itself, never
-    CHECK_FALSE(actsAlone(State::Clock, na));
-    CHECK_FALSE(actsAlone(State::NoChoice, na));
-    CHECK_FALSE(actsAlone(State::Misfit, na));
-    CHECK_FALSE(actsAlone(State::Line, row(kSupportMage)));
+    CHECK_FALSE(actsAlone(State::Clock, na, true));
+    CHECK_FALSE(actsAlone(State::NoChoice, na, true));
+    CHECK_FALSE(actsAlone(State::Misfit, na, true));
+    CHECK_FALSE(actsAlone(State::Line, row(kSupportMage), true));
 }
 
 TEST_CASE("tactician line: an Enfeeble order casts the first single-target enfeeble she can that the foe lacks", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::firstEnfeeble;
     using cardian::tactician::kEnfeebleOrder;
-    const std::vector<SpellID> want{ SpellID::Paralyze, SpellID::Slow, SpellID::Blind, SpellID::Dia, SpellID::Bio, SpellID::Poison };
+    const std::vector<SpellID> want{ SpellID::Paralyze, SpellID::Slow, SpellID::Blind, SpellID::Dia, SpellID::Bio, SpellID::Poison,
+                                     SpellID::Burn, SpellID::Frost, SpellID::Choke, SpellID::Rasp, SpellID::Shock, SpellID::Drown };
     REQUIRE(want.size() == kEnfeebleOrder.size());
     for (std::size_t i = 0; i < want.size(); ++i)
     {
@@ -326,6 +339,7 @@ TEST_CASE("tactician line: an Enfeeble order casts the first single-target enfee
     };
     CHECK(firstEnfeeble(only({ SpellID::Dia, SpellID::Paralyze })) == std::optional<uint16>(static_cast<uint16>(SpellID::Paralyze)));
     CHECK(firstEnfeeble(only({ SpellID::Poison, SpellID::Dia })) == std::optional<uint16>(static_cast<uint16>(SpellID::Dia)));
+    CHECK(firstEnfeeble(only({ SpellID::Shock, SpellID::Burn })) == std::optional<uint16>(static_cast<uint16>(SpellID::Burn)));
     CHECK_FALSE(firstEnfeeble(only({ SpellID::Diaga })).has_value());
     CHECK_FALSE(firstEnfeeble(only({})).has_value());
 }

@@ -212,6 +212,9 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
+    // Her tactician (tactician_line.h) runs: her Support Mage row speaks,
+    // her gambits are on, and a tactician watches her scope
+    auto TacticianRuns() const -> bool;
     // The stake (RESEARCH §12.16): the party's place whenever it stands,
     // pushed by the orders (pawn::applyOrdersTo); hers while she stands in
     // its zone and no retreat is called (Staked). Staked, she keeps to it:
@@ -752,11 +755,9 @@ private:
     // or one below it while her tactician lets her melee
     auto TakesFights() const -> bool;
 
-    // Her tactician (tactician_line.h): it runs while her Support Mage row
-    // speaks, her gambits are on, and a tactician watches her scope; and it
-    // lets her melee a fight a row below the line claims while her recovery
-    // is not due and she is not down resting (RESEARCH §14.12 decision 19)
-    auto TacticianRuns() const -> bool;
+    // Her tactician lets her melee a fight a row below the line claims
+    // while it runs (TacticianRuns), her recovery is not due and she is not
+    // down resting (RESEARCH §14.12 decision 19)
     auto TacticianMelee() const -> bool;
 
     // The foes around the party this tick (as above), gathered once a tick

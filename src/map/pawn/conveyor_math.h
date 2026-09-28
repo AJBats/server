@@ -46,9 +46,10 @@ namespace cardian::tactics
 {
     // What merges into one need, the same kind on the same target: a cure
     // on a member, whatever the tier; a status spell by the family it
-    // writes (Dia and Dia II are one need, Paralyze another); a -na by its
-    // spell; damage and the rest never merge across casters, so their key
-    // carries the caster and they are hers alone
+    // writes (Dia and Dia II are one need, Paralyze another), but an
+    // elemental debuff by its spell (kStatusBySpell); a -na by its spell;
+    // damage and the rest never merge across casters, so their key carries
+    // the caster and they are hers alone
     enum class NeedKind : uint8
     {
         Cure,
@@ -57,6 +58,10 @@ namespace cardian::tactics
         Damage,
         Other,
     };
+
+    // A Status need's arg carries this bit when it is keyed by its spell
+    // rather than its family, clear of every family number
+    inline constexpr uint32 kStatusBySpell = 0x10000;
 
     struct NeedKey
     {

@@ -62,10 +62,10 @@ namespace pawn
     constexpr auto G_TARGET_TARGETING_ALLY   = static_cast<gambits::G_TARGET>(102); // a mob on her or on a party member
     constexpr auto G_TARGET_TARGETING_SELF   = static_cast<gambits::G_TARGET>(103); // a mob on her
 
-    // Cardian-only spell select: Enfeeble, the enfeebles her tactician
-    // prices (tactician_line.h). Below her Support Mage row it lets her
-    // tactician cast every one of them; as an order it casts the first of
-    // kEnfeebleOrder she can cast that the foe does not carry yet.
+    // Cardian-only spell select: Enfeeble, the single-target enfeebles her
+    // tactician prices (tactician_line.h kEnfeebleOrder). Below her Support
+    // Mage row it lets her tactician cast any of them; as an order it casts
+    // the first she can that the foe does not carry yet. Never a -ga spell.
     constexpr auto G_SELECT_ENFEEBLE = static_cast<gambits::G_SELECT>(100);
 
     // Cardian-only status a status condition can name: Enfeeble, a group,

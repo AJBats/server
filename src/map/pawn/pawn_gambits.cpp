@@ -285,21 +285,29 @@ namespace pawn
             {
                 return nullptr;
             }
-            const bool removal = (spell->select == G_SELECT::HIGHEST && spell->select_arg == cardian::ailments::kNaFamily) ||
-                                 (spell->select == G_SELECT::SPECIFIC && cardian::ailments::isRemoval(spell->select_arg));
-            return removal ? &*spell : nullptr;
+            return cardian::tactician::isRemovalAction(*spell) ? &*spell : nullptr;
+        }
+
+        // An enfeeble an Enfeeble order may cast on the foe: not on it
+        // already, not nullified by what is on it, and not one it is immune
+        // to (the bank's verdicts, the ones her tactician's pricing asks)
+        auto enfeebleLands(CSpell* PSpell, CBattleEntity* PTarget) -> bool
+        {
+            return !pawn::tactics::bank::onAlready(PSpell, PTarget).has_value() && !pawn::tactics::bank::blockedOn(PSpell, PTarget) &&
+                   !pawn::tactics::bank::immuneTo(PSpell, PTarget);
         }
 
         // A spell a row picked by what is on the target still answers it:
         // a -na or Erase still has something to take off, an enfeeble is not
-        // on already. The conveyor asks before it casts a request a row fed
+        // on already and nothing another caster landed since blocks it. The
+        // conveyor asks every tick before it casts a request a row fed, so
+        // only what can change in a request's short life is asked; the row's
+        // own pick weighed the rest (an immunity never changes)
         auto stillAnswers(const Action_t& action, const uint16 spellId, CBattleEntity* PTarget) -> bool
         {
-            const bool removal = (action.select == G_SELECT::HIGHEST && action.select_arg == cardian::ailments::kNaFamily) ||
-                                 (action.select == G_SELECT::SPECIFIC && cardian::ailments::isRemoval(action.select_arg));
-            if (removal)
+            if (cardian::tactician::isRemovalAction(action))
             {
-                return cardian::ailments::cures(spellId, effectsOn(PTarget), erasableOn(PTarget));
+                return cardian::ailments::cures(spellId, effectsOn(PTarget), spellId == cardian::ailments::kErase && erasableOn(PTarget));
             }
             if (action.select == pawn::G_SELECT_ENFEEBLE)
             {
@@ -414,7 +422,9 @@ namespace pawn
 
         // Her scope's conveyor (RESEARCH §12.12 item 2): where a tactician
         // watches, spell rows feed it and it says who casts; where none
-        // does, rows cast as they always have
+        // does, rows cast as they always have. With her gambits on, a
+        // Support Mage under a conveyor is her tactician running
+        // (CPawnController::TacticianRuns)
         const bool conveyor    = pawn::tactics::has(POwner);
         const bool supportMage = conveyor && pawn::tactics::supportMage(POwner);
 
@@ -439,17 +449,17 @@ namespace pawn
 
         // Her rows in the running order (the world's first in the wild),
         // top down; the first to act ends the think. An order acts, and so
-        // does a -na or Erase row below her tactician line, which her
-        // tactician has no judgement of its own for yet; every other row
-        // below the line is her tactician's to read, and a struck-out row
-        // does nothing (tactician_line.h actsAlone)
+        // does a -na or Erase row below her tactician line while her
+        // tactician runs, which has no judgement of its own for them yet;
+        // every other row below the line is her tactician's to read, and a
+        // struck-out row does nothing (tactician_line.h actsAlone)
         const auto layers = RunningLayers();
         const auto states = RunningStates(layers);
         cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t index)
                                     {
                                         auto&      gambit = row.gambit;
                                         const auto state  = states[index - 1];
-                                        if (!row.enabled || !cardian::tactician::actsAlone(state, gambit) || IsBehavior(gambit) ||
+                                        if (!row.enabled || !cardian::tactician::actsAlone(state, gambit, supportMage) || IsBehavior(gambit) ||
                                             cardian::engage::isEngageRow(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
                                         {
                                             return false;
@@ -540,7 +550,7 @@ namespace pawn
         }
         const bool own   = !cardian::layers::isWorldRowId(rowId);
         const auto state = own ? StateOf(static_cast<std::size_t>(row - m_gambits.data()) + 1) : cardian::tactician::stateOf(row->gambit, 1, std::nullopt, rowFits(row->gambit));
-        if (!cardian::tactician::actsAlone(state, row->gambit))
+        if (!cardian::tactician::actsAlone(state, row->gambit, m_PController->TacticianRuns()))
         {
             return false;
         }
@@ -768,10 +778,35 @@ namespace pawn
     {
         // A -na or Erase row picks someone it has a cure for: under a
         // condition many hold (Tactician's choice, Enfeeble), the most hurt
-        // may carry nothing she can take off while another does
+        // may carry nothing she can take off while another does, or another
+        // mage may be taking it off already. It is asked of whom the spell
+        // lands on, and before the row's conditions, so a candidate passed
+        // over never spends the row's timer
         const auto* removal = removalOf(gambit);
         for (auto* PCandidate : Candidates(gambit.target_selector))
         {
+            CBattleEntity* PActionTarget = PCandidate;
+            switch (gambit.target_selector)
+            {
+                case G_TARGET::TRIGGER_SELF_ACTION_TARGET:
+                    PActionTarget = FightTarget();
+                    break;
+                case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
+                    PActionTarget = POwner;
+                    break;
+                default:
+                    break;
+            }
+
+            if (removal != nullptr)
+            {
+                const auto spell = ResolveSpell(*removal, PActionTarget);
+                if (!spell.has_value() || pawn::tactics::othersCasting(POwner, spell::GetSpell(*spell), PActionTarget))
+                {
+                    continue;
+                }
+            }
+
             bool matches = true;
             for (std::size_t groupIndex = 0; groupIndex < gambit.predicate_groups.size(); ++groupIndex)
             {
@@ -782,19 +817,9 @@ namespace pawn
                 }
             }
 
-            if (!matches || (removal != nullptr && !ResolveSpell(*removal, PCandidate).has_value()))
+            if (matches)
             {
-                continue;
-            }
-
-            switch (gambit.target_selector)
-            {
-                case G_TARGET::TRIGGER_SELF_ACTION_TARGET:
-                    return FightTarget();
-                case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
-                    return POwner;
-                default:
-                    return PCandidate;
+                return PActionTarget;
             }
         }
         return nullptr;
@@ -1184,7 +1209,9 @@ namespace pawn
             case G_SELECT::HIGHEST:
             {
                 // -na (best): the -na for the worst ailment on the target
-                // that she can cast now, Erase last (ailments.h)
+                // that she can cast now, Erase last (ailments.h); "can cast"
+                // at the spell's real MP cost, as the conveyor asks before it
+                // casts (bank::usable)
                 if (action.select_arg == cardian::ailments::kNaFamily)
                 {
                     if (PTarget == nullptr)
@@ -1202,18 +1229,17 @@ namespace pawn
             case pawn::G_SELECT_ENFEEBLE:
             {
                 // Enfeeble as an order: the first of her tactician's single-
-                // target enfeebles she can cast that the foe does not carry
-                // (tactician_line.h kEnfeebleOrder)
+                // target enfeebles she can cast now (bank::usable, as the
+                // conveyor asks) that would land on the foe
+                // (tactician_line.h kEnfeebleOrder, enfeebleLands)
                 if (PTarget == nullptr)
                 {
                     return std::nullopt;
                 }
                 const auto spell = cardian::tactician::firstEnfeeble([this, PTarget](const uint16 id)
                                                                      {
-                                                                         auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
                                                                          return pawn::tactics::bank::usable(POwner, static_cast<SpellID>(id)) &&
-                                                                                !pawn::tactics::bank::onAlready(PSpell, PTarget).has_value() &&
-                                                                                !pawn::tactics::bank::blockedOn(PSpell, PTarget);
+                                                                                enfeebleLands(spell::GetSpell(static_cast<SpellID>(id)), PTarget);
                                                                      });
                 return spell.has_value() ? Maybe<SpellID>(static_cast<SpellID>(*spell)) : std::nullopt;
             }
@@ -2512,14 +2538,14 @@ namespace pawn
             return false;
         };
 
-        // Enfeeble heads her Magic when her jobs cast any of her tactician's
-        // enfeebles (tactician_line.h), usable once she can cast one
+        // Enfeeble heads her Magic when her jobs cast any of its enfeebles
+        // (tactician_line.h kEnfeebleOrder), usable once she can cast one
         {
             bool ofHers = false;
             bool usable = false;
-            for (const auto& p : cardian::tactician::kPricedDebuffs)
+            for (const auto id : cardian::tactician::kEnfeebleOrder)
             {
-                auto* PSpell = spell::GetSpell(static_cast<SpellID>(p.id));
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
                 ofHers       = ofHers || (PSpell != nullptr && ofHerJobs(PSpell));
                 usable       = usable || (PSpell != nullptr && CSpellBook::Eligible(PPawn, PSpell));
             }

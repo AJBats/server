@@ -105,6 +105,10 @@ namespace pawn::tactics
         std::string why;
     };
     auto feed(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget, uint32 row, const std::string& rowId) -> std::optional<Fed>;
+    // Someone else in her scope has a cast in flight for the need this
+    // spell on this target would feed: a row that picks among candidates
+    // passes over this one rather than feed a need she cannot have
+    auto othersCasting(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget) -> bool;
 
     // Her standing assignment: the first need in her slot's order that is
     // hers; nothing offensive while she is not in the fight -- drawn, or
