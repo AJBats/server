@@ -1015,6 +1015,23 @@ void CPawnController::SetRetreat(const bool on)
         {
             POwner->PAI->Internal_Disengage();
         }
+        // A cast or shot of her own is dropped on the spot, so she runs at
+        // once; one the player ordered (begun as OrderStarted stamped it) is
+        // his, and goes on
+        if (on && (POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CRangeState>()))
+        {
+            bool ordered = false;
+            if (!m_StartedOrder.empty())
+            {
+                const auto sinceOrder = POwner->PAI->GetCurrentState()->GetStartTime() - m_StartedOrderAt;
+                ordered               = sinceOrder > -1s && sinceOrder < 1s;
+            }
+            if (!ordered)
+            {
+                ShowInfoFmt("pawn: {} drops her cast: retreat", POwner->getName());
+                POwner->PAI->InterruptStates();
+            }
+        }
         m_Retreat = on;
         if (on)
         {

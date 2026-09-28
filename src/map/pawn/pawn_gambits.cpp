@@ -356,6 +356,13 @@ namespace pawn
             return;
         }
 
+        // Retreat: nothing of her own until it is lifted, cures included --
+        // she runs. The player's own orders are his (FireQueuedOrder)
+        if (m_PController->IsRetreating())
+        {
+            return;
+        }
+
         // Her scope's conveyor (RESEARCH §12.12 item 2): where a tactician
         // watches, spell rows feed it and it says who casts; where none
         // does, rows cast as they always have
