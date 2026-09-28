@@ -34,15 +34,19 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 19: WAIT, RESCUE, HOMEPOINT, CANCEL and
-// PAUSE (their lines leave LEGACY_CD); 18: the gambit review's lines, still on
+// compatible, the user, 2026-09-14). 20: the Auction House screen's lines,
+// on LEGACY_CD (ahlist <name> <shelf> -> ahl.b / ahl / ahl.e, ahhist ->
+// ahh.b / ahh / ahh.e, ahbid -> ahb or err ahbid; list.b <count> <by a
+// counter>; cd p's field 22 whether she stands by that counter, her charid
+// now field 23; the text protocol's 16 to 18); 19: WAIT, RESCUE, HOMEPOINT,
+// CANCEL and PAUSE (their lines leave LEGACY_CD); 18: the gambit review's lines, still on
 // LEGACY_CD (the catalogue by side -- gvc <name> <page>:<range|-> <target>|
 // <cond>:<arg|*|s>=<label>;..., no gvt -- every learnable action, gva keys
 // ending ! not hers now, and the row state x-side; the text protocol's 15);
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 19 };
+enum { CL_PROTOCOL = 20 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };

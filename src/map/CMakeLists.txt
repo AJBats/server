@@ -56,6 +56,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/spell_movement.h # CARDIAN: spell range and sight approach
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/link_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/link_api.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/auction.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/auction.h
 )
 
 set(MAP_CORE_SOURCES
