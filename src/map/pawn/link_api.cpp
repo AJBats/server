@@ -24,6 +24,8 @@
 #include "action_keys.h"
 #include "auction.h"
 #include "cardian_link.h"
+#include "engage_math.h"
+#include "gambit_wire.h"
 #include "gate_guards.h"
 #include "pawn_gambits.h"
 #include "pawn.h"
@@ -404,6 +406,239 @@ namespace pawn::linkapi
             auto answer  = ask;
             answer.given = 1;
             reply.finish(answer, pawn::items::useItem(PPawn, landed));
+        }
+
+        // ---- gambits (the gambit editor, M3.85) ----------------------------
+
+        static_assert(static_cast<uint8>(cardian::tactician::State::Order) == CL_GS_ORDER && static_cast<uint8>(cardian::tactician::State::Line) == CL_GS_LINE &&
+                      static_cast<uint8>(cardian::tactician::State::Allows) == CL_GS_ALLOWS && static_cast<uint8>(cardian::tactician::State::NotBelow) == CL_GS_NOT_BELOW &&
+                      static_cast<uint8>(cardian::tactician::State::Clock) == CL_GS_CLOCK && static_cast<uint8>(cardian::tactician::State::NoChoice) == CL_GS_NO_CHOICE &&
+                      static_cast<uint8>(cardian::tactician::State::Misfit) == CL_GS_MISFIT,
+                      "a row's state crosses as its number");
+        static_assert(static_cast<uint8>(pawn::Side::Self) == CL_SIDE_SELF && static_cast<uint8>(pawn::Side::Ally) == CL_SIDE_ALLY && static_cast<uint8>(pawn::Side::Foe) == CL_SIDE_FOE);
+        static_assert(static_cast<uint8>(pawn::Takes::Nothing) == CL_VC_NOTHING && static_cast<uint8>(pawn::Takes::Number) == CL_VC_NUMBER &&
+                      static_cast<uint8>(pawn::Takes::Status) == CL_VC_STATUS);
+        static_assert(static_cast<uint8>(pawn::ActionGroup::Fight) == CL_AG_FIGHT && static_cast<uint8>(pawn::ActionGroup::Behaviours) == CL_AG_BEHAVIOURS &&
+                      static_cast<uint8>(pawn::ActionGroup::Magic) == CL_AG_MAGIC && static_cast<uint8>(pawn::ActionGroup::Abilities) == CL_AG_ABILITIES &&
+                      static_cast<uint8>(pawn::ActionGroup::WeaponSkills) == CL_AG_WEAPON_SKILLS && static_cast<uint8>(pawn::ActionGroup::Ranged) == CL_AG_RANGED);
+
+        // Her gambit set: a cardian he commands
+        auto gambitsOf(CCharEntity* PPawn) -> pawn::CGambits*
+        {
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            return PController != nullptr ? &PController->Gambits() : nullptr;
+        }
+
+        // Her rows as they now stand, each a GAMBIT_ROW answer, and the GAMBITS
+        // that closes them: the last answer to GAMBITS, or the one ahead of an
+        // edit's outcome
+        auto rowsOf(CCharEntity* PPawn, const pawn::CGambits& set, Reply& reply) -> cl_gambits
+        {
+            auto summary    = make<cl_gambits>();
+            summary.cardian = PPawn->id;
+            summary.master  = set.MasterOn() ? 1 : 0;
+            std::size_t index = 0;
+            for (const auto& row : set.Rows())
+            {
+                if (++index > UINT8_MAX)
+                {
+                    break;
+                }
+                auto msg    = make<cl_gambit_row>();
+                msg.cardian = PPawn->id;
+                msg.index   = static_cast<uint8_t>(index);
+                msg.on      = row.enabled ? 1 : 0;
+                msg.state   = static_cast<uint8_t>(set.StateOf(index));
+                msg.fits    = pawn::wire::toWire(row.gambit, msg.gambit) ? 1 : 0;
+                const auto label = pawn::labelGambit(row.gambit);
+                setText(msg.head, label.head);
+                setText(msg.action, label.action);
+                reply.more(msg);
+                summary.count = static_cast<uint8_t>(index);
+            }
+            return summary;
+        }
+
+        void gambits(CCharEntity* PChar, const cl_gambits& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            auto* PSet  = gambitsOf(PPawn);
+            if (PSet == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            reply.finish(rowsOf(PPawn, *PSet, reply), CL_S_OK);
+        }
+
+        // An edit of her rows: made by edit(set), which returns its outcome,
+        // and saved when it took; then her rows as they now stand, refused or
+        // not, so the editor never keeps a guess; then the outcome
+        template <typename Message, typename Edit>
+        void editGambits(CCharEntity* PChar, const Message& ask, Reply& reply, Edit&& edit)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            auto* PSet  = gambitsOf(PPawn);
+            if (PSet == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            const uint16 status = edit(*PSet);
+            if (status == CL_S_OK)
+            {
+                pawn::saveGambits(PPawn);
+            }
+            reply.more(rowsOf(PPawn, *PSet, reply));
+            reply.finish(ask, status);
+        }
+
+        // A row the editor sent, as the gambit engine takes it, or why not:
+        // the row grammar's own refusals, and the editor's pairing rules
+        auto rowFrom(const cl_gambit& fields, uint16& status) -> std::optional<gambits::Gambit_t>
+        {
+            auto gambit = pawn::wire::fromWire(fields);
+            if (!gambit.has_value())
+            {
+                status = CL_S_MALFORMED;
+                return std::nullopt;
+            }
+            switch (cardian::engage::pairingOf(*gambit))
+            {
+                case cardian::engage::Pairing::AttackAlone:
+                    status = CL_S_ATTACK_ALONE;
+                    return std::nullopt;
+                case cardian::engage::Pairing::AttackOnClock:
+                    status = CL_S_ATTACK_ON_CLOCK;
+                    return std::nullopt;
+                default:
+                    status = CL_S_OK;
+                    return gambit;
+            }
+        }
+
+        void gambitToggle(CCharEntity* PChar, const cl_gambit_toggle& ask, Reply& reply)
+        {
+            editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
+                        {
+                            return set.SetEnabled(ask.index, ask.on != 0) ? CL_S_OK : CL_S_NO_SUCH_ROW;
+                        });
+        }
+
+        void gambitMove(CCharEntity* PChar, const cl_gambit_move& ask, Reply& reply)
+        {
+            editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
+                        {
+                            return set.Move(ask.from, ask.to) ? CL_S_OK : CL_S_NO_SUCH_ROW;
+                        });
+        }
+
+        void gambitDelete(CCharEntity* PChar, const cl_gambit_delete& ask, Reply& reply)
+        {
+            editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
+                        {
+                            return set.Erase(ask.index) ? CL_S_OK : CL_S_NO_SUCH_ROW;
+                        });
+        }
+
+        void gambitInsert(CCharEntity* PChar, const cl_gambit_insert& ask, Reply& reply)
+        {
+            editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
+                        {
+                            uint16 status = CL_S_OK;
+                            auto   gambit = rowFrom(ask.gambit, status);
+                            if (!gambit.has_value())
+                            {
+                                return status;
+                            }
+                            return set.Insert(ask.index, std::move(*gambit)) ? CL_S_OK : CL_S_NO_SUCH_ROW;
+                        });
+        }
+
+        // Rewritten in place, the row keeps its switch
+        void gambitReplace(CCharEntity* PChar, const cl_gambit_replace& ask, Reply& reply)
+        {
+            editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
+                        {
+                            uint16 status = CL_S_OK;
+                            auto   gambit = rowFrom(ask.gambit, status);
+                            if (!gambit.has_value())
+                            {
+                                return status;
+                            }
+                            return set.Replace(ask.index, std::move(*gambit)) ? CL_S_OK : CL_S_NO_SUCH_ROW;
+                        });
+        }
+
+        void gambitMaster(CCharEntity* PChar, const cl_gambit_master& ask, Reply& reply)
+        {
+            editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
+                        {
+                            set.SetMaster(ask.on != 0);
+                            return CL_S_OK;
+                        });
+        }
+
+        // Entries in parts, as many to a message as its array holds, each part
+        // an answer (CL_F_MORE); none for an empty list
+        template <typename Part, typename Item, std::size_t N, typename Entry, typename Fill>
+        void inParts(Reply& reply, const uint32 cardian, Item (Part::*array)[N], const std::vector<Entry>& entries, Fill&& fill)
+        {
+            for (std::size_t next = 0; next < entries.size();)
+            {
+                auto part    = make<Part>();
+                part.cardian = cardian;
+                for (; part.count < N && next < entries.size(); ++next)
+                {
+                    fill(entries[next], (part.*array)[part.count++]);
+                }
+                reply.more(part);
+            }
+        }
+
+        // The pickers' catalogue for her (pawn::vocabularyFor): its clauses,
+        // statuses and actions in parts, then her jobs and levels
+        void gambitVocab(CCharEntity* PChar, const cl_gambit_vocab& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            const auto vocab = pawn::vocabularyFor(PPawn);
+            inParts(reply, PPawn->id, &cl_vocab_conditions::conditions, vocab.conditions, [](const pawn::VocabCondition& c, cl_vocab_condition& out)
+                    {
+                        out.target    = static_cast<uint16_t>(c.target);
+                        out.condition = static_cast<uint16_t>(c.condition);
+                        out.takes     = static_cast<uint8_t>(c.takes);
+                        out.side      = static_cast<uint8_t>(c.side);
+                        out.min       = c.min;
+                        out.max       = c.max;
+                        out.step      = c.step;
+                        out.initial   = c.initial;
+                        setText(out.label, c.label);
+                    });
+            inParts(reply, PPawn->id, &cl_vocab_statuses::statuses, vocab.statuses, [](const pawn::VocabStatus& s, cl_vocab_status& out)
+                    {
+                        out.id = s.id;
+                        setText(out.label, s.label);
+                    });
+            inParts(reply, PPawn->id, &cl_vocab_actions::actions, vocab.actions, [](const pawn::VocabAction& a, cl_vocab_action& out)
+                    {
+                        out.action  = cl_gambit_action{ static_cast<uint16_t>(a.reaction), static_cast<uint16_t>(a.select), a.arg };
+                        out.targets = a.targets;
+                        out.mp      = a.mp;
+                        out.group   = static_cast<uint8_t>(a.group);
+                        out.usable  = a.usable ? 1 : 0;
+                        setText(out.label, a.label);
+                    });
+            auto answer      = ask;
+            answer.mainJob   = vocab.mjob;
+            answer.mainLevel = vocab.mlvl;
+            answer.subJob    = vocab.sjob;
+            answer.subLevel  = vocab.slvl;
+            reply.finish(answer, CL_S_OK);
         }
 
         // A point the mesh moved less than this (yalms) is the point asked
@@ -1215,6 +1450,14 @@ namespace pawn::linkapi
         handle<cl_sort>(sortContainer);
         handle<cl_move>(moveStack);
         handle<cl_give_use>(giveUse);
+        handle<cl_gambits>(gambits);
+        handle<cl_gambit_toggle>(gambitToggle);
+        handle<cl_gambit_move>(gambitMove);
+        handle<cl_gambit_delete>(gambitDelete);
+        handle<cl_gambit_insert>(gambitInsert);
+        handle<cl_gambit_replace>(gambitReplace);
+        handle<cl_gambit_master>(gambitMaster);
+        handle<cl_gambit_vocab>(gambitVocab);
         handle<cl_walk>(walk);
         handle<cl_view>(lookThrough);
         handle<cl_maneuver>(maneuver);

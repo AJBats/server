@@ -34,7 +34,12 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 24: items and gear, TAKE, GIL, EQUIP,
+// compatible, the user, 2026-09-14). 25: gambits, GAMBITS, GAMBIT_ROW, the
+// edits (GAMBIT_TOGGLE, _MOVE, _DELETE, _INSERT, _REPLACE, _MASTER) and the
+// catalogue (GAMBIT_VOCAB, VOCAB_CONDITIONS, _STATUSES, _ACTIONS): rows as the
+// gambit engine's own fields (the gambits, gb, g, gvocab, gv, gvc, gvs, gva,
+// gvx, gtoggle, gmove, gdel, gins, gset and gmaster lines leave LEGACY_CD);
+// 24: items and gear, TAKE, GIL, EQUIP,
 // USE, DROP, SORT, MOVE and GIVE_USE (the take, givegil, takegil, wear, strip,
 // equipset, use, drop, sort, move and giveuse lines leave LEGACY_CD; an
 // AH_BID's notWorn is the equip's own outcome); 23: a cardian's state, ROSTER, MEMBER,
@@ -56,7 +61,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 24 };
+enum { CL_PROTOCOL = 25 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -178,6 +183,11 @@ enum
     CL_S_CANNOT_REMOVE     = 0x0172, // the game kept the piece on
     CL_S_USING_ITEM        = 0x0173, // she is using an item: her worn pieces stay where they are meanwhile
     CL_S_VIA_INVENTORY     = 0x0174, // a stack moves between her inventory and a bag, never bag to bag
+
+    // Her gambits
+    CL_S_NO_SUCH_ROW       = 0x0180,
+    CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
+    CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -663,6 +673,252 @@ typedef struct cl_give_use
     uint8_t   given;   // answered: 1 once the stack is hers, so a refusal is the use's
     uint8_t   spare[2];
 } cl_give_use;
+
+// ---- 0x03xx: gambits -------------------------------------------------------
+//
+// A cardian's gambit rows (M3.85, the gambit editor) and the pickers'
+// catalogue, for a cardian he commands. A row crosses as the gambit
+// engine's own fields; its label is for people. Every edit is answered by
+// her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS (CL_F_MORE)
+// -- and then its outcome, refused or not, so the editor never keeps a guess.
+
+enum
+{
+    CL_T_GAMBITS          = 0x0301,
+    CL_T_GAMBIT_ROW       = 0x0302,
+    CL_T_GAMBIT_TOGGLE    = 0x0303,
+    CL_T_GAMBIT_MOVE      = 0x0304,
+    CL_T_GAMBIT_DELETE    = 0x0305,
+    CL_T_GAMBIT_INSERT    = 0x0306,
+    CL_T_GAMBIT_REPLACE   = 0x0307,
+    CL_T_GAMBIT_MASTER    = 0x0308,
+    CL_T_GAMBIT_VOCAB     = 0x0309,
+    CL_T_VOCAB_CONDITIONS = 0x030A,
+    CL_T_VOCAB_STATUSES   = 0x030B,
+    CL_T_VOCAB_ACTIONS    = 0x030C,
+};
+
+// One condition of a row: the gambit engine's condition and its argument, in
+// the group it belongs to (a row's conditions are listed group by group)
+typedef struct cl_gambit_condition
+{
+    uint16_t condition;
+    uint8_t  group;
+    uint8_t  spare;
+    uint32_t arg;
+} cl_gambit_condition;
+
+// One action of a row: the gambit engine's reaction, how it selects, and the
+// argument (the spell, ability, weapon skill, family or behaviour)
+typedef struct cl_gambit_action
+{
+    uint16_t reaction;
+    uint16_t select;
+    uint32_t arg;
+} cl_gambit_action;
+
+// A row as the gambit engine holds it: when its target meets every group of
+// conditions -- all of a group, or any of it where orGroups says so -- it
+// takes its first action it can
+typedef struct cl_gambit
+{
+    uint16_t            target;         // the target selector
+    uint16_t            retry;          // seconds before it fires again
+    uint8_t             conditionCount;
+    uint8_t             actionCount;
+    uint8_t             orGroups;       // bit g: group g is met by any one of its conditions
+    uint8_t             spare;
+    cl_gambit_condition conditions[16];
+    cl_gambit_action    actions[8];
+} cl_gambit;
+
+enum
+{
+    CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
+    CL_GS_LINE      = 1, // her Support Mage row: the line itself
+    CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
+    CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
+    CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
+    CL_GS_NO_CHOICE = 5, // Tactician's choice with no tactician above it: struck out
+    CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
+};
+
+// One of her rows, as the editor shows it: an answer to GAMBITS and to every edit
+typedef struct cl_gambit_row
+{
+    cl_header h;
+    uint32_t  cardian;   // charid
+    uint8_t   index;     // 1-based, in list order
+    uint8_t   on;        // its checkbox
+    uint8_t   state;     // CL_GS_*: what the row means where it sits
+    uint8_t   fits;       // 0: more than cl_gambit carries (a hand-made brain's), gambit left empty: shown, not rewritten
+    cl_gambit gambit;
+    char      head[64];   // the row as the player reads it: when, "Ally: HP < 50%"
+    char      action[64]; // and what, "Cure (best)"
+} cl_gambit_row;
+
+// Her rows: each a GAMBIT_ROW (CL_F_MORE), then this
+typedef struct cl_gambits
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   master;  // answered: 1 while her master switch is on
+    uint8_t   count;   // answered: rows sent
+    uint8_t   spare[2];
+} cl_gambits;
+
+typedef struct cl_gambit_toggle
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   index;
+    uint8_t   on;
+    uint8_t   spare[2];
+} cl_gambit_toggle;
+
+typedef struct cl_gambit_move
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   from;    // 1-based, as shown
+    uint8_t   to;
+    uint8_t   spare[2];
+} cl_gambit_move;
+
+typedef struct cl_gambit_delete
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   index;
+    uint8_t   spare[3];
+} cl_gambit_delete;
+
+// A new row at a position, switched on
+typedef struct cl_gambit_insert
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   index;
+    uint8_t   spare[3];
+    cl_gambit gambit;
+} cl_gambit_insert;
+
+// A row rewritten in place, keeping its switch
+typedef struct cl_gambit_replace
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   index;
+    uint8_t   spare[3];
+    cl_gambit gambit;
+} cl_gambit_replace;
+
+typedef struct cl_gambit_master
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   on;
+    uint8_t   spare[3];
+} cl_gambit_master;
+
+// ---- the pickers' catalogue: every clause a row can say, for her ----------
+
+enum
+{
+    CL_VC_NOTHING = 0, // the clause takes nothing more
+    CL_VC_NUMBER  = 1, // a number in its range, the label's '*'
+    CL_VC_STATUS  = 2, // a status, picked in the row's next cell
+};
+
+enum
+{
+    CL_SIDE_SELF = 0,
+    CL_SIDE_ALLY = 1,
+    CL_SIDE_FOE  = 2,
+};
+
+// A clause: one target and one condition, on its side's page
+typedef struct cl_vocab_condition
+{
+    uint16_t target;
+    uint16_t condition;
+    uint8_t  takes;     // CL_VC_*
+    uint8_t  side;      // CL_SIDE_*
+    uint16_t spare;
+    uint16_t min;       // CL_VC_NUMBER: its range, its step, and where a new row starts
+    uint16_t max;
+    uint16_t step;
+    uint16_t initial;
+    char     label[48]; // for people; with CL_VC_NUMBER a '*' marks where the number is shown
+} cl_vocab_condition;
+
+typedef struct cl_vocab_conditions
+{
+    cl_header          h;
+    uint32_t           cardian; // charid
+    uint8_t            count;
+    uint8_t            spare[3];
+    cl_vocab_condition conditions[48];
+} cl_vocab_conditions;
+
+// A status a status condition can name
+typedef struct cl_vocab_status
+{
+    uint16_t id;        // xi::StatusEffect
+    char     label[30];
+} cl_vocab_status;
+
+typedef struct cl_vocab_statuses
+{
+    cl_header       h;
+    uint32_t        cardian; // charid
+    uint8_t         count;
+    uint8_t         spare[3];
+    cl_vocab_status statuses[48];
+} cl_vocab_statuses;
+
+enum
+{
+    CL_AG_FIGHT         = 0,
+    CL_AG_BEHAVIOURS    = 1,
+    CL_AG_MAGIC         = 2,
+    CL_AG_ABILITIES     = 3,
+    CL_AG_WEAPON_SKILLS = 4,
+    CL_AG_RANGED        = 5,
+};
+
+// An action a row can take, of her main and support job at every level
+typedef struct cl_vocab_action
+{
+    cl_gambit_action action;
+    uint16_t         targets;   // what it may be aimed at (the server's TARGET_* flags)
+    uint16_t         mp;        // a spell's base MP cost
+    uint8_t          group;     // CL_AG_*
+    uint8_t          usable;    // 1: she can use it now; the pickers grey the rest
+    uint16_t         spare;
+    char             label[48];
+} cl_vocab_action;
+
+typedef struct cl_vocab_actions
+{
+    cl_header       h;
+    uint32_t        cardian; // charid
+    uint8_t         count;
+    uint8_t         spare[3];
+    cl_vocab_action actions[48];
+} cl_vocab_actions;
+
+// The catalogue: its clauses, statuses and actions as answers in parts
+// (CL_F_MORE), then this, with her jobs and levels, which the actions follow
+typedef struct cl_gambit_vocab
+{
+    cl_header h;
+    uint32_t  cardian;   // charid
+    uint8_t   mainJob;   // answered
+    uint8_t   mainLevel; // answered
+    uint8_t   subJob;    // answered
+    uint8_t   subLevel;  // answered
+} cl_gambit_vocab;
 
 // ---- 0x04xx: orders and control -------------------------------------------
 

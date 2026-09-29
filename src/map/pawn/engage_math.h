@@ -60,20 +60,26 @@ namespace cardian::engage
                                    });
     }
 
-    // Why the editor refuses a row, "" when it may stand. Attack takes its
-    // row alone: a row that is the door's never reaches her think, so a
-    // second action on it would never act. An engage row is read on every
-    // roam tick, so a condition that keeps a clock (TIMER) or rolls a die
-    // (RANDOM) would run down or reroll there; it is refused on one. Attack
-    // on herself or an ally is not refused: like any action aimed at the
-    // wrong side it stands, struck out (tactician_line.h fitsSide), and the
-    // door never reads it
-    inline auto pairingError(const gambits::Gambit_t& g) -> std::string_view
+    // Why the editor refuses a row. Attack takes its row alone: a row that
+    // is the door's never reaches her think, so a second action on it would
+    // never act. An engage row is read on every roam tick, so a condition
+    // that keeps a clock (TIMER) or rolls a die (RANDOM) would run down or
+    // reroll there; it is refused on one. Attack on herself or an ally is
+    // not refused: like any action aimed at the wrong side it stands, struck
+    // out (tactician_line.h fitsSide), and the door never reads it
+    enum class Pairing : uint8
+    {
+        Fine,
+        AttackAlone,   // Attack shares its row with another action
+        AttackOnClock, // an Attack row waits on a timer or a chance
+    };
+
+    inline auto pairingOf(const gambits::Gambit_t& g) -> Pairing
     {
         const bool attack = isEngageRow(g);
         if (attack && !std::ranges::all_of(g.actions, [](const gambits::Action_t& a) { return a.reaction == gambits::G_REACTION::ATTACK; }))
         {
-            return "Attack goes alone on its row";
+            return Pairing::AttackAlone;
         }
         if (attack)
         {
@@ -83,12 +89,26 @@ namespace cardian::engage
                 {
                     if (p.condition == gambits::G_CONDITION::TIMER || p.condition == gambits::G_CONDITION::RANDOM)
                     {
-                        return "an Attack row cannot wait on a timer or a chance";
+                        return Pairing::AttackOnClock;
                     }
                 }
             }
         }
-        return "";
+        return Pairing::Fine;
+    }
+
+    // The same in words, "" when the row may stand
+    inline auto pairingError(const gambits::Gambit_t& g) -> std::string_view
+    {
+        switch (pairingOf(g))
+        {
+            case Pairing::AttackAlone:
+                return "Attack goes alone on its row";
+            case Pairing::AttackOnClock:
+                return "an Attack row cannot wait on a timer or a chance";
+            default:
+                return "";
+        }
     }
 
     // The rows the door reads: an enabled engage row on a Foe condition that

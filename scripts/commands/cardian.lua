@@ -8,16 +8,8 @@
 --       humans get terse errors, the addon gets data. A verb that gains its own
 --       message leaves this file.
 --
---       gambits <name>                   the cardian's gambit rows (gb.b / g / gb.e)
---       gtoggle <name> <row> <on|off>    a row's switch
---       gmove <name> <from> <to>         reorder a row (1-based, as shown)
---       gdel <name> <row>                delete a row
---       gins <name> <row> <spec>         insert a row (the row grammar) at a position
---       gset <name> <row> <spec>         replace a row in place (keeps its switch)
---       gvocab <name>                    the pickers' catalogue for the cardian
 --       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
 --       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
---                                        (gv.b, gvc/gvs/gva/gvx chunks, gv.e)
 --       finder [exp|mission <log>|quest <area>]  the party finder: who is in reach and what each says to the goal
 --       goals                            what the player could recruit for: current missions, quests under way
 --       shout <kind> <log> [again]       the shout: up to eight adventurers in reach and their answers, timed
@@ -28,8 +20,7 @@
 --       pause                            typed only (the addon sends PAUSE): the pause button
 --       rescue <name>                    typed only (the addon sends RESCUE): a stuck cardian to your side
 --       recall <name> | faded            a cardian of yours that faded stands again; who has faded
---       gmaster <name> <on|off>          the cardian's master gambit switch
---       greset <name>                    back to the default rows of the job she holds now
+--       greset <name>                    typed only: back to the default rows of the job she holds now
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -347,80 +338,6 @@ local function sendGoals(player)
     reply(player, '#cd gl.e')
 end
 
--- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <state> <spec> <label>'
--- per row, 'gb.e <name>'. The state is what the row means where it sits (o an order,
--- t her Support Mage row, a her tactician's to use, x-below / x-clock / x-choice / x-side struck
--- out; Link protocol 13). The label is the rest of the line.
-local function sendGambits(player, name)
-    local g = player:cardianGambits(name)
-    if g == nil then
-        reply(player, '#cd err gambits no such cardian')
-        return
-    end
-    reply(player, string.format('#cd gb.b %s %d', name, g.master and 1 or 0))
-    for _, row in ipairs(g.rows) do
-        reply(player, string.format('#cd g %s %d %d %s %s %s', name, row.index, row.on and 1 or 0, row.state, row.spec, row.label))
-    end
-    reply(player, '#cd gb.e ' .. name)
-end
-
--- The pickers' catalogue: 'gv.b <name> <mjob> <mlvl> <sjob> <slvl>', then chunked 'gvs <name> k=label;...',
--- 'gvc <name> <page>:<range|-> k=label;...' (the condition's side, self, ally or
--- foe, and range = min,max,step,default for a numeric one) and
--- 'gva <name> <group> k=label;...' lines under the link's line cap, then
--- 'gv.e <name>'
-local function sendVocab(player, name)
-    local v = player:cardianGambitVocab(name)
-    if v == nil then
-        reply(player, '#cd err gvocab no such cardian')
-        return
-    end
-    -- Her jobs and levels head the catalogue: the actions are theirs
-    reply(player, string.format('#cd gv.b %s %d %d %d %d', name, v.mjob, v.mlvl, v.sjob, v.slvl))
-    local function chunked(tag, prefix, entries, groupOf)
-        local buf, bufGroup = {}, nil
-        local size = 0
-        local function flush()
-            if #buf > 0 then
-                reply(player, string.format('#cd %s %s %s%s', tag, name, prefix(bufGroup), table.concat(buf, ';')))
-            end
-            buf, size = {}, 0
-        end
-        for _, e in ipairs(entries) do
-            local group = groupOf and groupOf(e) or nil
-            local pair  = e.key .. '=' .. e.label
-            if #buf > 0 and (size + #pair > 1700 or group ~= bufGroup) then
-                flush()
-            end
-            bufGroup = group
-            buf[#buf + 1] = pair
-            size = size + #pair + 1
-        end
-        flush()
-    end
-    -- A condition's page and its number's range, 'foe:10,90,10,50' or 'ally:-'
-    chunked('gvc', function (g) return g .. ' ' end, v.conditions, function (e) return e.page .. ':' .. (e.group ~= '' and e.group or '-') end)
-    chunked('gvs', function () return '' end, v.statuses)
-    -- An action she cannot use now carries '!' after its key: the pickers
-    -- grey it, the command window leaves it out
-    local actions = {}
-    for _, e in ipairs(v.actions) do
-        actions[#actions + 1] = { key = e.usable and e.key or (e.key .. '!'), label = e.label, group = e.group }
-    end
-    chunked('gva', function (g) return g .. ' ' end, actions, function (e) return e.group end)
-    -- The valid-target mask and the MP cost of every action that has a
-    -- mask, key=mask,mp: what a command window may aim it at, and what it
-    -- may grey out
-    local masks = {}
-    for _, e in ipairs(v.actions) do
-        if e.usable and e.targets ~= nil and e.targets > 0 then
-            masks[#masks + 1] = { key = e.key, label = tostring(e.targets) .. ',' .. tostring(e.mp or 0) }
-        end
-    end
-    chunked('gvx', function () return '' end, masks)
-    reply(player, '#cd gv.e ' .. name)
-end
-
 -- The party's orders, one line (Link protocol 3):
 -- 'st <strategy> <retreat> <min> <max> <pull> <aggressive> <links> <staked> <stake zone> <name;name...>'
 local function sendOrders(player)
@@ -434,16 +351,6 @@ local function sendOrders(player)
                                 o.staked and 1 or 0, o.stake_zone, table.concat(o.names, ';')))
 end
 
--- A gambit edit: the reply is ok or err, then the authoritative rows either way
-local function gambitEdit(player, name, verb, err)
-    if err ~= '' then
-        reply(player, '#cd err ' .. verb .. ' ' .. err)
-    else
-        reply(player, '#cd ok ' .. verb)
-    end
-    sendGambits(player, name)
-end
-
 commandObj.onTrigger = function(player, line)
     local args = {}
     for word in tostring(line or ''):gmatch('%S+') do
@@ -453,21 +360,7 @@ commandObj.onTrigger = function(player, line)
     local verb = args[1]
     local name = args[2]
 
-    if verb == 'gambits' and name then
-        sendGambits(player, name)
-    elseif verb == 'gtoggle' and name and args[3] and args[4] then
-        gambitEdit(player, name, verb, player:cardianGambitToggle(name, tonumber(args[3]) or 0, args[4] == 'on'))
-    elseif verb == 'gmove' and name and args[3] and args[4] then
-        gambitEdit(player, name, verb, player:cardianGambitMove(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0))
-    elseif verb == 'gdel' and name and args[3] then
-        gambitEdit(player, name, verb, player:cardianGambitDelete(name, tonumber(args[3]) or 0))
-    elseif verb == 'gins' and name and args[3] and args[4] then
-        gambitEdit(player, name, verb, player:cardianGambitInsert(name, tonumber(args[3]) or 0, args[4]))
-    elseif verb == 'gset' and name and args[3] and args[4] then
-        gambitEdit(player, name, verb, player:cardianGambitReplace(name, tonumber(args[3]) or 0, args[4]))
-    elseif verb == 'gvocab' and name then
-        sendVocab(player, name)
-    elseif verb == 'owned' then
+    if verb == 'owned' then
         reply(player, '#cd own.b')
         for _, n in ipairs(player:cardianAccountPawns()) do
             reply(player, '#cd o ' .. n)
@@ -528,10 +421,12 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd err stake ' .. err)
         end
         sendOrders(player)
-    elseif verb == 'gmaster' and name and args[3] then
-        gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then
-        gambitEdit(player, name, verb, player:cardianGambitReset(name))
+        -- Typed only, which verbs stay typeable not decided yet: answered in
+        -- chat, since the addon never asks it; the gambit editor reads her
+        -- rows again over the Link within seconds
+        local err = player:cardianGambitReset(name)
+        player:printToPlayer(err ~= '' and ('greset: ' .. err) or ('greset: ' .. name .. "'s gambits are her job's defaults again"), channel)
     elseif verb == 'finder' then
         -- The party finder: 'finder [adv|mission <log>|quest <area>]' -> 'pf.b <n>',
         -- one 'pf <name> <job> <level> <state> <zone> <willing> <her line>' per
@@ -641,7 +536,7 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok faded ' .. table.concat(names, ','))
         end
     else
-        player:printToPlayer('Usage: !cardian rescue <name> | recall <name> | faded | stake [clear|toggle] | pause')
+        player:printToPlayer('Usage: !cardian rescue <name> | recall <name> | faded | stake [clear|toggle] | pause | greset <name>')
     end
 end
 

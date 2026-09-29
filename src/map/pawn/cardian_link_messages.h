@@ -70,6 +70,18 @@ namespace cardian::link
     X(SORT, cl_sort)             \
     X(MOVE, cl_move)             \
     X(GIVE_USE, cl_give_use)     \
+    X(GAMBITS, cl_gambits)       \
+    X(GAMBIT_ROW, cl_gambit_row) \
+    X(GAMBIT_TOGGLE, cl_gambit_toggle) \
+    X(GAMBIT_MOVE, cl_gambit_move) \
+    X(GAMBIT_DELETE, cl_gambit_delete) \
+    X(GAMBIT_INSERT, cl_gambit_insert) \
+    X(GAMBIT_REPLACE, cl_gambit_replace) \
+    X(GAMBIT_MASTER, cl_gambit_master) \
+    X(GAMBIT_VOCAB, cl_gambit_vocab) \
+    X(VOCAB_CONDITIONS, cl_vocab_conditions) \
+    X(VOCAB_STATUSES, cl_vocab_statuses) \
+    X(VOCAB_ACTIONS, cl_vocab_actions) \
     X(WALK, cl_walk)             \
     X(VIEW, cl_view)             \
     X(MANEUVER, cl_maneuver)     \
@@ -173,11 +185,16 @@ namespace cardian::link
         return true;
     }
 
-    // Text into a fixed field: cut to fit, the terminating zero kept
+    // Text into a fixed field: cut to fit, on a character boundary (UTF-8), the
+    // terminating zero kept
     template <std::size_t N>
     void setText(char (&field)[N], std::string_view text)
     {
-        const auto length = std::min(text.size(), N - 1);
+        auto length = std::min(text.size(), N - 1);
+        while (length < text.size() && length > 0 && (static_cast<unsigned char>(text[length]) & 0xC0) == 0x80)
+        {
+            --length;
+        }
         std::memcpy(field, text.data(), length);
         std::memset(field + length, 0, N - length);
     }

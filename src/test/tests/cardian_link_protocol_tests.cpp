@@ -31,8 +31,11 @@
 
 #include "map/pawn/action_keys.h"
 #include "map/pawn/cardian_link_messages.h"
+#include "map/pawn/gambit_text.h"
+#include "map/pawn/gambit_wire.h"
 
 #include <string>
+#include <vector>
 
 using namespace cardian::link;
 
@@ -95,6 +98,24 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_sort) == 24);
     STATIC_REQUIRE(sizeof(cl_move) == 28);
     STATIC_REQUIRE(sizeof(cl_give_use) == 28);
+    STATIC_REQUIRE(sizeof(cl_gambit_condition) == 8);
+    STATIC_REQUIRE(sizeof(cl_gambit_action) == 8);
+    STATIC_REQUIRE(sizeof(cl_gambit) == 200);
+    STATIC_REQUIRE(sizeof(cl_gambit_row) == 352);
+    STATIC_REQUIRE(sizeof(cl_gambits) == 24);
+    STATIC_REQUIRE(sizeof(cl_gambit_toggle) == 24);
+    STATIC_REQUIRE(sizeof(cl_gambit_move) == 24);
+    STATIC_REQUIRE(sizeof(cl_gambit_delete) == 24);
+    STATIC_REQUIRE(sizeof(cl_gambit_insert) == 224);
+    STATIC_REQUIRE(sizeof(cl_gambit_replace) == 224);
+    STATIC_REQUIRE(sizeof(cl_gambit_master) == 24);
+    STATIC_REQUIRE(sizeof(cl_vocab_condition) == 64);
+    STATIC_REQUIRE(sizeof(cl_vocab_conditions) == 3096);
+    STATIC_REQUIRE(sizeof(cl_vocab_status) == 32);
+    STATIC_REQUIRE(sizeof(cl_vocab_statuses) == 1560);
+    STATIC_REQUIRE(sizeof(cl_vocab_action) == 64);
+    STATIC_REQUIRE(sizeof(cl_vocab_actions) == 3096);
+    STATIC_REQUIRE(sizeof(cl_gambit_vocab) == 24);
     STATIC_REQUIRE(sizeof(cl_legacy_cd) == sizeof(cl_header));
 }
 
@@ -174,6 +195,10 @@ TEST_CASE("Cardian link: text is cut to fit and always terminated", "[cardian][l
     setText(bind.name, "Mi");
     CHECK(textOf(bind.name) == "Mi");
     CHECK(bind.name[5] == '\0');
+
+    // A character of several bytes is kept whole or left out, never cut
+    setText(bind.name, "Abcdefghijklmn\xE2\x89\xA5"); // fourteen letters and a three-byte sign
+    CHECK(textOf(bind.name) == "Abcdefghijklmn");
 }
 
 TEST_CASE("Cardian link: type numbers name their messages in the logs", "[cardian][link]")
@@ -181,4 +206,67 @@ TEST_CASE("Cardian link: type numbers name their messages in the logs", "[cardia
     CHECK(typeName(CL_T_GIVE) == "GIVE");
     CHECK(typeName(CL_T_LEGACY_CD) == "LEGACY_CD");
     CHECK(typeName(0x7FFE) == "0x7FFE");
+}
+
+TEST_CASE("Cardian link: a gambit row crosses as its fields and back", "[cardian][link]")
+{
+    // The default rows, and rows of several groups, an any-of group and two actions
+    for (const std::string row : { "100|0:0|0:0:0|0", "2|2:50|4:0:0|0", "0|0:0|100:11:3|0", "1|101:0|2:0:1|0",
+                                   "1|3:40&?12:3,12:4|2:2:1+2:2:2|5", "0|?12:3,12:4&13:6|3:2:35|0" })
+    {
+        const auto gambit = pawn::text::parseRow(row);
+        REQUIRE(gambit.has_value());
+        cl_gambit fields{};
+        REQUIRE(pawn::wire::toWire(*gambit, fields));
+        const auto back = pawn::wire::fromWire(fields);
+        REQUIRE(back.has_value());
+        CHECK(pawn::text::formatRow(*back) == row);
+    }
+}
+
+TEST_CASE("Cardian link: a gambit row's fields that no row makes are refused", "[cardian][link]")
+{
+    const auto valid = [](const std::string& row)
+    {
+        const auto gambit = pawn::text::parseRow(row);
+        REQUIRE(gambit.has_value());
+        cl_gambit fields{};
+        REQUIRE(pawn::wire::toWire(*gambit, fields));
+        return fields;
+    };
+
+    // No conditions, no actions
+    CHECK_FALSE(pawn::wire::fromWire(cl_gambit{}).has_value());
+
+    // A group listed out of order
+    auto skipped                = valid("1|3:40&12:3|2:2:1|0");
+    skipped.conditions[1].group = 2;
+    CHECK_FALSE(pawn::wire::fromWire(skipped).has_value());
+
+    // An any-of bit on a group that is not there
+    auto phantom     = valid("1|3:40|2:2:1|0");
+    phantom.orGroups = 0x02;
+    CHECK_FALSE(pawn::wire::fromWire(phantom).has_value());
+
+    // A retired behaviour, which the row grammar refuses too
+    auto retired       = valid("0|0:0|100:6:1|0");
+    retired.actions[0] = cl_gambit_action{ 100, 8, 1 };
+    CHECK_FALSE(pawn::wire::fromWire(retired).has_value());
+
+    // A group with no condition, which the fields cannot name
+    gambits::Gambit_t gap;
+    gap.predicate_groups.emplace_back(gambits::G_LOGIC::AND, std::vector<gambits::Predicate_t>{ gambits::Predicate_t(gambits::G_CONDITION::ALWAYS, 0) });
+    gap.predicate_groups.emplace_back(gambits::G_LOGIC::AND, std::vector<gambits::Predicate_t>{});
+    gap.actions.emplace_back(gambits::G_REACTION::MA, gambits::G_SELECT::SPECIFIC, 1);
+    cl_gambit gapFields{};
+    CHECK_FALSE(pawn::wire::toWire(gap, gapFields));
+
+    // More conditions than the fields carry: not sent at all, the fields left empty
+    gambits::Gambit_t big;
+    big.predicate_groups.emplace_back(gambits::G_LOGIC::AND, std::vector<gambits::Predicate_t>(pawn::wire::kConditions + 1, gambits::Predicate_t(gambits::G_CONDITION::ALWAYS, 0)));
+    big.actions.emplace_back(gambits::G_REACTION::MA, gambits::G_SELECT::SPECIFIC, 1);
+    cl_gambit fields{};
+    CHECK_FALSE(pawn::wire::toWire(big, fields));
+    CHECK(fields.conditionCount == 0);
+    CHECK(fields.actionCount == 0);
 }

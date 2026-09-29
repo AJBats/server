@@ -1803,7 +1803,7 @@ namespace pawn
         return name.empty() ? fmt::format("family {}", family) : titleCase(name);
     }
 
-    auto labelGambit(const Gambit_t& g) -> std::string
+    auto labelGambit(const Gambit_t& g) -> GambitLabel
     {
         // "Always" says nothing beside another condition, and alone is the
         // side's "any"; an OR group that holds it is always true, so says
@@ -1831,19 +1831,18 @@ namespace pawn
                 first = false;
             }
         }
-        std::string out = headText(target, conditions);
-        out += " -> ";
+        GambitLabel out{ headText(target, conditions), "" };
         for (std::size_t i = 0; i < g.actions.size(); ++i)
         {
             if (i != 0)
             {
-                out += " + ";
+                out.action += " + ";
             }
-            out += actionText(g.actions[i]);
+            out.action += actionText(g.actions[i]);
         }
         if (g.retry_delay != 0)
         {
-            out += fmt::format(" (every {}s)", g.retry_delay);
+            out.action += fmt::format(" (every {}s)", g.retry_delay);
         }
         return out;
     }
@@ -2280,72 +2279,73 @@ namespace pawn
         // The conditions, FFXII's way (the gambit review, RESEARCH §14.13):
         // each entry one clause that names its side and when, on the page
         // of that side, stored as one target and one condition. An entry
-        // that takes a number carries '*' for it in its key and label, and
-        // its range as min,max,step,default; a status entry carries 's',
-        // the status picked in the row's next cell. Upstream's trust
-        // targets (tank, melee, caster...) are two conditions in one and
-        // are not offered; a row that holds one still reads (headText)
-        enum class Takes : uint8
+        // that takes a number carries '*' for it in its label, and its range;
+        // a status entry takes the status picked in the row's next cell.
+        // Upstream's trust targets (tank, melee, caster...) are two
+        // conditions in one and are not offered; a row that holds one still
+        // reads (headText)
+        struct Range
         {
-            Nothing,
-            Number,
-            Status,
+            uint16 min = 0, max = 0, step = 0, initial = 0;
         };
         struct Clause
         {
-            const char*  page;
-            G_TARGET     target;
-            G_CONDITION  condition;
-            Takes        takes = Takes::Nothing;
-            const char*  range = "";
+            Side        side;
+            G_TARGET    target;
+            G_CONDITION condition;
+            Takes       takes = Takes::Nothing;
+            Range       range = {};
         };
-        const auto self  = G_TARGET::SELF;
-        const auto ally  = G_TARGET::PARTY;
-        const auto foe   = G_TARGET::TARGET;
+        const auto self    = G_TARGET::SELF;
+        const auto ally    = G_TARGET::PARTY;
+        const auto foe     = G_TARGET::TARGET;
+        const auto hpBelow = Range{ 10, 90, 10, 50 };
+        const auto hpAbove = Range{ 10, 100, 10, 75 };
+        const auto mpBelow = Range{ 10, 90, 10, 30 };
+        const auto tpAbove = Range{ 500, 3000, 500, 1000 };
         const auto clauses = std::to_array<Clause>({
-            { "self", self, G_CONDITION::ALWAYS },
-            { "self", self, G_CONDITION::HPP_LT, Takes::Number, "10,90,10,50" },
-            { "self", self, G_CONDITION::HPP_GTE, Takes::Number, "10,100,10,75" },
-            { "self", self, G_CONDITION::MPP_LT, Takes::Number, "10,90,10,30" },
-            { "self", self, G_CONDITION::TP_GTE, Takes::Number, "500,3000,500,1000" },
-            { "self", self, pawn::G_CONDITION_TACTICIANS_CHOICE },
-            { "self", self, G_CONDITION::HAS_TOP_ENMITY },
-            { "self", self, G_CONDITION::NOT_HAS_TOP_ENMITY },
-            { "self", self, G_CONDITION::PT_HAS_TANK },
-            { "self", self, G_CONDITION::NOT_PT_HAS_TANK },
-            { "self", self, G_CONDITION::STATUS, Takes::Status },
-            { "self", self, G_CONDITION::NOT_STATUS, Takes::Status },
-            { "ally", ally, G_CONDITION::ALWAYS },
-            { "ally", ally, G_CONDITION::HPP_LT, Takes::Number, "10,90,10,50" },
-            { "ally", ally, G_CONDITION::HPP_GTE, Takes::Number, "10,100,10,75" },
-            { "ally", ally, G_CONDITION::MPP_LT, Takes::Number, "10,90,10,30" },
-            { "ally", ally, G_CONDITION::TP_GTE, Takes::Number, "500,3000,500,1000" },
-            { "ally", ally, pawn::G_CONDITION_TACTICIANS_CHOICE },
-            { "ally", ally, G_CONDITION::STATUS, Takes::Status },
-            { "ally", ally, G_CONDITION::NOT_STATUS, Takes::Status },
-            { "ally", G_TARGET::PARTY_DEAD, G_CONDITION::ALWAYS },
-            { "foe", foe, G_CONDITION::ALWAYS },
-            { "foe", pawn::G_TARGET_LEADERS_TARGET, G_CONDITION::ALWAYS },
-            { "foe", pawn::G_TARGET_TARGETED_BY_ALLY, G_CONDITION::ALWAYS },
-            { "foe", pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS },
-            { "foe", pawn::G_TARGET_TARGETING_SELF, G_CONDITION::ALWAYS },
-            { "foe", foe, G_CONDITION::NOT_HAS_TOP_ENMITY },
-            { "foe", foe, G_CONDITION::HPP_LT, Takes::Number, "10,90,10,50" },
-            { "foe", foe, G_CONDITION::HPP_GTE, Takes::Number, "10,100,10,75" },
-            { "foe", foe, G_CONDITION::TP_GTE, Takes::Number, "500,3000,500,1000" },
-            { "foe", foe, pawn::G_CONDITION_TACTICIANS_CHOICE },
-            { "foe", foe, G_CONDITION::SC_AVAILABLE },
-            { "foe", foe, G_CONDITION::MB_AVAILABLE },
-            { "foe", foe, G_CONDITION::STATUS, Takes::Status },
-            { "foe", foe, G_CONDITION::NOT_STATUS, Takes::Status },
+            { Side::Self, self, G_CONDITION::ALWAYS },
+            { Side::Self, self, G_CONDITION::HPP_LT, Takes::Number, hpBelow },
+            { Side::Self, self, G_CONDITION::HPP_GTE, Takes::Number, hpAbove },
+            { Side::Self, self, G_CONDITION::MPP_LT, Takes::Number, mpBelow },
+            { Side::Self, self, G_CONDITION::TP_GTE, Takes::Number, tpAbove },
+            { Side::Self, self, pawn::G_CONDITION_TACTICIANS_CHOICE },
+            { Side::Self, self, G_CONDITION::HAS_TOP_ENMITY },
+            { Side::Self, self, G_CONDITION::NOT_HAS_TOP_ENMITY },
+            { Side::Self, self, G_CONDITION::PT_HAS_TANK },
+            { Side::Self, self, G_CONDITION::NOT_PT_HAS_TANK },
+            { Side::Self, self, G_CONDITION::STATUS, Takes::Status },
+            { Side::Self, self, G_CONDITION::NOT_STATUS, Takes::Status },
+            { Side::Ally, ally, G_CONDITION::ALWAYS },
+            { Side::Ally, ally, G_CONDITION::HPP_LT, Takes::Number, hpBelow },
+            { Side::Ally, ally, G_CONDITION::HPP_GTE, Takes::Number, hpAbove },
+            { Side::Ally, ally, G_CONDITION::MPP_LT, Takes::Number, mpBelow },
+            { Side::Ally, ally, G_CONDITION::TP_GTE, Takes::Number, tpAbove },
+            { Side::Ally, ally, pawn::G_CONDITION_TACTICIANS_CHOICE },
+            { Side::Ally, ally, G_CONDITION::STATUS, Takes::Status },
+            { Side::Ally, ally, G_CONDITION::NOT_STATUS, Takes::Status },
+            { Side::Ally, G_TARGET::PARTY_DEAD, G_CONDITION::ALWAYS },
+            { Side::Foe, foe, G_CONDITION::ALWAYS },
+            { Side::Foe, pawn::G_TARGET_LEADERS_TARGET, G_CONDITION::ALWAYS },
+            { Side::Foe, pawn::G_TARGET_TARGETED_BY_ALLY, G_CONDITION::ALWAYS },
+            { Side::Foe, pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS },
+            { Side::Foe, pawn::G_TARGET_TARGETING_SELF, G_CONDITION::ALWAYS },
+            { Side::Foe, foe, G_CONDITION::NOT_HAS_TOP_ENMITY },
+            { Side::Foe, foe, G_CONDITION::HPP_LT, Takes::Number, hpBelow },
+            { Side::Foe, foe, G_CONDITION::HPP_GTE, Takes::Number, hpAbove },
+            { Side::Foe, foe, G_CONDITION::TP_GTE, Takes::Number, tpAbove },
+            { Side::Foe, foe, pawn::G_CONDITION_TACTICIANS_CHOICE },
+            { Side::Foe, foe, G_CONDITION::SC_AVAILABLE },
+            { Side::Foe, foe, G_CONDITION::MB_AVAILABLE },
+            { Side::Foe, foe, G_CONDITION::STATUS, Takes::Status },
+            { Side::Foe, foe, G_CONDITION::NOT_STATUS, Takes::Status },
         });
         for (const auto& c : clauses)
         {
             const auto target = static_cast<std::size_t>(c.target);
             const auto value  = c.takes == Takes::Number ? std::string("*") : std::string();
             const auto words  = c.condition == G_CONDITION::ALWAYS ? std::string() : conditionWords(c.condition, value, onFoe(target));
-            const auto arg    = c.takes == Takes::Number ? "*" : (c.takes == Takes::Status ? "s" : "0");
-            v.conditions.push_back({ fmt::format("{}|{}:{}", target, static_cast<uint16>(c.condition), arg), headText(target, words), c.range, 0, 0, c.page });
+            v.conditions.push_back({ c.target, c.condition, c.takes, c.side, c.range.min, c.range.max, c.range.step, c.range.initial, headText(target, words) });
         }
 
         // The statuses "status =" and "status ≠" can name: the ones a party
@@ -2354,28 +2354,31 @@ namespace pawn
         for (const uint16 id : { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 15u, 16u, 28u, 31u,
                                  33u, 36u, 37u, 40u, 41u, 42u, 43u, 56u, 57u, 58u, 66u, 68u, 158u })
         {
-            v.statuses.push_back({ fmt::format("{}", id), statusName(id), "" });
+            v.statuses.push_back({ id, statusName(id) });
         }
 
-        // Attack: which fight she takes, with a Foe target (engage_math.h).
-        // Its group is one word, as the gva line carries it
+        // Attack: which fight she takes, with a Foe target (engage_math.h)
+        const auto behaviour = [](const pawn::Behavior b)
+        {
+            return static_cast<G_SELECT>(b);
+        };
         v.actions = {
-            { "0:0:0", "Attack", "Fight", TARGET_ENEMY },
-            { "100:1:1", "Avoid aggro", "Behaviours" },
-            { "100:13:1", "Avoid links", "Behaviours" },
-            { "100:6:1", "Rest with the player", "Behaviours" },
-            { "100:7:1", "Home point with the player", "Behaviours" },
+            { G_REACTION::ATTACK, G_SELECT::HIGHEST, 0, "Attack", ActionGroup::Fight, TARGET_ENEMY },
+            { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::AvoidAggro), 1, "Avoid aggro", ActionGroup::Behaviours },
+            { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::AvoidLinks), 1, "Avoid links", ActionGroup::Behaviours },
+            { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::RestWithPlayer), 1, "Rest with the player", ActionGroup::Behaviours },
+            { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::HomePointWithPlayer), 1, "Home point with the player", ActionGroup::Behaviours },
         };
         // Formation: the lead, then auto (a seat by job), then the ring's seats
         for (const auto slot : { pawn::Slot::Lead, pawn::Slot::Follow, pawn::Slot::FlankLeft, pawn::Slot::FlankRight, pawn::Slot::RearLeft, pawn::Slot::RearRight, pawn::Slot::Behind })
         {
-            v.actions.push_back({ fmt::format("100:4:{}", static_cast<uint16>(slot)), fmt::format("Formation: {}", cardian::formation::slotName(slot)), "Behaviours" });
+            v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::Formation), static_cast<uint32>(slot), fmt::format("Formation: {}", cardian::formation::slotName(slot)), ActionGroup::Behaviours });
         }
 
         // The role she plays: one row switches the whole role (RESEARCH §12.2 item 2)
         for (const auto role : pawn::kRoles)
         {
-            v.actions.push_back({ fmt::format("100:{}:{}", static_cast<uint16>(pawn::Behavior::Role), static_cast<uint16>(role)), fmt::format("Role: {}", pawn::roleName(role)), "Behaviours" });
+            v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::Role), static_cast<uint32>(role), fmt::format("Role: {}", pawn::roleName(role)), ActionGroup::Behaviours });
         }
 
         // The actions of her main job and her support job, at every level, in
@@ -2427,12 +2430,12 @@ namespace pawn
             if (family != SPELLFAMILY_NONE && kin > 1 && std::ranges::find(named, family) == named.end())
             {
                 named.push_back(family);
-                VocabEntry best{ fmt::format("2:0:{}", static_cast<uint32>(family)), familyName(static_cast<uint32>(family)) + " (best)", "Magic" };
+                VocabAction best{ G_REACTION::MA, G_SELECT::HIGHEST, static_cast<uint32>(family), familyName(static_cast<uint32>(family)) + " (best)", ActionGroup::Magic };
                 best.usable = std::ranges::find(hers, family) != hers.end();
                 v.actions.push_back(std::move(best));
             }
             const auto id = static_cast<uint16>(PSpell->getID());
-            VocabEntry spell{ fmt::format("2:2:{}", id), titleCase(PSpell->getName()), "Magic", PSpell->getValidTarget(), PSpell->getMPCost() };
+            VocabAction spell{ G_REACTION::MA, G_SELECT::SPECIFIC, id, titleCase(PSpell->getName()), ActionGroup::Magic, PSpell->getValidTarget(), PSpell->getMPCost() };
             spell.usable = CSpellBook::Eligible(PPawn, PSpell);
             v.actions.push_back(std::move(spell));
         }
@@ -2441,7 +2444,7 @@ namespace pawn
         // list orders them
         for (auto* PAbility : jobAbilities(PPawn))
         {
-            VocabEntry ability{ fmt::format("3:2:{}", PAbility->getID()), titleCase(PAbility->getName()), "Abilities", PAbility->getValidTarget() };
+            VocabAction ability{ G_REACTION::JA, G_SELECT::SPECIFIC, PAbility->getID(), titleCase(PAbility->getName()), ActionGroup::Abilities, PAbility->getValidTarget() };
             ability.usable = charutils::hasAbility(PPawn, PAbility->getID());
             v.actions.push_back(std::move(ability));
         }
@@ -2453,8 +2456,8 @@ namespace pawn
         // so the list is rebuilt here, where it is about to be read.
         charutils::BuildingCharWeaponSkills(PPawn);
 
-        v.actions.push_back({ "4:0:0", "Weapon skill (best)", "WeaponSkills" });
-        v.actions.push_back({ "4:3:0", "Weapon skill (any)", "WeaponSkills" });
+        v.actions.push_back({ G_REACTION::WS, G_SELECT::HIGHEST, 0, "Weapon skill (best)", ActionGroup::WeaponSkills });
+        v.actions.push_back({ G_REACTION::WS, G_SELECT::RANDOM, 0, "Weapon skill (any)", ActionGroup::WeaponSkills });
         for (uint16 id = 1; id < MAX_WEAPONSKILL_ID; ++id)
         {
             auto* PWeaponSkill = battleutils::GetWeaponSkill(id);
@@ -2462,12 +2465,12 @@ namespace pawn
             {
                 continue;
             }
-            VocabEntry skill{ fmt::format("4:2:{}", id), titleCase(PWeaponSkill->getName()), "WeaponSkills", TARGET_ENEMY };
+            VocabAction skill{ G_REACTION::WS, G_SELECT::SPECIFIC, id, titleCase(PWeaponSkill->getName()), ActionGroup::WeaponSkills, TARGET_ENEMY };
             skill.usable = charutils::hasWeaponSkill(PPawn, id) && charutils::canUseWeaponSkill(PPawn, id);
             v.actions.push_back(std::move(skill));
         }
 
-        v.actions.push_back({ "1:0:0", "Ranged Attack", "Ranged", TARGET_ENEMY });
+        v.actions.push_back({ G_REACTION::RATTACK, G_SELECT::HIGHEST, 0, "Ranged Attack", ActionGroup::Ranged, TARGET_ENEMY });
         return v;
     }
 auto isMeleeJob(const xi::Job job) -> bool
