@@ -1,8 +1,7 @@
 -----------------------------------
 -- func: pawnjob <charname> <job> (level)
 -- desc: Cardian pawns - change a spawned pawn's main job (and level).
---       Her gambit rows stay as they are; !cardian greset <name> seeds
---       them again from the new job.
+--       Her gambit rows stay as they are.
 -----------------------------------
 ---@type TCommand
 local commandObj = {}

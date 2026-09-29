@@ -32,6 +32,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class CBattleEntity;
@@ -57,10 +58,23 @@ namespace pawn
     // character's own.
     auto ownerAccountOf(const CCharEntity* PChar) -> uint32;
 
-    // Every character the player could spawn as a cardian, by name: their
-    // account's own alts and the generated cardians it owns, never the one
-    // they are playing -- spawn()'s eligibility, as a list
-    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>;
+    // Her status pane's numbers: the seven base stats, each its total and the
+    // part of it gear and effects give, then attack and defence. The equipment
+    // screen, the party finder's look at a responder and her snapshot as she
+    // fades read them the same way
+    struct StatusNumbers
+    {
+        std::array<int16, 7> total{}; // STR, DEX, VIT, AGI, INT, MND, CHR
+        std::array<int16, 7> bonus{};
+        uint16               attack  = 0;
+        uint16               defence = 0;
+    };
+    auto statusNumbers(CCharEntity* PChar) -> StatusNumbers;
+
+    // Every character the player could spawn as a cardian, charid and name:
+    // their account's own alts and the generated cardians it owns, never the
+    // one they are playing -- spawn()'s eligibility, as a list
+    auto accountPawns(const CCharEntity* PChar) -> std::vector<std::pair<uint32, std::string>>;
 
     // Delete orphaned pawn session rows (client_addr = 0) left by a crash.
     // Called once at map boot.
@@ -80,7 +94,7 @@ namespace pawn
     bool spawn(CCharEntity* PSummoner, const std::string& targetName);
 
     // The club signs in with the player (ROADMAP H): every member of the
-    // account (accountPawnNames) not online stands where the game saved
+    // account (accountPawns) not online stands where the game saved
     // her, idling there until invited. The chat line, "Jevyak
     // (Northern San d'Oria), Zapp (...)", empty when nobody stood. spawn
     // stays the GM's tool
@@ -229,13 +243,13 @@ namespace pawn
         position_t at{}; // where, and facing: rotation is the heading
     };
     auto stakeOf(uint32 ownerCharID) -> std::optional<Stake>;
-    auto setStake(CCharEntity* POwner) -> std::string; // "" when set or moved; otherwise why not
+    auto setStake(CCharEntity* POwner) -> uint16; // CL_S_OK when set or moved (the Link's outcomes); otherwise why not
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 
     // Every cardian of the owner's in the zone fights the entity with this
-    // targid. "" when they go; otherwise why not, as the player reads it.
-    auto partyEngage(CCharEntity* POwner, uint16 targid) -> std::string;
+    // targid. CL_S_OK when they go; otherwise why not.
+    auto partyEngage(CCharEntity* POwner, uint16 targid) -> uint16;
 
     // A mob nobody can hit right now: a worm underground (the game's own
     // test -- the worm roam flag with its name hidden), or anything the
@@ -263,9 +277,10 @@ namespace pawn
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
-    // field: min | max | pull | aggressive | links. "" or the reason not.
-    // A band end pushed past the other drags it along.
-    auto setHuntRule(CCharEntity* POwner, std::string_view field, int value) -> std::string;
+    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS. CL_S_OK, or
+    // CL_S_MALFORMED for a rule or value out of range. A band end pushed past
+    // the other drags it along.
+    auto setHuntRule(CCharEntity* POwner, uint8 rule, int value) -> uint16;
 
 
     // A dead pawn home points: revived the way a home point revives a
@@ -275,6 +290,9 @@ namespace pawn
     // untouched. false unless the pawn is dead and one of those players is
     // in the world.
     bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer = nullptr);
+    // The player's order to one of his: home points, then waits there as a
+    // warp leaves her (the user, 2026-09-14). CL_S_OK, or CL_S_NOT_KNOCKED_OUT.
+    auto orderHomePoint(const CCharEntity* PPlayer, CCharEntity* PPawn) -> uint16;
 
     // A zone change the server meant to carry through the client protocol
     // -- a warp of her own (a scroll, Warp, Warp II on her) or a party
@@ -295,8 +313,15 @@ namespace pawn
     // A stuck cardian teleports to her player's side: only from within
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's
-    // cardians. "" on success, else why not.
-    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string;
+    // cardians. CL_S_OK when she came (the Link's outcomes), else why not,
+    // with the numbers behind a refusal in `refusal`.
+    struct RescueRefusal
+    {
+        float  away         = 0; // CL_S_TOO_FAR: yalms between them
+        float  range        = 0; // CL_S_TOO_FAR: RESCUE_RANGE
+        uint16 cooldownLeft = 0; // CL_S_COOLING_DOWN: seconds
+    };
+    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn, RescueRefusal& refusal) -> uint16;
 
     // Replace the pawn's gambits with her own rows: her saved set, else her
     // job's defaults (gambit_defaults.h) with her gambits on, saved at once
@@ -307,9 +332,9 @@ namespace pawn
     // (forgetGuestGambits). Her world layer (world.h brainRows) is not among
     // them and is left as it is: it runs ahead of them while she is in the
     // wild, and rebuilds by itself when the world's file, her job or her
-    // role changes. The controller calls this once, on its first tick; a
-    // reset (greset) calls it again, and !pawnbrain after a look at the
-    // world's file (world.h rereadBrains). Implemented in pawn_module.cpp.
+    // role changes. The controller calls this once, on its first tick, and
+    // !pawnbrain again after a look at the world's file (world.h
+    // rereadBrains). Implemented in pawn_module.cpp.
     void loadBrain(CCharEntity* PPawn);
 
     // The saved gambit set (cardian_gambits, M3.85): the rows in the row
@@ -365,11 +390,14 @@ namespace pawn
     // invited along takes orders and shows what /check would show, and
     // nothing else.
     auto findManagedPawn(const CCharEntity* PSummoner, const std::string& targetName) -> CCharEntity*;
+    // The same by charid, as the Cardian Link names her: no name to look up
+    auto findManagedPawn(const CCharEntity* PSummoner, uint32 pawnCharID) -> CCharEntity*;
     auto findCommandablePawn(const CCharEntity* PPlayer, const std::string& targetName) -> CCharEntity*;
+    auto findCommandablePawn(const CCharEntity* PPlayer, uint32 pawnCharID) -> CCharEntity*;
 
-    // Names of every live pawn this character commands, sorted by name: the
-    // roster the command window walks.
-    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>;
+    // Every live pawn this character commands, by name: the roster the
+    // command window walks
+    auto commandablePawns(const CCharEntity* PPlayer) -> std::vector<CCharEntity*>;
 
     // Possession support --------------------------------------------------
 
@@ -402,7 +430,8 @@ namespace pawn
     // over follow behavior and clears on arrival. `meet`: the trek is to
     // meet her player (follow me from another zone), so it follows him
     // rather than holding to this zone (meetTrek); a GM's goto is fixed
-    bool orderTravelByName(const std::string& targetName, uint16 zoneId, uint32 meet); // meet: the player's charid, 0 for a fixed zone
+    bool orderTravel(uint32 pawnCharID, uint16 zoneId, uint32 meet); // meet: the player's charid, 0 for a fixed zone
+    bool orderTravelByName(const std::string& targetName, uint16 zoneId, uint32 meet);
 
     auto travelOrderOf(uint32 pawnCharID) -> std::optional<xi::ZoneId>;
     void clearTravelOrder(uint32 pawnCharID);

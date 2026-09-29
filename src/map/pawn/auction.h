@@ -21,12 +21,14 @@
 
 #pragma once
 
+#include "cardian_link_messages.h"
 #include "common/cbasetypes.h"
 
 #include <string>
 #include <unordered_map>
 #include <vector>
 
+class CBaseEntity;
 class CCharEntity;
 
 // The Auction House screen's server half (ROADMAP L): what the auction
@@ -97,19 +99,19 @@ namespace pawn::auction
 
     auto history(uint16 itemId, bool stack) -> History;
 
-    // What a bid came to. Won: where the piece is and whether she wears
-    // it, how much of the price the purse gave, and `note` says what fell
-    // short of the asking (it stayed in the inventory, she could not wear
-    // it). Not won: `refused` says why -- "nothing at that price or less"
-    // when the auction house had no listing at or under the bid.
+    // What a bid came to: CL_S_OK when won (the Link's outcomes), else why
+    // not -- CL_S_NOTHING_AT_PRICE when the auction house had no listing at
+    // or under the bid. Won: where the piece is (the inventory when the move
+    // on to the bag asked for fell through), whether she wears it and, when
+    // she was to and does not, why not; and how much of the price the purse
+    // gave.
     struct BidResult
     {
-        bool        won = false;
-        std::string refused;
-        std::string note;
-        uint8       location  = 0;
-        bool        equipped  = false;
-        uint32      fromPurse = 0;
+        uint16 status    = CL_S_REFUSED; // CL_S_OK only once the piece is hers
+        uint8  location  = 0;
+        bool   equipped  = false;
+        uint16 notWorn   = 0;
+        uint32 fromPurse = 0;
     };
 
     // PChar bids `price` for one piece, or one stack, of any item, as the
@@ -126,4 +128,17 @@ namespace pawn::auction
     // transaction, so no gil moves unless the piece is won. With nothing
     // listed at or under the bid, no purchase is tried.
     auto bid(CCharEntity* PChar, CCharEntity* PPurse, uint16 itemId, bool stack, uint32 price, uint8 location, uint8 equipSlot, bool equip) -> BidResult;
+
+    // The auction counter within the player's reach (8 yalms, a gate
+    // guard's), nullptr for none
+    auto counterNear(const CCharEntity* PPlayer) -> const CBaseEntity*;
+
+    // Whether a member of his party may shop there now: CL_S_OK, or why not
+    // -- he stands by no counter (CL_S_NOT_BY_COUNTER), or she is not within
+    // 15 yalms of the one he stands at (CL_S_TOO_FAR_TO_SHOP). The player
+    // himself stands by it by being within reach of one.
+    auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember) -> uint16;
+    // The same with the counter he stands by already found (counterNear), for a
+    // caller that asks it of every member
+    auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember, const CBaseEntity* PCounter) -> uint16;
 } // namespace pawn::auction

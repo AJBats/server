@@ -23,6 +23,7 @@
 #include "view.h"
 
 #include "local_planner.h"
+#include "action_keys.h"
 #include "cardian_link.h"
 #include "formation_math.h"
 #include "pawn.h"
@@ -387,7 +388,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     // Leaving a maneuver by whatever door (its finisher, his cancel, his
     // camera off her, her leaving his party, her death) hands her back:
     // her gambit switch as it was, his walk order gone, and his addon
-    // told (`cd mv <name>`, no finisher) so it lets go of the camera
+    // told (MANEUVER_STATE, ended) so it lets go of the camera
     if (from == Mode::Maneuver && to != Mode::Maneuver)
     {
         // A composed maneuver ended before its order fired (his cancel, her
@@ -409,7 +410,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         {
             pawn::clearManeuver(m_ManeuverBy);
         }
-        cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {}", POwner->getName()));
+        TellManeuver(CL_MS_ENDED);
         m_ManeuverBy       = 0;
         m_ManeuverComposed = false;
     }
@@ -1337,7 +1338,7 @@ namespace
     }
 } // namespace
 
-auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string
+auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, uint16* waitSeconds) -> uint16
 {
     if (key == kAttackOrder)
     {
@@ -1352,7 +1353,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     unsigned id   = 0;
     if (!parseOrderKey(key, kind, mode, id))
     {
-        return "bad action";
+        return CL_S_MALFORMED;
     }
     if (kind == kItemOrder)
     {
@@ -1360,36 +1361,50 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         PTarget = POwner;
         if (!inventorySlotOf(static_cast<CCharEntity*>(POwner), static_cast<uint16>(id)).has_value())
         {
-            return fmt::format("she has no {}", OrderName(kind, id));
+            return CL_S_NOT_CARRIED;
         }
     }
     if (PTarget == nullptr)
     {
-        return "no target";
+        return CL_S_NO_TARGET;
     }
     if (POwner->isDead())
     {
-        return "KO'd";
+        return CL_S_KNOCKED_OUT;
     }
 
     // Held (pause/pause.h), nothing starts: the order goes straight to her queue. Her
     // tick clock stands still with the simulation, so its grace runs from the release.
     // Out of the action's reach, the order is queued too: she walks in first
-    // (OrderApproach) and the queue's grace waits for her
+    // (OrderApproach) and the queue's grace waits for her. So too an order on its
+    // recast, or given as she gets up from a rest
     const EntityId target(PTarget);
     const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
-    const auto     err = cardian::pause::isHeld() ? std::string("paused")
-                         : Acting()               ? std::string("busy")
-                         : outOfReach             ? std::string("out of reach")
-                                                  : TryAction(kind, mode, id, target);
-    if (err != "paused" && err != "busy" && err != "recast" && err != "standing up" && err != "out of reach")
+    std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : Acting() ? "busy" : outOfReach ? "out of reach" : "";
+    if (heldFor.empty())
     {
-        if (err.empty())
+        OrderStarted(key, kind, id);
+        const auto status = TryAction(kind, mode, id, target);
+        if (status != CL_S_OK)
         {
-            OrderStarted(kind, id);
-            NoteOrderFired();
+            OrderNotStarted();
         }
-        return err;
+        if (status == CL_S_ON_RECAST)
+        {
+            heldFor = "recast";
+        }
+        else if (status == CL_S_STANDING_UP)
+        {
+            heldFor = "standing up";
+        }
+        else
+        {
+            if (status == CL_S_OK)
+            {
+                NoteOrderFired();
+            }
+            return status;
+        }
     }
 
     // A little early is held, too early refused. The wait is the least
@@ -1399,11 +1414,15 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     const auto wait  = OrderWait(kind, id);
     if (wait > grace)
     {
-        return fmt::format("{} is {} s away", OrderName(kind, id), wholeSeconds(wait));
+        if (waitSeconds != nullptr)
+        {
+            *waitSeconds = static_cast<uint16>(std::clamp(wholeSeconds(wait), 1, static_cast<int>(UINT16_MAX)));
+        }
+        return CL_S_TOO_SOON;
     }
     m_QueuedOrderDeadline = m_Tick + grace;
     SetQueuedOrder(std::make_pair(key, target));
-    ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), err, wholeSeconds(grace));
+    ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), heldFor, wholeSeconds(grace));
     if (InManeuver())
     {
         if (cardian::pause::isHeld())
@@ -1421,7 +1440,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
             EndManeuver("his order is hers to carry out, the maneuver ends");
         }
     }
-    return "";
+    return CL_S_OK;
 }
 
 auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
@@ -1502,19 +1521,21 @@ void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, Entity
     }
     if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
-        const auto line = QueuedOrderLine();
-        cardian::link::sendToCharacter(owner, line.empty() ? fmt::format("cd q {}", POwner->getName()) : fmt::format("cd q {} {}", POwner->getName(), line));
+        cardian::link::send(owner, QueueLine());
     }
 }
 
-auto CPawnController::QueuedOrderLine() const -> std::string
+auto CPawnController::QueueLine() const -> cl_queue
 {
-    if (!m_QueuedOrder.has_value())
+    auto line      = cardian::link::make<cl_queue>();
+    line.character = POwner->id;
+    if (m_QueuedOrder.has_value())
     {
-        return "";
+        const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
+        line.action         = pawn::actionOfKey(m_QueuedOrder->first);
+        line.target         = PTarget != nullptr ? PTarget->targid : uint16{ 0 };
     }
-    const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
-    return fmt::format("{} {}", m_QueuedOrder->first, PTarget != nullptr ? PTarget->targid : 0);
+    return line;
 }
 
 auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 formerOwner) -> bool
@@ -1534,7 +1555,7 @@ auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 f
     // still shows the line
     if (formerOwner != 0 && pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)) == 0)
     {
-        cardian::link::sendToCharacter(formerOwner, fmt::format("cd q {}", POwner->getName()));
+        cardian::link::send(formerOwner, QueueLine());
     }
     return true;
 }
@@ -1544,13 +1565,22 @@ auto CPawnController::CancelQueuedOrder() -> bool
     return DropQueuedOrder("the player took it back");
 }
 
-void CPawnController::OrderStarted(const unsigned kind, const unsigned id)
+void CPawnController::OrderStarted(const std::string& key, const unsigned kind, const unsigned id)
 {
-    m_StartedOrder   = OrderName(kind, id);
-    m_StartedOrderAt = m_Tick;
+    m_StartedOrder    = OrderName(kind, id);
+    m_StartedOrderKey = key;
+    m_StartedOrderAt  = m_Tick;
 }
 
-void CPawnController::ToldAfterOrder(const std::string& said)
+auto CPawnController::OrderNotStarted() -> bool
+{
+    const bool untold = !m_StartedOrder.empty();
+    m_StartedOrder.clear();
+    m_StartedOrderKey.clear();
+    return untold;
+}
+
+void CPawnController::ToldAfterOrder(const uint16 message, const std::string& said)
 {
     constexpr auto kHeels = 2s;
     if (m_StartedOrder.empty() || m_Tick - m_StartedOrderAt > kHeels)
@@ -1558,23 +1588,30 @@ void CPawnController::ToldAfterOrder(const std::string& said)
         return;
     }
     ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), m_StartedOrder, said);
-    Note(fmt::format("{} refused: {}", m_StartedOrder, said));
+    auto note    = cardian::link::make<cl_note>();
+    note.kind    = CL_NOTE_REFUSED;
+    note.action  = pawn::actionOfKey(m_StartedOrderKey);
+    note.message = message;
+    cardian::link::setText(note.about, said);
+    Note(note, CL_S_REFUSED);
     m_StartedOrder.clear();
+    m_StartedOrderKey.clear();
 }
 
-void CPawnController::Note(const std::string& text) const
+void CPawnController::Note(cl_note note, const uint16 reason) const
 {
     if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
-        cardian::link::sendToCharacter(owner, "cd note " + text);
+        note.cardian = POwner->id;
+        cardian::link::send(owner, note, reason);
     }
 }
 
-auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const unsigned id, const EntityId target) -> std::string
+auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const unsigned id, const EntityId target) -> uint16
 {
     if (!PrepareRestAction(true))
     {
-        return "standing up";
+        return CL_S_STANDING_UP;
     }
     bool fired = false;
     switch (kind)
@@ -1586,17 +1623,17 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
         {
             if (mode != 2)
             {
-                return "pick a spell";
+                return CL_S_MALFORMED;
             }
             const auto spellId = static_cast<SpellID>(id);
             CSpell*    PSpell  = spell::GetSpell(spellId);
             if (PSpell == nullptr)
             {
-                return "no such spell";
+                return CL_S_MALFORMED;
             }
             if (static_cast<CCharEntity*>(POwner)->PRecastContainer->HasRecast(RECAST_MAGIC, static_cast<Recast>(spellId), 0s))
             {
-                return "recast";
+                return CL_S_ON_RECAST;
             }
             // An order is never second-guessed: straight to the base
             // controller's cast, past the gambit engine's redundancy rule
@@ -1612,14 +1649,14 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
         case 3:
             if (mode != 2)
             {
-                return "pick an ability";
+                return CL_S_MALFORMED;
             }
             fired = Ability(target, static_cast<uint16>(id));
             break;
         case 4:
             if (mode != 2)
             {
-                return "pick a weapon skill";
+                return CL_S_MALFORMED;
             }
             fired = WeaponSkill(target, static_cast<uint16>(id));
             break;
@@ -1630,14 +1667,14 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             const auto slot  = inventorySlotOf(PChar, static_cast<uint16>(id));
             if (!slot.has_value())
             {
-                return fmt::format("she has no {}", OrderName(kind, id));
+                return CL_S_NOT_CARRIED;
             }
             return pawn::items::useItem(PChar, *slot, LOC_INVENTORY);
         }
         default:
-            return "bad action";
+            return CL_S_MALFORMED;
     }
-    return fired ? "" : "cannot do that now";
+    return fired ? CL_S_OK : CL_S_CANNOT_NOW;
 }
 
 void CPawnController::FireQueuedOrder()
@@ -1717,7 +1754,10 @@ void CPawnController::FireQueuedOrder()
         if (PMob == nullptr || PMob->isDead())
         {
             ShowInfoFmt("pawn: {} lets the queued attack go (its target is gone)", POwner->getName());
-            Note("the attack let go: its target is gone");
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            Note(note, CL_S_NO_TARGET);
             return;
         }
         ShowInfoFmt("pawn: {} starts the queued attack on {}", POwner->getName(), PMob->getName());
@@ -1761,10 +1801,14 @@ void CPawnController::FireQueuedOrder()
         }
         else if (m_Tick - m_OrderApproachSince > kOrderApproachMax)
         {
-            const auto name = OrderName(kind, id);
             ShowInfoFmt("pawn: {} lets the queued {} go (could not get in reach of {})", POwner->getName(), key, beyond->first->getName());
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            note.target = beyond->first->targid;
+            cardian::link::setText(note.about, beyond->first->getName());
             SetQueuedOrder(std::nullopt);
-            Note(fmt::format("{} let go: could not get in reach of {}", name, beyond->first->getName()));
+            Note(note, CL_S_UNREACHED);
             if (InManeuver() && m_ManeuverComposed)
             {
                 m_ManeuverComposed = false;
@@ -1786,9 +1830,13 @@ void CPawnController::FireQueuedOrder()
     {
         SetQueuedOrder(std::nullopt);
         const auto wait = OrderWait(kind, id);
-        const auto why  = (Acting() || wait <= 0s) ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait));
-        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
-        Note(fmt::format("{} let go: {}", OrderName(kind, id), why));
+        const bool busy = Acting() || wait <= 0s;
+        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, busy ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait)));
+        auto note   = cardian::link::make<cl_note>();
+        note.kind   = CL_NOTE_LET_GO;
+        note.action = pawn::actionOfKey(key);
+        note.wait   = busy ? 0 : static_cast<uint16_t>(std::clamp(wholeSeconds(wait), 0, static_cast<int>(UINT16_MAX)));
+        Note(note, CL_S_TOO_SOON);
         return;
     }
     if (Acting())
@@ -1805,20 +1853,29 @@ void CPawnController::FireQueuedOrder()
 
     // The action's own target rules decide whether a corpse is valid. A
     // Raise ordered while resting waits here through the same stand gate.
-    const auto err = TryAction(kind, mode, id, target);
-    if (err == "recast" || err == "standing up")
+    // Stamped as started first: a refusal the game gives as she tries it is
+    // this order's (ToldAfterOrder)
+    OrderStarted(key, kind, id);
+    const auto status = TryAction(kind, mode, id, target);
+    if (status == CL_S_ON_RECAST || status == CL_S_STANDING_UP)
     {
+        OrderNotStarted();
         return; // the timer has not run out: next tick, until the deadline
     }
     SetQueuedOrder(std::nullopt);
-    if (!err.empty())
+    if (status != CL_S_OK)
     {
-        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, err);
-        Note(fmt::format("{} let go: {}", OrderName(kind, id), err));
+        ShowInfoFmt("pawn: {} lets the queued {} go (outcome 0x{:04X})", POwner->getName(), key, status);
+        if (OrderNotStarted())
+        {
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            Note(note, status);
+        }
         return;
     }
     // Started, not done: the game may still refuse it on its next step (ToldAfterOrder)
-    OrderStarted(kind, id);
     ShowInfoFmt("pawn: {} starts the queued {} on {}", POwner->getName(), key, PTarget->getName());
     NoteOrderFired();
 }
@@ -3925,35 +3982,38 @@ auto CPawnController::InManeuver() const -> bool
     return m_Mode == Mode::Maneuver;
 }
 
-auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
+auto CPawnController::BeginManeuver(CCharEntity* PBy, uint32* other) -> uint16
 {
     if (PBy == nullptr)
     {
-        return "no player";
+        return CL_S_REFUSED;
     }
     if (InManeuver())
     {
         if (m_ManeuverBy != PBy->id)
         {
-            return "another player's maneuver";
+            return CL_S_ANOTHER_PLAYERS;
         }
-        return m_ManeuverComposed ? fmt::format("{} has a maneuver waiting: cancel it first", POwner->getName()) : "";
+        return m_ManeuverComposed ? CL_S_MANEUVER_COMPOSED : CL_S_OK;
     }
     if (POwner->isDead())
     {
-        return "KO'd";
+        return CL_S_KNOCKED_OUT;
     }
     // A fight is no bar (docs/maneuvers.md: the boss pull that went
     // sideways). She stays engaged through it, the tick leaves an engaged
     // maneuver alone, and its end hands her straight back to the fight
     if (cardian::view::origin(PBy) != POwner)
     {
-        return "not looking through her";
+        return CL_S_NOT_LOOKING;
     }
-    if (const auto other = pawn::maneuverOf(PBy->id); other != 0 && other != POwner->id)
+    if (const auto driven = pawn::maneuverOf(PBy->id); driven != 0 && driven != POwner->id)
     {
-        const auto* POther = zoneutils::GetChar(other);
-        return fmt::format("one maneuver at a time ({})", POther != nullptr ? POther->getName() : "another");
+        if (other != nullptr)
+        {
+            *other = driven;
+        }
+        return CL_S_ONE_MANEUVER;
     }
 
     EndRestOrder("a maneuver");
@@ -3965,8 +4025,17 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy) -> std::string
     m_Gambits->SetMaster(false);
     pawn::setManeuver(PBy->id, POwner->id);
     Transition(Mode::Maneuver, fmt::format("{} takes the wheel", PBy->getName()));
-    cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {} on", POwner->getName()));
-    return "";
+    TellManeuver(CL_MS_LIVE);
+    return CL_S_OK;
+}
+
+// The player whose maneuver it is hears every change of it
+void CPawnController::TellManeuver(const uint8 state) const
+{
+    auto msg    = cardian::link::make<cl_maneuver_state>();
+    msg.cardian = POwner->id;
+    msg.state   = state;
+    cardian::link::send(m_ManeuverBy, msg);
 }
 
 void CPawnController::EndManeuver(const std::string_view why)
@@ -4010,29 +4079,28 @@ void CPawnController::SetOwnMaster(const bool on)
     m_Gambits->SetMaster(on);
 }
 
-auto CPawnController::ComposeMove(const bool wait)
-    -> std::string
+auto CPawnController::ComposeMove(const bool wait) -> uint16
 {
     if (!InManeuver())
     {
-        return "no maneuver";
+        return CL_S_NO_MANEUVER;
     }
     if (!cardian::pause::isHeld())
     {
-        return "a move is a paused maneuver's order";
+        return CL_S_NOT_PAUSED;
     }
     if (m_ManeuverComposed)
     {
-        return "her maneuver is composed already: cancel it first";
+        return CL_S_MANEUVER_COMPOSED;
     }
     if (!pawn::walkOrderOf(POwner->id).has_value())
     {
-        return "no route laid";
+        return CL_S_NO_ROUTE;
     }
     m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(std::string(wait ? "movewait" : "move"), EntityId(POwner)));
     MarkComposed(fmt::format("walk the route{}", wait ? ", then wait there" : ""));
-    return "";
+    return CL_S_OK;
 }
 
 // A maneuver's order is given -- held, or a rest either way: composed, it
@@ -4046,26 +4114,26 @@ void CPawnController::MarkComposed(const std::string_view what)
         pawn::clearManeuver(m_ManeuverBy);
     }
     ShowInfoFmt("pawn: {}'s maneuver is composed: {}", POwner->getName(), what);
-    cardian::link::sendToCharacter(m_ManeuverBy, fmt::format("cd mv {} composed", POwner->getName()));
+    TellManeuver(CL_MS_COMPOSED);
 }
 
-auto CPawnController::ComposeRest(const int percent) -> std::string
+auto CPawnController::ComposeRest(const int percent) -> uint16
 {
     if (!InManeuver())
     {
-        return "no maneuver";
+        return CL_S_NO_MANEUVER;
     }
     if (m_ManeuverComposed)
     {
-        return "her maneuver is composed already: cancel it first";
+        return CL_S_MANEUVER_COMPOSED;
     }
     if (percent < 1 || percent > 100)
     {
-        return "rest takes 1 to 100 percent";
+        return CL_S_MALFORMED;
     }
     if (cardian::rest::Order{ .percent = percent }.metBy(POwner->health.hp, POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP()))
     {
-        return fmt::format("{} is already at {}% HP and MP", POwner->getName(), percent);
+        return CL_S_ALREADY_RESTED;
     }
     // Live, she rests where she stands: the point she was steered toward is let go
     if (!cardian::pause::isHeld())
@@ -4075,19 +4143,19 @@ auto CPawnController::ComposeRest(const int percent) -> std::string
     m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(fmt::format("rest:{}", percent), EntityId(POwner)));
     MarkComposed(fmt::format("{}rest until {}%", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", percent));
-    return "";
+    return CL_S_OK;
 }
 
-auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> std::string
+auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> uint16
 {
     auto* PMob = dynamic_cast<CMobEntity*>(PTarget);
     if (PMob == nullptr || PMob->isDead())
     {
-        return "pick a monster";
+        return CL_S_NOT_A_MONSTER;
     }
     if (POwner->isDead())
     {
-        return "KO'd";
+        return CL_S_KNOCKED_OUT;
     }
     if (cardian::pause::isHeld())
     {
@@ -4097,20 +4165,20 @@ auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> std::string
         {
             MarkComposed(fmt::format("{}attack {}", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", PMob->getName()));
         }
-        return "";
+        return CL_S_OK;
     }
     EndManeuver("his order is away, she attacks: the maneuver ends");
     DropQueuedOrder("his attack order replaces it"); // her newest order is the one she carries out
     m_PlayersOrder = EntityId(PMob);
     EngageOn(PMob);
-    return "";
+    return CL_S_OK;
 }
 
-auto CPawnController::DisengageOrder() -> std::string
+auto CPawnController::DisengageOrder() -> uint16
 {
     if (POwner->isDead())
     {
-        return "KO'd";
+        return CL_S_KNOCKED_OUT;
     }
     if (cardian::pause::isHeld())
     {
@@ -4120,16 +4188,16 @@ auto CPawnController::DisengageOrder() -> std::string
         {
             MarkComposed(fmt::format("{}disengage", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : ""));
         }
-        return "";
+        return CL_S_OK;
     }
     const bool fighting = POwner->PAI->IsEngaged() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend;
     if (!fighting)
     {
-        return "she is not fighting";
+        return CL_S_NOT_FIGHTING;
     }
     EndManeuver("his order is away, she disengages: the maneuver ends");
     StandDown("the player's order: she sheathes");
-    return "";
+    return CL_S_OK;
 }
 
 // How close an order needs her: the spell's or ability's own range, melee

@@ -28,8 +28,8 @@
 #include "world.h"
 #include "pawn_controller.h"
 #include "gambit_text.h"
+#include "link_api.h"
 #include "pawn_gambits.h"
-#include "pawn_items.h"
 #include "spell_bank.h"
 #include "tactics.h"
 #include "view.h"
@@ -41,21 +41,17 @@
 #include "pause/pause.h"
 #include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
-#include "item_container.h"
 #include "enums/party_kind.h"
 #include "packets/c2s/0x06e_group_solicit_req.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
 #include "packets/basic.h"
 #include "utils/moduleutils.h"
-#include "ability.h"
-#include "recast_container.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
 #include <algorithm>
-#include <cctype>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <utility>
@@ -203,8 +199,7 @@ namespace pawn
         gambits.RemoveAllGambits();
 
         // The set she has, else her job's defaults (gambit_defaults.h),
-        // seeded once. A job change leaves them as they are; a reset
-        // (greset) seeds them again from the job she holds then.
+        // seeded once. A job change leaves them as they are.
         if (pawn::loadSavedGambits(PPawn))
         {
             return;
@@ -253,6 +248,10 @@ class PawnModule : public CPPModule
     void OnInit() override
     {
         pawn::cleanupStaleRows();
+        // The cardian API's messages on the Cardian Link (link_api.cpp), and
+        // the Lua libraries two of them are answered from
+        pawn::linkapi::registerHandlers();
+        pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
         // The MP bank's samplers, a Lua library (RESEARCH §12.13)
@@ -400,14 +399,6 @@ class PawnModule : public CPPModule
             return pawn::seats::capsLine(PChar != nullptr ? static_cast<uint16>(PChar->getZone()) : 0);
         };
 
-        // A cardian of yours without a body stands again: to the front of
-        // her tier and a run. Not a managedPair: she has no body to find
-        lua["CBaseEntity"]["cardianRecall"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            return PChar != nullptr ? pawn::seats::recall(PChar->id, name) : "nobody is asking";
-        };
-
         lua["CBaseEntity"]["cardianFaded"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -503,7 +494,8 @@ class PawnModule : public CPPModule
             return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
         };
 
-        // Cardian management surface (!cardian command / companion addon).
+        // Cardian management surface for the debug commands and the party
+        // progress module (modules/cardian/lua/party_progress.lua).
         // Two gates (ROADMAP H: command yes, manage no). managedPair resolves
         // the named pawn through findManagedPawn: only the summoner inspects
         // or moves her belongings or spends her money. commandPair resolves
@@ -511,7 +503,7 @@ class PawnModule : public CPPModule
         // a wild cardian invited along takes orders, shows what /check would
         // show, is sent home when KO'd, and has her gambits edited as a
         // guest's -- cleared when she leaves the party (pawn::leftParty).
-        // Mutators return "" on success, else a reason forwarded to the addon.
+        // Mutators return "" on success, else a reason the command prints.
         const auto managedPair = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::pair<CCharEntity*, CCharEntity*>
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -523,129 +515,6 @@ class PawnModule : public CPPModule
             return { PChar, pawn::findCommandablePawn(PChar, name) };
         };
 
-        // The !cardian command's replies, over the Cardian Link when this
-        // character's addon is bound to one: '#cd tag ...' chat lines become
-        // 'cd tag ...' link lines. false = no link; the command then prints
-        // to chat for a human typing it.
-        lua["CBaseEntity"]["cardianLinkSend"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& line) -> bool
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return false;
-            }
-            const std::string wire = line.rfind("#cd ", 0) == 0 ? "cd " + line.substr(4) : line;
-            return cardian::link::sendToCharacter(PChar->id, wire);
-        };
-
-        lua["CBaseEntity"]["cardianAccountPawns"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
-        {
-            auto names = ::lua.create_table();
-            for (const auto& name : pawn::accountPawnNames(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
-            {
-                names.add(name);
-            }
-            return names;
-        };
-        // The roster: every cardian this character commands
-        lua["CBaseEntity"]["cardianNames"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
-        {
-            auto names = ::lua.create_table();
-            for (const auto& name : pawn::commandablePawnNames(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity())))
-            {
-                names.add(name);
-            }
-            return names;
-        };
-        // The party finder: who is in reach and what she says to the goal
-        // (exp, or a mission log or quest area), the shout, a look at a
-        // responder, the invite, and the contracts
-        const auto candidateRow = [](const pawn::finder::Candidate& c) -> sol::table
-        {
-            auto row        = ::lua.create_table();
-            row["name"]     = c.name;
-            row["job"]      = c.job;
-            row["level"]    = c.level;
-            row["zone"]     = c.zone;
-            row["state"]    = c.state;
-            row["willing"]  = c.answer.yes;
-            row["line"]     = c.answer.line;
-            row["affinity"] = c.affinity;
-            row["mission"]  = static_cast<uint8>(c.answer.fit); // 0 free, 1 behind, 2 on it, 3 done it
-            row["race"]     = c.race;
-            row["nation"]   = c.nation;
-            row["rank"]     = c.rank;
-            row["zoneid"]   = c.zoneId;
-            return row;
-        };
-        lua["CBaseEntity"]["cardianFinder"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log) -> sol::table
-        {
-            auto rows = ::lua.create_table();
-            for (const auto& c : pawn::finder::candidates(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), pawn::finder::goalFrom(kind, log)))
-            {
-                rows.add(candidateRow(c));
-            }
-            return rows;
-        };
-        lua["CBaseEntity"]["cardianShout"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log, const bool again) -> sol::table
-        {
-            auto        out = ::lua.create_table();
-            std::string why;
-            const auto* made = pawn::finder::shout(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), pawn::finder::goalFrom(kind, log), again, why);
-            if (made == nullptr)
-            {
-                out["err"] = why;
-                return out;
-            }
-            out["id"]   = made->id;
-            out["wait"] = made->waitMs;
-            out["kind"] = pawn::finder::kindName(made->goal);
-            out["log"]  = made->goal.log;
-            auto rows   = ::lua.create_table();
-            for (const auto& r : made->rows)
-            {
-                auto row      = candidateRow(r.c);
-                row["reveal"] = r.revealMs;
-                row["decide"] = r.decideMs;
-                rows.add(row);
-            }
-            out["rows"] = rows;
-            return out;
-        };
-        lua["CBaseEntity"]["cardianPeek"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto p = pawn::finder::peek(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
-            if (!p.has_value())
-            {
-                return sol::lua_nil;
-            }
-            auto t        = ::lua.create_table();
-            t["name"]     = p->name;
-            t["job"]      = p->job;
-            t["level"]    = p->level;
-            t["sjob"]     = p->sjob;
-            t["slvl"]     = p->slvl;
-            t["nation"]   = p->nation;
-            t["rank"]     = p->rank;
-            t["standing"] = p->standing;
-            t["affinity"] = p->affinity;
-            t["hp"]       = p->hp;
-            t["maxhp"]    = p->maxhp;
-            t["mp"]       = p->mp;
-            t["maxmp"]    = p->maxmp;
-            t["stats"]    = p->stats;
-            auto gear     = ::lua.create_table();
-            for (const auto& chunk : p->gear)
-            {
-                gear.add(chunk);
-            }
-            t["gear"] = gear;
-            return t;
-        };
-        lua["CBaseEntity"]["cardianInvite"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& kind, const int log) -> std::string
-        {
-            return pawn::finder::invite(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name, pawn::finder::goalFrom(kind, log));
-        };
         lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& why, sol::optional<bool> mission)
         {
             const auto* PPlayer = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -653,46 +522,6 @@ class PawnModule : public CPPModule
             {
                 pawn::finder::bond(PPlayer->id, charutils::getCharIdFromName(name), why.c_str(), mission.value_or(false));
             }
-        };
-        // Your contract (ROADMAP H, the party waits): his open contracts,
-        // each with her job, level, where she is, and whether she stands in
-        // his party, stands waiting, or could not stand ("out")
-        lua["CBaseEntity"]["cardianContracts"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
-        {
-            auto        rows    = ::lua.create_table();
-            const auto* PPlayer = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PPlayer == nullptr)
-            {
-                return rows;
-            }
-            for (const auto& c : pawn::finder::openContracts(PPlayer->id))
-            {
-                auto        row   = ::lua.create_table();
-                const auto* PPawn = pawn::findPawn(c.charid);
-                row["name"]       = c.name;
-                row["kind"]       = pawn::finder::kindName(c.goal);
-                if (PPawn != nullptr)
-                {
-                    row["job"]   = static_cast<uint8>(PPawn->GetMJob());
-                    row["level"] = PPawn->GetMLevel();
-                    row["zone"]  = static_cast<uint16>(PPawn->getZone());
-                    row["state"] = PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty ? "party" : "standing";
-                }
-                else if (const auto rset = db::preparedStmt("SELECT s.mjob, s.mlvl, c.pos_zone FROM chars c JOIN char_stats s ON s.charid = c.charid WHERE c.charid = ?", c.charid);
-                         rset && rset->next())
-                {
-                    row["job"]   = rset->get<uint8>("mjob");
-                    row["level"] = rset->get<uint8>("mlvl");
-                    row["zone"]  = rset->get<uint16>("pos_zone");
-                    row["state"] = pawn::seats::has(c.charid) ? "faded" : "out";
-                }
-                rows.add(row);
-            }
-            return rows;
-        };
-        lua["CBaseEntity"]["cardianEndContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            return pawn::finder::release(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
         };
         // Her contract with the given player (the cardian's own entity asks)
         lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 playerCharID) -> std::string
@@ -711,407 +540,10 @@ class PawnModule : public CPPModule
             }
             return out;
         };
-        // The stats line's tokens for a cardian the player commands
-        lua["CBaseEntity"]["cardianStatsLine"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            return sol::make_object(::lua, pawn::finder::statsLine(PPawn));
-        };
         // Hers to manage, or only to command
         lua["CBaseEntity"]["cardianOwns"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
             return managedPair(PLuaBaseEntity, name).second != nullptr;
-        };
-
-        lua["CBaseEntity"]["cardianGive"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::giveToPawn(PChar, PPawn, slot, qty) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianTake"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::takeFromPawn(PChar, PPawn, slot, qty) : "no such cardian";
-        };
-
-        // The trade window's gil line: to her, or back from her
-        lua["CBaseEntity"]["cardianGil"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 amount, const bool toPawn) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::moveGil(PChar, PPawn, amount, toPawn) : "no such cardian";
-        };
-
-        // location: the inventory (0) or a wardrobe the piece is worn from
-        lua["CBaseEntity"]["cardianWear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::equip(PPawn, invSlot, equipSlot, location) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianStrip"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::unequip(PPawn, equipSlot) : "no such cardian";
-        };
-
-        // One of her containers: the inventory (location 0) or a storage bag
-        lua["CBaseEntity"]["cardianInv"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location) -> sol::object
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr || location > LOC_WARDROBE8)
-            {
-                return sol::lua_nil;
-            }
-
-            auto result = ::lua.create_table();
-            if (const auto* storage = PPawn->getStorage(location))
-            {
-                result["size"] = storage->GetSize();
-                result["free"] = storage->GetFreeSlotsCount();
-            }
-            auto chunkTable = ::lua.create_table();
-            for (const auto& chunk : pawn::items::containerChunks(PPawn, location))
-            {
-                chunkTable.add(chunk);
-            }
-            result["chunks"] = chunkTable;
-            return result;
-        };
-
-        // Her storage bags, { loc, size, used } each, in cycling order
-        lua["CBaseEntity"]["cardianBags"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto result = ::lua.create_table();
-            for (const auto& bag : pawn::items::bags(PPawn))
-            {
-                auto entry    = ::lua.create_table();
-                entry["loc"]  = bag.location;
-                entry["size"] = bag.size;
-                entry["used"] = bag.used;
-                result.add(entry);
-            }
-            return result;
-        };
-
-        // The Auction House screen (ROADMAP L) shops for a member of his
-        // party: the player himself, by his own name, or a cardian of his to
-        // manage (a wild one's gear and gil are the world's); nullptr for
-        // anyone else
-        const auto shopper = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> CCharEntity*
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            return PChar != nullptr && PChar->getName() == name ? PChar : managedPair(PLuaBaseEntity, name).second;
-        };
-
-        // A list's rows for Lua, one entry per form an item is listed in,
-        // each { id, level, stock, going, category, stack, size }
-        const auto auctionRows = [](const std::vector<pawn::auction::Listing>& listings) -> sol::object
-        {
-            auto result = ::lua.create_table();
-            for (const auto& listing : listings)
-            {
-                auto entry        = ::lua.create_table();
-                entry["id"]       = listing.itemId;
-                entry["level"]    = listing.level;
-                entry["stock"]    = listing.stock;
-                entry["going"]    = listing.going;
-                entry["category"] = listing.category;
-                entry["stack"]    = listing.stack;
-                entry["size"]     = listing.stackSize;
-                result.add(entry);
-            }
-            return result;
-        };
-
-        // What the auction house has, in stock or sold out, that the member
-        // could wear in an equipment slot; nil for anyone not his to shop for
-        lua["CBaseEntity"]["cardianAuctionList"] = [shopper, auctionRows](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> sol::object
-        {
-            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
-            if (PWho == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            return auctionRows(pawn::auction::wearableAtAuction(PWho, equipSlot));
-        };
-
-        // What the auction house has ever listed in a set of its categories,
-        // in the order given (a group under her grid, a category of Browse),
-        // the same entries; with `learnable`, only the spell scrolls the
-        // member can learn now and has not
-        lua["CBaseEntity"]["cardianAuctionShelf"] = [shopper, auctionRows](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const sol::table& categories, const bool learnable) -> sol::object
-        {
-            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
-            if (PWho == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            // a category is 1..255 (xi.itemAHCategory); anything else, typed
-            // by hand, is left out rather than wrapped onto another
-            std::vector<uint8> cats;
-            for (std::size_t i = 1; i <= categories.size(); ++i)
-            {
-                if (categories[i].get_type() == sol::type::number)
-                {
-                    if (const double cat = categories[i].get<double>(); cat >= 1 && cat <= 255)
-                    {
-                        cats.push_back(static_cast<uint8>(cat));
-                    }
-                }
-            }
-            return auctionRows(pawn::auction::inCategories(PWho, cats, learnable));
-        };
-
-        // An item's history in one form (singly or by the stack) as the game's
-        // own auction house shows it: { stock, going, sales = { { date,
-        // price, seller, buyer } } }, newest first
-        lua["CBaseEntity"]["cardianAuctionHistory"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 itemId, const bool stack) -> sol::table
-        {
-            const auto h      = pawn::auction::history(itemId, stack);
-            auto       result = ::lua.create_table();
-            result["stock"]   = h.stock;
-            result["going"]   = h.going;
-            auto sales        = ::lua.create_table();
-            for (const auto& sale : h.sales)
-            {
-                auto entry      = ::lua.create_table();
-                entry["date"]   = sale.date;
-                entry["price"]  = sale.price;
-                entry["seller"] = sale.seller;
-                entry["buyer"]  = sale.buyer;
-                sales.add(entry);
-            }
-            result["sales"] = sales;
-            return result;
-        };
-
-        // The member bids for one piece or one stack (pawn::auction::bid), a
-        // cardian with the player's purse behind hers: { won, refused, note,
-        // location, equipped, from_purse }; nil for anyone not his to shop for
-        lua["CBaseEntity"]["cardianAuctionBid"] = [shopper](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint16 itemId, const bool stack,
-                                                            const uint32 price, const uint8 location, const uint8 equipSlot, const bool equip) -> sol::object
-        {
-            CCharEntity* PWho = shopper(PLuaBaseEntity, name);
-            if (PWho == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto*      PPlayer   = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            const auto r         = pawn::auction::bid(PWho, PPlayer, itemId, stack, price, location, equipSlot, equip);
-            auto       result    = ::lua.create_table();
-            result["won"]        = r.won;
-            result["refused"]    = r.refused;
-            result["note"]       = r.note;
-            result["location"]   = r.location;
-            result["equipped"]   = r.equipped;
-            result["from_purse"] = r.fromPurse;
-            return result;
-        };
-
-        lua["CBaseEntity"]["cardianMove"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::moveItem(PPawn, fromLoc, slot, toLoc, qty) : "no such cardian";
-        };
-
-        // The gambit editor's view of a cardian's rows (M3.85): index, on,
-        // what the row means where it sits (tactician_line.h token), the row
-        // in the grammar, and the label as the player reads it
-        const auto gambitsOf = [](CCharEntity* PPawn) -> pawn::CGambits*
-        {
-            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr ? &PController->Gambits() : nullptr;
-        };
-        lua["CBaseEntity"]["cardianGambits"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            auto* PGambits            = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            auto result   = ::lua.create_table();
-            auto rows     = ::lua.create_table();
-            std::size_t n = 0;
-            for (const auto& row : PGambits->Rows())
-            {
-                ++n;
-                auto entry     = ::lua.create_table();
-                entry["index"] = n;
-                entry["on"]    = row.enabled;
-                entry["state"] = std::string(cardian::tactician::token(PGambits->StateOf(n)));
-                entry["spec"]  = pawn::text::formatRow(row.gambit);
-                entry["label"] = pawn::labelGambit(row.gambit);
-                rows.add(entry);
-            }
-            result["master"] = PGambits->MasterOn();
-            result["rows"]   = rows;
-            return result;
-        };
-        // Every edit saves the set (cardian_gambits)
-        lua["CBaseEntity"]["cardianGambitToggle"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const bool on) -> std::string
-        {
-            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
-            auto* PGambits = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return "no such cardian";
-            }
-            if (!PGambits->SetEnabled(index, on))
-            {
-                return "no such row";
-            }
-            pawn::saveGambits(PPawn);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianGambitMove"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 from, const uint32 to) -> std::string
-        {
-            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
-            auto* PGambits = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return "no such cardian";
-            }
-            if (!PGambits->Move(from, to))
-            {
-                return "no such row";
-            }
-            pawn::saveGambits(PPawn);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianGambitDelete"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index) -> std::string
-        {
-            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
-            auto* PGambits = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return "no such cardian";
-            }
-            if (!PGambits->Erase(index))
-            {
-                return "no such row";
-            }
-            pawn::saveGambits(PPawn);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianGambitInsert"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
-        {
-            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
-            auto* PGambits = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto gambit = pawn::text::parseRow(spec);
-            if (!gambit.has_value())
-            {
-                return "malformed row";
-            }
-            if (const auto why = cardian::engage::pairingError(*gambit); !why.empty())
-            {
-                return std::string(why);
-            }
-            if (!PGambits->Insert(index, std::move(*gambit)))
-            {
-                return "no such row";
-            }
-            pawn::saveGambits(PPawn);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianGambitReplace"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 index, const std::string& spec) -> std::string
-        {
-            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
-            auto* PGambits = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto gambit = pawn::text::parseRow(spec);
-            if (!gambit.has_value())
-            {
-                return "malformed row";
-            }
-            if (const auto why = cardian::engage::pairingError(*gambit); !why.empty())
-            {
-                return std::string(why);
-            }
-            if (!PGambits->Replace(index, std::move(*gambit)))
-            {
-                return "no such row";
-            }
-            pawn::saveGambits(PPawn);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianGambitVocab"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            auto* PPawn = commandPair(PLuaBaseEntity, name).second;
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            const auto vocab  = pawn::vocabularyFor(PPawn);
-            auto       result = ::lua.create_table();
-            const auto pack   = [](const std::vector<pawn::VocabEntry>& entries)
-            {
-                auto list = ::lua.create_table();
-                for (const auto& e : entries)
-                {
-                    auto entry     = ::lua.create_table();
-                    entry["key"]     = e.key;
-                    entry["label"]   = e.label;
-                    entry["group"]   = e.group;
-                    entry["targets"] = e.targets;
-                    entry["mp"]      = e.mp;
-                    entry["page"]    = e.page;
-                    entry["usable"]  = e.usable;
-                    list.add(entry);
-                }
-                return list;
-            };
-            result["mjob"]       = vocab.mjob;
-            result["mlvl"]       = vocab.mlvl;
-            result["sjob"]       = vocab.sjob;
-            result["slvl"]       = vocab.slvl;
-            result["conditions"] = pack(vocab.conditions);
-            result["statuses"]   = pack(vocab.statuses);
-            result["actions"]    = pack(vocab.actions);
-            return result;
-        };
-        lua["CBaseEntity"]["cardianGambitMaster"] = [commandPair, gambitsOf](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
-        {
-            auto* PPawn    = commandPair(PLuaBaseEntity, name).second;
-            auto* PGambits = gambitsOf(PPawn);
-            if (PGambits == nullptr)
-            {
-                return "no such cardian";
-            }
-            PGambits->SetMaster(on);
-            pawn::saveGambits(PPawn);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianGambitReset"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            pawn::forgetGambits(PPawn);
-            return pawn::reloadBrain(PPawn) ? "" : "no such cardian";
         };
 
         lua["CBaseEntity"]["cardianHunt"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
@@ -1123,159 +555,6 @@ class PawnModule : public CPPModule
             }
             // A flag, never a gambit row: the lead slot is the list's call
             return pawn::setHunting(PPawn, on) ? "" : "no controller";
-        };
-
-        // The party strategy channel: orders live on the player and every
-        // cardian of theirs, and every wild cardian in their party, follows them
-        lua["CBaseEntity"]["cardianOrders"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            const auto rules     = pawn::huntRulesOf(PChar->id);
-            auto       result    = ::lua.create_table();
-            result["strategy"]   = pawn::strategyOf(PChar->id);
-            result["retreat"]    = pawn::isRetreating(PChar->id);
-            result["hunt_min"]   = rules.minCheck;
-            result["hunt_max"]   = rules.maxCheck;
-            result["pull_first"] = rules.pullFirst;
-            result["aggressive"] = rules.aggressive;
-            result["links"]      = rules.links;
-            // The stake (RESEARCH §12.16): set or not, and where
-            const auto stake     = pawn::stakeOf(PChar->id);
-            result["staked"]     = stake.has_value();
-            result["stake_zone"] = stake.has_value() ? static_cast<uint16>(stake->zone) : 0;
-            auto names           = ::lua.create_table();
-            for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
-            {
-                names.add(std::string(pawn::strategyName(i)));
-            }
-            result["names"] = names;
-            return result;
-        };
-        lua["CBaseEntity"]["cardianSetStrategy"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 strategy) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            if (strategy >= pawn::kStrategyCount)
-            {
-                return "no such strategy";
-            }
-            pawn::setStrategy(PChar, strategy);
-            return "";
-        };
-        lua["CBaseEntity"]["cardianSetHunt"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& field, const int value) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::setHuntRule(PChar, field, value);
-        };
-        // Wait here / follow me. Follow from another zone is a travel order
-        // to the player's: she treks the world to meet them
-        lua["CBaseEntity"]["cardianWait"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr)
-            {
-                return "she is not herself right now";
-            }
-            PController->SetWaiting(on, true);
-            if (on)
-            {
-                pawn::clearTravelOrder(PPawn->id);
-                ShowInfoFmt("pawn: {} waits here (ordered)", PPawn->getName());
-            }
-            else if (PPawn->loc.zone != PChar->loc.zone)
-            {
-                ShowInfoFmt("pawn: {} sets out to meet {} in zone {}", PPawn->getName(), PChar->getName(), static_cast<uint16>(PChar->getZone()));
-                pawn::orderTravelByName(name, static_cast<uint16>(PChar->getZone()), PChar->id);
-            }
-            else
-            {
-                ShowInfoFmt("pawn: {} follows (ordered)", PPawn->getName());
-            }
-            return "";
-        };
-
-        lua["CBaseEntity"]["cardianWaiting"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr && PController->IsWaiting();
-        };
-
-        // Her rest as the roster line carries it: the percentage her rest
-        // order runs to (0: none), whether she kneels, Healing's ticks so
-        // far, and milliseconds to the next tick and between ticks
-        lua["CBaseEntity"]["cardianRestState"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            if (PController == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            const auto clock = PController->RestNow();
-            auto       table = ::lua.create_table();
-            table["percent"]  = PController->RestOrderPercent();
-            table["down"]     = clock.down;
-            table["ticks"]    = clock.ticks;
-            table["next"]     = static_cast<int>(std::max(0.0, clock.next) * 1000.0);
-            table["interval"] = static_cast<int>(clock.interval * 1000.0);
-            return table;
-        };
-
-        lua["CBaseEntity"]["cardianRetreat"] = [](CLuaBaseEntity* PLuaBaseEntity, const bool on) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            pawn::setRetreat(PChar, on);
-            return "";
-        };
-        // The stake (RESEARCH §12.16): set or move it here, facing his way;
-        // clear it. The chord's left arm and !cardian stake are this path
-        lua["CBaseEntity"]["cardianStake"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::setStake(PChar);
-        };
-        lua["CBaseEntity"]["cardianStakeClear"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::clearStake(PChar->id, "cleared") ? "" : "no stake";
-        };
-        lua["CBaseEntity"]["cardianEngage"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 targid) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::partyEngage(PChar, targid);
         };
 
         lua["CBaseEntity"]["cardianAvoid"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
@@ -1293,8 +572,8 @@ class PawnModule : public CPPModule
             return "";
         };
 
-        // Sent home alone, to the ordering player's home point, she waits
-        // there as a warp leaves her (the user, 2026-09-14)
+        // Sent home alone, to the ordering player's home point (!pawnhomepoint;
+        // the addon sends the Link's HOMEPOINT)
         lua["CBaseEntity"]["cardianHomePoint"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -1302,94 +581,7 @@ class PawnModule : public CPPModule
             {
                 return "no such cardian";
             }
-            if (!pawn::homePoint(PPawn, PChar))
-            {
-                return "not KO'd";
-            }
-            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
-            {
-                PController->SetWaiting(true, true, "waits at her home point");
-            }
-            return "";
-        };
-
-        // What she cannot do yet and for how long: the seconds left on
-        // every spell and ability still on recast, keyed the way the
-        // vocabulary keys them so a command list can label its own rows.
-        // Only what is actually waiting is sent; the rest are ready.
-        lua["CBaseEntity"]["cardianRecasts"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto       table = ::lua.create_table();
-            const auto now   = timer::now();
-            const auto left  = [&](const Recast_t& recast) -> double
-            {
-                auto remaining = (recast.TimeStamp + recast.RecastTime) - now;
-                // A charged ability is usable while any charge is back, so
-                // only the wait for the next charge counts: the recast holds
-                // every spent charge's time end to end, and the ability is
-                // ready once fewer than all but one remain (HasRecast)
-                if (recast.chargeTime != 0s && recast.maxCharges > 0)
-                {
-                    remaining -= recast.chargeTime * (recast.maxCharges - 1);
-                }
-                return remaining > 0s ? std::chrono::duration<double>(remaining).count() : 0.0;
-            };
-
-            if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_MAGIC); PList != nullptr)
-            {
-                for (const auto& recast : *PList)
-                {
-                    if (const auto seconds = left(recast); seconds > 0.0)
-                    {
-                        table[fmt::format("2:2:{}", static_cast<uint16>(recast.ID))] = seconds;
-                    }
-                }
-            }
-
-            // Abilities are stored by recast id, the vocabulary keys them by
-            // ability id, so they are matched through her own ability list
-            if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_ABILITY); PList != nullptr)
-            {
-                for (auto* PAbility : pawn::abilitiesFor(PPawn))
-                {
-                    for (const auto& recast : *PList)
-                    {
-                        if (recast.ID != PAbility->getRecastId())
-                        {
-                            continue;
-                        }
-                        if (const auto seconds = left(recast); seconds > 0.0)
-                        {
-                            table[fmt::format("3:2:{}", PAbility->getID())] = seconds;
-                        }
-                    }
-                }
-            }
-            return table;
-        };
-
-        // Her experience on her main job, and what the next level costs:
-        // the character's own screens show it, and there is no upstream
-        // getter for either
-        lua["CBaseEntity"]["cardianExp"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            const auto job   = static_cast<uint8>(PPawn->GetMJob());
-            auto       table = ::lua.create_table();
-            table["exp"]     = job < MAX_JOBTYPE ? PPawn->jobs.exp[job] : 0;
-            table["tnl"]     = charutils::GetExpNEXTLevel(PPawn->GetMLevel());
-            return table;
+            return pawn::orderHomePoint(PChar, PPawn) == CL_S_OK ? "" : "not KO'd";
         };
 
         // A cardian, for the Lua module that moves quest and mission
@@ -1398,45 +590,6 @@ class PawnModule : public CPPModule
         {
             const auto* PChar = dynamic_cast<const CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return PChar != nullptr && pawn::isPawn(PChar);
-        };
-
-        // The view origin (ROADMAP C, pawn/view.h): the player's client is
-        // looking through this cardian, so the world around her must reach
-        // him. "" looks through nobody again; a number is a target index in
-        // his zone, any entity, for a GM (a player's eye through any mob
-        // would be a wallhack).
-        lua["CBaseEntity"]["cardianView"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr || PChar->loc.zone == nullptr)
-            {
-                return "not in a zone";
-            }
-            if (name.empty())
-            {
-                cardian::view::clear(PChar);
-                return "";
-            }
-            CBaseEntity* PTarget = nullptr;
-            if (std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isdigit(c); }))
-            {
-                if (PChar->m_GMlevel == 0)
-                {
-                    return "a cardian's name";
-                }
-                PTarget = PChar->loc.zone->GetEntity(static_cast<uint16>(std::stoul(name)), TYPE_PC | TYPE_MOB | TYPE_NPC);
-            }
-            else
-            {
-                PTarget = commandPair(PLuaBaseEntity, name).second;
-            }
-            if (PTarget == nullptr || PTarget->loc.zone != PChar->loc.zone)
-            {
-                return "no such entity here";
-            }
-            cardian::view::set(PChar, PTarget);
-            ShowInfoFmt("pawn: {} looks through {}", PChar->getName(), PTarget->getName());
-            return "";
         };
 
         // The steer tick (pawn/view.h, every kSteerPeriodMs): every cardian
@@ -1456,272 +609,6 @@ class PawnModule : public CPPModule
                 }
             });
         });
-
-        // A walk order (pawn.h): a point in her zone, or none. The point is
-        // the player's ring, which is its own thing on his client (no mesh
-        // there): it is slid along the mesh from the last point toward the
-        // one asked -- a wall or a ledge stops it, so it never leaves the
-        // floor she can walk -- and its height is the mesh's. Answers the
-        // error, then the point as taken (x, y, z), for the ring to follow
-        lua["CBaseEntity"]["cardianWalk"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, sol::optional<float> x, sol::optional<float> y, sol::optional<float> z) -> std::tuple<std::string, float, float, float>
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return { "no such cardian", 0.f, 0.f, 0.f };
-            }
-            if (!x.has_value() || !y.has_value() || !z.has_value())
-            {
-                // A composed maneuver's route is its order's, not the ring's: the ring
-                // going (the camera home) leaves it for her to walk at the release
-                const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
-                if (PController == nullptr || !PController->ManeuverComposed())
-                {
-                    pawn::clearWalkOrder(PPawn->id);
-                }
-                return { "", 0.f, 0.f, 0.f };
-            }
-            if (PPawn->loc.zone == nullptr || PChar->loc.zone != PPawn->loc.zone)
-            {
-                return { "not in your zone", 0.f, 0.f, 0.f };
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            // Composed, her maneuver's way is set: a point still in flight from the ring moves nothing
-            if (PController != nullptr && PController->ManeuverComposed())
-            {
-                const auto at = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
-                return { "", at.x, at.y, at.z };
-            }
-            position_t point{ *x, *y, *z, 0, 0 };
-            if (auto* PMesh = PPawn->loc.zone->navMesh(); PMesh != nullptr)
-            {
-                const auto from = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
-                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
-                {
-                    point = *slid;
-                }
-                else
-                {
-                    point = from; // nowhere to slide from: the ring stays where it was
-                }
-                PMesh->snapToValidPosition(point); // the surface's own height
-            }
-            // Held, in a maneuver, the ring lays a route (docs/maneuvers.md)
-            const bool laying = PController != nullptr && PController->InManeuver() && cardian::pause::isHeld();
-            pawn::setWalkOrder(PPawn->id, point, PChar->id, laying);
-            return { "", point.x, point.y, point.z };
-        };
-
-        // The command window: one action now, on a target index in the
-        // zone (0 = herself)
-        lua["CBaseEntity"]["cardianDo"] = [commandPair, managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            // Her items are hers to use only when she is his: use is a manage verb
-            if (key.starts_with("item:") && managedPair(PLuaBaseEntity, name).second == nullptr)
-            {
-                return name + " is not yours to manage";
-            }
-            if (PPawn->loc.zone == nullptr)
-            {
-                return "not in a zone";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr)
-            {
-                return "no controller";
-            }
-            CBattleEntity* PTarget = targid == 0 ? static_cast<CBattleEntity*>(PPawn)
-                                                 : dynamic_cast<CBattleEntity*>(PPawn->loc.zone->GetEntity(targid, TYPE_PC | TYPE_MOB | TYPE_NPC));
-            if (PTarget == nullptr)
-            {
-                return "no such target";
-            }
-            const auto err = PController->DoAction(key, PTarget);
-            if (err.empty())
-            {
-                ShowInfoFmt("pawn: {} is ordered {} on {} by {}", PPawn->getName(), key, PTarget->getName(), PChar->getName());
-            }
-            return err;
-        };
-
-        // A maneuver (docs/maneuvers.md, pawn_controller.h): begins one on
-        // her; "off" ends it; "move", "movewait" and "rest:<n>" are its
-        // orders that are no action. Answers "" or why not
-        lua["CBaseEntity"]["cardianManeuver"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& what) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr)
-            {
-                return "no controller";
-            }
-            if (what == "off")
-            {
-                if (!PController->InManeuver())
-                {
-                    return "no maneuver";
-                }
-                PController->EndManeuver(fmt::format("{} cancels the maneuver", PChar->getName()));
-                return "";
-            }
-            if (what == "move" || what == "movewait")
-            {
-                return PController->ComposeMove(what == "movewait");
-            }
-            if (int percent = 0; std::sscanf(what.c_str(), "rest:%d", &percent) == 1)
-            {
-                return PController->ComposeRest(percent);
-            }
-            return PController->BeginManeuver(PChar);
-        };
-        // A composed maneuver of his waiting on her (a pause queues one per
-        // cardian): told to an addon that has just bound, which starts empty
-        lua["CBaseEntity"]["cardianComposed"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            const auto* PController   = PPawn != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr && PChar != nullptr && PController->ManeuverComposed() && PController->ManeuverBy() == PChar->id;
-        };
-        // The cardian this player has a maneuver on, her name, or ""
-        lua["CBaseEntity"]["cardianManeuverOf"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
-        {
-            const auto* PChar       = dynamic_cast<const CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            const auto* PPawn       = PChar != nullptr ? zoneutils::GetChar(pawn::maneuverOf(PChar->id)) : nullptr;
-            const auto* PController = PPawn != nullptr && PPawn->PAI != nullptr ? dynamic_cast<const CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr && PController->InManeuver() ? PPawn->getName() : std::string();
-        };
-
-        // The command window's queue line: what she has waiting ("" with none),
-        // and the player taking it back
-        lua["CBaseEntity"]["cardianQueued"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            auto* PController         = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr ? PController->QueuedOrderLine() : "";
-        };
-        lua["CBaseEntity"]["cardianCancel"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            return PController != nullptr && PController->CancelQueuedOrder() ? "" : "nothing queued";
-        };
-
-        lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::rescue(PChar, PPawn) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::useItem(PPawn, slot, location) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianDrop"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::dropItem(PPawn, slot, qty, location) : "no such cardian";
-        };
-
-        // Merge and compact one of her containers (the inventory or a bag)
-        lua["CBaseEntity"]["cardianSort"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::sortBag(PPawn, location) : "no such cardian";
-        };
-
-        // The scroll flow in one action: transfer, then the pawn uses the
-        // stack from wherever it landed
-        lua["CBaseEntity"]["cardianGiveUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-
-            // Refused whole while held, as the use would be: not half of it, the transfer
-            if (cardian::pause::isHeld())
-            {
-                return "not while paused";
-            }
-
-            uint8 landed = 0;
-            if (auto err = pawn::items::giveToPawn(PChar, PPawn, slot, qty, &landed); !err.empty())
-            {
-                return err;
-            }
-            return pawn::items::useItem(PPawn, landed);
-        };
-
-        // Attack/defense for the companion equip screen; upstream exposes no
-        // Lua accessor for the computed values
-        lua["CBaseEntity"]["cardianCombatStats"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto stats   = ::lua.create_table();
-            stats["att"] = PPawn->ATT(SLOT_MAIN);
-            stats["def"] = PPawn->DEF();
-            return stats;
-        };
-
-        // The Profile page: what the client's own Profile screen shows --
-        // title, nation, race, home point, rank and rank points
-        lua["CBaseEntity"]["cardianProfile"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            const auto nation = std::min<uint8>(PPawn->profile.nation, 2);
-            auto*      PZone  = zoneutils::GetZone(PPawn->profile.home_point.destination);
-
-            auto table          = ::lua.create_table();
-            table["title"]      = PPawn->profile.title;
-            table["nation"]     = nation;
-            table["race"]       = PPawn->look.race;
-            table["rank"]       = PPawn->profile.rank[nation];
-            table["rankpoints"] = PPawn->profile.rankpoints;
-            table["home"]       = PZone != nullptr ? PZone->getName() : std::string("?");
-            return table;
-        };
-
-        lua["CBaseEntity"]["cardianGear"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto chunkTable = ::lua.create_table();
-            for (const auto& chunk : pawn::items::equipChunks(PPawn))
-            {
-                chunkTable.add(chunk);
-            }
-            return chunkTable;
-        };
     }
 
     // A character entering a zone -- a login, a zone change, a cardian's

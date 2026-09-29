@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "cardian_link_messages.h"
 #include "engage_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
@@ -163,9 +164,8 @@ public:
     void SetRestOrder(int percent, std::string_view why);
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
-    auto RestOrderPercent() const -> int; // 0: none
-    // Her kneel as the rest row shows it: Healing's ticks so far, and
-    // seconds to the next and between ticks (zero while standing)
+    // Her kneel: Healing's ticks so far, and seconds to the next and between
+    // ticks (zero while standing)
     struct RestClock
     {
         bool   down     = false;
@@ -173,7 +173,6 @@ public:
         double next     = 0.0;
         double interval = 0.0;
     };
-    auto RestNow() const -> RestClock;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -235,8 +234,10 @@ public:
     // queued order firing): he is handed back and she carries it out. His
     // camera leaving her, her leaving his party, her death and his cancel
     // end it too; every end restores her gambit switch to what it was. One
-    // maneuver per player at a time. Begin answers "" or why not.
-    auto BeginManeuver(CCharEntity* PBy) -> std::string;
+    // maneuver per player at a time. Begin answers CL_S_OK or why not (the
+    // Link's outcomes, cardian_link_protocol.h); other receives the cardian he
+    // drives already, on CL_S_ONE_MANEUVER.
+    auto BeginManeuver(CCharEntity* PBy, uint32* other = nullptr) -> uint16;
     void EndManeuver(std::string_view why);
     auto InManeuver() const -> bool;
     // A paused maneuver (held, docs/maneuvers.md): the ring lays a route
@@ -244,15 +245,16 @@ public:
     // Composed, the maneuver no longer needs his eye on her: at the release
     // she walks the route, the order fires at its end, and that is the
     // maneuver's end. ComposeMove is the route with no order: end at its
-    // end, waiting there if `wait`. Answers "" or why not.
-    auto ComposeMove(bool wait) -> std::string;
+    // end, waiting there if `wait`. Answers CL_S_OK or why not.
+    auto ComposeMove(bool wait) -> uint16;
     // The maneuver's "Rest until N%", her queued order either way: live,
     // composed at once where she stands, his camera handed back; paused,
     // after the route if one is laid. The maneuver lasts through the rest
     // until HP and MP both reach N% -- her queued order, and cancelled as
-    // one -- gambits off throughout (the user, 2026-09-23). Answers "" or why not
-    auto ComposeRest(int percent) -> std::string;
+    // one -- gambits off throughout (the user, 2026-09-23). Answers CL_S_OK or why not
+    auto ComposeRest(int percent) -> uint16;
     void MarkComposed(std::string_view what); // the maneuver's order is given, to play out without him: his live slot frees for the next cardian
+    void TellManeuver(uint8 state) const;     // his addon hears the change (MANEUVER_STATE, CL_MS_*)
     auto ManeuverComposed() const -> bool;
     auto ManeuverBy() const -> uint32; // whose maneuver she is on, 0 for none
     // Her gambit master switch as her own setting: while a maneuver holds
@@ -304,10 +306,12 @@ public:
     // The command window: one action now, on the target the player picked.
     // `key` is the vocabulary's action key, kind:mode:id -- the concrete
     // ones only: a spell (2:2:id), an ability (3:2:id), a weapon skill
-    // (4:2:id), the ranged attack (1:0:0); the "best of" entries are the
-    // gambit engine's -- or "attack", her order to fight the mob picked
-    // (AttackOrder), or "disengage" (DisengageOrder). "" when it fired, else why not.
-    auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
+    // (4:2:id), the ranged attack (1:0:0), an item she carries (item:<id>);
+    // the "best of" entries are the gambit engine's -- or "attack", her order
+    // to fight the mob picked (AttackOrder), or "disengage" (DisengageOrder).
+    // CL_S_OK when it fired or is held (the Link's outcomes), else why not;
+    // CL_S_TOO_SOON puts the seconds it is away in `waitSeconds`.
+    auto DoAction(const std::string& key, CBattleEntity* PTarget, uint16* waitSeconds = nullptr) -> uint16;
 
     // The order given a little early -- while she acts, or while the
     // spell is on recast -- is held and fired the moment both allow, the
@@ -322,11 +326,11 @@ public:
         return m_QueuedOrder.has_value();
     }
 
-    // The queued order for the command window's queue line: its action key and
-    // its target's index, "2:2:1 1024"; "" with none. The addon words it from the
-    // list it holds. It is told whenever this changes (`cd q <her name> <key>
-    // <target index>`), and the player can take the order back.
-    auto QueuedOrderLine() const -> std::string;
+    // The queued order as the command window's queue line shows it: the Link's
+    // QUEUE, her action and its target's index (CL_AK_NONE with none). The addon
+    // words it from the list it holds. It is told whenever this changes, and the
+    // player can take the order back.
+    auto QueueLine() const -> cl_queue;
     auto CancelQueuedOrder() -> bool;
 
     // An order waits on the player's behalf: it ends with the tie to him, as a trek
@@ -337,7 +341,7 @@ public:
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line
     // of sight, its own script's word -- which the player hears as a note.
-    void ToldAfterOrder(const std::string& said);
+    void ToldAfterOrder(uint16 message, const std::string& said);
 
     // The attack order, fired once her beat is served: the front row draws
     // first, the back line a touch later
@@ -1069,32 +1073,40 @@ private:
     // in progress has left
     auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
-    void Note(const std::string& text) const; // one line to the player's addon, printed as a complaint
+    // What came of one of the player's orders, to his addon (the Link's NOTE,
+    // cardian_link_protocol.h): the note as the caller filled it, and why
+    void Note(cl_note note, uint16 reason) const;
 
     // The command window's Attack: the party's engage order (EngageOn), given
     // to her alone, replacing any order she has queued. Held, it waits as her
     // one queued order -- a paused maneuver's, played out at the end of its
     // route; live, a maneuver ends as it is given, and she walks in and
     // fights with her gambits back
-    auto AttackOrder(CBattleEntity* PTarget) -> std::string;
+    auto AttackOrder(CBattleEntity* PTarget) -> uint16;
     // The command window's Disengage: she sheathes. An Attack row of hers
     // that claims the mob takes her back into the fight once her draw
     // cooldown (the usual re-engage wait) is served, and a Support Mage
     // whose rows take no fight attends it again; with her gambits off she
     // stays out. Held and in a maneuver, as Attack
-    auto DisengageOrder() -> std::string;
+    auto DisengageOrder() -> uint16;
 
     // The one way the queued order changes, so the addon's queue line is never stale
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
 
     // The order that last started, and when: what a refusal right after it is about
+    // The order last started, the game's word on it heard for kHeels after: its
+    // name for the log and its key for the note, set and cleared together.
+    // Stamped before the order is tried, so a refusal the game gives as it
+    // starts is its own; a try that fails takes it back (OrderNotStarted)
     std::string       m_StartedOrder;
+    std::string       m_StartedOrderKey;
     timer::time_point m_StartedOrderAt{ timer::time_point::min() };
-    void              OrderStarted(unsigned kind, unsigned id);
+    void              OrderStarted(const std::string& key, unsigned kind, unsigned id);
+    auto              OrderNotStarted() -> bool; // false when the game refused it already, and said so
 
-    // The action itself, no queueing: "" when it fired, "recast", or why
-    // not
-    auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
+    // The action itself, no queueing: CL_S_OK when it fired; CL_S_ON_RECAST and
+    // CL_S_STANDING_UP for an order to hold; else why not
+    auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> uint16;
     timer::time_point m_LastHuntLogTime;
     cardian::rest::State m_Rest;
     cardian::rest::Follow m_RestFollow;

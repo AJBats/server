@@ -44,7 +44,7 @@ class CCharEntity;
 // Taking and letting go tell the players: each real player's client gets his status
 // packet again, which carries speed 0 while held (packets/char_status.cpp) -- that is
 // the movement lock, derived from the hold, so there is nothing to restore -- and
-// every bound addon gets `cd paused <holder>` or `cd resumed` for its banner. The
+// every bound addon gets the Link's PAUSED or RESUMED message for its banner. The
 // release also tells each client again what is left of his ability recasts and buff
 // timers, which it counted down on its own clock while the server stood still.
 // Everything here is for the main thread except isHeld(), which is safe from anywhere.
@@ -73,9 +73,9 @@ auto release(std::string_view why) -> Result;
 
 // The pause button: takes the hold, or lets go of the asker's own. Anyone may pause
 // and only the holder may resume (co-op's real rules are a later decision); a player
-// on his way out of the game may not pause. Answers with why not, or with nothing
-// when it did.
-auto toggle(CCharEntity* PChar) -> std::string;
+// on his way out of the game may not pause. CL_S_OK when it did (the Link's
+// outcomes, pawn/cardian_link_protocol.h), else why not.
+auto toggle(CCharEntity* PChar) -> uint16;
 
 auto isHeld() -> bool;
 auto status() -> Status;
