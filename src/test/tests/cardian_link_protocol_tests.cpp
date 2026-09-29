@@ -127,6 +127,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_contract) == 28);
     STATIC_REQUIRE(sizeof(cl_contracts) == 468);
     STATIC_REQUIRE(sizeof(cl_end_contract) == 20);
+    STATIC_REQUIRE(sizeof(cl_note) == 68);
     STATIC_REQUIRE(sizeof(cl_legacy_cd) == sizeof(cl_header));
 }
 

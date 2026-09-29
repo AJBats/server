@@ -2593,7 +2593,7 @@ namespace pawn
 
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
         {
-            PController->ToldAfterOrder(said);
+            PController->ToldAfterOrder(message, said);
         }
     }
 

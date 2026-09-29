@@ -48,11 +48,6 @@ namespace pawn::items
     // slot the stack arrived in (for give-and-use chaining). CL_S_OK or why not.
     auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> uint16;
 
-    // A queued order's outcome in words, for the note a cardian leaves when
-    // she lets it go (CPawnController::TryAction's outcomes). Leaves with the
-    // text protocol.
-    auto legacyReason(uint16 status) -> std::string;
-
     // Retail's auto-sort is a client option: the client asks for a stack
     // merge whenever an item lands. A cardian has no client, so the server
     // merges her partial stacks itself -- at spawn, after a transfer into

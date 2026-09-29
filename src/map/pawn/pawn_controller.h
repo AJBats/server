@@ -341,7 +341,7 @@ public:
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line
     // of sight, its own script's word -- which the player hears as a note.
-    void ToldAfterOrder(const std::string& said);
+    void ToldAfterOrder(uint16 message, const std::string& said);
 
     // The attack order, fired once her beat is served: the front row draws
     // first, the back line a touch later
@@ -1073,7 +1073,9 @@ private:
     // in progress has left
     auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
-    void Note(const std::string& text) const; // one line to the player's addon, printed as a complaint
+    // What came of one of the player's orders, to his addon (the Link's NOTE,
+    // cardian_link_protocol.h): the note as the caller filled it, and why
+    void Note(cl_note note, uint16 reason) const;
 
     // The command window's Attack: the party's engage order (EngageOn), given
     // to her alone, replacing any order she has queued. Held, it waits as her
@@ -1092,9 +1094,15 @@ private:
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
 
     // The order that last started, and when: what a refusal right after it is about
+    // The order last started, the game's word on it heard for kHeels after: its
+    // name for the log and its key for the note, set and cleared together.
+    // Stamped before the order is tried, so a refusal the game gives as it
+    // starts is its own; a try that fails takes it back (OrderNotStarted)
     std::string       m_StartedOrder;
+    std::string       m_StartedOrderKey;
     timer::time_point m_StartedOrderAt{ timer::time_point::min() };
-    void              OrderStarted(unsigned kind, unsigned id);
+    void              OrderStarted(const std::string& key, unsigned kind, unsigned id);
+    auto              OrderNotStarted() -> bool; // false when the game refused it already, and said so
 
     // The action itself, no queueing: CL_S_OK when it fired; CL_S_ON_RECAST and
     // CL_S_STANDING_UP for an order to hold; else why not

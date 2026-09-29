@@ -192,35 +192,6 @@ namespace pawn::items
         }
     } // namespace
 
-    auto legacyReason(const uint16 status) -> std::string
-    {
-        switch (status)
-        {
-            case CL_S_OK:
-                return "";
-            case CL_S_NO_ITEM:
-                return "no item in that slot";
-            case CL_S_ITEM_BUSY:
-                return "item is busy";
-            case CL_S_NOT_WHILE_PAUSED:
-                return "not while paused";
-            case CL_S_ITEM_UNUSABLE:
-                return "item cannot be used";
-            case CL_S_STANDING_UP:
-                return "standing up";
-            case CL_S_CANNOT_NOW:
-                return "cannot do that now";
-            case CL_S_NOT_CARRIED:
-                return "she has none";
-            case CL_S_ON_RECAST:
-                return "recast";
-            case CL_S_MALFORMED:
-                return "bad action";
-            default:
-                return "refused";
-        }
-    }
-
     namespace
     {
         // The bags in the order the addon cycles them

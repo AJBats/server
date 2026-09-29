@@ -108,6 +108,7 @@ namespace cardian::link
     X(DO, cl_do)                 \
     X(QUEUES, cl_queues)         \
     X(QUEUE, cl_queue)           \
+    X(NOTE, cl_note)             \
     X(MANEUVER_STATE, cl_maneuver_state) \
     X(WALK_TAKEN, cl_walk_taken) \
     X(PAUSE, cl_pause)           \

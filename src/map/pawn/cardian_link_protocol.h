@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 26: his cardians and the party finder,
+// compatible, the user, 2026-09-14). 27: NOTE, what came of a cardian's
+// order after it was taken (the note line leaves LEGACY_CD for the server's
+// pushes); 26: his cardians and the party finder,
 // OWNED, SPAWN, DESPAWN, SHOUT, SHOUT_RESPONDER, PEEK, INVITE, CONTRACTS and
 // END_CONTRACT (the owned, spawn, despawn, shout, peek, invite, contracts and
 // endcontract lines leave LEGACY_CD); 25: gambits, GAMBITS, GAMBIT_ROW, the
@@ -64,7 +66,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 26 };
+enum { CL_PROTOCOL = 27 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -141,6 +143,8 @@ enum
     CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
     CL_S_COOLING_DOWN      = 0x0133, // a cooldown runs: the answer says how long (RESCUE's cooldownLeft, SHOUT's waitMs)
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
+    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target
+    CL_S_CANNOT_RECOVER    = 0x0136, // resting, she cannot recover right now (a poison, an avatar out)
 
     // The pause button
     CL_S_PAUSE_OFF         = 0x0140, // the pause is switched off on this server
@@ -1218,7 +1222,37 @@ enum
     CL_T_WALK_TAKEN     = 0x0505,
     CL_T_PAUSE          = 0x0506,
     CL_T_QUEUE          = 0x0507,
+    CL_T_NOTE           = 0x0508,
 };
+
+enum
+{
+    CL_NOTE_LET_GO    = 0, // she let the order go: reason says why
+    CL_NOTE_REFUSED   = 1, // the game refused it on its next step: message
+    CL_NOTE_REST_ENDS = 2, // her rest order ended: reason says why
+};
+
+// One-way, to the player whose order it was: what came of one of his cardians'
+// orders after it was taken, which she has no client to show. The header's
+// status says why. Let go -- CL_S_NO_TARGET its target gone, CL_S_UNREACHED she
+// could not get in reach of it, CL_S_TOO_SOON busy or on recast past the
+// order's grace (wait: the recast's seconds left, 0 busy), or what the game
+// answered when she tried; refused by the game on its next step, with the
+// battle message it answered; or her rest order ended. The server names it;
+// the addon words it.
+typedef struct cl_note
+{
+    cl_header h;
+    uint32_t  cardian;  // charid
+    uint8_t   kind;     // CL_NOTE_*
+    uint8_t   spare[3];
+    cl_action action;   // the order
+    uint16_t  target;   // CL_S_UNREACHED: the target's index in her zone
+    uint16_t  wait;     // CL_S_TOO_SOON: seconds of recast left; 0 busy
+    uint16_t  message;  // CL_NOTE_REFUSED: the game's battle message (MsgBasic)
+    uint16_t  spare2;
+    char      about[32]; // for people: the battle message's name (REFUSED), the target's (UNREACHED)
+} cl_note;
 
 // One-way, to a player at every change of a queue line of his (and an answer
 // to QUEUES): the one command a character has waiting -- one of his cardians'

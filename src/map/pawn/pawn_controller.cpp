@@ -1383,7 +1383,12 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : Acting() ? "busy" : outOfReach ? "out of reach" : "";
     if (heldFor.empty())
     {
+        OrderStarted(key, kind, id);
         const auto status = TryAction(kind, mode, id, target);
+        if (status != CL_S_OK)
+        {
+            OrderNotStarted();
+        }
         if (status == CL_S_ON_RECAST)
         {
             heldFor = "recast";
@@ -1396,7 +1401,6 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
         {
             if (status == CL_S_OK)
             {
-                OrderStarted(kind, id);
                 NoteOrderFired();
             }
             return status;
@@ -1561,13 +1565,22 @@ auto CPawnController::CancelQueuedOrder() -> bool
     return DropQueuedOrder("the player took it back");
 }
 
-void CPawnController::OrderStarted(const unsigned kind, const unsigned id)
+void CPawnController::OrderStarted(const std::string& key, const unsigned kind, const unsigned id)
 {
-    m_StartedOrder   = OrderName(kind, id);
-    m_StartedOrderAt = m_Tick;
+    m_StartedOrder    = OrderName(kind, id);
+    m_StartedOrderKey = key;
+    m_StartedOrderAt  = m_Tick;
 }
 
-void CPawnController::ToldAfterOrder(const std::string& said)
+auto CPawnController::OrderNotStarted() -> bool
+{
+    const bool untold = !m_StartedOrder.empty();
+    m_StartedOrder.clear();
+    m_StartedOrderKey.clear();
+    return untold;
+}
+
+void CPawnController::ToldAfterOrder(const uint16 message, const std::string& said)
 {
     constexpr auto kHeels = 2s;
     if (m_StartedOrder.empty() || m_Tick - m_StartedOrderAt > kHeels)
@@ -1575,15 +1588,22 @@ void CPawnController::ToldAfterOrder(const std::string& said)
         return;
     }
     ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), m_StartedOrder, said);
-    Note(fmt::format("{} refused: {}", m_StartedOrder, said));
+    auto note    = cardian::link::make<cl_note>();
+    note.kind    = CL_NOTE_REFUSED;
+    note.action  = pawn::actionOfKey(m_StartedOrderKey);
+    note.message = message;
+    cardian::link::setText(note.about, said);
+    Note(note, CL_S_REFUSED);
     m_StartedOrder.clear();
+    m_StartedOrderKey.clear();
 }
 
-void CPawnController::Note(const std::string& text) const
+void CPawnController::Note(cl_note note, const uint16 reason) const
 {
     if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
     {
-        cardian::link::sendLegacy(owner, "note " + text);
+        note.cardian = POwner->id;
+        cardian::link::send(owner, note, reason);
     }
 }
 
@@ -1734,7 +1754,10 @@ void CPawnController::FireQueuedOrder()
         if (PMob == nullptr || PMob->isDead())
         {
             ShowInfoFmt("pawn: {} lets the queued attack go (its target is gone)", POwner->getName());
-            Note("the attack let go: its target is gone");
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            Note(note, CL_S_NO_TARGET);
             return;
         }
         ShowInfoFmt("pawn: {} starts the queued attack on {}", POwner->getName(), PMob->getName());
@@ -1778,10 +1801,14 @@ void CPawnController::FireQueuedOrder()
         }
         else if (m_Tick - m_OrderApproachSince > kOrderApproachMax)
         {
-            const auto name = OrderName(kind, id);
             ShowInfoFmt("pawn: {} lets the queued {} go (could not get in reach of {})", POwner->getName(), key, beyond->first->getName());
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            note.target = beyond->first->targid;
+            cardian::link::setText(note.about, beyond->first->getName());
             SetQueuedOrder(std::nullopt);
-            Note(fmt::format("{} let go: could not get in reach of {}", name, beyond->first->getName()));
+            Note(note, CL_S_UNREACHED);
             if (InManeuver() && m_ManeuverComposed)
             {
                 m_ManeuverComposed = false;
@@ -1803,9 +1830,13 @@ void CPawnController::FireQueuedOrder()
     {
         SetQueuedOrder(std::nullopt);
         const auto wait = OrderWait(kind, id);
-        const auto why  = (Acting() || wait <= 0s) ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait));
-        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
-        Note(fmt::format("{} let go: {}", OrderName(kind, id), why));
+        const bool busy = Acting() || wait <= 0s;
+        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, busy ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait)));
+        auto note   = cardian::link::make<cl_note>();
+        note.kind   = CL_NOTE_LET_GO;
+        note.action = pawn::actionOfKey(key);
+        note.wait   = busy ? 0 : static_cast<uint16_t>(std::clamp(wholeSeconds(wait), 0, static_cast<int>(UINT16_MAX)));
+        Note(note, CL_S_TOO_SOON);
         return;
     }
     if (Acting())
@@ -1822,21 +1853,29 @@ void CPawnController::FireQueuedOrder()
 
     // The action's own target rules decide whether a corpse is valid. A
     // Raise ordered while resting waits here through the same stand gate.
+    // Stamped as started first: a refusal the game gives as she tries it is
+    // this order's (ToldAfterOrder)
+    OrderStarted(key, kind, id);
     const auto status = TryAction(kind, mode, id, target);
     if (status == CL_S_ON_RECAST || status == CL_S_STANDING_UP)
     {
+        OrderNotStarted();
         return; // the timer has not run out: next tick, until the deadline
     }
     SetQueuedOrder(std::nullopt);
     if (status != CL_S_OK)
     {
-        const auto why = pawn::items::legacyReason(status);
-        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
-        Note(fmt::format("{} let go: {}", OrderName(kind, id), why));
+        ShowInfoFmt("pawn: {} lets the queued {} go (outcome 0x{:04X})", POwner->getName(), key, status);
+        if (OrderNotStarted())
+        {
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            Note(note, status);
+        }
         return;
     }
     // Started, not done: the game may still refuse it on its next step (ToldAfterOrder)
-    OrderStarted(kind, id);
     ShowInfoFmt("pawn: {} starts the queued {} on {}", POwner->getName(), key, PTarget->getName());
     NoteOrderFired();
 }

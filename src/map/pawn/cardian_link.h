@@ -164,9 +164,9 @@ namespace cardian::link
 
     // A one-way message to this character's addon
     template <typename T>
-    auto send(const uint32 charid, T msg) -> bool
+    auto send(const uint32 charid, T msg, const uint16 status = CL_S_OK) -> bool
     {
-        stamp(msg, 0, 0, CL_S_OK);
+        stamp(msg, 0, 0, status);
         return sendBytes(charid, bytesOf(msg));
     }
 
