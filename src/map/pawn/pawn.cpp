@@ -1408,9 +1408,7 @@ namespace pawn
 
     auto strategyName(const uint16 strategy) -> std::string_view
     {
-        // One word each: the orders line is whitespace-split on the wire, so a
-        // two-word name would slide every field after it (the names go last,
-        // joined by ';', and are split out of args[10] by the addon)
+        // For the map log and !tactics; the addon words its own from the number
         static constexpr std::array<std::string_view, kStrategyCount> names{ "Hold", "Pull" };
         return strategy < names.size() ? names[strategy] : std::string_view("?");
     }

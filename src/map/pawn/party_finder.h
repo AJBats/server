@@ -96,7 +96,6 @@ namespace pawn::finder
         Faded,
         Away,
     };
-    auto presenceName(Presence presence) -> const char*; // here, standing, busy, faded, away: the finder verb's words
 
     struct Candidate
     {
@@ -114,11 +113,6 @@ namespace pawn::finder
         Presence    presence = Presence::Away;
         Answer      answer;
     };
-
-    // Everyone in reach with her answer: the yeses first, then here before
-    // standing before the rest, then by level descending, then by name.
-    // The `finder` verb's debugging list; the screen shouts instead
-    auto candidates(const CCharEntity* PPlayer, const Goal& goal) -> std::vector<Candidate>;
 
     // The shout: up to eight of the adventurers in reach the world holds
     // (on the ladder or standing) hear it, picked at random -- enough

@@ -183,6 +183,11 @@ namespace cardian::link
     // CL_T_LEGACY_CD. Leaves with the conversion.
     auto sendLegacy(uint32 charid, std::string_view line) -> bool;
 
+    // Whether the !cardian command running now was run by the Link for the
+    // bound character's addon (LEGACY_CD) rather than typed: the command
+    // answers nothing typed (CLAUDE.md, UI first). Leaves with LEGACY_CD.
+    auto runningLegacy() -> bool;
+
     // The uplink side store (RESEARCH.md par.7, option B): the freshest
     // client-reported position of a bound character, already converted to
     // server conventions. Cardian AI code is the only reader; loc.p and the

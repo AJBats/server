@@ -64,6 +64,9 @@ using namespace std::chrono_literals;
 
 namespace
 {
+    // A LEGACY_CD line is running as the !cardian command (runningLegacy)
+    bool legacyRunning = false;
+
     using namespace cardian::link;
 
     Stats g_stats;
@@ -739,6 +742,18 @@ namespace
             {
                 return;
             }
+            // The command runs inside the call, on this thread: marked for its span
+            struct Running
+            {
+                Running()
+                {
+                    legacyRunning = true;
+                }
+                ~Running()
+                {
+                    legacyRunning = false;
+                }
+            } running;
             CCommandHandler::call(scheduler_, ::lua, PChar, fmt::format("cardian {}", text));
         }
 
@@ -980,6 +995,11 @@ namespace cardian::link
         {
             connection->push(bytes);
         }
+    }
+
+    auto runningLegacy() -> bool
+    {
+        return legacyRunning;
     }
 
     auto sendLegacy(const uint32 charid, const std::string_view line) -> bool

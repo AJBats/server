@@ -332,9 +332,9 @@ namespace pawn
     // (forgetGuestGambits). Her world layer (world.h brainRows) is not among
     // them and is left as it is: it runs ahead of them while she is in the
     // wild, and rebuilds by itself when the world's file, her job or her
-    // role changes. The controller calls this once, on its first tick; a
-    // reset (greset) calls it again, and !pawnbrain after a look at the
-    // world's file (world.h rereadBrains). Implemented in pawn_module.cpp.
+    // role changes. The controller calls this once, on its first tick, and
+    // !pawnbrain again after a look at the world's file (world.h
+    // rereadBrains). Implemented in pawn_module.cpp.
     void loadBrain(CCharEntity* PPawn);
 
     // The saved gambit set (cardian_gambits, M3.85): the rows in the row

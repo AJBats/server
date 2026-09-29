@@ -1,7 +1,8 @@
 -- The combat pause's movement lock and its button (pause P4). Held, a player's client
 -- is told speed 0 in his status packet, a position packet moves nobody on the server,
 -- and both are as they were after the release: the lock is derived from the hold, so
--- there is nothing to restore. The button is `!cardian pause`, player:cardianPause().
+-- there is nothing to restore. The button is the Link's PAUSE;
+-- these tests press it through player:cardianPause().
 --
 -- xi.cardian.pause is bound for tests by src/test/tests/cardian_pawn_stubs.cpp.
 

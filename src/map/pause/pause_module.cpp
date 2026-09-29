@@ -32,7 +32,7 @@
 
 namespace
 {
-    // The pause button's refusal as a typed `!cardian pause` answers it
+    // The pause button's refusal in words, as player:cardianPause() answers it
     auto refusalText(const uint16 status) -> std::string
     {
         switch (status)
@@ -62,9 +62,9 @@ namespace
 // is the input gate (input_gate.h).
 class CardianPauseModule : public CPPModule
 {
-    // The pause button's server side: the addon's PAUSE over the Link, and a typed
-    // `!cardian pause` (player:cardianPause(), which answers with why not, or with
-    // nothing when the hold was taken or let go)
+    // The pause button's server side: the addon's PAUSE over the Link. The binding
+    // player:cardianPause() takes the same toggle for xi_test's Lua tests, answering
+    // why not, or nothing when the hold was taken or let go
     void OnInit() override
     {
         cardian::link::handle<cl_pause>([](CCharEntity* PChar, const cl_pause& ask, cardian::link::Reply& reply)

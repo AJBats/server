@@ -53,7 +53,6 @@
 #include "zone.h"
 
 #include <algorithm>
-#include <cctype>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <utility>
@@ -201,8 +200,7 @@ namespace pawn
         gambits.RemoveAllGambits();
 
         // The set she has, else her job's defaults (gambit_defaults.h),
-        // seeded once. A job change leaves them as they are; a reset
-        // (greset) seeds them again from the job she holds then.
+        // seeded once. A job change leaves them as they are.
         if (pawn::loadSavedGambits(PPawn))
         {
             return;
@@ -400,14 +398,6 @@ class PawnModule : public CPPModule
             return pawn::seats::capsLine(PChar != nullptr ? static_cast<uint16>(PChar->getZone()) : 0);
         };
 
-        // A cardian of yours without a body stands again: to the front of
-        // her tier and a run. Not a managedPair: she has no body to find
-        lua["CBaseEntity"]["cardianRecall"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            return PChar != nullptr ? pawn::seats::recall(PChar->id, name) : "nobody is asking";
-        };
-
         lua["CBaseEntity"]["cardianFaded"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -503,7 +493,8 @@ class PawnModule : public CPPModule
             return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
         };
 
-        // Cardian management surface (!cardian command / companion addon).
+        // Cardian management surface for the debug commands and the !cardian
+        // command's Lua (the conquest exchange, goals, party progress).
         // Two gates (ROADMAP H: command yes, manage no). managedPair resolves
         // the named pawn through findManagedPawn: only the summoner inspects
         // or moves her belongings or spends her money. commandPair resolves
@@ -511,7 +502,7 @@ class PawnModule : public CPPModule
         // a wild cardian invited along takes orders, shows what /check would
         // show, is sent home when KO'd, and has her gambits edited as a
         // guest's -- cleared when she leaves the party (pawn::leftParty).
-        // Mutators return "" on success, else a reason forwarded to the addon.
+        // Mutators return "" on success, else a reason the command prints.
         const auto managedPair = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::pair<CCharEntity*, CCharEntity*>
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -523,11 +514,11 @@ class PawnModule : public CPPModule
             return { PChar, pawn::findCommandablePawn(PChar, name) };
         };
 
-        // The !cardian command's replies, over the Cardian Link when this
-        // character's addon is bound to one: a '#cd tag ...' chat line goes
-        // as the text of a LEGACY_CD message until its own message exists.
-        // false = no link; the command then prints to chat for a human
-        // typing it.
+        // The !cardian command's replies, over the Cardian Link to this
+        // character's addon: a '#cd tag ...' line goes as the text of a
+        // LEGACY_CD message until its own message exists. false = no link.
+        // And whether the command runs for the addon at all (cardianByLink):
+        // typed by a person, it answers nothing (CLAUDE.md, UI first)
         lua["CBaseEntity"]["cardianLinkSend"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& line) -> bool
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -537,31 +528,11 @@ class PawnModule : public CPPModule
             }
             return cardian::link::sendLegacy(PChar->id, line.rfind("#cd ", 0) == 0 ? std::string_view(line).substr(4) : std::string_view(line));
         };
+        lua["CBaseEntity"]["cardianByLink"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> bool
+        {
+            return cardian::link::runningLegacy();
+        };
 
-        // The typed `!cardian finder`: who is in reach and what she says to the
-        // goal (exp, or a mission log or quest area). The screen shouts over the
-        // Link instead (pawn/link_api.h)
-        const auto candidateRow = [](const pawn::finder::Candidate& c) -> sol::table
-        {
-            auto row       = ::lua.create_table();
-            row["name"]    = c.name;
-            row["job"]     = c.job;
-            row["level"]   = c.level;
-            row["zone"]    = c.zone;
-            row["state"]   = pawn::finder::presenceName(c.presence);
-            row["willing"] = c.answer.yes;
-            row["line"]    = c.answer.line;
-            return row;
-        };
-        lua["CBaseEntity"]["cardianFinder"] = [candidateRow](CLuaBaseEntity* PLuaBaseEntity, const std::string& kind, const int log) -> sol::table
-        {
-            auto rows = ::lua.create_table();
-            for (const auto& c : pawn::finder::candidates(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), pawn::finder::goalFrom(kind, log)))
-            {
-                rows.add(candidateRow(c));
-            }
-            return rows;
-        };
         lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& why, sol::optional<bool> mission)
         {
             const auto* PPlayer = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -593,19 +564,6 @@ class PawnModule : public CPPModule
             return managedPair(PLuaBaseEntity, name).second != nullptr;
         };
 
-        // A typed `!cardian greset`: back to the default rows of the job she
-        // holds now (the editor's rows come over the Link, pawn/link_api.h)
-        lua["CBaseEntity"]["cardianGambitReset"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            pawn::forgetGambits(PPawn);
-            return pawn::reloadBrain(PPawn) ? "" : "no such cardian";
-        };
-
         lua["CBaseEntity"]["cardianHunt"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
@@ -615,60 +573,6 @@ class PawnModule : public CPPModule
             }
             // A flag, never a gambit row: the lead slot is the list's call
             return pawn::setHunting(PPawn, on) ? "" : "no controller";
-        };
-
-        // The party strategy channel: orders live on the player and every
-        // cardian of theirs, and every wild cardian in their party, follows
-        // them. The addon reads and changes them with the Link's ORDERS family
-        // (link_api.cpp); this and the two stake bindings below stay for the
-        // typed !cardian stake until it is decided which verbs stay typeable
-        lua["CBaseEntity"]["cardianOrders"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            const auto rules     = pawn::huntRulesOf(PChar->id);
-            auto       result    = ::lua.create_table();
-            result["strategy"]   = pawn::strategyOf(PChar->id);
-            result["retreat"]    = pawn::isRetreating(PChar->id);
-            result["hunt_min"]   = rules.minCheck;
-            result["hunt_max"]   = rules.maxCheck;
-            result["pull_first"] = rules.pullFirst;
-            result["aggressive"] = rules.aggressive;
-            result["links"]      = rules.links;
-            // The stake (RESEARCH §12.16): set or not, and where
-            const auto stake     = pawn::stakeOf(PChar->id);
-            result["staked"]     = stake.has_value();
-            result["stake_zone"] = stake.has_value() ? static_cast<uint16>(stake->zone) : 0;
-            auto names           = ::lua.create_table();
-            for (uint16 i = 0; i < pawn::kStrategyCount; ++i)
-            {
-                names.add(std::string(pawn::strategyName(i)));
-            }
-            result["names"] = names;
-            return result;
-        };
-        // The stake (RESEARCH §12.16): set or move it here, facing his way;
-        // clear it. The typed !cardian stake is this path; the addon's is STAKE
-        lua["CBaseEntity"]["cardianStake"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::setStake(PChar) == CL_S_OK ? "" : "no character";
-        };
-        lua["CBaseEntity"]["cardianStakeClear"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return "no character";
-            }
-            return pawn::clearStake(PChar->id, "cleared") ? "" : "no stake";
         };
 
         lua["CBaseEntity"]["cardianAvoid"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
@@ -706,46 +610,6 @@ class PawnModule : public CPPModule
             return PChar != nullptr && pawn::isPawn(PChar);
         };
 
-        // The view origin (ROADMAP C, pawn/view.h) as a typed !cardian verb:
-        // the addon sends the Link's VIEW message instead (link_api.cpp), so
-        // this stays only for a GM's number -- a target index in his zone, any
-        // entity (a player's eye through any mob would be a wallhack) -- until
-        // it is decided which !cardian verbs stay typeable. "" looks through
-        // nobody again.
-        lua["CBaseEntity"]["cardianView"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr || PChar->loc.zone == nullptr)
-            {
-                return "not in a zone";
-            }
-            if (name.empty())
-            {
-                cardian::view::clear(PChar);
-                return "";
-            }
-            CBaseEntity* PTarget = nullptr;
-            if (std::all_of(name.begin(), name.end(), [](unsigned char c) { return std::isdigit(c); }))
-            {
-                if (PChar->m_GMlevel == 0)
-                {
-                    return "a cardian's name";
-                }
-                PTarget = PChar->loc.zone->GetEntity(static_cast<uint16>(std::stoul(name)), TYPE_PC | TYPE_MOB | TYPE_NPC);
-            }
-            else
-            {
-                PTarget = commandPair(PLuaBaseEntity, name).second;
-            }
-            if (PTarget == nullptr || PTarget->loc.zone != PChar->loc.zone)
-            {
-                return "no such entity here";
-            }
-            cardian::view::set(PChar, PTarget);
-            ShowInfoFmt("pawn: {} looks through {}", PChar->getName(), PTarget->getName());
-            return "";
-        };
-
         // The steer tick (pawn/view.h, every kSteerPeriodMs): every cardian
         // under a walk order takes her step
         cardian::view::setSteerTick([]()
@@ -763,30 +627,6 @@ class PawnModule : public CPPModule
                 }
             });
         });
-
-        // A typed `!cardian rescue`, worded for a person (the addon sends the Link's RESCUE)
-        lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            pawn::RescueRefusal refusal;
-            switch (PPawn != nullptr ? pawn::rescue(PChar, PPawn, refusal) : CL_S_NO_SUCH_CARDIAN)
-            {
-                case CL_S_OK:
-                    return "";
-                case CL_S_OTHER_ZONE:
-                    return "not in your zone";
-                case CL_S_KNOCKED_OUT:
-                    return "KO'd";
-                case CL_S_NOT_WHILE_PAUSED:
-                    return "not while paused";
-                case CL_S_TOO_FAR:
-                    return fmt::format("too far ({:.0f} y; within {:.0f})", refusal.away, refusal.range);
-                case CL_S_COOLING_DOWN:
-                    return fmt::format("cooling down ({} s left)", refusal.cooldownLeft);
-                default:
-                    return "no such cardian";
-            }
-        };
 
         // One of her containers told to the player's addon one-way (pawn/link_api.h):
         // the conquest exchange's purchase, still on LEGACY_CD, calls it after a sale

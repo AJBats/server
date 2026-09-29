@@ -1,21 +1,14 @@
 -----------------------------------
 -- func: cardian <verb> [args]
--- desc: Cardian companion-addon API, the verbs not yet converted to Cardian
---       Link messages (src/map/pawn/cardian_link_protocol.h). A LEGACY_CD
---       message runs this command for the bound character, and its replies
---       go back the same way; with no link bound (a human typing !cardian in
---       chat) the replies print to chat channel 31 instead. Machine-facing --
---       humans get terse errors, the addon gets data. A verb that gains its own
---       message leaves this file.
+-- desc: The Cardian addon's requests not yet converted to Cardian Link
+--       messages (src/map/pawn/cardian_link_protocol.h), whose logic is Lua: a
+--       LEGACY_CD message runs this command for the bound character, and its
+--       replies go back the same way. Nothing here is for typing: Cardian's
+--       features are the addon's menus and buttons (CLAUDE.md, UI first). The
+--       file leaves once these have messages of their own (ROADMAP, the Link).
 --
---       finder [exp|mission <log>|quest <area>]  typed only: who is in reach and what each says to the goal
 --       goals                            what the player could recruit for: current missions, quests under way
---       stake [clear|toggle]             typed only (the addon sends STAKE): set/move, clear, or toggle
---                                        camp using server state; answered with the orders line, st
---       pause                            typed only (the addon sends PAUSE): the pause button
---       rescue <name>                    typed only (the addon sends RESCUE): a stuck cardian to your side
---       recall <name> | faded            a cardian of yours that faded stands again; who has faded
---       greset <name>                    typed only: back to the default rows of the job she holds now
+--       cpshop <name> | cpbuy <name> <option>   the conquest exchange, for a cardian of yours
 -----------------------------------
 ---@type TCommand
 local commandObj = {}
@@ -26,12 +19,8 @@ commandObj.cmdprops =
     parameters = 's',
 }
 
-local channel = xi.msg.channel.NS_LINKSHELL3
-
 local function reply(player, line)
-    if not player:cardianLinkSend(line) then
-        player:printToPlayer(line, channel)
-    end
+    player:cardianLinkSend(line)
 end
 
 -- Her inventory after a sale, told to the addon as the Link's own INVENTORY
@@ -333,20 +322,12 @@ local function sendGoals(player)
     reply(player, '#cd gl.e')
 end
 
--- The party's orders, one line (Link protocol 3):
--- 'st <strategy> <retreat> <min> <max> <pull> <aggressive> <links> <staked> <stake zone> <name;name...>'
-local function sendOrders(player)
-    local o = player:cardianOrders()
-    if o == nil then
-        reply(player, '#cd err orders no character')
+commandObj.onTrigger = function(player, line)
+    -- Run by the Link for the addon alone: typed, it answers nothing
+    if not player:cardianByLink() then
         return
     end
-    reply(player, string.format('#cd st %d %d %d %d %d %d %d %d %d %s', o.strategy, o.retreat and 1 or 0,
-                                o.hunt_min, o.hunt_max, o.pull_first, o.aggressive and 1 or 0, o.links and 1 or 0,
-                                o.staked and 1 or 0, o.stake_zone, table.concat(o.names, ';')))
-end
 
-commandObj.onTrigger = function(player, line)
     local args = {}
     for word in tostring(line or ''):gmatch('%S+') do
         args[#args + 1] = word
@@ -355,61 +336,7 @@ commandObj.onTrigger = function(player, line)
     local verb = args[1]
     local name = args[2]
 
-    if verb == 'view' then
-        -- The view origin, typed: a GM's target index (the experiment), or a
-        -- cardian's name; `off` ends it. The addon sends the Link's VIEW
-        -- message instead
-        local err = player:cardianView((name == nil or name == 'off') and '' or name)
-        if err ~= '' then
-            reply(player, '#cd err view ' .. err)
-        else
-            reply(player, '#cd ok view')
-        end
-    elseif verb == 'pause' then
-        -- Typed only: the addon sends the Link's PAUSE. A hold taken or let go is
-        -- told to every addon by the server itself (PAUSED / RESUMED); only a
-        -- refusal is answered here
-        local err = player:cardianPause()
-        if err ~= '' then
-            reply(player, '#cd note ' .. err)
-        end
-    elseif verb == 'stake' then
-        -- Typed only: the addon sends the Link's STAKE. Kept, with its spec
-        -- (addon/tests/stake_command_spec.lua), until it is decided which
-        -- verbs stay typeable. The server owns the toggle decision, including
-        -- two presses before the first reply reaches the addon. Bare stake
-        -- still sets/moves it.
-        local action = args[2]
-        local err
-        if args[3] ~= nil or (action ~= nil and action ~= 'clear' and action ~= 'toggle') then
-            err = 'usage: stake [clear|toggle]'
-        elseif action == 'clear' or (action == 'toggle' and player:cardianOrders().staked) then
-            err = player:cardianStakeClear()
-        else
-            err = player:cardianStake()
-        end
-        if err == '' then
-            reply(player, '#cd ok stake')
-        else
-            reply(player, '#cd err stake ' .. err)
-        end
-        sendOrders(player)
-    elseif verb == 'greset' and name then
-        -- Typed only, which verbs stay typeable not decided yet: answered in
-        -- chat, since the addon never asks it; the gambit editor reads her
-        -- rows again over the Link within seconds
-        local err = player:cardianGambitReset(name)
-        player:printToPlayer(err ~= '' and ('greset: ' .. err) or ('greset: ' .. name .. "'s gambits are her job's defaults again"), channel)
-    elseif verb == 'finder' then
-        -- Typed only, the finder's debugging list, answered in chat: 'finder
-        -- [exp|mission <log>|quest <area>]', everyone in reach and her answer.
-        -- The screen shouts over the Link instead
-        local rows = player:cardianFinder(args[2] or 'exp', tonumber(args[3]) or 0)
-        player:printToPlayer(string.format('finder: %d in reach', #rows), channel)
-        for _, r in ipairs(rows) do
-            player:printToPlayer(string.format('%s, job %d level %d, %s in %s: %s "%s"', r.name, r.job, r.level, r.state, r.zone, r.willing and 'yes' or 'no', r.line), channel)
-        end
-    elseif verb == 'goals' then
+    if verb == 'goals' then
         sendGoals(player)
     elseif verb == 'cpshop' and name then
         sendCpShop(player, name)
@@ -422,32 +349,8 @@ commandObj.onTrigger = function(player, line)
             sendCpShop(player, name)
             sendInv(player, name)
         end
-    elseif verb == 'rescue' and name then
-        -- Typed only: the addon sends the Link's RESCUE
-        local err = player:cardianRescue(name)
-        if err ~= '' then
-            reply(player, '#cd err rescue ' .. err)
-        else
-            reply(player, '#cd ok rescue')
-        end
-    elseif verb == 'recall' and name then
-        -- A body that faded because her zone was full stands again where
-        -- the game saved her (ROADMAP H); the management page's verb
-        local err = player:cardianRecall(name)
-        if err ~= '' then
-            reply(player, '#cd err recall ' .. err)
-        else
-            reply(player, '#cd ok recall')
-        end
-    elseif verb == 'faded' then
-        local names = player:cardianFaded()
-        if #names == 0 then
-            reply(player, '#cd ok faded')
-        else
-            reply(player, '#cd ok faded ' .. table.concat(names, ','))
-        end
     else
-        player:printToPlayer('Usage: !cardian rescue <name> | recall <name> | faded | stake [clear|toggle] | pause | greset <name>')
+        reply(player, '#cd err ' .. (verb or '?') .. ' no such request')
     end
 end
 

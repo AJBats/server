@@ -50,8 +50,7 @@ commandObj.onTrigger = function(player, verb, arg, arg2, arg3, arg4)
             player:printToPlayer(line)
         end
     elseif verb == 'faded' then
-        -- Your cardians without a body, in chat: the !cardian verb of the
-        -- same name answers the addon, which is silent about it
+        -- Your cardians without a body, in chat
         local names = player:cardianFaded()
         player:printToPlayer(#names == 0 and 'None of yours is faded.' or ('Faded: ' .. table.concat(names, ', ')))
     elseif verb == 'cap' then
