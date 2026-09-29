@@ -62,6 +62,14 @@ namespace cardian::link
     X(JOBS, cl_jobs)             \
     X(SKILLS, cl_skills)         \
     X(GIVE, cl_give)             \
+    X(TAKE, cl_take)             \
+    X(GIL, cl_gil)               \
+    X(EQUIP, cl_equip)           \
+    X(USE, cl_use)               \
+    X(DROP, cl_drop)             \
+    X(SORT, cl_sort)             \
+    X(MOVE, cl_move)             \
+    X(GIVE_USE, cl_give_use)     \
     X(WALK, cl_walk)             \
     X(VIEW, cl_view)             \
     X(MANEUVER, cl_maneuver)     \

@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -220,9 +221,12 @@ namespace pawn::linkapi
             return bags;
         }
 
-        // A stack from his inventory to hers: her inventory as it now stands,
-        // then the outcome
-        void give(CCharEntity* PChar, const cl_give& ask, Reply& reply)
+        // A change to the items or gear of a cardian of his to manage: made by
+        // change(PPawn, partly), which returns its outcome and sets partly when
+        // a refusal came after part of it had moved; what it moved, told by
+        // moved(PPawn) as answers when it moved anything; then its outcome
+        template <typename Message, typename Change, typename Moved>
+        void changeItems(CCharEntity* PChar, const Message& ask, Reply& reply, Change&& change, Moved&& moved)
         {
             auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
             if (PPawn == nullptr)
@@ -230,13 +234,176 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-
-            const auto status = pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty);
-            if (status == CL_S_OK)
+            bool       partly = false;
+            const auto status = change(PPawn, partly);
+            if (status == CL_S_OK || partly)
             {
-                reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+                moved(PPawn);
             }
             reply.finish(ask, status);
+        }
+
+        // A stack from his inventory to hers, or back
+        void give(CCharEntity* PChar, const cl_give& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty); },
+                [&](CCharEntity* PPawn) { reply.more(inventoryOf(PPawn, LOC_INVENTORY)); });
+        }
+
+        void take(CCharEntity* PChar, const cl_take& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::takeFromPawn(PChar, PPawn, ask.slot, ask.qty); },
+                [&](CCharEntity* PPawn) { reply.more(inventoryOf(PPawn, LOC_INVENTORY)); });
+        }
+
+        // The trade window's gil line: her status pane carries her new purse,
+        // his client counts his own
+        void gil(CCharEntity* PChar, const cl_gil& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::moveGil(PChar, PPawn, ask.amount, ask.toHer != 0); },
+                [&](CCharEntity* PPawn) { reply.more(statsOf(PPawn, true)); });
+        }
+
+        // She uses an item on herself: the stack thins when the use completes,
+        // so the outcome is all there is to tell now
+        void use(CCharEntity* PChar, const cl_use& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::useItem(PPawn, ask.slot, ask.bag); },
+                [](CCharEntity*) {});
+        }
+
+        void drop(CCharEntity* PChar, const cl_drop& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::dropItem(PPawn, ask.slot, ask.qty, ask.bag); },
+                [&](CCharEntity* PPawn)
+                {
+                    reply.more(inventoryOf(PPawn, ask.bag));
+                    reply.more(bagsOf(PPawn));
+                });
+        }
+
+        // One of her containers merged and put in order; a worn piece may sit
+        // in a new slot, so her gear follows
+        void sortContainer(CCharEntity* PChar, const cl_sort& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::sortBag(PPawn, ask.bag); },
+                [&](CCharEntity* PPawn)
+                {
+                    reply.more(inventoryOf(PPawn, ask.bag));
+                    reply.more(bagsOf(PPawn));
+                    reply.more(gearOf(PPawn));
+                });
+        }
+
+        // A stack between her inventory and one of her bags; a worn piece
+        // carried into a wardrobe reports its new home in her gear
+        void moveStack(CCharEntity* PChar, const cl_move& ask, Reply& reply)
+        {
+            changeItems(
+                PChar, ask, reply, [&](CCharEntity* PPawn, bool& partly) { return pawn::items::moveItem(PPawn, ask.from, ask.slot, ask.to, ask.qty, &partly); },
+                [&](CCharEntity* PPawn)
+                {
+                    reply.more(inventoryOf(PPawn, ask.from));
+                    reply.more(inventoryOf(PPawn, ask.to));
+                    reply.more(bagsOf(PPawn));
+                    reply.more(gearOf(PPawn));
+                });
+        }
+
+        // The wardrobes her worn pieces sit in: a worn mark lives in its
+        // container's rows
+        auto wornWardrobes(CCharEntity* PPawn) -> std::set<uint8>
+        {
+            std::set<uint8> out;
+            for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
+            {
+                if (const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr && pawn::items::isWardrobe(PItem->getLocationID()))
+                {
+                    out.insert(PItem->getLocationID());
+                }
+            }
+            return out;
+        }
+
+        // A loadout in one pass (pawn::items::equipSet), each slot's outcome
+        // in the answer. Tried, it answers with her status pane, gear and
+        // inventory, and every wardrobe that held a worn piece before or
+        // after: a piece put on from a wardrobe is worn from it after
+        void equip(CCharEntity* PChar, const cl_equip& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            constexpr std::size_t kMaxSlots = sizeof(cl_equip::slots) / sizeof(cl_equip_slot);
+            if (ask.count == 0 || ask.count > kMaxSlots)
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+
+            auto                                  touched = wornWardrobes(PPawn);
+            std::vector<pawn::items::EquipChange> changes;
+            for (std::size_t i = 0; i < ask.count; ++i)
+            {
+                changes.push_back({ ask.slots[i].equipSlot, ask.slots[i].bag, ask.slots[i].slot });
+            }
+            pawn::items::equipSet(PPawn, changes);
+            touched.merge(wornWardrobes(PPawn));
+
+            auto   answer = ask;
+            uint16 status = CL_S_OK;
+            for (std::size_t i = 0; i < changes.size(); ++i)
+            {
+                answer.results[i] = changes[i].result;
+                if (status == CL_S_OK)
+                {
+                    status = changes[i].result;
+                }
+            }
+            reply.more(statsOf(PPawn, true));
+            reply.more(gearOf(PPawn));
+            reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+            for (const auto location : touched)
+            {
+                reply.more(inventoryOf(PPawn, location));
+            }
+            reply.finish(answer, status);
+        }
+
+        // The scroll's way: the stack given, then used from wherever it landed
+        void giveUse(CCharEntity* PChar, const cl_give_use& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            // Refused whole while held, as the use would be: not half of it, the transfer
+            if (cardian::pause::isHeld())
+            {
+                reply.finish(ask, CL_S_NOT_WHILE_PAUSED);
+                return;
+            }
+            uint8 landed = 0;
+            if (const auto status = pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty, &landed); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+            reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+            auto answer  = ask;
+            answer.given = 1;
+            reply.finish(answer, pawn::items::useItem(PPawn, landed));
         }
 
         // A point the mesh moved less than this (yalms) is the point asked
@@ -1029,22 +1196,6 @@ namespace pawn::linkapi
         }
     } // namespace
 
-    void tellStats(CCharEntity* PPlayer, CCharEntity* PPawn)
-    {
-        if (PPlayer != nullptr && PPawn != nullptr)
-        {
-            cardian::link::send(PPlayer->id, statsOf(PPawn, pawn::findManagedPawn(PPlayer, PPawn->id) != nullptr));
-        }
-    }
-
-    void tellGear(CCharEntity* PPlayer, CCharEntity* PPawn)
-    {
-        if (PPlayer != nullptr && PPawn != nullptr)
-        {
-            cardian::link::send(PPlayer->id, gearOf(PPawn));
-        }
-    }
-
     void tellInventory(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 location)
     {
         if (PPlayer != nullptr && PPawn != nullptr && location <= LOC_WARDROBE8)
@@ -1053,17 +1204,17 @@ namespace pawn::linkapi
         }
     }
 
-    void tellBags(CCharEntity* PPlayer, CCharEntity* PPawn)
-    {
-        if (PPlayer != nullptr && PPawn != nullptr)
-        {
-            cardian::link::send(PPlayer->id, bagsOf(PPawn));
-        }
-    }
-
     void registerHandlers()
     {
         handle<cl_give>(give);
+        handle<cl_take>(take);
+        handle<cl_gil>(gil);
+        handle<cl_equip>(equip);
+        handle<cl_use>(use);
+        handle<cl_drop>(drop);
+        handle<cl_sort>(sortContainer);
+        handle<cl_move>(moveStack);
+        handle<cl_give_use>(giveUse);
         handle<cl_walk>(walk);
         handle<cl_view>(lookThrough);
         handle<cl_maneuver>(maneuver);

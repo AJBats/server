@@ -8,19 +8,6 @@
 --       humans get terse errors, the addon gets data. A verb that gains its own
 --       message leaves this file.
 --
---       move <name> <from> <slot> <to> <qty>  a stack between her inventory and a bag, either way
---       take <name> <slot> <qty>         cardian inventory slot -> you
---       givegil <name> <amount>          your gil -> cardian (the trade window's gil line)
---       takegil <name> <amount>          cardian's gil -> you
---       wear <name> <invslot> <eqslot> [loc]  equip from the cardian's inventory, or a wardrobe (loc)
---       strip <name> <eqslot>            unequip
---       equipset <name> <eq:slot[:loc],...>   apply a whole loadout in one pass
---                                        (slot 0 clears the slot; loc = a wardrobe, else the inventory)
---       use <name> <slot> [loc]          cardian uses the item on itself (the inventory only; a bag refuses)
---       drop <name> <slot> <qty> [loc]   destroy part of a cardian's stack (the inventory only; a bag refuses)
---       sort <name> <loc>                merge and compact a container (0 = inventory)
---       giveuse <name> <slot> <qty>      give from your inventory, then the
---                                        cardian uses it (the scroll flow)
 --       gambits <name>                   the cardian's gambit rows (gb.b / g / gb.e)
 --       gtoggle <name> <row> <on|off>    a row's switch
 --       gmove <name> <from> <to>         reorder a row (1-based, as shown)
@@ -61,52 +48,9 @@ local function reply(player, line)
     end
 end
 
--- A cardian's state after a change, told to the addon as the Link's own
--- messages (INVENTORY, BAGS, GEAR, MEMBER_STATS): the item and gear
--- verbs below call these until they convert
-local function sendInv(player, name, loc)
-    player:cardianTellInventory(name, loc or 0)
-end
-
-local function sendBags(player, name)
-    player:cardianTellBags(name)
-end
-
-local function sendGear(player, name)
-    player:cardianTellGear(name)
-end
-
-local function sendStatsLine(player, name)
-    player:cardianTellStats(name)
-end
-
--- The wardrobes holding worn gear, read off the gear line's trailing loc
-local function wornWardrobes(player, name)
-    local set = {}
-    for _, chunk in ipairs(player:cardianGear(name) or {}) do
-        for loc in chunk:gmatch('%d+:%d+:%d+:(%d+)') do
-            set[tonumber(loc)] = true
-        end
-    end
-    return set
-end
-
--- The wardrobes an equip change touched -- those holding worn gear before
--- and after, and any a piece was worn from (extra) -- each sent once, since
--- a worn mark lives in its container's rows
-local function sendTouchedWardrobes(player, name, before, extra)
-    local locs = wornWardrobes(player, name)
-    for loc in pairs(before or {}) do
-        locs[loc] = true
-    end
-    for loc in pairs(extra or {}) do
-        locs[loc] = true
-    end
-    for loc in pairs(locs) do
-        if loc ~= 0 then
-            sendInv(player, name, loc)
-        end
-    end
+-- Her inventory after a sale, told to the addon as the Link's own INVENTORY
+local function sendInv(player, name)
+    player:cardianTellInventory(name, 0)
 end
 
 -- The conquest exchange by proxy -------------------------------------------
@@ -403,56 +347,6 @@ local function sendGoals(player)
     reply(player, '#cd gl.e')
 end
 
--- Strips first (freeing hands and slots), then equips main-hand upward so
--- sub-slot rules see the new main. Per-slot failures are collected, not
--- fatal: the reply names what refused and the gear block that follows is
--- the authoritative result.
-local function applyEquipSet(player, name, manifest)
-    local before = wornWardrobes(player, name)
-    local strips = {}
-    local wears  = {}
-    local extra  = {}
-    for pair in manifest:gmatch('[^,]+') do
-        local eqslot, invslot, loc = pair:match('^(%d+):(%d+):?(%d*)$')
-        if eqslot then
-            if tonumber(invslot) == 0 then
-                strips[#strips + 1] = tonumber(eqslot)
-            else
-                wears[#wears + 1] = { eqslot = tonumber(eqslot), invslot = tonumber(invslot), loc = tonumber(loc) or 0 }
-                extra[tonumber(loc) or 0] = true
-            end
-        end
-    end
-    table.sort(wears, function(a, b)
-        return a.eqslot < b.eqslot
-    end)
-
-    local fails = {}
-    for _, eqslot in ipairs(strips) do
-        local err = player:cardianStrip(name, eqslot)
-        -- a stale diff asking to clear an already-empty slot is not a failure
-        if err ~= '' and err ~= 'nothing equipped' then
-            fails[#fails + 1] = string.format('%d: %s', eqslot, err)
-        end
-    end
-    for _, w in ipairs(wears) do
-        local err = player:cardianWear(name, w.invslot, w.eqslot, w.loc)
-        if err ~= '' then
-            fails[#fails + 1] = string.format('%d: %s', w.eqslot, err)
-        end
-    end
-
-    if #fails > 0 then
-        reply(player, '#cd err equipset ' .. table.concat(fails, '; '))
-    else
-        reply(player, '#cd ok equipset')
-    end
-    sendStatsLine(player, name)
-    sendGear(player, name)
-    sendInv(player, name)
-    sendTouchedWardrobes(player, name, before, extra)
-end
-
 -- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <state> <spec> <label>'
 -- per row, 'gb.e <name>'. The state is what the row means where it sits (o an order,
 -- t her Support Mage row, a her tactician's to use, x-below / x-clock / x-choice / x-side struck
@@ -638,20 +532,6 @@ commandObj.onTrigger = function(player, line)
         gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then
         gambitEdit(player, name, verb, player:cardianGambitReset(name))
-    elseif verb == 'equipset' and name and args[3] then
-        applyEquipSet(player, name, args[3])
-    elseif verb == 'move' and name and args[6] then
-        local from, to = tonumber(args[3]) or 0, tonumber(args[5]) or 0
-        local err = player:cardianMove(name, from, tonumber(args[4]) or 0, to, tonumber(args[6]) or 1)
-        if err ~= '' then
-            reply(player, '#cd err move ' .. err)
-        else
-            reply(player, '#cd ok move')
-            sendInv(player, name, from)
-            sendInv(player, name, to)
-            sendBags(player, name)
-            sendGear(player, name) -- a worn piece carried into a wardrobe reports its new home
-        end
     elseif verb == 'finder' then
         -- The party finder: 'finder [adv|mission <log>|quest <area>]' -> 'pf.b <n>',
         -- one 'pf <name> <job> <level> <state> <zone> <willing> <her line>' per
@@ -736,27 +616,6 @@ commandObj.onTrigger = function(player, line)
             sendCpShop(player, name)
             sendInv(player, name)
         end
-    elseif verb == 'take' and name then
-        local err = player:cardianTake(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
-        if err ~= '' then
-            reply(player, '#cd err take ' .. err)
-        else
-            reply(player, '#cd ok take')
-            sendInv(player, name)
-        end
-    elseif (verb == 'givegil' or verb == 'takegil') and name then
-        -- her gil rides the stats line; yours your client already shows. An
-        -- amount past the gil cap is refused here: the binding's uint32 would
-        -- wrap it into another amount
-        local amount = math.floor(tonumber(args[3]) or 0)
-        local err    = (amount ~= amount or amount < 1 or amount > 999999999) and 'bad amount'
-            or player:cardianGil(name, amount, verb == 'givegil')
-        if err ~= '' then
-            reply(player, '#cd err ' .. verb .. ' ' .. err)
-        else
-            reply(player, '#cd ok ' .. verb)
-            sendStatsLine(player, name)
-        end
     elseif verb == 'rescue' and name then
         -- Typed only: the addon sends the Link's RESCUE
         local err = player:cardianRescue(name)
@@ -781,71 +640,8 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd ok faded ' .. table.concat(names, ','))
         end
-    elseif verb == 'use' and name then
-        local err = player:cardianUse(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0)
-        if err ~= '' then
-            reply(player, '#cd err use ' .. err)
-        else
-            -- the item decrements only when the use completes; the addon
-            -- re-syncs after the cast to see the result
-            reply(player, '#cd ok use')
-        end
-    elseif verb == 'drop' and name then
-        local loc = tonumber(args[5]) or 0
-        local err = player:cardianDrop(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1, loc)
-        if err ~= '' then
-            reply(player, '#cd err drop ' .. err)
-        else
-            reply(player, '#cd ok drop')
-            sendInv(player, name, loc)
-            sendBags(player, name)
-        end
-    elseif verb == 'sort' and name then
-        local loc = tonumber(args[3]) or 0
-        local err = player:cardianSort(name, loc)
-        if err ~= '' then
-            reply(player, '#cd err sort ' .. err)
-        else
-            reply(player, '#cd ok sort')
-            sendInv(player, name, loc)
-            sendBags(player, name)
-            sendGear(player, name) -- worn pieces may sit in new slots
-        end
-    elseif verb == 'giveuse' and name then
-        local err = player:cardianGiveUse(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
-        if err ~= '' then
-            reply(player, '#cd err giveuse ' .. err)
-        else
-            reply(player, '#cd ok giveuse')
-            sendInv(player, name)
-        end
-    elseif verb == 'wear' and name then
-        local loc    = tonumber(args[5]) or 0
-        local before = wornWardrobes(player, name)
-        local err    = player:cardianWear(name, tonumber(args[3]) or 0, tonumber(args[4]) or 0, loc)
-        if err ~= '' then
-            reply(player, '#cd err wear ' .. err)
-        else
-            reply(player, '#cd ok wear')
-            sendStatsLine(player, name)
-            sendGear(player, name)
-            sendInv(player, name)
-            sendTouchedWardrobes(player, name, before, { [loc] = true })
-        end
-    elseif verb == 'strip' and name then
-        local before = wornWardrobes(player, name)
-        local err    = player:cardianStrip(name, tonumber(args[3]) or 0)
-        if err ~= '' then
-            reply(player, '#cd err strip ' .. err)
-        else
-            reply(player, '#cd ok strip')
-            sendStatsLine(player, name)
-            sendGear(player, name)
-            sendInv(player, name)
-            sendTouchedWardrobes(player, name, before)
-        end
     else
-        player:printToPlayer('Usage: !cardian move <name> <from> <slot> <to> <qty> | sort <name> <loc> | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded')
+        player:printToPlayer('Usage: !cardian rescue <name> | recall <name> | faded | stake [clear|toggle] | pause')
     end
 end
 

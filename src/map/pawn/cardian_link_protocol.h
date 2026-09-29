@@ -34,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 23: a cardian's state, ROSTER, MEMBER,
+// compatible, the user, 2026-09-14). 24: items and gear, TAKE, GIL, EQUIP,
+// USE, DROP, SORT, MOVE and GIVE_USE (the take, givegil, takegil, wear, strip,
+// equipset, use, drop, sort, move and giveuse lines leave LEGACY_CD; an
+// AH_BID's notWorn is the equip's own outcome); 23: a cardian's state, ROSTER, MEMBER,
 // SYNC, MEMBER_STATS, GEAR, BAGS, RECASTS, PROFILE, JOBS, SKILLS and an
 // INVENTORY asked for (the list, sync, inv, bags, gear, recasts, profile,
 // jobs, skills and mskills lines leave LEGACY_CD); 22: the Auction House, AH_SHELF,
@@ -53,7 +56,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 23 };
+enum { CL_PROTOCOL = 24 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -101,7 +104,7 @@ enum
     CL_S_BAD_QUANTITY      = 0x0106,
     CL_S_ITEM_BUSY         = 0x0107,
     CL_S_ITEM_CANNOT_MOVE  = 0x0108,
-    CL_S_NO_SPACE          = 0x0109, // she has no room for it
+    CL_S_NO_SPACE          = 0x0109, // the inventory it was bound for has no room: hers, or his when he takes it back
     CL_S_ITEM_SLIPPED_AWAY = 0x010A, // the stack changed while it moved
     CL_S_REFUSED           = 0x010B, // the game refused it; the map log says why
 
@@ -147,7 +150,7 @@ enum
     CL_S_ON_RECAST         = 0x0155, // its recast runs (an order within its grace waits it out instead)
     CL_S_STANDING_UP       = 0x0156, // she is getting up from a rest (an order waits instead)
     CL_S_ITEM_UNUSABLE     = 0x0157, // not an item anyone uses
-    CL_S_INVENTORY_ONLY    = 0x0158, // an item is used from the inventory only
+    CL_S_INVENTORY_ONLY    = 0x0158, // an item is used or dropped from the inventory only
     CL_S_NO_SUCH_BAG       = 0x0159,
 
     // The Auction House (a full inventory is CL_S_NO_SPACE)
@@ -167,6 +170,14 @@ enum
     CL_S_RARE_OWNED        = 0x016D, // it is Rare, and one is already owned
     CL_S_NOTHING_AT_PRICE  = 0x016E, // nothing listed at that price or less
     CL_S_PURCHASE_FAILED   = 0x016F, // a listing was there and the purchase still failed: try again
+
+    // Her items and gear (no room where a stack was bound: CL_S_NO_SPACE an
+    // inventory, CL_S_BAG_FULL a bag)
+    CL_S_GIL_FULL          = 0x0170, // the receiving purse cannot hold that much
+    CL_S_NOT_EQUIPMENT     = 0x0171, // that container slot holds nothing to wear
+    CL_S_CANNOT_REMOVE     = 0x0172, // the game kept the piece on
+    CL_S_USING_ITEM        = 0x0173, // she is using an item: her worn pieces stay where they are meanwhile
+    CL_S_VIA_INVENTORY     = 0x0174, // a stack moves between her inventory and a bag, never bag to bag
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -514,14 +525,28 @@ typedef struct cl_skills
 } cl_skills;
 
 // ---- 0x02xx: items and gear -----------------------------------------------
+//
+// Changes to the items and gear of a cardian of his to manage. A change that
+// moved something -- all it was asked, or part of it before a refusal -- is
+// answered by what it moved (CL_F_MORE) ahead of its outcome: her containers,
+// bags, gear and status pane as they now stand, each message naming its own.
+// One refused before it moved anything is answered by the outcome alone;
+// EQUIP, a loadout of many slots, answers with her state whenever it was tried.
 
 enum
 {
-    CL_T_GIVE = 0x0201,
+    CL_T_GIVE     = 0x0201,
+    CL_T_TAKE     = 0x0202,
+    CL_T_GIL      = 0x0203,
+    CL_T_EQUIP    = 0x0204,
+    CL_T_USE      = 0x0205,
+    CL_T_DROP     = 0x0206,
+    CL_T_SORT     = 0x0207,
+    CL_T_MOVE     = 0x0208,
+    CL_T_GIVE_USE = 0x0209,
 };
 
 // A stack from the player's inventory to hers, answered by her inventory
-// (CL_F_MORE) and then the outcome
 typedef struct cl_give
 {
     cl_header h;
@@ -530,6 +555,114 @@ typedef struct cl_give
     uint8_t   slot;    // the player's inventory slot
     uint8_t   spare[3];
 } cl_give;
+
+// A stack from her inventory back to his, answered by her inventory
+typedef struct cl_take
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint32_t  qty;
+    uint8_t   slot;    // her inventory slot
+    uint8_t   spare[3];
+} cl_take;
+
+// Gil as the trade window's gil line moves it, to her or back from her,
+// answered by her status pane (her gil rides it)
+typedef struct cl_gil
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint32_t  amount;
+    uint8_t   toHer;   // 1: his gil to her; 0: hers back to him
+    uint8_t   spare[3];
+} cl_gil;
+
+// One equipment slot of a loadout: the piece to wear there, by the container
+// (the inventory or a wardrobe) and slot it sits in; slot 0 leaves it bare
+typedef struct cl_equip_slot
+{
+    uint8_t equipSlot; // 0 main hand .. 15 back
+    uint8_t bag;
+    uint8_t slot;
+    uint8_t spare;
+} cl_equip_slot;
+
+// A loadout in one pass, as the equipment screen drafts it: the slots left
+// bare first, freeing hands and slots, then each piece put on from the main
+// hand up, so the rules of the second hand see the new first. A slot that
+// does not take leaves the rest to go on. Once tried, answered by her status
+// pane, gear, inventory and every wardrobe the loadout touched, then the
+// outcome: CL_S_OK when every slot took, else the first refusal, and results
+// holds each slot's own.
+typedef struct cl_equip
+{
+    cl_header     h;
+    uint32_t      cardian;     // charid
+    uint8_t       count;       // slots used
+    uint8_t       spare[3];
+    cl_equip_slot slots[16];
+    uint16_t      results[16]; // answered: each slot's outcome (CL_S_*), in the order asked
+} cl_equip;
+
+// She uses an item on herself, as the game's own item use. Answered by the
+// outcome alone: the stack thins when the use completes, and a later sync
+// shows it.
+typedef struct cl_use
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   bag;     // the inventory; any other is refused CL_S_INVENTORY_ONLY
+    uint8_t   slot;
+    uint8_t   spare[2];
+} cl_use;
+
+// Part of one of her stacks thrown away, answered by the container and her bags
+typedef struct cl_drop
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint32_t  qty;
+    uint8_t   bag;     // the inventory; any other is refused CL_S_INVENTORY_ONLY
+    uint8_t   slot;
+    uint8_t   spare[2];
+} cl_drop;
+
+// One of her containers merged and put in order, answered by the container,
+// her bags and her gear (a worn piece may sit in a new slot)
+typedef struct cl_sort
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   bag;
+    uint8_t   spare[3];
+} cl_sort;
+
+// A stack between her inventory and one of her bags, either way; a worn piece
+// moves whole, between the inventory and a wardrobe, and stays worn. Answered
+// by both containers, her bags and her gear.
+typedef struct cl_move
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint32_t  qty;
+    uint8_t   from;    // the container it sits in
+    uint8_t   slot;
+    uint8_t   to;
+    uint8_t   spare;
+} cl_move;
+
+// The scroll's way in one action: a stack from his inventory to hers, which
+// she uses at once. Refused whole while the game is paused. Answered by her
+// inventory once the stack is hers, then the outcome of the use.
+typedef struct cl_give_use
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint32_t  qty;
+    uint8_t   slot;    // the player's inventory slot
+    uint8_t   given;   // answered: 1 once the stack is hers, so a refusal is the use's
+    uint8_t   spare[2];
+} cl_give_use;
 
 // ---- 0x04xx: orders and control -------------------------------------------
 

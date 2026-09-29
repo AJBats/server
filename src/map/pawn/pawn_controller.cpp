@@ -1830,7 +1830,7 @@ void CPawnController::FireQueuedOrder()
     SetQueuedOrder(std::nullopt);
     if (status != CL_S_OK)
     {
-        const auto why = pawn::items::legacyReason(status, nullptr, static_cast<CCharEntity*>(POwner));
+        const auto why = pawn::items::legacyReason(status);
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, why);
         Note(fmt::format("{} let go: {}", OrderName(kind, id), why));
         return;

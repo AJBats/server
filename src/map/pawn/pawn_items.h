@@ -37,11 +37,8 @@ class CCharEntity;
 // charutils path the client's own equip request runs, so job, level and
 // slot rules hold for pawns exactly as they do for players.
 //
-// A function with its own Cardian Link message returns the outcome that
-// message carries (CL_S_*, cardian_link_protocol.h), which the addon words.
-// The rest return an empty string on success or a short lowercase reason
-// ("no space", "not equippable", ...) the command layer forwards to the
-// addon verbatim, until they have messages of their own.
+// Each change returns its outcome as the Cardian Link carries it (CL_S_*,
+// cardian_link_protocol.h), which the addon words.
 namespace pawn::items
 {
     // Move qty from the player's LOC_INVENTORY slot into the pawn's
@@ -51,10 +48,10 @@ namespace pawn::items
     // slot the stack arrived in (for give-and-use chaining). CL_S_OK or why not.
     auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> uint16;
 
-    // A transfer's or an item use's outcome in the old protocol's words, for the
-    // verbs still on it (take, use, giveuse) and a cardian's notes. PPlayer may be
-    // null where no distance is told. Leaves with the text protocol.
-    auto legacyReason(uint16 status, const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string;
+    // A queued order's outcome in words, for the note a cardian leaves when
+    // she lets it go (CPawnController::TryAction's outcomes). Leaves with the
+    // text protocol.
+    auto legacyReason(uint16 status) -> std::string;
 
     // Retail's auto-sort is a client option: the client asks for a stack
     // merge whenever an item lands. A cardian has no client, so the server
@@ -65,17 +62,17 @@ namespace pawn::items
     auto tidyStacks(CCharEntity* PPawn) -> uint8;
     auto tidyContainer(CCharEntity* PPawn, uint8 location) -> uint8;
     // The same move back, from her inventory slot to the player's
-    auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> std::string;
+    auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty) -> uint16;
     // Gil across, as the trade window's gil line moves it: to the pawn, or
     // back from her. Within trading reach, both sides or neither
-    auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, uint32 amount, bool toPawn) -> std::string;
+    auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, uint32 amount, bool toPawn) -> uint16;
 
     // Sort one of her containers: partial stacks merged, then every stack
     // compacted from slot 1 in item-id order, fuller stacks first. The
     // item objects move, so worn gear stays worn; the saved equip rows and
     // recast entries follow. Refused while any stack is mid-transaction or
     // an item use is in flight, and undone if the database does not follow.
-    auto sortBag(CCharEntity* PPawn, uint8 location) -> std::string;
+    auto sortBag(CCharEntity* PPawn, uint8 location) -> uint16;
 
     // The pawn uses the item in the given container's slot on itself
     // through its own AI -- cast time, job/level checks and spell learning
@@ -87,14 +84,31 @@ namespace pawn::items
 
     // Destroy qty of the stack in the inventory slot; any other container
     // refuses (its contents are fetched first).
-    auto dropItem(CCharEntity* PPawn, uint8 slot, uint32 qty, uint8 location = 0) -> std::string;
+    auto dropItem(CCharEntity* PPawn, uint8 slot, uint32 qty, uint8 location = 0) -> uint16;
 
     // Equip the item in invSlot of location (the inventory or a wardrobe;
     // the storage-only bags refuse, as on retail) into equipSlot
-    // (SLOTTYPE), or clear equipSlot. Both re-run gear sets, health and
-    // latents the way the 0x050 handler does for a real client.
-    auto equip(CCharEntity* PPawn, uint8 invSlot, uint8 equipSlot, uint8 location = 0) -> std::string;
-    auto unequip(CCharEntity* PPawn, uint8 equipSlot) -> std::string;
+    // (SLOTTYPE), or clear equipSlot (one already bare is CL_S_OK). Both
+    // re-run gear sets, health and latents the way the 0x050 handler does
+    // for a real client.
+    auto equip(CCharEntity* PPawn, uint8 invSlot, uint8 equipSlot, uint8 location = 0) -> uint16;
+    auto unequip(CCharEntity* PPawn, uint8 equipSlot) -> uint16;
+
+    // One slot of a loadout: the piece in location/invSlot into equipSlot,
+    // or invSlot 0 to leave equipSlot bare; result is what came of it
+    struct EquipChange
+    {
+        uint8  equipSlot = 0;
+        uint8  location  = 0;
+        uint8  invSlot   = 0;
+        uint16 result    = CL_S_OK;
+    };
+
+    // A loadout in one pass, as the equipment screen drafts it: the slots
+    // left bare first, freeing hands and slots, then each piece put on from
+    // the main hand up, so the second hand's rules see the new first. A
+    // slot that does not take leaves the rest to go on.
+    void equipSet(CCharEntity* PPawn, std::vector<EquipChange>& changes);
 
     // Her storage bags, the ones a character reaches from the field: Mog
     // Case, the sized Mog Wardrobes, Satchel and Sack -- the item-move
@@ -122,13 +136,15 @@ namespace pawn::items
     // first, the rest lands in a free slot), the wardrobe's equipment-only
     // rule, and the transaction layer's write-through. Worn gear moves as
     // it is between the inventory and a wardrobe, either way, and stays
-    // worn; the storage-only bags take nothing worn.
-    auto moveItem(CCharEntity* PPawn, uint8 fromLoc, uint8 slot, uint8 toLoc, uint32 qty) -> std::string;
+    // worn; the storage-only bags take nothing worn. Each top-up commits by
+    // itself, so a refusal can come after part of the stack has moved:
+    // partly, when given, says so.
+    auto moveItem(CCharEntity* PPawn, uint8 fromLoc, uint8 slot, uint8 toLoc, uint32 qty, bool* partly = nullptr) -> uint16;
 
-    // Protocol chunks for the companion addon, each short enough for one
-    // chat-packet reply (~140 bytes).
-    //   equipment: "e <equipSlot>:<itemId>:<slot>[:<loc>],..." (filled slots
-    //              only; loc present when the piece is worn from a wardrobe)
+    // What she wears, in the text protocol's chunks, for the party finder's
+    // look at a responder until it converts: each short enough for one
+    // chat-packet reply (~140 bytes), "<equipSlot>:<itemId>:<slot>[:<loc>],..."
+    // (filled slots only; loc present when the piece is worn from a wardrobe)
     auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>;
 
     // Her gil: the inventory's slot 0 (0 when it holds none, or not gil)

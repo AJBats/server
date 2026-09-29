@@ -610,15 +610,14 @@ namespace pawn::auction
         }
         else if (equip && slot != 0)
         {
-            if (const auto err = pawn::items::equip(PChar, slot, equipSlot, result.location); err.empty())
+            if (const auto status = pawn::items::equip(PChar, slot, equipSlot, result.location); status == CL_S_OK)
             {
                 result.equipped = true;
             }
             else
             {
-                // The equip's own reasons are words until the gear converts (ROADMAP, the Link)
-                ShowInfoFmt("auction: {} does not wear the {} she won: {}", PChar->getName(), itemId, err);
-                result.notWorn = CL_S_REFUSED;
+                ShowInfoFmt("auction: {} does not wear the {} she won (outcome 0x{:04X})", PChar->getName(), itemId, status);
+                result.notWorn = status;
             }
         }
         return result;

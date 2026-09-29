@@ -31,7 +31,6 @@
 #include "gambit_text.h"
 #include "link_api.h"
 #include "pawn_gambits.h"
-#include "pawn_items.h"
 #include "spell_bank.h"
 #include "tactics.h"
 #include "view.h"
@@ -43,15 +42,12 @@
 #include "pause/pause.h"
 #include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
-#include "item_container.h"
 #include "enums/party_kind.h"
 #include "packets/c2s/0x06e_group_solicit_req.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
 #include "packets/basic.h"
 #include "utils/moduleutils.h"
-#include "ability.h"
-#include "recast_container.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -711,38 +707,6 @@ class PawnModule : public CPPModule
             return managedPair(PLuaBaseEntity, name).second != nullptr;
         };
 
-        lua["CBaseEntity"]["cardianTake"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::takeFromPawn(PChar, PPawn, slot, qty) : "no such cardian";
-        };
-
-        // The trade window's gil line: to her, or back from her
-        lua["CBaseEntity"]["cardianGil"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint32 amount, const bool toPawn) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::moveGil(PChar, PPawn, amount, toPawn) : "no such cardian";
-        };
-
-        // location: the inventory (0) or a wardrobe the piece is worn from
-        lua["CBaseEntity"]["cardianWear"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::equip(PPawn, invSlot, equipSlot, location) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianStrip"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 equipSlot) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::unequip(PPawn, equipSlot) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianMove"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::moveItem(PPawn, fromLoc, slot, toLoc, qty) : "no such cardian";
-        };
-
         // The gambit editor's view of a cardian's rows (M3.85): index, on,
         // what the row means where it sits (tactician_line.h token), the row
         // in the grammar, and the label as the player reads it
@@ -1111,102 +1075,12 @@ class PawnModule : public CPPModule
             }
         };
 
-        lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::legacyReason(pawn::items::useItem(PPawn, slot, location), PChar, PPawn) : "no such cardian";
-        };
-
-        lua["CBaseEntity"]["cardianDrop"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::dropItem(PPawn, slot, qty, location) : "no such cardian";
-        };
-
-        // Merge and compact one of her containers (the inventory or a bag)
-        lua["CBaseEntity"]["cardianSort"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::sortBag(PPawn, location) : "no such cardian";
-        };
-
-        // The scroll flow in one action: transfer, then the pawn uses the
-        // stack from wherever it landed
-        lua["CBaseEntity"]["cardianGiveUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty) -> std::string
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-
-            // Refused whole while held, as the use would be: not half of it, the transfer
-            if (cardian::pause::isHeld())
-            {
-                return "not while paused";
-            }
-
-            uint8 landed = 0;
-            if (const auto status = pawn::items::giveToPawn(PChar, PPawn, slot, qty, &landed); status != CL_S_OK)
-            {
-                return pawn::items::legacyReason(status, PChar, PPawn);
-            }
-            return pawn::items::legacyReason(pawn::items::useItem(PPawn, landed), PChar, PPawn);
-        };
-
-        // Attack/defense for the companion equip screen; upstream exposes no
-        // Lua accessor for the computed values
-        lua["CBaseEntity"]["cardianCombatStats"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto stats   = ::lua.create_table();
-            stats["att"] = PPawn->ATT(SLOT_MAIN);
-            stats["def"] = PPawn->DEF();
-            return stats;
-        };
-
-        lua["CBaseEntity"]["cardianGear"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> sol::object
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return sol::lua_nil;
-            }
-
-            auto chunkTable = ::lua.create_table();
-            for (const auto& chunk : pawn::items::equipChunks(PPawn))
-            {
-                chunkTable.add(chunk);
-            }
-            return chunkTable;
-        };
-
-        // A cardian's state told to the player's addon one-way (pawn/link_api.h):
-        // the item and gear verbs still on LEGACY_CD call these after each change
-        lua["CBaseEntity"]["cardianTellStats"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name)
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            pawn::linkapi::tellStats(PChar, PPawn);
-        };
-        lua["CBaseEntity"]["cardianTellGear"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name)
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            pawn::linkapi::tellGear(PChar, PPawn);
-        };
+        // One of her containers told to the player's addon one-way (pawn/link_api.h):
+        // the conquest exchange's purchase, still on LEGACY_CD, calls it after a sale
         lua["CBaseEntity"]["cardianTellInventory"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location)
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
             pawn::linkapi::tellInventory(PChar, PPawn, location);
-        };
-        lua["CBaseEntity"]["cardianTellBags"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name)
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            pawn::linkapi::tellBags(PChar, PPawn);
         };
 
         // The gate guard within the player's reach, { name, nation, type }, nil for
