@@ -14,7 +14,7 @@
 //     type number is never reused. The high byte is the area: 0x00 the link
 //     itself, 0x01 a cardian's state, 0x02 items and gear, 0x03 gambits, 0x04
 //     orders and control, 0x05 the pause and the server's other notices, 0x06
-//     the party finder, 0x07 the conquest exchange.
+//     the party finder, 0x07 the conquest exchange, 0x08 the Auction House.
 //   - A request carries req != 0. Every answer echoes req with CL_F_REPLY; all
 //     but the last also carry CL_F_MORE. The last answer is the request's own
 //     message and carries the outcome in status. req 0 is one-way: nobody answers.
@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 21: DO, QUEUE and QUEUES, and actions as
+// compatible, the user, 2026-09-14). 22: the Auction House, AH_SHELF,
+// AH_HISTORY and AH_BID (the ahlist, ahhist and ahbid lines leave
+// LEGACY_CD); 21: DO, QUEUE and QUEUES, and actions as
 // typed fields (cl_action; the do, queues and q lines leave LEGACY_CD);
 // 20: the Auction House screen's lines,
 // on LEGACY_CD (ahlist <name> <shelf> -> ahl.b / ahl / ahl.e, ahhist ->
@@ -48,7 +50,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 21 };
+enum { CL_PROTOCOL = 22 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -144,6 +146,24 @@ enum
     CL_S_ITEM_UNUSABLE     = 0x0157, // not an item anyone uses
     CL_S_INVENTORY_ONLY    = 0x0158, // an item is used from the inventory only
     CL_S_NO_SUCH_BAG       = 0x0159,
+
+    // The Auction House (a full inventory is CL_S_NO_SPACE)
+    CL_S_NOT_BY_COUNTER    = 0x0160, // the player stands by no auction counter
+    CL_S_TOO_FAR_TO_SHOP   = 0x0161, // she does not stand by the counter he stands at
+    CL_S_NO_SUCH_ITEM      = 0x0162,
+    CL_S_NOT_IN_STACKS     = 0x0163, // that item does not come in stacks
+    CL_S_BAD_PRICE         = 0x0164, // a bid is 1 to 999,999,999 gil
+    CL_S_IN_EVENT          = 0x0165, // not during an event, hers or his
+    CL_S_IN_JAIL           = 0x0166,
+    CL_S_NO_AUCTION_HOUSE  = 0x0167, // her zone has none
+    CL_S_WARDROBE_GEAR     = 0x0168, // only gear goes in a wardrobe
+    CL_S_WORN_FROM_BAG     = 0x0169, // gear is worn from the inventory or a wardrobe only
+    CL_S_CANNOT_WEAR       = 0x016A, // that cannot be worn there, by her
+    CL_S_BAG_FULL          = 0x016B, // no room in that bag
+    CL_S_NOT_ENOUGH_GIL    = 0x016C, // for a cardian: hers and his purse together
+    CL_S_RARE_OWNED        = 0x016D, // it is Rare, and one is already owned
+    CL_S_NOTHING_AT_PRICE  = 0x016E, // nothing listed at that price or less
+    CL_S_PURCHASE_FAILED   = 0x016F, // a listing was there and the purchase still failed: try again
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -643,5 +663,100 @@ typedef struct cl_calendar
     cl_header h;
     uint32_t  gametime;
 } cl_calendar;
+
+// ---- 0x08xx: the Auction House ---------------------------------------------
+//
+// The Auction House screen (ROADMAP L) shops for a member of the player's
+// party: the player himself, by his own charid, or a cardian of his to manage.
+// He must stand by an auction counter, and she by the counter he stands at.
+// The auction house stays blind, as retail's: a listing's price is never told,
+// only how many are listed and what the last sales paid.
+
+enum
+{
+    CL_T_AH_SHELF   = 0x0801,
+    CL_T_AH_HISTORY = 0x0802,
+    CL_T_AH_BID     = 0x0803,
+};
+
+// One item in one form the auction house lists it in: singly, or by the stack
+typedef struct cl_ah_listing
+{
+    uint16_t item;
+    uint8_t  level;     // the level it asks for: gear's, a scroll's to learn; else 0
+    uint8_t  category;  // the auction house's own (xi.itemAHCategory)
+    uint32_t stock;     // how many are listed now in this form; 0 when sold out
+    uint32_t going;     // the going rate in this form; 0 when nothing has sold
+    uint8_t  stack;     // 1: the stack form
+    uint8_t  spare;
+    uint16_t stackSize; // how many pieces the form buys
+} cl_ah_listing;
+
+enum
+{
+    CL_SHELF_SLOT       = 0, // what she can wear in `slot`
+    CL_SHELF_CATEGORIES = 1, // everything ever listed in `categories`
+    CL_SHELF_LEARNABLE  = 2, // the spell scrolls in `categories` she can learn now and has not
+};
+
+// A shelf for one member: every item the auction house has ever listed there,
+// in stock or sold out, one row per form, in the auction house's order (by
+// category as asked, the highest level first). Answered in parts, each with
+// the request's own fields (CL_F_MORE), the last with the outcome.
+typedef struct cl_ah_shelf
+{
+    cl_header     h;
+    uint32_t      member;         // charid
+    uint8_t       kind;           // CL_SHELF_*
+    uint8_t       slot;           // CL_SHELF_SLOT: the equipment slot
+    uint8_t       count;          // categories used
+    uint8_t       rows;           // answered: listings used in this part
+    uint8_t       categories[16]; // the auction house's own, in the order shown
+    cl_ah_listing listings[64];   // answered
+} cl_ah_shelf;
+
+// One sale off an item's history
+typedef struct cl_ah_sale
+{
+    uint32_t date;       // Unix time
+    uint32_t price;      // what the buyer paid
+    char     seller[16];
+    char     buyer[16];
+} cl_ah_sale;
+
+// What the game's own auction house shows of an item in one form: its stock,
+// the going rate, and its last ten sales, newest first. Asked by the buy panel.
+typedef struct cl_ah_history
+{
+    cl_header  h;
+    uint16_t   item;
+    uint8_t    stack;     // 1: the stack form
+    uint8_t    count;     // answered: sales used
+    uint32_t   stock;     // answered
+    uint32_t   going;     // answered
+    cl_ah_sale sales[10]; // answered
+} cl_ah_history;
+
+// A bid for one piece or one stack, as the game's own purchase: the cheapest
+// listing at or under the bid is hers, and she pays the bid. A cardian's purse
+// has his behind it (fromPurse). Won, the piece goes on from her inventory to
+// `bag` and, with `equip`, she wears it. Answered with the outcome; won, with
+// where it landed and whether she wears it.
+typedef struct cl_ah_bid
+{
+    cl_header h;
+    uint32_t  member;    // charid
+    uint32_t  price;
+    uint32_t  fromPurse; // answered: the part of the price his purse gave
+    uint16_t  item;
+    uint8_t   stack;     // 1: the stack form
+    uint8_t   bag;       // the inventory, or a bag she carries into the field; answered: where it landed
+    uint8_t   slot;      // with equip: the equipment slot
+    uint8_t   equip;     // 1: wear it
+    uint8_t   equipped;  // answered
+    uint8_t   spare;
+    uint16_t  notWorn;   // answered with equip and equipped 0: why (CL_S_*)
+    uint16_t  spare2;
+} cl_ah_bid;
 
 #pragma pack(pop)

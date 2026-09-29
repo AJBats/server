@@ -74,7 +74,10 @@ namespace cardian::link
     X(PAUSE, cl_pause)           \
     X(PAUSED, cl_paused)         \
     X(RESUMED, cl_resumed)       \
-    X(CALENDAR, cl_calendar)
+    X(CALENDAR, cl_calendar)     \
+    X(AH_SHELF, cl_ah_shelf)     \
+    X(AH_HISTORY, cl_ah_history) \
+    X(AH_BID, cl_ah_bid)
 
     template <typename T>
     struct MessageType;

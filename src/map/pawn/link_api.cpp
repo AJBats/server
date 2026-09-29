@@ -22,6 +22,7 @@
 #include "link_api.h"
 
 #include "action_keys.h"
+#include "auction.h"
 #include "cardian_link.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -40,7 +41,9 @@
 #include "utils/zoneutils.h"
 #include "zone.h"
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace pawn::linkapi
 {
@@ -521,6 +524,136 @@ namespace pawn::linkapi
             }
             reply.finish(ask, CL_S_OK);
         }
+
+        // The Auction House screen shops for a member of his party: himself, by
+        // his own charid, or a cardian of his to manage (a wild one's gear and
+        // gil are the world's); nullptr for anyone else
+        auto shopperOf(CCharEntity* PChar, const uint32 member) -> CCharEntity*
+        {
+            return member == PChar->id ? PChar : pawn::findManagedPawn(PChar, member);
+        }
+
+        // A shelf of the auction house for one member (pawn/auction.h), in
+        // parts: each carries the request's own fields and its share of the rows
+        void ahShelf(CCharEntity* PChar, const cl_ah_shelf& ask, Reply& reply)
+        {
+            constexpr std::size_t kMaxCategories = sizeof(cl_ah_shelf::categories);
+            if (ask.kind > CL_SHELF_LEARNABLE || (ask.kind == CL_SHELF_SLOT && ask.slot > SLOT_BACK) ||
+                (ask.kind != CL_SHELF_SLOT && (ask.count == 0 || ask.count > kMaxCategories)))
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            auto* PMember = shopperOf(PChar, ask.member);
+            if (PMember == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (const auto status = pawn::auction::whereShopping(PChar, PMember); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+
+            std::vector<pawn::auction::Listing> listings;
+            if (ask.kind == CL_SHELF_SLOT)
+            {
+                listings = pawn::auction::wearableAtAuction(PMember, ask.slot);
+            }
+            else
+            {
+                std::vector<uint8> categories;
+                for (std::size_t i = 0; i < ask.count; ++i)
+                {
+                    if (ask.categories[i] != 0)
+                    {
+                        categories.push_back(ask.categories[i]);
+                    }
+                }
+                listings = pawn::auction::inCategories(PMember, categories, ask.kind == CL_SHELF_LEARNABLE);
+            }
+
+            constexpr std::size_t kPerPart = sizeof(cl_ah_shelf::listings) / sizeof(cl_ah_listing);
+            std::size_t           next     = 0;
+            while (true)
+            {
+                auto part = ask;
+                part.rows = 0;
+                for (; part.rows < kPerPart && next < listings.size(); ++next)
+                {
+                    const auto& listing = listings[next];
+                    auto&       row     = part.listings[part.rows++];
+                    row                 = cl_ah_listing{};
+                    row.item            = listing.itemId;
+                    row.level           = listing.level;
+                    row.category        = listing.category;
+                    row.stock           = listing.stock;
+                    row.going           = listing.going;
+                    row.stack           = listing.stack ? 1 : 0;
+                    row.stackSize       = static_cast<uint16_t>(std::min<uint32>(listing.stackSize, UINT16_MAX));
+                }
+                if (next < listings.size())
+                {
+                    reply.more(part);
+                    continue;
+                }
+                reply.finish(part, CL_S_OK);
+                return;
+            }
+        }
+
+        // An item's stock, going rate and last sales in one form, as the game's
+        // own auction house shows them (the buy panel)
+        void ahHistory(CCharEntity* /* PChar */, const cl_ah_history& ask, Reply& reply)
+        {
+            const auto history = pawn::auction::history(ask.item, ask.stack != 0);
+            auto       answer  = ask;
+            answer.stock       = history.stock;
+            answer.going       = history.going;
+            answer.count       = 0;
+            constexpr std::size_t kSales = sizeof(cl_ah_history::sales) / sizeof(cl_ah_sale);
+            for (const auto& sale : history.sales)
+            {
+                if (answer.count >= kSales)
+                {
+                    break;
+                }
+                auto& row = answer.sales[answer.count++];
+                row.date  = sale.date;
+                row.price = sale.price;
+                setText(row.seller, sale.seller);
+                setText(row.buyer, sale.buyer);
+            }
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // A bid for one piece or one stack (pawn::auction::bid), a cardian's
+        // purse with his behind it
+        void ahBid(CCharEntity* PChar, const cl_ah_bid& ask, Reply& reply)
+        {
+            auto* PMember = shopperOf(PChar, ask.member);
+            if (PMember == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (const auto status = pawn::auction::whereShopping(PChar, PMember); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+            const auto result = pawn::auction::bid(PMember, PChar, ask.item, ask.stack != 0, ask.price, ask.bag, ask.slot, ask.equip != 0);
+            auto       answer = ask;
+            if (result.status == CL_S_OK)
+            {
+                answer.bag       = result.location;
+                answer.equipped  = result.equipped ? 1 : 0;
+                answer.notWorn   = result.notWorn;
+                answer.fromPurse = result.fromPurse;
+            }
+            reply.finish(answer, result.status);
+        }
     } // namespace
 
     void registerHandlers()
@@ -542,5 +675,8 @@ namespace pawn::linkapi
         handle<cl_cancel>(cancel);
         handle<cl_do>(doAction);
         handle<cl_queues>(queues);
+        handle<cl_ah_shelf>(ahShelf);
+        handle<cl_ah_history>(ahHistory);
+        handle<cl_ah_bid>(ahBid);
     }
 } // namespace pawn::linkapi
