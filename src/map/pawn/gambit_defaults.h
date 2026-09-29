@@ -61,13 +61,14 @@ namespace pawn
     //    takes the party leader's fight first, and another cardian's only
     //    after it, so a cardian whose mob has died joins the player's fight
     //    before anyone else's.
-    //  - Mage: a Support Mage who attends fights without engaging monsters
-    //    and cures. Her weapon skill row and Rest with the player are
-    //    orders, above her role row (her tactician line, tactician_line.h,
-    //    where a weapon skill means something); below it, her allow-list:
-    //    the Cure left to her judgement, and her Attack row, shipped
-    //    unchecked -- checking it makes her a melee mage whose tactician
-    //    leaves a fight to rest (RESEARCH §14.12 decisions 19 and 20).
+    //  - Mage: a Support Mage who attends fights without engaging monsters,
+    //    cures, takes ailments off and enfeebles. Her weapon skill row and
+    //    Rest with the player are orders, above her role row (her tactician
+    //    line, tactician_line.h, where a weapon skill means something);
+    //    below it, her allow-list: the Cure, the -na and the enfeebles left
+    //    to her judgement, and her Attack row, shipped unchecked -- checking
+    //    it makes her a melee mage whose tactician leaves a fight to rest
+    //    (RESEARCH §14.12 decisions 19 and 20).
     // The weapon skill row is in every set (the user, 2026-09-26): it costs
     // nothing, and comes up only once she is engaged with the TP for one.
     // Neither set avoids aggro (that is the world's, not the party's): the
@@ -83,11 +84,13 @@ namespace pawn
             { "0|0:0|100:11:3|0", true }, // Self -> Role: Damage
         };
         static const std::vector<std::pair<std::string, bool>> mage{
-            { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
-            { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
-            { "0|0:0|100:11:1|0", true }, // Self -> Role: Support Mage
-            { "1|101:0|2:0:1|0", true },  // Ally: tactician's choice -> Cure (best)
-            { "102|0:0|0:0:0|0", false }, // Foe: targeting ally -> Attack
+            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+            { "0|0:0|100:11:1|0", true },  // Self -> Role: Support Mage
+            { "1|101:0|2:0:1|0", true },   // Ally: tactician's choice -> Cure (best)
+            { "1|101:0|2:0:4|0", true },   // Ally: tactician's choice -> -na (best)
+            { "2|101:0|2:100:0|0", true }, // Foe: tactician's choice -> Enfeeble
+            { "102|0:0|0:0:0|0", false },  // Foe: targeting ally -> Attack
         };
         return isMageJob(job) ? mage : melee;
     }

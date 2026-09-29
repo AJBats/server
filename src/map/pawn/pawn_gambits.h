@@ -300,7 +300,8 @@ namespace pawn
         // question about one entity, over her whole alliance for the party
         // selectors, a mob for `Target`
         auto Names(gambits::G_TARGET selector, const CBattleEntity* PTarget) const -> bool;
-        auto SelectTarget(const gambits::Gambit_t& gambit) -> CBattleEntity*;
+        // gate: the row is below her tactician line, so Tactician's choice holds
+        auto SelectTarget(const gambits::Gambit_t& gambit, bool gate = false) -> CBattleEntity*;
         // What her rows call "the mob": her battle target, else the party's
         // fight she attends or walks in on (RESEARCH §12.15)
         auto FightTarget() -> CBattleEntity*;

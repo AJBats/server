@@ -227,9 +227,12 @@ TEST_CASE("Cardian link: type numbers name their messages in the logs", "[cardia
 
 TEST_CASE("Cardian link: a gambit row crosses as its fields and back", "[cardian][link]")
 {
-    // The default rows, and rows of several groups, an any-of group and two actions
+    // The default rows, rows of several groups, an any-of group and two
+    // actions, and the Cardian-only ids: -na (best), the Enfeeble action
+    // (select 100) and the Enfeeble status (10000)
     for (const std::string row : { "100|0:0|0:0:0|0", "2|2:50|4:0:0|0", "0|0:0|100:11:3|0", "1|101:0|2:0:1|0",
-                                   "1|3:40&?12:3,12:4|2:2:1+2:2:2|5", "0|?12:3,12:4&13:6|3:2:35|0" })
+                                   "1|3:40&?12:3,12:4|2:2:1+2:2:2|5", "0|?12:3,12:4&13:6|3:2:35|0",
+                                   "1|101:0|2:0:4|0", "2|101:0|2:100:0|0", "1|9:10000|2:0:4|0" })
     {
         const auto gambit = pawn::text::parseRow(row);
         REQUIRE(gambit.has_value());

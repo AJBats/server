@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "ailments.h"
 #include "engage_math.h"
 #include "gambit_ids.h"
 
@@ -36,7 +37,10 @@
 // 17-19). Her first Support Mage row splits her list: the rows above it are
 // orders, as any row is; the rows below it are her tactician's allow-list,
 // the spells it may cast and the fights it may melee, and they never run as
-// orders. Where a row sits gives it its meaning, and a row with none where
+// orders -- but for her -na and Erase rows, which run as written while her
+// tactician runs, until it has a judgement of its own for ailments
+// (actsAlone). Where a row
+// sits gives it its meaning, and a row with none where
 // it sits is struck out: kept, shown, and doing nothing. The rules are pure,
 // over a row and plain numbers, so xi_test pins them; the gambit engine
 // (CGambits) asks.
@@ -52,7 +56,7 @@ namespace cardian::tactician
     };
     inline constexpr uint32                kCureFamily = 1; // SPELLFAMILY_CURE
     inline constexpr std::array<uint16, 6> kCureTiers{ 1, 2, 3, 4, 5, 6 }; // Cure to Cure VI
-    inline constexpr std::array<Spell, 8>  kPricedDebuffs{ {
+    inline constexpr std::array<Spell, 14> kPricedDebuffs{ {
         { 58, 14 },  // Paralyze
         { 56, 12 },  // Slow
         { 254, 72 }, // Blind
@@ -61,6 +65,12 @@ namespace cardian::tactician
         { 220, 62 }, // Poison
         { 225, 63 }, // Poisonga
         { 230, 64 }, // Bio
+        { 235, 65 }, // Burn
+        { 236, 65 }, // Frost
+        { 237, 65 }, // Choke
+        { 238, 65 }, // Rasp
+        { 239, 65 }, // Shock
+        { 240, 65 }, // Drown
     } };
 
     constexpr auto isCureTier(const uint32 spell) -> bool
@@ -87,6 +97,34 @@ namespace cardian::tactician
                                    {
                                        return p.family == family;
                                    });
+    }
+
+    // What Enfeeble casts (gambit_ids.h G_SELECT_ENFEEBLE): the single-
+    // target enfeebles her tactician prices. Below the line her tactician
+    // may cast any of them; as an order she casts the first of them she can
+    // that the foe does not carry yet. The -ga spells are never Enfeeble's:
+    // one reaches every mob around the foe, so they take a row that names them
+    inline constexpr std::array<uint16, 12> kEnfeebleOrder{ 58, 56, 254, 23, 230, 220,   // Paralyze, Slow, Blind, Dia, Bio, Poison,
+                                                            235, 236, 237, 238, 239, 240 }; // Burn, Frost, Choke, Rasp, Shock, Drown
+    static_assert(std::ranges::all_of(kEnfeebleOrder, [](const uint16 spell) { return pricedFamilyOf(spell).has_value(); }));
+
+    constexpr auto isEnfeebleSpell(const uint32 spell) -> bool
+    {
+        return std::ranges::find(kEnfeebleOrder, spell) != kEnfeebleOrder.end();
+    }
+
+    // castable(spell): she can cast it now and the foe does not carry it
+    template <typename Castable>
+    constexpr auto firstEnfeeble(Castable&& castable) -> std::optional<uint16>
+    {
+        for (const auto spell : kEnfeebleOrder)
+        {
+            if (castable(spell))
+            {
+                return spell;
+            }
+        }
+        return std::nullopt;
     }
 
     // A row's meaning where it sits
@@ -205,15 +243,24 @@ namespace cardian::tactician
 
     // What a row below the line lets her tactician do: one action, and
     // that one hers -- a Cure for someone on the party's side, a debuff she
-    // prices on a Foe row's foe, or the melee of a fight a Foe row finds
-    // (decision 19)
+    // prices on a Foe row's foe (Enfeeble: the single-target ones), the
+    // melee of a fight a Foe row finds (decision 19), or a -na or Erase for
+    // someone on the party's side
     enum class Allowance : uint8
     {
         None,
         Cures,
         Debuff,
         Melee,
+        Ailments,
     };
+
+    // An action that takes ailments off: -na (best), a -na or Erase
+    inline auto isRemovalAction(const gambits::Action_t& a) -> bool
+    {
+        using gambits::G_SELECT;
+        return (a.select == G_SELECT::HIGHEST && a.select_arg == ailments::kNaFamily) || (a.select == G_SELECT::SPECIFIC && ailments::isRemoval(a.select_arg));
+    }
 
     inline auto allowanceOf(const gambits::Gambit_t& g) -> Allowance
     {
@@ -238,10 +285,14 @@ namespace cardian::tactician
             return curesTarget(g.target_selector) ? Allowance::Cures : Allowance::None;
         }
         const bool debuff = (a.select == G_SELECT::SPECIFIC && pricedFamilyOf(a.select_arg).has_value()) ||
-                            (a.select == G_SELECT::HIGHEST && isPricedFamily(a.select_arg));
+                            (a.select == G_SELECT::HIGHEST && isPricedFamily(a.select_arg)) || a.select == pawn::G_SELECT_ENFEEBLE;
         if (debuff)
         {
             return engage::isFoeTarget(g.target_selector) ? Allowance::Debuff : Allowance::None;
+        }
+        if (isRemovalAction(a))
+        {
+            return curesTarget(g.target_selector) ? Allowance::Ailments : Allowance::None;
         }
         return Allowance::None;
     }
@@ -280,7 +331,7 @@ namespace cardian::tactician
 
     // Whether a row below the line lets her tactician cast this spell:
     // Cure (best) any tier, a tier itself, a priced debuff by its id or by
-    // its family
+    // its family, and Enfeeble the single-target priced debuffs
     inline auto allowsSpell(const gambits::Gambit_t& g, const uint32 spell) -> bool
     {
         const auto kind = allowanceOf(g);
@@ -297,8 +348,24 @@ namespace cardian::tactician
         {
             return isCureTier(spell);
         }
+        if (a.select == pawn::G_SELECT_ENFEEBLE)
+        {
+            return isEnfeebleSpell(spell);
+        }
         const auto family = pricedFamilyOf(spell);
         return family.has_value() && *family == a.select_arg;
+    }
+
+    // Whether a row acts on its own, as her think runs it: an order, and,
+    // below the line while her tactician runs, a -na or Erase row. Her
+    // tactician has no judgement of its own for ailments yet, so such a row
+    // runs as written, Tactician's choice holding on it as on every row
+    // below the line: under -na (best) she takes an ailment off whoever
+    // carries one she can cure. With her tactician not running it waits, as
+    // her Cure rows below the line do
+    inline auto actsAlone(const State state, const gambits::Gambit_t& g, const bool runs) -> bool
+    {
+        return state == State::Order || (runs && state == State::Allows && allowanceOf(g) == Allowance::Ailments);
     }
 
     // Her tactician's melee (decision 19): a fight a row below the line

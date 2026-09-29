@@ -31,6 +31,7 @@
 #include "map/pawn/tactician_line.h"
 #include "map/spell.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -99,6 +100,8 @@ TEST_CASE("tactician line: her lists are spell.h's numbers", "[cardian][gambits]
         { SpellID::Paralyze, SPELLFAMILY_PARALYZE }, { SpellID::Slow, SPELLFAMILY_SLOW }, { SpellID::Blind, SPELLFAMILY_BLIND },
         { SpellID::Dia, SPELLFAMILY_DIA }, { SpellID::Diaga, SPELLFAMILY_DIAGA }, { SpellID::Poison, SPELLFAMILY_POISON },
         { SpellID::Poisonga, SPELLFAMILY_POISONGA }, { SpellID::Bio, SPELLFAMILY_BIO },
+        { SpellID::Burn, SPELLFAMILY_ELE_DOT }, { SpellID::Frost, SPELLFAMILY_ELE_DOT }, { SpellID::Choke, SPELLFAMILY_ELE_DOT },
+        { SpellID::Rasp, SPELLFAMILY_ELE_DOT }, { SpellID::Shock, SPELLFAMILY_ELE_DOT }, { SpellID::Drown, SPELLFAMILY_ELE_DOT },
     };
     REQUIRE(priced.size() == kPricedDebuffs.size());
     for (std::size_t i = 0; i < priced.size(); ++i)
@@ -156,6 +159,20 @@ TEST_CASE("tactician line: below the line only her cures, her priced debuffs and
     CHECK(below("102|0:0|0:0:0|0") == State::Allows);
     CHECK(below("100|0:0|0:0:0|0") == State::Allows);
     CHECK(below("2|2:75|0:0:0|0") == State::Allows); // Foe: HP >= 75% -> Attack
+
+    // Enfeeble, every priced debuff at once, on the mob
+    CHECK(below("2|101:0|2:100:0|0") == State::Allows);   // Foe: tactician's choice -> Enfeeble
+    CHECK(below("100|0:0|2:100:0|0") == State::Allows);   // Foe: party leader's target -> Enfeeble
+    CHECK(below("1|101:0|2:100:0|0") == State::NotBelow); // Enfeeble on a party member
+
+    // Her -na and Erase, for someone on the party's side
+    CHECK(below("1|101:0|2:0:4|0") == State::Allows);     // Ally: tactician's choice -> -na (best)
+    CHECK(below("1|9:10000|2:0:4|0") == State::Allows);   // Ally: status = Enfeeble -> -na (best)
+    CHECK(below("1|9:3|2:2:14|0") == State::Allows);      // Ally: status = Poison -> Poisona
+    CHECK(below("0|0:0|2:2:143|0") == State::Allows);     // Self -> Erase
+    CHECK(below("2|0:0|2:0:4|0") == State::NotBelow);     // -na (best) on the mob
+    CHECK(below("1|0:0|2:2:95|0") == State::NotBelow);    // Esuna, a -na family spell on herself alone
+    CHECK(below("1|39:30|2:0:4|0") == State::Clock);      // on a timer
 
     // Everything else is struck out there
     CHECK(below("1|0:0|2:2:43|0") == State::NotBelow);  // Protect
@@ -246,9 +263,84 @@ TEST_CASE("tactician line: which spells a row below the line lets her cast", "[c
     CHECK(allowsSpell(dia, static_cast<uint16>(SpellID::Dia)));
     CHECK_FALSE(allowsSpell(dia, static_cast<uint16>(SpellID::Diaga)));
 
+    // Enfeeble lets her tactician cast the single-target debuffs it prices,
+    // and nothing else: never a -ga spell, which reaches the mobs around
+    const auto enfeeble = row("2|101:0|2:100:0|0");
+    for (const auto id : cardian::tactician::kEnfeebleOrder)
+    {
+        CHECK(allowsSpell(enfeeble, id));
+    }
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Diaga)));
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Poisonga)));
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Cure)));
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Sleep)));
+    CHECK_FALSE(allowsSpell(enfeeble, static_cast<uint16>(SpellID::Fire)));
+
+    // A -na row is no spell of her tactician's: it runs as written (actsAlone)
+    CHECK_FALSE(allowsSpell(row("1|101:0|2:0:4|0"), static_cast<uint16>(SpellID::Poisona)));
+
     // Nothing that does not fit below the line allows a spell
     CHECK_FALSE(allowsSpell(row("1|0:0|2:2:43|0"), static_cast<uint16>(SpellID::Protect)));
     CHECK_FALSE(allowsSpell(row("102|0:0|0:0:0|0"), static_cast<uint16>(SpellID::Cure)));
+}
+
+TEST_CASE("tactician line: an order acts alone, and below the line only a -na or Erase row does", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::actsAlone;
+    const auto na = row("1|101:0|2:0:4|0");
+    CHECK(actsAlone(State::Order, row(kRest), true));
+    CHECK(actsAlone(State::Order, na, true));
+    CHECK(actsAlone(State::Allows, na, true));
+    CHECK(actsAlone(State::Allows, row("1|9:3|2:2:14|0"), true));  // Ally: status = Poison -> Poisona
+    CHECK(actsAlone(State::Allows, row("0|0:0|2:2:143|0"), true)); // Self -> Erase
+
+    // Her cures, her enfeebles and her melee wait for her tactician
+    CHECK_FALSE(actsAlone(State::Allows, row(kCureBest), true));
+    CHECK_FALSE(actsAlone(State::Allows, row("2|101:0|2:100:0|0"), true));
+    CHECK_FALSE(actsAlone(State::Allows, row("102|0:0|0:0:0|0"), true));
+
+    // With her tactician not running (her Support Mage row unchecked, her
+    // gambits off), a -na row below the line waits as her Cure rows do; an
+    // order still acts
+    CHECK_FALSE(actsAlone(State::Allows, na, false));
+    CHECK_FALSE(actsAlone(State::Allows, row("0|0:0|2:2:143|0"), false));
+    CHECK(actsAlone(State::Order, na, false));
+
+    // Struck out, or the line itself, never
+    CHECK_FALSE(actsAlone(State::Clock, na, true));
+    CHECK_FALSE(actsAlone(State::NoChoice, na, true));
+    CHECK_FALSE(actsAlone(State::Misfit, na, true));
+    CHECK_FALSE(actsAlone(State::Line, row(kSupportMage), true));
+}
+
+TEST_CASE("tactician line: an Enfeeble order casts the first single-target enfeeble she can that the foe lacks", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::firstEnfeeble;
+    using cardian::tactician::kEnfeebleOrder;
+    const std::vector<SpellID> want{ SpellID::Paralyze, SpellID::Slow, SpellID::Blind, SpellID::Dia, SpellID::Bio, SpellID::Poison,
+                                     SpellID::Burn, SpellID::Frost, SpellID::Choke, SpellID::Rasp, SpellID::Shock, SpellID::Drown };
+    REQUIRE(want.size() == kEnfeebleOrder.size());
+    for (std::size_t i = 0; i < want.size(); ++i)
+    {
+        CHECK(kEnfeebleOrder[i] == static_cast<uint16>(want[i]));
+    }
+
+    // No -ga: as an order it would reach every mob around the foe
+    CHECK(std::ranges::find(kEnfeebleOrder, static_cast<uint16>(SpellID::Diaga)) == kEnfeebleOrder.end());
+    CHECK(std::ranges::find(kEnfeebleOrder, static_cast<uint16>(SpellID::Poisonga)) == kEnfeebleOrder.end());
+
+    const auto only = [](std::vector<SpellID> castable)
+    {
+        return [castable = std::move(castable)](const uint16 spell)
+        {
+            return std::ranges::find(castable, static_cast<SpellID>(spell)) != castable.end();
+        };
+    };
+    CHECK(firstEnfeeble(only({ SpellID::Dia, SpellID::Paralyze })) == std::optional<uint16>(static_cast<uint16>(SpellID::Paralyze)));
+    CHECK(firstEnfeeble(only({ SpellID::Poison, SpellID::Dia })) == std::optional<uint16>(static_cast<uint16>(SpellID::Dia)));
+    CHECK(firstEnfeeble(only({ SpellID::Shock, SpellID::Burn })) == std::optional<uint16>(static_cast<uint16>(SpellID::Burn)));
+    CHECK_FALSE(firstEnfeeble(only({ SpellID::Diaga })).has_value());
+    CHECK_FALSE(firstEnfeeble(only({})).has_value());
 }
 
 TEST_CASE("tactician line: her tactician's melee, and when it gives way to her rest", "[cardian][gambits][tactician]")
@@ -280,7 +372,7 @@ TEST_CASE("tactician line: the default sets mean what they say where they sit", 
     {
         mage.push_back(spec);
     }
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Order, State::Order, State::Line, State::Allows, State::Allows });
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Order, State::Order, State::Line, State::Allows, State::Allows, State::Allows, State::Allows });
 
     std::vector<std::string> melee;
     for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::WAR))

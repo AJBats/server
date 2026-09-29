@@ -70,6 +70,14 @@ namespace pawn::tactics
             { SpellID::Poison, Model::Dot, xi::StatusEffect::Poison, 1, xi::Mod::INT, 0, 0, 3.0 },
             { SpellID::Poisonga, Model::Dot, xi::StatusEffect::Poison, 1, xi::Mod::INT, 0, 0, 3.0 },
             { SpellID::Bio, Model::Dot, xi::StatusEffect::Bio, 2, xi::Mod::INT, 0, 60, 3.0 }, // the ticks only
+            // The elemental debuffs, the ticks only, as Bio: the stat each
+            // takes down is not priced
+            { SpellID::Burn, Model::Dot, xi::StatusEffect::Burn, 1, xi::Mod::INT, 0, 0, 3.0 },
+            { SpellID::Frost, Model::Dot, xi::StatusEffect::Frost, 1, xi::Mod::INT, 0, 0, 3.0 },
+            { SpellID::Choke, Model::Dot, xi::StatusEffect::Choke, 1, xi::Mod::INT, 0, 0, 3.0 },
+            { SpellID::Rasp, Model::Dot, xi::StatusEffect::Rasp, 1, xi::Mod::INT, 0, 0, 3.0 },
+            { SpellID::Shock, Model::Dot, xi::StatusEffect::Shock, 1, xi::Mod::INT, 0, 0, 3.0 },
+            { SpellID::Drown, Model::Dot, xi::StatusEffect::Drown, 1, xi::Mod::INT, 0, 0, 3.0 },
         };
 
         // Her allow-list's lists (tactician_line.h) are the bank's own, in
@@ -90,6 +98,17 @@ namespace pawn::tactics
                       cardian::tactician::kPricedDebuffs[2].family == SPELLFAMILY_BLIND && cardian::tactician::kPricedDebuffs[3].family == SPELLFAMILY_DIA &&
                       cardian::tactician::kPricedDebuffs[4].family == SPELLFAMILY_DIAGA && cardian::tactician::kPricedDebuffs[5].family == SPELLFAMILY_POISON &&
                       cardian::tactician::kPricedDebuffs[6].family == SPELLFAMILY_POISONGA && cardian::tactician::kPricedDebuffs[7].family == SPELLFAMILY_BIO);
+        static_assert([]
+                      {
+                          for (std::size_t i = 8; i < cardian::tactician::kPricedDebuffs.size(); ++i)
+                          {
+                              if (cardian::tactician::kPricedDebuffs[i].family != SPELLFAMILY_ELE_DOT)
+                              {
+                                  return false;
+                              }
+                          }
+                          return true;
+                      }());
         static_assert(cardian::tactician::kCureFamily == SPELLFAMILY_CURE);
         static_assert(cardian::tactician::kCureTiers[0] == static_cast<uint16>(SpellID::Cure) && cardian::tactician::kCureTiers[1] == static_cast<uint16>(SpellID::Cure_II) &&
                       cardian::tactician::kCureTiers[2] == static_cast<uint16>(SpellID::Cure_III) && cardian::tactician::kCureTiers[3] == static_cast<uint16>(SpellID::Cure_IV) &&
@@ -586,6 +605,22 @@ namespace pawn::tactics
             return Ratio{ weighted / weights, percent, assumed };
         }
 
+        // An effect on the target that this one would erase as it lands:
+        // each elemental debuff deletes the one it beats (a Burn deletes a
+        // Frost, in its onEffectGain), as status_effect_tables.lua's
+        // EFFECT_NULLIFIES column records
+        auto erasesOn(CBattleEntity* PTarget, const xi::StatusEffect effect) -> bool
+        {
+            sol::protected_function removes = ::lua["xi"]["data"]["statusEffect"]["getEffectToRemove"];
+            auto                    res     = removes(static_cast<uint16>(effect));
+            if (failed("getEffectToRemove", res) || res.get_type(0) != sol::type::number)
+            {
+                return false;
+            }
+            const auto other = res.get<uint16>(0);
+            return other != 0 && PTarget->StatusEffectContainer->HasStatusEffect(static_cast<xi::StatusEffect>(other));
+        }
+
         // justCast: the line for a cast the log saw, priced as the spell
         // stood before it -- the effect it put on the mob is there already
         auto priceDebuff(FightRecord& r, const SpotAverages& spot, const Exchange& x, CBattleEntity* PCaster, CMobEntity* PMob, CSpell* PSpell, const Priced& p, const bool justCast, const std::vector<CBattleEntity*>* members) -> DebuffPrice
@@ -608,6 +643,12 @@ namespace pawn::tactics
             {
                 sol::protected_function nullified = ::lua["xi"]["data"]["statusEffect"]["isEffectNullified"];
                 if (auto res = nullified(CLuaBaseEntity(PMob), static_cast<uint16>(p.effect), p.tier); !failed("isEffectNullified", res) && res.get<bool>(0))
+                {
+                    price.blocked = true;
+                    return price;
+                }
+                // Nor is a debuff that is up wiped to make room for this one
+                if (erasesOn(PMob, p.effect))
                 {
                     price.blocked = true;
                     return price;
@@ -789,7 +830,19 @@ namespace pawn::tactics
             }
             sol::protected_function nullified = ::lua["xi"]["data"]["statusEffect"]["isEffectNullified"];
             auto                    res       = nullified(CLuaBaseEntity(PTarget), static_cast<uint16>(p->effect), p->tier);
-            return !failed("isEffectNullified", res) && res.get<bool>(0);
+            return (!failed("isEffectNullified", res) && res.get<bool>(0)) || erasesOn(PTarget, p->effect);
+        }
+
+        auto immuneTo(CSpell* PSpell, CBattleEntity* PTarget) -> bool
+        {
+            const auto* p = PSpell != nullptr ? priced(PSpell->getID()) : nullptr;
+            if (p == nullptr || PTarget == nullptr)
+            {
+                return false;
+            }
+            sol::protected_function immune = ::lua["xi"]["data"]["statusEffect"]["isTargetImmune"];
+            auto                    res    = immune(CLuaBaseEntity(PTarget), static_cast<uint16>(p->effect), PSpell->getElement());
+            return !failed("isTargetImmune", res) && res.get<bool>(0);
         }
 
         auto castRange(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> float

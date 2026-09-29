@@ -216,7 +216,7 @@ namespace cardian::tactics
         bool        formula     = false; // the rates came from the formulas: nothing measured yet
         bool        noData      = false; // no damage rate yet, measured or from the formulas: not priced, so not cast
         double      onFor       = -1.0;  // the effect is on the mob already, this long to go
-        bool        blocked     = false; // an effect on the mob nullifies this one (a Bio under a Dia)
+        bool        blocked     = false; // an effect on the mob nullifies this one (a Bio under a Dia), or this one would erase it (a Burn over a Frost)
         double      moot        = -1.0;  // the mob dies before it lands: its seconds left
         bool        priced      = true;
         std::string family;              // when unpriced: what it is

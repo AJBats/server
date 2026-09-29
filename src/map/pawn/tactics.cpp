@@ -799,6 +799,20 @@ namespace pawn::tactics
         return fed;
     }
 
+    auto othersCasting(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget) -> bool
+    {
+        auto* PTactician = PPawn != nullptr && PSpell != nullptr && PTarget != nullptr ? find(PPawn) : nullptr;
+        if (PTactician == nullptr)
+        {
+            return false;
+        }
+        const auto key = Conveyor::keyFor(PSpell, PTarget->id, PPawn->id);
+        return std::ranges::any_of(PTactician->conveyor().needs(), [&key, PPawn](const Need& n)
+                                   {
+                                       return n.key == key && n.lockedBy != 0 && n.lockedBy != PPawn->id;
+                                   });
+    }
+
     auto assignment(CCharEntity* PPawn, const bool engaged) -> std::optional<Assignment>
     {
         auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;

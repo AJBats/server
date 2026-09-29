@@ -155,6 +155,8 @@ namespace pawn
                             return TARGET_ENEMY;
                         case G_SELECT::BEST_INDI:
                             return TARGET_SELF;
+                        case pawn::G_SELECT_ENFEEBLE:
+                            return TARGET_ENEMY;
                         default:
                             return 0;
                     }
@@ -251,6 +253,68 @@ namespace pawn
         auto isElemental(const uint16 element) -> bool
         {
             return element >= ELEMENT_FIRE && element <= ELEMENT_WATER;
+        }
+
+        // What is on someone, as ailments.h asks it
+        auto effectsOn(CBattleEntity* PEntity)
+        {
+            return [PEntity](const uint16 effect)
+            {
+                return PEntity->StatusEffectContainer->HasStatusEffect(static_cast<xi::StatusEffect>(effect));
+            };
+        }
+
+        // An erasable effect Erase can take off her: one that runs out, as
+        // CStatusEffectContainer::EraseStatusEffect takes only those
+        auto erasableOn(CBattleEntity* PEntity) -> bool
+        {
+            bool found = false;
+            PEntity->StatusEffectContainer->ForEachEffect([&found](CStatusEffect& effect)
+                                                          {
+                                                              found = found || (effect.HasEffectFlag(xi::StatusEffectFlag::Erasable) && effect.GetDuration() > 0s && !effect.isDeleted());
+                                                          });
+            return found;
+        }
+
+        // The row's spell, when it takes ailments off: -na (best), a -na or
+        // Erase. Only the first spell of a row can start a think (Execute)
+        auto removalOf(const Gambit_t& g) -> const Action_t*
+        {
+            const auto spell = std::ranges::find(g.actions, G_REACTION::MA, &Action_t::reaction);
+            if (spell == g.actions.end())
+            {
+                return nullptr;
+            }
+            return cardian::tactician::isRemovalAction(*spell) ? &*spell : nullptr;
+        }
+
+        // An enfeeble an Enfeeble order may cast on the foe: not on it
+        // already, not nullified by what is on it, and not one it is immune
+        // to (the bank's verdicts, the ones her tactician's pricing asks)
+        auto enfeebleLands(CSpell* PSpell, CBattleEntity* PTarget) -> bool
+        {
+            return !pawn::tactics::bank::onAlready(PSpell, PTarget).has_value() && !pawn::tactics::bank::blockedOn(PSpell, PTarget) &&
+                   !pawn::tactics::bank::immuneTo(PSpell, PTarget);
+        }
+
+        // A spell a row picked by what is on the target still answers it:
+        // a -na or Erase still has something to take off, an enfeeble is not
+        // on already and nothing another caster landed since blocks it. The
+        // conveyor asks every tick before it casts a request a row fed, so
+        // only what can change in a request's short life is asked; the row's
+        // own pick weighed the rest (an immunity never changes)
+        auto stillAnswers(const Action_t& action, const uint16 spellId, CBattleEntity* PTarget) -> bool
+        {
+            if (cardian::tactician::isRemovalAction(action))
+            {
+                return cardian::ailments::cures(spellId, effectsOn(PTarget), spellId == cardian::ailments::kErase && erasableOn(PTarget));
+            }
+            if (action.select == pawn::G_SELECT_ENFEEBLE)
+            {
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(spellId));
+                return !pawn::tactics::bank::onAlready(PSpell, PTarget).has_value() && !pawn::tactics::bank::blockedOn(PSpell, PTarget);
+            }
+            return true;
         }
     } // namespace
 
@@ -365,7 +429,9 @@ namespace pawn
 
         // Her scope's conveyor (RESEARCH §12.12 item 2): where a tactician
         // watches, spell rows feed it and it says who casts; where none
-        // does, rows cast as they always have
+        // does, rows cast as they always have. With her gambits on, a
+        // Support Mage under a conveyor is her tactician running
+        // (CPawnController::TacticianRuns)
         const bool conveyor    = pawn::tactics::has(POwner);
         const bool supportMage = conveyor && pawn::tactics::supportMage(POwner);
 
@@ -389,15 +455,18 @@ namespace pawn
         m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
 
         // Her rows in the running order (the world's first in the wild),
-        // top down; the first to act ends the think. Only an order acts: a
-        // row below her tactician line is her tactician's to read, and a
-        // struck-out row does nothing (tactician_line.h)
+        // top down; the first to act ends the think. An order acts, and so
+        // does a -na or Erase row below her tactician line while her
+        // tactician runs, which has no judgement of its own for them yet;
+        // every other row below the line is her tactician's to read, and a
+        // struck-out row does nothing (tactician_line.h actsAlone)
         const auto layers = RunningLayers();
         const auto states = RunningStates(layers);
         cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t index)
                                     {
-                                        auto& gambit = row.gambit;
-                                        if (!row.enabled || states[index - 1] != cardian::tactician::State::Order || IsBehavior(gambit) ||
+                                        auto&      gambit = row.gambit;
+                                        const auto state  = states[index - 1];
+                                        if (!row.enabled || !cardian::tactician::actsAlone(state, gambit, supportMage) || IsBehavior(gambit) ||
                                             cardian::engage::isEngageRow(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
                                         {
                                             return false;
@@ -408,7 +477,7 @@ namespace pawn
                                             return false;
                                         }
 
-                                        CBattleEntity* PTarget = SelectTarget(gambit);
+                                        CBattleEntity* PTarget = SelectTarget(gambit, state == cardian::tactician::State::Allows);
                                         if (PTarget == nullptr)
                                         {
                                             return false;
@@ -477,8 +546,9 @@ namespace pawn
         {
             return false;
         }
-        // A request a row fed is an order's: a row that has since moved below
-        // her tactician line, or been struck out, no longer asks
+        // A request a row fed is one that acts alone (tactician_line.h
+        // actsAlone): a row that has since moved below her tactician line,
+        // or been struck out, no longer asks
         const auto layers = RunningLayers();
         const auto* row   = cardian::layers::findRow(layers, rowId, rowIdOf);
         if (row == nullptr || !row->enabled || IsBehavior(row->gambit))
@@ -487,10 +557,11 @@ namespace pawn
         }
         const bool own   = !cardian::layers::isWorldRowId(rowId);
         const auto state = own ? StateOf(static_cast<std::size_t>(row - m_gambits.data()) + 1) : cardian::tactician::stateOf(row->gambit, 1, std::nullopt, rowFits(row->gambit));
-        if (state != cardian::tactician::State::Order)
+        if (!cardian::tactician::actsAlone(state, row->gambit, m_PController->TacticianRuns()))
         {
             return false;
         }
+        const bool gate = state == cardian::tactician::State::Allows;
         const auto& g = row->gambit;
         const auto action = std::find_if(g.actions.begin(), g.actions.end(), [](const auto& a) { return a.reaction == G_REACTION::MA; });
         if (action == g.actions.end() ||
@@ -525,13 +596,13 @@ namespace pawn
             bool matches = true;
             for (std::size_t group = 0; group < g.predicate_groups.size(); ++group)
             {
-                if (!CheckTrigger(candidate, g, group, true))
+                if (!CheckTrigger(candidate, g, group, true, gate))
                 {
                     matches = false;
                     break;
                 }
             }
-            if (matches)
+            if (matches && stillAnswers(*action, spellId, castTarget))
             {
                 return true;
             }
@@ -710,33 +781,52 @@ namespace pawn
         }
     }
 
-    auto CGambits::SelectTarget(const Gambit_t& gambit) -> CBattleEntity*
+    auto CGambits::SelectTarget(const Gambit_t& gambit, const bool gate) -> CBattleEntity*
     {
+        // A -na or Erase row picks someone it has a cure for: under a
+        // condition many hold (Tactician's choice, Enfeeble), the most hurt
+        // may carry nothing she can take off while another does, or another
+        // mage may be taking it off already. It is asked of whom the spell
+        // lands on, and before the row's conditions, so a candidate passed
+        // over never spends the row's timer
+        const auto* removal = removalOf(gambit);
         for (auto* PCandidate : Candidates(gambit.target_selector))
         {
+            CBattleEntity* PActionTarget = PCandidate;
+            switch (gambit.target_selector)
+            {
+                case G_TARGET::TRIGGER_SELF_ACTION_TARGET:
+                    PActionTarget = FightTarget();
+                    break;
+                case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
+                    PActionTarget = POwner;
+                    break;
+                default:
+                    break;
+            }
+
+            if (removal != nullptr)
+            {
+                const auto spell = ResolveSpell(*removal, PActionTarget);
+                if (!spell.has_value() || pawn::tactics::othersCasting(POwner, spell::GetSpell(*spell), PActionTarget))
+                {
+                    continue;
+                }
+            }
+
             bool matches = true;
             for (std::size_t groupIndex = 0; groupIndex < gambit.predicate_groups.size(); ++groupIndex)
             {
-                if (!CheckTrigger(PCandidate, gambit, groupIndex))
+                if (!CheckTrigger(PCandidate, gambit, groupIndex, false, gate))
                 {
                     matches = false;
                     break;
                 }
             }
 
-            if (!matches)
+            if (matches)
             {
-                continue;
-            }
-
-            switch (gambit.target_selector)
-            {
-                case G_TARGET::TRIGGER_SELF_ACTION_TARGET:
-                    return FightTarget();
-                case G_TARGET::TRIGGER_TARGET_ACTION_SELF:
-                    return POwner;
-                default:
-                    return PCandidate;
+                return PActionTarget;
             }
         }
         return nullptr;
@@ -761,9 +851,15 @@ namespace pawn
         // "Sleep" is asleep: Sleep II and Lullaby answer the same row -- the
         // three a wake-up removes together (CLuaBaseEntity::wakeUp, which a
         // Cure calls) -- so a brain needs one row for all (the user,
-        // 2026-09-14). Nightmare is Sleep itself, a tier above
+        // 2026-09-14). Nightmare is Sleep itself, a tier above. Enfeeble is
+        // a group: any ailment a -na cures, or an effect Erase takes
+        // (ailments.h)
         auto hasStatus(CBattleEntity* PEntity, const uint32 arg) -> bool
         {
+            if (arg == pawn::G_STATUS_ENFEEBLE)
+            {
+                return cardian::ailments::enfeebled(effectsOn(PEntity), erasableOn(PEntity));
+            }
             const auto effect = static_cast<xi::StatusEffect>(arg);
             if (effect == xi::StatusEffect::SleepI)
             {
@@ -1108,9 +1204,52 @@ namespace pawn
         switch (action.select)
         {
             case G_SELECT::SPECIFIC:
+            {
+                // A -na or Erase goes only on someone it would take something off
+                if (cardian::ailments::isRemoval(action.select_arg) &&
+                    (PTarget == nullptr || !cardian::ailments::cures(action.select_arg, effectsOn(PTarget), erasableOn(PTarget))))
+                {
+                    return std::nullopt;
+                }
                 return m_spellBook.GetAvailable(static_cast<SpellID>(action.select_arg));
+            }
             case G_SELECT::HIGHEST:
+            {
+                // -na (best): the -na for the worst ailment on the target
+                // that she can cast now, Erase last (ailments.h); "can cast"
+                // at the spell's real MP cost, as the conveyor asks before it
+                // casts (bank::usable)
+                if (action.select_arg == cardian::ailments::kNaFamily)
+                {
+                    if (PTarget == nullptr)
+                    {
+                        return std::nullopt;
+                    }
+                    const auto spell = cardian::ailments::best(effectsOn(PTarget), erasableOn(PTarget), [this](const uint16 id)
+                                                               {
+                                                                   return pawn::tactics::bank::usable(POwner, static_cast<SpellID>(id));
+                                                               });
+                    return spell.has_value() ? Maybe<SpellID>(static_cast<SpellID>(*spell)) : std::nullopt;
+                }
                 return m_spellBook.GetBestAvailable(static_cast<SPELLFAMILY>(action.select_arg));
+            }
+            case pawn::G_SELECT_ENFEEBLE:
+            {
+                // Enfeeble as an order: the first of her tactician's single-
+                // target enfeebles she can cast now (bank::usable, as the
+                // conveyor asks) that would land on the foe
+                // (tactician_line.h kEnfeebleOrder, enfeebleLands)
+                if (PTarget == nullptr)
+                {
+                    return std::nullopt;
+                }
+                const auto spell = cardian::tactician::firstEnfeeble([this, PTarget](const uint16 id)
+                                                                     {
+                                                                         return pawn::tactics::bank::usable(POwner, static_cast<SpellID>(id)) &&
+                                                                                enfeebleLands(spell::GetSpell(static_cast<SpellID>(id)), PTarget);
+                                                                     });
+                return spell.has_value() ? Maybe<SpellID>(static_cast<SpellID>(*spell)) : std::nullopt;
+            }
             case G_SELECT::RANDOM:
                 return m_spellBook.GetRandomDamageSpell(PTarget);
             case G_SELECT::BEST_INDI:
@@ -1557,9 +1696,13 @@ namespace pawn
             return cardian::engage::isFoeTarget(static_cast<G_TARGET>(target)) || target == static_cast<std::size_t>(G_TARGET::TRIGGER_TARGET_ACTION_SELF);
         }
 
-        auto statusName(const uint16 id) -> std::string
+        auto statusName(const uint32 id) -> std::string
         {
-            return id == static_cast<uint16>(xi::StatusEffect::Ko) ? std::string("KO") : titleCase(effects::GetEffectName(id));
+            if (id == pawn::G_STATUS_ENFEEBLE)
+            {
+                return "Enfeeble";
+            }
+            return id == static_cast<uint16>(xi::StatusEffect::Ko) ? std::string("KO") : titleCase(effects::GetEffectName(static_cast<uint16>(id)));
         }
 
         // A condition's clause, its value given as text: the number or the
@@ -1654,7 +1797,7 @@ namespace pawn
             {
                 case G_CONDITION::STATUS:
                 case G_CONDITION::NOT_STATUS:
-                    return conditionWords(p.condition, statusName(static_cast<uint16>(arg)), foe);
+                    return conditionWords(p.condition, statusName(arg), foe);
                 case G_CONDITION::JA_ON_COOLDOWN:
                 {
                     auto* PAbility = ability::GetAbility(static_cast<uint16>(arg));
@@ -1738,6 +1881,8 @@ namespace pawn
                             return "Indi (best)";
                         case G_SELECT::BEST_AGAINST_TARGET:
                             return familyName(a.select_arg) + " (best against target)";
+                        case pawn::G_SELECT_ENFEEBLE:
+                            return "Enfeeble";
                         default:
                             return fmt::format("magic ({}:{})", static_cast<uint16>(a.select), a.select_arg);
                     }
@@ -2348,9 +2493,10 @@ namespace pawn
             v.conditions.push_back({ c.target, c.condition, c.takes, c.side, c.range.min, c.range.max, c.range.step, c.range.initial, headText(target, words) });
         }
 
-        // The statuses "status =" and "status ≠" can name: the ones a party
-        // fights and buffs with (KO is the ally's own entry). Ids are
-        // xi::StatusEffect.
+        // The statuses "status =" and "status ≠" can name: Enfeeble first,
+        // the group (ailments.h), then the ones a party fights and buffs
+        // with (KO is the ally's own entry). Ids are xi::StatusEffect.
+        v.statuses.push_back({ static_cast<uint16>(pawn::G_STATUS_ENFEEBLE), statusName(pawn::G_STATUS_ENFEEBLE) });
         for (const uint16 id : { 1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 9u, 10u, 11u, 12u, 13u, 15u, 16u, 28u, 31u,
                                  33u, 36u, 37u, 40u, 41u, 42u, 43u, 56u, 57u, 58u, 66u, 68u, 158u })
         {
@@ -2401,6 +2547,25 @@ namespace pawn
             }
             return false;
         };
+
+        // Enfeeble heads her Magic when her jobs cast any of its enfeebles
+        // (tactician_line.h kEnfeebleOrder), usable once she can cast one
+        {
+            bool ofHers = false;
+            bool usable = false;
+            for (const auto id : cardian::tactician::kEnfeebleOrder)
+            {
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
+                ofHers       = ofHers || (PSpell != nullptr && ofHerJobs(PSpell));
+                usable       = usable || (PSpell != nullptr && CSpellBook::Eligible(PPawn, PSpell));
+            }
+            if (ofHers)
+            {
+                VocabAction enfeeble{ G_REACTION::MA, pawn::G_SELECT_ENFEEBLE, 0, "Enfeeble", ActionGroup::Magic, TARGET_ENEMY };
+                enfeeble.usable = usable;
+                v.actions.push_back(std::move(enfeeble));
+            }
+        }
 
         // Magic in spell order, a family's "(best)" just before its first
         // spell when she has more than one spell of it to choose among
