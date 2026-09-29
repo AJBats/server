@@ -20,12 +20,14 @@
 */
 
 #include "auction.h"
+#include "cardian_link_messages.h"
 #include "pawn_items.h"
 
 #include "common/database.h"
 #include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/utils.h"
 
 #include "entities/char_entity.h"
 #include "enums/item_flag.h"
@@ -131,12 +133,6 @@ namespace pawn::auction
                 }
             }
             return 0;
-        }
-
-        auto gilOf(CCharEntity* PChar) -> uint32
-        {
-            const CItem* PGil = PChar->getStorage(LOC_INVENTORY)->GetItem(0);
-            return PGil != nullptr ? PGil->getQuantity() : 0;
         }
 
         // The shared purchase's work in one transaction across both
@@ -487,79 +483,79 @@ namespace pawn::auction
         BidResult   result;
         const auto* PItem  = xi::items::lookup(itemId);
         const auto  job    = PChar != nullptr ? static_cast<uint8>(PChar->GetMJob()) : 0;
-        const auto  refuse = [&result](std::string why) -> BidResult
+        const auto  refuse = [&result](const uint16 why) -> BidResult
         {
-            result.refused = std::move(why);
+            result.status = why;
             return result;
         };
 
         if (PItem == nullptr || job == 0)
         {
-            return refuse("no such item");
+            return refuse(CL_S_NO_SUCH_ITEM);
         }
         if (stack && PItem->getStackSize() <= 1)
         {
-            return refuse("that does not come in stacks");
+            return refuse(CL_S_NOT_IN_STACKS);
         }
         const uint32 quantity = stack ? PItem->getStackSize() : 1;
         if (price == 0 || price > 999999999)
         {
-            return refuse("no such price");
+            return refuse(CL_S_BAD_PRICE);
         }
         // The game's own gates on a bid (the auction packet's validator), on
         // whoever is bidding and on the player placing it for her
         CCharEntity* PActor = PPurse != nullptr ? PPurse : PChar;
         if (PChar->isInEvent() || PActor->isInEvent())
         {
-            return refuse("not during an event");
+            return refuse(CL_S_IN_EVENT);
         }
         if (jailutils::InPrison(PChar) || jailutils::InPrison(PActor))
         {
-            return refuse("not from jail");
+            return refuse(CL_S_IN_JAIL);
         }
         if (PChar->loc.zone == nullptr || !PChar->loc.zone->CanUseMisc(xi::ZoneMisc::AuctionHouse))
         {
-            return refuse("there is no auction house here");
+            return refuse(CL_S_NO_AUCTION_HOUSE);
         }
         if (!pawn::items::usableContainer(PChar, location))
         {
-            return refuse("no such bag");
+            return refuse(CL_S_NO_SUCH_BAG);
         }
         if (pawn::items::isWardrobe(location) && dynamic_cast<const CItemEquipment*>(PItem) == nullptr)
         {
-            return refuse("only gear goes in a wardrobe"); // the game's own item move's rule
+            return refuse(CL_S_WARDROBE_GEAR); // the game's own item move's rule
         }
         if (equip && location != LOC_INVENTORY && !pawn::items::isWardrobe(location))
         {
-            return refuse("gear is worn from the inventory or a wardrobe");
+            return refuse(CL_S_WORN_FROM_BAG);
         }
         if (equip && (equipSlot > SLOT_BACK || !wearable(PChar, dynamic_cast<const CItemEquipment*>(PItem), equipSlot, job, equipLevel(PChar))))
         {
-            return refuse("that cannot be worn there");
+            return refuse(CL_S_CANNOT_WEAR);
         }
         if (PChar->getStorage(LOC_INVENTORY)->GetFreeSlotsCount() == 0)
         {
-            return refuse("no room in the inventory");
+            return refuse(CL_S_NO_SPACE);
         }
         if (location != LOC_INVENTORY && PChar->getStorage(location)->GetFreeSlotsCount() == 0)
         {
-            return refuse("no room in that bag");
+            return refuse(CL_S_BAG_FULL);
         }
         const bool   shared    = PPurse != nullptr && PPurse != PChar;
-        const uint32 own       = gilOf(PChar);
+        const uint32 own       = pawn::items::gilOf(PChar);
         const uint32 shortfall = own < price ? price - own : 0;
-        if (shortfall > 0 && (!shared || gilOf(PPurse) < shortfall))
+        if (shortfall > 0 && (!shared || pawn::items::gilOf(PPurse) < shortfall))
         {
-            return refuse(shared ? "not enough gil, hers and yours together" : "not enough gil");
+            return refuse(CL_S_NOT_ENOUGH_GIL);
         }
         if (PItem->hasFlag(ItemFlag::Rare) && charutils::HasItem(PChar, itemId))
         {
-            return refuse("it is Rare, and one is already owned");
+            return refuse(CL_S_RARE_OWNED);
         }
 
         if (!listedAtOrUnder(itemId, stack, price))
         {
-            return refuse("nothing at that price or less");
+            return refuse(CL_S_NOTHING_AT_PRICE);
         }
 
         const auto before = slotsWith(PChar, LOC_INVENTORY, itemId);
@@ -582,14 +578,14 @@ namespace pawn::auction
         }
         if (!bought)
         {
-            return refuse("the purchase failed; try again"); // a listing was there: busy gil, the database, or another buyer first
+            return refuse(CL_S_PURCHASE_FAILED); // a listing was there: busy gil, the database, or another buyer first
         }
         result.fromPurse = shortfall;
 
         // The purchase lands in the inventory; a split (a take and a fresh
         // give, as the game's own item move splits) sends it on to the bag,
         // and the client is told of both
-        result.won      = true;
+        result.status   = CL_S_OK;
         result.location = LOC_INVENTORY;
         uint8 slot      = landedSlot(PChar, LOC_INVENTORY, itemId, before, quantity);
         if (location != LOC_INVENTORY && slot != 0)
@@ -604,25 +600,77 @@ namespace pawn::auction
             }
             else
             {
-                result.note = "it stayed in the inventory";
+                ShowInfoFmt("auction: {}'s {} stayed in the inventory: the move on to bag {} fell through", PChar->getName(), itemId, location);
             }
         }
         // The equip packet's own gate: nothing is put on out of a normal status
         if (equip && slot != 0 && PChar->status != xi::Status::Normal)
         {
-            result.note += (result.note.empty() ? "" : "; ") + std::string("not worn: not now");
+            result.notWorn = CL_S_CANNOT_NOW;
         }
         else if (equip && slot != 0)
         {
-            if (const auto err = pawn::items::equip(PChar, slot, equipSlot, result.location); err.empty())
+            if (const auto status = pawn::items::equip(PChar, slot, equipSlot, result.location); status == CL_S_OK)
             {
                 result.equipped = true;
             }
             else
             {
-                result.note += (result.note.empty() ? "" : "; ") + std::string("not worn: ") + err;
+                ShowInfoFmt("auction: {} does not wear the {} she won (outcome 0x{:04X})", PChar->getName(), itemId, status);
+                result.notWorn = status;
             }
         }
         return result;
+    }
+
+    namespace
+    {
+        constexpr float kCounterReach = 8.0f;  // yalms, the player to a counter (a gate guard's reach)
+        constexpr float kShopReach    = 15.0f; // yalms, a member to the counter the player stands at
+    } // namespace
+
+    auto counterNear(const CCharEntity* PPlayer) -> const CBaseEntity*
+    {
+        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
+        {
+            return nullptr;
+        }
+        const CBaseEntity* PNearest = nullptr;
+        float              nearest  = kCounterReach;
+        for (const auto* PCounter : PPlayer->loc.zone->queryEntitiesByName("Auction_Counter"))
+        {
+            if (PCounter == nullptr)
+            {
+                continue;
+            }
+            if (const float away = distance(PPlayer->loc.p, PCounter->loc.p); away <= nearest)
+            {
+                PNearest = PCounter;
+                nearest  = away;
+            }
+        }
+        return PNearest;
+    }
+
+    auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember) -> uint16
+    {
+        return whereShopping(PPlayer, PMember, counterNear(PPlayer));
+    }
+
+    auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember, const CBaseEntity* PCounter) -> uint16
+    {
+        if (PCounter == nullptr)
+        {
+            return CL_S_NOT_BY_COUNTER;
+        }
+        if (PMember == PPlayer)
+        {
+            return CL_S_OK;
+        }
+        if (PMember == nullptr || PMember->loc.zone != PPlayer->loc.zone || distance(PMember->loc.p, PCounter->loc.p) > kShopReach)
+        {
+            return CL_S_TOO_FAR_TO_SHOP;
+        }
+        return CL_S_OK;
     }
 } // namespace pawn::auction

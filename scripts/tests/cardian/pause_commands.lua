@@ -180,19 +180,29 @@ describe('Combat pause: commands', function()
         player:setHP(10)
         local mp = player:getMP()
 
+        -- The queue line's action as the Link names it (cardian_link_protocol.h):
+        -- kind 2 a spell, mode 2 the one id names; kind 11 the client's own action
+        -- menu, id its 0x01A action (2 = Attack)
+        local function says(line, kind, mode, id, target)
+            return line ~= nil and line.kind == kind and line.mode == mode and line.id == id and line.target == target
+        end
+        local function shown(line)
+            return line == nil and 'nothing' or string.format('%d:%d:%d on %d', line.kind, line.mode, line.id, line.target)
+        end
+
         assert(pause.hold())
-        assert(player:cardianQueuedOwn() == '', 'a queue line with nothing queued: ' .. player:cardianQueuedOwn())
+        assert(player:cardianQueuedOwn() == nil, 'a queue line with nothing queued: ' .. shown(player:cardianQueuedOwn()))
 
         player.actions:useSpell(player, xi.magic.spell.CURE)
         local line = player:cardianQueuedOwn()
-        assert(line == string.format('2:2:%d %d', xi.magic.spell.CURE, player:getTargID()), 'the queue line reads: ' .. line)
+        assert(says(line, 2, 2, xi.magic.spell.CURE, player:getTargID()), 'the queue line reads: ' .. shown(line))
 
         player.actions:engage(mob)
         line = player:cardianQueuedOwn()
-        assert(line == string.format('cmd:Attack %d', mob:getTargID()), 'the replaced queue line reads: ' .. line)
+        assert(says(line, 11, 0, 2, mob:getTargID()), 'the replaced queue line reads: ' .. shown(line))
 
         assert(player:cardianCancelOwn(), 'he could not take his queued command back')
-        assert(player:cardianQueuedOwn() == '' and pause.queued(player:getID()) == nil, 'the command is still queued after he took it back')
+        assert(player:cardianQueuedOwn() == nil and pause.queued(player:getID()) == nil, 'the command is still queued after he took it back')
         assert(not player:cardianCancelOwn(), 'a second cancel found something to take back')
 
         assert(pause.release())

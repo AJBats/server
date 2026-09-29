@@ -29,7 +29,6 @@
 #include "common/timer.h"
 #include "common/version.h"
 
-#include "command_handler.h"
 #include "common/types/position.h"
 #include "entities/char_entity.h"
 #include "map_session.h"
@@ -37,26 +36,11 @@
 #include "utils/zoneutils.h"
 #include "zone.h"
 
-// The map's Lua state (luautils.h), taken by forward declaration so this
-// transport never pays sol2's compile cost
-namespace sol
-{
-class state;
-}
-extern sol::state lua;
-
-// The link's protocol number, sent in welcome. The addon (link.lua's
-// kProtocol) unloads itself when its own differs: both are bumped together
-// whenever a line either side sends changes shape, and no line is kept
-// compatible (the user, 2026-09-14)
-constexpr uint32 kLinkProtocol = 18; // 18: the Auction House's shelves (ahlist <name> <shelf>: an equipment slot's number, c<cat>.<cat> a set of categories, s<cat>... the spell scrolls she can learn; ahl.b/ahl/ahl.e/err ahlist carry the shelf); 17: the Auction House buy panel, singles and stacks (ahl entries id:level:stock:going:category:stack:size; ahhist <itemid> <stack> -> ahh.b <itemid> <stack> <stock> <going> / ahh <itemid> <stack> date:price:seller:buyer,... / ahh.e <itemid> <stack>; ahbid <name> <eqslot> <itemid> <stack> <price> <loc> <0|1> <seq> -> ahb <seq> <name> <itemid> <stack> <price> <loc> <equipped> <from purse> [note], refused err ahbid <seq> <why>); 16: the Auction House screen (list.b <count> <by a counter>; cd p ends with whether she stands by that counter; ahlist <name> <eqslot> -> ahl.b <name> <eqslot> / ahl <name> <eqslot> id:level:stock:going:category,... / ahl.e <name> <eqslot>, refused err ahlist <name> <eqslot> <why>); 15: the gambit catalogue by side (gvc <name> <page>:<range|-> <target>|<cond>:<arg|*|s>=<label>;..., no gvt), every learnable action (gva keys ending ! are not hers now), the row state x-side; 14: the gil line (givegil / takegil <name> <amount>) and item orders (do <name> item:<id>, a cardian's queue line speaking item:<id>); 13: the tactician line (g <name> <index> <on> <state> <spec> <label>, state o / t / a / x-below / x-clock / x-choice); 12: the party waits (contracts -> ct.b / ct <name> <kind> <job> <level> <zone> <state> / ct.e; endcontract <name>); 11: the maneuver's rest (mv <name> rest:<n>; cd p carries the percent a rest order runs to, whether she kneels, Healing's ticks, next and interval ms); 10: the ring on the mesh (cd ring <x> <y> <z> <asked x> <asked z> answers a walk the mesh moved); 8: maneuvers (mv <name> [off], mv; cd mv <name> on | cd mv <name> | cd mv; gvx carries key=mask,mp)
-
 #include <asio/ip/tcp.hpp>
-#include <asio/read_until.hpp>
+#include <asio/read.hpp>
 #include <asio/steady_timer.hpp>
 #include <asio/write.hpp>
 
-#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <deque>
@@ -66,16 +50,17 @@ constexpr uint32 kLinkProtocol = 18; // 18: the Auction House's shelves (ahlist 
 #include <string>
 #include <string_view>
 #include <unordered_map>
-#include <vector>
 
 using namespace std::chrono_literals;
 
 namespace
 {
-    cardian::link::Stats g_stats;
+    using namespace cardian::link;
+
+    Stats g_stats;
 
     // The uplink side store: charid -> last streamed position, server
-    // conventions. Written by pos lines, read by cardian AI, both on the
+    // conventions. Written by pos messages, read by cardian AI, both on the
     // main thread; entries go stale by age rather than needing cleanup,
     // but unbind and disconnect erase eagerly anyway.
     // TODO(cardian): the moment a second consumer of this store appears,
@@ -103,46 +88,18 @@ namespace
     constexpr auto FreshPositionMaxAge = std::chrono::seconds(1);
 
     class Connection;
-    // charid -> the connection bound to it, for replies addressed to a
-    // character (sendToCharacter). Maintained by bind/unbind/disconnect on
-    // the main thread; a connection erases itself before it can die.
+    // charid -> the connection bound to it, for messages addressed to a
+    // character (sendBytes). Maintained by bind/unbind/disconnect on the main
+    // thread; a connection erases itself before it can die.
     std::unordered_map<uint32, Connection*> g_boundConnections;
 
-    auto splitWords(std::string_view line) -> std::vector<std::string_view>
+    // Who answers each addon message the transport does not answer itself
+    struct Registered
     {
-        std::vector<std::string_view> words;
-        std::size_t                   pos = 0;
-        while (pos < line.size())
-        {
-            const auto start = line.find_first_not_of(' ', pos);
-            if (start == std::string_view::npos)
-            {
-                break;
-            }
-            const auto end = line.find(' ', start);
-            words.emplace_back(line.substr(start, end == std::string_view::npos ? std::string_view::npos : end - start));
-            if (end == std::string_view::npos)
-            {
-                break;
-            }
-            pos = end + 1;
-        }
-        return words;
-    }
-
-    // 0 = malformed (bind treats 0 itself as malformed too)
-    auto parseCharID(std::string_view text) -> uint32
-    {
-        uint32     value    = 0;
-        const auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
-        return (ec == std::errc() && ptr == text.data() + text.size()) ? value : 0;
-    }
-
-    auto parseFloat(std::string_view text, float& out) -> bool
-    {
-        const auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), out);
-        return ec == std::errc() && ptr == text.data() + text.size() && std::isfinite(out);
-    }
+        std::size_t                                                                   size = 0;
+        std::function<void(CCharEntity* PChar, std::string_view frame, Reply& reply)> handler;
+    };
+    std::unordered_map<uint16, Registered> g_handlers;
 
     // Peer bytes never reach the log raw
     auto printable(std::string_view text) -> std::string
@@ -169,22 +126,29 @@ namespace
         return ec ? "unknown" : fmt::format("{}:{}", endpoint.address().to_string(), endpoint.port());
     }
 
+    auto headerOf(const std::string_view frame) -> cl_header
+    {
+        cl_header header{};
+        std::memcpy(&header, frame.data(), sizeof(header));
+        return header;
+    }
+
     // One addon connection: two coroutines on the main context sharing this
     // object.
-    //   - the READER (run/serve) owns the lifecycle: it reads lines, handles
-    //     them, pings a quiet peer, drops a silent one, and closes the socket
-    //     when it is done.
+    //   - the READER (run/serve) owns the lifecycle: it reads messages,
+    //     handles them, pings a quiet peer, drops a silent one, and closes the
+    //     socket when it is done.
     //   - the WRITER (writeLoop) is the only code that ever writes to the
-    //     socket. Everyone else -- replies, pings, future pushes -- calls
-    //     enqueue(), which never blocks: the outbox is bounded and a full
-    //     one drops the newest line with a counter. A stalled peer can
-    //     therefore never stall the reader, and the silence rule ends it.
+    //     socket. Everyone else -- answers, pings, pushes -- calls enqueue(),
+    //     which never blocks: the outbox is bounded and a full one drops the
+    //     newest message with a counter. A stalled peer can therefore never
+    //     stall the reader, and the silence rule ends it.
     // Nothing thrown in either reaches the scheduler: an exception closes
     // this connection and nothing else.
     class Connection : public std::enable_shared_from_this<Connection>
     {
     public:
-        Connection(Scheduler& scheduler, asio::ip::tcp::socket socket, const cardian::link::Config& config)
+        Connection(Scheduler& scheduler, asio::ip::tcp::socket socket, const Config& config)
         : scheduler_(scheduler)
         , socket_(std::move(socket))
         , wake_(scheduler.mainContext())
@@ -227,8 +191,8 @@ namespace
                 serverDrop_ = true;
             }
 
-            // Let the writer deliver what the peer was told (an err, a last
-            // pong) before the socket goes -- bounded, so a stalled peer
+            // Let the writer deliver what the peer was told (a refusal, a last
+            // answer) before the socket goes -- bounded, so a stalled peer
             // cannot hold the close
             for (int i = 0; i < 100 && writeError_.empty() && (!outbox_.empty() || writeInFlight_); ++i)
             {
@@ -241,14 +205,14 @@ namespace
             }
 
             closing_ = true;
-            wake_.cancel(); // release the writer if it is waiting for lines
+            wake_.cancel(); // release the writer if it is waiting for messages
 
             if (serverDrop_)
             {
                 ++g_stats.dropped;
             }
             --g_stats.live;
-            unbind(); // no ghost freshness or replies after the link is gone
+            unbind(); // no ghost freshness or messages after the link is gone
             ShowInfoFmt("link: {} disconnected ({})", peer_, closeReason);
 
             asio::error_code ec;
@@ -256,13 +220,17 @@ namespace
             socket_.close(ec);
         }
 
-        // A line addressed to this connection's character (cd replies)
-        void push(std::string line)
+        // A whole message addressed to this connection's character
+        void push(std::string bytes)
         {
-            enqueue(std::move(line));
+            enqueue(std::move(bytes));
         }
 
     private:
+        // What the character's link owns goes with the bind -- but only while this
+        // connection is that link: a newer connection that took the character
+        // over (an addon reloaded while this one waits out its silence) keeps
+        // its stream and its view
         void unbind()
         {
             if (boundCharID_ == 0)
@@ -272,27 +240,54 @@ namespace
             if (const auto it = g_boundConnections.find(boundCharID_); it != g_boundConnections.end() && it->second == this)
             {
                 g_boundConnections.erase(it);
+                g_freshPositions.erase(boundCharID_);
+                cardian::view::clearById(boundCharID_); // his camera came off her with the addon; her walk ends with the view (WalkOrderTick)
             }
-            g_freshPositions.erase(boundCharID_);
-            cardian::view::clearById(boundCharID_); // his camera came off her with the addon; her walk ends with the view (WalkOrderTick)
             boundCharID_ = 0;
         }
 
         // The only path to the wire. Never blocks, never writes.
-        void enqueue(std::string line)
+        void enqueue(std::string bytes)
         {
             if (closing_)
             {
                 return;
             }
-            if (outbox_.size() >= config_.maxOutboxLines)
+            if (outbox_.size() >= config_.maxOutboxMessages)
             {
                 ++g_stats.outDropped;
                 return;
             }
-            line.push_back('\n');
-            outbox_.push_back(std::move(line));
+            outbox_.push_back(std::move(bytes));
             wake_.cancel(); // a no-op unless the writer is waiting
+        }
+
+        // The last answer to one of the link's own requests; a one-way message gets none
+        template <typename T>
+        void answer(T msg, const uint16 status)
+        {
+            if (msg.h.req == 0)
+            {
+                return;
+            }
+            stamp(msg, msg.h.req, CL_F_REPLY, status);
+            enqueue(bytesOf(msg));
+        }
+
+        // A request the link refuses comes back as itself with the status; a
+        // one-way message, or an answer, is not answered
+        void refuse(const std::string_view frame, const uint16 status)
+        {
+            auto header = headerOf(frame);
+            if (header.req == 0 || (header.flags & CL_F_REPLY) != 0)
+            {
+                return;
+            }
+            header.flags  = CL_F_REPLY;
+            header.status = status;
+            std::string bytes(frame);
+            std::memcpy(bytes.data(), &header, sizeof(header));
+            enqueue(std::move(bytes));
         }
 
         auto writeLoop() -> Task<void>
@@ -309,11 +304,11 @@ namespace
                         continue;
                     }
 
-                    const std::string line = std::move(outbox_.front());
+                    const std::string bytes = std::move(outbox_.front());
                     outbox_.pop_front();
 
                     writeInFlight_           = true;
-                    const auto [ec, written] = co_await asio::async_write(socket_, asio::buffer(line), asio::as_tuple(asio::use_awaitable));
+                    const auto [ec, written] = co_await asio::async_write(socket_, asio::buffer(bytes), asio::as_tuple(asio::use_awaitable));
                     writeInFlight_           = false;
                     if (ec)
                     {
@@ -325,7 +320,7 @@ namespace
                         }
                         co_return;
                     }
-                    ++g_stats.linesOut;
+                    ++g_stats.messagesOut;
                 }
             }
             catch (const std::exception& e)
@@ -343,12 +338,25 @@ namespace
             lastRx_      = realtime::now();
             windowStart_ = lastRx_;
 
+            // Room for a whole message and more behind it: every whole message
+            // is taken out after each read, so what waits is under maxMessage
+            const std::size_t inboxLimit = config_.maxMessage * 4;
+
             while (socket_.is_open() && !scheduler_.closeRequested())
             {
-                auto result = co_await Scheduler::withTimeout(
-                    asio::async_read_until(socket_, asio::dynamic_buffer(inbox_, config_.maxLine), '\n', asio::as_tuple(asio::use_awaitable)),
+                // Read into the inbox itself, so bytes that arrive as the read
+                // times out are kept rather than lost with the cancelled read
+                const auto before = inbox_.size();
+                auto       result = co_await Scheduler::withTimeout(
+                    asio::async_read(socket_, asio::dynamic_buffer(inbox_, inboxLimit), asio::transfer_at_least(1), asio::as_tuple(asio::use_awaitable)),
                     config_.pingInterval);
 
+                if (inbox_.size() != before)
+                {
+                    lastRx_ = realtime::now();
+                }
+
+                std::string endReason;
                 if (!result.has_value())
                 {
                     // Nothing arrived within a ping interval
@@ -357,60 +365,89 @@ namespace
                         serverDrop_ = true;
                         co_return fmt::format("silent for {}ms", config_.deadAfter.count());
                     }
-                    enqueue(fmt::format("ping {}", ++pingSeq_));
-                    continue;
-                }
-
-                const auto [ec, length] = result.value();
-                if (ec)
-                {
-                    if (ec == asio::error::eof)
+                    if (inbox_.size() == before)
                     {
-                        co_return "closed by peer";
+                        auto ping  = make<cl_ping>();
+                        ping.h.req = ++pingSeq_;
+                        enqueue(bytesOf(ping));
                     }
-                    if (ec == asio::error::not_found)
-                    {
-                        serverDrop_ = true;
-                        co_return "line too long";
-                    }
-                    co_return ec.message();
+                }
+                else if (const auto ec = std::get<0>(*result); ec)
+                {
+                    endReason = ec == asio::error::eof ? "closed by peer" : ec.message();
                 }
 
-                const auto now = realtime::now();
-                lastRx_        = now;
-
-                if (now - windowStart_ >= 1s)
+                // Every whole message in the inbox, in order, even when the read
+                // also ended the connection
+                if (auto reason = drainInbox(); !reason.empty())
                 {
-                    windowStart_     = now;
-                    linesThisSecond_ = 0;
+                    co_return reason;
                 }
-                if (++linesThisSecond_ > config_.maxLinesPerSecond)
+                if (!endReason.empty())
                 {
-                    serverDrop_ = true;
-                    co_return "flooding";
-                }
-
-                std::string line = inbox_.substr(0, length - 1);
-                inbox_.erase(0, length);
-                if (!line.empty() && line.back() == '\r')
-                {
-                    line.pop_back();
-                }
-
-                ++g_stats.linesIn;
-
-                if (!handleLine(line))
-                {
-                    if (!greeted_)
-                    {
-                        serverDrop_ = true;
-                        co_return "hello expected";
-                    }
-                    co_return "bye";
+                    co_return endReason;
                 }
             }
 
             co_return "server shutting down";
+        }
+
+        // Handles every whole message waiting in the inbox, then drops what was
+        // handled; a non-empty reason ends the connection
+        auto drainInbox() -> std::string
+        {
+            std::size_t handled = 0;
+            auto        reason  = drainFrom(handled);
+            inbox_.erase(0, handled);
+            return reason;
+        }
+
+        // Each message is handled where it lies in the inbox, and `handled`
+        // moves past it: the inbox is shifted once per drain, not once per
+        // message. Nothing a handler does touches the inbox.
+        auto drainFrom(std::size_t& handled) -> std::string
+        {
+            while (true)
+            {
+                const auto rest = std::string_view(inbox_).substr(handled);
+
+                if (rest.size() < sizeof(uint32_t))
+                {
+                    return {};
+                }
+                uint32_t size = 0;
+                std::memcpy(&size, rest.data(), sizeof(size));
+                if (size < sizeof(cl_header) || size > config_.maxMessage)
+                {
+                    serverDrop_ = true;
+                    return fmt::format("message size {} (limit {})", size, config_.maxMessage);
+                }
+                if (rest.size() < size)
+                {
+                    return {};
+                }
+
+                const auto frame = rest.substr(0, size);
+                handled += size;
+
+                const auto now = realtime::now();
+                if (now - windowStart_ >= 1s)
+                {
+                    windowStart_        = now;
+                    messagesThisSecond_ = 0;
+                }
+                if (++messagesThisSecond_ > config_.maxMessagesPerSecond)
+                {
+                    serverDrop_ = true;
+                    return "flooding";
+                }
+
+                ++g_stats.messagesIn;
+                if (auto reason = handleMessage(frame); !reason.empty())
+                {
+                    return reason;
+                }
+            }
         }
 
         // The bound character, re-resolved and re-verified on EVERY use: it
@@ -418,7 +455,7 @@ namespace
         // client address must still be this socket's peer. Sessions die at
         // zone lines and possession re-homes identities, so nothing here may
         // cache a pointer; any failure clears the bind and the addon,
-        // noticing its own identity, binds again.
+        // told so, binds again.
         auto resolveBound() -> CCharEntity*
         {
             if (boundCharID_ == 0)
@@ -434,165 +471,247 @@ namespace
             return PChar;
         }
 
-        // false ends the connection
-        auto handleLine(std::string_view line) -> bool
+        // The bound character for a message that needs one. Without it, a
+        // request comes back refused and a one-way message is answered with
+        // an UNBOUND notice, so the addon binds again either way.
+        auto requireBound(const std::string_view frame) -> CCharEntity*
         {
-            const auto words = splitWords(line);
-            if (words.empty())
+            const bool wasBound = boundCharID_ != 0;
+            if (auto* PChar = resolveBound())
             {
-                return true;
+                return PChar;
             }
+            const uint16 why = wasBound ? CL_S_BIND_STALE : CL_S_NOT_BOUND;
+            if (headerOf(frame).req != 0)
+            {
+                refuse(frame, why);
+            }
+            else
+            {
+                auto notice     = make<cl_unbound>();
+                notice.h.status = why;
+                enqueue(bytesOf(notice));
+            }
+            return nullptr;
+        }
 
-            const auto verb = words[0];
+        // A non-empty reason ends the connection
+        auto handleMessage(const std::string_view frame) -> std::string
+        {
+            const auto header = headerOf(frame);
 
             if (!greeted_)
             {
-                if (verb != "hello")
+                if (header.type != CL_T_HELLO)
                 {
-                    enqueue("err hello first");
-                    return false;
+                    refuse(frame, CL_S_HELLO_FIRST);
+                    serverDrop_ = true;
+                    return "hello expected";
                 }
-                greeted_ = true;
-                ShowInfoFmt("link: {} hello (addon v{})", peer_, printable(words.size() > 1 ? words[1] : "?"));
-                enqueue(fmt::format("welcome {} 0 {}", version::GetGitSha(), kLinkProtocol));
-                return true;
+                return handleHello(frame);
             }
 
-            if (verb == "ping")
+            switch (header.type)
             {
-                enqueue(fmt::format("pong {}", printable(words.size() > 1 ? words[1] : "0")));
-                return true;
-            }
-            if (verb == "pong" || verb == "hello")
-            {
-                return true;
-            }
-            if (verb == "stats")
-            {
-                const auto s = g_stats;
-                enqueue(fmt::format("stats accepted={} live={} rejected={} dropped={} in={} out={} outdrop={} pos={}",
-                                    s.accepted, s.live, s.rejected, s.dropped, s.linesIn, s.linesOut, s.outDropped, s.posIn));
-                return true;
-            }
-            if (verb == "bind")
-            {
-                const auto id = words.size() > 1 ? parseCharID(words[1]) : 0;
-                if (id == 0)
-                {
-                    enqueue("err bind malformed");
-                    return true;
-                }
-                auto* PChar = zoneutils::GetChar(id);
-                if (PChar == nullptr)
-                {
-                    enqueue("err bind no such character");
-                    return true;
-                }
-                if (PChar->PSession == nullptr)
-                {
-                    enqueue("err bind not a played character");
-                    return true;
-                }
-                if (PChar->PSession->client_ipp.getIPString() != peerAddress_)
-                {
-                    enqueue("err bind address mismatch");
-                    return true;
-                }
-                if (boundCharID_ != id)
-                {
-                    unbind(); // the old identity's stream and replies die with the bind
-                }
-                boundCharID_             = id;
-                g_boundConnections[id]   = this; // a later bind of the same character from another link takes over
-                calibrated_              = false;
-                ShowInfoFmt("link: {} bound to {} ({})", peer_, PChar->getName(), id);
-                enqueue(fmt::format("bound {} {}", id, PChar->getName()));
-
-                // An addon that binds into a held simulation shows the banner too
-                if (const auto pause = cardian::pause::status(); pause.held)
-                {
-                    enqueue(fmt::format("cd paused {} {}", pause.holderName, earth_time::vanadiel_timestamp()));
-                }
-                else
-                {
-                    // The calendar runs behind real time by every pause so far: his client is told where it stands
-                    enqueue(fmt::format("cd calendar {}", earth_time::vanadiel_timestamp()));
-                }
-                return true;
-            }
-            if (verb == "whoami")
-            {
-                if (boundCharID_ == 0)
-                {
-                    enqueue("err not bound");
-                    return true;
-                }
-                auto* PChar = resolveBound();
-                if (PChar == nullptr)
-                {
-                    enqueue("err bind stale");
-                    return true;
-                }
-                enqueue(fmt::format("you {} {} {}", PChar->id, PChar->getName(),
-                                    PChar->loc.zone != nullptr ? PChar->loc.zone->getName() : "nozone"));
-                return true;
-            }
-            if (verb == "pos")
-            {
-                handlePos(words);
-                return true;
-            }
-            if (verb == "cd")
-            {
-                // The cardian management API over the link: the rest of the
-                // line runs as the bound character's !cardian command, whose
-                // replies come back through sendToCharacter
-                if (boundCharID_ == 0)
-                {
-                    enqueue("err not bound");
-                    return true;
-                }
-                auto* PChar = resolveBound();
-                if (PChar == nullptr)
-                {
-                    enqueue("err bind stale");
-                    return true;
-                }
-                const auto rest = line.substr(line.find("cd") + 2);
-                const auto args = rest.substr(std::min(rest.find_first_not_of(' '), rest.size()));
-                if (args.empty())
-                {
-                    enqueue("err cd empty");
-                    return true;
-                }
-                CCommandHandler::call(scheduler_, ::lua, PChar, fmt::format("cardian {}", args));
-                return true;
-            }
-            if (verb == "bye")
-            {
-                return false;
+                case CL_T_HELLO:
+                    return {}; // a second hello changes nothing
+                case CL_T_BYE:
+                    return "bye";
+                case CL_T_PING:
+                    handlePing(frame);
+                    return {};
+                case CL_T_STATS:
+                    handleStats(frame);
+                    return {};
+                case CL_T_BIND:
+                    handleBind(frame);
+                    return {};
+                case CL_T_WHOAMI:
+                    handleWhoami(frame);
+                    return {};
+                case CL_T_POS:
+                    handlePos(frame);
+                    return {};
+                default:
+                    break;
             }
 
-            ShowDebugFmt("link: {} unknown verb '{}'", peer_, printable(verb));
-            enqueue(fmt::format("err unknown {}", printable(verb)));
-            return true;
+            const auto it = g_handlers.find(header.type);
+            if (it == g_handlers.end())
+            {
+                ShowDebugFmt("link: {} sent a message nobody handles: {}", peer_, typeName(header.type));
+                refuse(frame, CL_S_UNKNOWN_TYPE);
+                return {};
+            }
+            if (frame.size() != it->second.size)
+            {
+                refuse(frame, CL_S_MALFORMED);
+                return {};
+            }
+            if (auto* PChar = requireBound(frame))
+            {
+                Reply reply(header,
+                            [this](std::string bytes)
+                            {
+                                enqueue(std::move(bytes));
+                            });
+                it->second.handler(PChar, frame, reply);
+            }
+            return {};
         }
 
-        // pos <x> <y> <z> <yaw> <moving>: the client's raw values, filed in
-        // the side store in server conventions with the motion derived from
-        // the previous sample. No ack: twenty a second answer themselves in
-        // aggregate through ping health.
-        void handlePos(const std::vector<std::string_view>& words)
+        auto handleHello(const std::string_view frame) -> std::string
         {
-            if (boundCharID_ == 0)
+            cl_hello hello{};
+            if (!decode(frame, hello) || hello.magic != CL_MAGIC)
             {
-                enqueue("err not bound");
+                refuse(frame, CL_S_MALFORMED);
+                serverDrop_ = true;
+                return "hello malformed";
+            }
+
+            ShowInfoFmt("link: {} hello (addon v{}, protocol {})", peer_, printable(textOf(hello.version)), hello.protocol);
+
+            auto welcome     = hello;
+            welcome.protocol = CL_PROTOCOL;
+            setText(welcome.version, version::GetGitSha());
+            if (hello.protocol != CL_PROTOCOL)
+            {
+                answer(welcome, CL_S_PROTOCOL_MISMATCH);
+                return fmt::format("protocol {}, this server's is {}", hello.protocol, static_cast<int>(CL_PROTOCOL));
+            }
+
+            greeted_ = true;
+            answer(welcome, CL_S_OK);
+            return {};
+        }
+
+        void handlePing(const std::string_view frame)
+        {
+            cl_ping ping{};
+            if (!decode(frame, ping))
+            {
+                refuse(frame, CL_S_MALFORMED);
                 return;
             }
-            auto* PChar = resolveBound();
+            // An answer to our own ping needs nothing: its arrival already
+            // counts as the peer being alive
+            if ((ping.h.flags & CL_F_REPLY) == 0)
+            {
+                answer(ping, CL_S_OK);
+            }
+        }
+
+        void handleStats(const std::string_view frame)
+        {
+            cl_stats ask{};
+            if (!decode(frame, ask))
+            {
+                refuse(frame, CL_S_MALFORMED);
+                return;
+            }
+            const auto s    = g_stats;
+            ask.accepted    = s.accepted;
+            ask.live        = s.live;
+            ask.rejected    = s.rejected;
+            ask.dropped     = s.dropped;
+            ask.messagesIn  = s.messagesIn;
+            ask.messagesOut = s.messagesOut;
+            ask.outDropped  = s.outDropped;
+            ask.posIn       = s.posIn;
+            answer(ask, CL_S_OK);
+        }
+
+        void handleBind(const std::string_view frame)
+        {
+            cl_bind ask{};
+            if (!decode(frame, ask) || ask.charid == 0)
+            {
+                refuse(frame, CL_S_MALFORMED);
+                return;
+            }
+            auto* PChar = zoneutils::GetChar(ask.charid);
             if (PChar == nullptr)
             {
-                enqueue("err bind stale");
+                answer(ask, CL_S_NO_SUCH_CHARACTER);
+                return;
+            }
+            if (PChar->PSession == nullptr)
+            {
+                answer(ask, CL_S_NOT_PLAYED);
+                return;
+            }
+            if (PChar->PSession->client_ipp.getIPString() != peerAddress_)
+            {
+                answer(ask, CL_S_ADDRESS_MISMATCH);
+                return;
+            }
+            if (boundCharID_ != ask.charid)
+            {
+                unbind(); // the old identity's stream and messages die with the bind
+            }
+            boundCharID_                   = ask.charid;
+            g_boundConnections[ask.charid] = this; // a later bind of the same character from another link takes over
+            calibrated_                    = false;
+            ShowInfoFmt("link: {} bound to {} ({})", peer_, PChar->getName(), ask.charid);
+
+            auto bound = ask;
+            setText(bound.name, PChar->getName());
+            answer(bound, CL_S_OK);
+
+            // What the addon must know from here: whether the simulation is
+            // held, or else where the calendar stands (it runs behind real time
+            // by every pause so far)
+            if (const auto pause = cardian::pause::status(); pause.held)
+            {
+                auto paused     = make<cl_paused>();
+                paused.holder   = pause.holder;
+                paused.gametime = earth_time::vanadiel_timestamp();
+                setText(paused.holderName, pause.holderName);
+                enqueue(bytesOf(paused));
+            }
+            else
+            {
+                auto calendar     = make<cl_calendar>();
+                calendar.gametime = earth_time::vanadiel_timestamp();
+                enqueue(bytesOf(calendar));
+            }
+        }
+
+        void handleWhoami(const std::string_view frame)
+        {
+            cl_whoami ask{};
+            if (!decode(frame, ask))
+            {
+                refuse(frame, CL_S_MALFORMED);
+                return;
+            }
+            auto* PChar = requireBound(frame);
+            if (PChar == nullptr)
+            {
+                return;
+            }
+            ask.charid = PChar->id;
+            ask.zone   = static_cast<uint16_t>(PChar->getZone());
+            setText(ask.name, PChar->getName());
+            answer(ask, CL_S_OK);
+        }
+
+        // The client's raw values, filed in the side store in server
+        // conventions with the motion derived from the previous sample. No
+        // answer: twenty a second answer themselves in aggregate through
+        // ping health.
+        void handlePos(const std::string_view frame)
+        {
+            cl_pos pos{};
+            if (!decode(frame, pos) || !std::isfinite(pos.x) || !std::isfinite(pos.y) || !std::isfinite(pos.z) || !std::isfinite(pos.yaw) || pos.moving > 1)
+            {
+                ShowDebugFmt("link: {} sent a malformed pos", peer_);
+                return;
+            }
+            auto* PChar = requireBound(frame);
+            if (PChar == nullptr)
+            {
                 return;
             }
 
@@ -602,28 +721,15 @@ namespace
                 return;
             }
 
-            float x   = 0.0f;
-            float y   = 0.0f;
-            float z   = 0.0f;
-            float yaw = 0.0f;
-            if (words.size() < 6 ||
-                !parseFloat(words[1], x) || !parseFloat(words[2], y) ||
-                !parseFloat(words[3], z) || !parseFloat(words[4], yaw) ||
-                (words[5] != "0" && words[5] != "1"))
-            {
-                enqueue("err pos malformed");
-                return;
-            }
-
             // The 0x015 handler's axis swap (its "not a typo" lines): the
             // client's y-slot is the server's z and vice versa; yaw radians
             // encode into the uint8 rotation
             StoredPosition stored;
-            stored.x        = x;
-            stored.y        = z;
-            stored.z        = y;
-            stored.rotation = radianToRotation(yaw);
-            stored.moving   = words[5] == "1";
+            stored.x        = pos.x;
+            stored.y        = pos.z;
+            stored.z        = pos.y;
+            stored.rotation = radianToRotation(pos.yaw);
+            stored.moving   = pos.moving == 1;
             stored.at       = timer::now();
 
             // Where the player is, in the map log every WORLD_WHERE_LOG
@@ -664,31 +770,31 @@ namespace
             ++g_stats.posIn;
         }
 
-        Scheduler&                  scheduler_;
-        asio::ip::tcp::socket       socket_;
-        asio::steady_timer          wake_; // the writer parks on this; enqueue() cancels it
-        const cardian::link::Config config_;
-        std::string                 peer_;
-        std::string                 peerAddress_; // address only, for session-identity checks
-        std::string                 inbox_;
-        std::deque<std::string>     outbox_;
-        std::string                 writeError_;
-        realtime::time_point        lastRx_{};
-        realtime::time_point        windowStart_{};
-        uint32                      linesThisSecond_ = 0;
-        uint32                      pingSeq_         = 0;
-        uint32                      boundCharID_     = 0;
-        bool                        calibrated_      = false;
-        bool                        greeted_         = false;
-        bool                        serverDrop_      = false;
-        bool                        closing_         = false;
-        bool                        writeInFlight_   = false;
+        Scheduler&              scheduler_;
+        asio::ip::tcp::socket   socket_;
+        asio::steady_timer      wake_; // the writer parks on this; enqueue() cancels it
+        const Config            config_;
+        std::string             peer_;
+        std::string             peerAddress_; // address only, for session-identity checks
+        std::string             inbox_;
+        std::deque<std::string> outbox_;
+        std::string             writeError_;
+        realtime::time_point    lastRx_{};
+        realtime::time_point    windowStart_{};
+        uint32                  messagesThisSecond_ = 0;
+        uint32                  pingSeq_            = 0;
+        uint32                  boundCharID_        = 0;
+        bool                    calibrated_         = false;
+        bool                    greeted_            = false;
+        bool                    serverDrop_         = false;
+        bool                    closing_            = false;
+        bool                    writeInFlight_      = false;
     };
 
     class Listener
     {
     public:
-        Listener(Scheduler& scheduler, const cardian::link::Config& config)
+        Listener(Scheduler& scheduler, const Config& config)
         : scheduler_(scheduler)
         , acceptor_(scheduler.mainContext())
         , config_(config)
@@ -760,9 +866,9 @@ namespace
         }
 
     private:
-        Scheduler&                  scheduler_;
-        asio::ip::tcp::acceptor     acceptor_;
-        const cardian::link::Config config_;
+        Scheduler&              scheduler_;
+        asio::ip::tcp::acceptor acceptor_;
+        const Config            config_;
     };
 
     // Owned by the process: the scheduler's io_context is gone by the time
@@ -798,7 +904,8 @@ namespace cardian::link
 
         g_listener = listener;
         scheduler.postToMainThread(g_listener->acceptLoop());
-        ShowInfoFmt("link: listening on port {} (ping {}ms, dead {}ms, {} connections max)", port, config.pingInterval.count(), config.deadAfter.count(), config.maxConnections);
+        ShowInfoFmt("link: listening on port {} (protocol {}, ping {}ms, dead {}ms, {} connections max)", port, static_cast<int>(CL_PROTOCOL),
+                    config.pingInterval.count(), config.deadAfter.count(), config.maxConnections);
     }
 
     auto stats() -> Stats
@@ -806,22 +913,27 @@ namespace cardian::link
         return g_stats;
     }
 
-    auto sendToCharacter(const uint32 charid, std::string line) -> bool
+    void handleType(const uint16 type, const std::size_t size, std::function<void(CCharEntity* PChar, std::string_view frame, Reply& reply)> handler)
+    {
+        g_handlers[type] = Registered{ size, std::move(handler) };
+    }
+
+    auto sendBytes(const uint32 charid, std::string bytes) -> bool
     {
         const auto it = g_boundConnections.find(charid);
         if (it == g_boundConnections.end())
         {
             return false;
         }
-        it->second->push(std::move(line));
+        it->second->push(std::move(bytes));
         return true;
     }
 
-    void sendToAll(const std::string& line)
+    void sendBytesToAll(const std::string& bytes)
     {
         for (const auto& [charid, connection] : g_boundConnections)
         {
-            connection->push(line);
+            connection->push(bytes);
         }
     }
 

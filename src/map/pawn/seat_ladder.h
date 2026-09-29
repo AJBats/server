@@ -177,7 +177,7 @@ namespace pawn::seats
             entries.push_back(e);
         }
 
-        // To the front of her equals: a recall, an invite
+        // To the front of her equals: a summon, an invite
         void touch(const uint32 charid)
         {
             if (auto* e = find(charid); e != nullptr)
@@ -317,7 +317,7 @@ namespace pawn::seats
             return hers;
         }
 
-        // The recall list: this player's cardians without a body
+        // This player's cardians without a body (!pawnworld faded)
         auto belowTheLine(const uint32 owner) const -> std::vector<uint32>
         {
             std::vector<uint32> hers;

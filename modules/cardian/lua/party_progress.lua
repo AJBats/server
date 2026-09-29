@@ -55,8 +55,8 @@ local function titleFromKey(key)
     return table.concat(words, ' ')
 end
 
--- Shared with the link's command script (scripts/commands/cardian.lua),
--- which titles the finder's goals the same way
+-- Shared with the party finder's goals (finder_goals.lua), which title the
+-- missions and quests the same way
 xi.cardian = xi.cardian or {}
 xi.cardian.titleFromKey = titleFromKey
 

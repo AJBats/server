@@ -471,7 +471,7 @@ namespace
     // Invited (ROADMAP H): in the player's zone she simply follows; from her
     // own city she runs to them (the wait ends, a travel order to their
     // zone); from anywhere else she holds where she stands until gathered
-    // ("follow me", cardianWait off), a field route walking past aggro
+    // ("follow me", the Link's WAIT off), a field route walking past aggro
     void gatherOrHold(CCharEntity* PPawn)
     {
         auto*              PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
@@ -1408,9 +1408,7 @@ namespace pawn
 
     auto strategyName(const uint16 strategy) -> std::string_view
     {
-        // One word each: the orders line is whitespace-split on the wire, so a
-        // two-word name would slide every field after it (the names go last,
-        // joined by ';', and are split out of args[10] by the addon)
+        // For the map log and !tactics; the addon words its own from the number
         static constexpr std::array<std::string_view, kStrategyCount> names{ "Hold", "Pull" };
         return strategy < names.size() ? names[strategy] : std::string_view("?");
     }
@@ -1519,11 +1517,11 @@ namespace pawn
         }
     } // namespace
 
-    auto setStake(CCharEntity* POwner) -> std::string
+    auto setStake(CCharEntity* POwner) -> uint16
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr)
         {
-            return "no character";
+            return CL_S_REFUSED;
         }
         // Where he stands, facing his way: the Link's streamed position
         // when it has one (fresher than the last position packet), the
@@ -1540,7 +1538,7 @@ namespace pawn
             }
         }
         placeStake(POwner, POwner->getZone(), at, "");
-        return "";
+        return CL_S_OK;
     }
 
     void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how)
@@ -1635,41 +1633,41 @@ namespace pawn
         return ordersFor(ownerCharID).rules;
     }
 
-    auto setHuntRule(CCharEntity* POwner, const std::string_view field, const int value) -> std::string
+    auto setHuntRule(CCharEntity* POwner, const uint8 rule, const int value) -> uint16
     {
         if (POwner == nullptr)
         {
-            return "no character";
+            return CL_S_REFUSED;
         }
         auto&          o     = ordersFor(POwner->id);
         auto&          r     = o.rules;
         constexpr int  top   = static_cast<int>(EMobDifficulty::MAX) - 1;
         const auto     check = [&](const int v, const int lo, const int hi) { return v >= lo && v <= hi; };
-        if (field == "min" && check(value, 0, top))
+        if (rule == CL_HUNT_MIN && check(value, 0, top))
         {
             r.minCheck = static_cast<uint8>(value);
             r.maxCheck = std::max(r.maxCheck, r.minCheck);
         }
-        else if (field == "max" && check(value, 0, top))
+        else if (rule == CL_HUNT_MAX && check(value, 0, top))
         {
             r.maxCheck = static_cast<uint8>(value);
             r.minCheck = std::min(r.minCheck, r.maxCheck);
         }
-        else if (field == "pull" && check(value, 0, static_cast<int>(kPullFirstNames.size()) - 1))
+        else if (rule == CL_HUNT_PULL && check(value, 0, static_cast<int>(kPullFirstNames.size()) - 1))
         {
             r.pullFirst = static_cast<uint8>(value);
         }
-        else if (field == "aggressive" && check(value, 0, 1))
+        else if (rule == CL_HUNT_AGGRESSIVE && check(value, 0, 1))
         {
             r.aggressive = value != 0;
         }
-        else if (field == "links" && check(value, 0, 1))
+        else if (rule == CL_HUNT_LINKS && check(value, 0, 1))
         {
             r.links = value != 0;
         }
         else
         {
-            return "no such rule or value";
+            return CL_S_MALFORMED;
         }
         db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links) VALUES (?, ?, ?, ?, ?, ?) "
                          "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
@@ -1678,7 +1676,7 @@ namespace pawn
         ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}", POwner->getName(),
                     magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
                     kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided");
-        return "";
+        return CL_S_OK;
     }
 
     auto isUnderground(const CMobEntity* PMob) -> bool
@@ -1691,37 +1689,37 @@ namespace pawn
         return PMob->GetUntargetable() || (worm && PMob->IsNameHidden());
     }
 
-    auto partyEngage(CCharEntity* POwner, const uint16 targid) -> std::string
+    auto partyEngage(CCharEntity* POwner, const uint16 targid) -> uint16
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr)
         {
-            return "no zone";
+            return CL_S_REFUSED;
         }
         if (targid == 0)
         {
-            return "no target";
+            return CL_S_NO_TARGET;
         }
         if (isRetreating(POwner->id))
         {
-            return "retreating";
+            return CL_S_RETREATING;
         }
         auto* PEntity = POwner->loc.zone->GetEntity(targid, TYPE_MOB | TYPE_PC);
         if (PEntity == nullptr)
         {
-            return "no target";
+            return CL_S_NO_TARGET;
         }
-        if (auto* PChar = dynamic_cast<CCharEntity*>(PEntity); PChar != nullptr)
+        if (dynamic_cast<CCharEntity*>(PEntity) != nullptr)
         {
-            return isPawn(PChar) ? "talk comes later" : "that is a player";
+            return CL_S_NOT_A_MONSTER; // a player, or a cardian (talk comes later)
         }
         auto* PMob = dynamic_cast<CMobEntity*>(PEntity);
         if (PMob == nullptr || PMob->isDead())
         {
-            return "no target";
+            return CL_S_NO_TARGET;
         }
         if (isUnderground(PMob))
         {
-            return "underground";
+            return CL_S_UNDERGROUND;
         }
 
         uint32 sent = 0;
@@ -1738,46 +1736,49 @@ namespace pawn
             }
         }
         ShowInfoFmt("pawn: {} sends {} cardian(s) at {}", POwner->getName(), sent, PMob->getName());
-        return sent > 0 ? "" : "no cardians out";
+        return sent > 0 ? CL_S_OK : CL_S_NO_CARDIANS_OUT;
     }
 
-    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn) -> std::string
+    auto rescue(CCharEntity* PPlayer, CCharEntity* PPawn, RescueRefusal& refusal) -> uint16
     {
         // By player, for this process's life: a restart forgives the cooldown
         static std::unordered_map<uint32, timer::time_point> lastRescue;
 
         if (PPawn == nullptr || !pawns.contains(PPawn->id))
         {
-            return "no such cardian";
+            return CL_S_NO_SUCH_CARDIAN;
         }
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr || PPawn->loc.zone != PPlayer->loc.zone)
         {
-            return "not in your zone";
+            return CL_S_OTHER_ZONE;
         }
         if (PPawn->isDead())
         {
-            return "KO'd";
+            return CL_S_KNOCKED_OUT;
         }
 
         // A held simulation (pause/pause.h) moves nobody
         if (cardian::pause::isHeld())
         {
-            return "not while paused";
+            return CL_S_NOT_WHILE_PAUSED;
         }
 
         const float range = settings::get<float>("pawn.RESCUE_RANGE");
         const float away  = distance(PPlayer->loc.p, PPawn->loc.p);
         if (away > range)
         {
-            return fmt::format("too far ({:.0f} y; within {:.0f})", away, range);
+            refusal.away  = away;
+            refusal.range = range;
+            return CL_S_TOO_FAR;
         }
 
         const auto cooldown = std::chrono::seconds(static_cast<int64>(settings::get<float>("pawn.RESCUE_COOLDOWN")));
         const auto now      = timer::now();
         if (const auto it = lastRescue.find(PPlayer->id); it != lastRescue.end() && now - it->second < cooldown)
         {
-            const auto left = std::chrono::duration_cast<std::chrono::seconds>(cooldown - (now - it->second)).count();
-            return fmt::format("cooling down ({} s left)", left);
+            const auto left      = std::chrono::duration_cast<std::chrono::seconds>(cooldown - (now - it->second)).count();
+            refusal.cooldownLeft = static_cast<uint16>(std::clamp<int64>(left, 1, UINT16_MAX));
+            return CL_S_COOLING_DOWN;
         }
         lastRescue[PPlayer->id] = now;
 
@@ -1787,7 +1788,7 @@ namespace pawn
         PPawn->updatemask |= UPDATE_POS;
 
         ShowInfoFmt("pawn: {} rescued to {}'s side ({:.1f} y)", PPawn->getName(), PPlayer->getName(), away);
-        return "";
+        return CL_S_OK;
     }
 
     bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer)
@@ -1827,6 +1828,19 @@ namespace pawn
         clearTravelOrder(PPawn->id); // she waits at her home point: a trek she was on ends there
         requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
         return true;
+    }
+
+    auto orderHomePoint(const CCharEntity* PPlayer, CCharEntity* PPawn) -> uint16
+    {
+        if (!homePoint(PPawn, PPlayer))
+        {
+            return CL_S_NOT_KNOCKED_OUT;
+        }
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->SetWaiting(true, true, "waits at her home point");
+        }
+        return CL_S_OK;
     }
 
     namespace
@@ -2137,10 +2151,10 @@ namespace pawn
         return true;
     }
 
-    bool orderTravelByName(const std::string& targetName, const uint16 zoneId, const uint32 meet)
+    bool orderTravel(const uint32 pawnCharID, const uint16 zoneId, const uint32 meet)
     {
-        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
-        if (targetCharID == 0 || !pawns.contains(targetCharID))
+        const auto it = pawns.find(pawnCharID);
+        if (it == pawns.end())
         {
             return false;
         }
@@ -2148,13 +2162,18 @@ namespace pawn
         const auto destination = static_cast<xi::ZoneId>(zoneId);
         if (zoneutils::GetZone(destination) == nullptr)
         {
-            ShowWarningFmt("pawn: goto {}: zone {} is not loaded", targetName, zoneId);
+            ShowWarningFmt("pawn: goto {}: zone {} is not loaded", it->second->getName(), zoneId);
             return false;
         }
 
-        travelOrders[targetCharID] = TravelOrder{ destination, meet };
-        ShowInfoFmt("pawn: {} ordered to travel to zone {}{}", targetName, zoneId, meet != 0 ? " to meet her player" : "");
+        travelOrders[pawnCharID] = TravelOrder{ destination, meet };
+        ShowInfoFmt("pawn: {} ordered to travel to zone {}{}", it->second->getName(), zoneId, meet != 0 ? " to meet her player" : "");
         return true;
+    }
+
+    bool orderTravelByName(const std::string& targetName, const uint16 zoneId, const uint32 meet)
+    {
+        return orderTravel(charutils::getCharIdFromName(targetName), zoneId, meet);
     }
 
     auto meetTrek(const CCharEntity* PPawn) -> std::optional<xi::ZoneId>
@@ -2169,14 +2188,16 @@ namespace pawn
             return it->second.zone;
         }
         // Loading between zones he is in none: the trek keeps to where he
-        // was going. His destination is where he stands once landed, and
-        // where he is headed while he zones
+        // was going. While he zones his destination is where he is headed;
+        // otherwise it names no zone (Unknown once the zone-in has landed
+        // him, ZONE_NO_DESTINATION as he logs out) and he is where he stands
         const auto* PPlayer = zoneutils::GetChar(it->second.meet);
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
         {
             return it->second.zone;
         }
-        const auto hisZone = PPlayer->loc.destination;
+        const auto headed  = PPlayer->loc.destination;
+        const auto hisZone = headed != xi::ZoneId::Unknown && headed != ZONE_NO_DESTINATION ? headed : PPlayer->getZone();
         if (hisZone == PPawn->getZone())
         {
             ShowInfoFmt("pawn: travel {}: {} is here, the trek ends", PPawn->getName(), PPlayer->getName());
@@ -2374,12 +2395,16 @@ namespace pawn
             return nullptr;
         }
 
-        const uint32 targetCharID = charutils::getCharIdFromName(targetName);
-        if (targetCharID == 0 || summonerOf(targetCharID) != PSummoner->id)
+        return findManagedPawn(PSummoner, charutils::getCharIdFromName(targetName));
+    }
+
+    auto findManagedPawn(const CCharEntity* PSummoner, const uint32 pawnCharID) -> CCharEntity*
+    {
+        if (PSummoner == nullptr || pawnCharID == 0 || summonerOf(pawnCharID) != PSummoner->id)
         {
             return nullptr;
         }
-        return findPawn(targetCharID);
+        return findPawn(pawnCharID);
     }
 
     namespace
@@ -2398,36 +2423,65 @@ namespace pawn
             return nullptr;
         }
 
-        auto* PPawn = findPawn(charutils::getCharIdFromName(targetName));
+        return findCommandablePawn(PPlayer, charutils::getCharIdFromName(targetName));
+    }
+
+    auto findCommandablePawn(const CCharEntity* PPlayer, const uint32 pawnCharID) -> CCharEntity*
+    {
+        if (PPlayer == nullptr || pawnCharID == 0)
+        {
+            return nullptr;
+        }
+        auto* PPawn = findPawn(pawnCharID);
         return PPawn != nullptr && commands(PPlayer, PPawn) ? PPawn : nullptr;
     }
 
-    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>
+    auto accountPawns(const CCharEntity* PChar) -> std::vector<std::pair<uint32, std::string>>
     {
-        std::vector<std::string> names;
-        for (auto& [charid, name] : accountMembers(PChar))
-        {
-            names.emplace_back(std::move(name));
-        }
-        return names;
+        return accountMembers(PChar);
     }
 
-    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>
+    auto statusNumbers(CCharEntity* PChar) -> StatusNumbers
     {
-        std::vector<std::string> names;
+        StatusNumbers numbers;
+        const std::array<std::pair<uint16, xi::Mod>, 7> stats{ {
+            { PChar->STR(), xi::Mod::STR },
+            { PChar->DEX(), xi::Mod::DEX },
+            { PChar->VIT(), xi::Mod::VIT },
+            { PChar->AGI(), xi::Mod::AGI },
+            { PChar->INT(), xi::Mod::INT },
+            { PChar->MND(), xi::Mod::MND },
+            { PChar->CHR(), xi::Mod::CHR },
+        } };
+        for (std::size_t i = 0; i < stats.size(); ++i)
+        {
+            numbers.total[i] = static_cast<int16>(stats[i].first);
+            numbers.bonus[i] = static_cast<int16>(PChar->getMod(stats[i].second));
+        }
+        numbers.attack  = static_cast<uint16>(std::clamp<int32>(PChar->ATT(SLOT_MAIN), 0, UINT16_MAX));
+        numbers.defence = static_cast<uint16>(std::clamp<int32>(PChar->DEF(), 0, UINT16_MAX));
+        return numbers;
+    }
+
+    auto commandablePawns(const CCharEntity* PPlayer) -> std::vector<CCharEntity*>
+    {
+        std::vector<CCharEntity*> out;
         if (PPlayer == nullptr)
         {
-            return names;
+            return out;
         }
         for (const auto& [charid, PPawn] : pawns)
         {
             if (commands(PPlayer, PPawn.get()))
             {
-                names.emplace_back(PPawn->getName());
+                out.push_back(PPawn.get());
             }
         }
-        std::ranges::sort(names);
-        return names;
+        std::ranges::sort(out, {}, [](const CCharEntity* PPawn) -> const std::string&
+                          {
+                              return PPawn->getName();
+                          });
+        return out;
     }
 
     auto release(const uint32 pawnCharID) -> std::unique_ptr<CCharEntity>
@@ -2537,7 +2591,7 @@ namespace pawn
 
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
         {
-            PController->ToldAfterOrder(said);
+            PController->ToldAfterOrder(message, said);
         }
     }
 

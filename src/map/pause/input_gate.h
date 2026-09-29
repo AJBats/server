@@ -22,6 +22,7 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "pawn/cardian_link_messages.h"
 
 #include <optional>
 #include <string>
@@ -73,10 +74,10 @@ auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool;
 // The command that character has waiting, if any.
 auto queued(uint32 charid) -> std::optional<Queued>;
 
-// The same for his command window's queue line: its key and its target's index, "2:2:1
-// 1024", "" with none. The addon words it. It is told whenever this changes (`cd q
-// <his name> <key> <target index>`).
-auto queuedLine(uint32 charid) -> std::string;
+// The same for his command window's queue line: the Link's QUEUE, the action and its
+// target's index (CL_AK_NONE with none). The addon words it. It is told whenever this
+// changes.
+auto queueLine(uint32 charid) -> cl_queue;
 
 // The player takes his queued command back. False with none.
 auto cancel(CCharEntity* PChar) -> bool;

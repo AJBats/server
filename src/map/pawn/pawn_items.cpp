@@ -20,6 +20,7 @@
 */
 
 #include "pawn_items.h"
+#include "cardian_link_messages.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 
@@ -66,37 +67,37 @@ namespace
         uint8  landedSlot   = 0;
         uint16 landedItemId = 0;
 
-        auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> std::string
+        auto move(CCharEntity* PSender, CCharEntity* PReceiver, const uint8 slot, const uint32 qty) -> uint16
         {
             auto* storage = PSender->getStorage(LOC_INVENTORY);
             CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
 
             if (PItem == nullptr || PItem->getQuantity() == 0)
             {
-                return "no item in that slot";
+                return CL_S_NO_ITEM;
             }
             if (PItem->isType(ITEM_CURRENCY))
             {
-                return "gil cannot be transferred";
+                return CL_S_GIL_NOT_AN_ITEM;
             }
             this->landedItemId = PItem->getID();
             if (PItem->state() == ItemState::Equipped)
             {
-                return "item is equipped";
+                return CL_S_ITEM_EQUIPPED;
             }
             if (qty == 0 || qty > PItem->getQuantity())
             {
-                return "bad quantity";
+                return CL_S_BAD_QUANTITY;
             }
             if (!this->claim(PSender, PItem).isSet())
             {
-                return "item is busy";
+                return CL_S_ITEM_BUSY;
             }
 
             auto stack = xi::items::clone(*PItem);
             if (!stack)
             {
-                return "item cannot move";
+                return CL_S_ITEM_CANNOT_MOVE;
             }
             stack->setQuantity(qty);
 
@@ -106,55 +107,56 @@ namespace
             if (!landed.has_value())
             {
                 this->rollback();
-                return "no space";
+                return CL_S_NO_SPACE;
             }
             this->landedSlot = *landed;
             if (!this->take(PSender, LOC_INVENTORY, slot, qty))
             {
                 this->rollback();
-                return "item slipped away";
+                return CL_S_ITEM_SLIPPED_AWAY;
             }
             if (!this->commit())
             {
                 this->rollback();
-                return "transfer refused";
+                return CL_S_REFUSED;
             }
-            return {};
+            return CL_S_OK;
         }
 
         // Gil between the same two, as the trade window's gil line moves it:
         // the sender pays, the receiver earns, both or neither
-        auto moveGil(CCharEntity* PSender, CCharEntity* PReceiver, const uint32 amount) -> std::string
+        auto moveGil(CCharEntity* PSender, CCharEntity* PReceiver, const uint32 amount) -> uint16
         {
             const CItem* PSent = PSender->getStorage(LOC_INVENTORY)->GetItem(0);
             const CItem* PHeld = PReceiver->getStorage(LOC_INVENTORY)->GetItem(0);
             if (PSent == nullptr || !PSent->isType(ITEM_CURRENCY) || PHeld == nullptr || !PHeld->isType(ITEM_CURRENCY))
             {
-                return "no gil slot";
+                ShowErrorFmt("pawn: no gil slot between {} and {}", PSender->getName(), PReceiver->getName());
+                return CL_S_REFUSED;
             }
             if (amount == 0)
             {
-                return "bad amount";
+                return CL_S_BAD_QUANTITY;
             }
             if (PSent->getQuantity() < amount)
             {
-                return "not enough gil";
+                return CL_S_NOT_ENOUGH_GIL;
             }
             if (static_cast<uint64>(PHeld->getQuantity()) + amount > PHeld->getStackSize())
             {
-                return fmt::format("{} cannot hold that much gil", PReceiver->getName());
+                return CL_S_GIL_FULL;
             }
             if (!this->pay(PSender, amount) || !this->earn(PReceiver, amount))
             {
                 this->rollback();
-                return "gil is busy";
+                return CL_S_ITEM_BUSY;
             }
             if (!this->commit())
             {
                 this->rollback();
-                return "transfer refused";
+                return CL_S_REFUSED;
             }
-            return {};
+            return CL_S_OK;
         }
 
     protected:
@@ -168,20 +170,6 @@ namespace
         {
         }
     };
-
-    // Payload fragments sized for one GP_SERV_COMMAND_CHAT_STD each (Mes is
-    // 150 bytes and the command layer prepends "#cd xx.y <name> ")
-    constexpr size_t kChunkLimit = 110;
-
-    void packEntry(std::vector<std::string>& chunks, const std::string& entry)
-    {
-        if (chunks.empty() || chunks.back().size() + entry.size() + 1 > kChunkLimit)
-        {
-            chunks.emplace_back(entry);
-            return;
-        }
-        chunks.back() += "," + entry;
-    }
 } // namespace
 
 namespace pawn::items
@@ -190,18 +178,17 @@ namespace pawn::items
     {
         // No item teleportation: a trade reaches pawn.TRADE_RANGE yalms, in
         // the same zone
-        auto outOfReach(const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string
+        auto reach(const CCharEntity* PPlayer, const CCharEntity* PPawn) -> uint16
         {
             if (PPlayer->loc.zone != PPawn->loc.zone)
             {
-                return fmt::format("{} is in another zone", PPawn->getName());
+                return CL_S_OTHER_ZONE;
             }
-            const float range = settings::get<float>("pawn.TRADE_RANGE");
-            if (const float away = distance(PPlayer->loc.p, PPawn->loc.p); away > range)
+            if (distance(PPlayer->loc.p, PPawn->loc.p) > settings::get<float>("pawn.TRADE_RANGE"))
             {
-                return fmt::format("{} is {:.0f} y away, out of trading reach ({:.0f})", PPawn->getName(), away, range);
+                return CL_S_OUT_OF_REACH;
             }
-            return "";
+            return CL_S_OK;
         }
     } // namespace
 
@@ -269,19 +256,25 @@ namespace pawn::items
             }
         }
 
+        // No room where a stack was bound: her inventory, or one of her bags
+        auto noRoom(const uint8 toLoc) -> uint16
+        {
+            return toLoc == LOC_INVENTORY ? CL_S_NO_SPACE : CL_S_BAG_FULL;
+        }
+
         // The whole stack changes container the item-move handler's way, the
         // object itself carried across so augments, signature and extra data
         // ride along; a database row that does not follow puts the stack
         // back. Worn gear stays worn: the equip slot points at the object,
         // which now reports its new container and slot, so the saved equip
         // rows are written again and the recast entry follows.
-        auto carryStack(CCharEntity* PPawn, CItemContainer* PSrc, CItemContainer* PDst, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const bool worn) -> std::string
+        auto carryStack(CCharEntity* PPawn, CItemContainer* PSrc, CItemContainer* PDst, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const bool worn) -> uint16
         {
             const uint16 itemId = PSrc->GetItem(slot)->getID();
             const uint8  landed = PSrc->MoveItemTo(slot, *PDst);
             if (landed == ERROR_SLOTID)
             {
-                return "no space";
+                return noRoom(toLoc);
             }
             const auto rset = db::preparedStmt("UPDATE char_inventory SET location = ?, slot = ? WHERE charid = ? AND location = ? AND slot = ?",
                                                toLoc,
@@ -296,28 +289,28 @@ namespace pawn::items
                 {
                     ShowErrorFmt("pawn: {} could not put item {} back into {}/{}", PPawn->getName(), itemId, fromLoc, slot);
                 }
-                return "move refused";
+                return CL_S_REFUSED;
             }
             if (worn)
             {
                 rekeyItemRecast(PPawn, fromLoc, slot, toLoc, landed);
                 charutils::SaveCharEquip(PPawn);
             }
-            return {};
+            return CL_S_OK;
         }
     } // namespace
 
-    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> std::string
+    auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty, uint8* landedSlot) -> uint16
     {
-        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
+        if (const auto status = reach(PPlayer, PPawn); status != CL_S_OK)
         {
-            return tooFar;
+            return status;
         }
 
         CardianTransfer transfer;
 
-        auto result = transfer.move(PPlayer, PPawn, slot, qty);
-        if (!result.empty())
+        const auto result = transfer.move(PPlayer, PPawn, slot, qty);
+        if (result != CL_S_OK)
         {
             return result;
         }
@@ -411,22 +404,22 @@ namespace pawn::items
         return merges;
     }
 
-    auto sortBag(CCharEntity* PPawn, const uint8 location) -> std::string
+    auto sortBag(CCharEntity* PPawn, const uint8 location) -> uint16
     {
         if (!usableContainer(PPawn, location))
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
         auto* PContainer = PPawn->getStorage(location);
         if (PContainer == nullptr)
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
 
         // A worn charged item mid-use still points its cast at a slot
         if (PPawn->PAI->IsCurrentState<CItemState>())
         {
-            return "busy using an item";
+            return CL_S_USING_ITEM;
         }
 
         tidyContainer(PPawn, location);
@@ -439,7 +432,7 @@ namespace pawn::items
             const CItem* PItem = PContainer->GetItem(slot);
             if (PItem != nullptr && PItem->isBusy() && PItem->state() != ItemState::Equipped)
             {
-                return "an item is busy";
+                return CL_S_ITEM_BUSY;
             }
         }
 
@@ -486,7 +479,7 @@ namespace pawn::items
         }
         if (!moved)
         {
-            return {};
+            return CL_S_OK;
         }
 
         // The rows follow in two steps inside one transaction: every row
@@ -523,7 +516,7 @@ namespace pawn::items
                     ShowErrorFmt("pawn: {} lost a stack putting container {} back (slot {})", PPawn->getName(), location, p.was);
                 }
             }
-            return "sort refused";
+            return CL_S_REFUSED;
         }
         if (wornMoved)
         {
@@ -536,120 +529,141 @@ namespace pawn::items
             }
             charutils::SaveCharEquip(PPawn);
         }
-        return {};
+        return CL_S_OK;
     }
 
-    auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> std::string
+    auto takeFromPawn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const uint32 qty) -> uint16
     {
-        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
+        if (const auto status = reach(PPlayer, PPawn); status != CL_S_OK)
         {
-            return tooFar;
+            return status;
         }
         return CardianTransfer().move(PPawn, PPlayer, slot, qty);
     }
 
-    auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, const uint32 amount, const bool toPawn) -> std::string
+    auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, const uint32 amount, const bool toPawn) -> uint16
     {
-        if (const auto tooFar = outOfReach(PPlayer, PPawn); !tooFar.empty())
+        if (const auto status = reach(PPlayer, PPawn); status != CL_S_OK)
         {
-            return tooFar;
+            return status;
         }
         return toPawn ? CardianTransfer().moveGil(PPlayer, PPawn, amount) : CardianTransfer().moveGil(PPawn, PPlayer, amount);
     }
 
-    auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> std::string
+    auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> uint16
     {
         // Inventory slot 0 is the gil slot; to EquipItem it means "unequip"
         if (equipSlot >= SLOT_LINK1 || invSlot == 0)
         {
-            return "bad slot";
+            return CL_S_MALFORMED;
         }
         // Gear is worn from the inventory and the wardrobes only; the
         // storage-only bags are dead storage for it, as on retail
         if (location != LOC_INVENTORY && !isWardrobe(location))
         {
-            return "not an equippable bag";
+            return CL_S_WORN_FROM_BAG;
         }
         if (!usableContainer(PPawn, location))
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
 
         const auto* storage = PPawn->getStorage(location);
         const auto* PItem   = storage != nullptr ? dynamic_cast<CItemEquipment*>(storage->GetItem(invSlot)) : nullptr;
         if (PItem == nullptr)
         {
-            return "not equipment";
+            return CL_S_NOT_EQUIPMENT;
         }
 
         charutils::EquipItem(PPawn, invSlot, equipSlot, location);
         if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) != PItem)
         {
-            return "cannot equip";
+            return CL_S_CANNOT_WEAR;
         }
 
         luautils::CheckForGearSet(PPawn);
         PPawn->UpdateHealth();
         PPawn->retriggerLatents = true;
-        return {};
+        return CL_S_OK;
     }
 
-    auto unequip(CCharEntity* PPawn, const uint8 equipSlot) -> std::string
+    auto unequip(CCharEntity* PPawn, const uint8 equipSlot) -> uint16
     {
         if (equipSlot >= SLOT_LINK1)
         {
-            return "bad slot";
+            return CL_S_MALFORMED;
         }
         if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) == nullptr)
         {
-            return "nothing equipped";
+            return CL_S_OK;
         }
 
         charutils::EquipItem(PPawn, 0, equipSlot, LOC_INVENTORY);
         if (PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) != nullptr)
         {
-            return "cannot remove";
+            return CL_S_CANNOT_REMOVE;
         }
 
         luautils::CheckForGearSet(PPawn);
         PPawn->UpdateHealth();
         PPawn->retriggerLatents = true;
-        return {};
+        return CL_S_OK;
     }
 
-    auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> std::string
+    void equipSet(CCharEntity* PPawn, std::vector<EquipChange>& changes)
+    {
+        std::vector<EquipChange*> wears;
+        for (auto& change : changes)
+        {
+            if (change.invSlot == 0)
+            {
+                change.result = unequip(PPawn, change.equipSlot);
+            }
+            else
+            {
+                wears.push_back(&change);
+            }
+        }
+        std::ranges::stable_sort(wears, {}, &EquipChange::equipSlot);
+        for (auto* change : wears)
+        {
+            change->result = equip(PPawn, change->invSlot, change->equipSlot, change->location);
+        }
+    }
+
+    auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> uint16
     {
         // A held simulation (pause/pause.h) starts nothing, and a slot is no order to
         // keep for the release: her bag can be sorted meanwhile.
         if (cardian::pause::isHeld())
         {
-            return "not while paused";
+            return CL_S_NOT_WHILE_PAUSED;
         }
 
         // Items are used from the inventory only; a bag's contents are worn
         // or fetched first
         if (location != LOC_INVENTORY)
         {
-            return "used from the inventory only";
+            return CL_S_INVENTORY_ONLY;
         }
         if (!usableContainer(PPawn, location))
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
         const auto* storage = PPawn->getStorage(location);
         const CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
 
         if (PItem == nullptr || PItem->getQuantity() == 0)
         {
-            return "no item in that slot";
+            return CL_S_NO_ITEM;
         }
         if (!PItem->isType(ITEM_USABLE))
         {
-            return "item cannot be used";
+            return CL_S_ITEM_UNUSABLE;
         }
         if (PItem->isBusy())
         {
-            return "item is busy";
+            return CL_S_ITEM_BUSY;
         }
 
         // Finish the rest transitions before the item's engine wind-up.
@@ -657,42 +671,42 @@ namespace pawn::items
         {
             if (!controller->PrepareRestAction(true))
             {
-                return "standing up";
+                return CL_S_STANDING_UP;
             }
         }
         if (!PPawn->PAI->UseItem(EntityId(PPawn), location, slot))
         {
-            return "cannot use right now";
+            return CL_S_CANNOT_NOW;
         }
-        return {};
+        return CL_S_OK;
     }
 
-    auto dropItem(CCharEntity* PPawn, const uint8 slot, const uint32 qty, const uint8 location) -> std::string
+    auto dropItem(CCharEntity* PPawn, const uint8 slot, const uint32 qty, const uint8 location) -> uint16
     {
         // Stacks are dropped from the inventory only; a bag's contents are
         // fetched first
         if (location != LOC_INVENTORY)
         {
-            return "dropped from the inventory only";
+            return CL_S_INVENTORY_ONLY;
         }
         const auto* storage = PPawn->getStorage(location);
         const CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
 
         if (PItem == nullptr || PItem->getQuantity() == 0)
         {
-            return "no item in that slot";
+            return CL_S_NO_ITEM;
         }
         if (PItem->isType(ITEM_CURRENCY))
         {
-            return "gil cannot be dropped";
+            return CL_S_GIL_NOT_AN_ITEM;
         }
         if (PItem->isBusy())
         {
-            return "item is busy";
+            return CL_S_ITEM_BUSY;
         }
         if (qty == 0 || qty > PItem->getQuantity())
         {
-            return "bad quantity";
+            return CL_S_BAD_QUANTITY;
         }
 
         const uint32 before = PItem->getQuantity();
@@ -701,9 +715,9 @@ namespace pawn::items
         const CItem* PAfter = storage->GetItem(slot);
         if (PAfter != nullptr && PAfter->getQuantity() == before)
         {
-            return "cannot drop";
+            return CL_S_REFUSED;
         }
-        return {};
+        return CL_S_OK;
     }
 
     auto bags(CCharEntity* PPawn) -> std::vector<Bag>
@@ -721,36 +735,36 @@ namespace pawn::items
         return out;
     }
 
-    auto moveItem(CCharEntity* PPawn, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty) -> std::string
+    auto moveItem(CCharEntity* PPawn, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty, bool* partly) -> uint16
     {
         if (fromLoc == toLoc || !usableContainer(PPawn, fromLoc) || !usableContainer(PPawn, toLoc))
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
         if (fromLoc != LOC_INVENTORY && toLoc != LOC_INVENTORY)
         {
-            return "moves go through the inventory";
+            return CL_S_VIA_INVENTORY;
         }
 
         auto* PSrc = PPawn->getStorage(fromLoc);
         auto* PDst = PPawn->getStorage(toLoc);
         if (PSrc == nullptr || PDst == nullptr)
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
 
         CItem* PItem = slot != 0 ? PSrc->GetItem(slot) : nullptr;
         if (PItem == nullptr || PItem->getQuantity() == 0)
         {
-            return "no item in that slot";
+            return CL_S_NO_ITEM;
         }
         if (PItem->isType(ITEM_CURRENCY))
         {
-            return "gil stays in the inventory";
+            return CL_S_GIL_NOT_AN_ITEM;
         }
         if (isWardrobe(toLoc) && !PItem->isType(ITEM_EQUIPMENT) && !PItem->isType(ITEM_WEAPON))
         {
-            return "only equipment goes in a wardrobe";
+            return CL_S_WARDROBE_GEAR;
         }
         if (PItem->state() == ItemState::Equipped)
         {
@@ -758,21 +772,21 @@ namespace pawn::items
             // and a wardrobe only; the storage-only bags take nothing worn
             if (toLoc != LOC_INVENTORY && !isWardrobe(toLoc))
             {
-                return "unequip it first";
+                return CL_S_ITEM_EQUIPPED;
             }
             if (PPawn->PAI->IsCurrentState<CItemState>())
             {
-                return "busy using an item";
+                return CL_S_USING_ITEM;
             }
             return carryStack(PPawn, PSrc, PDst, fromLoc, slot, toLoc, true);
         }
         if (PItem->isBusy())
         {
-            return "item is busy";
+            return CL_S_ITEM_BUSY;
         }
         if (qty == 0 || qty > PItem->getQuantity())
         {
-            return "bad quantity";
+            return CL_S_BAD_QUANTITY;
         }
 
         // Room first, so no merge commits ahead of a refusal: with no free
@@ -790,12 +804,22 @@ namespace pawn::items
             }
             if (room < qty)
             {
-                return "no space";
+                return noRoom(toLoc);
             }
         }
 
         const uint16 itemId = PItem->getID();
         uint32       left   = qty;
+
+        // A refusal once the top-ups have begun: whatever they moved stays moved
+        const auto refused = [&](const uint16 status) -> uint16
+        {
+            if (partly != nullptr)
+            {
+                *partly = left < qty;
+            }
+            return status;
+        };
 
         // A same-item partial stack in the destination is topped up first,
         // one transaction per stack so a merged-away claim is released
@@ -814,26 +838,26 @@ namespace pawn::items
                 auto transaction = ItemClaimTransaction::start(PPawn);
                 if (!transaction || !transaction->claimSlot(fromLoc, slot) || !transaction->claimSlot(toLoc, into))
                 {
-                    return "item is busy";
+                    return refused(CL_S_ITEM_BUSY);
                 }
                 if (!transaction->moveBetween(fromLoc, slot, toLoc, into, part) || !transaction->commit())
                 {
                     ShowErrorFmt("pawn: {} could not merge {} of item {} into {}/{}", PPawn->getName(), part, itemId, toLoc, into);
-                    return "move refused";
+                    return refused(CL_S_REFUSED);
                 }
                 left -= part;
             }
         }
         if (left == 0)
         {
-            return {};
+            return CL_S_OK;
         }
 
         // The stack as it stands after the merges
         PItem = PSrc->GetItem(slot);
         if (PItem == nullptr || PItem->getQuantity() < left)
         {
-            return "item slipped away";
+            return refused(CL_S_ITEM_SLIPPED_AWAY);
         }
 
         if (left < PItem->getQuantity())
@@ -842,64 +866,22 @@ namespace pawn::items
             auto transaction = ItemClaimTransaction::start(PPawn);
             if (!transaction || !transaction->claimSlot(fromLoc, slot))
             {
-                return "item is busy";
+                return refused(CL_S_ITEM_BUSY);
             }
             if (!transaction->split(fromLoc, slot, toLoc, left) || !transaction->commit())
             {
-                return "no space";
+                return refused(noRoom(toLoc));
             }
-            return {};
+            return CL_S_OK;
         }
 
-        return carryStack(PPawn, PSrc, PDst, fromLoc, slot, toLoc, false);
+        const auto status = carryStack(PPawn, PSrc, PDst, fromLoc, slot, toLoc, false);
+        return status == CL_S_OK ? status : refused(status);
     }
 
-    auto containerChunks(CCharEntity* PPawn, const uint8 location) -> std::vector<std::string>
+    auto gilOf(CCharEntity* PChar) -> uint32
     {
-        std::vector<std::string> chunks;
-
-        const auto* storage = PPawn->getStorage(location);
-        if (storage == nullptr)
-        {
-            return chunks;
-        }
-
-        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
-        {
-            const CItem* PItem = storage->GetItem(slot);
-            if (PItem == nullptr || PItem->getQuantity() == 0)
-            {
-                continue;
-            }
-
-            auto entry = fmt::format("{}:{}:{}", slot, PItem->getID(), PItem->getQuantity());
-            if (PItem->state() == ItemState::Equipped)
-            {
-                entry += ":E";
-            }
-            packEntry(chunks, entry);
-        }
-        return chunks;
-    }
-
-    auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>
-    {
-        std::vector<std::string> chunks;
-
-        for (uint8 equipSlot = SLOT_MAIN; equipSlot < SLOT_LINK1; ++equipSlot)
-        {
-            const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot));
-            if (PItem == nullptr)
-            {
-                continue;
-            }
-            auto entry = fmt::format("{}:{}:{}", equipSlot, PItem->getID(), PItem->getSlotID());
-            if (PItem->getLocationID() != LOC_INVENTORY)
-            {
-                entry += fmt::format(":{}", PItem->getLocationID());
-            }
-            packEntry(chunks, entry);
-        }
-        return chunks;
+        const auto* PGil = PChar->getStorage(LOC_INVENTORY)->GetItem(0);
+        return PGil != nullptr && PGil->isType(ITEM_CURRENCY) ? PGil->getQuantity() : 0;
     }
 } // namespace pawn::items

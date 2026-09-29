@@ -73,37 +73,80 @@ namespace pawn
         bool              enabled = true;
     };
 
-    // The row as the player reads it: "Party: HP < 50% -> Cure (best)"
-    auto labelGambit(const gambits::Gambit_t& gambit) -> std::string;
+    // The row as the player reads it, in its two halves: when, "Party: HP <
+    // 50%", and what, "Cure (best)" (the editor draws an arrow between them)
+    struct GambitLabel
+    {
+        std::string head;
+        std::string action;
+    };
+    auto labelGambit(const gambits::Gambit_t& gambit) -> GambitLabel;
 
     // A spell family as a label: "Cure", or "family 37" when unnamed
     auto familyName(uint32 family) -> std::string;
 
     // The catalogue the editor's pickers offer for one cardian: the
-    // conditions, FFXII's way -- one clause each, naming its side, a number
-    // it takes left to the row ("Ally: HP < *%") -- the statuses a status
-    // condition names, and the actions she can take right now -- her
-    // spells, abilities and weapon skills, plus the behaviours. Keys are
-    // row-grammar fragments.
-    struct VocabEntry
+    // conditions, FFXII's way -- one clause each, one target and one
+    // condition on its side's page, a number or a status it takes left to
+    // the row ("Ally: HP < *%") -- the statuses a status condition names,
+    // and the actions of her jobs at every level -- her spells, abilities
+    // and weapon skills, plus the behaviours -- each marked whether she can
+    // use it now.
+    enum class Side : uint8
     {
-        std::string key;   // "target|cond:arg" ('*' for the number, 's' for the status), "status id", or "reaction:select:arg"
-        std::string label; // as the player reads it; a '*' stands for the number
-        std::string group; // actions: Behaviours / Magic / Abilities / WeaponSkills / Ranged; numeric conditions: "min,max,step,default"
-        uint16      targets = 0; // actions: the valid-target mask (TARGET_*), so a command window knows which cursor to open
-        uint16      mp      = 0; // spells: the base MP cost, so a command window can grey what she cannot afford
-        std::string page;        // conditions: the side's page, self / ally / foe
-        bool        usable = true; // actions: whether she can use it now (the pickers grey the rest)
+        Self,
+        Ally,
+        Foe,
+    };
+    enum class Takes : uint8
+    {
+        Nothing,
+        Number, // in its range, the label's '*'
+        Status, // picked in the row's next cell
+    };
+    struct VocabCondition
+    {
+        gambits::G_TARGET    target;
+        gambits::G_CONDITION condition;
+        Takes                takes = Takes::Nothing;
+        Side                 side  = Side::Self;
+        uint16               min = 0, max = 0, step = 0, initial = 0; // Takes::Number: its range, and where a new row starts
+        std::string          label;                                   // a '*' stands for the number
+    };
+    struct VocabStatus
+    {
+        uint16      id; // xi::StatusEffect
+        std::string label;
+    };
+    enum class ActionGroup : uint8
+    {
+        Fight,
+        Behaviours,
+        Magic,
+        Abilities,
+        WeaponSkills,
+        Ranged,
+    };
+    struct VocabAction
+    {
+        gambits::G_REACTION reaction;
+        gambits::G_SELECT   select;
+        uint32              arg = 0;
+        std::string         label;
+        ActionGroup         group;
+        uint16              targets = 0;    // the valid-target mask (TARGET_*), so a command window knows which cursor to open
+        uint16              mp      = 0;    // spells: the base MP cost, so a command window can grey what she cannot afford
+        bool                usable  = true; // whether she can use it now (the pickers grey the rest)
     };
     struct Vocabulary
     {
-        uint8                   mjob = 0; // her jobs and levels, which the actions follow
-        uint8                   mlvl = 0;
-        uint8                   sjob = 0;
-        uint8                   slvl = 0;
-        std::vector<VocabEntry> conditions;
-        std::vector<VocabEntry> statuses;
-        std::vector<VocabEntry> actions;
+        uint8                       mjob = 0; // her jobs and levels, which the actions follow
+        uint8                       mlvl = 0;
+        uint8                       sjob = 0;
+        uint8                       slvl = 0;
+        std::vector<VocabCondition> conditions;
+        std::vector<VocabStatus>    statuses;
+        std::vector<VocabAction>    actions;
     };
     auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary;
 

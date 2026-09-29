@@ -25,7 +25,35 @@
 
 #include "entities/char_entity.h"
 #include "lua/lua_base_entity.h"
+#include "pawn/cardian_link.h"
 #include "utils/moduleutils.h"
+
+#include <fmt/format.h>
+
+namespace
+{
+    // The pause button's refusal in words, as player:cardianPause() answers it
+    auto refusalText(const uint16 status) -> std::string
+    {
+        switch (status)
+        {
+            case CL_S_OK:
+                return "";
+            case CL_S_PAUSE_OFF:
+                return "the pause is switched off on this server";
+            case CL_S_LOGGING_OUT:
+                return "you are logging out";
+            case CL_S_SYNTHESIZING:
+                return "Cannot pause while performing synthesis.";
+            case CL_S_FISHING:
+                return "Cannot pause while fishing.";
+            case CL_S_PAUSED_BY_OTHER:
+                return fmt::format("{} has the game paused", cardian::pause::status().holderName);
+            default:
+                return fmt::format("refused ({})", status);
+        }
+    }
+} // namespace
 
 // The pause's own seat in the module system, for the two duties the module hooks
 // serve. A tick that keeps coming while the simulation is held, to let go of a hold
@@ -34,10 +62,16 @@
 // is the input gate (input_gate.h).
 class CardianPauseModule : public CPPModule
 {
-    // The pause button's server side: `!cardian pause`, which the addon sends over the
-    // Link. Answers with why not, or with nothing when the hold was taken or let go.
+    // The pause button's server side: the addon's PAUSE over the Link. The binding
+    // player:cardianPause() takes the same toggle for xi_test's Lua tests, answering
+    // why not, or nothing when the hold was taken or let go
     void OnInit() override
     {
+        cardian::link::handle<cl_pause>([](CCharEntity* PChar, const cl_pause& ask, cardian::link::Reply& reply)
+                                        {
+                                            reply.finish(ask, cardian::pause::toggle(PChar));
+                                        });
+
         lua["CBaseEntity"]["cardianPause"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
@@ -45,14 +79,25 @@ class CardianPauseModule : public CPPModule
             {
                 return "no character";
             }
-            return cardian::pause::toggle(PChar);
+            return refusalText(cardian::pause::toggle(PChar));
         };
 
-        // The player's own queued command, for his command window's queue line ("" with
-        // none), and him taking it back
-        lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        // The player's own queued command as his queue line names it -- { kind, mode,
+        // id, target }, the Link's cl_action and target index; nil with none -- and him
+        // taking it back
+        lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
         {
-            return cardian::pause::input::queuedLine(PLuaBaseEntity->GetBaseEntity()->id);
+            const auto line = cardian::pause::input::queueLine(PLuaBaseEntity->GetBaseEntity()->id);
+            if (line.action.kind == CL_AK_NONE)
+            {
+                return sol::lua_nil;
+            }
+            auto fields      = ::lua.create_table();
+            fields["kind"]   = line.action.kind;
+            fields["mode"]   = line.action.mode;
+            fields["id"]     = line.action.id;
+            fields["target"] = line.target;
+            return fields;
         };
         lua["CBaseEntity"]["cardianCancelOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
         {

@@ -177,28 +177,6 @@ namespace cardian::tactician
 
     // The state as the editor reads it on a row's line (Link protocol 13):
     // the server names, the addon words
-    constexpr auto token(const State state) -> std::string_view
-    {
-        switch (state)
-        {
-            case State::Order:
-                return "o";
-            case State::Line:
-                return "t";
-            case State::Allows:
-                return "a";
-            case State::NotBelow:
-                return "x-below";
-            case State::Clock:
-                return "x-clock";
-            case State::NoChoice:
-                return "x-choice";
-            case State::Misfit:
-                return "x-side";
-        }
-        return "o";
-    }
-
     // Her Support Mage row: a behaviour row that names the role
     inline auto isSupportMageRow(const gambits::Gambit_t& g) -> bool
     {

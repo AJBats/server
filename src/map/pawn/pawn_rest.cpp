@@ -48,17 +48,6 @@ void CPawnController::EndRestOrder(const std::string_view why)
     m_RestOrder = {};
 }
 
-auto CPawnController::RestOrderPercent() const -> int
-{
-    return m_RestOrder.percent;
-}
-
-auto CPawnController::RestNow() const -> RestClock
-{
-    const auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
-    return healing != nullptr ? healingClock(healing, restSeconds(timer::now())) : RestClock{};
-}
-
 auto CPawnController::RestAllowsAction() const -> bool
 {
     return m_Rest.canAct(restSeconds(timer::now()), POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
@@ -168,9 +157,11 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // nothing but a reason she cannot recover, she would stand idle for good
     if (ordered && (noRecovery || POwner->isDead()))
     {
-        const auto why = POwner->isDead() ? std::string("KO'd") : std::string("she cannot recover right now");
-        Note(fmt::format("{}'s rest ends: {}", POwner->getName(), why));
-        EndRestOrder(why);
+        auto note   = cardian::link::make<cl_note>();
+        note.kind   = CL_NOTE_REST_ENDS;
+        note.action = cl_action{ CL_AK_REST, 0, static_cast<uint16_t>(m_RestOrder.percent) };
+        Note(note, POwner->isDead() ? CL_S_KNOCKED_OUT : CL_S_CANNOT_RECOVER);
+        EndRestOrder(POwner->isDead() ? "KO'd" : "she cannot recover right now");
         ordered = false;
     }
     // The player's rest order stands down for nothing but the emergency cure

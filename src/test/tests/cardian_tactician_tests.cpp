@@ -213,7 +213,6 @@ TEST_CASE("tactician line: an action aimed at the wrong side is a misfit, struck
     CHECK(cardian::tactician::stateOf(g, 1, std::nullopt, false) == State::Misfit);
     CHECK(cardian::tactician::stateOf(g, 3, std::optional<std::size_t>(1), false) == State::Misfit);
     CHECK(cardian::tactician::struck(State::Misfit));
-    CHECK(cardian::tactician::token(State::Misfit) == "x-side");
 }
 
 TEST_CASE("tactician line: a timer or a chance below the line is struck out", "[cardian][gambits][tactician]")
@@ -388,13 +387,3 @@ TEST_CASE("tactician line: the default sets mean what they say where they sit", 
     }
 }
 
-TEST_CASE("tactician line: the editor's tokens", "[cardian][gambits][tactician]")
-{
-    using cardian::tactician::token;
-    CHECK(token(State::Order) == "o");
-    CHECK(token(State::Line) == "t");
-    CHECK(token(State::Allows) == "a");
-    CHECK(token(State::NotBelow) == "x-below");
-    CHECK(token(State::Clock) == "x-clock");
-    CHECK(token(State::NoChoice) == "x-choice");
-}

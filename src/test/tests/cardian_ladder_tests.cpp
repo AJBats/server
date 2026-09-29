@@ -423,7 +423,7 @@ TEST_CASE("Ladder: withdraw takes the body and the row through the engine", "[ca
     CHECK(rig.log == std::vector<std::string>{ "fade 2", "signOut 2" });
 }
 
-TEST_CASE("Ladder: the recall list is her player's cardians without a body", "[cardian][ladder]")
+TEST_CASE("Ladder: below the line are her player's cardians without a body", "[cardian][ladder]")
 {
     Rig rig(1, 10);
     rig.owned(1, Tier::Alt, 7);
@@ -436,7 +436,7 @@ TEST_CASE("Ladder: the recall list is her player's cardians without a body", "[c
     CHECK(rig.ladder.belowTheLine(8) == std::vector<uint32>{ 3 });
     CHECK(rig.ladder.belowTheLine(9).empty());
 
-    // a recall is a touch: she goes to the front of her tier and takes the seat
+    // a touch (a summon, an invite) takes her to the front of her tier and the seat
     rig.ladder.touch(2);
     CHECK(rig.run() == std::vector<std::string>{ "fade 1", "stand 2" });
 }

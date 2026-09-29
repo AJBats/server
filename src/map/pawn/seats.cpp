@@ -19,7 +19,6 @@
 #include "common/timer.h"
 
 #include "entities/char_entity.h"
-#include "utils/charutils.h"
 #include "utils/zoneutils.h"
 
 #include <chrono>
@@ -337,23 +336,6 @@ namespace pawn::seats
             }
         }
         return names;
-    }
-
-    auto recall(const uint32 ownerCharID, const std::string& name) -> std::string
-    {
-        const uint32 charid = charutils::getCharIdFromName(name);
-        const auto   facts  = factsOf(charid);
-        if (!facts.has_value() || facts->owner != ownerCharID)
-        {
-            return fmt::format("{} is not one of yours in the waterfall", name);
-        }
-        if (isStanding(charid))
-        {
-            return fmt::format("{} is already standing", name);
-        }
-        ladder->touch(charid);
-        run();
-        return isStanding(charid) ? std::string{} : fmt::format("{} is at the front of her tier, but the caps have no room yet", name);
     }
 
     auto nameOf(const uint32 charid) -> std::string

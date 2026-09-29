@@ -56,11 +56,8 @@ namespace pawn::seats
     void setCaps(uint32 standing, uint32 faded);
     auto capsLine(uint16 zoneId) -> std::string;
 
-    // The recall list: her player's cardians without a body, by name; and
-    // a recall, to the front of her tier and a run. "" on success, else
-    // why not
+    // Her player's cardians without a body, by name (!pawnworld faded)
     auto fadedNames(uint32 ownerCharID) -> std::vector<std::string>;
-    auto recall(uint32 ownerCharID, const std::string& name) -> std::string;
 
     // An invite's stand, for anyone the ladder holds: for a minute she
     // ranks as a party member (the invite is on its way to making her

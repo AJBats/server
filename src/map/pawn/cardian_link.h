@@ -21,41 +21,32 @@
 
 #pragma once
 
+#include "cardian_link_messages.h"
 #include "common/cbasetypes.h"
 
 #include <chrono>
 #include <cstddef>
+#include <functional>
 #include <optional>
+#include <string>
+#include <string_view>
 
+class CCharEntity;
 class Scheduler;
 
 // Cardian Link: the direct TCP channel between the companion addon and this
 // map server (RESEARCH.md §7, which also carries the invariants this code is
-// held to). Newline-delimited text, one connection per client. Everything
-// runs on the main thread: the acceptor and every connection are coroutines
-// on the scheduler's main context, so game state is never touched from
-// another thread and the socket never has two readers or two writers.
+// held to). Binary messages, one connection per client; every message and the
+// rules they follow are in cardian_link_protocol.h, the one file both sides
+// read. Everything runs on the main thread: the acceptor and every connection
+// are coroutines on the scheduler's main context, so game state is never
+// touched from another thread and the socket never has two readers or two
+// writers.
 //
-// Wire (both directions are lines of space-separated words):
-//   addon -> server   hello <addon version> | bind <charid> | whoami
-//                     | pos <x> <y> <z> <yaw> <moving> | cd <cardian command...>
-//                     | ping <n> | pong <n> | stats | bye
-//   server -> addon   welcome <server build> <charid> <protocol> | bound <charid> <name>
-//                     | you <charid> <name> <zone> | cd <tag> ... | ping <n>
-//                     | cd paused <holder> | cd resumed (to every bound addon, and
-//                     | cd paused after bound when the simulation is held)
-//                     | cd q <character> [<key> <target index>] (a queued command set, replaced or gone)
-//                     | cd mv <cardian> on|composed | cd mv <cardian> (his maneuver begun, composed under a hold, or ended)
-//                     | cd ring <x> <y> <z> <asked x> <asked z> (a walk point as the mesh took it, when it differs)
-//                     | pong <n> | stats k=v ... | err <text>
-//
-// cd carries the cardian management API (scripts/commands/cardian.lua): the
-// line after the verb runs as the bound character's `!cardian ...` command,
-// and the command's replies come back as cd lines through sendToCharacter.
-// This replaced the chat-channel transport (say packets in, channel-31
-// lines out) on 2026-09-01.
-// The first line must be hello. Each side pings after Config::pingInterval
-// of silence and drops the peer after Config::deadAfter of it.
+// The transport answers the link's own messages (hello, bind, ping, bye, pos,
+// stats, whoami). Everything else is answered by whoever registered its type
+// with handle() -- the pawn module registers the cardian API at init -- so this
+// file carries no game logic and links into xi_test without the pawn module.
 //
 // bind attaches the connection to a live character: the charid must name a
 // session-backed character whose session's client address is this socket's
@@ -67,12 +58,12 @@ namespace cardian::link
 {
     struct Config
     {
-        std::chrono::milliseconds pingInterval      = std::chrono::seconds(5);
-        std::chrono::milliseconds deadAfter         = std::chrono::seconds(15);
-        std::size_t               maxLine           = 2048; // bytes, newline included (equipset manifests ride cd lines)
-        uint32                    maxConnections    = 32;
-        uint32                    maxLinesPerSecond = 200;
-        std::size_t               maxOutboxLines    = 256; // per connection; a full outbox drops the newest line
+        std::chrono::milliseconds pingInterval         = std::chrono::seconds(5);
+        std::chrono::milliseconds deadAfter            = std::chrono::seconds(15);
+        std::size_t               maxMessage           = 16384; // bytes, header included
+        uint32                    maxConnections       = 32;
+        uint32                    maxMessagesPerSecond = 200;
+        std::size_t               maxOutboxMessages    = 256; // per connection; a full outbox drops the newest message
     };
 
     // Bind cardian.LINK_PORT and start accepting. No-op when
@@ -84,26 +75,108 @@ namespace cardian::link
 
     struct Stats
     {
-        uint32 accepted = 0; // connections accepted since boot
-        uint32 live     = 0; // connections open now
-        uint32 rejected = 0; // refused at accept: connection cap reached
-        uint32 dropped  = 0; // closed by the server: silence, flooding, oversize line, protocol, exception
-        uint32 linesIn  = 0;
-        uint32 linesOut   = 0;
-        uint32 outDropped = 0; // lines dropped because a connection's outbox was full (a peer not reading)
-        uint32 posIn      = 0; // pos lines accepted into the side store
+        uint32 accepted    = 0; // connections accepted since boot
+        uint32 live        = 0; // connections open now
+        uint32 rejected    = 0; // refused at accept: connection cap reached
+        uint32 dropped     = 0; // closed by the server: silence, flooding, oversize message, protocol, exception
+        uint32 messagesIn  = 0;
+        uint32 messagesOut = 0;
+        uint32 outDropped  = 0; // messages dropped because a connection's outbox was full (a peer not reading)
+        uint32 posIn       = 0; // pos messages accepted into the side store
     };
 
     auto stats() -> Stats;
 
-    // Push a line to the connection bound to this character (its cd replies).
-    // false when no link is bound to them -- the caller decides what that
-    // means (the cardian command falls back to chat for a human typing it).
-    auto sendToCharacter(uint32 charid, std::string line) -> bool;
+    // The way back to the connection that sent a request, handed to its
+    // handler: answers go to the asker, never to whichever link holds the
+    // character by then. Made by the transport; valid only while the handler
+    // runs. A request sent one-way (req 0) is answered by nothing.
+    class Reply
+    {
+    public:
+        Reply(const cl_header& asked, std::function<void(std::string)> send)
+        : asked_(asked)
+        , send_(std::move(send))
+        {
+        }
 
-    // Push a line to every bound connection: what all the addons must hear at once
-    // (the combat pause taken and let go).
-    void sendToAll(const std::string& line);
+        // An answer that is not the last
+        template <typename T>
+        void more(T msg)
+        {
+            if (asked_.req != 0)
+            {
+                stamp(msg, asked_.req, CL_F_REPLY | CL_F_MORE, CL_S_OK);
+                send_(bytesOf(msg));
+            }
+        }
+
+        // The last answer: the request's own message, as asked or with its
+        // answer fields filled, carrying the outcome
+        template <typename T>
+        void finish(T msg, const uint16 status)
+        {
+            if (asked_.req != 0)
+            {
+                stamp(msg, asked_.req, CL_F_REPLY, status);
+                send_(bytesOf(msg));
+            }
+        }
+
+        // A one-way notice to the same connection, answering nothing: what a
+        // stream sent one-way (WALK) hears when it must hear something
+        template <typename T>
+        void notify(T msg, const uint16 status = CL_S_OK)
+        {
+            stamp(msg, 0, 0, status);
+            send_(bytesOf(msg));
+        }
+
+    private:
+        cl_header                        asked_;
+        std::function<void(std::string)> send_;
+    };
+
+    // Who answers an addon message of type T. The transport checks the size and
+    // the bind first: the handler gets the bound character, resolved and
+    // verified, the message, and the way to answer it. A request of a type
+    // nobody handles comes back CL_S_UNKNOWN_TYPE.
+    void handleType(uint16 type, std::size_t size, std::function<void(CCharEntity* PChar, std::string_view frame, Reply& reply)> handler);
+
+    template <typename T>
+    void handle(std::function<void(CCharEntity* PChar, const T& msg, Reply& reply)> handler)
+    {
+        handleType(MessageType<T>::value, sizeof(T),
+                   [handler = std::move(handler)](CCharEntity* PChar, const std::string_view frame, Reply& reply)
+                   {
+                       T msg;
+                       std::memcpy(&msg, frame.data(), sizeof(T));
+                       handler(PChar, msg, reply);
+                   });
+    }
+
+    // A whole message to the connection bound to this character; false when
+    // no link is bound to them
+    auto sendBytes(uint32 charid, std::string bytes) -> bool;
+
+    // A whole message to every bound connection
+    void sendBytesToAll(const std::string& bytes);
+
+    // A one-way message to this character's addon
+    template <typename T>
+    auto send(const uint32 charid, T msg, const uint16 status = CL_S_OK) -> bool
+    {
+        stamp(msg, 0, 0, status);
+        return sendBytes(charid, bytesOf(msg));
+    }
+
+    // A one-way message to every bound addon at once (the pause taken and let go)
+    template <typename T>
+    void sendToAll(T msg)
+    {
+        stamp(msg, 0, 0, CL_S_OK);
+        sendBytesToAll(bytesOf(msg));
+    }
 
     // The uplink side store (RESEARCH.md par.7, option B): the freshest
     // client-reported position of a bound character, already converted to

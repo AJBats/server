@@ -98,6 +98,7 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_gambit_layers_tests.cpp # CARDIAN: the two layers of a character's gambit rows (ROADMAP K5)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_tactician_tests.cpp # CARDIAN: the tactician line's rules (ROADMAP K4)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_ailments_tests.cpp # CARDIAN: the Enfeeble status group and -na (best)'s pick
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_link_protocol_tests.cpp # CARDIAN: the Link's messages: sizes, headers, text
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
     ${resource})
 add_dependencies(xi_test data_schema_generate)
