@@ -2462,18 +2462,11 @@ namespace pawn
                 out.push_back(PPawn.get());
             }
         }
+        std::ranges::sort(out, {}, [](const CCharEntity* PPawn) -> const std::string&
+                          {
+                              return PPawn->getName();
+                          });
         return out;
-    }
-
-    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>
-    {
-        std::vector<std::string> names;
-        for (const auto* PPawn : commandablePawns(PPlayer))
-        {
-            names.emplace_back(PPawn->getName());
-        }
-        std::ranges::sort(names);
-        return names;
     }
 
     auto release(const uint32 pawnCharID) -> std::unique_ptr<CCharEntity>

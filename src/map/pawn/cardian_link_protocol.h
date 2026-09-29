@@ -34,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 22: the Auction House, AH_SHELF,
+// compatible, the user, 2026-09-14). 23: a cardian's state, ROSTER, MEMBER,
+// SYNC, MEMBER_STATS, GEAR, BAGS, RECASTS, PROFILE, JOBS, SKILLS and an
+// INVENTORY asked for (the list, sync, inv, bags, gear, recasts, profile,
+// jobs, skills and mskills lines leave LEGACY_CD); 22: the Auction House, AH_SHELF,
 // AH_HISTORY and AH_BID (the ahlist, ahhist and ahbid lines leave
 // LEGACY_CD); 21: DO, QUEUE and QUEUES, and actions as
 // typed fields (cl_action; the do, queues and q lines leave LEGACY_CD);
@@ -50,7 +53,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 22 };
+enum { CL_PROTOCOL = 23 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -297,10 +300,24 @@ typedef struct cl_legacy_cd
 } cl_legacy_cd;
 
 // ---- 0x01xx: a cardian's state --------------------------------------------
+//
+// What the menu shows of a cardian he commands. Each is asked for, and the
+// ones a change moves (MEMBER_STATS, GEAR, INVENTORY, BAGS) are also sent by
+// themselves, one-way, as the change is made.
 
 enum
 {
-    CL_T_INVENTORY = 0x0101,
+    CL_T_INVENTORY    = 0x0101,
+    CL_T_ROSTER       = 0x0102,
+    CL_T_MEMBER       = 0x0103,
+    CL_T_SYNC         = 0x0104,
+    CL_T_MEMBER_STATS = 0x0105,
+    CL_T_GEAR         = 0x0106,
+    CL_T_BAGS         = 0x0107,
+    CL_T_RECASTS      = 0x0108,
+    CL_T_PROFILE      = 0x0109,
+    CL_T_JOBS         = 0x010A,
+    CL_T_SKILLS       = 0x010B,
 };
 
 enum { CL_ITEM_EQUIPPED = 0x01 };
@@ -314,17 +331,187 @@ typedef struct cl_item
 } cl_item;
 
 // One of her containers as it stands: the inventory (loc 0) or a storage bag.
-// An answer to whatever changed it.
+// Asked for (a cardian of his to manage, cardian and loc), and an answer to
+// whatever changed it.
 typedef struct cl_inventory
 {
     cl_header h;
     uint32_t  cardian;   // charid
     uint8_t   loc;
-    uint8_t   size;      // slots the container has
-    uint8_t   free;
-    uint8_t   count;     // items in use
-    cl_item   items[80]; // a container holds 80 at most
+    uint8_t   size;      // answered: slots the container has
+    uint8_t   free;      // answered
+    uint8_t   count;     // answered: items in use
+    cl_item   items[80]; // answered: a container holds 80 at most
 } cl_inventory;
+
+// His party's roster: each cardian he commands and who is in a zone comes as
+// a MEMBER answer (CL_F_MORE), by name, then this, with what the player himself
+// stands by
+typedef struct cl_roster
+{
+    cl_header h;
+    uint8_t   count;     // answered: members sent
+    uint8_t   byCounter; // answered: 1 while he stands by an auction counter
+    uint16_t  spare;
+} cl_roster;
+
+enum
+{
+    CL_MEMBER_WAITING    = 0x01, // holding her ground, ordered or left behind by magic
+    CL_MEMBER_OWNED      = 0x02, // his to manage; else a wild cardian in his party, orders only
+    CL_MEMBER_BY_COUNTER = 0x04, // she stands by the auction counter he stands at
+    CL_MEMBER_BY_GUARD   = 0x08, // a gate guard stands within his reach: the conquest exchange sells to her
+};
+
+// One cardian as the roster shows her: an answer to ROSTER and SYNC
+typedef struct cl_member
+{
+    cl_header h;
+    uint32_t  cardian;      // charid
+    char      name[16];
+    uint8_t   mainJob;
+    uint8_t   mainLevel;
+    uint8_t   subJob;
+    uint8_t   subLevel;
+    uint16_t  hp;
+    uint16_t  maxHp;
+    uint16_t  mp;
+    uint16_t  maxMp;
+    uint16_t  tp;
+    uint16_t  zone;         // the zone id
+    uint32_t  exp;          // on her main job
+    uint32_t  tnl;          // what the next level costs
+    uint8_t   flags;        // CL_MEMBER_*
+    uint8_t   spare[3];
+    char      zoneName[32]; // where she is, for people
+} cl_member;
+
+// Everything the equipment screen shows of one cardian: MEMBER, MEMBER_STATS,
+// GEAR and, when she is his to manage, her INVENTORY, as answers (CL_F_MORE),
+// then this
+typedef struct cl_sync
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_sync;
+
+// The status pane of the equipment screen: the seven base stats, each its
+// total and the part of it gear and effects give; attack, defence; her gil
+// (0 unless she is his to manage)
+typedef struct cl_member_stats
+{
+    cl_header h;
+    uint32_t  cardian;  // charid
+    int16_t   total[7]; // STR, DEX, VIT, AGI, INT, MND, CHR
+    int16_t   bonus[7];
+    uint16_t  attack;
+    uint16_t  defence;
+    uint32_t  gil;
+} cl_member_stats;
+
+// A piece she wears: its item, and the container and slot it is worn from
+// (the inventory, or a wardrobe); item 0 for an empty equipment slot
+typedef struct cl_worn
+{
+    uint16_t item;
+    uint8_t  bag;
+    uint8_t  slot;
+} cl_worn;
+
+typedef struct cl_gear
+{
+    cl_header h;
+    uint32_t  cardian;  // charid
+    cl_worn   worn[16]; // by equipment slot, main hand to back
+} cl_gear;
+
+// One of her storage bags: the container, its slots and those in use
+typedef struct cl_bag
+{
+    uint8_t loc;
+    uint8_t size;
+    uint8_t used;
+    uint8_t spare;
+} cl_bag;
+
+// Her storage bags, in the order the menu cycles them (a cardian of his to
+// manage)
+typedef struct cl_bags
+{
+    cl_header h;
+    uint32_t  cardian;  // charid
+    uint8_t   count;    // answered
+    uint8_t   spare[3];
+    cl_bag    bags[16]; // answered
+} cl_bags;
+
+// An action still on recast, and the seconds left on it
+typedef struct cl_recast
+{
+    cl_action action;
+    float     seconds;
+} cl_recast;
+
+// What she cannot do yet: every spell and ability of hers still on recast,
+// by the action the command window lists it as; the rest are ready. Answered
+// in parts, each with its share (CL_F_MORE), the last with the outcome
+typedef struct cl_recasts
+{
+    cl_header h;
+    uint32_t  cardian;       // charid
+    uint8_t   count;         // answered: recasts in this part
+    uint8_t   spare[3];
+    cl_recast recasts[64];   // answered
+} cl_recasts;
+
+// What the client's own Profile screen shows, for her
+typedef struct cl_profile
+{
+    cl_header h;
+    uint32_t  cardian;      // charid
+    uint16_t  title;        // answered
+    uint8_t   nation;       // answered
+    uint8_t   race;         // answered
+    uint8_t   rank;         // answered: her rank in her nation
+    uint8_t   spare;
+    uint16_t  homeZone;     // answered: her home point's zone
+    uint32_t  rankPoints;   // answered
+    char      homeName[32]; // answered: her home point's zone, for people
+} cl_profile;
+
+// Her level in every job, by job id (0 for a job she has none in)
+typedef struct cl_jobs
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint8_t   levels[24]; // answered
+} cl_jobs;
+
+enum
+{
+    CL_SKILLS_COMBAT = 0,
+    CL_SKILLS_MAGIC  = 1,
+};
+
+// A skill her jobs can raise: its level as the client's skill pages show it
+// (whole levels), and its cap at her level (the higher of main and support job)
+typedef struct cl_skill
+{
+    uint16_t skill;
+    uint16_t level;
+    uint16_t cap;
+    uint16_t spare;
+} cl_skill;
+
+typedef struct cl_skills
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint8_t   kind;       // CL_SKILLS_*
+    uint8_t   count;      // answered
+    uint16_t  spare;
+    cl_skill  skills[32]; // answered
+} cl_skills;
 
 // ---- 0x02xx: items and gear -----------------------------------------------
 

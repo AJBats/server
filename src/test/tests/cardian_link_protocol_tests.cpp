@@ -72,6 +72,20 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_ah_sale) == 40);
     STATIC_REQUIRE(sizeof(cl_ah_history) == 428);
     STATIC_REQUIRE(sizeof(cl_ah_bid) == 40);
+    STATIC_REQUIRE(sizeof(cl_roster) == 20);
+    STATIC_REQUIRE(sizeof(cl_member) == 96);
+    STATIC_REQUIRE(sizeof(cl_sync) == 20);
+    STATIC_REQUIRE(sizeof(cl_member_stats) == 56);
+    STATIC_REQUIRE(sizeof(cl_worn) == 4);
+    STATIC_REQUIRE(sizeof(cl_gear) == 84);
+    STATIC_REQUIRE(sizeof(cl_bag) == 4);
+    STATIC_REQUIRE(sizeof(cl_bags) == 88);
+    STATIC_REQUIRE(sizeof(cl_recast) == 8);
+    STATIC_REQUIRE(sizeof(cl_recasts) == 536);
+    STATIC_REQUIRE(sizeof(cl_profile) == 64);
+    STATIC_REQUIRE(sizeof(cl_jobs) == 44);
+    STATIC_REQUIRE(sizeof(cl_skill) == 8);
+    STATIC_REQUIRE(sizeof(cl_skills) == 280);
     STATIC_REQUIRE(sizeof(cl_legacy_cd) == sizeof(cl_header));
 }
 

@@ -51,6 +51,16 @@ namespace cardian::link
     X(UNBOUND, cl_unbound)       \
     X(LEGACY_CD, cl_legacy_cd)   \
     X(INVENTORY, cl_inventory)   \
+    X(ROSTER, cl_roster)         \
+    X(MEMBER, cl_member)         \
+    X(SYNC, cl_sync)             \
+    X(MEMBER_STATS, cl_member_stats) \
+    X(GEAR, cl_gear)             \
+    X(BAGS, cl_bags)             \
+    X(RECASTS, cl_recasts)       \
+    X(PROFILE, cl_profile)       \
+    X(JOBS, cl_jobs)             \
+    X(SKILLS, cl_skills)         \
     X(GIVE, cl_give)             \
     X(WALK, cl_walk)             \
     X(VIEW, cl_view)             \

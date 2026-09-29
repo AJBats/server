@@ -24,11 +24,14 @@
 #include "action_keys.h"
 #include "auction.h"
 #include "cardian_link.h"
+#include "gate_guards.h"
+#include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_items.h"
 #include "view.h"
 
+#include "ability.h"
 #include "ai/ai_container.h"
 #include "common/logging.h"
 #include "entities/char_entity.h"
@@ -38,11 +41,16 @@
 #include "navmesh/navmesh.h"
 #include "pause/input_gate.h"
 #include "pause/pause.h"
+#include "recast_container.h"
+#include "utils/battleutils.h"
+#include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <string>
 #include <vector>
 
 namespace pawn::linkapi
@@ -80,6 +88,136 @@ namespace pawn::linkapi
                 item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
             }
             return msg;
+        }
+
+        // A number into a field of two bytes, held at its top rather than wrapped
+        auto clamp16(const int64 value) -> uint16_t
+        {
+            return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
+        }
+
+        // A zone's name for people: the game's, its underscores as spaces
+        template <std::size_t N>
+        void setZoneName(char (&field)[N], CZone* PZone)
+        {
+            std::string name = PZone != nullptr ? PZone->getName() : std::string("?");
+            std::replace(name.begin(), name.end(), '_', ' ');
+            setText(field, name);
+        }
+
+        // What the player himself stands by, worked out once for all the lines
+        // that tell it: the auction counter and the gate guard within his reach
+        struct PlayerReach
+        {
+            const CBaseEntity* counter = nullptr;
+            bool               byGuard = false;
+        };
+
+        auto reachOf(CCharEntity* PPlayer) -> PlayerReach
+        {
+            return PlayerReach{ pawn::auction::counterNear(PPlayer), pawn::guards::guardNear(PPlayer) != nullptr };
+        }
+
+        // One cardian as his roster shows her; managed: she is his to manage
+        auto memberOf(CCharEntity* PPlayer, CCharEntity* PPawn, const PlayerReach& reach, const bool managed) -> cl_member
+        {
+            auto member      = make<cl_member>();
+            member.cardian   = PPawn->id;
+            setText(member.name, PPawn->getName());
+            member.mainJob   = static_cast<uint8_t>(PPawn->GetMJob());
+            member.mainLevel = PPawn->GetMLevel();
+            member.subJob    = static_cast<uint8_t>(PPawn->GetSJob());
+            member.subLevel  = PPawn->GetSLevel();
+            member.hp        = clamp16(PPawn->health.hp);
+            member.maxHp     = clamp16(PPawn->GetMaxHP());
+            member.mp        = clamp16(PPawn->health.mp);
+            member.maxMp     = clamp16(PPawn->GetMaxMP());
+            member.tp        = clamp16(PPawn->health.tp);
+            member.zone      = static_cast<uint16_t>(PPawn->getZone());
+            setZoneName(member.zoneName, PPawn->loc.zone);
+
+            const auto job = static_cast<uint8>(PPawn->GetMJob());
+            member.exp     = job < MAX_JOBTYPE ? PPawn->jobs.exp[job] : 0;
+            member.tnl     = charutils::GetExpNEXTLevel(PPawn->GetMLevel());
+
+            const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
+            uint8       flags       = 0;
+            if (PController != nullptr && PController->IsWaiting())
+            {
+                flags |= CL_MEMBER_WAITING;
+            }
+            if (managed)
+            {
+                flags |= CL_MEMBER_OWNED;
+            }
+            if (pawn::auction::whereShopping(PPlayer, PPawn, reach.counter) == CL_S_OK)
+            {
+                flags |= CL_MEMBER_BY_COUNTER;
+            }
+            if (reach.byGuard)
+            {
+                flags |= CL_MEMBER_BY_GUARD;
+            }
+            member.flags = flags;
+            return member;
+        }
+
+        // Her status pane; her gil only when she is his to manage (a wild
+        // cardian's purse is her own)
+        auto statsOf(CCharEntity* PPawn, const bool managed) -> cl_member_stats
+        {
+            auto stats    = make<cl_member_stats>();
+            stats.cardian = PPawn->id;
+            const std::array<std::pair<uint16, xi::Mod>, 7> kStats{ {
+                { PPawn->STR(), xi::Mod::STR },
+                { PPawn->DEX(), xi::Mod::DEX },
+                { PPawn->VIT(), xi::Mod::VIT },
+                { PPawn->AGI(), xi::Mod::AGI },
+                { PPawn->INT(), xi::Mod::INT },
+                { PPawn->MND(), xi::Mod::MND },
+                { PPawn->CHR(), xi::Mod::CHR },
+            } };
+            for (std::size_t i = 0; i < kStats.size(); ++i)
+            {
+                stats.total[i] = static_cast<int16_t>(kStats[i].first);
+                stats.bonus[i] = static_cast<int16_t>(PPawn->getMod(kStats[i].second));
+            }
+            stats.attack  = clamp16(PPawn->ATT(SLOT_MAIN));
+            stats.defence = clamp16(PPawn->DEF());
+            stats.gil     = managed ? pawn::items::gilOf(PPawn) : 0;
+            return stats;
+        }
+
+        // What she wears, by equipment slot
+        auto gearOf(CCharEntity* PPawn) -> cl_gear
+        {
+            auto gear    = make<cl_gear>();
+            gear.cardian = PPawn->id;
+            for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
+            {
+                if (const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
+                {
+                    gear.worn[equipSlot] = cl_worn{ PItem->getID(), PItem->getLocationID(), PItem->getSlotID() };
+                }
+            }
+            return gear;
+        }
+
+        // Her storage bags, in the order the menu cycles them
+        auto bagsOf(CCharEntity* PPawn) -> cl_bags
+        {
+            auto bags    = make<cl_bags>();
+            bags.cardian = PPawn->id;
+            constexpr std::size_t kMax = sizeof(cl_bags::bags) / sizeof(cl_bag);
+            for (const auto& bag : pawn::items::bags(PPawn))
+            {
+                if (bags.count >= kMax)
+                {
+                    break;
+                }
+                bags.bags[bags.count++] = cl_bag{ bag.location, bag.size, bag.used, 0 };
+            }
+            return bags;
         }
 
         // A stack from his inventory to hers: her inventory as it now stands,
@@ -654,7 +792,274 @@ namespace pawn::linkapi
             }
             reply.finish(answer, result.status);
         }
+
+        // His party's roster: every cardian he commands, by name, who is in a
+        // zone (one between zones joins it once she lands), then what he himself
+        // stands by
+        void roster(CCharEntity* PChar, const cl_roster& ask, Reply& reply)
+        {
+            const auto reach  = reachOf(PChar);
+            auto       answer = ask;
+            answer.count      = 0;
+            for (auto* PPawn : pawn::commandablePawns(PChar))
+            {
+                if (PPawn->loc.zone == nullptr)
+                {
+                    continue;
+                }
+                reply.more(memberOf(PChar, PPawn, reach, pawn::findManagedPawn(PChar, PPawn->id) != nullptr));
+                answer.count = static_cast<uint8_t>(std::min<std::size_t>(answer.count + 1, UINT8_MAX));
+            }
+            answer.byCounter = reach.counter != nullptr ? 1 : 0;
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // The equipment screen's whole view of her: roster line, status pane,
+        // gear and, his to manage, her inventory
+        void sync(CCharEntity* PChar, const cl_sync& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            const bool managed = pawn::findManagedPawn(PChar, ask.cardian) != nullptr;
+            reply.more(memberOf(PChar, PPawn, reachOf(PChar), managed));
+            reply.more(statsOf(PPawn, managed));
+            reply.more(gearOf(PPawn));
+            if (managed)
+            {
+                reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+            }
+            reply.finish(ask, CL_S_OK);
+        }
+
+        // One of her containers, asked for: the inventory or a bag (his to manage)
+        void inventory(CCharEntity* PChar, const cl_inventory& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (ask.loc > LOC_WARDROBE8)
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            reply.finish(inventoryOf(PPawn, ask.loc), CL_S_OK);
+        }
+
+        void bags(CCharEntity* PChar, const cl_bags& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            reply.finish(bagsOf(PPawn), CL_S_OK);
+        }
+
+        // What she cannot do yet: the seconds left on every spell and ability
+        // still on recast, by the action the command window lists it as
+        void recasts(CCharEntity* PChar, const cl_recasts& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            std::vector<cl_recast> all;
+            const auto             now  = timer::now();
+            const auto             left = [&](const Recast_t& recast) -> float
+            {
+                auto remaining = (recast.TimeStamp + recast.RecastTime) - now;
+                // A charged ability is usable while any charge is back, so only
+                // the wait for the next charge counts: the recast holds every
+                // spent charge's time end to end, and the ability is ready once
+                // fewer than all but one remain (HasRecast)
+                if (recast.chargeTime != 0s && recast.maxCharges > 0)
+                {
+                    remaining -= recast.chargeTime * (recast.maxCharges - 1);
+                }
+                return remaining > 0s ? std::chrono::duration<float>(remaining).count() : 0.0f;
+            };
+            const auto add = [&](const uint8_t kind, const uint16_t id, const float seconds)
+            {
+                if (seconds > 0.0f)
+                {
+                    all.push_back(cl_recast{ cl_action{ kind, 2, id }, seconds });
+                }
+            };
+
+            if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_MAGIC); PList != nullptr)
+            {
+                for (const auto& recast : *PList)
+                {
+                    add(CL_AK_MAGIC, static_cast<uint16_t>(recast.ID), left(recast));
+                }
+            }
+            // Abilities are stored by recast id, the command window lists them by
+            // ability id, so they are matched through her own ability list
+            if (auto* PList = PPawn->PRecastContainer->GetRecastList(RECAST_ABILITY); PList != nullptr)
+            {
+                for (auto* PAbility : pawn::abilitiesFor(PPawn))
+                {
+                    for (const auto& recast : *PList)
+                    {
+                        if (recast.ID == PAbility->getRecastId())
+                        {
+                            add(CL_AK_ABILITY, PAbility->getID(), left(recast));
+                        }
+                    }
+                }
+            }
+
+            // In parts, each with its share: a shared recast puts every ability of
+            // its family on the list
+            constexpr std::size_t kPerPart = sizeof(cl_recasts::recasts) / sizeof(cl_recast);
+            std::size_t           next     = 0;
+            while (true)
+            {
+                auto part  = ask;
+                part.count = 0;
+                for (; part.count < kPerPart && next < all.size(); ++next)
+                {
+                    part.recasts[part.count++] = all[next];
+                }
+                if (next < all.size())
+                {
+                    reply.more(part);
+                    continue;
+                }
+                reply.finish(part, CL_S_OK);
+                return;
+            }
+        }
+
+        // What the client's own Profile screen shows, for her
+        void profile(CCharEntity* PChar, const cl_profile& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            const auto nation = std::min<uint8>(PPawn->profile.nation, 2);
+            auto       answer = ask;
+            answer.title      = PPawn->profile.title;
+            answer.nation     = nation;
+            answer.race       = static_cast<uint8_t>(PPawn->look.race);
+            answer.rank       = PPawn->profile.rank[nation];
+            answer.rankPoints = PPawn->profile.rankpoints;
+            answer.homeZone   = static_cast<uint16_t>(PPawn->profile.home_point.destination);
+            setZoneName(answer.homeName, zoneutils::GetZone(PPawn->profile.home_point.destination));
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // Her level in every job
+        void jobs(CCharEntity* PChar, const cl_jobs& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            auto answer = ask;
+            for (std::size_t job = 0; job < sizeof(cl_jobs::levels) && job < MAX_JOBTYPE; ++job)
+            {
+                answer.levels[job] = PPawn->jobs.job[job];
+            }
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // The combat or the magic skills her jobs can raise, each at its level
+        // and its cap at her level: the higher of main and support job
+        void skills(CCharEntity* PChar, const cl_skills& ask, Reply& reply)
+        {
+            static constexpr std::array<uint8, 19> kCombat{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 25, 26, 27, 28, 29, 30, 31 };
+            static constexpr std::array<uint8, 14> kMagic{ 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 };
+
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (ask.kind > CL_SKILLS_MAGIC)
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            auto       answer   = ask;
+            answer.count        = 0;
+            const auto mainJob  = PPawn->GetMJob();
+            const auto subJob   = PPawn->GetSJob();
+            const auto mainLvl  = PPawn->GetMLevel();
+            const auto subLvl   = PPawn->GetSLevel();
+            const auto addSkill = [&](const uint8 skill)
+            {
+                const auto type = static_cast<xi::SkillType>(skill);
+                uint16     cap  = battleutils::GetMaxSkill(type, mainJob, mainLvl);
+                if (static_cast<uint8>(subJob) != 0 && subLvl > 0)
+                {
+                    cap = std::max(cap, battleutils::GetMaxSkill(type, subJob, subLvl));
+                }
+                if (cap > 0 && answer.count < sizeof(cl_skills::skills) / sizeof(cl_skill))
+                {
+                    const uint16 level          = std::min<uint16>(PPawn->RealSkills.skill[skill] / 10, cap);
+                    answer.skills[answer.count++] = cl_skill{ skill, level, cap, 0 };
+                }
+            };
+            if (ask.kind == CL_SKILLS_COMBAT)
+            {
+                std::for_each(kCombat.begin(), kCombat.end(), addSkill);
+            }
+            else
+            {
+                std::for_each(kMagic.begin(), kMagic.end(), addSkill);
+            }
+            reply.finish(answer, CL_S_OK);
+        }
     } // namespace
+
+    void tellStats(CCharEntity* PPlayer, CCharEntity* PPawn)
+    {
+        if (PPlayer != nullptr && PPawn != nullptr)
+        {
+            cardian::link::send(PPlayer->id, statsOf(PPawn, pawn::findManagedPawn(PPlayer, PPawn->id) != nullptr));
+        }
+    }
+
+    void tellGear(CCharEntity* PPlayer, CCharEntity* PPawn)
+    {
+        if (PPlayer != nullptr && PPawn != nullptr)
+        {
+            cardian::link::send(PPlayer->id, gearOf(PPawn));
+        }
+    }
+
+    void tellInventory(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 location)
+    {
+        if (PPlayer != nullptr && PPawn != nullptr && location <= LOC_WARDROBE8)
+        {
+            cardian::link::send(PPlayer->id, inventoryOf(PPawn, location));
+        }
+    }
+
+    void tellBags(CCharEntity* PPlayer, CCharEntity* PPawn)
+    {
+        if (PPlayer != nullptr && PPawn != nullptr)
+        {
+            cardian::link::send(PPlayer->id, bagsOf(PPawn));
+        }
+    }
 
     void registerHandlers()
     {
@@ -678,5 +1083,13 @@ namespace pawn::linkapi
         handle<cl_ah_shelf>(ahShelf);
         handle<cl_ah_history>(ahHistory);
         handle<cl_ah_bid>(ahBid);
+        handle<cl_roster>(roster);
+        handle<cl_sync>(sync);
+        handle<cl_inventory>(inventory);
+        handle<cl_bags>(bags);
+        handle<cl_recasts>(recasts);
+        handle<cl_profile>(profile);
+        handle<cl_jobs>(jobs);
+        handle<cl_skills>(skills);
     }
 } // namespace pawn::linkapi

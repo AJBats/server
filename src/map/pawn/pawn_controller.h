@@ -164,9 +164,8 @@ public:
     void SetRestOrder(int percent, std::string_view why);
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
-    auto RestOrderPercent() const -> int; // 0: none
-    // Her kneel as the rest row shows it: Healing's ticks so far, and
-    // seconds to the next and between ticks (zero while standing)
+    // Her kneel: Healing's ticks so far, and seconds to the next and between
+    // ticks (zero while standing)
     struct RestClock
     {
         bool   down     = false;
@@ -174,7 +173,6 @@ public:
         double next     = 0.0;
         double interval = 0.0;
     };
-    auto RestNow() const -> RestClock;
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;

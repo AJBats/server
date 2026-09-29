@@ -915,32 +915,10 @@ namespace pawn::items
         return carryStack(PPawn, PSrc, PDst, fromLoc, slot, toLoc, false);
     }
 
-    auto containerChunks(CCharEntity* PPawn, const uint8 location) -> std::vector<std::string>
+    auto gilOf(CCharEntity* PChar) -> uint32
     {
-        std::vector<std::string> chunks;
-
-        const auto* storage = PPawn->getStorage(location);
-        if (storage == nullptr)
-        {
-            return chunks;
-        }
-
-        for (uint8 slot = 1; slot <= storage->GetSize(); ++slot)
-        {
-            const CItem* PItem = storage->GetItem(slot);
-            if (PItem == nullptr || PItem->getQuantity() == 0)
-            {
-                continue;
-            }
-
-            auto entry = fmt::format("{}:{}:{}", slot, PItem->getID(), PItem->getQuantity());
-            if (PItem->state() == ItemState::Equipped)
-            {
-                entry += ":E";
-            }
-            packEntry(chunks, entry);
-        }
-        return chunks;
+        const auto* PGil = PChar->getStorage(LOC_INVENTORY)->GetItem(0);
+        return PGil != nullptr && PGil->isType(ITEM_CURRENCY) ? PGil->getQuantity() : 0;
     }
 
     auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>

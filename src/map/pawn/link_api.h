@@ -26,8 +26,21 @@
 // carries them; this file turns each into the game's own calls and the game's
 // state back into messages. The verbs not yet converted still run as the
 // !cardian command (scripts/commands/cardian.lua) through LEGACY_CD.
+#include "common/cbasetypes.h"
+
+class CCharEntity;
+
 namespace pawn::linkapi
 {
     // Hands every handler of this file to the transport; the pawn module's init
     void registerHandlers();
+
+    // A cardian's state, told to the player's addon one-way as a change moves
+    // it: her status pane, her gear, one of her containers, her bags. The item
+    // and gear verbs still on LEGACY_CD call these after each change (the
+    // Cardian bindings cardianTell*) until they convert.
+    void tellStats(CCharEntity* PPlayer, CCharEntity* PPawn);
+    void tellGear(CCharEntity* PPlayer, CCharEntity* PPawn);
+    void tellInventory(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 location);
+    void tellBags(CCharEntity* PPlayer, CCharEntity* PPawn);
 } // namespace pawn::linkapi

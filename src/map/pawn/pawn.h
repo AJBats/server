@@ -381,10 +381,8 @@ namespace pawn
     auto findCommandablePawn(const CCharEntity* PPlayer, const std::string& targetName) -> CCharEntity*;
     auto findCommandablePawn(const CCharEntity* PPlayer, uint32 pawnCharID) -> CCharEntity*;
 
-    // Names of every live pawn this character commands, sorted by name: the
-    // roster the command window walks.
-    auto commandablePawnNames(const CCharEntity* PPlayer) -> std::vector<std::string>;
-    // The same pawns themselves, in no particular order
+    // Every live pawn this character commands, by name: the roster the
+    // command window walks
     auto commandablePawns(const CCharEntity* PPlayer) -> std::vector<CCharEntity*>;
 
     // Possession support --------------------------------------------------

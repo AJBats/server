@@ -48,17 +48,6 @@ void CPawnController::EndRestOrder(const std::string_view why)
     m_RestOrder = {};
 }
 
-auto CPawnController::RestOrderPercent() const -> int
-{
-    return m_RestOrder.percent;
-}
-
-auto CPawnController::RestNow() const -> RestClock
-{
-    const auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
-    return healing != nullptr ? healingClock(healing, restSeconds(timer::now())) : RestClock{};
-}
-
 auto CPawnController::RestAllowsAction() const -> bool
 {
     return m_Rest.canAct(restSeconds(timer::now()), POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));

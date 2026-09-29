@@ -127,9 +127,10 @@ namespace pawn::items
 
     // Protocol chunks for the companion addon, each short enough for one
     // chat-packet reply (~140 bytes).
-    //   container: "<slot>:<itemId>:<qty>[:E],..."        (used slots only)
     //   equipment: "e <equipSlot>:<itemId>:<slot>[:<loc>],..." (filled slots
     //              only; loc present when the piece is worn from a wardrobe)
-    auto containerChunks(CCharEntity* PPawn, uint8 location) -> std::vector<std::string>;
     auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>;
+
+    // Her gil: the inventory's slot 0 (0 when it holds none, or not gil)
+    auto gilOf(CCharEntity* PChar) -> uint32;
 } // namespace pawn::items

@@ -138,4 +138,7 @@ namespace pawn::auction
     // 15 yalms of the one he stands at (CL_S_TOO_FAR_TO_SHOP). The player
     // himself stands by it by being within reach of one.
     auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember) -> uint16;
+    // The same with the counter he stands by already found (counterNear), for a
+    // caller that asks it of every member
+    auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember, const CBaseEntity* PCounter) -> uint16;
 } // namespace pawn::auction

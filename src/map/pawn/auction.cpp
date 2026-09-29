@@ -135,12 +135,6 @@ namespace pawn::auction
             return 0;
         }
 
-        auto gilOf(CCharEntity* PChar) -> uint32
-        {
-            const CItem* PGil = PChar->getStorage(LOC_INVENTORY)->GetItem(0);
-            return PGil != nullptr ? PGil->getQuantity() : 0;
-        }
-
         // The shared purchase's work in one transaction across both
         // characters, as pawn_items' CardianTransfer moves gil between two:
         // her share and his paid, her piece given, one commit or one rollback
@@ -548,9 +542,9 @@ namespace pawn::auction
             return refuse(CL_S_BAG_FULL);
         }
         const bool   shared    = PPurse != nullptr && PPurse != PChar;
-        const uint32 own       = gilOf(PChar);
+        const uint32 own       = pawn::items::gilOf(PChar);
         const uint32 shortfall = own < price ? price - own : 0;
-        if (shortfall > 0 && (!shared || gilOf(PPurse) < shortfall))
+        if (shortfall > 0 && (!shared || pawn::items::gilOf(PPurse) < shortfall))
         {
             return refuse(CL_S_NOT_ENOUGH_GIL);
         }
@@ -661,7 +655,11 @@ namespace pawn::auction
 
     auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember) -> uint16
     {
-        const auto* PCounter = counterNear(PPlayer);
+        return whereShopping(PPlayer, PMember, counterNear(PPlayer));
+    }
+
+    auto whereShopping(const CCharEntity* PPlayer, const CCharEntity* PMember, const CBaseEntity* PCounter) -> uint16
+    {
         if (PCounter == nullptr)
         {
             return CL_S_NOT_BY_COUNTER;

@@ -58,6 +58,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/link_api.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/auction.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/auction.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/gate_guards.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/gate_guards.h
 )
 
 set(MAP_CORE_SOURCES

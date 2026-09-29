@@ -8,13 +8,7 @@
 --       humans get terse errors, the addon gets data. A verb that gains its own
 --       message leaves this file.
 --
---       list                             roster of your live cardians
---       sync <name>                      one cardian: stats + gear + inventory
---       inv <name> [loc]                 a cardian's inventory (loc 0), or one of her storage bags
---       bags <name>                      her storage bags as loc:size:used,... -- Mog Case, the Mog
---                                        Wardrobes, Satchel and Sack when she has them
 --       move <name> <from> <slot> <to> <qty>  a stack between her inventory and a bag, either way
---       gear <name>                      a cardian's equipment
 --       take <name> <slot> <qty>         cardian inventory slot -> you
 --       givegil <name> <amount>          your gil -> cardian (the trade window's gil line)
 --       takegil <name> <amount>          cardian's gil -> you
@@ -67,20 +61,23 @@ local function reply(player, line)
     end
 end
 
--- One container: the inventory unless a bag's location is given
+-- A cardian's state after a change, told to the addon as the Link's own
+-- messages (INVENTORY, BAGS, GEAR, MEMBER_STATS): the item and gear
+-- verbs below call these until they convert
 local function sendInv(player, name, loc)
-    loc = loc or 0
-    local inv = player:cardianInv(name, loc)
-    if inv == nil then
-        reply(player, '#cd err inv no such cardian')
-        return
-    end
+    player:cardianTellInventory(name, loc or 0)
+end
 
-    reply(player, string.format('#cd inv.b %s %d %d %d', name, inv.size or 0, inv.free or 0, loc))
-    for _, chunk in ipairs(inv.chunks) do
-        reply(player, string.format('#cd i %s %s', name, chunk))
-    end
-    reply(player, '#cd inv.e ' .. name)
+local function sendBags(player, name)
+    player:cardianTellBags(name)
+end
+
+local function sendGear(player, name)
+    player:cardianTellGear(name)
+end
+
+local function sendStatsLine(player, name)
+    player:cardianTellStats(name)
 end
 
 -- The wardrobes holding worn gear, read off the gear line's trailing loc
@@ -112,121 +109,21 @@ local function sendTouchedWardrobes(player, name, before, extra)
     end
 end
 
-local function sendBags(player, name)
-    local bags = player:cardianBags(name)
-    if bags == nil then
-        reply(player, '#cd err bags no such cardian')
-        return
-    end
-
-    local parts = {}
-    for _, bag in ipairs(bags) do
-        parts[#parts + 1] = string.format('%d:%d:%d', bag.loc, bag.size, bag.used)
-    end
-    reply(player, string.format('#cd bags %s %s', name, table.concat(parts, ',')))
-end
-
-local function sendGear(player, name)
-    local chunks = player:cardianGear(name)
-    if chunks == nil then
-        reply(player, '#cd err gear no such cardian')
-        return
-    end
-
-    reply(player, '#cd gear.b ' .. name)
-    for _, chunk in ipairs(chunks) do
-        reply(player, string.format('#cd e %s %s', name, chunk))
-    end
-    reply(player, '#cd gear.e ' .. name)
-end
-
 -- The conquest exchange by proxy -------------------------------------------
 -- A cardian cannot talk to a gate guard, but her player can stand beside
 -- one, and she stands beside them with conquest points of her own. The
 -- guards are a fixed list; a slow check asks whether the player is within
--- reach of one, and its answer rides on the roster line so her menu grows
--- the Conquest exchange row only while it says yes. cpshop and cpbuy sell
+-- reach of one, and its answer rides on the roster (the Link's ROSTER) so
+-- her menu grows the Conquest exchange row only while it says yes. cpshop and cpbuy sell
 -- to her from that guard's stock at that guard's prices, out of her own
 -- points. The stock is the guard's own -- conquest.lua keeps it in
 -- file-local tables -- read from the file once, when the commands load.
 
--- The city and embassy guards: grep overseerOnTrigger scripts/zones/*/npcs,
--- keeping guard types CITY and FOREIGN (the outpost and border overseers
--- sell nothing)
-local guards =
-{
-    ['Achantere_TK']      = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.CITY,    zone = 'Northern_San_dOria' },
-    ['Alrauverat']        = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'Lower_Jeuno' },
-    ['Aravoge_TK']        = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.CITY,    zone = 'Southern_San_dOria' },
-    ['Arpevion_TK']       = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.CITY,    zone = 'Southern_San_dOria' },
-    ['Chapal-Afal_WW']    = { nation = xi.nation.WINDURST, type = xi.conquest.guard.FOREIGN, zone = 'Northern_San_dOria' },
-    ['Crying_Wind_IM']    = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.CITY,    zone = 'Bastok_Mines' },
-    ['Emitt']             = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'Upper_Jeuno' },
-    ['Flying_Axe_IM']     = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.CITY,    zone = 'Port_Bastok' },
-    ['Glarociquet_TK']    = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.FOREIGN, zone = 'Metalworks' },
-    ['Harara_WW']         = { nation = xi.nation.WINDURST, type = xi.conquest.guard.CITY,    zone = 'Windurst_Woods' },
-    ['Kochahy-Muwachahy'] = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'Port_Jeuno' },
-    ['Lexun-Marixun_WW']  = { nation = xi.nation.WINDURST, type = xi.conquest.guard.FOREIGN, zone = 'Metalworks' },
-    ['Milma-Hapilma_WW']  = { nation = xi.nation.WINDURST, type = xi.conquest.guard.CITY,    zone = 'Port_Windurst' },
-    ['Morlepiche']        = { nation = xi.nation.OTHER,    type = xi.conquest.guard.CITY,    zone = 'RuLude_Gardens' },
-    ['Panoquieur_TK']     = { nation = xi.nation.SANDORIA, type = xi.conquest.guard.FOREIGN, zone = 'Windurst_Woods' },
-    ['Puroiko-Maiko_WW']  = { nation = xi.nation.WINDURST, type = xi.conquest.guard.CITY,    zone = 'Windurst_Waters' },
-    ['Rabid_Wolf_IM']     = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.CITY,    zone = 'Bastok_Markets' },
-    ['Sachetan_IM']       = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.FOREIGN, zone = 'Port_Windurst' },
-    ['Yevgeny_IM']        = { nation = xi.nation.BASTOK,   type = xi.conquest.guard.FOREIGN, zone = 'Northern_San_dOria' },
-}
-
--- The guards by zone, so a check only looks up the names that live there
-local guardsByZone = {}
-for name, g in pairs(guards) do
-    guardsByZone[g.zone] = guardsByZone[g.zone] or {}
-    table.insert(guardsByZone[g.zone], name)
-end
-
--- The nearest NPC of a kind within reach of the player, or nil: { npc,
--- name }. namesIn(zone name) lists the names to look for in his zone, nil
--- for none: the zone's query warns in the map log at every miss, so only
--- names that live there are asked for. Every roster line asks, so the
--- answer is kept for two seconds per player in `cache`; the zone resolves
--- names from a cache of its own.
-local function nearestNpc(player, cache, namesIn, reach)
-    local id  = player:getID()
-    local now = os.time()
-    local c   = cache[id]
-    if c ~= nil and now - c.at < 2 then
-        return c.found
-    end
-
-    local found, nearest = nil, reach
-    local names = namesIn(player:getZoneName())
-    local zone  = player:getZone()
-    if names ~= nil and zone ~= nil then
-        for _, name in ipairs(names) do
-            for _, npc in pairs(zone:queryEntitiesByName(name)) do
-                local away = player:checkDistance(npc)
-                if away <= nearest then
-                    found   = { npc = npc, name = name }
-                    nearest = away
-                end
-            end
-        end
-    end
-    cache[id] = { at = now, found = found }
-    return found
-end
-
-local kGuardReach = 8 -- yalms
-
--- The nearest guard within reach of the player, or nil: { npc, name,
--- nation, type } -- nearest, because a consulate stands its guards together
-local guardCache = {}
+-- The guard within the player's reach, { name, nation, type }, or nil: the
+-- fixed list of guards that sell, and the reach, are pawn/gate_guards.cpp's,
+-- which the roster judges by too
 local function guardNear(player)
-    local near = nearestNpc(player, guardCache, function (zoneName) return guardsByZone[zoneName] end, kGuardReach)
-    if near == nil then
-        return nil
-    end
-    local g = guards[near.name]
-    return { npc = near.npc, name = near.name, nation = g.nation, type = g.type }
+    return player:cardianGuardNear()
 end
 
 -- The guard's stock tables, as conquest.lua writes them: one entry per
@@ -345,78 +242,6 @@ local function cpPrice(entry, buyerNation, guardNation)
     return price
 end
 
--- One roster line: her jobs, health, TP, how far she is from her next
--- level, whether a gate guard is within the player's reach (the
--- Conquest exchange row on her page), her rest as the command window
--- shows it, whether she stands by the auction counter the player stands
--- at (the Auction House screen's names), and last her charid, which the
--- Link's messages name her by. Both the roster list and a single sync send
--- it, so a screen sees the same fields either way. Experience comes from
--- the Cardian binding -- upstream has no getter for it or for the level's
--- cost.
-local function pawnLine(player, name, targ)
-    local xp    = player:cardianExp(name)
-    local guard = guardNear(player) ~= nil
-    local rest  = player:cardianRestState(name) or {}
-    return string.format('#cd p %s %d %d %d %d %d %d %d %d %d %d %d %d %d %d %s %d %d %d %d %d %d %d',
-        name,
-        targ:getMainJob(), targ:getMainLvl(),
-        targ:getSubJob(), targ:getSubLvl(),
-        targ:getHP(), targ:getMaxHP(),
-        targ:getMP(), targ:getMaxMP(),
-        targ:getTP(),
-        xp and xp.exp or 0, xp and xp.tnl or 0,
-        guard and 1 or 0,
-        player:cardianWaiting(name) and 1 or 0,
-        player:cardianOwns(name) and 1 or 0, targ:getZoneName(),
-        rest.percent or 0, rest.down and 1 or 0, rest.ticks or 0, rest.next or 0, rest.interval or 0,
-        player:cardianByCounter(targ) and 1 or 0,
-        targ:getID())
-end
-
-local function sendPawnLine(player, name)
-    local targ = GetPlayerByName(name)
-    if targ then
-        reply(player, pawnLine(player, name, targ))
-    end
-end
-
-local statMods = {
-    xi.mod.STR, xi.mod.DEX, xi.mod.VIT, xi.mod.AGI,
-    xi.mod.INT, xi.mod.MND, xi.mod.CHR,
-}
-
--- Seven base stats as total:bonus pairs, then attack:defense, then gil --
--- the status pane of the companion equip screen
-local function sendStatsLine(player, name)
-    local targ = GetPlayerByName(name)
-    if targ == nil then
-        return
-    end
-
-    local line = player:cardianStatsLine(name)
-    if line == nil then
-        return
-    end
-    reply(player, string.format('#cd s %s %s %d', name, line, player:cardianOwns(name) and targ:getGil() or 0))
-end
-
--- What she cannot do yet: 'rc <name> key=seconds;...' for every spell
--- and ability still on recast. Nothing listed means everything is ready.
-local function sendRecasts(player, name)
-    local recasts = player:cardianRecasts(name)
-    if recasts == nil then
-        reply(player, '#cd err recasts no such cardian')
-        return
-    end
-
-    local parts = {}
-    for key, seconds in pairs(recasts) do
-        parts[#parts + 1] = string.format('%s=%.1f', key, seconds)
-    end
-    reply(player, '#cd rc ' .. name .. ' ' .. table.concat(parts, ';'))
-end
-
 -- The conquest exchange verbs: the gate guard within the player's reach
 -- sells to her out of her own conquest points. 'cps.b <name> <cp> <rank> <nation> <guard>', one
 -- 'cps <name> <option> <item> <price> <lvl> <rank>' per item, 'cps.e'.
@@ -504,19 +329,6 @@ local function cpBuy(player, name, option)
     return ''
 end
 
--- The three read-only pages under the cardian's menu: her profile, her
--- job levels, her combat skills -- what the client's own screens show for
--- the player, read for a cardian instead
-
-local function sendProfile(player, name)
-    local p = player:cardianProfile(name)
-    if p == nil then
-        reply(player, '#cd err profile no such cardian')
-        return
-    end
-    reply(player, string.format('#cd pr %s %d %d %d %d %d %s', name, p.title, p.nation, p.race, p.rank, p.rankpoints, p.home))
-end
-
 -- The enum key as a title, the party progress module's own caser
 local function titleFromKey(key)
     return xi.cardian and xi.cardian.titleFromKey and xi.cardian.titleFromKey(key) or key
@@ -591,62 +403,6 @@ local function sendGoals(player)
     reply(player, '#cd gl.e')
 end
 
--- Every job she has a level in, as job:level
-local function sendJobs(player, name)
-    local targ = GetPlayerByName(name)
-    if targ == nil or player:cardianGear(name) == nil then
-        reply(player, '#cd err jobs no such cardian')
-        return
-    end
-    local parts = {}
-    for job = 1, 22 do
-        local level = targ:getJobLevel(job)
-        if level > 0 then
-            parts[#parts + 1] = string.format('%d:%d', job, level)
-        end
-    end
-    reply(player, '#cd jl ' .. name .. ' ' .. table.concat(parts, ','))
-end
-
--- The combat skills her jobs can raise, as skill:level:cap -- the base
--- skill level the client's Combat Skills page shows (the server keeps
--- skills in tenths; the cap table is in whole levels), and the cap at
--- her level (the higher of main and support job)
-local kCombatSkills = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 25, 26, 27, 28, 29, 30, 31 }
-local kMagicSkills  = { 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45 }
-
--- A skill list: '<tag> <name> skill:level:cap,...' for every skill of the
--- set her jobs can raise
-local function sendSkillList(player, name, verb, tag, skills)
-    local targ = GetPlayerByName(name)
-    if targ == nil or player:cardianGear(name) == nil then
-        reply(player, '#cd err ' .. verb .. ' no such cardian')
-        return
-    end
-    local mjob, mlvl = targ:getMainJob(), targ:getMainLvl()
-    local sjob, slvl = targ:getSubJob(), targ:getSubLvl()
-    local parts = {}
-    for _, skill in ipairs(skills) do
-        local cap = targ:getMaxSkillLevel(mlvl, mjob, skill)
-        if sjob ~= 0 and slvl > 0 then
-            cap = math.max(cap, targ:getMaxSkillLevel(slvl, sjob, skill))
-        end
-        if cap > 0 then
-            local level = math.min(math.floor(targ:getCharSkillLevel(skill) / 10), cap)
-            parts[#parts + 1] = string.format('%d:%d:%d', skill, level, cap)
-        end
-    end
-    reply(player, '#cd ' .. tag .. ' ' .. name .. ' ' .. table.concat(parts, ','))
-end
-
-local function sendSkills(player, name)
-    sendSkillList(player, name, 'skills', 'cs', kCombatSkills)
-end
-
-local function sendMagicSkills(player, name)
-    sendSkillList(player, name, 'mskills', 'ms', kMagicSkills)
-end
-
 -- Strips first (freeing hands and slots), then equips main-hand upward so
 -- sub-slot rules see the new main. Per-slot failures are collected, not
 -- fatal: the reply names what refused and the gear block that follows is
@@ -695,20 +451,6 @@ local function applyEquipSet(player, name, manifest)
     sendGear(player, name)
     sendInv(player, name)
     sendTouchedWardrobes(player, name, before, extra)
-end
-
--- 'list.b <count> <by a counter>': the player's own reach rides on the
--- roster's head, so the Menu's Auction House row shows with no cardian
-local function sendList(player)
-    local names = player:cardianNames()
-    reply(player, string.format('#cd list.b %d %d', #names, player:cardianCounterNear() and 1 or 0))
-    for _, name in ipairs(names) do
-        local targ = GetPlayerByName(name)
-        if targ then
-            reply(player, pawnLine(player, name, targ))
-        end
-    end
-    reply(player, '#cd list.e')
 end
 
 -- The gambit rows: 'gb.b <name> <master>', one 'g <name> <index> <on> <state> <spec> <label>'
@@ -817,9 +559,7 @@ commandObj.onTrigger = function(player, line)
     local verb = args[1]
     local name = args[2]
 
-    if verb == 'list' then
-        sendList(player)
-    elseif verb == 'gambits' and name then
+    if verb == 'gambits' and name then
         sendGambits(player, name)
     elseif verb == 'gtoggle' and name and args[3] and args[4] then
         gambitEdit(player, name, verb, player:cardianGambitToggle(name, tonumber(args[3]) or 0, args[4] == 'on'))
@@ -845,7 +585,6 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd err spawn cannot spawn (unknown, online, already out, wrong account, or pawns disabled)')
         end
-        sendList(player)
     elseif verb == 'despawn' and name then
         local mine = false
         for _, n in ipairs(player:cardianAccountPawns()) do
@@ -856,7 +595,6 @@ commandObj.onTrigger = function(player, line)
         else
             reply(player, '#cd err despawn not one of yours, or not out')
         end
-        sendList(player)
     elseif verb == 'view' then
         -- The view origin, typed: a GM's target index (the experiment), or a
         -- cardian's name; `off` ends it. The addon sends the Link's VIEW
@@ -900,25 +638,8 @@ commandObj.onTrigger = function(player, line)
         gambitEdit(player, name, verb, player:cardianGambitMaster(name, args[3] == 'on'))
     elseif verb == 'greset' and name then
         gambitEdit(player, name, verb, player:cardianGambitReset(name))
-    elseif verb == 'sync' and name then
-        -- cardianGear answers for any cardian you command; her bags only
-        -- when she is yours
-        if player:cardianGear(name) == nil then
-            reply(player, '#cd err sync no such cardian')
-        else
-            sendPawnLine(player, name)
-            sendStatsLine(player, name)
-            sendGear(player, name)
-            if player:cardianOwns(name) then
-                sendInv(player, name)
-            end
-        end
     elseif verb == 'equipset' and name and args[3] then
         applyEquipSet(player, name, args[3])
-    elseif verb == 'inv' and name then
-        sendInv(player, name, tonumber(args[3]) or 0)
-    elseif verb == 'bags' and name then
-        sendBags(player, name)
     elseif verb == 'move' and name and args[6] then
         local from, to = tonumber(args[3]) or 0, tonumber(args[5]) or 0
         local err = player:cardianMove(name, from, tonumber(args[4]) or 0, to, tonumber(args[6]) or 1)
@@ -931,10 +652,6 @@ commandObj.onTrigger = function(player, line)
             sendBags(player, name)
             sendGear(player, name) -- a worn piece carried into a wardrobe reports its new home
         end
-    elseif verb == 'gear' and name then
-        sendGear(player, name)
-    elseif verb == 'recasts' and name then
-        sendRecasts(player, name)
     elseif verb == 'finder' then
         -- The party finder: 'finder [adv|mission <log>|quest <area>]' -> 'pf.b <n>',
         -- one 'pf <name> <job> <level> <state> <zone> <willing> <her line>' per
@@ -1019,14 +736,6 @@ commandObj.onTrigger = function(player, line)
             sendCpShop(player, name)
             sendInv(player, name)
         end
-    elseif verb == 'profile' and name then
-        sendProfile(player, name)
-    elseif verb == 'jobs' and name then
-        sendJobs(player, name)
-    elseif verb == 'skills' and name then
-        sendSkills(player, name)
-    elseif verb == 'mskills' and name then
-        sendMagicSkills(player, name)
     elseif verb == 'take' and name then
         local err = player:cardianTake(name, tonumber(args[3]) or 0, tonumber(args[4]) or 1)
         if err ~= '' then
@@ -1136,7 +845,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded')
+        player:printToPlayer('Usage: !cardian move <name> <from> <slot> <to> <qty> | sort <name> <loc> | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded')
     end
 end
 
