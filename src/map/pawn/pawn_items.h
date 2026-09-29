@@ -51,8 +51,9 @@ namespace pawn::items
     // slot the stack arrived in (for give-and-use chaining). CL_S_OK or why not.
     auto giveToPawn(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 slot, uint32 qty, uint8* landedSlot = nullptr) -> uint16;
 
-    // A transfer's outcome in the old protocol's words, for the verbs still
-    // on it (take, giveuse). Leaves with the text protocol.
+    // A transfer's or an item use's outcome in the old protocol's words, for the
+    // verbs still on it (take, use, giveuse) and a cardian's notes. PPlayer may be
+    // null where no distance is told. Leaves with the text protocol.
     auto legacyReason(uint16 status, const CCharEntity* PPlayer, const CCharEntity* PPawn) -> std::string;
 
     // Retail's auto-sort is a client option: the client asks for a stack
@@ -81,8 +82,8 @@ namespace pawn::items
     // all run the game's item machinery. The inventory only; a bag's
     // contents are worn or fetched first. Refusals raised inside the AI (wrong job,
     // mid-action) surface only as drained packets; the caller re-syncs for
-    // the truth.
-    auto useItem(CCharEntity* PPawn, uint8 slot, uint8 location = 0) -> std::string;
+    // the truth. CL_S_OK when it began, else why not.
+    auto useItem(CCharEntity* PPawn, uint8 slot, uint8 location = 0) -> uint16;
 
     // Destroy qty of the stack in the inventory slot; any other container
     // refuses (its contents are fetched first).

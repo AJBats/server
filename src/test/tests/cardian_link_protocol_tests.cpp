@@ -29,6 +29,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "map/pawn/action_keys.h"
 #include "map/pawn/cardian_link_messages.h"
 
 #include <string>
@@ -62,7 +63,37 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_homepoint) == 20);
     STATIC_REQUIRE(sizeof(cl_cancel) == 20);
     STATIC_REQUIRE(sizeof(cl_pause) == sizeof(cl_header));
+    STATIC_REQUIRE(sizeof(cl_action) == 4);
+    STATIC_REQUIRE(sizeof(cl_do) == 28);
+    STATIC_REQUIRE(sizeof(cl_queue) == 28);
+    STATIC_REQUIRE(sizeof(cl_queues) == sizeof(cl_header));
     STATIC_REQUIRE(sizeof(cl_legacy_cd) == sizeof(cl_header));
+}
+
+TEST_CASE("Cardian link: a cardian's order key and its action fields cross both ways", "[cardian][link]")
+{
+    // Every key the pawn code gives an order, and back unchanged
+    for (const std::string key : { "1:0:0", "2:2:1", "3:2:35", "4:2:32", "item:4112", "attack", "disengage", "move", "movewait", "rest:80" })
+    {
+        const auto action = pawn::actionOfKey(key);
+        CHECK(action.kind != CL_AK_NONE);
+        CHECK(pawn::keyOfAction(action) == key);
+    }
+
+    const auto cure = pawn::actionOfKey("2:2:1");
+    CHECK(cure.kind == CL_AK_MAGIC);
+    CHECK(cure.mode == 2);
+    CHECK(cure.id == 1);
+
+    // Nothing a cardian is ordered: no key, and no fields that pass for one
+    CHECK(pawn::actionOfKey("").kind == CL_AK_NONE);
+    CHECK(pawn::actionOfKey("cmd:Heal").kind == CL_AK_NONE);
+    CHECK(pawn::actionOfKey("5:2:4112").kind == CL_AK_NONE); // an item is item:<id> alone
+    CHECK(pawn::actionOfKey("rest:0").kind == CL_AK_NONE);
+    CHECK(pawn::keyOfAction(cl_action{ CL_AK_CLIENT, 0, 2 }).empty());
+    CHECK(pawn::keyOfAction(cl_action{ CL_AK_HEAL, 0, 0 }).empty());
+    CHECK(pawn::keyOfAction(cl_action{ CL_AK_REST, 0, 101 }).empty());
+    CHECK(pawn::keyOfAction(cl_action{ 99, 0, 0 }).empty());
 }
 
 TEST_CASE("Cardian link: make fills the header and zeroes the rest", "[cardian][link]")

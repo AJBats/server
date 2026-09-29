@@ -221,6 +221,10 @@ namespace pawn::items
             case CL_S_OTHER_ZONE:
                 return fmt::format("{} is in another zone", PPawn->getName());
             case CL_S_OUT_OF_REACH:
+                if (PPlayer == nullptr)
+                {
+                    return "out of trading reach";
+                }
                 return fmt::format("{} is {:.0f} y away, out of trading reach ({:.0f})", PPawn->getName(), distance(PPlayer->loc.p, PPawn->loc.p),
                                    settings::get<float>("pawn.TRADE_RANGE"));
             case CL_S_NO_ITEM:
@@ -239,8 +243,26 @@ namespace pawn::items
                 return "no space";
             case CL_S_ITEM_SLIPPED_AWAY:
                 return "item slipped away";
+            case CL_S_NOT_WHILE_PAUSED:
+                return "not while paused";
+            case CL_S_INVENTORY_ONLY:
+                return "used from the inventory only";
+            case CL_S_NO_SUCH_BAG:
+                return "no such bag";
+            case CL_S_ITEM_UNUSABLE:
+                return "item cannot be used";
+            case CL_S_STANDING_UP:
+                return "standing up";
+            case CL_S_CANNOT_NOW:
+                return "cannot do that now";
+            case CL_S_NOT_CARRIED:
+                return "she has none";
+            case CL_S_ON_RECAST:
+                return "recast";
+            case CL_S_MALFORMED:
+                return "bad action";
             default:
-                return "transfer refused";
+                return "refused";
         }
     }
 
@@ -656,39 +678,39 @@ namespace pawn::items
         return {};
     }
 
-    auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> std::string
+    auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> uint16
     {
         // A held simulation (pause/pause.h) starts nothing, and a slot is no order to
         // keep for the release: her bag can be sorted meanwhile.
         if (cardian::pause::isHeld())
         {
-            return "not while paused";
+            return CL_S_NOT_WHILE_PAUSED;
         }
 
         // Items are used from the inventory only; a bag's contents are worn
         // or fetched first
         if (location != LOC_INVENTORY)
         {
-            return "used from the inventory only";
+            return CL_S_INVENTORY_ONLY;
         }
         if (!usableContainer(PPawn, location))
         {
-            return "no such bag";
+            return CL_S_NO_SUCH_BAG;
         }
         const auto* storage = PPawn->getStorage(location);
         const CItem* PItem  = storage != nullptr ? storage->GetItem(slot) : nullptr;
 
         if (PItem == nullptr || PItem->getQuantity() == 0)
         {
-            return "no item in that slot";
+            return CL_S_NO_ITEM;
         }
         if (!PItem->isType(ITEM_USABLE))
         {
-            return "item cannot be used";
+            return CL_S_ITEM_UNUSABLE;
         }
         if (PItem->isBusy())
         {
-            return "item is busy";
+            return CL_S_ITEM_BUSY;
         }
 
         // Finish the rest transitions before the item's engine wind-up.
@@ -696,14 +718,14 @@ namespace pawn::items
         {
             if (!controller->PrepareRestAction(true))
             {
-                return "standing up";
+                return CL_S_STANDING_UP;
             }
         }
         if (!PPawn->PAI->UseItem(EntityId(PPawn), location, slot))
         {
-            return "cannot use right now";
+            return CL_S_CANNOT_NOW;
         }
-        return {};
+        return CL_S_OK;
     }
 
     auto dropItem(CCharEntity* PPawn, const uint8 slot, const uint32 qty, const uint8 location) -> std::string

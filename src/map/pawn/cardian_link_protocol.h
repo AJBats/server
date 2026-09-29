@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 20: the Auction House screen's lines,
+// compatible, the user, 2026-09-14). 21: DO, QUEUE and QUEUES, and actions as
+// typed fields (cl_action; the do, queues and q lines leave LEGACY_CD);
+// 20: the Auction House screen's lines,
 // on LEGACY_CD (ahlist <name> <shelf> -> ahl.b / ahl / ahl.e, ahhist ->
 // ahh.b / ahh / ahh.e, ahbid -> ahb or err ahbid; list.b <count> <by a
 // counter>; cd p's field 22 whether she stands by that counter, her charid
@@ -46,7 +48,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 20 };
+enum { CL_PROTOCOL = 21 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -130,7 +132,46 @@ enum
     CL_S_SYNTHESIZING      = 0x0142, // nor in the middle of a synthesis
     CL_S_FISHING           = 0x0143, // nor with a line in the water
     CL_S_PAUSED_BY_OTHER   = 0x0144, // another player holds it, and only its holder resumes
+
+    // The command window's orders (DO), and using an item
+    CL_S_TOO_SOON          = 0x0150, // it could not start within the order's grace: the answer's wait
+    CL_S_NOT_CARRIED       = 0x0151, // she carries none of that item
+    CL_S_NOT_FIGHTING      = 0x0152, // a disengage with no fight to leave
+    CL_S_NOT_MANAGED       = 0x0153, // her items are hers to use only when she is yours
+    CL_S_CANNOT_NOW        = 0x0154, // the game would not start it now
+    CL_S_ON_RECAST         = 0x0155, // its recast runs (an order within its grace waits it out instead)
+    CL_S_STANDING_UP       = 0x0156, // she is getting up from a rest (an order waits instead)
+    CL_S_ITEM_UNUSABLE     = 0x0157, // not an item anyone uses
+    CL_S_INVENTORY_ONLY    = 0x0158, // an item is used from the inventory only
+    CL_S_NO_SUCH_BAG       = 0x0159,
 };
+
+// An action, as the command window gives one and a queue line shows it: fields,
+// never a text anyone parses. Kinds 1 to 4 are the gambit catalogue's, with its
+// mode (2: the one id names; the ranged attack's is 0).
+enum
+{
+    CL_AK_NONE        = 0,  // no action: a queue line with nothing waiting
+    CL_AK_RANGED      = 1,
+    CL_AK_MAGIC       = 2,  // id: the spell
+    CL_AK_ABILITY     = 3,  // id: the job ability
+    CL_AK_WEAPONSKILL = 4,  // id: the weapon skill
+    CL_AK_ITEM        = 5,  // id: the item, used on herself
+    CL_AK_ATTACK      = 6,  // the command window's Attack: fight the target
+    CL_AK_DISENGAGE   = 7,
+    CL_AK_MOVE        = 8,  // a paused maneuver's order: walk the route the ring laid
+    CL_AK_MOVE_WAIT   = 9,  // the same, then wait at its end
+    CL_AK_REST        = 10, // id: rest until this percent of HP and MP
+    CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
+    CL_AK_HEAL        = 12, // a player's own /heal
+};
+
+typedef struct cl_action
+{
+    uint8_t  kind; // CL_AK_*
+    uint8_t  mode;
+    uint16_t id;
+} cl_action;
 
 // ---- 0x00xx: the link itself ----------------------------------------------
 
@@ -301,6 +342,8 @@ enum
     CL_T_RESCUE       = 0x040C,
     CL_T_HOMEPOINT    = 0x040D,
     CL_T_CANCEL       = 0x040E,
+    CL_T_DO           = 0x040F,
+    CL_T_QUEUES       = 0x0410,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -488,6 +531,27 @@ typedef struct cl_cancel
     uint32_t  cardian; // charid; 0 = the player's own
 } cl_cancel;
 
+// The command window: one action now, on a target. An order she cannot start
+// at once -- busy, on recast, out of reach, the game paused -- is held as her
+// one queued order within cardian.ORDER_GRACE (QUEUE tells it); one that could
+// not start in that time is refused CL_S_TOO_SOON. Answered by the outcome.
+typedef struct cl_do
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    cl_action action;
+    uint16_t  target;  // a target index in her zone; 0 = herself
+    uint16_t  wait;    // answered with CL_S_TOO_SOON: seconds until it could start
+} cl_do;
+
+// Every queue line as it stands, for an addon that has just bound: each
+// character with a command waiting, his own and his cardians', comes as a QUEUE
+// answer (CL_F_MORE), then this
+typedef struct cl_queues
+{
+    cl_header h;
+} cl_queues;
+
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 
 enum
@@ -498,7 +562,21 @@ enum
     CL_T_MANEUVER_STATE = 0x0504,
     CL_T_WALK_TAKEN     = 0x0505,
     CL_T_PAUSE          = 0x0506,
+    CL_T_QUEUE          = 0x0507,
 };
+
+// One-way, to a player at every change of a queue line of his (and an answer
+// to QUEUES): the one command a character has waiting -- one of his cardians'
+// orders, held behind what she is doing or through a pause, or his own command
+// through a pause. The server names it; the addon words it.
+typedef struct cl_queue
+{
+    cl_header h;
+    uint32_t  character; // charid: one of his cardians, or himself
+    cl_action action;    // CL_AK_NONE: nothing waits now
+    uint16_t  target;    // the target's index in the zone; 0 when it is gone
+    uint16_t  spare;
+} cl_queue;
 
 // The pause button: takes the hold, or lets go of his own. Answered by the
 // outcome; the hold itself is told to every addon (PAUSED, RESUMED).

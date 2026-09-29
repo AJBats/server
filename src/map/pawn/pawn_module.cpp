@@ -1376,51 +1376,6 @@ class PawnModule : public CPPModule
             });
         });
 
-        // The command window: one action now, on a target index in the
-        // zone (0 = herself)
-        lua["CBaseEntity"]["cardianDo"] = [commandPair, managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& key, const uint16 targid) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            if (PPawn == nullptr)
-            {
-                return "no such cardian";
-            }
-            // Her items are hers to use only when she is his: use is a manage verb
-            if (key.starts_with("item:") && managedPair(PLuaBaseEntity, name).second == nullptr)
-            {
-                return name + " is not yours to manage";
-            }
-            if (PPawn->loc.zone == nullptr)
-            {
-                return "not in a zone";
-            }
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr)
-            {
-                return "no controller";
-            }
-            CBattleEntity* PTarget = targid == 0 ? static_cast<CBattleEntity*>(PPawn)
-                                                 : dynamic_cast<CBattleEntity*>(PPawn->loc.zone->GetEntity(targid, TYPE_PC | TYPE_MOB | TYPE_NPC));
-            if (PTarget == nullptr)
-            {
-                return "no such target";
-            }
-            const auto err = PController->DoAction(key, PTarget);
-            if (err.empty())
-            {
-                ShowInfoFmt("pawn: {} is ordered {} on {} by {}", PPawn->getName(), key, PTarget->getName(), PChar->getName());
-            }
-            return err;
-        };
-
-        // The command window's queue line: what she has waiting ("" with none)
-        lua["CBaseEntity"]["cardianQueued"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
-        {
-            const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
-            auto* PController         = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr ? PController->QueuedOrderLine() : "";
-        };
-
         // A typed `!cardian rescue`, worded for a person (the addon sends the Link's RESCUE)
         lua["CBaseEntity"]["cardianRescue"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
@@ -1448,7 +1403,7 @@ class PawnModule : public CPPModule
         lua["CBaseEntity"]["cardianUse"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint8 location) -> std::string
         {
             const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            return PPawn != nullptr ? pawn::items::useItem(PPawn, slot, location) : "no such cardian";
+            return PPawn != nullptr ? pawn::items::legacyReason(pawn::items::useItem(PPawn, slot, location), PChar, PPawn) : "no such cardian";
         };
 
         lua["CBaseEntity"]["cardianDrop"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 slot, const uint32 qty, const uint8 location) -> std::string
@@ -1485,7 +1440,7 @@ class PawnModule : public CPPModule
             {
                 return pawn::items::legacyReason(status, PChar, PPawn);
             }
-            return pawn::items::useItem(PPawn, landed);
+            return pawn::items::legacyReason(pawn::items::useItem(PPawn, landed), PChar, PPawn);
         };
 
         // Attack/defense for the companion equip screen; upstream exposes no

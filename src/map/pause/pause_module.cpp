@@ -82,11 +82,22 @@ class CardianPauseModule : public CPPModule
             return refusalText(cardian::pause::toggle(PChar));
         };
 
-        // The player's own queued command, for his command window's queue line ("" with
-        // none), and him taking it back
-        lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        // The player's own queued command as his queue line names it -- { kind, mode,
+        // id, target }, the Link's cl_action and target index; nil with none -- and him
+        // taking it back
+        lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
         {
-            return cardian::pause::input::queuedLine(PLuaBaseEntity->GetBaseEntity()->id);
+            const auto line = cardian::pause::input::queueLine(PLuaBaseEntity->GetBaseEntity()->id);
+            if (line.action.kind == CL_AK_NONE)
+            {
+                return sol::lua_nil;
+            }
+            auto fields      = ::lua.create_table();
+            fields["kind"]   = line.action.kind;
+            fields["mode"]   = line.action.mode;
+            fields["id"]     = line.action.id;
+            fields["target"] = line.target;
+            return fields;
         };
         lua["CBaseEntity"]["cardianCancelOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
         {

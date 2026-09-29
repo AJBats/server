@@ -21,6 +21,7 @@
 
 #pragma once
 
+#include "cardian_link_messages.h"
 #include "engage_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
@@ -307,10 +308,12 @@ public:
     // The command window: one action now, on the target the player picked.
     // `key` is the vocabulary's action key, kind:mode:id -- the concrete
     // ones only: a spell (2:2:id), an ability (3:2:id), a weapon skill
-    // (4:2:id), the ranged attack (1:0:0); the "best of" entries are the
-    // gambit engine's -- or "attack", her order to fight the mob picked
-    // (AttackOrder), or "disengage" (DisengageOrder). "" when it fired, else why not.
-    auto DoAction(const std::string& key, CBattleEntity* PTarget) -> std::string;
+    // (4:2:id), the ranged attack (1:0:0), an item she carries (item:<id>);
+    // the "best of" entries are the gambit engine's -- or "attack", her order
+    // to fight the mob picked (AttackOrder), or "disengage" (DisengageOrder).
+    // CL_S_OK when it fired or is held (the Link's outcomes), else why not;
+    // CL_S_TOO_SOON puts the seconds it is away in `waitSeconds`.
+    auto DoAction(const std::string& key, CBattleEntity* PTarget, uint16* waitSeconds = nullptr) -> uint16;
 
     // The order given a little early -- while she acts, or while the
     // spell is on recast -- is held and fired the moment both allow, the
@@ -325,11 +328,11 @@ public:
         return m_QueuedOrder.has_value();
     }
 
-    // The queued order for the command window's queue line: its action key and
-    // its target's index, "2:2:1 1024"; "" with none. The addon words it from the
-    // list it holds. It is told whenever this changes (the queue line, `q <her
-    // name> <key> <target index>`), and the player can take the order back.
-    auto QueuedOrderLine() const -> std::string;
+    // The queued order as the command window's queue line shows it: the Link's
+    // QUEUE, her action and its target's index (CL_AK_NONE with none). The addon
+    // words it from the list it holds. It is told whenever this changes, and the
+    // player can take the order back.
+    auto QueueLine() const -> cl_queue;
     auto CancelQueuedOrder() -> bool;
 
     // An order waits on the player's behalf: it ends with the tie to him, as a trek
@@ -1079,13 +1082,13 @@ private:
     // one queued order -- a paused maneuver's, played out at the end of its
     // route; live, a maneuver ends as it is given, and she walks in and
     // fights with her gambits back
-    auto AttackOrder(CBattleEntity* PTarget) -> std::string;
+    auto AttackOrder(CBattleEntity* PTarget) -> uint16;
     // The command window's Disengage: she sheathes. An Attack row of hers
     // that claims the mob takes her back into the fight once her draw
     // cooldown (the usual re-engage wait) is served, and a Support Mage
     // whose rows take no fight attends it again; with her gambits off she
     // stays out. Held and in a maneuver, as Attack
-    auto DisengageOrder() -> std::string;
+    auto DisengageOrder() -> uint16;
 
     // The one way the queued order changes, so the addon's queue line is never stale
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
@@ -1095,9 +1098,9 @@ private:
     timer::time_point m_StartedOrderAt{ timer::time_point::min() };
     void              OrderStarted(unsigned kind, unsigned id);
 
-    // The action itself, no queueing: "" when it fired, "recast", or why
-    // not
-    auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> std::string;
+    // The action itself, no queueing: CL_S_OK when it fired; CL_S_ON_RECAST and
+    // CL_S_STANDING_UP for an order to hold; else why not
+    auto TryAction(unsigned kind, unsigned mode, unsigned id, EntityId target) -> uint16;
     timer::time_point m_LastHuntLogTime;
     cardian::rest::State m_Rest;
     cardian::rest::Follow m_RestFollow;

@@ -1044,13 +1044,6 @@ commandObj.onTrigger = function(player, line)
         if err ~= '' then
             reply(player, '#cd note ' .. err)
         end
-    elseif verb == 'queues' then
-        -- The queue lines as they stand, for an addon that has just bound: his own
-        -- queued command and each cardian's. Every later change is pushed (cd q)
-        reply(player, '#cd q ' .. player:getName() .. ' ' .. player:cardianQueuedOwn())
-        for _, cardian in ipairs(player:cardianNames()) do
-            reply(player, '#cd q ' .. cardian .. ' ' .. player:cardianQueued(cardian))
-        end
     elseif verb == 'stake' then
         -- Typed only: the addon sends the Link's STAKE. Kept, with its spec
         -- (addon/tests/stake_command_spec.lua), until it is decided which
@@ -1236,13 +1229,6 @@ commandObj.onTrigger = function(player, line)
             reply(player, '#cd ok ' .. verb)
             sendStatsLine(player, name)
         end
-    elseif verb == 'do' and name and args[3] then
-        local err = player:cardianDo(name, args[3], tonumber(args[4]) or 0)
-        if err ~= '' then
-            reply(player, '#cd err do ' .. err)
-        else
-            reply(player, '#cd ok do')
-        end
     elseif verb == 'rescue' and name then
         -- Typed only: the addon sends the Link's RESCUE
         local err = player:cardianRescue(name)
@@ -1331,7 +1317,7 @@ commandObj.onTrigger = function(player, line)
             sendTouchedWardrobes(player, name, before)
         end
     else
-        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <shelf> | ahhist <itemid> <0|1> | ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded | do <name> <action> [targid]')
+        player:printToPlayer('Usage: !cardian list | sync <name> | inv <name> [loc] | bags <name> | ahlist <name> <shelf> | ahhist <itemid> <0|1> | ahbid <name> <eqslot> <itemid> <0|1> <price> <loc> <0|1> <seq> | move <name> <from> <slot> <to> <qty> | sort <name> <loc> | gear <name> | take | givegil <name> <amount> | takegil <name> <amount> | wear | strip | equipset | use <name> <slot> | drop <name> <slot> <qty> | giveuse <name> <slot> <qty> | rescue <name> | recall <name> | faded')
     end
 end
 

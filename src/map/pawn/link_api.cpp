@@ -21,6 +21,7 @@
 
 #include "link_api.h"
 
+#include "action_keys.h"
 #include "cardian_link.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -450,6 +451,76 @@ namespace pawn::linkapi
             }
             reply.finish(ask, PController->CancelQueuedOrder() ? CL_S_OK : CL_S_NOTHING_QUEUED);
         }
+
+        // The command window: one action now, on a target index in her zone (0 =
+        // herself), or held as her queued order (pawn_controller.h, DoAction). Her
+        // items are hers to use only when she is his to manage
+        void doAction(CCharEntity* PChar, const cl_do& ask, Reply& reply)
+        {
+            auto* PPawn       = pawn::findCommandablePawn(PChar, ask.cardian);
+            auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
+            if (PController == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            const auto key = pawn::keyOfAction(ask.action);
+            if (key.empty())
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            if (ask.action.kind == CL_AK_ITEM && pawn::findManagedPawn(PChar, ask.cardian) == nullptr)
+            {
+                reply.finish(ask, CL_S_NOT_MANAGED);
+                return;
+            }
+            if (PPawn->loc.zone == nullptr)
+            {
+                reply.finish(ask, CL_S_OTHER_ZONE);
+                return;
+            }
+            auto* PTarget = ask.target == 0 ? static_cast<CBattleEntity*>(PPawn)
+                                            : dynamic_cast<CBattleEntity*>(PPawn->loc.zone->GetEntity(ask.target, TYPE_PC | TYPE_MOB | TYPE_NPC));
+            if (PTarget == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_TARGET);
+                return;
+            }
+
+            uint16     wait   = 0; // never the packed field's own address
+            const auto status = PController->DoAction(key, PTarget, &wait);
+            if (status == CL_S_OK)
+            {
+                ShowInfoFmt("pawn: {} is ordered {} on {} by {}", PPawn->getName(), key, PTarget->getName(), PChar->getName());
+            }
+            auto answer = ask;
+            answer.wait = wait;
+            reply.finish(answer, status);
+        }
+
+        // His queue lines as they stand, for an addon that has just bound: his own
+        // command waiting through a pause, then each of his cardians' orders
+        void queues(CCharEntity* PChar, const cl_queues& ask, Reply& reply)
+        {
+            if (const auto own = cardian::pause::input::queueLine(PChar->id); own.action.kind != CL_AK_NONE)
+            {
+                reply.more(own);
+            }
+            for (auto* PPawn : pawn::commandablePawns(PChar))
+            {
+                const auto* PController = dynamic_cast<const CPawnController*>(PPawn->PAI->GetController());
+                if (PController == nullptr)
+                {
+                    continue;
+                }
+                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE)
+                {
+                    reply.more(line);
+                }
+            }
+            reply.finish(ask, CL_S_OK);
+        }
     } // namespace
 
     void registerHandlers()
@@ -469,5 +540,7 @@ namespace pawn::linkapi
         handle<cl_rescue>(rescue);
         handle<cl_homepoint>(homePoint);
         handle<cl_cancel>(cancel);
+        handle<cl_do>(doAction);
+        handle<cl_queues>(queues);
     }
 } // namespace pawn::linkapi
