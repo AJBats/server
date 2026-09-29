@@ -8,13 +8,8 @@
 --       humans get terse errors, the addon gets data. A verb that gains its own
 --       message leaves this file.
 --
---       owned                            every cardian of yours, spawned or not (own.b / o / own.e)
---       spawn <name> | despawn <name>    the Debug screen's spawn and despawn (creation stays !pawncreate)
---       finder [exp|mission <log>|quest <area>]  the party finder: who is in reach and what each says to the goal
+--       finder [exp|mission <log>|quest <area>]  typed only: who is in reach and what each says to the goal
 --       goals                            what the player could recruit for: current missions, quests under way
---       shout <kind> <log> [again]       the shout: up to eight adventurers in reach and their answers, timed
---       peek <name>                      one of the shout's responders: jobs, nation, rank, affinity, gear
---       invite <name> [kind] [log]       the party invite, sent for you; she answers it herself
 --       stake [clear|toggle]             typed only (the addon sends STAKE): set/move, clear, or toggle
 --                                        camp using server state; answered with the orders line, st
 --       pause                            typed only (the addon sends PAUSE): the pause button
@@ -360,29 +355,7 @@ commandObj.onTrigger = function(player, line)
     local verb = args[1]
     local name = args[2]
 
-    if verb == 'owned' then
-        reply(player, '#cd own.b')
-        for _, n in ipairs(player:cardianAccountPawns()) do
-            reply(player, '#cd o ' .. n)
-        end
-        reply(player, '#cd own.e')
-    elseif verb == 'spawn' and name then
-        if player:pawnSpawn(name) then
-            reply(player, '#cd ok spawn')
-        else
-            reply(player, '#cd err spawn cannot spawn (unknown, online, already out, wrong account, or pawns disabled)')
-        end
-    elseif verb == 'despawn' and name then
-        local mine = false
-        for _, n in ipairs(player:cardianAccountPawns()) do
-            if n == name then mine = true end
-        end
-        if mine and player:pawnDespawn(name) then
-            reply(player, '#cd ok despawn')
-        else
-            reply(player, '#cd err despawn not one of yours, or not out')
-        end
-    elseif verb == 'view' then
+    if verb == 'view' then
         -- The view origin, typed: a GM's target index (the experiment), or a
         -- cardian's name; `off` ends it. The addon sends the Link's VIEW
         -- message instead
@@ -428,78 +401,16 @@ commandObj.onTrigger = function(player, line)
         local err = player:cardianGambitReset(name)
         player:printToPlayer(err ~= '' and ('greset: ' .. err) or ('greset: ' .. name .. "'s gambits are her job's defaults again"), channel)
     elseif verb == 'finder' then
-        -- The party finder: 'finder [adv|mission <log>|quest <area>]' -> 'pf.b <n>',
-        -- one 'pf <name> <job> <level> <state> <zone> <willing> <her line>' per
-        -- adventurer in reach, 'pf.e'
+        -- Typed only, the finder's debugging list, answered in chat: 'finder
+        -- [exp|mission <log>|quest <area>]', everyone in reach and her answer.
+        -- The screen shouts over the Link instead
         local rows = player:cardianFinder(args[2] or 'exp', tonumber(args[3]) or 0)
-        reply(player, '#cd pf.b ' .. #rows)
+        player:printToPlayer(string.format('finder: %d in reach', #rows), channel)
         for _, r in ipairs(rows) do
-            reply(player, string.format('#cd pf %s %d %d %s %s %d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.line))
-        end
-        reply(player, '#cd pf.e')
-    elseif verb == 'shout' then
-        -- The shout: 'shout <exp|mission|quest> <log> [again]' -> 'sh.b <id> <n>
-        -- <waitMs> <kind> <log>', one 'sh <name> <job> <level> <state> <zone>
-        -- <willing> <revealMs> <decideMs> a=<affinity> m=<mission> r=<race>
-        -- n=<nation> k=<rank> z=<zone id> <her line>' per responder,
-        -- 'sh.e'; or 'err shout <why>'. The same shout again without 'again':
-        -- the screen replays it
-        local made = player:cardianShout(args[2] or 'exp', tonumber(args[3]) or 0, args[4] == 'again')
-        if made.err ~= nil then
-            reply(player, '#cd err shout ' .. made.err)
-        else
-            local rows = made.rows or {}
-            reply(player, string.format('#cd sh.b %d %d %d %s %d', made.id or 0, #rows, made.wait or 0, made.kind or 'exp', made.log or 0))
-            for _, r in ipairs(rows) do
-                reply(player, string.format('#cd sh %s %d %d %s %s %d %d %d a=%d m=%d r=%d n=%d k=%d z=%d %s', r.name, r.job, r.level, r.state, r.zone, r.willing and 1 or 0, r.reveal, r.decide,
-                    r.affinity or 0, r.mission or 0, r.race or 0, r.nation or 0, r.rank or 0, r.zoneid or 0, r.line))
-            end
-            reply(player, '#cd sh.e')
+            player:printToPlayer(string.format('%s, job %d level %d, %s in %s: %s "%s"', r.name, r.job, r.level, r.state, r.zone, r.willing and 'yes' or 'no', r.line), channel)
         end
     elseif verb == 'goals' then
         sendGoals(player)
-    elseif verb == 'peek' and name then
-        -- A look at one of the shout's responders: 'pk <name> <job> <level> <sjob>
-        -- <slvl> <nation> <rank> <standing> <affinity> <hp> <maxhp> <mp> <maxmp> <tp>'
-        -- (her numbers as she stands, or as she last stood at this level; zeros
-        -- when unknown), one 'pkg <name> <gear chunk>' per chunk, 'pks <name> <the
-        -- stats line's tokens> 0' when her numbers are known, 'pk.e <name>'
-        local p = player:cardianPeek(name)
-        if p == nil then
-            reply(player, '#cd err peek she is not in your shout')
-        else
-            reply(player, string.format('#cd pk %s %d %d %d %d %d %d %d %d %d %d %d %d %d', p.name, p.job, p.level, p.sjob, p.slvl, p.nation, p.rank, p.standing and 1 or 0, p.affinity,
-                p.hp or 0, p.maxhp or 0, p.mp or 0, p.maxmp or 0, 0))
-            for _, chunk in ipairs(p.gear) do
-                reply(player, '#cd pkg ' .. p.name .. ' ' .. chunk)
-            end
-            if p.stats ~= nil and p.stats ~= '' then
-                reply(player, '#cd pks ' .. p.name .. ' ' .. p.stats .. ' 0')
-            end
-            reply(player, '#cd pk.e ' .. p.name)
-        end
-    elseif verb == 'contracts' then
-        -- Your contract: each open contract of his (ct <name> <kind> <job>
-        -- <level> <zone id> <party|standing|out>), framed ct.b / ct.e
-        reply(player, '#cd ct.b')
-        for _, c in ipairs(player:cardianContracts()) do
-            reply(player, string.format('#cd ct %s %s %d %d %d %s', c.name, c.kind, c.job or 0, c.level or 0, c.zone or 0, c.state or 'out'))
-        end
-        reply(player, '#cd ct.e')
-    elseif verb == 'endcontract' and name then
-        local err = player:cardianEndContract(name)
-        if err ~= '' then
-            reply(player, '#cd err endcontract ' .. err)
-        else
-            reply(player, '#cd ok endcontract')
-        end
-    elseif verb == 'invite' and name then
-        local err = player:cardianInvite(name, args[3] or 'exp', tonumber(args[4]) or 0)
-        if err ~= '' then
-            reply(player, '#cd err invite ' .. err)
-        else
-            reply(player, '#cd ok invite')
-        end
     elseif verb == 'cpshop' and name then
         sendCpShop(player, name)
     elseif verb == 'cpbuy' and name and args[3] then

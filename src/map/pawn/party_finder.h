@@ -31,7 +31,9 @@
 // Recruiting proper, the pearl, is a later verb; this is the party's door.
 
 #include "common/cbasetypes.h"
+#include "pawn.h"
 
+#include <array>
 #include <optional>
 #include <string>
 #include <vector>
@@ -83,6 +85,19 @@ namespace pawn::finder
         std::string line;                   // hers: why she comes, or why not
     };
 
+    // Where she is, to the player: standing in his zone, standing elsewhere in
+    // his city, in a party (standing, or camping faded), online with no body,
+    // or away
+    enum class Presence : uint8
+    {
+        Here,
+        Standing,
+        Busy,
+        Faded,
+        Away,
+    };
+    auto presenceName(Presence presence) -> const char*; // here, standing, busy, faded, away: the finder verb's words
+
     struct Candidate
     {
         uint32      charid   = 0;
@@ -94,9 +109,9 @@ namespace pawn::finder
         uint8       nation   = 0;
         uint8       rank     = 1; // in her own nation
         uint32      affinity = 0; // hers toward this player, from the memory row
-        std::string zone;         // the underscore name, as the roster line carries it
+        std::string zone;         // the underscore name, as the game names the zone
         uint16      zoneId   = 0; // for the client's own short name of it
-        std::string state;        // here (standing in the player's zone), standing (elsewhere in the city), busy (in a party, standing or camping faded), faded (online, no body), away
+        Presence    presence = Presence::Away;
         Answer      answer;
     };
 
@@ -135,9 +150,11 @@ namespace pawn::finder
         uint32                 waitMs = 0; // until the player may shout again, as of this reply
     };
 
-    // nullptr with `why` set when the shout cannot be made at all (a full
-    // party, a goal the player's log does not hold)
-    auto shout(const CCharEntity* PPlayer, const Goal& goal, bool again, std::string& why) -> const Shout*;
+    // nullptr with `refusal` set (CL_S_*, cardian_link_protocol.h) when the
+    // shout cannot be made at all: a full party, a goal the player's log does
+    // not hold, or the cooldown with no shout of his to give back, waitMs
+    // saying how long
+    auto shout(const CCharEntity* PPlayer, const Goal& goal, bool again, uint16& refusal, uint32& waitMs) -> const Shout*;
 
     // A look at one of the shout's responders before the invite: her jobs,
     // nation and rank, her affinity, what she wears -- her body's gear when
@@ -146,28 +163,24 @@ namespace pawn::finder
     // (cardian_snapshot), or none. Only someone in the player's current shout
     struct Peek
     {
-        std::string              name;
-        uint8                    job      = 0;
-        uint8                    level    = 0;
-        uint8                    sjob     = 0;
-        uint8                    slvl     = 0;
-        uint8                    nation   = 0;
-        uint8                    rank     = 1;
-        bool                     standing = false;
-        uint32                   affinity = 0;
-        std::vector<std::string> gear;  // eqslot:itemid:invslot entries packed into chat-sized chunks, the gear line's format
-        uint32                   hp      = 0;
-        uint32                   maxhp   = 0;
-        uint32                   mp      = 0;
-        uint32                   maxmp   = 0;
-        std::string              stats;  // the stats line's tokens: seven total:bonus, then att:def; empty when her numbers are unknown
+        uint8                  job      = 0;
+        uint8                  level    = 0;
+        uint8                  sjob     = 0;
+        uint8                  slvl     = 0;
+        uint8                  nation   = 0;
+        uint8                  rank     = 1;
+        bool                   standing = false;
+        uint32                 affinity = 0;
+        std::array<uint16, 16> items{};        // what she wears, by equipment slot
+        bool                   known   = false; // the numbers below are hers
+        uint32                 hp      = 0;
+        uint32                 maxhp   = 0;
+        uint32                 mp      = 0;
+        uint32                 maxmp   = 0;
+        StatusNumbers          numbers;
     };
 
-    auto peek(const CCharEntity* PPlayer, const std::string& name) -> std::optional<Peek>;
-
-    // The stats line's tokens for a standing body: seven total:bonus, then
-    // att:def -- the one producer the Equipment page and the peek share
-    auto statsLine(CCharEntity* PPawn) -> std::string;
+    auto peek(const CCharEntity* PPlayer, uint32 charid) -> std::optional<Peek>;
 
     // Her numbers as she stands, written as her body fades, for the peek
     // at her while faded
@@ -181,9 +194,9 @@ namespace pawn::finder
     // not reached -- then the packet handler's checks (a leader or
     // unpartied inviter, room in the party, an invitee alive, unpartied
     // and not already asked), then the solicit packet the pawn answers by
-    // herself. A faded candidate stands first. "" on success, else the
-    // reason
-    auto invite(CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> std::string;
+    // herself. A faded candidate stands first. CL_S_OK on success, else
+    // why not; CL_S_DECLINES with her words in `line`
+    auto invite(CCharEntity* PPlayer, uint32 charid, const Goal& goal, std::string& line) -> uint16;
 
     // She answered a shout that has not lapsed: the invite may still come,
     // so the world's clocks (a town seat's dwell) leave her where she is
@@ -224,10 +237,32 @@ namespace pawn::finder
     auto openContractOf(uint32 charid) -> std::optional<OpenContract>;
     auto openContracts(uint32 playerCharID) -> std::vector<OpenContract>; // his, by name
 
+    // His open contracts as his Your contract page shows them: her job, level
+    // and zone, and whether she stands in his party, stands waiting to be
+    // invited, is faded, or could not stand (the map log says why)
+    enum class ContractState : uint8
+    {
+        Party,
+        Standing,
+        Faded,
+        Out,
+    };
+    struct ContractView
+    {
+        uint32        charid = 0;
+        std::string   name;
+        Goal          goal;
+        uint8         job   = 0;
+        uint8         level = 0;
+        uint16        zone  = 0;
+        ContractState state = ContractState::Out;
+    };
+    auto contractsOf(const CCharEntity* PPlayer) -> std::vector<ContractView>;
+
     // Her Party Finder page's Release: the contract ends and she is the
     // world's again where she stands, taken out of his party first when she
-    // is in it. "" on success, else why not
-    auto release(CCharEntity* PPlayer, const std::string& name) -> std::string;
+    // is in it. CL_S_OK, or CL_S_NO_CONTRACT
+    auto release(CCharEntity* PPlayer, uint32 charid) -> uint16;
 
     // Exp she was granted in the party of the player who recruited her,
     // under an exp contract: banked toward her affinity, the player told
@@ -237,9 +272,9 @@ namespace pawn::finder
     // A faded invitee's stand, shared by the verb and the hook below: the
     // ladder must hold her as the world's or this player's own, she must
     // not camp with others (her stand would seat her in their party), and
-    // the ladder must stand her when asked (seats::inviteStand). nullptr
-    // when she stands, else the reason, logged
-    auto standFaded(const CCharEntity* PPlayer, uint32 charid) -> const char*;
+    // the ladder must stand her when asked (seats::inviteStand). CL_S_OK
+    // when she stands, else why not, logged
+    auto standFaded(const CCharEntity* PPlayer, uint32 charid) -> uint16;
 
     // The game's own invite (/invite, the party menu), from the module's
     // incoming-packet hook ahead of the handler, for a party invite only.

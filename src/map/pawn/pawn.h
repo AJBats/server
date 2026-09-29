@@ -32,6 +32,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 class CBattleEntity;
@@ -57,10 +58,23 @@ namespace pawn
     // character's own.
     auto ownerAccountOf(const CCharEntity* PChar) -> uint32;
 
-    // Every character the player could spawn as a cardian, by name: their
-    // account's own alts and the generated cardians it owns, never the one
-    // they are playing -- spawn()'s eligibility, as a list
-    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>;
+    // Her status pane's numbers: the seven base stats, each its total and the
+    // part of it gear and effects give, then attack and defence. The equipment
+    // screen, the party finder's look at a responder and her snapshot as she
+    // fades read them the same way
+    struct StatusNumbers
+    {
+        std::array<int16, 7> total{}; // STR, DEX, VIT, AGI, INT, MND, CHR
+        std::array<int16, 7> bonus{};
+        uint16               attack  = 0;
+        uint16               defence = 0;
+    };
+    auto statusNumbers(CCharEntity* PChar) -> StatusNumbers;
+
+    // Every character the player could spawn as a cardian, charid and name:
+    // their account's own alts and the generated cardians it owns, never the
+    // one they are playing -- spawn()'s eligibility, as a list
+    auto accountPawns(const CCharEntity* PChar) -> std::vector<std::pair<uint32, std::string>>;
 
     // Delete orphaned pawn session rows (client_addr = 0) left by a crash.
     // Called once at map boot.
@@ -80,7 +94,7 @@ namespace pawn
     bool spawn(CCharEntity* PSummoner, const std::string& targetName);
 
     // The club signs in with the player (ROADMAP H): every member of the
-    // account (accountPawnNames) not online stands where the game saved
+    // account (accountPawns) not online stands where the game saved
     // her, idling there until invited. The chat line, "Jevyak
     // (Northern San d'Oria), Zapp (...)", empty when nobody stood. spawn
     // stays the GM's tool

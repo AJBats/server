@@ -21,8 +21,8 @@
 
 #include "party_finder.h"
 
+#include "cardian_link_messages.h"
 #include "pawn.h"
-#include "pawn_items.h"
 #include "seats.h"
 
 #include "ai/ai_container.h"
@@ -36,12 +36,12 @@
 #include "enums/mission_log.h"
 #include "enums/msg_std.h"
 #include "enums/party_kind.h"
+#include "items/item_equipment.h"
 #include "lua/lua_base_entity.h"
 #include "packets/s2c/0x009_message.h"
 #include "packets/s2c/0x017_chat_std.h"
 #include "packets/s2c/0x0dc_group_solicit_req.h"
 #include "party.h"
-#include "utils/charutils.h"
 #include "utils/jailutils.h"
 #include "utils/zoneutils.h"
 #include "world.h"
@@ -182,17 +182,17 @@ namespace pawn::finder
             return !partyMate && !pawn::world::isLeaving(f.charid);
         }
 
-        auto stateOf(const CCharEntity* PPlayer, const CCharEntity* PPawn, const uint32 charid, CZone* PHere) -> std::string
+        auto presenceOf(const CCharEntity* PPlayer, const CCharEntity* PPawn, const uint32 charid, CZone* PHere) -> Presence
         {
             if (PPawn != nullptr)
             {
-                return PPawn->PParty != nullptr ? "busy" : (PHere == PPlayer->loc.zone ? "here" : "standing");
+                return PPawn->PParty != nullptr ? Presence::Busy : (PHere == PPlayer->loc.zone ? Presence::Here : Presence::Standing);
             }
             if (!pawn::seats::has(charid))
             {
-                return "away";
+                return Presence::Away;
             }
-            return pawn::world::campLeaderOf(charid) != 0 ? "busy" : "faded";
+            return pawn::world::campLeaderOf(charid) != 0 ? Presence::Busy : Presence::Faded;
         }
 
         constexpr const char* kNationNames[] = { "San d'Oria", "Bastok", "Windurst" };
@@ -358,27 +358,21 @@ namespace pawn::finder
             return softAnswer(PPlayer, f, goal, fame, mood, fit);
         }
 
-        // Is the goal one the player's own log holds
-        auto goalHeld(const CCharEntity* PPlayer, const Goal& goal, std::string& why) -> bool
+        // Is the goal one the player's own log holds: CL_S_OK, or why not
+        auto goalHeld(const CCharEntity* PPlayer, const Goal& goal) -> uint16
         {
             switch (goal.kind)
             {
                 case Goal::Kind::Mission:
                     if ((goal.log > 4 && goal.log != 6) || PPlayer->m_missionLog[goal.log].current == noMission(goal.log))
                     {
-                        why = "you are not on a mission there";
-                        return false;
+                        return CL_S_NO_MISSION;
                     }
-                    return true;
+                    return CL_S_OK;
                 case Goal::Kind::Quest:
-                    if (goal.log > 10)
-                    {
-                        why = "no such quest log";
-                        return false;
-                    }
-                    return true;
+                    return goal.log > 10 ? CL_S_MALFORMED : CL_S_OK;
                 default:
-                    return true;
+                    return CL_S_OK;
             }
         }
 
@@ -453,7 +447,7 @@ namespace pawn::finder
         }
 
         // Her yes in the player's current shout, for this same goal
-        auto shoutedYes(const CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> const Responder*
+        auto shoutedYes(const CCharEntity* PPlayer, const uint32 charid, const Goal& goal) -> const Responder*
         {
             const auto* held = currentShout(PPlayer->id);
             if (held == nullptr || !(held->shout.goal == goal))
@@ -462,25 +456,9 @@ namespace pawn::finder
             }
             const auto it = std::ranges::find_if(held->shout.rows, [&](const Responder& r)
             {
-                return r.c.answer.yes && r.c.name == name;
+                return r.c.answer.yes && r.c.charid == charid;
             });
             return it != held->shout.rows.end() ? &*it : nullptr;
-        }
-
-        // Payload fragments sized for one GP_SERV_COMMAND_CHAT_STD each: the
-        // gear line's packing
-        constexpr size_t kChunkLimit = 110;
-
-        void packEntry(std::vector<std::string>& chunks, const std::string& entry)
-        {
-            if (chunks.empty() || chunks.back().size() + 1 + entry.size() > kChunkLimit)
-            {
-                chunks.push_back(entry);
-            }
-            else
-            {
-                chunks.back() += "," + entry;
-            }
         }
 
         // A recruit under contract with this player, or nullptr
@@ -532,6 +510,23 @@ namespace pawn::finder
         return goal.kind == Goal::Kind::Mission ? "mission" : goal.kind == Goal::Kind::Quest ? "quest" : "exp";
     }
 
+    auto presenceName(const Presence presence) -> const char*
+    {
+        switch (presence)
+        {
+            case Presence::Here:
+                return "here";
+            case Presence::Standing:
+                return "standing";
+            case Presence::Busy:
+                return "busy";
+            case Presence::Faded:
+                return "faded";
+            default:
+                return "away";
+        }
+    }
+
     auto candidates(const CCharEntity* PPlayer, const Goal& goal) -> std::vector<Candidate>
     {
         std::vector<Candidate> out;
@@ -560,7 +555,7 @@ namespace pawn::finder
             c.rank     = f.rank[f.nation];
             c.zone     = PHere->getName();
             c.zoneId   = static_cast<uint16>(PHere->GetID());
-            c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
+            c.presence = presenceOf(PPlayer, PPawn, f.charid, PHere);
             c.answer   = judge(PPlayer, f, PPawn, goal, fame);
             c.charid   = f.charid;
             c.friendly = f.partied || f.affinity > 0;
@@ -569,7 +564,7 @@ namespace pawn::finder
 
         const auto rankOf = [](const Candidate& c)
         {
-            return c.state == "here" ? 0 : c.state == "standing" ? 1 : c.state == "faded" ? 2 : 3;
+            return c.presence == Presence::Here ? 0 : c.presence == Presence::Standing ? 1 : c.presence == Presence::Faded ? 2 : 3;
         };
         std::ranges::sort(out, [&](const Candidate& a, const Candidate& b)
         {
@@ -590,12 +585,13 @@ namespace pawn::finder
         return out;
     }
 
-    auto shout(const CCharEntity* PPlayer, const Goal& goal, const bool again, std::string& why) -> const Shout*
+    auto shout(const CCharEntity* PPlayer, const Goal& goal, const bool again, uint16& refusal, uint32& waitMs) -> const Shout*
     {
-        why.clear();
+        refusal = CL_S_OK;
+        waitMs  = 0;
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
         {
-            why = "no such player";
+            refusal = CL_S_REFUSED;
             return nullptr;
         }
         auto* current = currentShout(PPlayer->id);
@@ -606,10 +602,10 @@ namespace pawn::finder
         }
         if (partyFull(PPlayer))
         {
-            why = "your party is full";
+            refusal = CL_S_PARTY_FULL;
             return nullptr;
         }
-        if (!goalHeld(PPlayer, goal, why))
+        if (refusal = goalHeld(PPlayer, goal); refusal != CL_S_OK)
         {
             return nullptr;
         }
@@ -621,7 +617,8 @@ namespace pawn::finder
                 current->shout.waitMs = wait;
                 return &current->shout;
             }
-            why = fmt::format("you can shout again in {} seconds", (wait + 999) / 1000);
+            refusal = CL_S_COOLING_DOWN;
+            waitMs  = wait;
             return nullptr;
         }
 
@@ -648,7 +645,7 @@ namespace pawn::finder
             c.rank     = f.rank[f.nation];
             c.zone     = PHere->getName();
             c.zoneId   = static_cast<uint16>(PHere->GetID());
-            c.state    = stateOf(PPlayer, PPawn, f.charid, PHere);
+            c.presence = presenceOf(PPlayer, PPawn, f.charid, PHere);
             c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(-10, 11));
             c.charid   = f.charid;
             c.friendly = f.partied || f.affinity > 0;
@@ -741,21 +738,13 @@ namespace pawn::finder
         return &it->second.shout;
     }
 
-    auto statsLine(CCharEntity* PPawn) -> std::string
-    {
-        return fmt::format("{}:{} {}:{} {}:{} {}:{} {}:{} {}:{} {}:{} {}:{}",
-                           PPawn->STR(), PPawn->getMod(xi::Mod::STR), PPawn->DEX(), PPawn->getMod(xi::Mod::DEX),
-                           PPawn->VIT(), PPawn->getMod(xi::Mod::VIT), PPawn->AGI(), PPawn->getMod(xi::Mod::AGI),
-                           PPawn->INT(), PPawn->getMod(xi::Mod::INT), PPawn->MND(), PPawn->getMod(xi::Mod::MND),
-                           PPawn->CHR(), PPawn->getMod(xi::Mod::CHR), PPawn->ATT(SLOT_MAIN), PPawn->DEF());
-    }
-
     void snapshot(CCharEntity* PPawn)
     {
         if (PPawn == nullptr)
         {
             return;
         }
+        const auto numbers = pawn::statusNumbers(PPawn);
         db::preparedStmt("INSERT INTO cardian_snapshot (charid, level, hp, maxhp, mp, maxmp, str_t, dex_t, vit_t, agi_t, int_t, mnd_t, chr_t, "
                          "str_b, dex_b, vit_b, agi_b, int_b, mnd_b, chr_b, att, def, taken_at) "
                          "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW()) "
@@ -766,35 +755,33 @@ namespace pawn::finder
                          PPawn->id, PPawn->GetMLevel(),
                          static_cast<uint32>(std::max(0, PPawn->health.hp)), static_cast<uint32>(std::max(0, PPawn->GetMaxHP())),
                          static_cast<uint32>(std::max(0, PPawn->health.mp)), static_cast<uint32>(std::max(0, PPawn->GetMaxMP())),
-                         static_cast<int16>(PPawn->STR()), static_cast<int16>(PPawn->DEX()), static_cast<int16>(PPawn->VIT()), static_cast<int16>(PPawn->AGI()),
-                         static_cast<int16>(PPawn->INT()), static_cast<int16>(PPawn->MND()), static_cast<int16>(PPawn->CHR()),
-                         PPawn->getMod(xi::Mod::STR), PPawn->getMod(xi::Mod::DEX), PPawn->getMod(xi::Mod::VIT), PPawn->getMod(xi::Mod::AGI),
-                         PPawn->getMod(xi::Mod::INT), PPawn->getMod(xi::Mod::MND), PPawn->getMod(xi::Mod::CHR),
-                         PPawn->ATT(SLOT_MAIN), PPawn->DEF());
+                         numbers.total[0], numbers.total[1], numbers.total[2], numbers.total[3],
+                         numbers.total[4], numbers.total[5], numbers.total[6],
+                         numbers.bonus[0], numbers.bonus[1], numbers.bonus[2], numbers.bonus[3],
+                         numbers.bonus[4], numbers.bonus[5], numbers.bonus[6],
+                         numbers.attack, numbers.defence);
     }
 
-    auto peek(const CCharEntity* PPlayer, const std::string& name) -> std::optional<Peek>
+    auto peek(const CCharEntity* PPlayer, const uint32 charid) -> std::optional<Peek>
     {
         if (PPlayer == nullptr)
         {
             return std::nullopt;
         }
-        const uint32 charid = charutils::getCharIdFromName(name);
-        const auto   facts  = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
+        const auto facts = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
         if (!facts.has_value())
         {
             return std::nullopt;
         }
         // Someone in his current shout, or held by his own open contract
         const auto* held       = currentShout(PPlayer->id);
-        const bool  shouted    = held != nullptr && std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.name == facts->name; });
+        const bool  shouted    = held != nullptr && std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.charid == charid; });
         const auto  contracted = openContractOf(charid);
         if (!shouted && !(contracted.has_value() && contracted->playerCharID == PPlayer->id))
         {
             return std::nullopt;
         }
         Peek p;
-        p.name     = facts->name;
         p.nation   = facts->nation;
         p.rank     = facts->rank[facts->nation];
         p.affinity = facts->affinity;
@@ -806,12 +793,19 @@ namespace pawn::finder
             p.sjob     = static_cast<uint8>(PPawn->GetSJob());
             p.slvl     = PPawn->GetSLevel();
             p.rank     = PPawn->profile.rank[facts->nation];
-            p.gear     = pawn::items::equipChunks(PPawn);
-            p.hp       = static_cast<uint32>(std::max(0, PPawn->health.hp));
-            p.maxhp    = static_cast<uint32>(std::max(0, PPawn->GetMaxHP()));
-            p.mp       = static_cast<uint32>(std::max(0, PPawn->health.mp));
-            p.maxmp    = static_cast<uint32>(std::max(0, PPawn->GetMaxMP()));
-            p.stats    = statsLine(PPawn);
+            for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
+            {
+                if (const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
+                {
+                    p.items[equipSlot] = PItem->getID();
+                }
+            }
+            p.known   = true;
+            p.hp      = static_cast<uint32>(std::max(0, PPawn->health.hp));
+            p.maxhp   = static_cast<uint32>(std::max(0, PPawn->GetMaxHP()));
+            p.mp      = static_cast<uint32>(std::max(0, PPawn->health.mp));
+            p.maxmp   = static_cast<uint32>(std::max(0, PPawn->GetMaxMP()));
+            p.numbers = pawn::statusNumbers(PPawn);
             return p;
         }
         p.job   = facts->job;
@@ -828,22 +822,28 @@ namespace pawn::finder
                                                charid, p.level);
             rset && rset->next())
         {
+            p.known = true;
             p.hp    = rset->get<uint32>("hp");
             p.maxhp = rset->get<uint32>("maxhp");
             p.mp    = rset->get<uint32>("mp");
             p.maxmp = rset->get<uint32>("maxmp");
-            std::string line;
+            std::size_t i = 0;
             for (const auto* stat : { "str", "dex", "vit", "agi", "int", "mnd", "chr" })
             {
-                line += fmt::format("{}:{} ", rset->get<int16>(fmt::format("{}_t", stat)), rset->get<int16>(fmt::format("{}_b", stat)));
+                p.numbers.total[i] = rset->get<int16>(fmt::format("{}_t", stat));
+                p.numbers.bonus[i] = rset->get<int16>(fmt::format("{}_b", stat));
+                ++i;
             }
-            line += fmt::format("{}:{}", rset->get<uint16>("att"), rset->get<uint16>("def"));
-            p.stats = line;
+            p.numbers.attack  = rset->get<uint16>("att");
+            p.numbers.defence = rset->get<uint16>("def");
         }
         const auto rset = db::preparedStmt("SELECT slot, itemid FROM cardian_wardrobe WHERE name = ? ORDER BY slot", facts->name);
         while (rset && rset->next())
         {
-            packEntry(p.gear, fmt::format("{}:{}:0", rset->get<uint8>("slot"), rset->get<uint16>("itemid")));
+            if (const auto slot = rset->get<uint8>("slot"); slot < p.items.size())
+            {
+                p.items[slot] = rset->get<uint16>("itemid");
+            }
         }
         return p;
     }
@@ -869,29 +869,29 @@ namespace pawn::finder
         return false;
     }
 
-    auto invite(CCharEntity* PPlayer, const std::string& name, const Goal& goal) -> std::string
+    auto invite(CCharEntity* PPlayer, const uint32 charid, const Goal& goal, std::string& line) -> uint16
     {
+        line.clear();
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
         {
-            return "no such player";
+            return CL_S_REFUSED;
         }
         if (PPlayer->PParty != nullptr && PPlayer->PParty->GetLeader() != PPlayer)
         {
-            return "you are not the party leader";
+            return CL_S_NOT_LEADER;
         }
         if (partyFull(PPlayer))
         {
-            return "your party is full";
+            return CL_S_PARTY_FULL;
         }
         // The list's own gate: an unrecruited census body, a yes in the
         // player's current shout for this goal, in the player's zone or
         // city, then what stops her whatever she said before. Her zone is
         // her body's when she stands and her row's when she is faded
-        const uint32 charid = charutils::getCharIdFromName(name);
-        const auto   facts  = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
+        const auto facts = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
         if (!facts.has_value())
         {
-            return "she is not one of the world's adventurers";
+            return CL_S_NOT_ADVENTURER;
         }
         auto* PPawn = pawn::findPawn(charid);
         // Her open contract with him is her yes, to its own goal: no shout,
@@ -901,52 +901,53 @@ namespace pawn::finder
         const auto asked = held.has_value() ? held->goal : goal;
         if (held.has_value() && held->playerCharID != PPlayer->id)
         {
-            return "she is under contract with another player";
+            return CL_S_CONTRACTED;
         }
         if (!held.has_value())
         {
             if (currentShout(PPlayer->id) == nullptr)
             {
-                return "your shout has faded (a shout lives ten minutes); shout again";
+                return CL_S_SHOUT_FADED;
             }
-            if (shoutedYes(PPlayer, facts->name, goal) == nullptr)
+            if (shoutedYes(PPlayer, charid, goal) == nullptr)
             {
-                return "she did not answer your shout for that";
+                return CL_S_NOT_A_YES;
             }
             if (!inReach(PPlayer, zoneOf(PPawn, facts->posZone)))
             {
-                return "she is not in your city";
+                return CL_S_NOT_IN_CITY;
             }
             const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, *facts, PPawn, goal) : MissionFit::Free;
             if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal, fit); hard.has_value())
             {
-                return hard->line;
+                line = hard->line;
+                return CL_S_DECLINES;
             }
         }
         if (PPawn == nullptr)
         {
-            if (const auto* why = standFaded(PPlayer, charid); why != nullptr)
+            if (const auto status = standFaded(PPlayer, charid); status != CL_S_OK)
             {
-                return why;
+                return status;
             }
             PPawn = pawn::findPawn(charid);
         }
         if (PPawn == nullptr)
         {
-            return "she cannot stand just now";
+            return CL_S_CANNOT_STAND;
         }
 
         if (PPawn->isDead())
         {
-            return "she is KO'd";
+            return CL_S_KNOCKED_OUT;
         }
         if (PPawn->PParty != nullptr)
         {
-            return "she is in a party already";
+            return CL_S_IN_A_PARTY;
         }
         if (PPawn->InvitePending.UniqueNo != 0)
         {
-            return "she already has an invite";
+            return CL_S_INVITE_PENDING;
         }
 
         consented[charid] = Consent{ PPlayer->id, asked, timer::now() };
@@ -954,7 +955,7 @@ namespace pawn::finder
         PPawn->InvitePending.ActIndex = PPlayer->targid;
         PPawn->pushPacket<GP_SERV_COMMAND_GROUP_SOLICIT_REQ>(PPawn->id, PPawn->targid, PPlayer->getName(), PartyKind::Party);
         ShowInfoFmt("pawn: {} invites {} from the party finder, for {}{}", PPlayer->getName(), PPawn->getName(), kindName(asked), held.has_value() ? ", her open contract" : "");
-        return "";
+        return CL_S_OK;
     }
 
     auto accepts(CCharEntity* PPawn) -> bool
@@ -1053,17 +1054,46 @@ namespace pawn::finder
         return out;
     }
 
-    auto release(CCharEntity* PPlayer, const std::string& name) -> std::string
+    auto contractsOf(const CCharEntity* PPlayer) -> std::vector<ContractView>
+    {
+        std::vector<ContractView> out;
+        if (PPlayer == nullptr)
+        {
+            return out;
+        }
+        for (const auto& c : openContracts(PPlayer->id))
+        {
+            ContractView view{ .charid = c.charid, .name = c.name, .goal = c.goal };
+            if (const auto* PPawn = pawn::findPawn(c.charid); PPawn != nullptr)
+            {
+                view.job   = static_cast<uint8>(PPawn->GetMJob());
+                view.level = PPawn->GetMLevel();
+                view.zone  = static_cast<uint16>(PPawn->getZone());
+                view.state = PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty ? ContractState::Party : ContractState::Standing;
+            }
+            else if (const auto rset = db::preparedStmt("SELECT s.mjob, s.mlvl, c.pos_zone FROM chars c JOIN char_stats s ON s.charid = c.charid WHERE c.charid = ?", c.charid);
+                     rset && rset->next())
+            {
+                view.job   = rset->get<uint8>("mjob");
+                view.level = rset->get<uint8>("mlvl");
+                view.zone  = rset->get<uint16>("pos_zone");
+                view.state = pawn::seats::has(c.charid) ? ContractState::Faded : ContractState::Out;
+            }
+            out.push_back(std::move(view));
+        }
+        return out;
+    }
+
+    auto release(CCharEntity* PPlayer, const uint32 charid) -> uint16
     {
         if (PPlayer == nullptr)
         {
-            return "no such player";
+            return CL_S_REFUSED;
         }
-        const uint32 charid = charutils::getCharIdFromName(name);
-        const auto   held   = charid != 0 ? openContractOf(charid) : std::nullopt;
+        const auto held = charid != 0 ? openContractOf(charid) : std::nullopt;
         if (!held.has_value() || held->playerCharID != PPlayer->id)
         {
-            return "she holds no contract with you";
+            return CL_S_NO_CONTRACT;
         }
         // In his party, Release takes her out of it as well: one step, no
         // kick to remember (the user, 2026-09-24). Leaving ends the contract
@@ -1075,7 +1105,7 @@ namespace pawn::finder
         }
         noteLeft(charid);
         pawn::forgetGuestGambits(charid);
-        return "";
+        return CL_S_OK;
     }
 
     void noteExp(const CCharEntity* PPawn, const uint32 exp)
@@ -1118,29 +1148,29 @@ namespace pawn::finder
         ShowInfoFmt("pawn: {}'s affinity with {} grows: {}{}", pawn::seats::nameOf(pawnCharID), pawn::seats::nameOf(playerCharID), why, mission ? " (a mission together)" : "");
     }
 
-    auto standFaded(const CCharEntity* PPlayer, const uint32 charid) -> const char*
+    auto standFaded(const CCharEntity* PPlayer, const uint32 charid) -> uint16
     {
         if (PPlayer == nullptr || charid == 0 || pawn::findPawn(charid) != nullptr)
         {
-            return nullptr;
+            return CL_S_OK;
         }
         if (!pawn::seats::heldFor(charid, PPlayer->id))
         {
-            return "she is away";
+            return CL_S_AWAY;
         }
         if (pawn::world::campLeaderOf(charid) != 0)
         {
-            return "she is in a party already";
+            return CL_S_IN_A_PARTY;
         }
         if (!pawn::seats::inviteStand(charid))
         {
             ShowInfoFmt("pawn: {} invites {}; she is faded and cannot stand now (nobody near her zone, the cap full of party members, or her stand waits on a retry)",
                         PPlayer->getName(), pawn::seats::nameOf(charid));
-            return "she cannot stand just now";
+            return CL_S_CANNOT_STAND;
         }
         const auto* PPawn = pawn::findPawn(charid);
         ShowInfoFmt("pawn: {} invites {}; she was faded and stands for it", PPlayer->getName(), PPawn != nullptr ? PPawn->getName() : pawn::seats::nameOf(charid));
-        return PPawn != nullptr ? nullptr : "she cannot stand just now";
+        return PPawn != nullptr ? CL_S_OK : CL_S_CANNOT_STAND;
     }
 
     auto interceptInvite(CCharEntity* PPlayer, const uint32 charid) -> bool
@@ -1167,9 +1197,9 @@ namespace pawn::finder
         // The player's own, or his contract's, faded: stood so the handler finds her
         if (pawn::findPawn(charid) == nullptr)
         {
-            if (const auto* why = standFaded(PPlayer, charid); why != nullptr && pawn::findPawn(charid) == nullptr)
+            if (const auto status = standFaded(PPlayer, charid); status != CL_S_OK && pawn::findPawn(charid) == nullptr)
             {
-                ShowInfoFmt("pawn: {} invites {} by name; {}, so the game drops the invite", PPlayer->getName(), pawn::seats::nameOf(charid), why);
+                ShowInfoFmt("pawn: {} invites {} by name; she does not stand (outcome 0x{:04X}), so the game drops the invite", PPlayer->getName(), pawn::seats::nameOf(charid), status);
             }
         }
         return false;

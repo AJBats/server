@@ -61,6 +61,15 @@ namespace cardian::link
     X(PROFILE, cl_profile)       \
     X(JOBS, cl_jobs)             \
     X(SKILLS, cl_skills)         \
+    X(OWNED, cl_owned) \
+    X(SPAWN, cl_spawn) \
+    X(DESPAWN, cl_despawn) \
+    X(SHOUT, cl_shout) \
+    X(SHOUT_RESPONDER, cl_shout_responder) \
+    X(PEEK, cl_peek) \
+    X(INVITE, cl_invite) \
+    X(CONTRACTS, cl_contracts) \
+    X(END_CONTRACT, cl_end_contract) \
     X(GIVE, cl_give)             \
     X(TAKE, cl_take)             \
     X(GIL, cl_gil)               \

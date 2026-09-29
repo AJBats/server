@@ -116,6 +116,17 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_vocab_action) == 64);
     STATIC_REQUIRE(sizeof(cl_vocab_actions) == 3096);
     STATIC_REQUIRE(sizeof(cl_gambit_vocab) == 24);
+    STATIC_REQUIRE(sizeof(cl_owned_cardian) == 24);
+    STATIC_REQUIRE(sizeof(cl_owned) == 788);
+    STATIC_REQUIRE(sizeof(cl_spawn) == 20);
+    STATIC_REQUIRE(sizeof(cl_despawn) == 20);
+    STATIC_REQUIRE(sizeof(cl_shout_responder) == 192);
+    STATIC_REQUIRE(sizeof(cl_shout) == 28);
+    STATIC_REQUIRE(sizeof(cl_peek) == 104);
+    STATIC_REQUIRE(sizeof(cl_invite) == 120);
+    STATIC_REQUIRE(sizeof(cl_contract) == 28);
+    STATIC_REQUIRE(sizeof(cl_contracts) == 468);
+    STATIC_REQUIRE(sizeof(cl_end_contract) == 20);
     STATIC_REQUIRE(sizeof(cl_legacy_cd) == sizeof(cl_header));
 }
 

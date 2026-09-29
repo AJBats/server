@@ -34,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 25: gambits, GAMBITS, GAMBIT_ROW, the
+// compatible, the user, 2026-09-14). 26: his cardians and the party finder,
+// OWNED, SPAWN, DESPAWN, SHOUT, SHOUT_RESPONDER, PEEK, INVITE, CONTRACTS and
+// END_CONTRACT (the owned, spawn, despawn, shout, peek, invite, contracts and
+// endcontract lines leave LEGACY_CD); 25: gambits, GAMBITS, GAMBIT_ROW, the
 // edits (GAMBIT_TOGGLE, _MOVE, _DELETE, _INSERT, _REPLACE, _MASTER) and the
 // catalogue (GAMBIT_VOCAB, VOCAB_CONDITIONS, _STATUSES, _ACTIONS): rows as the
 // gambit engine's own fields (the gambits, gb, g, gvocab, gv, gvc, gvs, gva,
@@ -61,7 +64,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 25 };
+enum { CL_PROTOCOL = 26 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -136,7 +139,7 @@ enum
     CL_S_NOT_KNOCKED_OUT   = 0x0130, // a home point is for a KO'd cardian
     CL_S_NOT_WHILE_PAUSED  = 0x0131, // a held simulation moves nobody
     CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
-    CL_S_COOLING_DOWN      = 0x0133, // the rescue's cooldown: the answer's cooldownLeft
+    CL_S_COOLING_DOWN      = 0x0133, // a cooldown runs: the answer says how long (RESCUE's cooldownLeft, SHOUT's waitMs)
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
 
     // The pause button
@@ -188,6 +191,25 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
+
+    // His cardians, and the party finder
+    CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
+    CL_S_NOT_OUT           = 0x0191, // a despawn for one of his who is not out
+    CL_S_PARTY_FULL        = 0x0192,
+    CL_S_NOT_LEADER        = 0x0193, // the party's leader invites
+    CL_S_NO_MISSION        = 0x0194, // a mission shout from a log he holds no mission in
+    CL_S_NOT_IN_SHOUT      = 0x0195, // nobody by that charid in his shout, or held by his contract
+    CL_S_NOT_ADVENTURER    = 0x0196, // not one of the world's adventurers
+    CL_S_CONTRACTED        = 0x0197, // under contract with another player
+    CL_S_SHOUT_FADED       = 0x0198, // his shout has lapsed (a shout lives ten minutes): shout again
+    CL_S_NOT_A_YES         = 0x0199, // she did not answer his shout for that
+    CL_S_NOT_IN_CITY       = 0x019A, // she is not in his city
+    CL_S_DECLINES          = 0x019B, // she says no, whatever she said before: the answer's line is hers
+    CL_S_AWAY              = 0x019C, // she is away from the world
+    CL_S_CANNOT_STAND      = 0x019D, // she is faded and cannot stand just now
+    CL_S_IN_A_PARTY        = 0x019E,
+    CL_S_INVITE_PENDING    = 0x019F, // she already has an invite
+    CL_S_NO_CONTRACT       = 0x01A0, // she holds no contract with him
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -339,6 +361,7 @@ enum
     CL_T_PROFILE      = 0x0109,
     CL_T_JOBS         = 0x010A,
     CL_T_SKILLS       = 0x010B,
+    CL_T_OWNED        = 0x010C,
 };
 
 enum { CL_ITEM_EQUIPPED = 0x01 };
@@ -533,6 +556,26 @@ typedef struct cl_skills
     uint16_t  spare;
     cl_skill  skills[32]; // answered
 } cl_skills;
+
+// One character he could spawn as a cardian: his account's own alts and the
+// cardians it owns, never the one he plays
+typedef struct cl_owned_cardian
+{
+    uint32_t cardian;  // charid
+    uint8_t  out;      // 1 while she is out as a cardian
+    uint8_t  spare[3];
+    char     name[16];
+} cl_owned_cardian;
+
+// Every character he could spawn, by name: answered in parts, each with its
+// share (CL_F_MORE), the last with the outcome
+typedef struct cl_owned
+{
+    cl_header        h;
+    uint8_t          count;        // answered: in this part
+    uint8_t          spare[3];
+    cl_owned_cardian cardians[32]; // answered
+} cl_owned;
 
 // ---- 0x02xx: items and gear -----------------------------------------------
 //
@@ -940,6 +983,8 @@ enum
     CL_T_CANCEL       = 0x040E,
     CL_T_DO           = 0x040F,
     CL_T_QUEUES       = 0x0410,
+    CL_T_SPAWN        = 0x0411,
+    CL_T_DESPAWN      = 0x0412,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1140,6 +1185,20 @@ typedef struct cl_do
     uint16_t  wait;    // answered with CL_S_TOO_SOON: seconds until it could start
 } cl_do;
 
+// The Debug screen's spawn and despawn of one of his (OWNED; creation stays
+// !pawncreate): she stands beside him, or leaves the world
+typedef struct cl_spawn
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_spawn;
+
+typedef struct cl_despawn
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_despawn;
+
 // Every queue line as it stands, for an addon that has just bound: each
 // character with a command waiting, his own and his cardians', comes as a QUEUE
 // answer (CL_F_MORE), then this
@@ -1239,6 +1298,166 @@ typedef struct cl_calendar
     cl_header h;
     uint32_t  gametime;
 } cl_calendar;
+
+// ---- 0x06xx: the party finder ----------------------------------------------
+//
+// The world's adventurers, recruited (ROADMAP H, party_finder.h): the shout,
+// a look at one who answered, the invite, and his open contracts. A goal is
+// what he recruits for: experience, or a mission log, or a quest area.
+
+enum
+{
+    CL_T_SHOUT           = 0x0601,
+    CL_T_SHOUT_RESPONDER = 0x0602,
+    CL_T_PEEK            = 0x0603,
+    CL_T_INVITE          = 0x0604,
+    CL_T_CONTRACTS       = 0x0605,
+    CL_T_END_CONTRACT    = 0x0606,
+};
+
+enum
+{
+    CL_GOAL_EXP     = 0,
+    CL_GOAL_MISSION = 1, // log: the mission log
+    CL_GOAL_QUEST   = 2, // log: the quest area
+};
+
+enum
+{
+    CL_PRESENCE_HERE     = 0, // standing in his zone
+    CL_PRESENCE_STANDING = 1, // standing elsewhere in his city
+    CL_PRESENCE_BUSY     = 2, // in a party, standing or camping faded
+    CL_PRESENCE_FADED    = 3, // online, no body: she stands for an invite
+    CL_PRESENCE_AWAY     = 4,
+};
+
+enum
+{
+    CL_FIT_FREE   = 0, // between missions, free to take it
+    CL_FIT_BEHIND = 1, // she has not reached the mission: a no of its own kind
+    CL_FIT_ON     = 2, // on that very mission
+    CL_FIT_DONE   = 3, // past it: she knows the way
+};
+
+// One who heard his shout, and her answer, fixed when the shout was made: an
+// answer to SHOUT. She is heard revealMs after the shout and answers decideMs
+// later; line is her words
+typedef struct cl_shout_responder
+{
+    cl_header h;
+    uint32_t  shout;        // the shout's id
+    uint32_t  cardian;      // charid
+    char      name[16];
+    uint8_t   job;
+    uint8_t   level;
+    uint8_t   race;
+    uint8_t   nation;
+    uint8_t   rank;         // in her own nation
+    uint8_t   presence;     // CL_PRESENCE_*
+    uint8_t   willing;      // 1: she would come
+    uint8_t   fit;          // CL_FIT_*: where her mission log stands, for a mission
+    uint32_t  affinity;     // hers toward him
+    uint32_t  revealMs;
+    uint32_t  decideMs;
+    uint16_t  zone;         // the zone id
+    uint16_t  spare;
+    char      zoneName[32]; // for people
+    char      line[96];     // for people
+} cl_shout_responder;
+
+// The shout for a goal: up to eight adventurers in reach hear it and answer
+// in their own time, each a SHOUT_RESPONDER (CL_F_MORE), then this. The same
+// goal again without `again` is the shout he has, to replay; `again` is a new
+// one, refused inside the cooldown with the one he has coming back. Refused
+// CL_S_COOLING_DOWN with none, waitMs saying how long
+typedef struct cl_shout
+{
+    cl_header h;
+    uint8_t   goal;    // CL_GOAL_*; answered: the goal of the shout he has, another than asked when a re-shout was refused
+    uint8_t   log;     // answered: the same
+    uint8_t   again;   // 1: a new shout, not the one he has
+    uint8_t   count;   // answered: responders sent
+    uint32_t  id;      // answered: this shout; the same id is the same shout
+    uint32_t  waitMs;  // answered: until he may shout again
+} cl_shout;
+
+// A look at one who answered his shout, or whom his contract holds: her jobs,
+// nation and rank, her affinity, what she wears -- as she stands, or as the
+// census dressed her while faded -- and her numbers as she stands, or as she
+// last stood at this level (known 0: never seen)
+typedef struct cl_peek
+{
+    cl_header h;
+    uint32_t  cardian;   // charid
+    uint8_t   job;       // answered
+    uint8_t   level;
+    uint8_t   subJob;
+    uint8_t   subLevel;
+    uint8_t   nation;
+    uint8_t   rank;
+    uint8_t   standing;  // 1: she has a body in the world
+    uint8_t   known;     // 1: the numbers below are hers
+    uint32_t  affinity;
+    uint16_t  hp;
+    uint16_t  maxHp;
+    uint16_t  mp;
+    uint16_t  maxMp;
+    int16_t   total[7];  // STR, DEX, VIT, AGI, INT, MND, CHR
+    int16_t   bonus[7];
+    uint16_t  attack;
+    uint16_t  defence;
+    uint16_t  items[16]; // what she wears, by equipment slot; 0 for none
+} cl_peek;
+
+// The party invite he would send by hand, sent for him, for the goal she was
+// asked about; she answers it herself. Answered by the outcome; declined,
+// with her words
+typedef struct cl_invite
+{
+    cl_header h;
+    uint32_t  cardian;  // charid
+    uint8_t   goal;     // CL_GOAL_*
+    uint8_t   log;
+    uint8_t   spare[2];
+    char      line[96]; // answered with CL_S_DECLINES: hers, for people
+} cl_invite;
+
+enum
+{
+    CL_CONTRACT_PARTY    = 0, // in his party
+    CL_CONTRACT_STANDING = 1, // standing, waiting to be invited
+    CL_CONTRACT_FADED    = 2, // online, no body
+    CL_CONTRACT_OUT      = 3, // could not stand (the map log says why)
+};
+
+// One of his open contracts: a world's adventurer held for him
+typedef struct cl_contract
+{
+    uint32_t cardian;  // charid
+    uint8_t  goal;     // CL_GOAL_*: what she was recruited for
+    uint8_t  job;
+    uint8_t  level;
+    uint8_t  state;    // CL_CONTRACT_*
+    uint16_t zone;     // the zone id
+    uint16_t spare;
+    char     name[16];
+} cl_contract;
+
+typedef struct cl_contracts
+{
+    cl_header   h;
+    uint8_t     count;         // answered
+    uint8_t     spare[3];
+    cl_contract contracts[16]; // answered
+} cl_contracts;
+
+// Her Party Finder page's Release: the contract ends and she is the world's
+// again where she stands, out of his party first when she is in it
+typedef struct cl_end_contract
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_end_contract;
 
 // ---- 0x08xx: the Auction House ---------------------------------------------
 //

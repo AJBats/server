@@ -170,20 +170,6 @@ namespace
         {
         }
     };
-
-    // Payload fragments sized for one GP_SERV_COMMAND_CHAT_STD each (Mes is
-    // 150 bytes and the command layer prepends "#cd xx.y <name> ")
-    constexpr size_t kChunkLimit = 110;
-
-    void packEntry(std::vector<std::string>& chunks, const std::string& entry)
-    {
-        if (chunks.empty() || chunks.back().size() + entry.size() + 1 > kChunkLimit)
-        {
-            chunks.emplace_back(entry);
-            return;
-        }
-        chunks.back() += "," + entry;
-    }
 } // namespace
 
 namespace pawn::items
@@ -926,26 +912,5 @@ namespace pawn::items
     {
         const auto* PGil = PChar->getStorage(LOC_INVENTORY)->GetItem(0);
         return PGil != nullptr && PGil->isType(ITEM_CURRENCY) ? PGil->getQuantity() : 0;
-    }
-
-    auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>
-    {
-        std::vector<std::string> chunks;
-
-        for (uint8 equipSlot = SLOT_MAIN; equipSlot < SLOT_LINK1; ++equipSlot)
-        {
-            const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot));
-            if (PItem == nullptr)
-            {
-                continue;
-            }
-            auto entry = fmt::format("{}:{}:{}", equipSlot, PItem->getID(), PItem->getSlotID());
-            if (PItem->getLocationID() != LOC_INVENTORY)
-            {
-                entry += fmt::format(":{}", PItem->getLocationID());
-            }
-            packEntry(chunks, entry);
-        }
-        return chunks;
     }
 } // namespace pawn::items

@@ -141,12 +141,6 @@ namespace pawn::items
     // partly, when given, says so.
     auto moveItem(CCharEntity* PPawn, uint8 fromLoc, uint8 slot, uint8 toLoc, uint32 qty, bool* partly = nullptr) -> uint16;
 
-    // What she wears, in the text protocol's chunks, for the party finder's
-    // look at a responder until it converts: each short enough for one
-    // chat-packet reply (~140 bytes), "<equipSlot>:<itemId>:<slot>[:<loc>],..."
-    // (filled slots only; loc present when the piece is worn from a wardrobe)
-    auto equipChunks(CCharEntity* PPawn) -> std::vector<std::string>;
-
     // Her gil: the inventory's slot 0 (0 when it holds none, or not gil)
     auto gilOf(CCharEntity* PChar) -> uint32;
 } // namespace pawn::items

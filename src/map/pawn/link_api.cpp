@@ -27,6 +27,7 @@
 #include "engage_math.h"
 #include "gambit_wire.h"
 #include "gate_guards.h"
+#include "party_finder.h"
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -169,24 +170,16 @@ namespace pawn::linkapi
         // cardian's purse is her own)
         auto statsOf(CCharEntity* PPawn, const bool managed) -> cl_member_stats
         {
-            auto stats    = make<cl_member_stats>();
-            stats.cardian = PPawn->id;
-            const std::array<std::pair<uint16, xi::Mod>, 7> kStats{ {
-                { PPawn->STR(), xi::Mod::STR },
-                { PPawn->DEX(), xi::Mod::DEX },
-                { PPawn->VIT(), xi::Mod::VIT },
-                { PPawn->AGI(), xi::Mod::AGI },
-                { PPawn->INT(), xi::Mod::INT },
-                { PPawn->MND(), xi::Mod::MND },
-                { PPawn->CHR(), xi::Mod::CHR },
-            } };
-            for (std::size_t i = 0; i < kStats.size(); ++i)
+            auto       stats   = make<cl_member_stats>();
+            const auto numbers = pawn::statusNumbers(PPawn);
+            stats.cardian      = PPawn->id;
+            for (std::size_t i = 0; i < numbers.total.size(); ++i)
             {
-                stats.total[i] = static_cast<int16_t>(kStats[i].first);
-                stats.bonus[i] = static_cast<int16_t>(PPawn->getMod(kStats[i].second));
+                stats.total[i] = numbers.total[i];
+                stats.bonus[i] = numbers.bonus[i];
             }
-            stats.attack  = clamp16(PPawn->ATT(SLOT_MAIN));
-            stats.defence = clamp16(PPawn->DEF());
+            stats.attack  = numbers.attack;
+            stats.defence = numbers.defence;
             stats.gil     = managed ? pawn::items::gilOf(PPawn) : 0;
             return stats;
         }
@@ -639,6 +632,237 @@ namespace pawn::linkapi
             answer.subJob    = vocab.sjob;
             answer.subLevel  = vocab.slvl;
             reply.finish(answer, CL_S_OK);
+        }
+
+        // ---- his cardians, and the party finder ----------------------------
+
+        static_assert(static_cast<uint8>(pawn::finder::Goal::Kind::Experience) == CL_GOAL_EXP &&
+                      static_cast<uint8>(pawn::finder::Goal::Kind::Mission) == CL_GOAL_MISSION &&
+                      static_cast<uint8>(pawn::finder::Goal::Kind::Quest) == CL_GOAL_QUEST);
+        static_assert(static_cast<uint8>(pawn::finder::Presence::Here) == CL_PRESENCE_HERE &&
+                      static_cast<uint8>(pawn::finder::Presence::Standing) == CL_PRESENCE_STANDING &&
+                      static_cast<uint8>(pawn::finder::Presence::Busy) == CL_PRESENCE_BUSY &&
+                      static_cast<uint8>(pawn::finder::Presence::Faded) == CL_PRESENCE_FADED &&
+                      static_cast<uint8>(pawn::finder::Presence::Away) == CL_PRESENCE_AWAY);
+        static_assert(static_cast<uint8>(pawn::finder::MissionFit::Free) == CL_FIT_FREE &&
+                      static_cast<uint8>(pawn::finder::MissionFit::Behind) == CL_FIT_BEHIND &&
+                      static_cast<uint8>(pawn::finder::MissionFit::On) == CL_FIT_ON &&
+                      static_cast<uint8>(pawn::finder::MissionFit::Done) == CL_FIT_DONE);
+
+        // Every character he could spawn as a cardian, in parts
+        void owned(CCharEntity* PChar, const cl_owned& ask, Reply& reply)
+        {
+            const auto            members  = pawn::accountPawns(PChar);
+            constexpr std::size_t kPerPart = sizeof(cl_owned::cardians) / sizeof(cl_owned_cardian);
+            std::size_t           next     = 0;
+            while (true)
+            {
+                auto part  = ask;
+                part.count = 0;
+                for (; part.count < kPerPart && next < members.size(); ++next)
+                {
+                    auto& row   = part.cardians[part.count++];
+                    row         = cl_owned_cardian{};
+                    row.cardian = members[next].first;
+                    row.out     = pawn::findPawn(members[next].first) != nullptr ? 1 : 0;
+                    setText(row.name, members[next].second);
+                }
+                if (next < members.size())
+                {
+                    reply.more(part);
+                    continue;
+                }
+                reply.finish(part, CL_S_OK);
+                return;
+            }
+        }
+
+        // One of those, by charid, by name; "" for none of his
+        auto ownedName(CCharEntity* PChar, const uint32 charid) -> std::string
+        {
+            for (auto& [id, name] : pawn::accountPawns(PChar))
+            {
+                if (id == charid)
+                {
+                    return name;
+                }
+            }
+            return {};
+        }
+
+        // The Debug screen's spawn and despawn (pawn::spawn, pawn::despawn)
+        void spawnCardian(CCharEntity* PChar, const cl_spawn& ask, Reply& reply)
+        {
+            const auto name = ownedName(PChar, ask.cardian);
+            reply.finish(ask, !name.empty() && pawn::spawn(PChar, name) ? CL_S_OK : CL_S_CANNOT_SPAWN);
+        }
+
+        void despawnCardian(CCharEntity* PChar, const cl_despawn& ask, Reply& reply)
+        {
+            const auto name = ownedName(PChar, ask.cardian);
+            if (name.empty())
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            reply.finish(ask, pawn::despawn(name) ? CL_S_OK : CL_S_NOT_OUT);
+        }
+
+        // A goal as the finder takes it, from its fields
+        auto goalOf(const uint8 kind, const uint8 log) -> std::optional<pawn::finder::Goal>
+        {
+            if (kind > CL_GOAL_QUEST)
+            {
+                return std::nullopt;
+            }
+            return pawn::finder::Goal{ static_cast<pawn::finder::Goal::Kind>(kind), log };
+        }
+
+        // One who heard the shout, as the screen shows her
+        auto responderOf(const uint32 shoutId, const pawn::finder::Responder& r) -> cl_shout_responder
+        {
+            const auto& c   = r.c;
+            auto        msg = make<cl_shout_responder>();
+            msg.shout       = shoutId;
+            msg.cardian     = c.charid;
+            setText(msg.name, c.name);
+            msg.job      = c.job;
+            msg.level    = c.level;
+            msg.race     = c.race;
+            msg.nation   = c.nation;
+            msg.rank     = c.rank;
+            msg.presence = static_cast<uint8_t>(c.presence);
+            msg.willing  = c.answer.yes ? 1 : 0;
+            msg.fit      = static_cast<uint8_t>(c.answer.fit);
+            msg.affinity = c.affinity;
+            msg.revealMs = r.revealMs;
+            msg.decideMs = r.decideMs;
+            msg.zone     = c.zoneId;
+            std::string zone = c.zone;
+            std::replace(zone.begin(), zone.end(), '_', ' ');
+            setText(msg.zoneName, zone);
+            setText(msg.line, c.answer.line);
+            return msg;
+        }
+
+        // The shout (pawn::finder::shout): each who heard it, then the shout;
+        // the one he has again, or refused, with the wait for the cooldown
+        void shout(CCharEntity* PChar, const cl_shout& ask, Reply& reply)
+        {
+            const auto goal = goalOf(ask.goal, ask.log);
+            if (!goal.has_value())
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            uint16      refusal = CL_S_OK;
+            uint32      waitMs  = 0;
+            const auto* made    = pawn::finder::shout(PChar, *goal, ask.again != 0, refusal, waitMs);
+            auto        answer  = ask;
+            if (made == nullptr)
+            {
+                answer.waitMs = waitMs;
+                reply.finish(answer, refusal);
+                return;
+            }
+            for (const auto& r : made->rows)
+            {
+                reply.more(responderOf(made->id, r));
+            }
+            answer.goal   = static_cast<uint8_t>(made->goal.kind);
+            answer.log    = made->goal.log;
+            answer.id     = made->id;
+            answer.waitMs = made->waitMs;
+            answer.count  = static_cast<uint8_t>(std::min<std::size_t>(made->rows.size(), UINT8_MAX));
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // A look at one who answered his shout, or whom his contract holds
+        void peek(CCharEntity* PChar, const cl_peek& ask, Reply& reply)
+        {
+            const auto p = pawn::finder::peek(PChar, ask.cardian);
+            if (!p.has_value())
+            {
+                reply.finish(ask, CL_S_NOT_IN_SHOUT);
+                return;
+            }
+            auto answer     = ask;
+            answer.job      = p->job;
+            answer.level    = p->level;
+            answer.subJob   = p->sjob;
+            answer.subLevel = p->slvl;
+            answer.nation   = p->nation;
+            answer.rank     = p->rank;
+            answer.standing = p->standing ? 1 : 0;
+            answer.known    = p->known ? 1 : 0;
+            answer.affinity = p->affinity;
+            answer.hp       = clamp16(p->hp);
+            answer.maxHp    = clamp16(p->maxhp);
+            answer.mp       = clamp16(p->mp);
+            answer.maxMp    = clamp16(p->maxmp);
+            for (std::size_t i = 0; i < p->numbers.total.size(); ++i)
+            {
+                answer.total[i] = p->numbers.total[i];
+                answer.bonus[i] = p->numbers.bonus[i];
+            }
+            answer.attack  = p->numbers.attack;
+            answer.defence = p->numbers.defence;
+            for (std::size_t slot = 0; slot < p->items.size(); ++slot)
+            {
+                answer.items[slot] = p->items[slot];
+            }
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // The party invite, sent for him; declined, with her words
+        void invite(CCharEntity* PChar, const cl_invite& ask, Reply& reply)
+        {
+            const auto goal = goalOf(ask.goal, ask.log);
+            if (!goal.has_value())
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            std::string line;
+            const auto  status = pawn::finder::invite(PChar, ask.cardian, *goal, line);
+            auto        answer = ask;
+            setText(answer.line, line);
+            reply.finish(answer, status);
+        }
+
+        static_assert(static_cast<uint8>(pawn::finder::ContractState::Party) == CL_CONTRACT_PARTY &&
+                      static_cast<uint8>(pawn::finder::ContractState::Standing) == CL_CONTRACT_STANDING &&
+                      static_cast<uint8>(pawn::finder::ContractState::Faded) == CL_CONTRACT_FADED &&
+                      static_cast<uint8>(pawn::finder::ContractState::Out) == CL_CONTRACT_OUT);
+
+        // His open contracts, as his Your contract page shows them
+        void contracts(CCharEntity* PChar, const cl_contracts& ask, Reply& reply)
+        {
+            auto                  answer = ask;
+            constexpr std::size_t kMax   = sizeof(cl_contracts::contracts) / sizeof(cl_contract);
+            answer.count                 = 0;
+            for (const auto& c : pawn::finder::contractsOf(PChar))
+            {
+                if (answer.count >= kMax)
+                {
+                    break;
+                }
+                auto& row   = answer.contracts[answer.count++];
+                row         = cl_contract{};
+                row.cardian = c.charid;
+                row.goal    = static_cast<uint8_t>(c.goal.kind);
+                row.job     = c.job;
+                row.level   = c.level;
+                row.zone    = c.zone;
+                row.state   = static_cast<uint8_t>(c.state);
+                setText(row.name, c.name);
+            }
+            reply.finish(answer, CL_S_OK);
+        }
+
+        void endContract(CCharEntity* PChar, const cl_end_contract& ask, Reply& reply)
+        {
+            reply.finish(ask, pawn::finder::release(PChar, ask.cardian));
         }
 
         // A point the mesh moved less than this (yalms) is the point asked
@@ -1458,6 +1682,14 @@ namespace pawn::linkapi
         handle<cl_gambit_replace>(gambitReplace);
         handle<cl_gambit_master>(gambitMaster);
         handle<cl_gambit_vocab>(gambitVocab);
+        handle<cl_owned>(owned);
+        handle<cl_spawn>(spawnCardian);
+        handle<cl_despawn>(despawnCardian);
+        handle<cl_shout>(shout);
+        handle<cl_peek>(peek);
+        handle<cl_invite>(invite);
+        handle<cl_contracts>(contracts);
+        handle<cl_end_contract>(endContract);
         handle<cl_walk>(walk);
         handle<cl_view>(lookThrough);
         handle<cl_maneuver>(maneuver);

@@ -2438,14 +2438,31 @@ namespace pawn
         return PPawn != nullptr && commands(PPlayer, PPawn) ? PPawn : nullptr;
     }
 
-    auto accountPawnNames(const CCharEntity* PChar) -> std::vector<std::string>
+    auto accountPawns(const CCharEntity* PChar) -> std::vector<std::pair<uint32, std::string>>
     {
-        std::vector<std::string> names;
-        for (auto& [charid, name] : accountMembers(PChar))
+        return accountMembers(PChar);
+    }
+
+    auto statusNumbers(CCharEntity* PChar) -> StatusNumbers
+    {
+        StatusNumbers numbers;
+        const std::array<std::pair<uint16, xi::Mod>, 7> stats{ {
+            { PChar->STR(), xi::Mod::STR },
+            { PChar->DEX(), xi::Mod::DEX },
+            { PChar->VIT(), xi::Mod::VIT },
+            { PChar->AGI(), xi::Mod::AGI },
+            { PChar->INT(), xi::Mod::INT },
+            { PChar->MND(), xi::Mod::MND },
+            { PChar->CHR(), xi::Mod::CHR },
+        } };
+        for (std::size_t i = 0; i < stats.size(); ++i)
         {
-            names.emplace_back(std::move(name));
+            numbers.total[i] = static_cast<int16>(stats[i].first);
+            numbers.bonus[i] = static_cast<int16>(PChar->getMod(stats[i].second));
         }
-        return names;
+        numbers.attack  = static_cast<uint16>(std::clamp<int32>(PChar->ATT(SLOT_MAIN), 0, UINT16_MAX));
+        numbers.defence = static_cast<uint16>(std::clamp<int32>(PChar->DEF(), 0, UINT16_MAX));
+        return numbers;
     }
 
     auto commandablePawns(const CCharEntity* PPlayer) -> std::vector<CCharEntity*>
