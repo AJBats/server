@@ -25,8 +25,7 @@
 //   - Characters are named by charid, entities within a zone by target index.
 //   - Text fields are for people to read, never for code to parse. The sender
 //     cuts text to fit, and a field always keeps its terminating zero.
-//   - A message's size equals its struct's size, except CL_T_LEGACY_CD, whose
-//     text follows the struct.
+//   - A message's size equals its struct's size.
 //   - Every constant is written with its value: the addon reads the numbers
 //     from this text to name messages and outcomes in its logs.
 #pragma once
@@ -34,7 +33,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 27: NOTE, what came of a cardian's
+// compatible, the user, 2026-09-14). 28: the party finder's goals, GOALS
+// and GOAL, and the conquest exchange, CP_SHOP, CP_ITEM and CP_BUY (the
+// goals, cpshop and cpbuy lines leave, and LEGACY_CD with them: no text
+// crosses the link any more); 27: NOTE, what came of a cardian's
 // order after it was taken (the note line leaves LEGACY_CD for the server's
 // pushes); 26: his cardians and the party finder,
 // OWNED, SPAWN, DESPAWN, SHOUT, SHOUT_RESPONDER, PEEK, INVITE, CONTRACTS and
@@ -66,7 +68,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 27 };
+enum { CL_PROTOCOL = 28 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -214,6 +216,17 @@ enum
     CL_S_IN_A_PARTY        = 0x019E,
     CL_S_INVITE_PENDING    = 0x019F, // she already has an invite
     CL_S_NO_CONTRACT       = 0x01A0, // she holds no contract with him
+
+    // The conquest exchange (no room in her inventory: CL_S_NO_SPACE)
+    CL_S_NO_GUARD          = 0x01B0, // the player stands by no gate guard that sells
+    CL_S_NOT_SOLD          = 0x01B1, // this guard does not sell that
+    CL_S_NOT_BY_PROXY      = 0x01B2, // the experience rings are sold to a player in person
+    CL_S_OUTRANKED         = 0x01B3, // another nation's guard sells only to a nation that outranks his
+    CL_S_FOREIGN_PLACE     = 0x01B4, // another nation's guard never sells what a conquest place buys
+    CL_S_NATION_PLACE      = 0x01B5, // her nation's conquest place is below the item's: the answer's have and need
+    CL_S_TOO_FEW_POINTS    = 0x01B6, // her conquest points fall short: the answer's have and need
+    CL_S_RANK_TOO_LOW      = 0x01B7, // her rank is below the item's: the answer's have and need
+    CL_S_GUARD_REFUSED     = 0x01B8, // the guard's own rules refused it, for none of the reasons above
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -255,7 +268,7 @@ enum
     CL_T_STATS     = 0x0006,
     CL_T_WHOAMI    = 0x0007,
     CL_T_UNBOUND   = 0x0008,
-    CL_T_LEGACY_CD = 0x00FF,
+    // 0x00FF was LEGACY_CD, which carried the text protocol's lines (15 to 27)
 };
 
 // The first message each way: the addon asks, the server answers with its own
@@ -335,16 +348,6 @@ typedef struct cl_unbound
 {
     cl_header h;
 } cl_unbound;
-
-// Scaffolding while the text protocol is converted, one message at a time; it
-// leaves before the conversion is merged. One-way, both ways: a line of the old
-// protocol without its 'cd ' -- from the addon, a !cardian verb the server runs
-// for the bound character; from the server, one of that command's replies. The
-// text follows the struct, and h.size counts it.
-typedef struct cl_legacy_cd
-{
-    cl_header h;
-} cl_legacy_cd;
 
 // ---- 0x01xx: a cardian's state --------------------------------------------
 //
@@ -1347,6 +1350,8 @@ enum
     CL_T_INVITE          = 0x0604,
     CL_T_CONTRACTS       = 0x0605,
     CL_T_END_CONTRACT    = 0x0606,
+    CL_T_GOALS           = 0x0607,
+    CL_T_GOAL            = 0x0608,
 };
 
 enum
@@ -1492,6 +1497,88 @@ typedef struct cl_end_contract
     cl_header h;
     uint32_t  cardian; // charid
 } cl_end_contract;
+
+// One goal he could recruit for: a mission log's current mission, or a quest
+// under way. An answer to GOALS
+typedef struct cl_goal
+{
+    cl_header h;
+    uint8_t   kind;      // CL_GOAL_MISSION or CL_GOAL_QUEST
+    uint8_t   log;       // the mission log, or the quest area
+    uint16_t  id;        // the mission's or the quest's id in its log
+    char      title[48]; // for people
+} cl_goal;
+
+// What he could recruit for (the finder's goals): each GOAL (CL_F_MORE), then
+// this, with how many missions of each log he has completed
+typedef struct cl_goals
+{
+    cl_header h;
+    uint8_t   count;         // answered: goals sent
+    uint8_t   spare[3];
+    uint16_t  completed[16]; // answered: by mission log id
+} cl_goals;
+
+// ---- 0x07xx: the conquest exchange -----------------------------------------
+//
+// A cardian cannot talk to a gate guard, but her player can stand beside one
+// (the roster's CL_MEMBER_BY_GUARD), and she buys from that guard's stock, at
+// that guard's prices, out of her own conquest points. The sale is the
+// guard's own (scripts/globals/conquest.lua); the Link asks
+// modules/cardian/lua/conquest_exchange.lua.
+
+enum
+{
+    CL_T_CP_SHOP = 0x0701,
+    CL_T_CP_ITEM = 0x0702,
+    CL_T_CP_BUY  = 0x0703,
+};
+
+// One thing the guard sells her: an answer to CP_SHOP
+typedef struct cl_cp_item
+{
+    cl_header h;
+    uint16_t  option; // the guard's own number for it
+    uint16_t  item;   // the item id
+    uint32_t  price;  // in her conquest points, at this guard
+    uint8_t   level;  // the level it is worn at
+    uint8_t   rank;   // the rank in her nation it needs; 0 for none
+    uint8_t   place;  // the conquest place her nation must hold for it; 0 for none
+    uint8_t   spare;
+} cl_cp_item;
+
+// The guard within the player's reach: what he sells her, each a CP_ITEM
+// (CL_F_MORE), then this, where she stands with him
+typedef struct cl_cp_shop
+{
+    cl_header h;
+    uint32_t  cardian;     // charid
+    uint32_t  cp;          // answered: her conquest points
+    uint8_t   rank;        // answered: her rank in her nation
+    uint8_t   nation;      // answered: hers (xi.nation)
+    uint8_t   guardNation; // answered: the guard's; 4 for Jeuno's
+    uint8_t   nationRank;  // answered: her nation's place in the conquest tally
+    uint8_t   foreign;     // answered: 1, another nation's guard
+    uint8_t   blocked;     // answered: 1, his nation outranks hers, so he sells her nothing
+    uint8_t   count;       // answered: items sent
+    uint8_t   spare;
+    char      guard[24];   // answered: the guard's name as the game keeps it ('Aravoge_TK'), for people
+} cl_cp_shop;
+
+// Buy one thing for her: her inventory (INVENTORY, CL_F_MORE) when she bought
+// it, then this. A refusal's have and need are the numbers its words need: her
+// points and the price, her rank and the item's, or her nation's place and
+// the item's
+typedef struct cl_cp_buy
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint16_t  option;  // cl_cp_item's
+    uint16_t  spare;
+    uint32_t  cp;      // answered: her conquest points now
+    uint32_t  have;    // answered, with a refusal that needs it
+    uint32_t  need;
+} cl_cp_buy;
 
 // ---- 0x08xx: the Auction House ---------------------------------------------
 //

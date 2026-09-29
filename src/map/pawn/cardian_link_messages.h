@@ -49,7 +49,6 @@ namespace cardian::link
     X(STATS, cl_stats)           \
     X(WHOAMI, cl_whoami)         \
     X(UNBOUND, cl_unbound)       \
-    X(LEGACY_CD, cl_legacy_cd)   \
     X(INVENTORY, cl_inventory)   \
     X(ROSTER, cl_roster)         \
     X(MEMBER, cl_member)         \
@@ -70,6 +69,11 @@ namespace cardian::link
     X(INVITE, cl_invite) \
     X(CONTRACTS, cl_contracts) \
     X(END_CONTRACT, cl_end_contract) \
+    X(GOALS, cl_goals)           \
+    X(GOAL, cl_goal)             \
+    X(CP_SHOP, cl_cp_shop)       \
+    X(CP_ITEM, cl_cp_item)       \
+    X(CP_BUY, cl_cp_buy)         \
     X(GIVE, cl_give)             \
     X(TAKE, cl_take)             \
     X(GIL, cl_gil)               \

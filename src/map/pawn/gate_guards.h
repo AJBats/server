@@ -33,7 +33,8 @@ class CCharEntity;
 // embassy guards (xi.conquest.guard CITY and FOREIGN; the outpost and border
 // overseers sell nothing), found by grepping overseerOnTrigger in
 // scripts/zones/*/npcs. The roster tells the addon whether one stands within
-// the player's reach, and the exchange's verbs sell from the nearest.
+// the player's reach, and the exchange's messages (CP_SHOP, CP_BUY) sell from
+// the nearest.
 namespace pawn::guards
 {
     struct Guard

@@ -29,21 +29,12 @@
 #include "common/timer.h"
 #include "common/version.h"
 
-#include "command_handler.h"
 #include "common/types/position.h"
 #include "entities/char_entity.h"
 #include "map_session.h"
 #include "pause/pause.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
-
-// The map's Lua state (luautils.h), taken by forward declaration so this
-// transport never pays sol2's compile cost
-namespace sol
-{
-class state;
-}
-extern sol::state lua;
 
 #include <asio/ip/tcp.hpp>
 #include <asio/read.hpp>
@@ -64,9 +55,6 @@ using namespace std::chrono_literals;
 
 namespace
 {
-    // A LEGACY_CD line is running as the !cardian command (runningLegacy)
-    bool legacyRunning = false;
-
     using namespace cardian::link;
 
     Stats g_stats;
@@ -112,11 +100,6 @@ namespace
         std::function<void(CCharEntity* PChar, std::string_view frame, Reply& reply)> handler;
     };
     std::unordered_map<uint16, Registered> g_handlers;
-
-    // An addon of the text protocol opened with a line starting "hello ". The
-    // first bytes are enough to tell it apart: as a binary size they are far
-    // over any limit.
-    constexpr std::string_view kTextHello = "hell";
 
     // Peer bytes never reach the log raw
     auto printable(std::string_view text) -> std::string
@@ -428,15 +411,6 @@ namespace
             {
                 const auto rest = std::string_view(inbox_).substr(handled);
 
-                if (!greeted_ && rest.starts_with(kTextHello))
-                {
-                    // The text protocol's own welcome line, carrying this server's
-                    // protocol number: an addon that old unloads itself with its
-                    // own mismatch message
-                    enqueue(fmt::format("welcome {} 0 {}\n", version::GetGitSha(), static_cast<int>(CL_PROTOCOL)));
-                    return "an addon of the text protocol, told this server's protocol";
-                }
-
                 if (rest.size() < sizeof(uint32_t))
                 {
                     return {};
@@ -557,9 +531,6 @@ namespace
                     return {};
                 case CL_T_POS:
                     handlePos(frame);
-                    return {};
-                case CL_T_LEGACY_CD:
-                    handleLegacy(frame);
                     return {};
                 default:
                     break;
@@ -724,37 +695,6 @@ namespace
             ask.zone   = static_cast<uint16_t>(PChar->getZone());
             setText(ask.name, PChar->getName());
             answer(ask, CL_S_OK);
-        }
-
-        // The old protocol's cardian verbs, until each has its own message:
-        // the text runs as the bound character's !cardian command, whose
-        // replies come back as LEGACY_CD through sendLegacy
-        void handleLegacy(const std::string_view frame)
-        {
-            auto* PChar = requireBound(frame);
-            if (PChar == nullptr)
-            {
-                return;
-            }
-            auto text = frame.substr(sizeof(cl_legacy_cd));
-            text.remove_prefix(std::min(text.find_first_not_of(' '), text.size()));
-            if (text.empty())
-            {
-                return;
-            }
-            // The command runs inside the call, on this thread: marked for its span
-            struct Running
-            {
-                Running()
-                {
-                    legacyRunning = true;
-                }
-                ~Running()
-                {
-                    legacyRunning = false;
-                }
-            } running;
-            CCommandHandler::call(scheduler_, ::lua, PChar, fmt::format("cardian {}", text));
         }
 
         // The client's raw values, filed in the side store in server
@@ -995,20 +935,6 @@ namespace cardian::link
         {
             connection->push(bytes);
         }
-    }
-
-    auto runningLegacy() -> bool
-    {
-        return legacyRunning;
-    }
-
-    auto sendLegacy(const uint32 charid, const std::string_view line) -> bool
-    {
-        auto header   = make<cl_legacy_cd>();
-        header.h.size = static_cast<uint32_t>(sizeof(cl_legacy_cd) + line.size());
-        auto bytes    = bytesOf(header);
-        bytes.append(line);
-        return sendBytes(charid, std::move(bytes));
     }
 
     auto freshPositionOf(uint32 charid) -> std::optional<FreshPosition>

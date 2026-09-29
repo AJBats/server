@@ -20,7 +20,6 @@
 */
 
 #include "auction.h"
-#include "gate_guards.h"
 #include "cardian_link.h"
 #include "engage_math.h"
 #include "pawn.h"
@@ -249,8 +248,10 @@ class PawnModule : public CPPModule
     void OnInit() override
     {
         pawn::cleanupStaleRows();
-        // The cardian API's messages on the Cardian Link (link_api.cpp)
+        // The cardian API's messages on the Cardian Link (link_api.cpp), and
+        // the Lua libraries two of them are answered from
         pawn::linkapi::registerHandlers();
+        pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
         // The MP bank's samplers, a Lua library (RESEARCH §12.13)
@@ -493,8 +494,8 @@ class PawnModule : public CPPModule
             return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
         };
 
-        // Cardian management surface for the debug commands and the !cardian
-        // command's Lua (the conquest exchange, goals, party progress).
+        // Cardian management surface for the debug commands and the party
+        // progress module (modules/cardian/lua/party_progress.lua).
         // Two gates (ROADMAP H: command yes, manage no). managedPair resolves
         // the named pawn through findManagedPawn: only the summoner inspects
         // or moves her belongings or spends her money. commandPair resolves
@@ -512,25 +513,6 @@ class PawnModule : public CPPModule
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return { PChar, pawn::findCommandablePawn(PChar, name) };
-        };
-
-        // The !cardian command's replies, over the Cardian Link to this
-        // character's addon: a '#cd tag ...' line goes as the text of a
-        // LEGACY_CD message until its own message exists. false = no link.
-        // And whether the command runs for the addon at all (cardianByLink):
-        // typed by a person, it answers nothing (CLAUDE.md, UI first)
-        lua["CBaseEntity"]["cardianLinkSend"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& line) -> bool
-        {
-            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
-            if (PChar == nullptr)
-            {
-                return false;
-            }
-            return cardian::link::sendLegacy(PChar->id, line.rfind("#cd ", 0) == 0 ? std::string_view(line).substr(4) : std::string_view(line));
-        };
-        lua["CBaseEntity"]["cardianByLink"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> bool
-        {
-            return cardian::link::runningLegacy();
         };
 
         lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& why, sol::optional<bool> mission)
@@ -627,30 +609,6 @@ class PawnModule : public CPPModule
                 }
             });
         });
-
-        // One of her containers told to the player's addon one-way (pawn/link_api.h):
-        // the conquest exchange's purchase, still on LEGACY_CD, calls it after a sale
-        lua["CBaseEntity"]["cardianTellInventory"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const uint8 location)
-        {
-            const auto [PChar, PPawn] = managedPair(PLuaBaseEntity, name);
-            pawn::linkapi::tellInventory(PChar, PPawn, location);
-        };
-
-        // The gate guard within the player's reach, { name, nation, type }, nil for
-        // none (pawn/gate_guards.h): the conquest exchange sells from its stock
-        lua["CBaseEntity"]["cardianGuardNear"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
-        {
-            const auto* PGuard = pawn::guards::guardNear(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()));
-            if (PGuard == nullptr)
-            {
-                return sol::lua_nil;
-            }
-            auto guard      = ::lua.create_table();
-            guard["name"]   = std::string(PGuard->name);
-            guard["nation"] = PGuard->nation;
-            guard["type"]   = PGuard->type;
-            return guard;
-        };
     }
 
     // A character entering a zone -- a login, a zone change, a cardian's

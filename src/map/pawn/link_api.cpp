@@ -38,6 +38,8 @@
 #include "ai/ai_container.h"
 #include "common/logging.h"
 #include "entities/char_entity.h"
+#include "lua/lua_base_entity.h"
+#include "lua/luautils.h"
 #include "enums/item_state.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -53,6 +55,8 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -690,6 +694,55 @@ namespace pawn::linkapi
             return {};
         }
 
+        // The Lua libraries some answers come from (modules/cardian/lua), by
+        // their table under xi.cardian: a library that did not load, or a
+        // function that failed, says so in the map log once and answers
+        // CL_S_REFUSED
+        constexpr std::array<std::pair<const char*, const char*>, 2> kLibraries{ {
+            { "finder", "./modules/cardian/lua/finder_goals.lua" },
+            { "exchange", "./modules/cardian/lua/conquest_exchange.lua" },
+        } };
+
+        auto libraryCall(const char* library, const char* name) -> std::optional<sol::protected_function>
+        {
+            const sol::object cardian = ::lua["xi"]["cardian"];
+            sol::object       table;
+            if (cardian.get_type() == sol::type::table)
+            {
+                table = cardian.as<sol::table>()[library];
+            }
+            if (table.get_type() != sol::type::table || table.as<sol::table>()[name].get_type() != sol::type::function)
+            {
+                static std::set<std::string> said;
+                if (said.insert(fmt::format("{}.{}", library, name)).second)
+                {
+                    ShowError("link: xi.cardian.{}.{} is not loaded (modules/cardian/lua); its answers are refused", library, name);
+                }
+                return std::nullopt;
+            }
+            return sol::protected_function(table.as<sol::table>()[name]);
+        }
+
+        // The result, or nullopt when the call failed (said once per name)
+        auto libraryTable(const char* name, const sol::protected_function_result& res) -> std::optional<sol::table>
+        {
+            if (!res.valid())
+            {
+                static std::set<std::string> said;
+                if (said.insert(name).second)
+                {
+                    sol::error err = res;
+                    ShowError("link: {} failed: {}", name, err.what());
+                }
+                return std::nullopt;
+            }
+            if (res.get_type(0) != sol::type::table)
+            {
+                return std::nullopt;
+            }
+            return res.get<sol::table>(0);
+        }
+
         // The Debug screen's spawn and despawn (pawn::spawn, pawn::despawn)
         void spawnCardian(CCharEntity* PChar, const cl_spawn& ask, Reply& reply)
         {
@@ -716,6 +769,53 @@ namespace pawn::linkapi
                 return std::nullopt;
             }
             return pawn::finder::Goal{ static_cast<pawn::finder::Goal::Kind>(kind), log };
+        }
+
+        // What he could recruit for besides experience (xi.cardian.finder.goals):
+        // each mission log's current mission and every quest under way, a GOAL
+        // each, then the missions done on each log
+        void goals(CCharEntity* PChar, const cl_goals& ask, Reply& reply)
+        {
+            auto call  = libraryCall("finder", "goals");
+            auto found = call ? libraryTable("finder.goals", (*call)(CLuaBaseEntity(PChar))) : std::nullopt;
+            if (!found)
+            {
+                reply.finish(ask, CL_S_REFUSED);
+                return;
+            }
+            auto       answer = ask;
+            const auto send   = [&](const uint8 kind, const sol::object& list)
+            {
+                if (list.get_type() != sol::type::table)
+                {
+                    return;
+                }
+                const auto rows = list.as<sol::table>();
+                for (std::size_t i = 1; i <= rows.size(); ++i)
+                {
+                    const sol::table row = rows[i];
+                    auto             msg = make<cl_goal>();
+                    msg.kind             = kind;
+                    msg.log              = row.get_or<uint8>("log", 0);
+                    msg.id               = row.get_or<uint16>("id", 0);
+                    setText(msg.title, row.get_or<std::string>("title", ""));
+                    reply.more(msg);
+                    answer.count = static_cast<uint8_t>(std::min<int>(answer.count + 1, UINT8_MAX));
+                }
+            };
+            send(CL_GOAL_MISSION, (*found)["missions"]);
+            send(CL_GOAL_QUEST, (*found)["quests"]);
+            if (const sol::object done = (*found)["completed"]; done.get_type() == sol::type::table)
+            {
+                for (const auto& [log, count] : done.as<sol::table>())
+                {
+                    if (log.get_type() == sol::type::number && count.get_type() == sol::type::number && log.as<std::size_t>() < sizeof(answer.completed) / sizeof(answer.completed[0]))
+                    {
+                        answer.completed[log.as<std::size_t>()] = clamp16(count.as<int64>());
+                    }
+                }
+            }
+            reply.finish(answer, CL_S_OK);
         }
 
         // One who heard the shout, as the screen shows her
@@ -1588,6 +1688,125 @@ namespace pawn::linkapi
             reply.finish(answer, CL_S_OK);
         }
 
+        // The conquest exchange's refusals, as conquest_exchange.lua names them
+        auto exchangeRefusal(const std::string& name) -> uint16
+        {
+            static const std::map<std::string, uint16> kCodes{
+                { "NO_SPACE", CL_S_NO_SPACE },
+                { "NOT_SOLD", CL_S_NOT_SOLD },
+                { "NOT_BY_PROXY", CL_S_NOT_BY_PROXY },
+                { "OUTRANKED", CL_S_OUTRANKED },
+                { "FOREIGN_PLACE", CL_S_FOREIGN_PLACE },
+                { "NATION_PLACE", CL_S_NATION_PLACE },
+                { "TOO_FEW_POINTS", CL_S_TOO_FEW_POINTS },
+                { "RANK_TOO_LOW", CL_S_RANK_TOO_LOW },
+                { "GUARD_REFUSED", CL_S_GUARD_REFUSED },
+            };
+            if (const auto it = kCodes.find(name); it != kCodes.end())
+            {
+                return it->second;
+            }
+            ShowError("link: the conquest exchange named a refusal the Link does not know: {}", name);
+            return CL_S_REFUSED;
+        }
+
+        // The gate guard within his reach sells to a cardian of his to manage
+        // (pawn/gate_guards.h); nullptr with the outcome when either is missing
+        auto exchangeParties(CCharEntity* PChar, const uint32 cardian, uint16& refusal) -> std::pair<CCharEntity*, const pawn::guards::Guard*>
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, cardian);
+            if (PPawn == nullptr)
+            {
+                refusal = CL_S_NO_SUCH_CARDIAN;
+                return {};
+            }
+            const auto* PGuard = pawn::guards::guardNear(PChar);
+            if (PGuard == nullptr)
+            {
+                refusal = CL_S_NO_GUARD;
+                return {};
+            }
+            return { PPawn, PGuard };
+        }
+
+        // What the guard sells her (xi.cardian.exchange.shop): a CP_ITEM each,
+        // then where she stands with him
+        void cpShop(CCharEntity* PChar, const cl_cp_shop& ask, Reply& reply)
+        {
+            uint16 refusal       = CL_S_OK;
+            auto [PPawn, PGuard] = exchangeParties(PChar, ask.cardian, refusal);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, refusal);
+                return;
+            }
+            auto call = libraryCall("exchange", "shop");
+            auto shop = call ? libraryTable("exchange.shop", (*call)(CLuaBaseEntity(PPawn), PGuard->nation)) : std::nullopt;
+            if (!shop)
+            {
+                reply.finish(ask, CL_S_REFUSED);
+                return;
+            }
+            auto answer = ask;
+            if (const sol::object items = (*shop)["items"]; items.get_type() == sol::type::table)
+            {
+                const auto rows = items.as<sol::table>();
+                for (std::size_t i = 1; i <= rows.size(); ++i)
+                {
+                    const sol::table row = rows[i];
+                    auto             msg = make<cl_cp_item>();
+                    msg.option           = row.get_or<uint16>("option", 0);
+                    msg.item             = row.get_or<uint16>("item", 0);
+                    msg.price            = row.get_or<uint32>("price", 0);
+                    msg.level            = row.get_or<uint8>("level", 0);
+                    msg.rank             = row.get_or<uint8>("rank", 0);
+                    msg.place            = row.get_or<uint8>("place", 0);
+                    reply.more(msg);
+                    answer.count = static_cast<uint8_t>(std::min<int>(answer.count + 1, UINT8_MAX));
+                }
+            }
+            answer.cp          = shop->get_or<uint32>("cp", 0);
+            answer.rank        = shop->get_or<uint8>("rank", 0);
+            answer.nation      = shop->get_or<uint8>("nation", 0);
+            answer.guardNation = PGuard->nation;
+            answer.nationRank  = shop->get_or<uint8>("nationRank", 0);
+            answer.foreign     = shop->get_or("foreign", false) ? 1 : 0;
+            answer.blocked     = shop->get_or("blocked", false) ? 1 : 0;
+            setText(answer.guard, std::string(PGuard->name));
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // One thing bought for her (xi.cardian.exchange.buy): her inventory,
+        // then the outcome, her points as they stand either way
+        void cpBuy(CCharEntity* PChar, const cl_cp_buy& ask, Reply& reply)
+        {
+            uint16 refusal       = CL_S_OK;
+            auto [PPawn, PGuard] = exchangeParties(PChar, ask.cardian, refusal);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, refusal);
+                return;
+            }
+            auto call = libraryCall("exchange", "buy");
+            auto sale = call ? libraryTable("exchange.buy", (*call)(CLuaBaseEntity(PPawn), PGuard->nation, PGuard->type, ask.option)) : std::nullopt;
+            if (!sale)
+            {
+                reply.finish(ask, CL_S_REFUSED);
+                return;
+            }
+            auto answer = ask;
+            answer.cp   = sale->get_or<uint32>("cp", 0);
+            answer.have = sale->get_or<uint32>("have", 0);
+            answer.need = sale->get_or<uint32>("need", 0);
+            if (const auto named = sale->get<sol::optional<std::string>>("refusal"))
+            {
+                reply.finish(answer, exchangeRefusal(*named));
+                return;
+            }
+            reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+            reply.finish(answer, CL_S_OK);
+        }
+
         // Her level in every job
         void jobs(CCharEntity* PChar, const cl_jobs& ask, Reply& reply)
         {
@@ -1655,11 +1874,16 @@ namespace pawn::linkapi
         }
     } // namespace
 
-    void tellInventory(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 location)
+    void loadLibraries()
     {
-        if (PPlayer != nullptr && PPawn != nullptr && location <= LOC_WARDROBE8)
+        for (const auto& [library, path] : kLibraries)
         {
-            cardian::link::send(PPlayer->id, inventoryOf(PPawn, location));
+            const auto res = ::lua.safe_script_file(path);
+            if (!res.valid())
+            {
+                sol::error err = res;
+                ShowError("link: xi.cardian.{} did not load: {}", library, err.what());
+            }
         }
     }
 
@@ -1690,6 +1914,9 @@ namespace pawn::linkapi
         handle<cl_invite>(invite);
         handle<cl_contracts>(contracts);
         handle<cl_end_contract>(endContract);
+        handle<cl_goals>(goals);
+        handle<cl_cp_shop>(cpShop);
+        handle<cl_cp_buy>(cpBuy);
         handle<cl_walk>(walk);
         handle<cl_view>(lookThrough);
         handle<cl_maneuver>(maneuver);

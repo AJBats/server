@@ -24,19 +24,15 @@
 // The cardian API on the Cardian Link: the companion addon's messages about
 // cardians, answered from the pawn module. The transport (cardian_link.h)
 // carries them; this file turns each into the game's own calls and the game's
-// state back into messages. The verbs not yet converted still run as the
-// !cardian command (scripts/commands/cardian.lua) through LEGACY_CD.
-#include "common/cbasetypes.h"
-
-class CCharEntity;
+// state back into messages. Two of them are answered from Lua, where the
+// game's own tables are: the party finder's goals and the conquest exchange
+// (modules/cardian/lua/finder_goals.lua and conquest_exchange.lua).
 
 namespace pawn::linkapi
 {
     // Hands every handler of this file to the transport; the pawn module's init
     void registerHandlers();
 
-    // One of her containers, told to the player's addon one-way as a change
-    // moves it: the conquest exchange's purchase, still on LEGACY_CD, calls
-    // this (the binding cardianTellInventory) until it converts
-    void tellInventory(CCharEntity* PPlayer, CCharEntity* PPawn, uint8 location);
+    // Loads the Lua libraries the handlers ask; the pawn module's init
+    void loadLibraries();
 } // namespace pawn::linkapi

@@ -128,7 +128,11 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_contracts) == 468);
     STATIC_REQUIRE(sizeof(cl_end_contract) == 20);
     STATIC_REQUIRE(sizeof(cl_note) == 68);
-    STATIC_REQUIRE(sizeof(cl_legacy_cd) == sizeof(cl_header));
+    STATIC_REQUIRE(sizeof(cl_goal) == 68);
+    STATIC_REQUIRE(sizeof(cl_goals) == 52);
+    STATIC_REQUIRE(sizeof(cl_cp_item) == 28);
+    STATIC_REQUIRE(sizeof(cl_cp_shop) == 56);
+    STATIC_REQUIRE(sizeof(cl_cp_buy) == 36);
 }
 
 TEST_CASE("Cardian link: a cardian's order key and its action fields cross both ways", "[cardian][link]")
@@ -216,7 +220,8 @@ TEST_CASE("Cardian link: text is cut to fit and always terminated", "[cardian][l
 TEST_CASE("Cardian link: type numbers name their messages in the logs", "[cardian][link]")
 {
     CHECK(typeName(CL_T_GIVE) == "GIVE");
-    CHECK(typeName(CL_T_LEGACY_CD) == "LEGACY_CD");
+    CHECK(typeName(CL_T_CP_BUY) == "CP_BUY");
+    CHECK(typeName(0x00FF) == "0x00FF"); // LEGACY_CD's, never reused
     CHECK(typeName(0x7FFE) == "0x7FFE");
 }
 
