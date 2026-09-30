@@ -33,7 +33,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 28: the party finder's goals, GOALS
+// compatible, the user, 2026-09-14). 30: a PARTY_ROLE carries the member's
+// numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
+// PARTY_ROLES, PARTY_ROLE and SET_PARTY_ROLE (RESEARCH §15); 28: the party finder's goals, GOALS
 // and GOAL, and the conquest exchange, CP_SHOP, CP_ITEM and CP_BUY (the
 // goals, cpshop and cpbuy lines leave, and LEGACY_CD with them: no text
 // crosses the link any more); 27: NOTE, what came of a cardian's
@@ -68,7 +70,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 28 };
+enum { CL_PROTOCOL = 30 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -138,6 +140,7 @@ enum
     CL_S_NOT_A_MONSTER     = 0x0123, // a player or a cardian, not a monster
     CL_S_UNDERGROUND       = 0x0124, // the monster is out of reach underground
     CL_S_NO_CARDIANS_OUT   = 0x0125, // none of his cardians is out in his zone
+    CL_S_NOT_IN_PARTY      = 0x0126, // nobody by that charid is in his party
 
     // One cardian's orders
     CL_S_NOT_KNOCKED_OUT   = 0x0130, // a home point is for a KO'd cardian
@@ -992,6 +995,9 @@ enum
     CL_T_QUEUES       = 0x0410,
     CL_T_SPAWN        = 0x0411,
     CL_T_DESPAWN      = 0x0412,
+    CL_T_PARTY_ROLES    = 0x0413,
+    CL_T_PARTY_ROLE     = 0x0414,
+    CL_T_SET_PARTY_ROLE = 0x0415,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1213,6 +1219,67 @@ typedef struct cl_queues
 {
     cl_header h;
 } cl_queues;
+
+// ---- the party's roles (RESEARCH §15) ----
+// Who tanks, heals, deals damage and pulls, as the party screen shows them.
+// The join rule says each member's role until the player chooses one for her.
+enum
+{
+    CL_ROLE_NONE   = 0,
+    CL_ROLE_TANK   = 1,
+    CL_ROLE_HEALER = 2,
+    CL_ROLE_DAMAGE = 3,
+    CL_ROLE_PULLER = 4, // one member's; the others can be held by several
+    CL_ROLE_AUTO   = 255, // asked only, never answered: the player's choice for her is taken back, and the join rule decides again
+};
+
+// One member of his party, her role, and what her column of the party screen
+// shows of her: an answer to PARTY_ROLES and to SET_PARTY_ROLE
+typedef struct cl_party_role
+{
+    cl_header h;
+    uint32_t  member;    // charid: the player, a cardian, or another player of his party
+    char      name[16];
+    uint8_t   mainJob;
+    uint8_t   mainLevel;
+    uint8_t   subJob;
+    uint8_t   subLevel;
+    uint8_t   role;      // CL_ROLE_*, never CL_ROLE_AUTO
+    uint8_t   byPlayer;  // 1 when the player chose it, 0 when the join rule gave it
+    uint8_t   self;      // 1 on the asking player's own row
+    uint8_t   spare;
+    uint16_t  hp;
+    uint16_t  maxHp;
+    uint16_t  mp;
+    uint16_t  maxMp;
+    uint16_t  tp;
+    uint16_t  attack;
+    uint16_t  defence;
+    uint16_t  spare2;
+    int16_t   total[7];  // STR, DEX, VIT, AGI, INT, MND, CHR
+    int16_t   bonus[7];  // the part of each that gear and effects give
+    uint16_t  worn[16];  // the item in each equipment slot, main hand to back; 0 for an empty slot
+} cl_party_role;
+
+// His party's roles: each member comes as a PARTY_ROLE answer (CL_F_MORE), the
+// player first and then in the order the party holds them, then this
+typedef struct cl_party_roles
+{
+    cl_header h;
+    uint8_t   count;    // answered: members sent
+    uint8_t   spare[3];
+} cl_party_roles;
+
+// The player's choice of a member's role, or, with CL_ROLE_AUTO, his taking
+// it back. The roles come back as they now stand (PARTY_ROLE, CL_F_MORE) ahead
+// of the outcome, refused or not
+typedef struct cl_set_party_role
+{
+    cl_header h;
+    uint32_t  member;   // charid
+    uint8_t   role;     // CL_ROLE_*
+    uint8_t   spare[3];
+} cl_set_party_role;
 
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 

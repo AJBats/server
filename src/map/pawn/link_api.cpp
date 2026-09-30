@@ -28,6 +28,7 @@
 #include "gambit_wire.h"
 #include "gate_guards.h"
 #include "party_finder.h"
+#include "party_roster.h"
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -1204,6 +1205,82 @@ namespace pawn::linkapi
             ordersChanged(PChar, ask, reply, pawn::setHuntRule(PChar, ask.rule, ask.value));
         }
 
+        // The party's roles as the party screen shows them (party_roster.h,
+        // RESEARCH §15): each member as an answer, the player first. How many
+        // were sent
+        auto sendPartyRoles(CCharEntity* PChar, Reply& reply) -> uint8
+        {
+            static_assert(CL_ROLE_NONE == static_cast<int>(cardian::party::Role::None) && CL_ROLE_TANK == static_cast<int>(cardian::party::Role::Tank) &&
+                          CL_ROLE_HEALER == static_cast<int>(cardian::party::Role::Healer) && CL_ROLE_DAMAGE == static_cast<int>(cardian::party::Role::Damage) &&
+                          CL_ROLE_PULLER == static_cast<int>(cardian::party::Role::Puller),
+                          "the Link's role numbers are the rule's");
+            uint8 count = 0;
+            for (const auto& row : pawn::roster::rolesOf(PChar))
+            {
+                auto msg = make<cl_party_role>();
+                msg.member = row.id;
+                setText(msg.name, row.name);
+                msg.mainJob   = row.mainJob;
+                msg.mainLevel = row.mainLevel;
+                msg.subJob    = row.subJob;
+                msg.subLevel  = row.subLevel;
+                msg.role      = static_cast<uint8_t>(row.role);
+                msg.byPlayer  = row.byPlayer ? 1 : 0;
+                msg.self      = row.id == PChar->id ? 1 : 0;
+
+                // What her column shows of her (pawn::statusNumbers, as her
+                // equipment screen's status pane has them)
+                const auto numbers = pawn::statusNumbers(row.who);
+                msg.hp      = clamp16(row.who->health.hp);
+                msg.maxHp   = clamp16(row.who->GetMaxHP());
+                msg.mp      = clamp16(row.who->health.mp);
+                msg.maxMp   = clamp16(row.who->GetMaxMP());
+                msg.tp      = clamp16(row.who->health.tp);
+                msg.attack  = numbers.attack;
+                msg.defence = numbers.defence;
+                for (std::size_t i = 0; i < numbers.total.size(); ++i)
+                {
+                    msg.total[i] = numbers.total[i];
+                    msg.bonus[i] = numbers.bonus[i];
+                }
+                for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
+                {
+                    if (const auto* PItem = row.who->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
+                    {
+                        msg.worn[equipSlot] = PItem->getID();
+                    }
+                }
+                reply.more(msg);
+                ++count;
+            }
+            return count;
+        }
+
+        void partyRoles(CCharEntity* PChar, const cl_party_roles& ask, Reply& reply)
+        {
+            auto answer  = ask;
+            answer.count = sendPartyRoles(PChar, reply);
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // The player's choice of a member's role, or his taking it back
+        // (CL_ROLE_AUTO): the roles come back as they now stand, then its
+        // outcome, so the screen never keeps a guess
+        void setPartyRole(CCharEntity* PChar, const cl_set_party_role& ask, Reply& reply)
+        {
+            uint16 status = CL_S_MALFORMED;
+            if (ask.role == CL_ROLE_AUTO)
+            {
+                status = pawn::roster::release(PChar, ask.member);
+            }
+            else if (ask.role < cardian::party::kRoleCount)
+            {
+                status = pawn::roster::choose(PChar, ask.member, static_cast<cardian::party::Role>(ask.role));
+            }
+            sendPartyRoles(PChar, reply);
+            reply.finish(ask, status);
+        }
+
         // "On me": set, cleared, or the other way round from how it stands
         void retreat(CCharEntity* PChar, const cl_retreat& ask, Reply& reply)
         {
@@ -1924,6 +2001,8 @@ namespace pawn::linkapi
         handle<cl_orders>(orders);
         handle<cl_set_strategy>(setStrategy);
         handle<cl_set_hunt>(setHunt);
+        handle<cl_party_roles>(partyRoles);
+        handle<cl_set_party_role>(setPartyRole);
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);

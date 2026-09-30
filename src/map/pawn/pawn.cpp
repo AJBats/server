@@ -25,6 +25,7 @@
 #include "stake_math.h"
 #include "stake_flag.h" // CARDIAN TRIAL: the stake's flag
 #include "party_finder.h"
+#include "party_roster.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
 #include "seats.h"
@@ -1194,6 +1195,7 @@ namespace pawn
             return;
         }
         tactics::memberLeft(PMember, PParty);
+        roster::memberLeft(PMember);
         // A real player out of the party takes every cardian of it with him:
         // the orders and the trek were his
         const bool playerLeft = !pawns.contains(PMember->id);
