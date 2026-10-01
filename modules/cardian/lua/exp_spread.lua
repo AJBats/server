@@ -155,9 +155,13 @@ exp.shapeOf = function(levels, top)
 end
 
 -- Where a spread sits between the party as one level (0) and upstream's
--- formula (1). EXP_CLASSIC_SPREAD = 0 is upstream's formula at every
--- spread
+-- formula (1). With the rule off (cardian.EXP_PARTY_AVERAGE false), or
+-- the classic spread at 0, it is upstream's formula at every spread
 exp.blendFor = function(spread)
+    if xi.settings.cardian.EXP_PARTY_AVERAGE == false then
+        return 1
+    end
+
     local averageSpread = xi.settings.cardian.EXP_AVERAGE_SPREAD or 3
     local classicSpread = xi.settings.cardian.EXP_CLASSIC_SPREAD or 10
 
@@ -348,8 +352,9 @@ end
 -- function (the override's super), handed in so this runs as a plain
 -- function under pcall
 local function ruleFor(upstream, member, mob, data)
-    -- Switched off, this is upstream's function and nothing else
-    if (xi.settings.cardian.EXP_CLASSIC_SPREAD or 10) <= 0 then
+    -- Switched off (cardian.EXP_PARTY_AVERAGE false, or the classic spread
+    -- at 0), this is the server's own formula and nothing else
+    if xi.settings.cardian.EXP_PARTY_AVERAGE == false or (xi.settings.cardian.EXP_CLASSIC_SPREAD or 10) <= 0 then
         return upstream(member, mob, data)
     end
 
