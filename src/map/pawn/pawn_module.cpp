@@ -454,13 +454,13 @@ class PawnModule : public CPPModule
             }
 
             // The grammar's and the editor's refusals hold here too: a
-            // retired behaviour or role never comes back, and no row is silently dead
+            // retired behaviour never comes back, and no row is silently dead
             if (std::ranges::any_of(gambit.actions, [](const Action_t& a)
                                     {
-                                        return a.reaction == pawn::G_REACTION_BEHAVIOR && pawn::isRetiredBehaviorAction(static_cast<uint32>(a.select), a.select_arg);
+                                        return a.reaction == pawn::G_REACTION_BEHAVIOR && pawn::isRetiredBehavior(static_cast<uint32>(a.select));
                                     }))
             {
-                ShowWarningFmt("pawn: malformed gambit for {} (target {}): a retired behaviour or role", PLuaBaseEntity->GetBaseEntity()->getName(), target);
+                ShowWarningFmt("pawn: malformed gambit for {} (target {}): a retired behaviour", PLuaBaseEntity->GetBaseEntity()->getName(), target);
                 return {};
             }
             if (const auto why = cardian::engage::pairingError(gambit); !why.empty())

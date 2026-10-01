@@ -163,8 +163,8 @@ namespace pawn::text
                 return std::nullopt;
             }
             g.actions.emplace_back(static_cast<gambits::G_REACTION>(reaction), static_cast<gambits::G_SELECT>(select), arg);
-            // A retired behaviour, or a retired role, never returns, saved or imported (gambit_ids.h)
-            if (reaction == static_cast<uint16>(G_REACTION_BEHAVIOR) && isRetiredBehaviorAction(select, arg))
+            // A retired behaviour never returns, saved or imported (gambit_ids.h)
+            if (reaction == static_cast<uint16>(G_REACTION_BEHAVIOR) && isRetiredBehavior(select))
             {
                 return std::nullopt;
             }

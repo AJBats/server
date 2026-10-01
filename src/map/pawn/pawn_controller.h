@@ -111,7 +111,7 @@ public:
     auto GetAnchor() const -> CCharEntity*;
 
     // The perimeter (RESEARCH §12.15). She attends the fight on this mob
-    // instead of drawing on it when she holds the Support Mage role and no
+    // instead of drawing on it when her rows offer the party spells and no
     // Attack row of hers claims the mob (engage_math.h attendsFight): from
     // the nearest safe spot outside the mob's TP reach and inside cure range
     // of the tank (AttendIntent). She may act offensively once the mob is
@@ -211,11 +211,11 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
-    // Her tactician (tactician_line.h) runs: her line row (a Support Mage
-    // or Tank row) speaks, her gambits are on, and a tactician watches her
-    // scope
+    // Her tactician (tactician_line.h) runs: her rows offer it a tool (a
+    // marked row that is on), her gambits are on, and a tactician watches
+    // her scope
     auto TacticianRuns() const -> bool;
-    // Her tactician's recovery is due: a Support Mage's MP, as her rest
+    // Her tactician's recovery is due: a casting mage's MP, as her rest
     // policy says. A tank's never is: she leaves no fight to rest
     auto RecoveryDue() const -> bool;
     // The stake (RESEARCH §12.16): the party's place whenever it stands,
@@ -364,10 +364,6 @@ public:
     void ClearGambitBehaviors();
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
-    // The roles her Role rows hold this tick, every one that speaks and
-    // not the first alone (gambit_layers.h holdsRole); one today, since
-    // every role is a line and one line a list
-    auto HoldsRole(pawn::Role role) const -> bool;
 
     auto FormationSlot() const -> pawn::Slot;
 
@@ -379,6 +375,7 @@ public:
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
     auto RestsWithPlayer() const -> bool;
+    auto RestsByRow() const -> bool;
     auto HomePointsWithPlayer() const -> bool;
 
     static constexpr float RoamDistance     = 3.0f;
@@ -734,14 +731,14 @@ private:
     // the next one gets its turn. Nothing while she retreats.
     //  - PartyFightScan: the party's fight whatever her rows say -- the
     //    leader's target, else another cardian's fight (how a hunter's
-    //    pull propagates), else a mob on one of us. What a Support Mage
-    //    attends, what her rest watches for, and what a camp leader joins.
+    //    pull propagates), else a mob on one of us. What a mage with spells
+    //    to offer attends, what her rest watches for, and what a camp
+    //    leader joins.
     //  - EngageChoice: the fight her rows take -- her enabled Attack rows
     //    top down (none with her gambits off), each row's foe the first of
     //    its kind whose conditions hold on it. `row` numbers the row, and
-    //    the why line names it with its layer. A row below her tactician
-    //    line counts only while her tactician lets her melee
-    //    (TacticianMelee).
+    //    the why line names it with its layer. A marked row counts only
+    //    while her tactician lets her melee (TacticianMelee).
     struct FightPick
     {
         CBattleEntity* target = nullptr;
@@ -763,13 +760,13 @@ private:
     auto ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>;
     // The same, with the rows below her tactician line counted or not
     auto ClaimingRowAs(CBattleEntity* PTarget, bool melee) const -> std::optional<RowClaim>;
-    // Whether any of her Attack rows takes fights now: one above the line,
-    // or one below it while her tactician lets her melee
+    // Whether any of her Attack rows takes fights now: an order, or a
+    // marked one while her tactician lets her melee
     auto TakesFights() const -> bool;
 
-    // Her tactician lets her melee a fight a row below the line claims
-    // while it runs (TacticianRuns), her recovery is not due and she is not
-    // down resting (RESEARCH §14.12 decision 19)
+    // Her tactician lets her melee a fight a marked row claims while it
+    // runs (TacticianRuns), her recovery is not due and she is not down
+    // resting (RESEARCH §14.12 decision 19)
     auto TacticianMelee() const -> bool;
 
     // The foes around the party this tick (as above), gathered once a tick
@@ -1156,8 +1153,7 @@ private:
     bool       m_Sprinting           = false;
     bool       m_PlayerMoving        = false;  // as of the last LeadPoint
 
-    std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{}; // the behaviour layer, by pawn::Behavior
-    uint32                                                  m_RolesHeld = 0; // the roles her Role rows hold this tick, a bit per pawn::Role
+    std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{};             // the behaviour layer, by pawn::Behavior
     bool                                                    m_PlayerSeenDead = false; // while KO'd: the player has been seen dead since
 
     // Aggro avoidance state

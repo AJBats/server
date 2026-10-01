@@ -788,15 +788,17 @@ typedef struct cl_gambit
     cl_gambit_action    actions[8];
 } cl_gambit;
 
+// A row's meaning (RESEARCH 17.13): a plain row is an order; a row carrying
+// the tactician's mark (the Tactician's choice condition) is a tool its
+// judgement uses, or struck out. 1 and 5 were the tactician line's, retired
+// with it and never sent
 enum
 {
-    CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
-    CL_GS_LINE      = 1, // her Support Mage or Tank row: the line itself
-    CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
-    CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
-    CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
-    CL_GS_NO_CHOICE = 5, // Tactician's choice with no tactician above it: struck out
-    CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_ORDER        = 0, // an order
+    CL_GS_TOOL         = 2, // marked: something her tactician may use
+    CL_GS_NO_JUDGEMENT = 3, // marked, and nothing her tactician has a judgement for: struck out
+    CL_GS_CLOCK        = 4, // marked, on a timer or a chance: struck out
+    CL_GS_MISFIT       = 6, // an action that cannot be aimed at the side its condition names: struck out
 };
 
 enum

@@ -30,6 +30,7 @@
 #include "map/pawn/engage_math.h"
 #include "map/pawn/gambit_defaults.h"
 #include "map/pawn/gambit_text.h"
+#include "map/pawn/tactician_line.h"
 #include "map/spell.h"
 
 #include <algorithm>
@@ -58,13 +59,13 @@ namespace
     };
 
     const Rows kMage{
-        { "2|2:50|4:0:0|0", true },
-        { "0|0:0|100:6:1|0", true },
-        { "0|0:0|100:11:1|0", true },
         { "1|101:0|2:0:1|0", true },
         { "1|101:0|2:0:4|0", true },
         { "2|101:0|2:100:0|0", true },
-        { "102|0:0|0:0:0|0", false },
+        { "0|101:0|100:14:1|0", true },
+        { "2|2:50|4:0:0|0", true },
+        { "0|0:0|100:6:1|0", true },
+        { "102|101:0|0:0:0|0", false },
     };
 
     const std::set<xi::Job> kMageJobs{ xi::Job::WHM, xi::Job::BLM, xi::Job::RDM, xi::Job::SMN, xi::Job::SCH, xi::Job::GEO };
@@ -111,7 +112,6 @@ namespace
     constexpr auto kAttack   = G_REACTION::ATTACK;
     constexpr auto kBehavior = pawn::G_REACTION_BEHAVIOR;
     constexpr auto kRest     = static_cast<uint16>(pawn::Behavior::RestWithPlayer);
-    constexpr auto kRole     = static_cast<uint16>(pawn::Behavior::Role);
 } // namespace
 
 TEST_CASE("gambit defaults: the six mage jobs take the mage set, every other job the melee set", "[cardian][gambits][defaults]")
@@ -142,7 +142,7 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set, every other job
     CHECK_FALSE(isMageJob(xi::Job::MON));
 }
 
-TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill and rest with the player, all on, and no Role row", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill and rest with the player, all on, every one an order", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::WAR);
     REQUIRE(rows == kMelee);
@@ -158,33 +158,37 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon sk
     requireRow(rows[3].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
     requireRow(rows[4].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
 
-    // A melee job runs no tactician of her own: the Role row that once
-    // ended the set named Damage, a value with nothing behind it, and the
-    // grammar refuses it now, saved or sent (RESEARCH §17.12)
+    // The Role row that once ended the set (Damage, a name with nothing
+    // behind it) is retired with the tactician line: the grammar refuses
+    // every value of it, saved or sent (RESEARCH §17.12, §17.13)
     CHECK_FALSE(parseRow("0|0:0|100:11:3|0").has_value());
-    CHECK(parseRow("0|0:0|100:11:2|0").has_value());
+    CHECK_FALSE(parseRow("0|0:0|100:11:2|0").has_value());
+    CHECK_FALSE(parseRow("0|0:0|100:11:1|0").has_value());
 }
 
-TEST_CASE("gambit defaults: the mage set is a Support Mage who cures, removes ailments and enfeebles, her weapon skill above her line, her Attack row below it and off", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enfeebles and rest first, then her weapon skill and rest with the player, her marked Attack row last and off", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::WHM);
     REQUIRE(rows == kMage);
 
-    // Checking the Attack row is what makes her a melee mage, so it ships off
+    // Checking the Attack row is what makes her a melee mage, so it ships
+    // off; marked, so checked it is her tactician's melee, which leaves a
+    // fight to rest (RESEARCH §14.12 decisions 19 and 20)
     for (std::size_t i = 0; i < 6; ++i)
     {
         INFO("row " << i);
         CHECK(rows[i].second);
     }
     CHECK_FALSE(rows[6].second);
+    CHECK(cardian::tactician::isMarked(*parseRow(rows[6].first)));
 
-    requireRow(rows[0].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
-    requireRow(rows[1].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
-    requireRow(rows[2].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRole, static_cast<uint32>(pawn::Role::SupportMage) });
-    requireRow(rows[3].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_CURE) });
-    requireRow(rows[4].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_NA) });
-    requireRow(rows[5].first, { G_TARGET::TARGET, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(pawn::G_SELECT_ENFEEBLE), 0 });
-    requireRow(rows[6].first, { pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS, kAttack, 0, 0 });
+    requireRow(rows[0].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_CURE) });
+    requireRow(rows[1].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_NA) });
+    requireRow(rows[2].first, { G_TARGET::TARGET, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(pawn::G_SELECT_ENFEEBLE), 0 });
+    requireRow(rows[3].first, { G_TARGET::SELF, pawn::G_CONDITION_TACTICIANS_CHOICE, kBehavior, static_cast<uint16>(pawn::Behavior::Rest), 1 });
+    requireRow(rows[4].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
+    requireRow(rows[5].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
+    requireRow(rows[6].first, { pawn::G_TARGET_TARGETING_ALLY, pawn::G_CONDITION_TACTICIANS_CHOICE, kAttack, 0, 0 });
 }
 
 TEST_CASE("gambit defaults: every default row parses, round-trips through the grammar and pairs as the editor asks", "[cardian][gambits][defaults]")

@@ -41,8 +41,8 @@
 // AHEAD of hers, so the world's competence goes first. A member of a
 // player's party also runs the rows her party role lends her
 // (role_bundles.h): never saved, shown in her editor read-only, and fitted
-// onto her own list by part (the fit, below), so a role's orders join her
-// orders and a role's allow-list rows join hers below her tactician line.
+// onto her own list (the fit, below): the role's rows first, then hers,
+// a lent row that means the same as one of hers standing in its place.
 // Joining a player's party, or leaving it, changes which layers run and
 // rewrites none of them, with one exception: rows the player edited on a
 // guest are forgotten as she leaves, and her job's defaults seeded again
@@ -133,12 +133,9 @@ namespace cardian::layers
         return engage::isFoeTarget(g.target_selector) ? Side::Foe : Side::Ally;
     }
 
-    // Two rows mean the same thing where they sit when they have the same
-    // action on the same side, whatever their conditions (RESEARCH §17.2
-    // decision 6): a lent row like that is left out, and hers stands
-    inline auto overlaps(const gambits::Gambit_t& a, const gambits::Gambit_t& b) -> bool
+    inline auto sameActions(const gambits::Gambit_t& a, const gambits::Gambit_t& b) -> bool
     {
-        if (sideOf(a) != sideOf(b) || a.actions.size() != b.actions.size())
+        if (a.actions.size() != b.actions.size())
         {
             return false;
         }
@@ -154,59 +151,50 @@ namespace cardian::layers
         return true;
     }
 
-    // Her own rows and the rows her role lends, in the running order:
-    //  1. her own orders (her rows above her line, or all of them when she
-    //     has none);
-    //  2. the role's orders (the bundle's rows ahead of its line row, or
-    //     all of them when it has none);
-    //  3. the line: her own line row when she has one, checked or not,
-    //     else the role's when the bundle brings one;
-    //  4. her own rows below her line;
-    //  5. the role's rows below its line.
-    // A lent row that overlaps a row of hers in the same part, whatever her
-    // checkbox or condition, takes her row's place (Both): the role's row
-    // runs there, on, pinned, while she holds the role, and hers is kept
-    // underneath and comes back when the role goes (the user, 2026-09-30:
-    // a role is a quick override; a player who wants his own tuning takes
-    // the role off). Her own line row's place is her line whenever she has
-    // one, checked or not -- and a lent line of another role stands in it
-    // too (a Tank line lent to a Support Mage: her tactician is the tank's
-    // while she holds the role, and her rows its tactician does not read
-    // are struck out there; RESEARCH §17.10). gambitOf(row) reads a row's
-    // gambit, enabledOf(row) its checkbox
+    // Two rows mean the same thing when they have the same action on the
+    // same side, whatever their conditions or the mark (RESEARCH §17.2
+    // decision 6): a lent row like that stands in hers. An Attack row is
+    // the exception: its finder is its meaning (which fight she takes), so
+    // only the same finder is the same row -- the Tank's "targeted by ally"
+    // pull takes her "targeted by ally" row and leaves her "targeting
+    // ally" order standing. Among several of hers that would do, one
+    // naming the same target is the one
+    inline auto sameRow(const gambits::Gambit_t& a, const gambits::Gambit_t& b) -> bool
+    {
+        return a.target_selector == b.target_selector && sameActions(a, b);
+    }
+
+    inline auto overlaps(const gambits::Gambit_t& a, const gambits::Gambit_t& b) -> bool
+    {
+        if (engage::isEngageRow(a) || engage::isEngageRow(b))
+        {
+            return sameRow(a, b);
+        }
+        return sideOf(a) == sideOf(b) && sameActions(a, b);
+    }
+
+    // Her own rows and the rows her role lends, in the running order: the
+    // role's rows first, in the bundle's order, then her own in hers -- a
+    // role is the quick override (the user, 2026-09-30; RESEARCH §17.13),
+    // so what it lends outranks what she has. A lent row that overlaps a
+    // row of hers, whatever her checkbox or condition, takes her row's
+    // place instead (Both): the role's row runs there, on, pinned, while
+    // she holds the role, and hers is kept underneath and comes back when
+    // the role goes (a player who wants his own tuning takes the role off).
+    // gambitOf(row) reads a row's gambit, enabledOf(row) its checkbox
     template <typename Row, typename GambitOf, typename EnabledOf>
     auto fit(const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, EnabledOf&& enabledOf) -> std::vector<Placed<Row>>
     {
-        const auto lineIn = [&](const std::span<Row> rows) -> std::optional<std::size_t>
-        {
-            for (std::size_t i = 0; i < rows.size(); ++i)
-            {
-                if (tactician::isLineRow(gambitOf(rows[i])))
-                {
-                    return i;
-                }
-            }
-            return std::nullopt;
-        };
-        const auto ownLine   = lineIn(own);
-        const auto lentLine  = lineIn(lent);
-        const bool lentLeads = lentLine.has_value() && !ownLine.has_value();
-
-        // Each list's parts: [0, above) its orders; the line; then its rows
-        // below
-        const std::size_t ownAbove     = ownLine.has_value() ? *ownLine : own.size();
-        const std::size_t ownBelowFrom = ownLine.has_value() ? *ownLine + 1 : own.size();
-        const std::size_t lentAbove    = lentLine.has_value() ? *lentLine : lent.size();
-        const std::size_t lentBelowFrom = lentLine.has_value() ? *lentLine + 1 : lent.size();
-
-        // standsIn[oi]: the lent row that takes her row oi's place, if any
+        // standsIn[oi]: the lent row that takes her row oi's place, if any:
+        // a row of hers naming the same target first, else the first on
+        // the same side
         std::vector<std::optional<std::size_t>> standsIn(own.size());
         std::vector<bool>                       lentOut(lent.size(), false);
-        const auto                              overlapped = [&](const std::size_t li, const std::size_t from, const std::size_t to)
+        const auto                              takeOver = [&](const std::size_t li, auto&& same)
         {
-            for (std::size_t oi = from; oi < to; ++oi)
+            for (std::size_t oi = 0; oi < own.size(); ++oi)
             {
-                if (!standsIn[oi].has_value() && overlaps(gambitOf(own[oi]), gambitOf(lent[li])))
+                if (!standsIn[oi].has_value() && same(gambitOf(own[oi]), gambitOf(lent[li])))
                 {
                     standsIn[oi] = li;
                     lentOut[li]  = true;
@@ -214,24 +202,29 @@ namespace cardian::layers
                 }
             }
         };
-        for (std::size_t li = 0; li < lentAbove; ++li)
+        for (std::size_t li = 0; li < lent.size(); ++li)
         {
-            overlapped(li, 0, ownAbove);
+            takeOver(li, [](const gambits::Gambit_t& a, const gambits::Gambit_t& b) { return sameRow(a, b); });
         }
-        for (std::size_t li = lentBelowFrom; li < lent.size(); ++li)
+        for (std::size_t li = 0; li < lent.size(); ++li)
         {
-            overlapped(li, ownBelowFrom, own.size());
-        }
-        if (lentLine.has_value() && !lentLeads)
-        {
-            standsIn[*ownLine] = *lentLine;
-            lentOut[*lentLine] = true;
+            if (!lentOut[li])
+            {
+                takeOver(li, [](const gambits::Gambit_t& a, const gambits::Gambit_t& b) { return overlaps(a, b); });
+            }
         }
 
         std::vector<Placed<Row>> out;
         out.reserve(own.size() + lent.size());
+        for (std::size_t li = 0; li < lent.size(); ++li)
+        {
+            if (!lentOut[li])
+            {
+                out.push_back({ &lent[li], Origin::Lent, li + 1, true });
+            }
+        }
         // Her row at oi, or the role's standing in its place under her number
-        const auto hers = [&](const std::size_t oi)
+        for (std::size_t oi = 0; oi < own.size(); ++oi)
         {
             if (standsIn[oi].has_value())
             {
@@ -240,40 +233,6 @@ namespace cardian::layers
             else
             {
                 out.push_back({ &own[oi], Origin::Own, oi + 1, static_cast<bool>(enabledOf(own[oi])) });
-            }
-        };
-        const auto theirs = [&](const std::size_t li)
-        {
-            out.push_back({ &lent[li], Origin::Lent, li + 1, true });
-        };
-        for (std::size_t oi = 0; oi < ownAbove; ++oi)
-        {
-            hers(oi);
-        }
-        for (std::size_t li = 0; li < lentAbove; ++li)
-        {
-            if (!lentOut[li])
-            {
-                theirs(li);
-            }
-        }
-        if (lentLeads)
-        {
-            theirs(*lentLine);
-        }
-        else if (ownLine.has_value())
-        {
-            hers(*ownLine);
-        }
-        for (std::size_t oi = ownBelowFrom; oi < own.size(); ++oi)
-        {
-            hers(oi);
-        }
-        for (std::size_t li = lentBelowFrom; li < lent.size(); ++li)
-        {
-            if (!lentOut[li])
-            {
-                theirs(li);
             }
         }
         return out;
@@ -370,21 +329,4 @@ namespace cardian::layers
         return true;
     }
 
-    // The roles a character holds this tick, as a set: every Role row that
-    // speaks adds hers, where `speak` keeps only the first (RESEARCH
-    // §17.4). With the Damage value retired every role is a line, and one
-    // line a list, so the set holds one role today; it stays a set for
-    // the day two speak. Bit r for pawn::Role r
-    constexpr auto holdRole(uint32& held, const uint16 role) -> void
-    {
-        if (role < 32)
-        {
-            held |= (1u << role);
-        }
-    }
-
-    constexpr auto holdsRole(const uint32 held, const uint16 role) -> bool
-    {
-        return role < 32 && (held & (1u << role)) != 0;
-    }
 } // namespace cardian::layers

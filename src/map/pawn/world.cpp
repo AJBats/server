@@ -526,7 +526,7 @@ namespace
     //              has <status> | lacks <status> | top enmity | not top enmity
     //   action     avoid aggro | avoid links | rest with leader | home point with leader |
     //              boost before weapon skills | formation <lead|flank left|flank right|
-    //              rear left|rear right|behind> | role <support mage|tank> | cast best <spell>
+    //              rear left|rear right|behind> | cast best <spell>
     //              (the best of its family) | cast <spell> | cast random damage |
     //              ability <name> | best weapon skill | random weapon skill
     // Names are the game's own (spell_list, abilities, the status enum), spaces
@@ -692,19 +692,6 @@ namespace
             }
             actSpec = fmt::format("100:4:{}", seat->second);
         }
-        else if (act.starts_with("role "))
-        {
-            // The roles a Role row names (gambit_ids.h kRoles); "damage" (3) is
-            // retired and no longer a name
-            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 }, { "tank", 2 } };
-            const auto                                        role = roles.find(trim(act.substr(5)));
-            if (role == roles.end())
-            {
-                ShowErrorFmt("world: brains: '{}': no role called '{}'", text, trim(act.substr(5)));
-                return std::nullopt;
-            }
-            actSpec = fmt::format("100:11:{}", role->second);
-        }
         else if (act == "cast random damage")
         {
             actSpec = "2:3:0";
@@ -820,7 +807,7 @@ namespace
     // Her role: the tank is the highest Warrior or Paladin of her party (ties
     // by name), any other of them and the fighters are melee, and the mages
     // are the jobs that take the mage defaults (pawn::isMageJob), so her
-    // world layer and her own Role row agree
+    // world layer and her own rows agree
     auto roleOf(const CCharEntity* PPawn) -> std::string
     {
         if (pawn::isMageJob(PPawn->GetMJob()))

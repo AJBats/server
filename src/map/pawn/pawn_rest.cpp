@@ -1,4 +1,4 @@
-// Cardian: one lifecycle for Support Mage, Rest With Player, town kneeling and the player's rest order.
+// Cardian: one lifecycle for the tactician's MP pacing (her marked Rest row), a plain Rest row, Rest With Player, town kneeling and the player's rest order.
 #include "pawn_controller.h"
 #include "pawn.h"
 #include "role_support.h"
@@ -118,23 +118,33 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool nearLeader = leader != nullptr && (Staked() || distance(POwner->loc.p, leader->loc.p) < 10.0f);
     const bool withPlayer = follow && (healing != nullptr || nearLeader);
     const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(POwner));
-    const bool support = advice.has_value() && pawn::tactics::supportMage(POwner) && m_Gambits->MasterOn();
-    // MP alone decides a Support Mage's own rest: her missing HP is her
+    // The emergency cure stands any kneeling caster the party picks for it
+    // (the bank advises everyone who offers it spells), whatever her Rest
+    // row says: the wake is about the cure, not her MP pacing
+    const bool urgent = advice.has_value() && advice->wake && m_Gambits->MasterOn();
+    // Her marked Rest row, its conditions holding, is the tactician's MP
+    // pacing (RESEARCH §17.13): the bank's advice on when to kneel and
+    // when she is ready
+    const bool support = advice.has_value() && pawn::tactics::offersRest(POwner) && m_Gambits->MasterOn();
+    // MP alone decides a casting mage's own rest: her missing HP is her
     // cures' to mend, as anyone else's is (the user, 2026-09-23)
     const bool supportRecovery = support && advice->recover;
-    // Rest With Player stays an explicit input even when a support role owns
-    // autonomous recovery. Do not overwrite it with the role's MP decision.
-    const bool want = townKneel || (support && place != nullptr && (supportRecovery || (healing != nullptr && POwner->health.mp < POwner->GetMaxMP())));
+    // The party's fight as the engage door scans it, whatever her rows say:
+    // the same foes and place-centered HUNT_LEASH, and the same foes counted
+    // absent (below ground, held off). A distant pull or untouched wildlife
+    // is no fight to her
+    const bool fightOn = place != nullptr && PartyFightScan(leader, place->position()).target != nullptr;
+    // A plain Rest row is an order: kneel while it holds and no fight is
+    // on, an attended one included. Rest With Player stays an explicit
+    // input beside both; neither overwrites it with the MP decision
+    const bool byRow = m_Gambits->MasterOn() && RestsByRow() && place != nullptr && !fightOn;
+    const bool want  = townKneel || byRow || (support && place != nullptr && (supportRecovery || (healing != nullptr && POwner->health.mp < POwner->GetMaxMP())));
     const int ticks = healing != nullptr ? healing->GetElapsedTickCount() : 0;
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
     m_RestTicks = ticks;
     const bool mpMissing = POwner->health.mp < POwner->GetMaxMP();
-    // The party's fight as the engage door scans it, whatever her rows say:
-    // the same foes and place-centered HUNT_LEASH, and the same foes counted
-    // absent (below ground, held off). A distant pull or untouched wildlife
-    // does not end a useful rest.
-    const bool campClear = support && place != nullptr && healing != nullptr && mpMissing &&
-        PartyFightScan(leader, place->position()).target == nullptr;
+    // No fight on while she is down with MP missing: a useful rest goes on
+    const bool campClear = support && place != nullptr && healing != nullptr && mpMissing && !fightOn;
 
     bool unsafe = false;
     if (want || withPlayer || healing != nullptr)
@@ -177,13 +187,13 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
         .campClear = campClear, .mpMissing = mpMissing,
-        .urgent = support && advice->wake, .blocked = blocked,
+        .urgent = urgent, .blocked = blocked,
         .moving = !stationary, .routinePosition = deferPosition,
         .recovered = support && place != nullptr && !supportRecovery, .tickLanded = landed,
         .ordered = ordered});
     if (decision == cardian::rest::Decision::Stand)
     {
-        StandFromRest(support && advice->wake ? advice->why : unsafe && !ordered ? "danger" : noRecovery ? "recovery blocked" :
+        StandFromRest(urgent ? advice->why : unsafe && !ordered ? "danger" : noRecovery ? "recovery blocked" :
             HasQueuedOrder() && !m_ManeuverResting ? "the player's action order" :
             support && place != nullptr && landed && !supportRecovery && !withPlayer && !campClear ? "recovery tick: pace and reserve ready" : "rest request ended or movement needed");
     }
@@ -193,7 +203,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, interval, 0s);
         m_RestTicks = 0;
         ShowInfoFmt("rest: {} kneels ({}, hp {}%, mp {}%)", POwner->getName(),
-                    ordered ? "the player's rest order" : townKneel ? "town" : withPlayer ? "with the player" : "support recovery",
+                    ordered ? "the player's rest order" : townKneel ? "town" : withPlayer ? "with the player" : byRow && !supportRecovery ? "her Rest row" : "the tactician's recovery",
                     POwner->GetHPP(), POwner->GetMPP());
     }
     else if (decision == cardian::rest::Decision::StayDown && campClear && landed && !supportRecovery && !withPlayer)

@@ -335,6 +335,7 @@ namespace pawn
         gambit.identifier = fmt::format("{}", ++m_nextId);
         gambit.last_used  = {};
         m_gambits.push_back(GambitRow{ std::move(gambit), enabled });
+        RowsChanged();
         return m_gambits.back().gambit.identifier;
     }
 
@@ -350,6 +351,7 @@ namespace pawn
                       {
                           return kv.first.rfind(prefix, 0) == 0;
                       });
+        RowsChanged();
     }
 
     void CGambits::RemoveAllGambits()
@@ -357,6 +359,7 @@ namespace pawn
         // Her own rows and their clocks; the world's layer is its own
         m_gambits.clear();
         m_timerConditionLastTrigger.clear();
+        RowsChanged();
     }
 
     namespace
@@ -398,6 +401,7 @@ namespace pawn
         m_roleKey       = key;
         m_roleRows.clear();
         m_roleTimers.clear();
+        RowsChanged();
         for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role, key.job))
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
@@ -429,6 +433,7 @@ namespace pawn
         m_worldKey       = pawn::world::brainKey(POwner);
         m_worldRows.clear();
         m_worldTimers.clear();
+        RowsChanged();
         for (const auto& spec : specs)
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
@@ -443,7 +448,7 @@ namespace pawn
             }
         }
         // Her own rows may not be loaded yet (her first tick reads the layer
-        // before it loads them), so the line does not count them
+        // before it loads them), so the line counts the world's alone
         ShowInfoFmt("pawn: {} runs the world's layer ({} rows: the world's, the {}'s, the {}'s) ahead of her own", POwner->getName(), m_worldRows.size(),
                     magic_enum::enum_name(POwner->GetMJob()), m_worldKey->role);
     }
@@ -483,12 +488,13 @@ namespace pawn
 
         // Her scope's conveyor (RESEARCH §12.12 item 2): where a tactician
         // watches, spell rows feed it and it says who casts; where none
-        // does, rows cast as they always have. With her gambits on, a line
-        // row that speaks under a conveyor is her tactician running
-        // (CPawnController::TacticianRuns): a Support Mage's, or a tank's
-        const bool conveyor    = pawn::tactics::has(POwner);
-        const bool supportMage = conveyor && pawn::tactics::supportMage(POwner);
-        const bool tank        = conveyor && LineRole() == pawn::Role::Tank && m_PController->HoldsRole(pawn::Role::Tank);
+        // does, rows cast as they always have. With her gambits on, a
+        // marked row under a conveyor is her tactician running
+        // (CPawnController::TacticianRuns); the tank tactician is the Tank
+        // seat's (RESEARCH §17.13: the seat is what she is for)
+        const bool conveyor = pawn::tactics::has(POwner);
+        const bool spells   = conveyor && pawn::tactics::offersSpells(POwner);
+        const bool tank     = conveyor && pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
         if (tank != m_tankOnDuty)
         {
             m_tankOnDuty = tank;
@@ -558,17 +564,17 @@ namespace pawn
 
         // Her rows in the running order (the world's first in the wild),
         // top down; the first to act ends the think. An order acts, and so
-        // does a -na or Erase row below her tactician line while her
-        // tactician runs, which has no judgement of its own for them yet;
-        // every other row below the line is her tactician's to read, and a
-        // struck-out row does nothing (tactician_line.h actsAlone)
+        // does a marked -na or Erase row while her tactician runs, which
+        // has no judgement of its own for them yet; every other marked row
+        // is her tactician's to read, and a struck-out row does nothing
+        // (tactician_line.h actsAlone)
         const auto layers = RunningLayers();
         const auto states = RunningStates(layers);
         cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t index, const bool on)
                                     {
                                         auto&      gambit = row.gambit;
                                         const auto state  = states[index - 1];
-                                        if (!on || !cardian::tactician::actsAlone(state, gambit, supportMage || tank) || IsBehavior(gambit) ||
+                                        if (!on || !cardian::tactician::actsAlone(state, gambit, spells || tank) || IsBehavior(gambit) ||
                                             cardian::engage::isEngageRow(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
                                         {
                                             return false;
@@ -579,7 +585,7 @@ namespace pawn
                                             return false;
                                         }
 
-                                        CBattleEntity* PTarget = SelectTarget(gambit, state == cardian::tactician::State::Allows);
+                                        CBattleEntity* PTarget = SelectTarget(gambit);
                                         if (PTarget == nullptr)
                                         {
                                             return false;
@@ -596,8 +602,8 @@ namespace pawn
                                         return true;
                                     });
 
-        // The role's own needs, on her think
-        if (supportMage)
+        // The tactician's own needs for the spells she offers, on her think
+        if (spells)
         {
             pawn::tactics::roleThink(POwner, engaged);
         }
@@ -649,8 +655,8 @@ namespace pawn
             return false;
         }
         // A request a row fed is one that acts alone (tactician_line.h
-        // actsAlone): a row that has since moved below her tactician line,
-        // or been struck out, no longer asks
+        // actsAlone): a row since marked for the tactician, or struck out,
+        // no longer asks
         const auto layers = RunningLayers();
         const auto* row   = cardian::layers::findRow(layers, rowId, rowIdOf);
         if (row == nullptr || IsBehavior(row->gambit))
@@ -679,7 +685,6 @@ namespace pawn
         {
             return false;
         }
-        const bool gate = state == cardian::tactician::State::Allows;
         const auto& g = row->gambit;
         const auto action = std::find_if(g.actions.begin(), g.actions.end(), [](const auto& a) { return a.reaction == G_REACTION::MA; });
         if (action == g.actions.end() ||
@@ -714,7 +719,7 @@ namespace pawn
             bool matches = true;
             for (std::size_t group = 0; group < g.predicate_groups.size(); ++group)
             {
-                if (!CheckTrigger(candidate, g, group, true, gate))
+                if (!CheckTrigger(candidate, g, group, true))
                 {
                     matches = false;
                     break;
@@ -899,10 +904,10 @@ namespace pawn
         }
     }
 
-    auto CGambits::SelectTarget(const Gambit_t& gambit, const bool gate) -> CBattleEntity*
+    auto CGambits::SelectTarget(const Gambit_t& gambit) -> CBattleEntity*
     {
         // A -na or Erase row picks someone it has a cure for: under a
-        // condition many hold (Tactician's choice, Enfeeble), the most hurt
+        // condition many hold (a marked row, Enfeeble), the most hurt
         // may carry nothing she can take off while another does, or another
         // mage may be taking it off already. It is asked of whom the spell
         // lands on, and before the row's conditions, so a candidate passed
@@ -935,7 +940,7 @@ namespace pawn
             bool matches = true;
             for (std::size_t groupIndex = 0; groupIndex < gambit.predicate_groups.size(); ++groupIndex)
             {
-                if (!CheckTrigger(PCandidate, gambit, groupIndex, false, gate))
+                if (!CheckTrigger(PCandidate, gambit, groupIndex))
                 {
                     matches = false;
                     break;
@@ -987,7 +992,7 @@ namespace pawn
         }
     } // namespace
 
-    auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex, const bool pending, const bool gate) -> bool
+    auto CGambits::CheckTrigger(CBattleEntity* PTrigger, const Gambit_t& gambit, const std::size_t groupIndex, const bool pending) -> bool
     {
         TracyZoneScoped;
 
@@ -1290,13 +1295,12 @@ namespace pawn
                     results.push_back(pawn::partyStrategy(POwner) == arg);
                     break;
                 case pawn::G_CONDITION_TACTICIANS_CHOICE:
-                    // Tactician's choice leaves the when to her tactician's
-                    // judgement (gambit_ids.h). On an allow-list entry, below
-                    // her tactician line, it holds: her tactician decides.
-                    // As an ordinary condition it never holds, so a row
-                    // carrying it never acts on its own: a Cure left to her
+                    // The tactician's mark says who decides, not when: it
+                    // holds wherever it is read, and a marked row never acts
+                    // on its own because the think passes it by
+                    // (tactician_line.h actsAlone) -- a Cure left to her
                     // judgement is never an "always cure"
-                    results.push_back(gate);
+                    results.push_back(true);
                     break;
                 default:
                     // VAL_URIEL_CHECK and anything newer: trust-NPC specific
@@ -1442,15 +1446,14 @@ namespace pawn
         {
             return;
         }
-        // An order speaks, and so does her line row (Support Mage or Tank),
-        // the line itself; a behaviour row below the line is struck out and
-        // silent
+        // A behaviour row is an order; one marked for the tactician has no
+        // judgement behind it, struck out and silent
         const auto layers = RunningLayers();
         const auto states = RunningStates(layers);
         cardian::layers::forEachRow(layers, [&](const GambitRow& row, const std::size_t place, const bool on)
                                     {
                                         const auto state = states[place - 1];
-                                        if (on && (state == cardian::tactician::State::Order || state == cardian::tactician::State::Line) &&
+                                        if (on && state == cardian::tactician::State::Order &&
                                             IsBehavior(row.gambit) && SelectTarget(row.gambit) != nullptr)
                                         {
                                             ApplyBehavior(row.gambit);
@@ -1467,18 +1470,18 @@ namespace pawn
             return out;
         }
         // The world's rows first, then her own and the lent ones as fitted.
-        // An order is read; below the line, an Attack row her tactician may
-        // melee on (tactician_line.h Allowance::Melee) is read as hers
+        // An order is read; a marked Attack row, the fight her tactician may
+        // melee on (tactician_line.h Allowance::Melee), is read as its
         const auto  layers   = RunningLayers();
         const auto  states   = RunningStates(layers);
         std::size_t place    = 0;
         const auto  consider = [&](const GambitRow& row, const bool on, const bool world, const bool lent, const std::size_t index)
         {
-            const auto state = states[place++];
-            const bool below = state == cardian::tactician::State::Allows;
-            if ((state == cardian::tactician::State::Order || below) && cardian::engage::doorReads(m_masterOn, on, row.gambit))
+            const auto state  = states[place++];
+            const bool marked = state == cardian::tactician::State::Tool;
+            if ((state == cardian::tactician::State::Order || marked) && cardian::engage::doorReads(m_masterOn, on, row.gambit))
             {
-                out.push_back({ index, world, below, &row.gambit, lent });
+                out.push_back({ index, world, marked, &row.gambit, lent });
             }
         };
         for (const auto& row : layers.world)
@@ -1498,13 +1501,11 @@ namespace pawn
         out.reserve(layers.world.size() + layers.rows.size());
         for (const auto& row : layers.world)
         {
-            out.push_back(cardian::tactician::stateOf(row.gambit, 1, std::nullopt, rowFits(row.gambit)));
+            out.push_back(cardian::tactician::stateOf(row.gambit, rowFits(row.gambit)));
         }
-        const auto  line  = cardian::tactician::lineOf(layers.rows, [](const cardian::layers::Placed<GambitRow>& p) -> const Gambit_t& { return p.row->gambit; });
-        std::size_t place = 0;
         for (const auto& p : layers.rows)
         {
-            out.push_back(cardian::tactician::stateOf(p.row->gambit, ++place, line, rowFits(p.row->gambit)));
+            out.push_back(cardian::tactician::stateOf(p.row->gambit, rowFits(p.row->gambit)));
         }
         return out;
     }
@@ -1538,17 +1539,69 @@ namespace pawn
                                    });
     }
 
-    auto CGambits::Line() const -> std::optional<std::size_t>
+    auto CGambits::OffersAny(const std::function<bool(cardian::tactician::Allowance)>& wanted) const -> bool
     {
-        const auto line = cardian::tactician::lineOf(m_gambits, [](const GambitRow& row) -> const Gambit_t& { return row.gambit; });
-        return line.has_value() ? std::optional<std::size_t>(line->place) : std::nullopt;
+        // Her own and the lent rows as fitted: a marked row that runs and
+        // names a tool the tactician has a judgement for, of the kind asked
+        const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
+        return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
+                                   {
+                                       const auto& g = p.row->gambit;
+                                       return p.on && cardian::tactician::stateOf(g, rowFits(g)) == cardian::tactician::State::Tool && wanted(cardian::tactician::allowanceOf(g));
+                                   });
     }
 
-    auto CGambits::LineRole() const -> std::optional<pawn::Role>
+    void CGambits::RowsChanged()
     {
+        ++m_rowsGeneration;
+        m_offers.reset();
+    }
+
+    auto CGambits::Offers() const -> const Offered&
+    {
+        // Asked many times a tick, by every member's scope (tactics
+        // scopeOf) and by the engage door, and the answer moves only when
+        // her rows do: laid out once per generation of them
+        if (!m_offers.has_value() || m_offers->generation != m_rowsGeneration)
+        {
+            m_offers = Offered{ m_rowsGeneration, OffersAny([](cardian::tactician::Allowance) { return true; }), OffersAny(cardian::tactician::isSpellTool) };
+        }
+        return *m_offers;
+    }
+
+    auto CGambits::OffersTools() const -> bool
+    {
+        return Offers().tools;
+    }
+
+    auto CGambits::OffersSpells() const -> bool
+    {
+        return Offers().spells;
+    }
+
+    auto CGambits::OffersRest() -> bool
+    {
+        // Her marked Rest row, with the player's gate on it holding now
+        // (RESEARCH §17.13: the row's other conditions are his, AND-ed with
+        // the tactician's judgement), so `* Self: MP < 30% -> Rest` paces
+        // her under 30% and not above. Read on her, as a Self row is
         const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
-        const auto line = cardian::tactician::lineOf(rows, [](const cardian::layers::Placed<const GambitRow>& p) -> const Gambit_t& { return p.row->gambit; });
-        return line.has_value() ? std::optional<pawn::Role>(line->role) : std::nullopt;
+        return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
+                                   {
+                                       const auto& g = p.row->gambit;
+                                       if (!p.on || cardian::tactician::stateOf(g, rowFits(g)) != cardian::tactician::State::Tool || cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Rest)
+                                       {
+                                           return false;
+                                       }
+                                       for (std::size_t group = 0; group < g.predicate_groups.size(); ++group)
+                                       {
+                                           if (!CheckTrigger(POwner, g, group, true))
+                                           {
+                                               return false;
+                                           }
+                                       }
+                                       return true;
+                                   });
     }
 
     auto CGambits::Admits(const uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>
@@ -1557,8 +1610,8 @@ namespace pawn
         {
             return std::nullopt;
         }
-        // Her own and the lent rows as fitted: only a row below the line is
-        // an allowance, hers or the role's alike
+        // Her own and the lent rows as fitted: a marked row is a tool the
+        // tactician may use, hers or the role's alike
         const auto        layers    = RunningLayers();
         const auto        states    = RunningStates(layers);
         const std::size_t worldRows = layers.world.size();
@@ -1567,7 +1620,7 @@ namespace pawn
         {
             const auto& row = *layers.rows[i].row;
             const auto& g   = row.gambit;
-            if (!layers.rows[i].on || states[worldRows + i] != cardian::tactician::State::Allows ||
+            if (!layers.rows[i].on || states[worldRows + i] != cardian::tactician::State::Tool ||
                 !cardian::tactician::allowsSpell(g, spell) || !Names(g.target_selector, PTarget) ||
                 now < g.last_used + std::chrono::seconds(g.retry_delay))
             {
@@ -1576,7 +1629,7 @@ namespace pawn
             bool holds = true;
             for (std::size_t group = 0; holds && group < g.predicate_groups.size(); ++group)
             {
-                holds = CheckTrigger(PTarget, g, group, true, true);
+                holds = CheckTrigger(PTarget, g, group, true);
             }
             if (holds)
             {
@@ -1601,21 +1654,21 @@ namespace pawn
         {
             return "on its clock";
         }
-        // The row below her Tank line that lets her: the tool's, naming the
-        // target, its retry run and its conditions holding (Tactician's
-        // choice among them). Used through it, so its retry stamp and its
-        // number in the log are the row's, as a cast's are: its place in
-        // the list as the editor shows it, lent rows counted
+        // The marked row that lets her: the tool's, naming the target, its
+        // retry run and its conditions holding. Used through it, so its
+        // retry stamp and its number in the log are the row's, as a cast's
+        // are: its place in the list as the editor shows it, lent rows
+        // counted
         const auto        layers    = RunningLayers();
         const auto        states    = RunningStates(layers);
         const std::size_t worldRows = layers.world.size();
         const auto        now       = timer::now();
-        std::string       refused   = "no row below her line lets her";
+        std::string       refused   = "no marked row lets her";
         for (std::size_t i = 0; i < layers.rows.size(); ++i)
         {
             auto&       row = *layers.rows[i].row;
             const auto& g   = row.gambit;
-            if (!layers.rows[i].on || states[worldRows + i] != cardian::tactician::State::Allows || !cardian::tactician::allowsAbility(g, ability))
+            if (!layers.rows[i].on || states[worldRows + i] != cardian::tactician::State::Tool || !cardian::tactician::allowsAbility(g, ability))
             {
                 continue;
             }
@@ -1633,7 +1686,7 @@ namespace pawn
             bool holds = true;
             for (std::size_t group = 0; holds && group < g.predicate_groups.size(); ++group)
             {
-                holds = CheckTrigger(PTarget, g, group, true, true);
+                holds = CheckTrigger(PTarget, g, group, true);
             }
             if (!holds)
             {
@@ -1657,21 +1710,11 @@ namespace pawn
     auto CGambits::AllowsSpell(const uint16 spell) const -> bool
     {
         const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
-        const auto line = cardian::tactician::lineOf(rows, [](const cardian::layers::Placed<const GambitRow>& p) -> const Gambit_t& { return p.row->gambit; });
-        if (!line.has_value())
-        {
-            return false;
-        }
-        for (std::size_t i = 0; i < rows.size(); ++i)
-        {
-            const auto& row = *rows[i].row;
-            if (rows[i].on && cardian::tactician::stateOf(row.gambit, i + 1, line, rowFits(row.gambit)) == cardian::tactician::State::Allows &&
-                cardian::tactician::allowsSpell(row.gambit, spell))
-            {
-                return true;
-            }
-        }
-        return false;
+        return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
+                                   {
+                                       const auto& g = p.row->gambit;
+                                       return p.on && cardian::tactician::stateOf(g, rowFits(g)) == cardian::tactician::State::Tool && cardian::tactician::allowsSpell(g, spell);
+                                   });
     }
 
     auto CGambits::EngageConditionsHold(const Gambit_t& gambit, CBattleEntity* PFoe) -> bool
@@ -1713,7 +1756,7 @@ namespace pawn
     {
         // One name per behaviour value, "?" for the gaps and the retired
         // values; the assert keeps the list in step with the enum
-        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "boost before weapon skills", "?", "role", "?", "avoid links" });
+        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "boost before weapon skills", "?", "?", "?", "avoid links", "rest" });
         static_assert(names.size() == pawn::BehaviorCount);
         const auto name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool sw   = pawn::isSwitch(behavior);
@@ -1732,18 +1775,12 @@ namespace pawn
                    g.predicate_groups.size() == 1 && g.predicate_groups[0].predicates.size() == 1 &&
                    g.predicate_groups[0].predicates[0].condition == G_CONDITION::ALWAYS;
         };
-        // A behaviour row is an order, so it sits above her tactician line:
-        // a new one goes in just above it, and one found below it, struck
-        // out there, moves up to it
-        const auto line = Line();
+        // Her row for it is set where it stands; a new one ends her list
         if (const auto it = std::find_if(m_gambits.begin(), m_gambits.end(), unconditional); it != m_gambits.end())
         {
             it->gambit.actions[0].select_arg = sw ? 1 : arg;
             it->enabled                      = sw ? arg != 0 : true;
-            if (const auto place = static_cast<std::size_t>(it - m_gambits.begin()) + 1; line.has_value() && place > *line)
-            {
-                Move(place, *line);
-            }
+            RowsChanged();
         }
         else
         {
@@ -1751,15 +1788,7 @@ namespace pawn
             row.target_selector = G_TARGET::SELF;
             row.predicate_groups.emplace_back(G_LOGIC::AND, std::vector<Predicate_t>{ Predicate_t(G_CONDITION::ALWAYS, 0) });
             row.actions.emplace_back(G_REACTION_BEHAVIOR, static_cast<G_SELECT>(behavior), sw ? 1 : arg);
-            if (line.has_value())
-            {
-                Insert(*line, std::move(row));
-                m_gambits[*line - 1].enabled = sw ? arg != 0 : true;
-            }
-            else
-            {
-                AddGambit(std::move(row), sw ? arg != 0 : true);
-            }
+            AddGambit(std::move(row), sw ? arg != 0 : true);
         }
         if (sw)
         {
@@ -1787,6 +1816,7 @@ namespace pawn
             return false;
         }
         m_gambits[index - 1].enabled = on;
+        RowsChanged();
         return true;
     }
 
@@ -1801,6 +1831,7 @@ namespace pawn
             GambitRow row = std::move(m_gambits[from - 1]);
             m_gambits.erase(m_gambits.begin() + static_cast<std::ptrdiff_t>(from - 1));
             m_gambits.insert(m_gambits.begin() + static_cast<std::ptrdiff_t>(to - 1), std::move(row));
+            RowsChanged();
         }
         return true;
     }
@@ -1812,6 +1843,7 @@ namespace pawn
             return false;
         }
         m_gambits.erase(m_gambits.begin() + static_cast<std::ptrdiff_t>(index - 1));
+        RowsChanged();
         return true;
     }
 
@@ -1824,6 +1856,7 @@ namespace pawn
         gambit.identifier = fmt::format("{}", ++m_nextId);
         gambit.last_used  = {};
         m_gambits.insert(m_gambits.begin() + static_cast<std::ptrdiff_t>(index - 1), GambitRow{ std::move(gambit), true });
+        RowsChanged();
         return true;
     }
 
@@ -1836,6 +1869,7 @@ namespace pawn
         gambit.identifier          = fmt::format("{}", ++m_nextId);
         gambit.last_used           = {};
         m_gambits[index - 1].gambit = std::move(gambit);
+        RowsChanged();
         return true;
     }
 
@@ -2074,8 +2108,8 @@ namespace pawn
                     return fmt::format("Home point with the player{}", off);
                 case pawn::Behavior::BoostBeforeWs:
                     return fmt::format("Boost before weapon skills{}", off);
-                case pawn::Behavior::Role:
-                    return fmt::format("Role: {}", pawn::roleName(static_cast<pawn::Role>(a.select_arg)));
+                case pawn::Behavior::Rest:
+                    return fmt::format("Rest{}", off);
                 default:
                     return fmt::format("behaviour {} = {}", static_cast<uint16>(a.select), a.select_arg);
             }
@@ -2743,6 +2777,7 @@ namespace pawn
             { G_REACTION::ATTACK, G_SELECT::HIGHEST, 0, "Attack", ActionGroup::Fight, TARGET_ENEMY },
             { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::AvoidAggro), 1, "Avoid aggro", ActionGroup::Behaviours },
             { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::AvoidLinks), 1, "Avoid links", ActionGroup::Behaviours },
+            { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::Rest), 1, "Rest", ActionGroup::Behaviours },
             { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::RestWithPlayer), 1, "Rest with the player", ActionGroup::Behaviours },
             { G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::HomePointWithPlayer), 1, "Home point with the player", ActionGroup::Behaviours },
         };
@@ -2750,12 +2785,6 @@ namespace pawn
         for (const auto slot : { pawn::Slot::Lead, pawn::Slot::Follow, pawn::Slot::FlankLeft, pawn::Slot::FlankRight, pawn::Slot::RearLeft, pawn::Slot::RearRight, pawn::Slot::Behind })
         {
             v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::Formation), static_cast<uint32>(slot), fmt::format("Formation: {}", cardian::formation::slotName(slot)), ActionGroup::Behaviours });
-        }
-
-        // The role she plays: one row switches the whole role (RESEARCH §12.2 item 2)
-        for (const auto role : pawn::kRoles)
-        {
-            v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::Role), static_cast<uint32>(role), fmt::format("Role: {}", pawn::roleName(role)), ActionGroup::Behaviours });
         }
 
         // The actions of her main job and her support job, at every level, in

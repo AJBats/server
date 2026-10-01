@@ -71,20 +71,25 @@ namespace pawn::tactics
     // characters first, the zone-coded mob lookup for the rest
     auto entity(CCharEntity* PPawn, uint32 id) -> CBattleEntity*;
 
-    // Her Role row says Support Mage (a real player never does)
-    auto supportMage(CBattleEntity* PMember) -> bool;
+    // Her rows offer the tactician spells for the party -- a marked Cure,
+    // -na or Enfeeble row that is on (a real player's never do)
+    auto offersSpells(CBattleEntity* PMember) -> bool;
+    // Her rows offer the tactician her rest: a marked Self -> Rest row that
+    // is on, the MP pacing's handle (RESEARCH §17.13)
+    auto offersRest(CBattleEntity* PMember) -> bool;
     // She attends the fight on this mob from the perimeter rather than
-    // fighting it: a Support Mage no Attack row of hers sends onto it
+    // fighting it: a mage with spells to offer, no Attack row of hers
+    // sending her onto it
     // (CPawnController::AttendsFight; a real player never does)
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool;
 
-    // Her allow-list (tactician_line.h; CGambits::Admits): the id of the row
-    // below her Support Mage row that lets her tactician cast this spell on
-    // this target now. Nothing when no row does, or she is no cardian. Every
+    // Her tools (tactician_line.h; CGambits::Admits): the id of the marked
+    // row that lets her tactician cast this spell on this target now.
+    // Nothing when no row does, or she is no cardian. Every
     // cast her tactician chooses asks it first: without a row it is not hers
     // to cast, emergency aid included
     auto admittedBy(CBattleEntity* PHolder, SpellID spell, CBattleEntity* PTarget) -> std::optional<std::string>;
-    // Whether a row below her line names this spell at all (CGambits::AllowsSpell)
+    // Whether a marked row of hers names this spell at all (CGambits::AllowsSpell)
     auto allows(CBattleEntity* PHolder, SpellID spell) -> bool;
 
     // The conveyor's doors (RESEARCH §12.12 item 2; conveyor.h), for the
@@ -124,7 +129,7 @@ namespace pawn::tactics
     auto assignment(CCharEntity* PPawn, bool engaged) -> std::optional<Assignment>;
 
     // Emergency aid is measured/selected centrally in the party tick;
-    // the Support Mage's ordinary needs are fed on her think.
+    // a casting mage's ordinary needs are fed on her think.
     void roleThink(CCharEntity* PPawn, bool engaged);
 
     // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h

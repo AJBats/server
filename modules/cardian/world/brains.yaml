@@ -8,7 +8,7 @@
 #              | has <status> | lacks <status> | top enmity | not top enmity
 #   action     avoid aggro | avoid links | rest with leader | home point with
 #              leader | boost before weapon skills | formation <lead|flank left|flank
-#              right|rear left|rear right|behind> | role <support mage|tank> | cast
+#              right|rear left|rear right|behind> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
 #              cast <spell> | cast random damage | ability <name> | best weapon
 #              skill | random weapon skill
@@ -20,7 +20,7 @@
 #
 # These rows are a layer of their own, not a body's rows. Every character
 # has her own rows -- a saved set, else her job's defaults (the fights she
-# takes, rest with the player, her role) -- the same list wherever she is,
+# takes, rest with the player, a mage's cures) -- the same list wherever she is,
 # and the only one the gambit editor shows. While a world body is out in the
 # wild (not in a player's party, not held by his contract) she also runs
 # this file's rows, AHEAD of her own: the `world` block every body runs,
@@ -33,9 +33,9 @@
 # Roles: a Warrior or Paladin is the tank when she is the highest of them
 # in her party, and the tank leads the camp; the others and the fighters
 # are melee; the mages are White, Black, Red Mage, Summoner, Scholar and
-# Geomancer, the jobs whose own defaults make them a Support Mage. No block
-# has a `role` row: her role is her own row, and one here would outrank it
-# in the wild. The file is re-read within seconds of a change and every
+# Geomancer, the jobs whose own defaults cure for the party. These rows are
+# all orders: the tactician's mark is a row of her own, never the world's.
+# The file is re-read within seconds of a change and every
 # world body picks it up; these rows are compiled to the same numeric form
 # the addon saves for your own cardians. `tools/world/check.py` compiles
 # every row against the same tables, so a typo fails a test before a

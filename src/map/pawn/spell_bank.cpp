@@ -786,7 +786,7 @@ namespace pawn::tactics
                 }
                 else
                 {
-                    line += fmt::format("; cast {} under the line", PSpell->getName());
+                    line += fmt::format("; cast {} by her tactician", PSpell->getName());
                 }
                 return line;
             }

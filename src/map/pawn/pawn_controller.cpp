@@ -69,6 +69,7 @@
 #include "entities/char_entity.h"
 #include "status_effect_container.h"
 #include "entities/mob_entity.h"
+#include "party_roster.h"
 #include "tactics.h"
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
@@ -109,21 +110,11 @@ CPawnController::CPawnController(CCharEntity* PPawn)
 void CPawnController::ClearGambitBehaviors()
 {
     m_Behaviors.fill(std::nullopt);
-    m_RolesHeld = 0;
 }
 
 void CPawnController::SetGambitBehavior(const uint16 behavior, const uint16 arg)
 {
     cardian::layers::speak(m_Behaviors, behavior, arg);
-    if (behavior == static_cast<uint16>(pawn::Behavior::Role))
-    {
-        cardian::layers::holdRole(m_RolesHeld, arg);
-    }
-}
-
-auto CPawnController::HoldsRole(const pawn::Role role) const -> bool
-{
-    return cardian::layers::holdsRole(m_RolesHeld, static_cast<uint16>(role));
 }
 
 auto CPawnController::Behavior(const pawn::Behavior behavior) const -> std::optional<uint16>
@@ -249,8 +240,8 @@ auto CPawnController::AttendsFight(CBattleEntity* PTarget) const -> bool
     {
         return false;
     }
-    const bool supportMage = pawn::tactics::supportMage(POwner);
-    return cardian::engage::attendsFight(supportMage, supportMage && ClaimingRow(PTarget).has_value());
+    const bool spells = pawn::tactics::offersSpells(POwner);
+    return cardian::engage::attendsFight(spells, spells && ClaimingRow(PTarget).has_value());
 }
 
 auto CPawnController::PlayersOrderOn(const CBattleEntity* PTarget) const -> bool
@@ -1977,9 +1968,9 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         m_KeepCampFightSpot = false;
         m_CampSettlement = {};
     }
-    // A fight she attends (AttendsFight: the Support Mage role, no Attack
-    // row of hers claims the mob, and it is not the mob the player's own
-    // Attack named) is taken the way her role says, attending, whatever
+    // A fight she attends (AttendsFight: her rows offer the fight spells,
+    // no Attack row of hers claims the mob, and it is not the mob the
+    // player's own Attack named) is taken attending, whatever
     // else brought her to the door, the party's engage chord included:
     // distance and the draw cooldown are the fight ring's
     // business, not hers. Attending needs a place to keep cure range to,
@@ -2761,6 +2752,14 @@ auto CPawnController::RestsWithPlayer() const -> bool
     return Behavior(pawn::Behavior::RestWithPlayer).value_or(0) != 0;
 }
 
+auto CPawnController::RestsByRow() const -> bool
+{
+    // A plain Self -> Rest row whose conditions hold: an order to kneel,
+    // out of a fight, for as long as it holds (the marked one is the
+    // tactician's and never speaks here)
+    return Behavior(pawn::Behavior::Rest).value_or(0) != 0;
+}
+
 auto CPawnController::HomePointsWithPlayer() const -> bool
 {
     return Behavior(pawn::Behavior::HomePointWithPlayer).value_or(0) != 0;
@@ -3017,13 +3016,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Her tactician's melee -- a row below her Support Mage row took this
-    // fight, and none above it claims the mob -- gives way to her rest the
-    // moment her recovery is due: she leaves the fight, the door has her
-    // attend it, and she rests as her rest policy says until it stands her
-    // (tactician_line.h leavesToRest; RESEARCH §14.12 decision 19). An order
-    // above the line, or the player's own Attack, keeps her in. A tank's
-    // recovery is never due (RecoveryDue): she leaves no fight to rest
+    // Her tactician's melee -- a marked Attack row took this fight, and no
+    // order claims the mob -- gives way to her rest the moment her recovery
+    // is due: she leaves the fight, the door has her attend it, and she
+    // rests as her rest policy says until it stands her (tactician_line.h
+    // leavesToRest; RESEARCH §14.12 decision 19). An order, or the player's
+    // own Attack, keeps her in. A tank's recovery is never due
+    // (RecoveryDue): she leaves no fight to rest
     if (const bool runs = TacticianRuns(), due = RecoveryDue();
         due && cardian::tactician::leavesToRest(runs, due, ClaimingRowAs(PTarget, false).has_value(), ClaimingRowAs(PTarget, true).has_value(), PlayersOrderOn(PTarget)))
     {
@@ -3493,12 +3492,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // the player, or the stake -- and the hunt round the player. Waiting,
     // she has neither, whatever the party's plan. The hunt is the party's
     // strategy, not a gambit, so her gambit switch does not gate it; a
-    // Support Mage whose rows take no fight never pulls, since she attends
+    // mage whose rows take no fight never pulls, since she attends
     // (RESEARCH §12.15), and one with an Attack row fights her own pull
     const Place* place         = CurrentPlace(PPlayer);
     const bool   somewhereToGo = place != nullptr && !m_Waiting;
     const bool   hunting       = somewhereToGo && PPlayer != nullptr && IsHunting() &&
-                         cardian::engage::huntsForParty(pawn::tactics::supportMage(POwner), TakesFights());
+                         cardian::engage::huntsForParty(pawn::tactics::offersSpells(POwner), TakesFights());
 
     TidyBag();
     m_Gambits->TickBehaviors();
@@ -3506,15 +3505,16 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // The engage door (engage_math.h): the fight her Attack rows take
     // (EngageChoice), drawn on through the one door (Draw) -- the rules,
     // then the draw, or the walk in when it is farther than she may draw
-    // from; with none, a Support Mage with a place to keep cure range to
-    // attends the party's fight (PartyFightScan) from the perimeter, so by
-    // default she attends without engaging monsters. With her gambits off
-    // neither is hers: she takes no fight of her own, and only an order
-    // (EngageOn, the command window's Attack) sends her in. A walk in
-    // already under way passed the door once; the approach below draws.
-    namespace engage             = cardian::engage;
-    const position_t from        = place != nullptr ? place->position() : POwner->loc.p;
-    const bool       supportMage = pawn::tactics::supportMage(POwner);
+    // from; with none, a mage with spells to offer and a place to keep cure
+    // range to attends the party's fight (PartyFightScan) from the
+    // perimeter, so by default she attends without engaging monsters. With
+    // her gambits off neither is hers: she takes no fight of her own, and
+    // only an order (EngageOn, the command window's Attack) sends her in.
+    // A walk in already under way passed the door once; the approach
+    // below draws.
+    namespace engage        = cardian::engage;
+    const position_t from   = place != nullptr ? place->position() : POwner->loc.p;
+    const bool       spells = pawn::tactics::offersSpells(POwner);
     FightPick        party;
     engage::How      how = engage::How::Draw;
     // An attendance she has committed to -- the mob engaged, or the
@@ -3528,7 +3528,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     if (auto* PAttended = AttendedTarget(); PAttended != nullptr && (AttendedEngaged() || m_AttendedOrdered))
     {
         const auto claim = ClaimingRow(PAttended);
-        switch (engage::keptAttendance(supportMage, claim.has_value()))
+        switch (engage::keptAttendance(spells, claim.has_value()))
         {
             case engage::Kept::Attend:
                 party = { PAttended, "the fight she is attending" };
@@ -3539,7 +3539,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 how   = engage::How::Draw;
                 break;
             case engage::Kept::Stop:
-                Transition(IdleMode(), fmt::format("stops attending {} (her gambits no longer make her a Support Mage)", PAttended->getName()));
+                Transition(IdleMode(), fmt::format("stops attending {} (her rows no longer offer the fight a spell)", PAttended->getName()));
                 break;
         }
     }
@@ -3550,8 +3550,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         // stands idle through a fight (engage_math.h doorAnswer)
         const bool campMember = m_World && PPlayer != nullptr && pawn::world::campLeaderOf(POwner->id) == PPlayer->id;
         party                 = EngageChoice(PPlayer, from);
-        const auto fight      = party.target == nullptr && (supportMage || campMember) ? PartyFightScan(PPlayer, from) : FightPick{};
-        const auto answer     = engage::doorAnswer(party.target != nullptr, fight.target != nullptr, supportMage, place != nullptr, campMember);
+        const auto fight      = party.target == nullptr && (spells || campMember) ? PartyFightScan(PPlayer, from) : FightPick{};
+        const auto answer     = engage::doorAnswer(party.target != nullptr, fight.target != nullptr, spells, place != nullptr, campMember);
         if (party.target == nullptr && answer.has_value())
         {
             party = fight;
@@ -3638,8 +3638,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 ShowInfoFmt("pawn: {} keeps her spot at ({:.1f}, {:.1f}) after the fight ({:.1f} y from her seat)", POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, distance(POwner->loc.p, held.point, true));
                 held.point = POwner->loc.p;
             }
-            Transition(IdleMode(), !supportMage && PAttended != nullptr && !PAttended->isDead()
-                                       ? fmt::format("stops attending {} (her gambits no longer make her a Support Mage)", PAttended->getName())
+            Transition(IdleMode(), !spells && PAttended != nullptr && !PAttended->isDead()
+                                       ? fmt::format("stops attending {} (her rows no longer offer the fight a spell)", PAttended->getName())
                                        : AttendExitReason());
         }
     }
@@ -5050,15 +5050,20 @@ auto CPawnController::TakesFights() const -> bool
 
 auto CPawnController::TacticianRuns() const -> bool
 {
-    // Her line row must speak (HoldsRole): unchecked, or under a condition
-    // that fails, her tactician is off and the rows below the line wait
-    const auto line = m_Gambits->LineRole();
-    return m_Gambits->MasterOn() && line.has_value() && HoldsRole(*line) && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
+    // Her tactician runs while her rows offer it a tool: a marked row that
+    // is on (RESEARCH §17.13). With every one unchecked, or her master
+    // switch off, it has nothing of hers to judge
+    return m_Gambits->MasterOn() && m_Gambits->OffersTools() && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
 }
 
 auto CPawnController::RecoveryDue() const -> bool
 {
-    return TacticianRuns() && m_Gambits->LineRole() == pawn::Role::SupportMage && pawn::tactics::recoveryDue(static_cast<const CCharEntity*>(POwner));
+    // The MP pacing is her marked Rest row's, its conditions holding: she
+    // leaves a fight to rest only while one runs (RESEARCH §17.13). The
+    // party's Tank never does, whatever her rows: the seat is what she is
+    // for, and a tank leaves no fight to rest (§17.11)
+    return TacticianRuns() && m_Gambits->OffersRest() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) != cardian::party::Role::Tank &&
+           pawn::tactics::recoveryDue(static_cast<const CCharEntity*>(POwner));
 }
 
 auto CPawnController::TacticianMelee() const -> bool
@@ -6217,7 +6222,10 @@ auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::
 
 auto CPawnController::TowsAtStake() const -> bool
 {
-    return Staked() && HoldsRole(pawn::Role::Tank);
+    // The party's Tank tows, with her gambits on: the seat is what she is
+    // for (RESEARCH §17.13), and with the master switch off nothing of her
+    // rows or her seat moves her
+    return Staked() && m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank;
 }
 
 auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction

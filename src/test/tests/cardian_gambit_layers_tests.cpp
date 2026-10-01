@@ -105,14 +105,16 @@ namespace
     }
 
     // The behaviour pass (CGambits::TickBehaviors) over the running order:
-    // every checked behaviour row speaks, and speak keeps the first
+    // every checked behaviour row that is an order speaks, and speak keeps
+    // the first; a marked one is the tactician's (a `* Self -> Rest`) and
+    // is silent here
     using Behaviors = std::array<std::optional<uint16>, pawn::BehaviorCount>;
     auto behaviorsOf(const Layers<Row>& layers) -> Behaviors
     {
         Behaviors out{};
         forEachRow(layers, [&](const Row& row, std::size_t, bool)
                    {
-                       if (row.enabled)
+                       if (row.enabled && cardian::tactician::stateOf(row.gambit) == cardian::tactician::State::Order)
                        {
                            for (const auto& action : row.gambit.actions)
                            {
@@ -175,32 +177,39 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     uint32 next = 0;
     auto   world = worldRows(kWorldBlock, next);
 
-    // A mage's own rows: her weapon skill, rest with the player and the Support Mage role
+    // A mage's own rows: her marked cures, her weapon skill, rest with the player
     auto own = ownRows(pawn::defaultRowsFor(xi::Job::WHM));
 
-    // In the wild she avoids aggro and links (the world's) and plays her own role
+    // In the wild she avoids aggro and links (the world's) and rests with
+    // the player (hers); her marked Rest row is the tactician's and never
+    // speaks as a behaviour
     const auto wild = behaviorsOf(layersFor<Row>(true, world, own));
     CHECK(behavior(wild, pawn::Behavior::AvoidAggro) == uint16{ 1 });
     CHECK(behavior(wild, pawn::Behavior::AvoidLinks) == uint16{ 1 });
     CHECK(behavior(wild, pawn::Behavior::RestWithPlayer) == uint16{ 1 });
-    CHECK(behavior(wild, pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
+    CHECK_FALSE(behavior(wild, pawn::Behavior::Rest).has_value());
+    // a plain Rest row speaks as any switch does
+    own.push_back({ "8", *pawn::text::parseRow("0|0:0|100:14:1|0"), true });
+    CHECK(behavior(behaviorsOf(layersFor<Row>(false, world, own)), pawn::Behavior::Rest) == uint16{ 1 });
+    own.pop_back();
 
     // With a player the world's rows are gone: no Avoid aggro, no Avoid links
     const auto party = behaviorsOf(layersFor<Row>(false, world, own));
     CHECK_FALSE(behavior(party, pawn::Behavior::AvoidAggro).has_value());
     CHECK_FALSE(behavior(party, pawn::Behavior::AvoidLinks).has_value());
     CHECK(behavior(party, pawn::Behavior::RestWithPlayer) == uint16{ 1 });
-    CHECK(behavior(party, pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
 
     // A world row speaks before her own for the same behaviour: the world's
-    // role row (none ships; a hand-edited file) would outrank hers in the wild
-    auto worldRole = worldRows({ "0|0:0|100:11:2|0" }, next);
-    const auto both = behaviorsOf(layersFor<Row>(true, worldRole, own));
-    CHECK(behavior(both, pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::Tank));
-    CHECK(behavior(behaviorsOf(layersFor<Row>(false, worldRole, own)), pawn::Behavior::Role) == static_cast<uint16>(pawn::Role::SupportMage));
+    // formation row (none ships; a hand-edited file) would outrank hers in
+    // the wild
+    own.push_back({ "9", *pawn::text::parseRow("0|0:0|100:4:2|0"), true }); // Self -> Formation: flank left
+    auto worldSeat = worldRows({ "0|0:0|100:4:6|0" }, next);           // Self -> Formation: behind
+    const auto both = behaviorsOf(layersFor<Row>(true, worldSeat, own));
+    CHECK(behavior(both, pawn::Behavior::Formation) == uint16{ 6 });
+    CHECK(behavior(behaviorsOf(layersFor<Row>(false, worldSeat, own)), pawn::Behavior::Formation) == uint16{ 2 });
 
     // An unchecked row of hers does not speak; the next one does
-    own[1].enabled  = false; // rest with the player
+    own[5].enabled  = false; // rest with the player
     const auto some = behaviorsOf(layersFor<Row>(false, world, own));
     CHECK_FALSE(behavior(some, pawn::Behavior::RestWithPlayer).has_value());
     CHECK(behavior(behaviorsOf(layersFor<Row>(true, world, own)), pawn::Behavior::RestWithPlayer) == uint16{ 1 });
@@ -304,29 +313,13 @@ namespace
         return out;
     }
 
-    // The line among the fitted rows, as the states are judged
-    auto fittedLine(std::vector<Row>& own, std::vector<Row>& lent) -> std::optional<cardian::tactician::Line>
-    {
-        const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-        return cardian::tactician::lineOf(rows, [](const Placed<Row>& p) -> const Gambit_t& { return p.row->gambit; });
-    }
-
-    // Its 1-based place
-    auto linePlace(std::vector<Row>& own, std::vector<Row>& lent) -> std::optional<std::size_t>
-    {
-        const auto line = fittedLine(own, lent);
-        return line.has_value() ? std::optional<std::size_t>(line->place) : std::nullopt;
-    }
-
-    // The states of the fitted rows, 1-based places
+    // The states of the fitted rows, in their order
     auto fittedStates(std::vector<Row>& own, std::vector<Row>& lent) -> std::vector<cardian::tactician::State>
     {
-        const auto                             rows = fit<Row>(own, lent, gambitOf, enabledOf);
-        const auto                             line = fittedLine(own, lent);
         std::vector<cardian::tactician::State> out;
-        for (std::size_t i = 0; i < rows.size(); ++i)
+        for (const auto& p : fit<Row>(own, lent, gambitOf, enabledOf))
         {
-            out.push_back(cardian::tactician::stateOf(rows[i].row->gambit, i + 1, line));
+            out.push_back(cardian::tactician::stateOf(p.row->gambit));
         }
         return out;
     }
@@ -338,16 +331,17 @@ namespace
     const std::vector<std::pair<std::string, bool>> kDamage = pawn::bundles::bundleFor(cardian::party::Role::Damage, xi::Job::WAR);
 } // namespace
 
-TEST_CASE("gambit layers: Healer's bundle onto a melee list adds a line and its rows under hers", "[cardian][gambits][layers][fit]")
+TEST_CASE("gambit layers: Healer's bundle onto a melee list puts the tactician's cure rows ahead of hers", "[cardian][gambits][layers][fit]")
 {
+    using cardian::tactician::State;
     uint32 next = 0;
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::BRD));
     auto   lent = lentRows(kHealer, next);
 
-    // her five orders stay orders; the role's Support Mage row is her line,
-    // and the role's Cure and -na follow it
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "3", "4", "5", "r1", "r2", "r3" });
-    CHECK(linePlace(own, lent) == 6);
+    // the role's marked Cure, -na and Rest come first -- a role is the
+    // quick override -- and her five orders follow in her order
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5" });
+    CHECK(fittedStates(own, lent) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Order });
 
     // the lent rows are found by their ids among the running rows, her own
     // by theirs, and a lent id of a row the role did not lend is nobody's
@@ -355,7 +349,7 @@ TEST_CASE("gambit layers: Healer's bundle onto a melee list adds a line and its 
     CHECK(findRow(layers, "r2", idOf) == &lent[1]);
     CHECK(findRow(layers, "5", idOf) == &own[4]);
     CHECK(findRow(layers, "r9", idOf) == nullptr);
-    CHECK(order(layers) == std::vector<std::string>{ "1", "2", "3", "4", "5", "r1", "r2", "r3" });
+    CHECK(order(layers) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5" });
 }
 
 TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the role's rows stand in her rows' places", "[cardian][gambits][layers][fit]")
@@ -364,173 +358,164 @@ TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the 
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::WHM));
     auto   lent = lentRows(kHealer, next);
 
-    // the bundle's three stand in the places of her Support Mage row (3),
-    // her Cure (4) and her -na (5), under her numbers; the rest of her list
-    // is untouched, and her line is where it was
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "r1*", "r2*", "r3*", "6", "7" });
-    CHECK(linePlace(own, lent) == 3);
+    // the bundle's three stand in the places of her Cure (1), her -na (2)
+    // and her Rest (4), under her numbers; the rest of her list is untouched
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "3", "r3*", "5", "6", "7" });
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-    CHECK(rows[3].row == &lent[1]);
+    CHECK(rows[1].row == &lent[1]);
+    CHECK(rows[1].index == 2);
+    CHECK(rows[1].origin == Origin::Both);
+    CHECK(rows[3].row == &lent[2]);
     CHECK(rows[3].index == 4);
-    CHECK(rows[3].origin == Origin::Both);
 }
 
-TEST_CASE("gambit layers: a lent row overlaps hers by action and side, in the same part, whatever the condition", "[cardian][gambits][layers][fit]")
+TEST_CASE("gambit layers: a lent row overlaps hers by action and side, whatever the condition or the mark", "[cardian][gambits][layers][fit]")
 {
     uint32 next = 0;
     auto   lent = lentRows(kHealer, next);
 
-    SECTION("a Cure she gated below her line is overridden: the role's ungated Cure stands in its place while the role is held")
+    SECTION("a Cure she gated is overridden: the role's ungated, marked Cure stands in its place while the role is held")
     {
         auto own = ownRows({
-            { "0|0:0|100:11:1|0", true }, // Self -> Support Mage
-            { "1|1:75|2:0:1|0", true },   // Ally: HP < 75% -> Cure (best)
+            { "0|0:0|100:6:1|0", true }, // Self -> Rest with the player
+            { "1|1:75|2:0:1|0", true },  // Ally: HP < 75% -> Cure (best), an order of hers
         });
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "r3", "1", "r1*" });
         const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-        CHECK(rows[1].row == &lent[1]);
-        CHECK(rows[1].index == 2);
+        CHECK(rows[3].row == &lent[0]);
+        CHECK(rows[3].index == 2);
         // her own gate is kept, untouched, for when the role goes
         CHECK(own[1].gambit.predicate_groups.size() == 1);
-    }
-    SECTION("a Cure order above her line is another part: the role's Cure joins below")
-    {
-        auto own = ownRows({
-            { "1|1:50|2:0:1|0", true },   // Ally: HP < 50% -> Cure (best), an order
-            { "0|0:0|100:11:1|0", true }, // Self -> Support Mage
-        });
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "r1*", "r2", "r3" });
     }
     SECTION("an unchecked row of hers is taken over: the role's stands in its place, on, her checkbox untouched")
     {
         auto own = ownRows({
-            { "0|0:0|100:11:1|0", true },  // Self -> Support Mage
-            { "1|101:0|2:0:1|0", false },  // Ally: tactician's choice -> Cure (best), off
+            { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
+            { "1|101:0|2:0:1|0", false }, // * Ally -> Cure (best), off
         });
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "r3", "1", "r1*" });
         const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-        CHECK(rows[1].on);
+        CHECK(rows[3].on);
         CHECK_FALSE(own[1].enabled);
     }
-    SECTION("a row of hers runs by its checkbox, a lent row always")
+    SECTION("a row of hers runs by its checkbox, a lent row always; Rest with the player is not the tactician's Rest")
     {
         auto own = ownRows({
             { "0|0:0|100:6:1|0", false }, // Self -> Rest with the player, off
         });
         const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
         REQUIRE(rows.size() == 4);
-        CHECK_FALSE(rows[0].on);
+        CHECK(rows[0].on);
         CHECK(rows[1].on);
         CHECK(rows[2].on);
-        CHECK(rows[3].on);
+        CHECK_FALSE(rows[3].on);
+        CHECK(rows[3].origin == Origin::Own);
     }
     SECTION("the same action for the other side is not the same row")
     {
         uint32 n     = 0;
         auto   other = lentRows({ { "0|0:0|2:0:1|0", true } }, n); // Self -> Cure (best), an order
         auto   own   = ownRows({ { "1|1:50|2:0:1|0", true } });    // Ally: HP < 50% -> Cure (best)
-        CHECK(fitted(own, other) == std::vector<std::string>{ "1", "r1" });
+        CHECK(fitted(own, other) == std::vector<std::string>{ "r1", "1" });
     }
 }
 
-TEST_CASE("gambit layers: her own Support Mage row unchecked is still her line's place, and the role's row stands there, on", "[cardian][gambits][layers][fit]")
-{
-    uint32 next = 0;
-    auto   lent = lentRows(kHealer, next);
-    auto   own  = ownRows({
-        { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player, an order
-        { "0|0:0|100:11:1|0", false }, // Self -> Support Mage, off: her tactician is off
-        { "1|101:0|2:0:1|0", true },   // Ally: tactician's choice -> Cure (best)
-    });
-    // her order; the role's line in her line's place; the role's Cure in
-    // her Cure's place; the role's -na
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "r1*", "r2*", "r3" });
-    CHECK(linePlace(own, lent) == 2);
-
-    const auto rows  = fit<Row>(own, lent, gambitOf, enabledOf);
-    const auto line  = fittedLine(own, lent);
-    const auto state = [&](const std::size_t place)
-    {
-        return cardian::tactician::stateOf(rows[place - 1].row->gambit, place, line);
-    };
-    CHECK(state(1) == cardian::tactician::State::Order);
-    CHECK(state(2) == cardian::tactician::State::Line);
-    CHECK(state(3) == cardian::tactician::State::Allows);
-    CHECK(state(4) == cardian::tactician::State::Allows);
-    // the role's line stands in her line's place and runs; her own row is
-    // kept underneath, its checkbox untouched
-    CHECK(rows[1].on);
-    CHECK(rows[1].row == &lent[0]);
-    CHECK(rows[1].index == 2);
-    CHECK_FALSE(own[1].enabled);
-}
-
-TEST_CASE("gambit layers: Tank's bundle onto a melee list is a line under her orders, with the pull and Provoke below it", "[cardian][gambits][layers][fit]")
+TEST_CASE("gambit layers: Tank's bundle onto a melee list puts the marked pull and Provoke ahead of her orders", "[cardian][gambits][layers][fit]")
 {
     using cardian::tactician::State;
     uint32 next = 0;
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::WAR));
     auto   lent = lentRows(kTank, next);
 
-    // her five orders stay orders, her own trio among them; the role's Tank
-    // row is her line, and the pull and Provoke are her tank tactician's
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "3", "4", "5", "r1", "r2", "r3" });
-    CHECK(fittedLine(own, lent) == std::optional<cardian::tactician::Line>(cardian::tactician::Line{ 6, pawn::Role::Tank }));
+    // the role's marked Provoke first -- the tank tactician's tool -- and
+    // its marked pull standing in the place of her own "targeted by ally"
+    // row (the same action on the same side, whatever the mark: the role's
+    // wins while she holds it), so the pull is her tactician's and the
+    // rest of her trio stays her orders
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "5" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 8);
-    CHECK(states[5] == State::Line);
-    CHECK(states[6] == State::Allows); // Foe: targeted by ally -> Attack: her tactician's melee
-    CHECK(states[7] == State::Allows); // Foe: tactician's choice -> Provoke
+    REQUIRE(states.size() == 6);
+    CHECK(states[0] == State::Tool);  // * Foe -> Provoke
+    CHECK(states[1] == State::Order); // Foe: party leader's target -> Attack
+    CHECK(states[2] == State::Tool);  // * Foe: targeted by ally -> Attack, in her row's place: her tactician's melee
+    CHECK(states[3] == State::Order);
+    CHECK(states[4] == State::Order);
+    CHECK(states[5] == State::Order);
+    const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
+    CHECK(rows[2].origin == Origin::Both);
+    CHECK(rows[2].index == 2);
 }
 
-TEST_CASE("gambit layers: Tank's bundle onto a default mage stands in her line's place: her tactician is the tank's while she holds the role", "[cardian][gambits][layers][fit]")
+TEST_CASE("gambit layers: Tank's bundle onto a default mage keeps her cures: the tank's tools and the mage's sit side by side", "[cardian][gambits][layers][fit]")
 {
     using cardian::tactician::State;
     uint32 next = 0;
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::RDM));
     auto   lent = lentRows(kTank, next);
 
-    // her two orders; the role's Tank row where her Support Mage row was;
-    // her rows below, the role's pull standing in her own (unchecked)
-    // Attack row's place, then Provoke. Her Cure, -na and Enfeeble are
-    // nothing the tank's tactician reads: struck out while she holds Tank,
-    // her own rows untouched for when the role goes
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "r1*", "4", "5", "6", "r2*", "r3" });
-    CHECK(fittedLine(own, lent) == std::optional<cardian::tactician::Line>(cardian::tactician::Line{ 3, pawn::Role::Tank }));
+    // the role's marked pull and Provoke first; her marked Cure, -na,
+    // Enfeeble and Rest stay her tactician's tools (no line strikes them
+    // out any more: one tactician, every tool a row), then her orders, and
+    // her own marked Attack row last, off: "targeting ally" is not the
+    // pull's finder, so the pull does not stand in it
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "1", "2", "3", "4", "5", "6", "7" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 8);
-    CHECK(states[2] == State::Line);
-    CHECK(states[3] == State::NotBelow); // Cure (best)
-    CHECK(states[4] == State::NotBelow); // -na (best)
-    CHECK(states[5] == State::NotBelow); // Enfeeble
-    CHECK(states[6] == State::Allows);   // the pull, in her Attack row's place: the tank's melee
-    CHECK(states[7] == State::Allows);   // Provoke
+    REQUIRE(states.size() == 9);
+    CHECK(states[0] == State::Tool);  // the pull: the tank's melee
+    CHECK(states[1] == State::Tool);  // Provoke
+    CHECK(states[2] == State::Tool);  // Cure (best)
+    CHECK(states[3] == State::Tool);  // -na (best)
+    CHECK(states[4] == State::Tool);  // Enfeeble
+    CHECK(states[5] == State::Tool);  // Rest
+    CHECK(states[6] == State::Order); // her weapon skill
+    CHECK(states[7] == State::Order); // Rest with the player
+    CHECK(states[8] == State::Tool);  // her own marked Attack row
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-    CHECK(rows[6].on);
-    CHECK_FALSE(own[6].enabled);
-    CHECK(own[2].enabled);
+    CHECK_FALSE(rows[8].on);
+    CHECK(rows[8].origin == Origin::Own);
+}
+
+TEST_CASE("gambit layers: an Attack row is its finder: a lent pull takes the same finder's row and leaves her other Attack rows standing", "[cardian][gambits][layers][fit]")
+{
+    uint32 next = 0;
+    auto   lent = lentRows(kTank, next);
+    SECTION("her 'targeting ally' order stays beside the lent 'targeted by ally' pull (played 2026-10-01: the pull had swallowed it)")
+    {
+        auto own = ownRows({
+            { "102|0:0|0:0:0|0", true }, // Foe: targeting ally -> Attack
+            { "2|2:50|4:0:0|0", true },  // Foe: HP >= 50% -> Weapon skill (best)
+        });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "1", "2" });
+    }
+    SECTION("her own 'targeted by ally' row, marked or not, is the one the pull stands in")
+    {
+        auto plain = ownRows({ { "101|0:0|0:0:0|0", true } });
+        CHECK(fitted(plain, lent) == std::vector<std::string>{ "r2", "r1*" });
+        auto marked = ownRows({ { "101|101:0|0:0:0|0", false } });
+        CHECK(fitted(marked, lent) == std::vector<std::string>{ "r2", "r1*" });
+        CHECK(fit<Row>(marked, lent, gambitOf, enabledOf)[1].on);
+    }
 }
 
 TEST_CASE("gambit layers: Damage's bundle is the role's for her job: the trio for a melee job, nothing for a mage", "[cardian][gambits][layers][fit]")
 {
     uint32 next = 0;
 
-    SECTION("a default melee has every row of it: the role's stand in theirs, and no line is lent")
+    SECTION("a default melee has every row of it: the role's stand in theirs")
     {
         auto lent = lentRows(pawn::bundles::bundleFor(cardian::party::Role::Damage, xi::Job::MNK), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::MNK));
         CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "4", "5" });
-        CHECK_FALSE(linePlace(own, lent).has_value());
     }
-    SECTION("a melee job with a hand-made list is lent the trio as orders")
+    SECTION("a melee job with a hand-made list is lent the trio as orders, ahead of hers")
     {
         auto lent = lentRows(pawn::bundles::bundleFor(cardian::party::Role::Damage, xi::Job::THF), next);
         auto own  = ownRows({
             { "2|2:50|4:0:0|0", true }, // Foe: HP >= 50% -> Weapon skill (best)
         });
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "r1", "r2", "r3" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1" });
     }
-    SECTION("a mage is lent nothing: the seat is hers, her list is her own, and her Attack row stays off below her line (RESEARCH §17.12)")
+    SECTION("a mage is lent nothing: the seat is hers, and her list is her own (RESEARCH §17.12)")
     {
         for (const auto job : { xi::Job::BLM, xi::Job::WHM, xi::Job::RDM, xi::Job::SMN, xi::Job::SCH, xi::Job::GEO })
         {
@@ -540,7 +525,6 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her job: the trio fo
         auto lent = lentRows(pawn::bundles::bundleFor(cardian::party::Role::Damage, xi::Job::BLM), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::BLM));
         CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "3", "4", "5", "6", "7" });
-        CHECK(linePlace(own, lent) == 3);
     }
 }
 
@@ -558,20 +542,6 @@ TEST_CASE("gambit layers: no bundle is her own rows alone, and the world's still
     }
 }
 
-TEST_CASE("gambit layers: the roles she holds are a set, where a behaviour keeps its first speaker", "[cardian][gambits][layers][fit]")
-{
-    uint32 held = 0;
-    CHECK_FALSE(holdsRole(held, static_cast<uint16>(pawn::Role::SupportMage)));
-    holdRole(held, static_cast<uint16>(pawn::Role::Tank));
-    holdRole(held, static_cast<uint16>(pawn::Role::SupportMage));
-    CHECK(holdsRole(held, static_cast<uint16>(pawn::Role::Tank)));
-    CHECK(holdsRole(held, static_cast<uint16>(pawn::Role::SupportMage)));
-    CHECK_FALSE(holdsRole(held, static_cast<uint16>(pawn::Role::None)));
-    // a role number past the set is never held
-    holdRole(held, 40);
-    CHECK_FALSE(holdsRole(held, 40));
-}
-
 TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and Healer's are the mage defaults' own", "[cardian][gambits][layers][fit]")
 {
     for (const auto role : { cardian::party::Role::None, cardian::party::Role::Tank, cardian::party::Role::Healer, cardian::party::Role::Damage, cardian::party::Role::Puller })
@@ -586,30 +556,33 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
             }
         }
     }
-    // Healer lends the mage defaults' Support Mage row, Cure and -na, in
-    // that order, whatever her job
+    // Healer lends the mage defaults' marked Cure, -na and Rest, in that
+    // order, whatever her job
     const auto& mage = pawn::defaultRowsFor(xi::Job::WHM);
     REQUIRE(kHealer.size() == 3);
-    CHECK(kHealer[0].first == mage[2].first);
-    CHECK(kHealer[1].first == mage[3].first);
-    CHECK(kHealer[2].first == mage[4].first);
+    CHECK(kHealer[0].first == mage[0].first);
+    CHECK(kHealer[1].first == mage[1].first);
+    CHECK(kHealer[2].first == mage[3].first);
+    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kHealer[2].first)) == cardian::tactician::Allowance::Rest);
     CHECK(pawn::bundles::bundleFor(cardian::party::Role::Healer, xi::Job::WHM) == kHealer);
-    // Damage lends a melee job the melee defaults' trio and nothing else: no
-    // Role row, since a melee job runs no tactician of her own
+    // Damage lends a melee job the melee defaults' trio and nothing else
     const auto& melee = pawn::defaultRowsFor(xi::Job::WAR);
     REQUIRE(kDamage.size() == 3);
     CHECK(kDamage[0].first == melee[0].first);
     CHECK(kDamage[1].first == melee[1].first);
     CHECK(kDamage[2].first == melee[2].first);
     CHECK(pawn::bundles::bundleFor(cardian::party::Role::Damage, xi::Job::THF) == kDamage);
-    // Tank lends its line, then the pull (the melee defaults' "targeted by
-    // ally" row: an ally is the player as much as a cardian) and Provoke
-    // as the tactician's choice (RESEARCH §17.11)
-    REQUIRE(kTank.size() == 3);
-    CHECK(cardian::tactician::lineRoleOf(*pawn::text::parseRow(kTank[0].first)) == pawn::Role::Tank);
-    CHECK(kTank[1].first == melee[1].first);
-    CHECK(cardian::tactician::allowsAbility(*pawn::text::parseRow(kTank[2].first), 35));
-    CHECK(cardian::tactician::carries(*pawn::text::parseRow(kTank[2].first), pawn::G_CONDITION_TACTICIANS_CHOICE));
+    // Tank lends the pull, marked (the melee defaults' "targeted by ally"
+    // finder, an ally being the player as much as a cardian, as the
+    // tactician's melee) and Provoke, marked (RESEARCH §17.11, §17.13)
+    REQUIRE(kTank.size() == 2);
+    const auto pull = *pawn::text::parseRow(kTank[0].first);
+    CHECK(cardian::tactician::isMarked(pull));
+    CHECK(cardian::tactician::stateOf(pull) == cardian::tactician::State::Tool);
+    CHECK(cardian::tactician::allowanceOf(pull) == cardian::tactician::Allowance::Melee);
+    CHECK(pull.target_selector == pawn::G_TARGET_TARGETED_BY_ALLY);
+    CHECK(cardian::tactician::allowsAbility(*pawn::text::parseRow(kTank[1].first), 35));
+    CHECK(cardian::tactician::isMarked(*pawn::text::parseRow(kTank[1].first)));
     // Puller never lends
     CHECK(pawn::bundles::bundleFor(cardian::party::Role::Puller, xi::Job::THF).empty());
     CHECK(pawn::bundles::bundleFor(cardian::party::Role::None, xi::Job::WAR).empty());
