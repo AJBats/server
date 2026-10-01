@@ -37,7 +37,7 @@
 // is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
 // own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
 // numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
-// PARTY_ROLES, PARTY_ROLE and SET_PARTY_ROLE (RESEARCH §15); 28: the party finder's goals, GOALS
+// PARTY_ROLES, PARTY_ROLE and SET_PARTY_ROLE (RESEARCH §17); 28: the party finder's goals, GOALS
 // and GOAL, and the conquest exchange, CP_SHOP, CP_ITEM and CP_BUY (the
 // goals, cpshop and cpbuy lines leave, and LEGACY_CD with them: no text
 // crosses the link any more); 27: NOTE, what came of a cardian's
@@ -802,7 +802,7 @@ enum
 enum
 {
     CL_GO_OWN  = 0, // her own row
-    CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §15): shown, never edited
+    CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §17): shown, never edited
     CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
 };
 
@@ -1235,7 +1235,7 @@ typedef struct cl_queues
     cl_header h;
 } cl_queues;
 
-// ---- the party's roles (RESEARCH §15) ----
+// ---- the party's roles (RESEARCH §17) ----
 // Who tanks, heals, deals damage and pulls, as the party screen shows them.
 // The join rule says each member's role until the player chooses one for her.
 enum

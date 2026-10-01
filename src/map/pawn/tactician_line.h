@@ -34,7 +34,7 @@
 #include <string_view>
 
 // The tactician line (ROADMAP K, RESEARCH §14.12 decisions 7, 14 and
-// 17-19; §15.11). Her first Role row that says Support Mage or Tank splits
+// 17-19; §17.11). Her first Role row that says Support Mage or Tank splits
 // her list: the rows above it are orders, as any row is; the rows below it
 // are her tactician's allow-list, and the line's role says which tactician
 // -- a Support Mage's: the spells it may cast and the fights it may melee; a
@@ -179,7 +179,7 @@ namespace cardian::tactician
     // The state as the editor reads it on a row's line (Link protocol 13):
     // the server names, the addon words
     // The role a behaviour row names that makes it a line: Support Mage or
-    // Tank (RESEARCH §15.11: the Tank row is a line as Support Mage's is).
+    // Tank (RESEARCH §17.11: the Tank row is a line as Support Mage's is).
     // A Damage row is a role and no line: nothing judges under it yet
     inline auto lineRoleOf(const gambits::Gambit_t& g) -> std::optional<pawn::Role>
     {
@@ -210,7 +210,7 @@ namespace cardian::tactician
     // The line: the 1-based place of her first line row, whatever its
     // checkbox or its condition (ROADMAP K call 3), and whose tactician it
     // is. One line a list: a second line row below it is a behaviour row
-    // below the line, struck out (RESEARCH §15.10)
+    // below the line, struck out (RESEARCH §17.10)
     struct Line
     {
         std::size_t place = 0;
@@ -235,7 +235,7 @@ namespace cardian::tactician
         return std::nullopt;
     }
 
-    // What the tank's tactician uses for hate (RESEARCH §15.11): Provoke,
+    // What the tank's tactician uses for hate (RESEARCH §17.11): Provoke,
     // by its ability id (ability.h, asserted in pawn_gambits.cpp). Flash,
     // Shield Bash and the rest are later rows, each named
     inline constexpr std::array<uint16, 1> kHateAbilities{ 35 }; // Provoke

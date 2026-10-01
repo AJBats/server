@@ -32,7 +32,7 @@ class CBattleEntity;
 class CCharEntity;
 
 // A player's party and its roles, as the party screen shows them (RESEARCH
-// §15). The join rule (party_roles.h) is pure; this is its adapter: it reads
+// §17). The join rule (party_roles.h) is pure; this is its adapter: it reads
 // the party the game holds, gathers what the rule asks of each member, and
 // keeps the roles the player chose himself. The choices are the player's and
 // in memory, like his party's strategy: a server restart forgets them, and

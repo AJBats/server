@@ -27,7 +27,7 @@
 #include <string_view>
 #include <vector>
 
-// The tank tactician's Provoke pacing (RESEARCH §15.11, the user
+// The tank tactician's Provoke pacing (RESEARCH §17.11, the user
 // 2026-10-01). A tank keeps Provoke for the pull and runs it on its clock
 // otherwise:
 //  1. the pull: she has no fight of her own, and a mob the party fights is

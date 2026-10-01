@@ -247,7 +247,7 @@ namespace pawn
         // Whose tactician her line is as it runs, her role's rows fitted in:
         // Support Mage or Tank; none without a line
         auto LineRole() const -> std::optional<pawn::Role>;
-        // The tank tactician's door (RESEARCH §15.11): the first enabled row
+        // The tank tactician's door (RESEARCH §17.11): the first enabled row
         // below a Tank line that lets her use this hate tool on this target
         // now -- the row names the ability and the target, its retry has
         // run, its conditions hold -- used through it, and stamped. Nothing

@@ -19,7 +19,7 @@
 ===========================================================================
 */
 
-// The party's roles and the join rule (RESEARCH §15.6): the user's order
+// The party's roles and the join rule (RESEARCH §17.6): the user's order
 // of candidates for Tank, Healer and Puller, how the rule settles a roster
 // given in the order its members joined, and how the player's own choice
 // on the party screen stands beside the rule. The party screen and the

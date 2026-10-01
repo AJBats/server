@@ -501,7 +501,7 @@ namespace pawn
             return;
         }
 
-        // The tank tactician's call (RESEARCH §15.11): Provoke on the pull,
+        // The tank tactician's call (RESEARCH §17.11): Provoke on the pull,
         // on its clock in the fight, held for the next pull at the end.
         // Ahead of the stagger, as the emergency cure is: the pull waits
         // for nobody. Asked only while she can act at all (the emergency

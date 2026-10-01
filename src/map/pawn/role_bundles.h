@@ -27,8 +27,8 @@
 #include <utility>
 #include <vector>
 
-// The rows a party role lends a member while she holds it (RESEARCH §15.5,
-// §15.11): a small bundle of ordinary gambit rows, every one a row the
+// The rows a party role lends a member while she holds it (RESEARCH §17.5,
+// §17.11): a small bundle of ordinary gambit rows, every one a row the
 // editor could make, in the grammar of gambit_text.h with the ids of
 // gambit_ids.h. The bundle is written as a default set is: its orders
 // first, then its line row where it has one, then the rows for below the

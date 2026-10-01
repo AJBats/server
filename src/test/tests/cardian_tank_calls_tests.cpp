@@ -19,7 +19,7 @@
 ===========================================================================
 */
 
-// The tank tactician's Provoke pacing (RESEARCH §15.11, the user
+// The tank tactician's Provoke pacing (RESEARCH §17.11, the user
 // 2026-10-01): kept for the pull, used on its clock in the fight, held at
 // the end unless the mob is where it must not be, and an add left alone.
 
@@ -161,7 +161,7 @@ TEST_CASE("tank calls: the add -- a second mob on the party while hers is on her
     v.fight = 100;
     v.mobs  = { { 100, 20, kTank, 3.0f }, { 101, 100, kHealer, 5.0f } };
     // her fight is held at the end; the add on the Healer is the player's
-    // to direct (RESEARCH §15.10)
+    // to direct (RESEARCH §17.10)
     CHECK_FALSE(callOf(v).has_value());
 
     // her fight on its clock comes first, add or no add

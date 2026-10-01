@@ -24,7 +24,7 @@
 // else her own alone; the first row in that order to speak for a behaviour
 // wins, whichever layer it is in; a world row's id never meets one of hers,
 // and a request her world row made is dropped once she is with a player.
-// The fit (RESEARCH §15.3): the rows her party role lends laid onto her own
+// The fit (RESEARCH §17.3): the rows her party role lends laid onto her own
 // by part, a lent row that means what one of hers means left out.
 
 #include <catch2/catch_test_macros.hpp>
@@ -265,7 +265,7 @@ TEST_CASE("gambit layers: a row is found in the layer its id names, while that l
     CHECK(findRow(wild, "9", idOf) == nullptr);
 }
 
-// --- the fit: a role's rows onto hers (RESEARCH §15.3) ----------------------
+// --- the fit: a role's rows onto hers (RESEARCH §17.3) ----------------------
 
 namespace
 {
@@ -582,7 +582,7 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(kDamage[3].first == melee[5].first);
     // Tank lends its line, then the pull (the melee defaults' "targeted by
     // ally" row: an ally is the player as much as a cardian) and Provoke
-    // as the tactician's choice (RESEARCH §15.11)
+    // as the tactician's choice (RESEARCH §17.11)
     REQUIRE(kTank.size() == 3);
     CHECK(cardian::tactician::lineRoleOf(*pawn::text::parseRow(kTank[0].first)) == pawn::Role::Tank);
     CHECK(kTank[1].first == melee[1].first);

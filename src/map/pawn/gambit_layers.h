@@ -34,7 +34,7 @@
 #include <vector>
 
 // A character's rows come in layers (ROADMAP K5, RESEARCH §14.12 decision 8,
-// RESEARCH §15). Her own rows -- the set she has, else her job's defaults --
+// RESEARCH §17). Her own rows -- the set she has, else her job's defaults --
 // are the same list wherever she is, and the only one the editor edits or
 // saves. A world body out in the wild also runs the world's rows
 // (modules/cardian/world/brains.yaml): never saved, shown or sent, and run
@@ -114,7 +114,7 @@ namespace cardian::layers
         std::vector<Placed<Row>> rows;
     };
 
-    // --- the fit (RESEARCH §15.3) ---------------------------------------
+    // --- the fit (RESEARCH §17.3) ---------------------------------------
 
     // The side a row's condition names, for the overlap rule
     enum class Side : uint8
@@ -134,7 +134,7 @@ namespace cardian::layers
     }
 
     // Two rows mean the same thing where they sit when they have the same
-    // action on the same side, whatever their conditions (RESEARCH §15.2
+    // action on the same side, whatever their conditions (RESEARCH §17.2
     // decision 6): a lent row like that is left out, and hers stands
     inline auto overlaps(const gambits::Gambit_t& a, const gambits::Gambit_t& b) -> bool
     {
@@ -172,7 +172,7 @@ namespace cardian::layers
     // one, checked or not -- and a lent line of another role stands in it
     // too (a Tank line lent to a Support Mage: her tactician is the tank's
     // while she holds the role, and her rows its tactician does not read
-    // are struck out there; RESEARCH §15.10). gambitOf(row) reads a row's
+    // are struck out there; RESEARCH §17.10). gambitOf(row) reads a row's
     // gambit, enabledOf(row) its checkbox
     template <typename Row, typename GambitOf, typename EnabledOf>
     auto fit(const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, EnabledOf&& enabledOf) -> std::vector<Placed<Row>>
@@ -373,7 +373,7 @@ namespace cardian::layers
     // The roles a character holds this tick, as a set: every Role row that
     // speaks adds hers, where `speak` keeps only the first. A Bard with the
     // melee defaults' Damage row and a lent Support Mage row holds both
-    // (RESEARCH §15.4). Bit r for pawn::Role r
+    // (RESEARCH §17.4). Bit r for pawn::Role r
     constexpr auto holdRole(uint32& held, const uint16 role) -> void
     {
         if (role < 32)

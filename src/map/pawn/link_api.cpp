@@ -1356,7 +1356,7 @@ namespace pawn::linkapi
         }
 
         // The party's roles as the party screen shows them (party_roster.h,
-        // RESEARCH §15): each member as an answer, the player first. How many
+        // RESEARCH §17): each member as an answer, the player first. How many
         // were sent
         auto sendPartyRoles(CCharEntity* PChar, Reply& reply) -> uint8
         {

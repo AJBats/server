@@ -33,7 +33,7 @@
 #include <string_view>
 #include <vector>
 
-// The party's roles (RESEARCH §15): who tanks, who heals, who deals damage
+// The party's roles (RESEARCH §17): who tanks, who heals, who deals damage
 // and who pulls, as the party screen shows them. A party role is the
 // party's word for a member; it is not the Role row of her gambits
 // (gambit_ids.h pawn::Role), whose values are gambits of their own.

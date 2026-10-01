@@ -127,7 +127,7 @@ namespace pawn::tactics
     // the Support Mage's ordinary needs are fed on her think.
     void roleThink(CCharEntity* PPawn, bool engaged);
 
-    // The tank tactician's call on her think (RESEARCH §15.11; tank_calls.h
+    // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h
     // has the rules): the mob to Provoke now and why, or none and why not,
     // in words her engine logs as they change. Asked by a holder of a Tank
     // line; the party as her scope sees it this instant. Nothing without a
