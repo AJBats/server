@@ -104,7 +104,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_gambit_condition) == 8);
     STATIC_REQUIRE(sizeof(cl_gambit_action) == 8);
     STATIC_REQUIRE(sizeof(cl_gambit) == 200);
-    STATIC_REQUIRE(sizeof(cl_gambit_row) == 352);
+    STATIC_REQUIRE(sizeof(cl_gambit_row) == 354);
     STATIC_REQUIRE(sizeof(cl_gambits) == 24);
     STATIC_REQUIRE(sizeof(cl_gambit_toggle) == 24);
     STATIC_REQUIRE(sizeof(cl_gambit_move) == 24);

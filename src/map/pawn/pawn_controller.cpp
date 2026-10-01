@@ -96,7 +96,7 @@ namespace
     // and a row below her tactician line said to be her tactician's melee
     auto rowLabel(const pawn::CGambits::EngageRow& row) -> std::string
     {
-        return fmt::format("{}row {}{}", row.world ? "world " : "", row.index, row.below ? ", her tactician's melee" : "");
+        return fmt::format("{}row {}{}", row.world ? "world " : row.lent ? "lent " : "", row.index, row.below ? ", her tactician's melee" : "");
     }
 } // namespace
 
@@ -109,11 +109,21 @@ CPawnController::CPawnController(CCharEntity* PPawn)
 void CPawnController::ClearGambitBehaviors()
 {
     m_Behaviors.fill(std::nullopt);
+    m_RolesHeld = 0;
 }
 
 void CPawnController::SetGambitBehavior(const uint16 behavior, const uint16 arg)
 {
     cardian::layers::speak(m_Behaviors, behavior, arg);
+    if (behavior == static_cast<uint16>(pawn::Behavior::Role))
+    {
+        cardian::layers::holdRole(m_RolesHeld, arg);
+    }
+}
+
+auto CPawnController::HoldsRole(const pawn::Role role) const -> bool
+{
+    return cardian::layers::holdsRole(m_RolesHeld, static_cast<uint16>(role));
 }
 
 auto CPawnController::Behavior(const pawn::Behavior behavior) const -> std::optional<uint16>
@@ -6194,7 +6204,7 @@ auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::
 
 auto CPawnController::TowsAtStake() const -> bool
 {
-    return Staked() && Behavior(pawn::Behavior::Role).value_or(0) == static_cast<uint16>(pawn::Role::Tank);
+    return Staked() && HoldsRole(pawn::Role::Tank);
 }
 
 auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction

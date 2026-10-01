@@ -720,7 +720,7 @@ namespace pawn::tactics
             return false;
         }
         auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->Behavior(pawn::Behavior::Role).value_or(0) == static_cast<uint16>(pawn::Role::SupportMage);
+        return PController != nullptr && PController->HoldsRole(pawn::Role::SupportMage);
     }
 
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool

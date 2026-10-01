@@ -33,7 +33,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 30: a PARTY_ROLE carries the member's
+// compatible, the user, 2026-09-14). 32: ROLE_LOCKED, and a GAMBIT_ROW's on
+// is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
+// own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
 // numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
 // PARTY_ROLES, PARTY_ROLE and SET_PARTY_ROLE (RESEARCH §15); 28: the party finder's goals, GOALS
 // and GOAL, and the conquest exchange, CP_SHOP, CP_ITEM and CP_BUY (the
@@ -70,7 +72,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 30 };
+enum { CL_PROTOCOL = 32 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -200,6 +202,7 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
+    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: shown, edited nowhere
 
     // His cardians, and the party finder
     CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
@@ -796,15 +799,27 @@ enum
     CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
 };
 
-// One of her rows, as the editor shows it: an answer to GAMBITS and to every edit
+enum
+{
+    CL_GO_OWN  = 0, // her own row
+    CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §15): shown, never edited
+    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
+};
+
+// One of her rows, as the editor shows it: an answer to GAMBITS and to every
+// edit. The rows come in the running order, her party role's rows fitted in
+// among hers; index numbers her own, and is 0 on a lent row, which no edit
+// names
 typedef struct cl_gambit_row
 {
     cl_header h;
     uint32_t  cardian;   // charid
-    uint8_t   index;     // 1-based, in list order
-    uint8_t   on;        // its checkbox
+    uint8_t   index;     // 1-based among her own rows; 0 on a lent row
+    uint8_t   on;        // as it runs: her checkbox, or on for a row her party role pins
     uint8_t   state;     // CL_GS_*: what the row means where it sits
     uint8_t   fits;       // 0: more than cl_gambit carries (a hand-made brain's), gambit left empty: shown, not rewritten
+    uint8_t   origin;    // CL_GO_*
+    uint8_t   lender;    // CL_ROLE_*: the party role a lent row comes from, or that hers folds; CL_ROLE_NONE on her own
     cl_gambit gambit;
     char      head[64];   // the row as the player reads it: when, "Ally: HP < 50%"
     char      action[64]; // and what, "Cure (best)"

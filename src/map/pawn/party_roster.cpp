@@ -22,6 +22,7 @@
 #include "party_roster.h"
 
 #include "cardian_link_messages.h"
+#include "pawn.h"
 #include "pawn_spellbook.h"
 
 #include "common/logging.h"
@@ -29,8 +30,12 @@
 #include "items/item_equipment.h"
 #include "party.h"
 #include "spell.h"
+#include "utils/zoneutils.h"
+
+#include "common/timer.h"
 
 #include <algorithm>
+#include <optional>
 #include <unordered_map>
 
 namespace pawn::roster
@@ -47,6 +52,26 @@ namespace pawn::roster
         // player charid -> his party as last settled, so a role that changes
         // is said once in the map log and not at every look
         std::unordered_map<uint32, std::vector<Held>> lastSettled;
+
+        // player charid -> his party as last settled, kept two seconds for the
+        // engines, which ask every tick; the screen settles afresh
+        struct Settled
+        {
+            timer::time_point at{};
+            std::vector<Held> held;
+        };
+        std::unordered_map<uint32, Settled> settledFor;
+
+        // member charid -> her role as last read, for the tick that cannot
+        // reach her player: between zones, hers or his, the party is unchanged
+        // and the role holds for a while rather than coming off and on again
+        struct LastRole
+        {
+            timer::time_point at{};
+            Role              role = Role::None;
+        };
+        std::unordered_map<uint32, LastRole> lastRoleOf;
+        constexpr auto                       kRoleGrace = std::chrono::seconds(60);
 
         // His party's characters: himself first, then the others in the
         // order the party holds them. Alone, he is his whole party
@@ -131,6 +156,22 @@ namespace pawn::roster
             }
             last = held;
         }
+
+        // His party settled: afresh, or as kept within the last two seconds.
+        // One settle for the screen and the engines, so the two never disagree
+        auto settleParty(CCharEntity* PPlayer, const bool fresh) -> const std::vector<Held>&
+        {
+            auto&      settled = settledFor[PPlayer->id];
+            const auto now     = timer::now();
+            if (fresh || settled.held.empty() || now - settled.at >= std::chrono::seconds(2))
+            {
+                const auto members = membersOf(PPlayer);
+                settled.held       = cardian::party::settle(factsOf(PPlayer, members));
+                settled.at         = now;
+                sayChanges(PPlayer, members, settled.held);
+            }
+            return settled.held;
+        }
     } // namespace
 
     auto rolesOf(CCharEntity* PPlayer) -> std::vector<Row>
@@ -140,12 +181,11 @@ namespace pawn::roster
         {
             return rows;
         }
-        const auto members = membersOf(PPlayer);
-        const auto held    = cardian::party::settle(factsOf(PPlayer, members));
-        sayChanges(PPlayer, members, held);
-
+        // Settled afresh, in the party's order, which membersOf gives again
+        const auto& held    = settleParty(PPlayer, true);
+        const auto  members = membersOf(PPlayer);
         rows.reserve(members.size());
-        for (std::size_t i = 0; i < members.size(); ++i)
+        for (std::size_t i = 0; i < members.size() && i < held.size(); ++i)
         {
             auto* PChar = members[i];
             Row   row;
@@ -161,6 +201,45 @@ namespace pawn::roster
             rows.push_back(std::move(row));
         }
         return rows;
+    }
+
+    auto roleOf(CCharEntity* PMember) -> Role
+    {
+        if (PMember == nullptr)
+        {
+            return Role::None;
+        }
+        // The real player in her party, else her summoner: the orders' owner.
+        // Out of his party (an alt standing by) she holds no role. Between
+        // zones, his (not to be found) or hers (off the party's list for the
+        // moment), the party is unchanged: her last role holds for a while
+        // (kRoleGrace), rather than the role layer coming off and on again
+        // around every zone line. Leaving the party forgets it (memberLeft)
+        auto&      last    = lastRoleOf[PMember->id];
+        const auto now     = timer::now();
+        const auto owner   = pawn::ordersOwnerOf(PMember);
+        auto*      PPlayer = owner != 0 ? zoneutils::GetChar(owner) : nullptr;
+        const bool withHim = PPlayer != nullptr && (PPlayer == PMember || (PMember->PParty != nullptr && PMember->PParty == PPlayer->PParty));
+
+        std::optional<Role> role;
+        if (withHim)
+        {
+            for (const auto& h : settleParty(PPlayer, false))
+            {
+                if (h.id == PMember->id)
+                {
+                    role = h.role;
+                    break;
+                }
+            }
+        }
+        if (!role.has_value())
+        {
+            const bool recent = last.at != timer::time_point{} && now - last.at < kRoleGrace;
+            return recent ? last.role : Role::None;
+        }
+        last = { now, *role };
+        return *role;
     }
 
     auto choose(CCharEntity* PPlayer, const uint32 memberId, const Role role) -> uint16
@@ -179,6 +258,7 @@ namespace pawn::roster
         auto facts = factsOf(PPlayer, members);
         cardian::party::choose(facts, memberId, role);
 
+        settledFor.erase(PPlayer->id);
         auto& chosen = chosenByPlayer[PPlayer->id];
         for (const auto& m : facts)
         {
@@ -213,6 +293,7 @@ namespace pawn::roster
         {
             it->second.erase(memberId);
         }
+        settledFor.erase(PPlayer->id);
         return CL_S_OK;
     }
 
@@ -224,6 +305,9 @@ namespace pawn::roster
         }
         chosenByPlayer.erase(PMember->id);
         lastSettled.erase(PMember->id);
+        lastRoleOf.erase(PMember->id);
+        // Whichever party she left is settled afresh at its next read
+        settledFor.clear();
         for (auto& [player, chosen] : chosenByPlayer)
         {
             chosen.erase(PMember->id);

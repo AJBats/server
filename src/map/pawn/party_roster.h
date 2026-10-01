@@ -60,6 +60,13 @@ namespace pawn::roster
     // changed since the last call is said once in the map log.
     auto rolesOf(CCharEntity* PPlayer) -> std::vector<Row>;
 
+    // A member's role as her party stands, for the gambit engine's tick:
+    // None when she is with no player. Her party is settled at most every
+    // two seconds for everyone in it, at once after a choice, and by the
+    // same settle the screen reads; while she or her player is between
+    // zones her last role holds for a minute
+    auto roleOf(CCharEntity* PMember) -> cardian::party::Role;
+
     // The player's choice of a member's role, his from here on. CL_S_OK, or
     // CL_S_NOT_IN_PARTY when nobody by that charid is in his party.
     auto choose(CCharEntity* PPlayer, uint32 memberId, cardian::party::Role role) -> uint16;

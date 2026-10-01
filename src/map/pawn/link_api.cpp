@@ -430,29 +430,34 @@ namespace pawn::linkapi
         // Her rows as they now stand, each a GAMBIT_ROW answer, and the GAMBITS
         // that closes them: the last answer to GAMBITS, or the one ahead of an
         // edit's outcome
-        auto rowsOf(CCharEntity* PPawn, const pawn::CGambits& set, Reply& reply) -> cl_gambits
+        auto rowsOf(CCharEntity* PPawn, pawn::CGambits& set, Reply& reply) -> cl_gambits
         {
+            static_assert(CL_GO_OWN == static_cast<int>(cardian::layers::Origin::Own) && CL_GO_LENT == static_cast<int>(cardian::layers::Origin::Lent) &&
+                              CL_GO_BOTH == static_cast<int>(cardian::layers::Origin::Both),
+                          "the Link's origins are the layers'");
             auto summary    = make<cl_gambits>();
             summary.cardian = PPawn->id;
             summary.master  = set.MasterOn() ? 1 : 0;
-            std::size_t index = 0;
-            for (const auto& row : set.Rows())
+            std::size_t count = 0;
+            for (const auto& shown : set.Shown())
             {
-                if (++index > UINT8_MAX)
+                if (++count > UINT8_MAX)
                 {
                     break;
                 }
                 auto msg    = make<cl_gambit_row>();
                 msg.cardian = PPawn->id;
-                msg.index   = static_cast<uint8_t>(index);
-                msg.on      = row.enabled ? 1 : 0;
-                msg.state   = static_cast<uint8_t>(set.StateOf(index));
-                msg.fits    = pawn::wire::toWire(row.gambit, msg.gambit) ? 1 : 0;
-                const auto label = pawn::labelGambit(row.gambit);
+                msg.index   = static_cast<uint8_t>(shown.index);
+                msg.on      = shown.on ? 1 : 0;
+                msg.state   = static_cast<uint8_t>(shown.state);
+                msg.fits    = pawn::wire::toWire(shown.row->gambit, msg.gambit) ? 1 : 0;
+                msg.origin  = static_cast<uint8_t>(shown.origin);
+                msg.lender  = shown.origin == cardian::layers::Origin::Own ? CL_ROLE_NONE : static_cast<uint8_t>(set.LentBy());
+                const auto label = pawn::labelGambit(shown.row->gambit);
                 setText(msg.head, label.head);
                 setText(msg.action, label.action);
                 reply.more(msg);
-                summary.count = static_cast<uint8_t>(index);
+                summary.count = static_cast<uint8_t>(count);
             }
             return summary;
         }
@@ -519,6 +524,10 @@ namespace pawn::linkapi
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
+                            if (set.Locked(ask.index))
+                            {
+                                return CL_S_ROLE_LOCKED;
+                            }
                             return set.SetEnabled(ask.index, ask.on != 0) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -527,6 +536,10 @@ namespace pawn::linkapi
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
+                            if (set.Locked(ask.from))
+                            {
+                                return CL_S_ROLE_LOCKED;
+                            }
                             return set.Move(ask.from, ask.to) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -535,6 +548,10 @@ namespace pawn::linkapi
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
+                            if (set.Locked(ask.index))
+                            {
+                                return CL_S_ROLE_LOCKED;
+                            }
                             return set.Erase(ask.index) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -563,6 +580,10 @@ namespace pawn::linkapi
                             if (!gambit.has_value())
                             {
                                 return status;
+                            }
+                            if (set.Locked(ask.index))
+                            {
+                                return CL_S_ROLE_LOCKED;
                             }
                             return set.Replace(ask.index, std::move(*gambit)) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });

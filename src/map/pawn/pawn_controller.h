@@ -360,6 +360,10 @@ public:
     void ClearGambitBehaviors();
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
+    // The roles her Role rows hold this tick, every one that speaks and
+    // not the first alone (gambit_layers.h holdsRole): a lent Support Mage
+    // row beside her own Damage row makes her both
+    auto HoldsRole(pawn::Role role) const -> bool;
 
     auto FormationSlot() const -> pawn::Slot;
 
@@ -1149,6 +1153,7 @@ private:
     bool       m_PlayerMoving        = false;  // as of the last LeadPoint
 
     std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{}; // the behaviour layer, by pawn::Behavior
+    uint32                                                  m_RolesHeld = 0; // the roles her Role rows hold this tick, a bit per pawn::Role
     bool                                                    m_PlayerSeenDead = false; // while KO'd: the player has been seen dead since
 
     // Aggro avoidance state
