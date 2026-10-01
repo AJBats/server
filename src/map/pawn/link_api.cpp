@@ -38,13 +38,18 @@
 #include "ability.h"
 #include "ai/ai_container.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "entities/char_entity.h"
+#include "enums/item_flag.h"
+#include "items/item_linkshell.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
 #include "enums/item_state.h"
 #include "item_container.h"
 #include "items/item.h"
 #include "navmesh/navmesh.h"
+#include "packets/s2c/0x01d_item_same.h"
+#include "packets/s2c/0x020_item_attr.h"
 #include "pause/input_gate.h"
 #include "pause/pause.h"
 #include "recast_container.h"
@@ -221,17 +226,127 @@ namespace pawn::linkapi
             return bags;
         }
 
-        // A change to the items or gear of a cardian of his to manage: made by
-        // change(PPawn, partly), which returns its outcome and sets partly when
-        // a refusal came after part of it had moved; what it moved, told by
-        // moved(PPawn) as answers when it moved anything; then its outcome
-        template <typename Message, typename Change, typename Moved>
-        void changeItems(CCharEntity* PChar, const Message& ask, Reply& reply, Change&& change, Moved&& moved)
+        // The character a request to manage names: a cardian of his, or
+        // himself. His own gear and bags are driven over the Link as hers
+        // are (ROADMAP, the road to subjob item 5), by the calls his
+        // client's own packets make
+        auto managedOrSelf(CCharEntity* PChar, const uint32 id) -> CCharEntity*
         {
-            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            return id == PChar->id ? PChar : pawn::findManagedPawn(PChar, id);
+        }
+
+        // What the game's own item handlers refuse him (packets/c2s/validation.cpp:
+        // in an event, or not standing as normal -- mounted, zoning), the
+        // Link refuses him too
+        auto refusesOwn(const CCharEntity* PChar) -> bool
+        {
+            return PChar->isInEvent() || PChar->status != xi::Status::Normal;
+        }
+
+        // A change to his own bags is told to his client as the game's own
+        // handlers tell it: every slot of each container touched, the close,
+        // then his worn slots asserted again, since a sort re-slots a bag
+        // and a move carries a worn piece. A change made through an item
+        // transaction tells itself; those two do not
+        void tellClient(CCharEntity* PChar, const std::set<uint8>& locations)
+        {
+            for (const auto location : locations)
+            {
+                auto* PContainer = PChar->getStorage(location);
+                if (PContainer == nullptr)
+                {
+                    continue;
+                }
+                for (uint8 slot = 1; slot <= PContainer->GetSize(); ++slot)
+                {
+                    PChar->pushPacket<GP_SERV_COMMAND_ITEM_ATTR>(PContainer->GetItem(slot), static_cast<CONTAINER_ID>(location), slot);
+                }
+            }
+            PChar->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PChar);
+            PChar->resyncEquipment();
+        }
+
+        // His own drop, as the game's own handler drops (packets/c2s/0x028):
+        // a storage slip that holds gear is refused, a linkshell is refused
+        // here rather than broken from a menu, and an ordinary item in his
+        // inventory goes to the recycle bin when the server keeps one. Both
+        // ways tell his client themselves
+        auto dropOwn(CCharEntity* PChar, const cl_drop& ask) -> uint16
+        {
+            if (ask.bag != LOC_INVENTORY)
+            {
+                return CL_S_INVENTORY_ONLY;
+            }
+            auto*  PContainer = PChar->getStorage(ask.bag);
+            CItem* PItem      = PContainer != nullptr ? PContainer->GetItem(ask.slot) : nullptr;
+            if (PItem == nullptr || PItem->getQuantity() == 0)
+            {
+                return CL_S_NO_ITEM;
+            }
+            if (PItem->isType(ITEM_CURRENCY))
+            {
+                return CL_S_GIL_NOT_AN_ITEM;
+            }
+            if (PItem->isBusy())
+            {
+                return CL_S_ITEM_BUSY;
+            }
+            if (ask.qty == 0 || ask.qty > PItem->getQuantity())
+            {
+                return CL_S_BAD_QUANTITY;
+            }
+            if (PItem->isStorageSlip())
+            {
+                int slipData = 0;
+                for (int i = 0; i < CItem::extra_size; ++i)
+                {
+                    slipData += PItem->m_extra[i];
+                }
+                if (slipData != 0)
+                {
+                    return CL_S_REFUSED;
+                }
+            }
+            if (dynamic_cast<CItemLinkshell*>(PItem) != nullptr)
+            {
+                return CL_S_REFUSED;
+            }
+
+            const uint32 before = PItem->getQuantity();
+            if (!settings::get<bool>("map.ENABLE_ITEM_RECYCLE_BIN") || PItem->hasFlag(ItemFlag::NoRecycle))
+            {
+                charutils::DropItem(PChar, ask.bag, ask.slot, static_cast<int32>(ask.qty), PItem->getID());
+            }
+            else
+            {
+                charutils::AddItemToRecycleBin(PChar, ask.bag, ask.slot, static_cast<uint8>(ask.qty));
+            }
+            const CItem* PAfter = PContainer->GetItem(ask.slot);
+            if (PAfter != nullptr && PAfter->getQuantity() == before)
+            {
+                return CL_S_REFUSED;
+            }
+            return CL_S_OK;
+        }
+
+        // A change to the items or gear of a cardian of his to manage -- or,
+        // given ownTouched, of his own, in which case his client is told of
+        // the containers it names afterwards. Made by change(PPawn, partly),
+        // which returns its outcome and sets partly when a refusal came after
+        // part of it had moved; what it moved, told by moved(PPawn) as
+        // answers when it moved anything; then its outcome
+        template <typename Message, typename Change, typename Moved>
+        void changeItems(CCharEntity* PChar, const Message& ask, Reply& reply, const std::optional<std::set<uint8>>& ownTouched, Change&& change, Moved&& moved)
+        {
+            auto* PPawn = ownTouched.has_value() ? managedOrSelf(PChar, ask.cardian) : pawn::findManagedPawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (PPawn == PChar && refusesOwn(PChar))
+            {
+                reply.finish(ask, CL_S_REFUSED);
                 return;
             }
             bool       partly = false;
@@ -239,6 +354,10 @@ namespace pawn::linkapi
             if (status == CL_S_OK || partly)
             {
                 moved(PPawn);
+                if (PPawn == PChar && !ownTouched->empty())
+                {
+                    tellClient(PChar, *ownTouched);
+                }
             }
             reply.finish(ask, status);
         }
@@ -247,14 +366,14 @@ namespace pawn::linkapi
         void give(CCharEntity* PChar, const cl_give& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty); },
+                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty); },
                 [&](CCharEntity* PPawn) { reply.more(inventoryOf(PPawn, LOC_INVENTORY)); });
         }
 
         void take(CCharEntity* PChar, const cl_take& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::takeFromPawn(PChar, PPawn, ask.slot, ask.qty); },
+                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::takeFromPawn(PChar, PPawn, ask.slot, ask.qty); },
                 [&](CCharEntity* PPawn) { reply.more(inventoryOf(PPawn, LOC_INVENTORY)); });
         }
 
@@ -263,23 +382,26 @@ namespace pawn::linkapi
         void gil(CCharEntity* PChar, const cl_gil& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::moveGil(PChar, PPawn, ask.amount, ask.toHer != 0); },
+                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::moveGil(PChar, PPawn, ask.amount, ask.toHer != 0); },
                 [&](CCharEntity* PPawn) { reply.more(statsOf(PPawn, true)); });
         }
 
         // She uses an item on herself: the stack thins when the use completes,
-        // so the outcome is all there is to tell now
+        // so the outcome is all there is to tell now. His own item use is his
+        // client's (own.lua: a chat line), never this
         void use(CCharEntity* PChar, const cl_use& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::useItem(PPawn, ask.slot, ask.bag); },
+                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::useItem(PPawn, ask.slot, ask.bag); },
                 [](CCharEntity*) {});
         }
 
+        // His own drop tells his client itself (dropOwn), so nothing to re-send
         void drop(CCharEntity* PChar, const cl_drop& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::dropItem(PPawn, ask.slot, ask.qty, ask.bag); },
+                PChar, ask, reply, std::set<uint8>{},
+                [&](CCharEntity* PPawn, bool&) { return PPawn == PChar ? dropOwn(PChar, ask) : pawn::items::dropItem(PPawn, ask.slot, ask.qty, ask.bag); },
                 [&](CCharEntity* PPawn)
                 {
                     reply.more(inventoryOf(PPawn, ask.bag));
@@ -292,7 +414,8 @@ namespace pawn::linkapi
         void sortContainer(CCharEntity* PChar, const cl_sort& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool&) { return pawn::items::sortBag(PPawn, ask.bag); },
+                PChar, ask, reply, std::set<uint8>{ ask.bag },
+                [&](CCharEntity* PPawn, bool&) { return pawn::items::sortBag(PPawn, ask.bag); },
                 [&](CCharEntity* PPawn)
                 {
                     reply.more(inventoryOf(PPawn, ask.bag));
@@ -306,7 +429,8 @@ namespace pawn::linkapi
         void moveStack(CCharEntity* PChar, const cl_move& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, [&](CCharEntity* PPawn, bool& partly) { return pawn::items::moveItem(PPawn, ask.from, ask.slot, ask.to, ask.qty, &partly); },
+                PChar, ask, reply, std::set<uint8>{ ask.from, ask.to },
+                [&](CCharEntity* PPawn, bool& partly) { return pawn::items::moveItem(PPawn, ask.from, ask.slot, ask.to, ask.qty, &partly); },
                 [&](CCharEntity* PPawn)
                 {
                     reply.more(inventoryOf(PPawn, ask.from));
@@ -337,10 +461,15 @@ namespace pawn::linkapi
         // after: a piece put on from a wardrobe is worn from it after
         void equip(CCharEntity* PChar, const cl_equip& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            auto* PPawn = managedOrSelf(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (PPawn == PChar && refusesOwn(PChar))
+            {
+                reply.finish(ask, CL_S_REFUSED);
                 return;
             }
             constexpr std::size_t kMaxSlots = sizeof(cl_equip::slots) / sizeof(cl_equip_slot);
@@ -1639,9 +1768,18 @@ namespace pawn::linkapi
         }
 
         // The equipment screen's whole view of her: roster line, status pane,
-        // gear and, his to manage, her inventory
+        // gear and, his to manage, her inventory. His own view has no roster
+        // line: his client holds that
         void sync(CCharEntity* PChar, const cl_sync& ask, Reply& reply)
         {
+            if (ask.cardian == PChar->id)
+            {
+                reply.more(statsOf(PChar, true));
+                reply.more(gearOf(PChar));
+                reply.more(inventoryOf(PChar, LOC_INVENTORY));
+                reply.finish(ask, CL_S_OK);
+                return;
+            }
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
@@ -1659,10 +1797,11 @@ namespace pawn::linkapi
             reply.finish(ask, CL_S_OK);
         }
 
-        // One of her containers, asked for: the inventory or a bag (his to manage)
+        // One of her containers, asked for: the inventory or a bag (his to
+        // manage); or one of his own
         void inventory(CCharEntity* PChar, const cl_inventory& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            auto* PPawn = managedOrSelf(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
@@ -1678,7 +1817,7 @@ namespace pawn::linkapi
 
         void bags(CCharEntity* PChar, const cl_bags& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            auto* PPawn = managedOrSelf(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);

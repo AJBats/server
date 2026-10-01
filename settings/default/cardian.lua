@@ -49,4 +49,16 @@ xi.settings.cardian =
     -- keep) while the server is off. true: its time goes by, as upstream's
     -- does. false: the game carries on from the second it stopped.
     CLOCK_RUNS_OFFLINE = true,
+
+    -- The exp formula (RESEARCH §15; modules/cardian/lua/exp_spread.lua).
+    -- true: Cardian's rule. While the party's level spread -- highest less
+    -- lowest among the members counted for a kill -- is within
+    -- EXP_AVERAGE_SPREAD, every member is paid as if the whole party were
+    -- its average level, rounded down; from there to EXP_CLASSIC_SPREAD
+    -- each reward slides toward the server's own figure, which it reaches
+    -- at that spread. false: the server's own formula at every spread, as
+    -- LandSandBoat pays it with the era module or without.
+    EXP_PARTY_AVERAGE  = true,
+    EXP_AVERAGE_SPREAD = 3,
+    EXP_CLASSIC_SPREAD = 10,
 }
