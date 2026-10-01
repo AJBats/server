@@ -111,6 +111,9 @@ namespace cardian::link
     X(CANCEL, cl_cancel)         \
     X(DO, cl_do)                 \
     X(QUEUES, cl_queues)         \
+    X(PARTY_ROLES, cl_party_roles) \
+    X(PARTY_ROLE, cl_party_role) \
+    X(SET_PARTY_ROLE, cl_set_party_role) \
     X(QUEUE, cl_queue)           \
     X(NOTE, cl_note)             \
     X(MANEUVER_STATE, cl_maneuver_state) \

@@ -24,15 +24,19 @@
 #include "conveyor.h"
 #include "fight_log.h"
 #include "cure_readiness.h"
+#include "party_roster.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "role_support.h"
 #include "rest_policy.h"
+#include "tank_calls.h"
 
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/utils.h"
 
+#include "ability.h"
 #include "ai/ai_container.h"
 #include "ai/helpers/event_handler.h"
 #include "alliance.h"
@@ -44,11 +48,14 @@
 #include "lua/lua_spell.h"
 #include "lua/luautils.h"
 #include "party.h"
+#include "recast_container.h"
+#include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
 #include <magic_enum/magic_enum.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <cmath>
@@ -720,7 +727,7 @@ namespace pawn::tactics
             return false;
         }
         auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->Behavior(pawn::Behavior::Role).value_or(0) == static_cast<uint16>(pawn::Role::SupportMage);
+        return PController != nullptr && PController->HoldsRole(pawn::Role::SupportMage);
     }
 
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool
@@ -834,6 +841,94 @@ namespace pawn::tactics
         {
             role::think(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), engaged, seconds(timer::now()));
         }
+    }
+
+    auto tankCall(CCharEntity* PPawn, const bool engaged) -> std::optional<TankCall>
+    {
+        auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        auto* PProvoke   = ability::GetAbility(ABILITY_PROVOKE);
+        if (PTactician == nullptr || PProvoke == nullptr)
+        {
+            return std::nullopt;
+        }
+        static const int holdHp = settings::get<int>("pawn.TANK_PROVOKE_HOLD_HP");
+
+        cardian::tank::View v;
+        v.self = PPawn->id;
+        // HasRecast reads the clock; Has only says an entry exists, and one
+        // outlives its recast
+        const bool hers = charutils::hasAbility(PPawn, ABILITY_PROVOKE);
+        v.provokeReady  = hers && !PPawn->PRecastContainer->HasRecast(RECAST_ABILITY, PProvoke->getRecastId(), PProvoke->getRecastTime());
+        v.provokeRange  = PProvoke->getRange();
+        v.holdHp        = holdHp;
+
+        // The party as it stands: who is the Healer by the screen's role,
+        // and how hurt each is
+        const auto scope = scopeOf(PPawn);
+        for (auto* PMember : scope.members)
+        {
+            if (PMember != nullptr && !PMember->isDead())
+            {
+                auto* PChar = static_cast<CCharEntity*>(PMember);
+                v.members.push_back({ PChar->id, PChar->GetHPP(), pawn::roster::roleOf(PChar) == cardian::party::Role::Healer });
+            }
+        }
+
+        // The mobs the party fights, as the log has them open, each read
+        // live: its HP, whom it is on, how far from her -- hitbox to hitbox,
+        // which is the gap the server's own range check allows. Her own
+        // fight is among them whether or not the log has it yet; a fight of
+        // the alliance's in another zone is nothing to her
+        auto* PFight = engaged ? PPawn->GetBattleTarget() : nullptr;
+        if (PFight != nullptr && !PFight->isDead())
+        {
+            v.fight = PFight->id;
+        }
+        const auto add = [&](CBattleEntity* PMob)
+        {
+            if (PMob == nullptr || PMob->isDead() || PMob->loc.zone != PPawn->loc.zone ||
+                std::ranges::any_of(v.mobs, [&](const cardian::tank::Mob& m) { return m.id == PMob->id; }))
+            {
+                return;
+            }
+            auto*        POn    = PMob->GetBattleTarget();
+            const uint32 target = POn != nullptr && POn->objtype == TYPE_PC ? POn->id : 0;
+            const float  gap    = distance(PPawn->loc.p, PMob->loc.p) - PPawn->modelHitboxSize - PMob->modelHitboxSize;
+            v.mobs.push_back({ PMob->id, PMob->GetHPP(), target, gap });
+        };
+        for (const auto& r : PTactician->log().open())
+        {
+            if (!r.settling())
+            {
+                add(asMob(Conveyor::resolve(scope, r.mobId)));
+            }
+        }
+        add(PFight);
+
+        // Its mind in words, for her engine to log as it changes (as the
+        // bank says its prices): the call, or why it holds Provoke. Provoke
+        // merely on its clock is every fight's rhythm, said by the use line
+        // already: quiet. Provoke not hers at all is said once
+        const auto decision = cardian::tank::decide(v);
+        TankCall   out;
+        if (decision.call.has_value())
+        {
+            auto* PMob = Conveyor::resolve(scope, decision.call->mob);
+            out.mob    = decision.call->mob;
+            out.why    = std::string(cardian::tank::reasonName(decision.call->reason));
+            out.mind   = fmt::format("Provoke {} ({})", PMob != nullptr ? PMob->getName() : "?", out.why);
+        }
+        else if (decision.held == cardian::tank::Held::NoProvoke)
+        {
+            out.quiet = hers;
+            out.mind  = hers ? "holds Provoke (on its clock)" : "holds Provoke (not hers at all)";
+        }
+        else
+        {
+            out.mind = fmt::format("holds Provoke ({}; {} fight{} in the party's picture)",
+                                   cardian::tank::heldName(decision.held), v.mobs.size(), v.mobs.size() == 1 ? "" : "s");
+        }
+        return out;
     }
 
     auto restAdvice(CCharEntity* PPawn) -> std::optional<RestAdvice>

@@ -33,7 +33,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 28: the party finder's goals, GOALS
+// compatible, the user, 2026-09-14). 32: ROLE_LOCKED, and a GAMBIT_ROW's on
+// is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
+// own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
+// numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
+// PARTY_ROLES, PARTY_ROLE and SET_PARTY_ROLE (RESEARCH §17); 28: the party finder's goals, GOALS
 // and GOAL, and the conquest exchange, CP_SHOP, CP_ITEM and CP_BUY (the
 // goals, cpshop and cpbuy lines leave, and LEGACY_CD with them: no text
 // crosses the link any more); 27: NOTE, what came of a cardian's
@@ -68,7 +72,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 28 };
+enum { CL_PROTOCOL = 32 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -138,6 +142,7 @@ enum
     CL_S_NOT_A_MONSTER     = 0x0123, // a player or a cardian, not a monster
     CL_S_UNDERGROUND       = 0x0124, // the monster is out of reach underground
     CL_S_NO_CARDIANS_OUT   = 0x0125, // none of his cardians is out in his zone
+    CL_S_NOT_IN_PARTY      = 0x0126, // nobody by that charid is in his party
 
     // One cardian's orders
     CL_S_NOT_KNOCKED_OUT   = 0x0130, // a home point is for a KO'd cardian
@@ -197,6 +202,7 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
+    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: shown, edited nowhere
 
     // His cardians, and the party finder
     CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
@@ -785,7 +791,7 @@ typedef struct cl_gambit
 enum
 {
     CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
-    CL_GS_LINE      = 1, // her Support Mage row: the line itself
+    CL_GS_LINE      = 1, // her Support Mage or Tank row: the line itself
     CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
     CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
     CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
@@ -793,15 +799,27 @@ enum
     CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
 };
 
-// One of her rows, as the editor shows it: an answer to GAMBITS and to every edit
+enum
+{
+    CL_GO_OWN  = 0, // her own row
+    CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §17): shown, never edited
+    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
+};
+
+// One of her rows, as the editor shows it: an answer to GAMBITS and to every
+// edit. The rows come in the running order, her party role's rows fitted in
+// among hers; index numbers her own, and is 0 on a lent row, which no edit
+// names
 typedef struct cl_gambit_row
 {
     cl_header h;
     uint32_t  cardian;   // charid
-    uint8_t   index;     // 1-based, in list order
-    uint8_t   on;        // its checkbox
+    uint8_t   index;     // 1-based among her own rows; 0 on a lent row
+    uint8_t   on;        // as it runs: her checkbox, or on for a row her party role pins
     uint8_t   state;     // CL_GS_*: what the row means where it sits
     uint8_t   fits;       // 0: more than cl_gambit carries (a hand-made brain's), gambit left empty: shown, not rewritten
+    uint8_t   origin;    // CL_GO_*
+    uint8_t   lender;    // CL_ROLE_*: the party role a lent row comes from, or that hers folds; CL_ROLE_NONE on her own
     cl_gambit gambit;
     char      head[64];   // the row as the player reads it: when, "Ally: HP < 50%"
     char      action[64]; // and what, "Cure (best)"
@@ -992,6 +1010,9 @@ enum
     CL_T_QUEUES       = 0x0410,
     CL_T_SPAWN        = 0x0411,
     CL_T_DESPAWN      = 0x0412,
+    CL_T_PARTY_ROLES    = 0x0413,
+    CL_T_PARTY_ROLE     = 0x0414,
+    CL_T_SET_PARTY_ROLE = 0x0415,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1213,6 +1234,67 @@ typedef struct cl_queues
 {
     cl_header h;
 } cl_queues;
+
+// ---- the party's roles (RESEARCH §17) ----
+// Who tanks, heals, deals damage and pulls, as the party screen shows them.
+// The join rule says each member's role until the player chooses one for her.
+enum
+{
+    CL_ROLE_NONE   = 0,
+    CL_ROLE_TANK   = 1,
+    CL_ROLE_HEALER = 2,
+    CL_ROLE_DAMAGE = 3,
+    CL_ROLE_PULLER = 4, // one member's; the others can be held by several
+    CL_ROLE_AUTO   = 255, // asked only, never answered: the player's choice for her is taken back, and the join rule decides again
+};
+
+// One member of his party, her role, and what her column of the party screen
+// shows of her: an answer to PARTY_ROLES and to SET_PARTY_ROLE
+typedef struct cl_party_role
+{
+    cl_header h;
+    uint32_t  member;    // charid: the player, a cardian, or another player of his party
+    char      name[16];
+    uint8_t   mainJob;
+    uint8_t   mainLevel;
+    uint8_t   subJob;
+    uint8_t   subLevel;
+    uint8_t   role;      // CL_ROLE_*, never CL_ROLE_AUTO
+    uint8_t   byPlayer;  // 1 when the player chose it, 0 when the join rule gave it
+    uint8_t   self;      // 1 on the asking player's own row
+    uint8_t   spare;
+    uint16_t  hp;
+    uint16_t  maxHp;
+    uint16_t  mp;
+    uint16_t  maxMp;
+    uint16_t  tp;
+    uint16_t  attack;
+    uint16_t  defence;
+    uint16_t  spare2;
+    int16_t   total[7];  // STR, DEX, VIT, AGI, INT, MND, CHR
+    int16_t   bonus[7];  // the part of each that gear and effects give
+    uint16_t  worn[16];  // the item in each equipment slot, main hand to back; 0 for an empty slot
+} cl_party_role;
+
+// His party's roles: each member comes as a PARTY_ROLE answer (CL_F_MORE), the
+// player first and then in the order the party holds them, then this
+typedef struct cl_party_roles
+{
+    cl_header h;
+    uint8_t   count;    // answered: members sent
+    uint8_t   spare[3];
+} cl_party_roles;
+
+// The player's choice of a member's role, or, with CL_ROLE_AUTO, his taking
+// it back. The roles come back as they now stand (PARTY_ROLE, CL_F_MORE) ahead
+// of the outcome, refused or not
+typedef struct cl_set_party_role
+{
+    cl_header h;
+    uint32_t  member;   // charid
+    uint8_t   role;     // CL_ROLE_*
+    uint8_t   spare[3];
+} cl_set_party_role;
 
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 

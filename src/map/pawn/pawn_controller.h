@@ -211,9 +211,13 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
-    // Her tactician (tactician_line.h) runs: her Support Mage row speaks,
-    // her gambits are on, and a tactician watches her scope
+    // Her tactician (tactician_line.h) runs: her line row (a Support Mage
+    // or Tank row) speaks, her gambits are on, and a tactician watches her
+    // scope
     auto TacticianRuns() const -> bool;
+    // Her tactician's recovery is due: a Support Mage's MP, as her rest
+    // policy says. A tank's never is: she leaves no fight to rest
+    auto RecoveryDue() const -> bool;
     // The stake (RESEARCH §12.16): the party's place whenever it stands,
     // pushed by the orders (pawn::applyOrdersTo); hers while she stands in
     // its zone and no retreat is called (Staked). Staked, she keeps to it:
@@ -360,6 +364,10 @@ public:
     void ClearGambitBehaviors();
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
+    // The roles her Role rows hold this tick, every one that speaks and
+    // not the first alone (gambit_layers.h holdsRole): a lent Support Mage
+    // row beside her own Damage row makes her both
+    auto HoldsRole(pawn::Role role) const -> bool;
 
     auto FormationSlot() const -> pawn::Slot;
 
@@ -1149,6 +1157,7 @@ private:
     bool       m_PlayerMoving        = false;  // as of the last LeadPoint
 
     std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{}; // the behaviour layer, by pawn::Behavior
+    uint32                                                  m_RolesHeld = 0; // the roles her Role rows hold this tick, a bit per pawn::Role
     bool                                                    m_PlayerSeenDead = false; // while KO'd: the player has been seen dead since
 
     // Aggro avoidance state

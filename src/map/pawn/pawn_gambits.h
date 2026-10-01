@@ -25,6 +25,7 @@
 #include "gambit_defaults.h"
 #include "gambit_ids.h"
 #include "gambit_layers.h"
+#include "party_roles.h"
 #include "pawn_spellbook.h"
 #include "tactician_line.h"
 #include "world.h"
@@ -182,11 +183,11 @@ namespace pawn
     // run ahead of hers by the think, the behaviours, the conveyor's
     // requests and the engage door alike. Both follow her master switch.
     //
-    // Her own first Support Mage row is the tactician line
+    // Her first Support Mage or Tank row is the tactician line
     // (tactician_line.h): the rows below it are her tactician's allow-list
-    // (Admits, and the engage door's melee rows), never orders, and a row
-    // with no meaning where it sits is struck out. The world's layer has no
-    // line: its rows are orders.
+    // (Admits and UseHateTool, and the engage door's melee rows), never
+    // orders, and a row with no meaning where it sits is struck out. The
+    // world's layer has no line: its rows are orders.
     class CGambits
     {
     public:
@@ -239,12 +240,38 @@ namespace pawn
             return m_gambits.size();
         }
 
-        // The tactician line: the 1-based place of her first Support Mage
-        // row among her own rows, whatever its checkbox; none without one
+        // The tactician line: the 1-based place of her first line row (a
+        // Support Mage or Tank row) among her own rows, whatever its
+        // checkbox; none without one
         auto Line() const -> std::optional<std::size_t>;
-        // What her own row at a 1-based place means where it sits, as the
-        // editor draws it
-        auto StateOf(std::size_t index) const -> cardian::tactician::State;
+        // Whose tactician her line is as it runs, her role's rows fitted in:
+        // Support Mage or Tank; none without a line
+        auto LineRole() const -> std::optional<pawn::Role>;
+        // The tank tactician's door (RESEARCH §17.11): the first enabled row
+        // below a Tank line that lets her use this hate tool on this target
+        // now -- the row names the ability and the target, its retry has
+        // run, its conditions hold -- used through it, and stamped. Nothing
+        // when it was; else why it was not, for the log
+        auto UseHateTool(uint16 ability, CBattleEntity* PTarget, const std::string& why) -> std::optional<std::string>;
+        // Her rows as the editor shows them: her own and the rows her party
+        // role lends, in the running order (gambit_layers.h fit), each with
+        // whose it is, its number (hers: the one the edits name; a lent one:
+        // 0, no edit names it) and its state where it sits
+        struct ShownRow
+        {
+            const GambitRow*          row    = nullptr;
+            cardian::layers::Origin   origin = cardian::layers::Origin::Own;
+            std::size_t               index  = 0;
+            cardian::tactician::State state  = cardian::tactician::State::Order;
+            bool                      on     = true; // as it runs: a row the role pins runs on whatever its checkbox
+        };
+        auto Shown() -> std::vector<ShownRow>;
+        // Whether her own row at a 1-based place is pinned by her party role
+        // (the role's row stands in its place): shown, edited nowhere. The
+        // edits below refuse such a row themselves, whoever asks
+        auto Locked(std::size_t index) const -> bool;
+        // The party role whose rows run with hers now; None for no role
+        auto LentBy() const -> cardian::party::Role;
 
         // Her allow-list, for her tactician: the id of the first enabled row
         // below the line that lets her cast this spell on this target now --
@@ -278,6 +305,7 @@ namespace pawn
             bool                     world  = false; // a row of the world's layer
             bool                     below  = false; // below her tactician line
             const gambits::Gambit_t* gambit = nullptr;
+            bool                     lent   = false; // a row her party role lends (gambit_layers.h)
         };
         auto EngageRows() -> std::vector<EngageRow>;
         // Whether an engage row's conditions hold, every one read on the
@@ -292,9 +320,11 @@ namespace pawn
     private:
         // The layers that run for her now (gambit_layers.h): her world rows
         // while she is in the wild, compiled on first need and again whenever
-        // their key changes (world.h brainKey), then her own
+        // their key changes (world.h brainKey), then her own with her party
+        // role's rows fitted in, compiled again whenever her role changes
         auto RunningLayers() -> cardian::layers::Layers<GambitRow>;
         void RebuildWorldLayer();
+        void RebuildRoleLayer(cardian::party::Role role);
         auto Candidates(gambits::G_TARGET selector) -> std::vector<CBattleEntity*>;
         // Whether a target is one a row's selector names: Candidates as a
         // question about one entity, over her whole alliance for the party
@@ -309,7 +339,8 @@ namespace pawn
         // an allow-list entry, so Tactician's choice holds
         auto CheckTrigger(CBattleEntity* PTrigger, const gambits::Gambit_t& gambit, std::size_t groupIndex, bool pending = false, bool gate = false) -> bool;
         // The states of the running layers' rows, in forEachRow's order:
-        // the world's first (orders, no line), then her own
+        // the world's first (orders, no line), then her own and the lent
+        // rows as fitted, the line judged among them
         auto RunningStates(const cardian::layers::Layers<GambitRow>& layers) const -> std::vector<cardian::tactician::State>;
         auto ResolveSpell(const gambits::Action_t& action, CBattleEntity* PTarget) -> Maybe<SpellID>;
         // Behaviour rows (G_REACTION_BEHAVIOR only) flip controller switches
@@ -352,5 +383,19 @@ namespace pawn
         std::optional<pawn::world::BrainKey>    m_worldKey;
         uint32                                  m_nextWorldId = 0;
         HashMap<std::string, timer::time_point> m_worldTimers;
+
+        // Her party role's layer (role_bundles.h): its rows (ids "r1",
+        // "r2"... numbered on across rebuilds), the role they were compiled
+        // for, and its own TIMER clocks
+        std::vector<GambitRow>                  m_roleRows;
+        std::optional<cardian::party::Role>     m_roleKey;
+        uint32                                  m_nextRoleId = 0;
+        HashMap<std::string, timer::time_point> m_roleTimers;
+        // The tank tactician's mind as last said, why its last call could
+        // not go through (said once), and whether it has her think (said as
+        // it changes)
+        std::string                             m_tankMind;
+        std::string                             m_tankRefusal;
+        bool                                    m_tankOnDuty = false;
     };
 } // namespace pawn

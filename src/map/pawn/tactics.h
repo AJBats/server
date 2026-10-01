@@ -127,6 +127,20 @@ namespace pawn::tactics
     // the Support Mage's ordinary needs are fed on her think.
     void roleThink(CCharEntity* PPawn, bool engaged);
 
+    // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h
+    // has the rules): the mob to Provoke now and why, or none and why not,
+    // in words her engine logs as they change. Asked by a holder of a Tank
+    // line; the party as her scope sees it this instant. Nothing without a
+    // tactician
+    struct TankCall
+    {
+        std::optional<uint32> mob;   // the mob to Provoke now
+        std::string           why;   // the call's reason, for the use line
+        std::string           mind;  // "Provoke X (the pull)" or "holds Provoke (...)"
+        bool                  quiet = false; // Provoke merely on its clock: every fight's rhythm, not a change of mind
+    };
+    auto tankCall(CCharEntity* PPawn, bool engaged) -> std::optional<TankCall>;
+
     struct RestAdvice
     {
         bool wake = false;

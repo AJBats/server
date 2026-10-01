@@ -132,15 +132,15 @@ namespace cardian::engage
     enum class Finder : uint8
     {
         LeadersTarget, // the party leader's battle target, while he is engaged
-        AllysFight,    // a mob another cardian of her party is engaged on
+        AllysFight,    // a mob an ally of hers -- any of her party but herself, the player included -- is engaged on
         OnAlly,        // an engaged mob whose target is her or a member of her party
         OnSelf,        // an engaged mob whose target is her
         Any,           // any foe in the party's fight: `Foe: any` and the foe conditions under Attack
     };
 
     // The party's fight is scanned in this order: the leader's weapon
-    // drawn commits the party first, another cardian's fight (a hunter's
-    // pull) next, then a mob that has come for one of us
+    // drawn commits the party first, an ally's fight (a hunter's pull, a
+    // second player's draw) next, then a mob that has come for one of us
     constexpr std::array<Finder, 4> kScanOrder{ Finder::LeadersTarget, Finder::AllysFight, Finder::OnAlly, Finder::OnSelf };
 
     // The finder a row's target names; none for a target that is not a foe
@@ -170,7 +170,7 @@ namespace cardian::engage
     struct Foe
     {
         bool leadersTarget = false; // the leader's battle target, while he is engaged
-        bool allysFight    = false; // another cardian of her party is engaged on it
+        bool allysFight    = false; // an ally of hers -- any of her party but herself, the player included -- is engaged on it
         bool onParty       = false; // engaged, and its target is her or a member of her party
         bool onSelf        = false; // engaged, and its target is her
         bool underground   = false; // below ground with no fight on

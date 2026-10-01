@@ -28,6 +28,7 @@
 #include "gambit_wire.h"
 #include "gate_guards.h"
 #include "party_finder.h"
+#include "party_roster.h"
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -558,29 +559,34 @@ namespace pawn::linkapi
         // Her rows as they now stand, each a GAMBIT_ROW answer, and the GAMBITS
         // that closes them: the last answer to GAMBITS, or the one ahead of an
         // edit's outcome
-        auto rowsOf(CCharEntity* PPawn, const pawn::CGambits& set, Reply& reply) -> cl_gambits
+        auto rowsOf(CCharEntity* PPawn, pawn::CGambits& set, Reply& reply) -> cl_gambits
         {
+            static_assert(CL_GO_OWN == static_cast<int>(cardian::layers::Origin::Own) && CL_GO_LENT == static_cast<int>(cardian::layers::Origin::Lent) &&
+                              CL_GO_BOTH == static_cast<int>(cardian::layers::Origin::Both),
+                          "the Link's origins are the layers'");
             auto summary    = make<cl_gambits>();
             summary.cardian = PPawn->id;
             summary.master  = set.MasterOn() ? 1 : 0;
-            std::size_t index = 0;
-            for (const auto& row : set.Rows())
+            std::size_t count = 0;
+            for (const auto& shown : set.Shown())
             {
-                if (++index > UINT8_MAX)
+                if (++count > UINT8_MAX)
                 {
                     break;
                 }
                 auto msg    = make<cl_gambit_row>();
                 msg.cardian = PPawn->id;
-                msg.index   = static_cast<uint8_t>(index);
-                msg.on      = row.enabled ? 1 : 0;
-                msg.state   = static_cast<uint8_t>(set.StateOf(index));
-                msg.fits    = pawn::wire::toWire(row.gambit, msg.gambit) ? 1 : 0;
-                const auto label = pawn::labelGambit(row.gambit);
+                msg.index   = static_cast<uint8_t>(shown.index);
+                msg.on      = shown.on ? 1 : 0;
+                msg.state   = static_cast<uint8_t>(shown.state);
+                msg.fits    = pawn::wire::toWire(shown.row->gambit, msg.gambit) ? 1 : 0;
+                msg.origin  = static_cast<uint8_t>(shown.origin);
+                msg.lender  = shown.origin == cardian::layers::Origin::Own ? CL_ROLE_NONE : static_cast<uint8_t>(set.LentBy());
+                const auto label = pawn::labelGambit(shown.row->gambit);
                 setText(msg.head, label.head);
                 setText(msg.action, label.action);
                 reply.more(msg);
-                summary.count = static_cast<uint8_t>(index);
+                summary.count = static_cast<uint8_t>(count);
             }
             return summary;
         }
@@ -647,6 +653,10 @@ namespace pawn::linkapi
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
+                            if (set.Locked(ask.index))
+                            {
+                                return CL_S_ROLE_LOCKED;
+                            }
                             return set.SetEnabled(ask.index, ask.on != 0) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -655,6 +665,10 @@ namespace pawn::linkapi
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
+                            if (set.Locked(ask.from))
+                            {
+                                return CL_S_ROLE_LOCKED;
+                            }
                             return set.Move(ask.from, ask.to) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -663,6 +677,10 @@ namespace pawn::linkapi
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
+                            if (set.Locked(ask.index))
+                            {
+                                return CL_S_ROLE_LOCKED;
+                            }
                             return set.Erase(ask.index) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -691,6 +709,10 @@ namespace pawn::linkapi
                             if (!gambit.has_value())
                             {
                                 return status;
+                            }
+                            if (set.Locked(ask.index))
+                            {
+                                return CL_S_ROLE_LOCKED;
                             }
                             return set.Replace(ask.index, std::move(*gambit)) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
@@ -1331,6 +1353,82 @@ namespace pawn::linkapi
         void setHunt(CCharEntity* PChar, const cl_set_hunt& ask, Reply& reply)
         {
             ordersChanged(PChar, ask, reply, pawn::setHuntRule(PChar, ask.rule, ask.value));
+        }
+
+        // The party's roles as the party screen shows them (party_roster.h,
+        // RESEARCH §17): each member as an answer, the player first. How many
+        // were sent
+        auto sendPartyRoles(CCharEntity* PChar, Reply& reply) -> uint8
+        {
+            static_assert(CL_ROLE_NONE == static_cast<int>(cardian::party::Role::None) && CL_ROLE_TANK == static_cast<int>(cardian::party::Role::Tank) &&
+                          CL_ROLE_HEALER == static_cast<int>(cardian::party::Role::Healer) && CL_ROLE_DAMAGE == static_cast<int>(cardian::party::Role::Damage) &&
+                          CL_ROLE_PULLER == static_cast<int>(cardian::party::Role::Puller),
+                          "the Link's role numbers are the rule's");
+            uint8 count = 0;
+            for (const auto& row : pawn::roster::rolesOf(PChar))
+            {
+                auto msg = make<cl_party_role>();
+                msg.member = row.id;
+                setText(msg.name, row.name);
+                msg.mainJob   = row.mainJob;
+                msg.mainLevel = row.mainLevel;
+                msg.subJob    = row.subJob;
+                msg.subLevel  = row.subLevel;
+                msg.role      = static_cast<uint8_t>(row.role);
+                msg.byPlayer  = row.byPlayer ? 1 : 0;
+                msg.self      = row.id == PChar->id ? 1 : 0;
+
+                // What her column shows of her (pawn::statusNumbers, as her
+                // equipment screen's status pane has them)
+                const auto numbers = pawn::statusNumbers(row.who);
+                msg.hp      = clamp16(row.who->health.hp);
+                msg.maxHp   = clamp16(row.who->GetMaxHP());
+                msg.mp      = clamp16(row.who->health.mp);
+                msg.maxMp   = clamp16(row.who->GetMaxMP());
+                msg.tp      = clamp16(row.who->health.tp);
+                msg.attack  = numbers.attack;
+                msg.defence = numbers.defence;
+                for (std::size_t i = 0; i < numbers.total.size(); ++i)
+                {
+                    msg.total[i] = numbers.total[i];
+                    msg.bonus[i] = numbers.bonus[i];
+                }
+                for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
+                {
+                    if (const auto* PItem = row.who->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
+                    {
+                        msg.worn[equipSlot] = PItem->getID();
+                    }
+                }
+                reply.more(msg);
+                ++count;
+            }
+            return count;
+        }
+
+        void partyRoles(CCharEntity* PChar, const cl_party_roles& ask, Reply& reply)
+        {
+            auto answer  = ask;
+            answer.count = sendPartyRoles(PChar, reply);
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // The player's choice of a member's role, or his taking it back
+        // (CL_ROLE_AUTO): the roles come back as they now stand, then its
+        // outcome, so the screen never keeps a guess
+        void setPartyRole(CCharEntity* PChar, const cl_set_party_role& ask, Reply& reply)
+        {
+            uint16 status = CL_S_MALFORMED;
+            if (ask.role == CL_ROLE_AUTO)
+            {
+                status = pawn::roster::release(PChar, ask.member);
+            }
+            else if (ask.role < cardian::party::kRoleCount)
+            {
+                status = pawn::roster::choose(PChar, ask.member, static_cast<cardian::party::Role>(ask.role));
+            }
+            sendPartyRoles(PChar, reply);
+            reply.finish(ask, status);
         }
 
         // "On me": set, cleared, or the other way round from how it stands
@@ -2063,6 +2161,8 @@ namespace pawn::linkapi
         handle<cl_orders>(orders);
         handle<cl_set_strategy>(setStrategy);
         handle<cl_set_hunt>(setHunt);
+        handle<cl_party_roles>(partyRoles);
+        handle<cl_set_party_role>(setPartyRole);
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);

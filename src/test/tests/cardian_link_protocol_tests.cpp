@@ -70,6 +70,9 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_do) == 28);
     STATIC_REQUIRE(sizeof(cl_queue) == 28);
     STATIC_REQUIRE(sizeof(cl_queues) == sizeof(cl_header));
+    STATIC_REQUIRE(sizeof(cl_party_role) == 120);
+    STATIC_REQUIRE(sizeof(cl_party_roles) == 20);
+    STATIC_REQUIRE(sizeof(cl_set_party_role) == 24);
     STATIC_REQUIRE(sizeof(cl_ah_listing) == 16);
     STATIC_REQUIRE(sizeof(cl_ah_shelf) == 1064);
     STATIC_REQUIRE(sizeof(cl_ah_sale) == 40);
@@ -101,7 +104,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_gambit_condition) == 8);
     STATIC_REQUIRE(sizeof(cl_gambit_action) == 8);
     STATIC_REQUIRE(sizeof(cl_gambit) == 200);
-    STATIC_REQUIRE(sizeof(cl_gambit_row) == 352);
+    STATIC_REQUIRE(sizeof(cl_gambit_row) == 354);
     STATIC_REQUIRE(sizeof(cl_gambits) == 24);
     STATIC_REQUIRE(sizeof(cl_gambit_toggle) == 24);
     STATIC_REQUIRE(sizeof(cl_gambit_move) == 24);
