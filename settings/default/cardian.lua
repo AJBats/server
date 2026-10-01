@@ -49,4 +49,14 @@ xi.settings.cardian =
     -- keep) while the server is off. true: its time goes by, as upstream's
     -- does. false: the game carries on from the second it stopped.
     CLOCK_RUNS_OFFLINE = true,
+
+    -- The exp formula (RESEARCH §15; modules/cardian/lua/exp_spread.lua).
+    -- While the party's level spread -- highest less lowest among the
+    -- members counted for a kill -- is within EXP_AVERAGE_SPREAD, every
+    -- member is paid as if the whole party were its average level, rounded
+    -- down. From there to EXP_CLASSIC_SPREAD each reward slides toward
+    -- upstream's figure, which it reaches at that spread. Upstream's
+    -- formula alone, at every spread: EXP_CLASSIC_SPREAD = 0.
+    EXP_AVERAGE_SPREAD = 3,
+    EXP_CLASSIC_SPREAD = 10,
 }
