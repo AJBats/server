@@ -25,12 +25,14 @@ describe('Cardian exp spread', function()
 
     -- The suite runs on the shipped spreads whatever the folder's settings
     -- say, and puts back what was loaded
+    local loadedOn      = xi.settings.cardian.EXP_PARTY_AVERAGE
     local loadedAverage = xi.settings.cardian.EXP_AVERAGE_SPREAD
     local loadedClassic = xi.settings.cardian.EXP_CLASSIC_SPREAD
     local shippedTable  = xi.data.experiencePoints.baseTable
     local tableSwapped  = false
 
     local function ruleOn()
+        xi.settings.cardian.EXP_PARTY_AVERAGE  = true
         xi.settings.cardian.EXP_AVERAGE_SPREAD = 3
         xi.settings.cardian.EXP_CLASSIC_SPREAD = 10
     end
@@ -50,6 +52,7 @@ describe('Cardian exp spread', function()
     local baseAt  = rule.baseAt
 
     after_each(function()
+        xi.settings.cardian.EXP_PARTY_AVERAGE  = loadedOn
         xi.settings.cardian.EXP_AVERAGE_SPREAD = loadedAverage
         xi.settings.cardian.EXP_CLASSIC_SPREAD = loadedClassic
         rule.shapeOf = shapeOf
@@ -194,6 +197,14 @@ describe('Cardian exp spread', function()
             end
         end)
 
+        it('ships switched on, and is upstream at every spread switched off', function()
+            assert(loadedOn == true, 'settings/default/cardian.lua ships EXP_PARTY_AVERAGE = true')
+            xi.settings.cardian.EXP_PARTY_AVERAGE = false
+            for spread = 0, 12 do
+                assert(rule.blendFor(spread) == 1, string.format('spread %d is upstream with the rule off', spread))
+            end
+        end)
+
         it('survives the two settings meeting', function()
             xi.settings.cardian.EXP_AVERAGE_SPREAD = 5
             xi.settings.cardian.EXP_CLASSIC_SPREAD = 5
@@ -253,6 +264,16 @@ describe('Cardian exp spread', function()
                 assert(paid[1] == upstream[1],
                     string.format('a lone %d on a level %d mob was paid %s, upstream pays %d', level, grade, tostring(paid[1]), upstream[1]))
             end
+        end)
+
+        it('pays the server\'s own figures with the rule switched off', function()
+            local upstream = upstreamPays({ 18, 15 }, 17)
+
+            xi.settings.cardian.EXP_PARTY_AVERAGE = false
+            local paid, members = partyKills({ 18, 15 }, 17)
+            assert(paid[1] == upstream[1] and paid[2] == upstream[2],
+                string.format('they were paid %s and %s; the server pays %d and %d', tostring(paid[1]), tostring(paid[2]), upstream[1], upstream[2]))
+            assert(recordOf(members[1]) == nil, 'and the rule keeps no record while off')
         end)
 
         it('pays a party of one level exactly what upstream does', function()
