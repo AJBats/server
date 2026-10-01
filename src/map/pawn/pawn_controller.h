@@ -365,8 +365,8 @@ public:
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
     // The roles her Role rows hold this tick, every one that speaks and
-    // not the first alone (gambit_layers.h holdsRole): a lent Support Mage
-    // row beside her own Damage row makes her both
+    // not the first alone (gambit_layers.h holdsRole); one today, since
+    // every role is a line and one line a list
     auto HoldsRole(pawn::Role role) const -> bool;
 
     auto FormationSlot() const -> pawn::Slot;

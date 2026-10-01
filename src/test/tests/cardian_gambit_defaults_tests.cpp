@@ -55,7 +55,6 @@ namespace
         { "102|0:0|0:0:0|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
-        { "0|0:0|100:11:3|0", true },
     };
 
     const Rows kMage{
@@ -143,7 +142,7 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set, every other job
     CHECK_FALSE(isMageJob(xi::Job::MON));
 }
 
-TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill, rest with the player and the Damage role, all on", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill and rest with the player, all on, and no Role row", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::WAR);
     REQUIRE(rows == kMelee);
@@ -158,7 +157,12 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon sk
     requireRow(rows[2].first, { pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS, kAttack, 0, 0 });
     requireRow(rows[3].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
     requireRow(rows[4].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
-    requireRow(rows[5].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRole, static_cast<uint32>(pawn::Role::MeleeDamage) });
+
+    // A melee job runs no tactician of her own: the Role row that once
+    // ended the set named Damage, a value with nothing behind it, and the
+    // grammar refuses it now, saved or sent (RESEARCH §17.12)
+    CHECK_FALSE(parseRow("0|0:0|100:11:3|0").has_value());
+    CHECK(parseRow("0|0:0|100:11:2|0").has_value());
 }
 
 TEST_CASE("gambit defaults: the mage set is a Support Mage who cures, removes ailments and enfeebles, her weapon skill above her line, her Attack row below it and off", "[cardian][gambits][defaults]")

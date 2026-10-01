@@ -128,8 +128,8 @@ TEST_CASE("tactician line: her lists are spell.h's numbers", "[cardian][gambits]
 
 TEST_CASE("tactician line: the line is her first Support Mage row, whatever its checkbox or condition", "[cardian][gambits][tactician]")
 {
-    // No Support Mage row, no line: every row is an order
-    CHECK_FALSE(lineOf(rows({ "100|0:0|0:0:0|0", kRest, "0|0:0|100:11:3|0" })).has_value());
+    // No Role row, no line: every row is an order
+    CHECK_FALSE(lineOf(rows({ "100|0:0|0:0:0|0", kRest, "0|0:0|100:4:1|0" })).has_value());
 
     CHECK(lineOf(rows({ kRest, kSupportMage, kCureBest })) == std::optional<std::size_t>(2));
     // A Support Mage row under a condition is the line all the same
@@ -147,8 +147,13 @@ TEST_CASE("tactician line: a Tank row is a line as Support Mage's is, and its ta
     // The Tank row is a line, and the line knows whose tactician it is
     CHECK(fullLineOf(rows({ kRest, kTank, kProvoke })) == std::optional<Line>(Line{ 2, pawn::Role::Tank }));
     CHECK(fullLineOf(rows({ kRest, kSupportMage, kCureBest })) == std::optional<Line>(Line{ 2, pawn::Role::SupportMage }));
-    // A Damage row is a role and no line
-    CHECK_FALSE(lineOf(rows({ "100|0:0|0:0:0|0", kRest, "0|0:0|100:11:3|0" })).has_value());
+    // Every role in the catalogue is a line; the retired Damage value (3)
+    // is no row at all, so no Role row is a role and no line
+    for (const auto role : pawn::kRoles)
+    {
+        CHECK(cardian::tactician::lineRoleOf(*pawn::text::parseRow("0|0:0|100:11:" + std::to_string(static_cast<uint16>(role)) + "|0")) == role);
+    }
+    CHECK_FALSE(pawn::text::parseRow("0|0:0|100:11:3|0").has_value());
     // The first line row wins, whichever role: one line a list
     CHECK(fullLineOf(rows({ kTank, kSupportMage })) == std::optional<Line>(Line{ 1, pawn::Role::Tank }));
     CHECK(statesOf(rows({ kTank, kSupportMage })) == std::vector<State>{ State::Line, State::NotBelow });

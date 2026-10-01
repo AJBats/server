@@ -110,14 +110,15 @@ namespace pawn
         return b != Behavior::Formation && b != Behavior::Role;
     }
 
-    // The roles a Role row can name (the argument of Behavior::Role). Values
-    // are frozen like the behaviours: they appear in rows and are persisted
+    // The roles a Role row can name (the argument of Behavior::Role): each
+    // a tactician line (tactician_line.h), the judgement she runs over the
+    // rows below it. Values are frozen like the behaviours: they appear in
+    // rows and are persisted
     enum class Role : uint16
     {
         None        = 0,
         SupportMage = 1,
-        Tank        = 2, // stands in (RESEARCH §12.16): at a stake she tows the mob to it and holds its 3 o'clock; the rest of the role comes later
-        MeleeDamage = 3, // the Damage role, standing in: a name and an editor entry; the rear seat, sneak attack and trick attack come later
+        Tank        = 2, // the tank tactician (tank_calls.h), and at a stake she tows the mob to it and holds its 3 o'clock
     };
     constexpr auto roleName(const Role role) -> std::string_view
     {
@@ -127,13 +128,26 @@ namespace pawn
                 return "Support Mage";
             case Role::Tank:
                 return "Tank";
-            case Role::MeleeDamage:
-                return "Damage";
             default:
                 return "none";
         }
     }
-    constexpr std::array<Role, 3> kRoles{ Role::SupportMage, Role::Tank, Role::MeleeDamage };
+    constexpr std::array<Role, 2> kRoles{ Role::SupportMage, Role::Tank };
+
+    // The retired role values, refused like a retired behaviour: 3 was
+    // "Damage", a name with no tactician behind it, from before the party
+    // had seats (RESEARCH §17.12)
+    constexpr auto isRetiredRole(const uint32 role) -> bool
+    {
+        return role == 3;
+    }
+
+    // A behaviour action the grammar refuses, saved, imported or sent: a
+    // retired behaviour, or a Role row naming a retired role
+    constexpr auto isRetiredBehaviorAction(const uint32 select, const uint32 arg) -> bool
+    {
+        return isRetiredBehavior(select) || (select == static_cast<uint32>(Behavior::Role) && isRetiredRole(arg));
+    }
 
     // The persisted numbers, pinned: a renumbered value fails the build
     // before it can reread a saved row as something else
@@ -164,5 +178,7 @@ namespace pawn
     static_assert(static_cast<uint16>(Role::None) == 0);
     static_assert(static_cast<uint16>(Role::SupportMage) == 1);
     static_assert(static_cast<uint16>(Role::Tank) == 2);
-    static_assert(static_cast<uint16>(Role::MeleeDamage) == 3);
+    static_assert(isRetiredRole(3) && !isRetiredRole(static_cast<uint16>(Role::SupportMage)) && !isRetiredRole(static_cast<uint16>(Role::Tank)));
+    static_assert(isRetiredBehaviorAction(static_cast<uint32>(Behavior::Role), 3) && !isRetiredBehaviorAction(static_cast<uint32>(Behavior::Role), 2) &&
+                  isRetiredBehaviorAction(8, 1) && !isRetiredBehaviorAction(static_cast<uint32>(Behavior::Formation), 3));
 } // namespace pawn

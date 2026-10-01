@@ -383,21 +383,22 @@ namespace pawn
             RebuildWorldLayer();
         }
         // Her party role's rows run with a player and never in the wild
-        const auto role = wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner);
-        if (!m_roleKey.has_value() || *m_roleKey != role)
+        const RoleKey key{ wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner), POwner->GetMJob() };
+        if (!m_roleKey.has_value() || *m_roleKey != key)
         {
-            RebuildRoleLayer(role);
+            RebuildRoleLayer(key);
         }
         return cardian::layers::layersFor<GambitRow>(wild, m_worldRows, m_gambits, m_roleRows, gambitOfRow, enabledOfRow);
     }
 
-    void CGambits::RebuildRoleLayer(const cardian::party::Role role)
+    void CGambits::RebuildRoleLayer(const RoleKey key)
     {
-        const bool had = !m_roleRows.empty();
-        m_roleKey      = role;
+        const bool had  = !m_roleRows.empty();
+        const auto role = key.role;
+        m_roleKey       = key;
         m_roleRows.clear();
         m_roleTimers.clear();
-        for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role))
+        for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role, key.job))
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
             {
@@ -1525,7 +1526,7 @@ namespace pawn
 
     auto CGambits::LentBy() const -> cardian::party::Role
     {
-        return m_roleKey.value_or(cardian::party::Role::None);
+        return m_roleKey.has_value() ? m_roleKey->role : cardian::party::Role::None;
     }
 
     auto CGambits::Locked(const std::size_t index) const -> bool
@@ -1603,7 +1604,8 @@ namespace pawn
         // The row below her Tank line that lets her: the tool's, naming the
         // target, its retry run and its conditions holding (Tactician's
         // choice among them). Used through it, so its retry stamp and its
-        // number in the log are the row's, as a cast's are
+        // number in the log are the row's, as a cast's are: its place in
+        // the list as the editor shows it, lent rows counted
         const auto        layers    = RunningLayers();
         const auto        states    = RunningStates(layers);
         const std::size_t worldRows = layers.world.size();
@@ -1617,7 +1619,7 @@ namespace pawn
             {
                 continue;
             }
-            const auto rowName = layers.rows[i].origin == cardian::layers::Origin::Lent ? fmt::format("lent row {}", g.identifier) : fmt::format("her row {}", layers.rows[i].index);
+            const auto rowName = fmt::format("row {}", worldRows + i + 1);
             if (!Names(g.target_selector, PTarget))
             {
                 refused = rowName + " does not name the target";

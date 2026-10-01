@@ -178,9 +178,9 @@ namespace cardian::tactician
 
     // The state as the editor reads it on a row's line (Link protocol 13):
     // the server names, the addon words
-    // The role a behaviour row names that makes it a line: Support Mage or
-    // Tank (RESEARCH §17.11: the Tank row is a line as Support Mage's is).
-    // A Damage row is a role and no line: nothing judges under it yet
+    // The role a behaviour row names, which makes it a line: every role in
+    // the catalogue is a tactician (RESEARCH §17.11, §17.12: the Tank row
+    // is a line as Support Mage's is)
     inline auto lineRoleOf(const gambits::Gambit_t& g) -> std::optional<pawn::Role>
     {
         const auto behaviour = [](const gambits::Action_t& a)
@@ -194,7 +194,7 @@ namespace cardian::tactician
         for (const auto& a : g.actions)
         {
             if (static_cast<uint16>(a.select) == static_cast<uint16>(pawn::Behavior::Role) &&
-                (a.select_arg == static_cast<uint32>(pawn::Role::SupportMage) || a.select_arg == static_cast<uint32>(pawn::Role::Tank)))
+                std::ranges::find(pawn::kRoles, static_cast<pawn::Role>(a.select_arg)) != pawn::kRoles.end())
             {
                 return static_cast<pawn::Role>(a.select_arg);
             }

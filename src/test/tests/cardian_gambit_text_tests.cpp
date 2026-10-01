@@ -139,6 +139,24 @@ TEST_CASE("row grammar: the retired melee mage switch cannot return", "[cardian]
     REQUIRE(parseRow("1|1:50|2:2:12|0").has_value()); // spell 12 is a spell, not the behaviour
 }
 
+TEST_CASE("row grammar: the retired Damage role cannot return, and the live roles do", "[cardian][gambits]")
+{
+    // Role value 3 (Damage) is retired (RESEARCH §17.12): refused as a
+    // retired behaviour is, saved or imported
+    REQUIRE_FALSE(parseRow("0|0:0|100:11:3|0").has_value());
+    REQUIRE_FALSE(parseRow("0|0:0|100:6:1+100:11:3|0").has_value());
+    for (const auto role : pawn::kRoles)
+    {
+        const auto spec = "0|0:0|100:11:" + std::to_string(static_cast<uint16>(role)) + "|0";
+        INFO("row " << spec);
+        REQUIRE(parseRow(spec).has_value());
+    }
+    REQUIRE(parseRow("0|0:0|100:4:3|0").has_value()); // seat 3 of the formation is a seat, not the role
+    CHECK(pawn::isRetiredRole(3));
+    CHECK_FALSE(pawn::isRetiredRole(static_cast<uint16>(pawn::Role::SupportMage)));
+    CHECK_FALSE(pawn::isRetiredRole(static_cast<uint16>(pawn::Role::Tank)));
+}
+
 TEST_CASE("row grammar: Avoid links is its own switch, beside Avoid aggro", "[cardian][gambits][avoid]")
 {
     for (const auto* spec : { "0|0:0|100:13:1|0", "0|0:0|100:1:1|0" })

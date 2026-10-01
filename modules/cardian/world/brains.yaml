@@ -8,7 +8,7 @@
 #              | has <status> | lacks <status> | top enmity | not top enmity
 #   action     avoid aggro | avoid links | rest with leader | home point with
 #              leader | boost before weapon skills | formation <lead|flank left|flank
-#              right|rear left|rear right|behind> | role <support mage|tank|damage> | cast
+#              right|rear left|rear right|behind> | role <support mage|tank> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
 #              cast <spell> | cast random damage | ability <name> | best weapon
 #              skill | random weapon skill

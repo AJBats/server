@@ -84,7 +84,7 @@ namespace pawn::wire
 
     // The fields back into a row; nullopt for what the row grammar refuses
     // too (gambit_text.h's parseRow) -- no conditions, no actions, a retired
-    // behaviour -- and for fields no row makes: counts past the arrays, a
+    // behaviour or role -- and for fields no row makes: counts past the arrays, a
     // group listed out of order, an any-of bit on a group that is not there
     inline auto fromWire(const cl_gambit& w) -> std::optional<gambits::Gambit_t>
     {
@@ -118,8 +118,8 @@ namespace pawn::wire
         for (std::size_t i = 0; i < w.actionCount; ++i)
         {
             const auto& a = w.actions[i];
-            // A retired behaviour never returns, saved, imported or sent (gambit_ids.h)
-            if (a.reaction == static_cast<uint16>(G_REACTION_BEHAVIOR) && isRetiredBehavior(a.select))
+            // A retired behaviour, or a retired role, never returns, saved, imported or sent (gambit_ids.h)
+            if (a.reaction == static_cast<uint16>(G_REACTION_BEHAVIOR) && isRetiredBehaviorAction(a.select, a.arg))
             {
                 return std::nullopt;
             }

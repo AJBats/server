@@ -371,9 +371,10 @@ namespace cardian::layers
     }
 
     // The roles a character holds this tick, as a set: every Role row that
-    // speaks adds hers, where `speak` keeps only the first. A Bard with the
-    // melee defaults' Damage row and a lent Support Mage row holds both
-    // (RESEARCH §17.4). Bit r for pawn::Role r
+    // speaks adds hers, where `speak` keeps only the first (RESEARCH
+    // §17.4). With the Damage value retired every role is a line, and one
+    // line a list, so the set holds one role today; it stays a set for
+    // the day two speak. Bit r for pawn::Role r
     constexpr auto holdRole(uint32& held, const uint16 role) -> void
     {
         if (role < 32)

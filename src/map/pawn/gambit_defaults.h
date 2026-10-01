@@ -57,10 +57,11 @@ namespace pawn
     // A job's default set, as (row, checkbox) pairs in list order.
     //  - Melee: the assist trio, her best weapon skill on a target with half
     //    its HP or more (the user, 2026-09-26: TP not spent on a mob about to
-    //    fall), then rest with the player, then the Damage role. The trio
-    //    takes the party leader's fight first, and another cardian's only
-    //    after it, so a cardian whose mob has died joins the player's fight
-    //    before anyone else's.
+    //    fall), then rest with the player. No Role row: a melee job runs no
+    //    tactician of her own, and her party role lends her one when her
+    //    jobs bring it (RESEARCH §17.12). The trio takes the party leader's
+    //    fight first, and another cardian's only after it, so a cardian
+    //    whose mob has died joins the player's fight before anyone else's.
     //  - Mage: a Support Mage who attends fights without engaging monsters,
     //    cures, takes ailments off and enfeebles. Her weapon skill row and
     //    Rest with the player are orders, above her role row (her tactician
@@ -81,7 +82,6 @@ namespace pawn
             { "102|0:0|0:0:0|0", true },  // Foe: targeting ally -> Attack
             { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
-            { "0|0:0|100:11:3|0", true }, // Self -> Role: Damage
         };
         static const std::vector<std::pair<std::string, bool>> mage{
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)

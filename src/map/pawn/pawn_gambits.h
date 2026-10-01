@@ -318,13 +318,23 @@ namespace pawn
         }
 
     private:
+        // What her party role's layer was compiled for: the role, and her
+        // job, since a bundle is the role's for her job (role_bundles.h)
+        struct RoleKey
+        {
+            cardian::party::Role role;
+            xi::Job              job;
+            auto                 operator==(const RoleKey&) const -> bool = default;
+        };
+
         // The layers that run for her now (gambit_layers.h): her world rows
         // while she is in the wild, compiled on first need and again whenever
         // their key changes (world.h brainKey), then her own with her party
-        // role's rows fitted in, compiled again whenever her role changes
+        // role's rows fitted in, compiled again whenever her role or her
+        // job changes
         auto RunningLayers() -> cardian::layers::Layers<GambitRow>;
         void RebuildWorldLayer();
-        void RebuildRoleLayer(cardian::party::Role role);
+        void RebuildRoleLayer(RoleKey key);
         auto Candidates(gambits::G_TARGET selector) -> std::vector<CBattleEntity*>;
         // Whether a target is one a row's selector names: Candidates as a
         // question about one entity, over her whole alliance for the party
@@ -385,10 +395,10 @@ namespace pawn
         HashMap<std::string, timer::time_point> m_worldTimers;
 
         // Her party role's layer (role_bundles.h): its rows (ids "r1",
-        // "r2"... numbered on across rebuilds), the role they were compiled
+        // "r2"... numbered on across rebuilds), the key they were compiled
         // for, and its own TIMER clocks
         std::vector<GambitRow>                  m_roleRows;
-        std::optional<cardian::party::Role>     m_roleKey;
+        std::optional<RoleKey>                  m_roleKey;
         uint32                                  m_nextRoleId = 0;
         HashMap<std::string, timer::time_point> m_roleTimers;
         // The tank tactician's mind as last said, why its last call could
