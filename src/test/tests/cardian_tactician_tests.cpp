@@ -199,7 +199,7 @@ TEST_CASE("tactician: a marked row is a tool when it names her cures, her priced
 
     // Her rest: the MP pacing's handle, a Self -> Rest row (RESEARCH §17.13)
     CHECK(stateOf("0|101:0|100:14:1|0") == State::Tool);         // * Self -> Rest
-    CHECK(stateOf("0|0:0|100:14:1|0") == State::Order);          // Self -> Rest: an order to kneel while it holds
+    CHECK(stateOf("0|0:0|100:14:1|0") == State::Order);          // Self -> Rest: an order, her own rest until full when it holds
     CHECK(stateOf("0|3:30&101:0|100:14:1|0") == State::Tool);    // * Self: MP < 30% -> Rest: the pacing, gated
     CHECK(stateOf("1|101:0|100:14:1|0") == State::NoJudgement);  // Ally -> Rest: nobody rests another
     CHECK(cardian::tactician::allowanceOf(row("0|101:0|100:14:1|0")) == cardian::tactician::Allowance::Rest);

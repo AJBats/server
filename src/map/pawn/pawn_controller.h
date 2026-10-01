@@ -159,9 +159,11 @@ public:
     // True while the policy keeps her kneeling; defer routine positioning then.
     auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false) -> bool;
     // The player's rest order (ComposeRest): down until her HP and MP both
-    // reach N%. Only a Support Mage's emergency cure stands her meanwhile;
-    // any order of his, or her leaving his party, ends it first
-    void SetRestOrder(int percent, std::string_view why);
+    // reach N%. Only the emergency cure stands her meanwhile; any order of
+    // his, or her leaving his party, ends it first. byRow: her own plain
+    // Rest row's, the same order at 100% (RESEARCH §17.13) -- danger and
+    // the party's fight stand her up meanwhile, and she kneels again after
+    void SetRestOrder(int percent, std::string_view why, bool byRow = false);
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
     // Her kneel: Healing's ticks so far, and seconds to the next and between
@@ -376,6 +378,7 @@ public:
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
     auto RestsWithPlayer() const -> bool;
     auto RestsByRow() const -> bool;
+    auto RestRowDue() const -> bool; // her plain Rest row speaks, she is short, and no rest order is on
     auto HomePointsWithPlayer() const -> bool;
 
     static constexpr float RoamDistance     = 3.0f;
@@ -1116,7 +1119,7 @@ private:
     timer::time_point m_LastHuntLogTime;
     cardian::rest::State m_Rest;
     cardian::rest::Follow m_RestFollow;
-    cardian::rest::Order m_RestOrder; // the player's "Rest until N%", none by default
+    cardian::rest::Order m_RestOrder; // the player's "Rest until N%", or her own Rest row's at 100%; none by default
     int m_RestTicks = 0;
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;

@@ -96,7 +96,7 @@ namespace pawn
         // 12: retired MeleeMage; an Attack row that claims the mob decides whether a
         // mage fights it. The grammar refuses 12, so no row carries it.
         AvoidLinks          = 13, // switch: keep clear of the idle kin of every mob fighting her, whatever AvoidAggro says
-        Rest                = 14, // switch: kneel while the row holds, out of a fight; marked, the tactician's MP pacing (RESEARCH §17.13)
+        Rest                = 14, // switch: when it holds and no fight is on, her own rest order, down until full; marked, the tactician's MP pacing (RESEARCH §17.13)
     };
     constexpr uint16 BehaviorCount = 15; // one past the highest value ever given, retired ones included
 

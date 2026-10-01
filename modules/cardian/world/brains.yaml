@@ -6,9 +6,9 @@
 #   who        self, party (a party member), mob (the mob)
 #   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n
 #              | has <status> | lacks <status> | top enmity | not top enmity
-#   action     avoid aggro | avoid links | rest with leader | home point with
-#              leader | boost before weapon skills | formation <lead|flank left|flank
-#              right|rear left|rear right|behind> | cast
+#   action     avoid aggro | avoid links | rest | rest with leader | home point
+#              with leader | boost before weapon skills | formation <lead|flank
+#              left|flank right|rear left|rear right|behind> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
 #              cast <spell> | cast random damage | ability <name> | best weapon
 #              skill | random weapon skill
@@ -45,6 +45,10 @@ world:
   - "self: always -> avoid aggro"
   - "self: always -> avoid links"
   - "self: always -> rest with leader"
+  # The farmer's rest: under half HP she sits down and rests to full, out
+  # of a fight (a plain rest is an order to rest until full; RESEARCH
+  # 17.13). The mages' block adds low MP
+  - "self: hp < 50 -> rest"
 
 roles:
   tank:
@@ -56,6 +60,7 @@ roles:
     - "party: hp < 60 -> cast best cure"          # Zapp's row
     - "party: has sleep -> cast cure"             # a Cure wakes her; "sleep" answers Sleep II and Lullaby too
     - "mob: hp >= 50 -> cast random damage"       # never one the mob already carries
+    - "self: mp < 30 -> rest"                     # low on MP, out of a fight: rest to full (a solo mage; a camp mage's own marked Rest row paces her ahead of this)
 
 jobs:
   MNK:

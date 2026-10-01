@@ -760,7 +760,14 @@ void CPawnController::RoamTick()
 
     auto* PPathFind = POwner->PAI->PathFind.get();
 
-    RestTick(false); // the solo-farmer rest stand-in is retired
+    // Her rest: the world's plain Rest rows (brains.yaml: half HP, low MP)
+    // start her own rest order, down until full, and a camp mage's marked
+    // Rest row paces her MP by the bank (RESEARCH §17.13). Kneeling, or
+    // on her row's order -- stood up by danger or her camp's fight, to
+    // kneel again after -- she holds her ground: a mob that has come for
+    // her and her camp's fight are answered, and nothing else of the
+    // roamer's runs
+    const bool down = RestTick(PPathFind == nullptr || !PPathFind->IsFollowingPath());
 
     // Her ground is hers to hold: a mob that has come for her is answered
     if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
@@ -781,6 +788,10 @@ void CPawnController::RoamTick()
             }
             return;
         }
+    }
+    if (down || m_RestOrder.active())
+    {
+        return;
     }
 
     if (PPathFind == nullptr || POwner->GetSpeed() <= 0)
@@ -1946,8 +1957,10 @@ auto CPawnController::Refusal(CBattleEntity* PTarget, const cardian::rules::Enga
 auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, const std::string_view how, const bool hold) -> bool
 {
     // Resting on his order she takes no fight, the party's or her own
-    // defence: only his own engage order ends it (EngageOn)
-    if (m_RestOrder.active() && kind != ApproachKind::Order)
+    // defence: only his own engage order ends it (EngageOn). Her own Rest
+    // row's order is no such hold: a fight calls her up, and she kneels
+    // again after it (RestTick)
+    if (m_RestOrder.active() && !m_RestOrder.byRow && kind != ApproachKind::Order)
     {
         SayRefusal(PTarget, fmt::format("resting until {}% on the player's order", m_RestOrder.percent));
         return false;
@@ -2754,10 +2767,19 @@ auto CPawnController::RestsWithPlayer() const -> bool
 
 auto CPawnController::RestsByRow() const -> bool
 {
-    // A plain Self -> Rest row whose conditions hold: an order to kneel,
-    // out of a fight, for as long as it holds (the marked one is the
-    // tactician's and never speaks here)
+    // A plain Self -> Rest row whose conditions hold this tick: it starts
+    // her own rest order, down until full (RestTick). The marked one is
+    // the tactician's and never speaks here
     return Behavior(pawn::Behavior::Rest).value_or(0) != 0;
+}
+
+auto CPawnController::RestRowDue() const -> bool
+{
+    // Her Rest row asks for its order: it speaks, she has something to
+    // rest for, and no rest order is on yet. RestTick takes it where she
+    // could kneel now; the party's hunt pick stands aside for it
+    return !m_RestOrder.active() && m_Gambits->MasterOn() && RestsByRow() &&
+           (POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP());
 }
 
 auto CPawnController::HomePointsWithPlayer() const -> bool
@@ -3363,8 +3385,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Resting on his order she finishes before she sets out after him. A
-    // trek to meet him follows him, and ends where he already is (meetTrek)
+    // Resting on his order, or her Rest row's, she finishes before she sets
+    // out after him. A trek to meet him follows him, and ends where he
+    // already is (meetTrek)
     if (!m_RestOrder.active() && pawn::meetTrek(static_cast<const CCharEntity*>(POwner)).has_value())
     {
         if (m_Mode != Mode::Travel)
@@ -3680,8 +3703,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
 
     // A hunter picks the party's next fight itself, the moment it is free
-    // to: the choice is never throttled, only the draw
-    if (hunting && !m_Approach.has_value() && !m_RestOrder.active())
+    // to: the choice is never throttled, only the draw. Resting on an
+    // order, or with her Rest row asking for one (RestTick, below the
+    // pick), she picks nothing
+    if (hunting && !m_Approach.has_value() && !m_RestOrder.active() && !RestRowDue())
     {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
@@ -3740,7 +3765,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         proposal = AttendIntent(PAttended, place);
     }
-    else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, she stays where she kneels
+    else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, or her Rest row's, she stays where she kneels
     {
         proposal = FormationIntent(*place, PPlayer, nullptr);
     }
