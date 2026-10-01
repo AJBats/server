@@ -157,10 +157,10 @@ namespace cardian::layers
     // Her own rows and the rows her role lends, in the running order:
     //  1. her own orders (her rows above her line, or all of them when she
     //     has none);
-    //  2. the role's orders (the bundle's rows ahead of its Support Mage
-    //     row, or all of them when it has none);
-    //  3. the line: her own Support Mage row when she has one, checked or
-    //     not, else the role's when the bundle brings one;
+    //  2. the role's orders (the bundle's rows ahead of its line row, or
+    //     all of them when it has none);
+    //  3. the line: her own line row when she has one, checked or not,
+    //     else the role's when the bundle brings one;
     //  4. her own rows below her line;
     //  5. the role's rows below its line.
     // A lent row that overlaps a row of hers in the same part, whatever her
@@ -168,9 +168,12 @@ namespace cardian::layers
     // runs there, on, pinned, while she holds the role, and hers is kept
     // underneath and comes back when the role goes (the user, 2026-09-30:
     // a role is a quick override; a player who wants his own tuning takes
-    // the role off). Her own Support Mage row's place is her line whenever
-    // she has one, checked or not. gambitOf(row) reads a row's gambit,
-    // enabledOf(row) its checkbox
+    // the role off). Her own line row's place is her line whenever she has
+    // one, checked or not -- and a lent line of another role stands in it
+    // too (a Tank line lent to a Support Mage: her tactician is the tank's
+    // while she holds the role, and her rows its tactician does not read
+    // are struck out there; RESEARCH §15.10). gambitOf(row) reads a row's
+    // gambit, enabledOf(row) its checkbox
     template <typename Row, typename GambitOf, typename EnabledOf>
     auto fit(const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, EnabledOf&& enabledOf) -> std::vector<Placed<Row>>
     {
@@ -178,7 +181,7 @@ namespace cardian::layers
         {
             for (std::size_t i = 0; i < rows.size(); ++i)
             {
-                if (tactician::isSupportMageRow(gambitOf(rows[i])))
+                if (tactician::isLineRow(gambitOf(rows[i])))
                 {
                     return i;
                 }

@@ -791,7 +791,7 @@ typedef struct cl_gambit
 enum
 {
     CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
-    CL_GS_LINE      = 1, // her Support Mage row: the line itself
+    CL_GS_LINE      = 1, // her Support Mage or Tank row: the line itself
     CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
     CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
     CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out

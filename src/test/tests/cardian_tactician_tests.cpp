@@ -61,15 +61,21 @@ namespace
         return out;
     }
 
-    auto lineOf(const std::vector<Gambit_t>& list) -> std::optional<std::size_t>
+    auto fullLineOf(const std::vector<Gambit_t>& list) -> std::optional<cardian::tactician::Line>
     {
         return cardian::tactician::lineOf(list, [](const Gambit_t& g) -> const Gambit_t& { return g; });
+    }
+
+    auto lineOf(const std::vector<Gambit_t>& list) -> std::optional<std::size_t>
+    {
+        const auto line = fullLineOf(list);
+        return line.has_value() ? std::optional<std::size_t>(line->place) : std::nullopt;
     }
 
     auto statesOf(const std::vector<Gambit_t>& list) -> std::vector<State>
     {
         std::vector<State> out;
-        const auto         line = lineOf(list);
+        const auto         line = fullLineOf(list);
         for (std::size_t i = 0; i < list.size(); ++i)
         {
             out.push_back(cardian::tactician::stateOf(list[i], i + 1, line));
@@ -83,9 +89,17 @@ namespace
         return statesOf(rows({ "0|0:0|100:11:1|0", spec }))[1];
     }
 
+    // The state of one row placed below a Tank row
+    auto belowTank(const std::string& spec) -> State
+    {
+        return statesOf(rows({ "0|0:0|100:11:2|0", spec }))[1];
+    }
+
     const std::string kSupportMage = "0|0:0|100:11:1|0";
+    const std::string kTank        = "0|0:0|100:11:2|0";
     const std::string kRest        = "0|0:0|100:6:1|0";
     const std::string kCureBest    = "1|101:0|2:0:1|0";
+    const std::string kProvoke     = "2|101:0|3:2:35|0"; // Foe: tactician's choice -> Provoke
 } // namespace
 
 TEST_CASE("tactician line: her lists are spell.h's numbers", "[cardian][gambits][tactician]")
@@ -125,6 +139,37 @@ TEST_CASE("tactician line: the line is her first Support Mage row, whatever its 
     // below the line: struck out
     const auto states = statesOf(rows({ kSupportMage, kCureBest, kSupportMage }));
     CHECK(states == std::vector<State>{ State::Line, State::Allows, State::NotBelow });
+}
+
+TEST_CASE("tactician line: a Tank row is a line as Support Mage's is, and its tactician reads melee and hate", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::Line;
+    // The Tank row is a line, and the line knows whose tactician it is
+    CHECK(fullLineOf(rows({ kRest, kTank, kProvoke })) == std::optional<Line>(Line{ 2, pawn::Role::Tank }));
+    CHECK(fullLineOf(rows({ kRest, kSupportMage, kCureBest })) == std::optional<Line>(Line{ 2, pawn::Role::SupportMage }));
+    // A Damage row is a role and no line
+    CHECK_FALSE(lineOf(rows({ "100|0:0|0:0:0|0", kRest, "0|0:0|100:11:3|0" })).has_value());
+    // The first line row wins, whichever role: one line a list
+    CHECK(fullLineOf(rows({ kTank, kSupportMage })) == std::optional<Line>(Line{ 1, pawn::Role::Tank }));
+    CHECK(statesOf(rows({ kTank, kSupportMage })) == std::vector<State>{ State::Line, State::NotBelow });
+
+    // Below a Tank line: the pull and Provoke are her tactician's; a cure,
+    // a debuff or a -na is nothing the tank's tactician reads
+    CHECK(belowTank("101|0:0|0:0:0|0") == State::Allows); // Foe: targeted by ally -> Attack
+    CHECK(belowTank(kProvoke) == State::Allows);
+    CHECK(belowTank("2|0:0|3:2:35|0") == State::Allows); // Foe -> Provoke, no condition: still the tactician's
+    CHECK(belowTank(kCureBest) == State::NotBelow);
+    CHECK(belowTank("1|101:0|2:0:4|0") == State::NotBelow); // -na (best)
+    CHECK(belowTank("2|101:0|2:100:0|0") == State::NotBelow); // Enfeeble
+    CHECK(belowTank("2|101:0|3:2:16|0") == State::NotBelow); // Foe -> Mighty Strikes: no hate tool
+    CHECK(belowTank("0|101:0|3:2:35|0") == State::NotBelow); // Self -> Provoke: a hate tool wants a foe
+    // Below a Support Mage line Provoke is nothing hers reads
+    CHECK(below(kProvoke) == State::NotBelow);
+
+    // Which rows name the tool
+    CHECK(cardian::tactician::allowsAbility(row(kProvoke), 35));
+    CHECK_FALSE(cardian::tactician::allowsAbility(row(kProvoke), 16));
+    CHECK_FALSE(cardian::tactician::allowsAbility(row(kCureBest), 35));
 }
 
 TEST_CASE("tactician line: above the line every row is an order, and Tactician's choice is struck out", "[cardian][gambits][tactician]")
@@ -211,7 +256,7 @@ TEST_CASE("tactician line: an action aimed at the wrong side is a misfit, struck
     // A misfit is struck out above the line, below it, and as no line at all
     const auto g = row("1|9:2|0:0:0|0");
     CHECK(cardian::tactician::stateOf(g, 1, std::nullopt, false) == State::Misfit);
-    CHECK(cardian::tactician::stateOf(g, 3, std::optional<std::size_t>(1), false) == State::Misfit);
+    CHECK(cardian::tactician::stateOf(g, 3, cardian::tactician::Line{ 1, pawn::Role::SupportMage }, false) == State::Misfit);
     CHECK(cardian::tactician::struck(State::Misfit));
 }
 

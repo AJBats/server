@@ -183,11 +183,11 @@ namespace pawn
     // run ahead of hers by the think, the behaviours, the conveyor's
     // requests and the engage door alike. Both follow her master switch.
     //
-    // Her own first Support Mage row is the tactician line
+    // Her first Support Mage or Tank row is the tactician line
     // (tactician_line.h): the rows below it are her tactician's allow-list
-    // (Admits, and the engage door's melee rows), never orders, and a row
-    // with no meaning where it sits is struck out. The world's layer has no
-    // line: its rows are orders.
+    // (Admits and UseHateTool, and the engage door's melee rows), never
+    // orders, and a row with no meaning where it sits is struck out. The
+    // world's layer has no line: its rows are orders.
     class CGambits
     {
     public:
@@ -240,9 +240,19 @@ namespace pawn
             return m_gambits.size();
         }
 
-        // The tactician line: the 1-based place of her first Support Mage
-        // row among her own rows, whatever its checkbox; none without one
+        // The tactician line: the 1-based place of her first line row (a
+        // Support Mage or Tank row) among her own rows, whatever its
+        // checkbox; none without one
         auto Line() const -> std::optional<std::size_t>;
+        // Whose tactician her line is as it runs, her role's rows fitted in:
+        // Support Mage or Tank; none without a line
+        auto LineRole() const -> std::optional<pawn::Role>;
+        // The tank tactician's door (RESEARCH §15.11): the first enabled row
+        // below a Tank line that lets her use this hate tool on this target
+        // now -- the row names the ability and the target, its retry has
+        // run, its conditions hold -- used through it, and stamped. Nothing
+        // when it was; else why it was not, for the log
+        auto UseHateTool(uint16 ability, CBattleEntity* PTarget, const std::string& why) -> std::optional<std::string>;
         // Her rows as the editor shows them: her own and the rows her party
         // role lends, in the running order (gambit_layers.h fit), each with
         // whose it is, its number (hers: the one the edits name; a lent one:
@@ -381,5 +391,11 @@ namespace pawn
         std::optional<cardian::party::Role>     m_roleKey;
         uint32                                  m_nextRoleId = 0;
         HashMap<std::string, timer::time_point> m_roleTimers;
+        // The tank tactician's mind as last said, why its last call could
+        // not go through (said once), and whether it has her think (said as
+        // it changes)
+        std::string                             m_tankMind;
+        std::string                             m_tankRefusal;
+        bool                                    m_tankOnDuty = false;
     };
 } // namespace pawn

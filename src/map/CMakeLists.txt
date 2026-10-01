@@ -64,6 +64,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_roster.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/party_roster.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/role_bundles.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/tank_calls.h
 )
 
 set(MAP_CORE_SOURCES

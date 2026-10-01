@@ -3022,8 +3022,9 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // moment her recovery is due: she leaves the fight, the door has her
     // attend it, and she rests as her rest policy says until it stands her
     // (tactician_line.h leavesToRest; RESEARCH §14.12 decision 19). An order
-    // above the line, or the player's own Attack, keeps her in
-    if (const bool runs = TacticianRuns(), due = runs && pawn::tactics::recoveryDue(static_cast<CCharEntity*>(POwner));
+    // above the line, or the player's own Attack, keeps her in. A tank's
+    // recovery is never due (RecoveryDue): she leaves no fight to rest
+    if (const bool runs = TacticianRuns(), due = RecoveryDue();
         due && cardian::tactician::leavesToRest(runs, due, ClaimingRowAs(PTarget, false).has_value(), ClaimingRowAs(PTarget, true).has_value(), PlayersOrderOn(PTarget)))
     {
         StandDown(fmt::format("leaves the fight on {} to rest (her recovery is due)", PTarget->getName()));
@@ -4816,8 +4817,11 @@ namespace
         return view;
     }
 
-    // Another cardian of her party in her zone, engaged on this foe
-    auto cardianOn(const CCharEntity* PPawn, const CBattleEntity* PFoe) -> const CCharEntity*
+    // An ally of hers engaged on this foe: any character of her party in
+    // her zone but herself, the player as much as a cardian (the user,
+    // 2026-10-01: "I am her ally, am I not?"). The leader's target is the
+    // specific finder; this one reads whoever has it
+    auto allyOn(const CCharEntity* PPawn, const CBattleEntity* PFoe) -> const CCharEntity*
     {
         if (PPawn->PParty == nullptr)
         {
@@ -4826,7 +4830,7 @@ namespace
         for (auto* PMember : PPawn->PParty->members)
         {
             const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
-            if (PChar != nullptr && PChar != PPawn && pawn::isPawn(PChar) && PChar->loc.zone == PPawn->loc.zone && PChar->PAI->IsEngaged() &&
+            if (PChar != nullptr && PChar != PPawn && PChar->loc.zone == PPawn->loc.zone && PChar->PAI->IsEngaged() &&
                 PChar->GetBattleTarget() == PFoe)
             {
                 return PChar;
@@ -4846,7 +4850,7 @@ auto CPawnController::FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) 
     const auto* PPawn = static_cast<const CCharEntity*>(POwner);
     auto*       PMob  = dynamic_cast<CMobEntity*>(PFoe);
     f.leadersTarget   = PMob != nullptr && PLeader != nullptr && PLeader->PAI->IsEngaged() && PLeader->GetBattleTarget() == PFoe;
-    f.allysFight      = cardianOn(PPawn, PFoe) != nullptr;
+    f.allysFight      = allyOn(PPawn, PFoe) != nullptr;
     if (PMob != nullptr && PMob->PAI->IsEngaged())
     {
         // The departing player's old aggro is not a new fight here
@@ -4886,8 +4890,8 @@ auto CPawnController::FoeWhy(const cardian::engage::Finder finder, CBattleEntity
             return fmt::format("{}'s target", PLeader != nullptr ? PLeader->getName() : std::string("the leader"));
         case cardian::engage::Finder::AllysFight:
         {
-            const auto* PChar = cardianOn(static_cast<const CCharEntity*>(POwner), PFoe);
-            return fmt::format("with {}", PChar != nullptr ? PChar->getName() : std::string("a cardian of the party"));
+            const auto* PChar = allyOn(static_cast<const CCharEntity*>(POwner), PFoe);
+            return fmt::format("with {}", PChar != nullptr ? PChar->getName() : std::string("an ally"));
         }
         case cardian::engage::Finder::OnAlly:
         case cardian::engage::Finder::OnSelf:
@@ -4938,14 +4942,16 @@ auto CPawnController::FoesAround(CCharEntity* PLeader, const position_t& from) c
             add(dynamic_cast<CMobEntity*>(PLeader->GetBattleTarget()));
         }
 
-        // A cardian already fighting pulls the rest of the party in -- how a
-        // hunter's pull propagates without the player tagging anything
+        // An ally already fighting pulls the rest of the party in -- how a
+        // hunter's pull propagates without the player tagging anything, and
+        // how a second player's draw does in co-op (allyOn reads the same
+        // allies: any of her party but herself)
         if (const auto* PParty = static_cast<CCharEntity*>(POwner)->PParty; PParty != nullptr)
         {
             for (auto* PMember : PParty->members)
             {
                 auto* PChar = dynamic_cast<CCharEntity*>(PMember);
-                if (PChar != nullptr && PChar != POwner && pawn::isPawn(PChar) && PChar->loc.zone == POwner->loc.zone && PChar->PAI->IsEngaged())
+                if (PChar != nullptr && PChar != POwner && PChar->loc.zone == POwner->loc.zone && PChar->PAI->IsEngaged())
                 {
                     add(PChar->GetBattleTarget());
                 }
@@ -5044,13 +5050,20 @@ auto CPawnController::TakesFights() const -> bool
 
 auto CPawnController::TacticianRuns() const -> bool
 {
-    return m_Gambits->MasterOn() && pawn::tactics::supportMage(POwner) && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
+    // Her line row must speak (HoldsRole): unchecked, or under a condition
+    // that fails, her tactician is off and the rows below the line wait
+    const auto line = m_Gambits->LineRole();
+    return m_Gambits->MasterOn() && line.has_value() && HoldsRole(*line) && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
+}
+
+auto CPawnController::RecoveryDue() const -> bool
+{
+    return TacticianRuns() && m_Gambits->LineRole() == pawn::Role::SupportMage && pawn::tactics::recoveryDue(static_cast<const CCharEntity*>(POwner));
 }
 
 auto CPawnController::TacticianMelee() const -> bool
 {
-    const auto* PChar = static_cast<const CCharEntity*>(POwner);
-    return cardian::tactician::meleeAllowed(TacticianRuns(), pawn::tactics::recoveryDue(PChar),
+    return cardian::tactician::meleeAllowed(TacticianRuns(), RecoveryDue(),
                                             POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
 }
 

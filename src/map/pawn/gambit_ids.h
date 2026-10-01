@@ -58,7 +58,7 @@ namespace pawn
     // fight yet, for the rows that decide which fight she takes (Attack).
     // Upstream's targets name an ally, or the fight she is already in.
     constexpr auto G_TARGET_LEADERS_TARGET   = static_cast<gambits::G_TARGET>(100); // the party leader's battle target, while he is engaged
-    constexpr auto G_TARGET_TARGETED_BY_ALLY = static_cast<gambits::G_TARGET>(101); // a mob another cardian of the party is fighting
+    constexpr auto G_TARGET_TARGETED_BY_ALLY = static_cast<gambits::G_TARGET>(101); // a mob an ally of hers -- any of the party but herself, the player included -- is fighting
     constexpr auto G_TARGET_TARGETING_ALLY   = static_cast<gambits::G_TARGET>(102); // a mob on her or on a party member
     constexpr auto G_TARGET_TARGETING_SELF   = static_cast<gambits::G_TARGET>(103); // a mob on her
 

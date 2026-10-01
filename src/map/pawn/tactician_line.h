@@ -34,16 +34,17 @@
 #include <string_view>
 
 // The tactician line (ROADMAP K, RESEARCH §14.12 decisions 7, 14 and
-// 17-19). Her first Support Mage row splits her list: the rows above it are
-// orders, as any row is; the rows below it are her tactician's allow-list,
-// the spells it may cast and the fights it may melee, and they never run as
-// orders -- but for her -na and Erase rows, which run as written while her
-// tactician runs, until it has a judgement of its own for ailments
-// (actsAlone). Where a row
-// sits gives it its meaning, and a row with none where
-// it sits is struck out: kept, shown, and doing nothing. The rules are pure,
-// over a row and plain numbers, so xi_test pins them; the gambit engine
-// (CGambits) asks.
+// 17-19; §15.11). Her first Role row that says Support Mage or Tank splits
+// her list: the rows above it are orders, as any row is; the rows below it
+// are her tactician's allow-list, and the line's role says which tactician
+// -- a Support Mage's: the spells it may cast and the fights it may melee; a
+// tank's: the fights it may melee and the hate tools it may use. They never
+// run as orders -- but for her -na and Erase rows under a Support Mage line,
+// which run as written while her tactician runs, until it has a judgement
+// of its own for ailments (actsAlone). Where a row sits gives it its
+// meaning, and a row with none where it sits is struck out: kept, shown,
+// and doing nothing. The rules are pure, over a row and plain numbers, so
+// xi_test pins them; the gambit engine (CGambits) asks.
 namespace cardian::tactician
 {
     // What her tactician casts, by spell id and spell family (spell.h's
@@ -131,7 +132,7 @@ namespace cardian::tactician
     enum class State : uint8
     {
         Order,    // an order, as every row above the line is, and every row of a list with no line
-        Line,     // her Support Mage row: the line itself
+        Line,     // her Support Mage or Tank row: the line itself
         Allows,   // below the line: something her tactician may use
         NotBelow, // below the line, and nothing her tactician uses: struck out
         Clock,    // below the line on a timer or a chance, which her judgement has no use for: struck out
@@ -177,37 +178,71 @@ namespace cardian::tactician
 
     // The state as the editor reads it on a row's line (Link protocol 13):
     // the server names, the addon words
-    // Her Support Mage row: a behaviour row that names the role
-    inline auto isSupportMageRow(const gambits::Gambit_t& g) -> bool
+    // The role a behaviour row names that makes it a line: Support Mage or
+    // Tank (RESEARCH §15.11: the Tank row is a line as Support Mage's is).
+    // A Damage row is a role and no line: nothing judges under it yet
+    inline auto lineRoleOf(const gambits::Gambit_t& g) -> std::optional<pawn::Role>
     {
         const auto behaviour = [](const gambits::Action_t& a)
         {
             return a.reaction == pawn::G_REACTION_BEHAVIOR;
         };
-        const auto role = [](const gambits::Action_t& a)
+        if (g.actions.empty() || !std::ranges::all_of(g.actions, behaviour))
         {
-            return static_cast<uint16>(a.select) == static_cast<uint16>(pawn::Behavior::Role) &&
-                   a.select_arg == static_cast<uint32>(pawn::Role::SupportMage);
-        };
-        return !g.actions.empty() && std::ranges::all_of(g.actions, behaviour) && std::ranges::any_of(g.actions, role);
+            return std::nullopt;
+        }
+        for (const auto& a : g.actions)
+        {
+            if (static_cast<uint16>(a.select) == static_cast<uint16>(pawn::Behavior::Role) &&
+                (a.select_arg == static_cast<uint32>(pawn::Role::SupportMage) || a.select_arg == static_cast<uint32>(pawn::Role::Tank)))
+            {
+                return static_cast<pawn::Role>(a.select_arg);
+            }
+        }
+        return std::nullopt;
     }
 
-    // The line: the 1-based place of her first Support Mage row, whatever
-    // its checkbox or its condition (ROADMAP K call 3); none without one.
+    inline auto isLineRow(const gambits::Gambit_t& g) -> bool
+    {
+        return lineRoleOf(g).has_value();
+    }
+
+    // The line: the 1-based place of her first line row, whatever its
+    // checkbox or its condition (ROADMAP K call 3), and whose tactician it
+    // is. One line a list: a second line row below it is a behaviour row
+    // below the line, struck out (RESEARCH §15.10)
+    struct Line
+    {
+        std::size_t place = 0;
+        pawn::Role  role  = pawn::Role::SupportMage;
+
+        auto operator==(const Line&) const -> bool = default;
+    };
+
     // gambitOf(row) reads a row's gambit, so any list of rows can be asked
     template <typename Rows, typename GambitOf>
-    auto lineOf(const Rows& rows, GambitOf&& gambitOf) -> std::optional<std::size_t>
+    auto lineOf(const Rows& rows, GambitOf&& gambitOf) -> std::optional<Line>
     {
         std::size_t place = 0;
         for (const auto& row : rows)
         {
             ++place;
-            if (isSupportMageRow(gambitOf(row)))
+            if (const auto role = lineRoleOf(gambitOf(row)); role.has_value())
             {
-                return place;
+                return Line{ place, *role };
             }
         }
         return std::nullopt;
+    }
+
+    // What the tank's tactician uses for hate (RESEARCH §15.11): Provoke,
+    // by its ability id (ability.h, asserted in pawn_gambits.cpp). Flash,
+    // Shield Bash and the rest are later rows, each named
+    inline constexpr std::array<uint16, 1> kHateAbilities{ 35 }; // Provoke
+
+    constexpr auto isHateAbility(const uint32 ability) -> bool
+    {
+        return std::ranges::find(kHateAbilities, ability) != kHateAbilities.end();
     }
 
     inline auto carries(const gambits::Gambit_t& g, const gambits::G_CONDITION condition) -> bool
@@ -244,8 +279,8 @@ namespace cardian::tactician
     // What a row below the line lets her tactician do: one action, and
     // that one hers -- a Cure for someone on the party's side, a debuff she
     // prices on a Foe row's foe (Enfeeble: the single-target ones), the
-    // melee of a fight a Foe row finds (decision 19), or a -na or Erase for
-    // someone on the party's side
+    // melee of a fight a Foe row finds (decision 19), a -na or Erase for
+    // someone on the party's side, or a hate tool on a Foe row's foe
     enum class Allowance : uint8
     {
         None,
@@ -253,7 +288,28 @@ namespace cardian::tactician
         Debuff,
         Melee,
         Ailments,
+        Hate,
     };
+
+    // Which allowances a line's tactician reads: a Support Mage's casts and
+    // melees; a tank's melees and holds hate. A row below a line whose
+    // tactician does not read it is struck out there (NotBelow)
+    constexpr auto allowedUnder(const pawn::Role line, const Allowance allowance) -> bool
+    {
+        switch (allowance)
+        {
+            case Allowance::Cures:
+            case Allowance::Debuff:
+            case Allowance::Ailments:
+                return line == pawn::Role::SupportMage;
+            case Allowance::Melee:
+                return true;
+            case Allowance::Hate:
+                return line == pawn::Role::Tank;
+            default:
+                return false;
+        }
+    }
 
     // An action that takes ailments off: -na (best), a -na or Erase
     inline auto isRemovalAction(const gambits::Action_t& a) -> bool
@@ -274,6 +330,11 @@ namespace cardian::tactician
         if (a.reaction == G_REACTION::ATTACK)
         {
             return engage::isFoeTarget(g.target_selector) ? Allowance::Melee : Allowance::None;
+        }
+        if (a.reaction == G_REACTION::JA)
+        {
+            const bool hate = a.select == G_SELECT::SPECIFIC && isHateAbility(a.select_arg);
+            return hate && engage::isFoeTarget(g.target_selector) ? Allowance::Hate : Allowance::None;
         }
         if (a.reaction != G_REACTION::MA)
         {
@@ -299,24 +360,25 @@ namespace cardian::tactician
 
     // A row's state at its 1-based place, given the line. Below the line a
     // row means one thing or nothing (decision 14): what it lets her
-    // tactician do, or struck out. Tactician's choice needs a tactician
-    // above it, so outside the line's rows it is struck out
+    // tactician do, or struck out -- and the line's tactician must read it
+    // (allowedUnder). Tactician's choice needs a tactician above it, so
+    // outside the line's rows it is struck out
     // `fits`: whether every action fits the row's side (fitsSide, read off
     // the spell and ability tables by the caller); a misfit is struck out
     // wherever it sits
-    inline auto stateOf(const gambits::Gambit_t& g, const std::size_t place, const std::optional<std::size_t> line, const bool fits = true) -> State
+    inline auto stateOf(const gambits::Gambit_t& g, const std::size_t place, const std::optional<Line> line, const bool fits = true) -> State
     {
         if (!fits)
         {
             return State::Misfit;
         }
-        if (line.has_value() && place == *line)
+        if (line.has_value() && place == line->place)
         {
             return State::Line;
         }
-        if (line.has_value() && place > *line)
+        if (line.has_value() && place > line->place)
         {
-            if (allowanceOf(g) == Allowance::None)
+            if (!allowedUnder(line->role, allowanceOf(g)))
             {
                 return State::NotBelow;
             }
@@ -354,6 +416,13 @@ namespace cardian::tactician
         }
         const auto family = pricedFamilyOf(spell);
         return family.has_value() && *family == a.select_arg;
+    }
+
+    // Whether a row below a Tank line lets her tactician use this hate
+    // tool: the row names it
+    inline auto allowsAbility(const gambits::Gambit_t& g, const uint32 ability) -> bool
+    {
+        return allowanceOf(g) == Allowance::Hate && g.actions.front().select_arg == ability;
     }
 
     // Whether a row acts on its own, as her think runs it: an order, and,

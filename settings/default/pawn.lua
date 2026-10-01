@@ -337,6 +337,11 @@ xi.settings.pawn =
     -- read off its own skill list, plus this many yalms.
     PERIMETER_MARGIN = 2,
 
+    -- The tank tactician's Provoke pacing (RESEARCH §15.11): under this
+    -- percent of her mob's HP a tank keeps Provoke for the next pull,
+    -- unless the mob is on the party's Healer or on someone under half HP.
+    TANK_PROVOKE_HOLD_HP = 25,
+
     -- The debug ring: at boot, WORLD_DEBUG_RING census bodies stand in a
     -- ring at the point in WORLD_DEBUG_ZONE, pinned (they never fade),
     -- farming if WORLD_DEBUG_FARM. The measurements run with no client
