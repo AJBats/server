@@ -5089,7 +5089,9 @@ void AddExperiencePoints(bool expFromRaise, bool awardRegionPoints, bool fromScr
     // exp added from raise shouldn't display a message. Don't need a message for zero exp either
     if (!expFromRaise && exp > 0)
     {
-        if (mobCheck >= EMobDifficulty::EvenMatch && isexpchain)
+        // CARDIAN: the chain is the formula's own judgement (exp_spread.lua judges it at the party's average level)
+        std::ignore = mobCheck;
+        if (isexpchain)
         {
             if (PChar->expChain.chainNumber != 0)
             {
