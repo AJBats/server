@@ -335,6 +335,11 @@ namespace pawn
         gambit.identifier = fmt::format("{}", ++m_nextId);
         gambit.last_used  = {};
         m_gambits.push_back(GambitRow{ std::move(gambit), enabled });
+        // An append is how her rows load, one at a time: her role's rows bind
+        // afresh over the list so far, so a load ends as a fresh fit would
+        // (a row naming the same target first), not on whichever match came
+        // in first. The editor's edits keep the bindings
+        m_roleBinds.clear();
         RowsChanged();
         return m_gambits.back().gambit.identifier;
     }
@@ -391,17 +396,21 @@ namespace pawn
         {
             RebuildRoleLayer(key);
         }
-        return cardian::layers::layersFor<GambitRow>(wild, m_worldRows, m_gambits, m_roleRows, gambitOfRow, enabledOfRow);
+        const auto binds = RoleBinds();
+        return { wild ? std::span<GambitRow>(m_worldRows) : std::span<GambitRow>{},
+                 cardian::layers::place<GambitRow>(m_gambits, m_roleRows, binds, enabledOfRow) };
     }
 
     void CGambits::RebuildRoleLayer(const RoleKey key)
     {
+        // A new role binds afresh: the first of her rows that means the same
+        // as each of its rows, in her order as it stands now
         const bool had  = !m_roleRows.empty();
         const auto role = key.role;
         m_roleKey       = key;
         m_roleRows.clear();
+        m_roleBinds.clear();
         m_roleTimers.clear();
-        RowsChanged();
         for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role, key.job))
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
@@ -415,6 +424,7 @@ namespace pawn
                 ShowErrorFmt("pawn: malformed role row '{}' for {}", spec, POwner->getName());
             }
         }
+        RowsChanged();
         if (!m_roleRows.empty())
         {
             ShowInfoFmt("pawn: {} runs the {} role's {} rows with her own", POwner->getName(), cardian::party::roleName(role), m_roleRows.size());
@@ -1532,7 +1542,7 @@ namespace pawn
 
     auto CGambits::Locked(const std::size_t index) const -> bool
     {
-        const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
+        const auto rows = Fitted();
         return std::ranges::any_of(rows, [index](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        return p.origin == cardian::layers::Origin::Both && p.index == index;
@@ -1543,7 +1553,7 @@ namespace pawn
     {
         // Her own and the lent rows as fitted: a marked row that runs and
         // names a tool the tactician has a judgement for, of the kind asked
-        const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
+        const auto rows = Fitted();
         return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        const auto& g = p.row->gambit;
@@ -1555,6 +1565,47 @@ namespace pawn
     {
         ++m_rowsGeneration;
         m_offers.reset();
+        Rebind();
+    }
+
+    void CGambits::Rebind()
+    {
+        const auto binds = cardian::layers::bindLent<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, RoleBinds());
+        m_roleBinds.assign(m_roleRows.size(), std::string());
+        for (std::size_t li = 0; li < binds.size(); ++li)
+        {
+            if (binds[li].has_value())
+            {
+                m_roleBinds[li] = m_gambits[*binds[li]].gambit.identifier;
+            }
+        }
+    }
+
+    auto CGambits::RoleBinds() const -> std::vector<std::optional<std::size_t>>
+    {
+        std::vector<std::optional<std::size_t>> out(m_roleRows.size());
+        for (std::size_t li = 0; li < out.size() && li < m_roleBinds.size(); ++li)
+        {
+            if (m_roleBinds[li].empty())
+            {
+                continue;
+            }
+            for (std::size_t oi = 0; oi < m_gambits.size(); ++oi)
+            {
+                if (m_gambits[oi].gambit.identifier == m_roleBinds[li])
+                {
+                    out[li] = oi;
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    auto CGambits::Fitted() const -> std::vector<cardian::layers::Placed<const GambitRow>>
+    {
+        const auto binds = RoleBinds();
+        return cardian::layers::place<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), binds, enabledOfRow);
     }
 
     auto CGambits::Offers() const -> const Offered&
@@ -1585,7 +1636,7 @@ namespace pawn
         // (RESEARCH §17.13: the row's other conditions are his, AND-ed with
         // the tactician's judgement), so `* Self: MP < 30% -> Rest` paces
         // her under 30% and not above. Read on her, as a Self row is
-        const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
+        const auto rows = Fitted();
         return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        const auto& g = p.row->gambit;
@@ -1709,7 +1760,7 @@ namespace pawn
 
     auto CGambits::AllowsSpell(const uint16 spell) const -> bool
     {
-        const auto rows = cardian::layers::fit<const GambitRow>(std::span<const GambitRow>(m_gambits), std::span<const GambitRow>(m_roleRows), gambitOfRow, enabledOfRow);
+        const auto rows = Fitted();
         return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        const auto& g = p.row->gambit;
@@ -1822,7 +1873,7 @@ namespace pawn
 
     auto CGambits::Move(const std::size_t from, const std::size_t to) -> bool
     {
-        if (from == 0 || to == 0 || from > m_gambits.size() || to > m_gambits.size() || Locked(from))
+        if (from == 0 || to == 0 || from > m_gambits.size() || to > m_gambits.size())
         {
             return false;
         }
@@ -2217,19 +2268,24 @@ namespace pawn
     {
         // "Always" says nothing beside another condition, and alone is the
         // side's "any"; an OR group that holds it is always true, so says
-        // nothing either
+        // nothing either. The tactician's mark is no clause either: the
+        // editor shows it as a star beside the row's switch (RESEARCH §17.13)
+        const auto silent = [](const Predicate_t& p)
+        {
+            return p.condition == G_CONDITION::ALWAYS || p.condition == pawn::G_CONDITION_TACTICIANS_CHOICE;
+        };
         const auto  target = static_cast<std::size_t>(g.target_selector);
         std::string conditions;
         for (const auto& group : g.predicate_groups)
         {
-            if (group.logic == G_LOGIC::OR && std::ranges::any_of(group.predicates, [](const Predicate_t& p) { return p.condition == G_CONDITION::ALWAYS; }))
+            if (group.logic == G_LOGIC::OR && std::ranges::any_of(group.predicates, silent))
             {
                 continue;
             }
             bool first = true;
             for (const auto& predicate : group.predicates)
             {
-                if (predicate.condition == G_CONDITION::ALWAYS)
+                if (silent(predicate))
                 {
                     continue;
                 }
@@ -2693,7 +2749,9 @@ namespace pawn
         // a status entry takes the status picked in the row's next cell.
         // Upstream's trust targets (tank, melee, caster...) are two
         // conditions in one and are not offered; a row that holds one still
-        // reads (headText)
+        // reads (headText). The tactician's mark is not offered either: it
+        // is set and taken off from the row's menu, never picked as a
+        // condition (RESEARCH §17.13)
         struct Range
         {
             uint16 min = 0, max = 0, step = 0, initial = 0;
@@ -2719,7 +2777,6 @@ namespace pawn
             { Side::Self, self, G_CONDITION::HPP_GTE, Takes::Number, hpAbove },
             { Side::Self, self, G_CONDITION::MPP_LT, Takes::Number, mpBelow },
             { Side::Self, self, G_CONDITION::TP_GTE, Takes::Number, tpAbove },
-            { Side::Self, self, pawn::G_CONDITION_TACTICIANS_CHOICE },
             { Side::Self, self, G_CONDITION::HAS_TOP_ENMITY },
             { Side::Self, self, G_CONDITION::NOT_HAS_TOP_ENMITY },
             { Side::Self, self, G_CONDITION::PT_HAS_TANK },
@@ -2731,7 +2788,6 @@ namespace pawn
             { Side::Ally, ally, G_CONDITION::HPP_GTE, Takes::Number, hpAbove },
             { Side::Ally, ally, G_CONDITION::MPP_LT, Takes::Number, mpBelow },
             { Side::Ally, ally, G_CONDITION::TP_GTE, Takes::Number, tpAbove },
-            { Side::Ally, ally, pawn::G_CONDITION_TACTICIANS_CHOICE },
             { Side::Ally, ally, G_CONDITION::STATUS, Takes::Status },
             { Side::Ally, ally, G_CONDITION::NOT_STATUS, Takes::Status },
             { Side::Ally, G_TARGET::PARTY_DEAD, G_CONDITION::ALWAYS },
@@ -2744,7 +2800,6 @@ namespace pawn
             { Side::Foe, foe, G_CONDITION::HPP_LT, Takes::Number, hpBelow },
             { Side::Foe, foe, G_CONDITION::HPP_GTE, Takes::Number, hpAbove },
             { Side::Foe, foe, G_CONDITION::TP_GTE, Takes::Number, tpAbove },
-            { Side::Foe, foe, pawn::G_CONDITION_TACTICIANS_CHOICE },
             { Side::Foe, foe, G_CONDITION::SC_AVAILABLE },
             { Side::Foe, foe, G_CONDITION::MB_AVAILABLE },
             { Side::Foe, foe, G_CONDITION::STATUS, Takes::Status },

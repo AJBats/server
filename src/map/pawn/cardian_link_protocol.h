@@ -202,7 +202,7 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
-    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: shown, edited nowhere
+    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: its content edited nowhere
 
     // His cardians, and the party finder
     CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
@@ -805,7 +805,7 @@ enum
 {
     CL_GO_OWN  = 0, // her own row
     CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §17): shown, never edited
-    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
+    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, its content pinned, moved as hers; hers comes back when the role goes
 };
 
 // One of her rows, as the editor shows it: an answer to GAMBITS and to every

@@ -42,7 +42,9 @@
 // player's party also runs the rows her party role lends her
 // (role_bundles.h): never saved, shown in her editor read-only, and fitted
 // onto her own list (the fit, below): the role's rows first, then hers,
-// a lent row that means the same as one of hers standing in its place.
+// a lent row that means the same as one of hers standing in its place --
+// and staying on that row of hers, wherever she moves it, while she holds
+// the role (bindLent).
 // Joining a player's party, or leaving it, changes which layers run and
 // rewrites none of them, with one exception: rows the player edited on a
 // guest are forgotten as she leaves, and her job's defaults seeded again
@@ -94,7 +96,8 @@ namespace cardian::layers
     // A row in the running order: the row itself, whose it is, its 1-based
     // place within its own layer (hers: the number the editor shows it
     // under; a lent row: its place in the bundle; the role's in her place:
-    // her number, so the edits that name it are refused), and whether it
+    // her number, so an edit of its content that names it is refused, and
+    // a move of it moves her row, the role's going with it), and whether it
     // runs: her own row's checkbox, and always for the role's
     template <typename Row>
     struct Placed
@@ -173,31 +176,42 @@ namespace cardian::layers
         return sideOf(a) == sideOf(b) && sameActions(a, b);
     }
 
-    // Her own rows and the rows her role lends, in the running order: the
-    // role's rows first, in the bundle's order, then her own in hers -- a
-    // role is the quick override (the user, 2026-09-30; RESEARCH §17.13),
-    // so what it lends outranks what she has. A lent row that overlaps a
-    // row of hers, whatever her checkbox or condition, takes her row's
-    // place instead (Both): the role's row runs there, on, pinned, while
-    // she holds the role, and hers is kept underneath and comes back when
-    // the role goes (a player who wants his own tuning takes the role off).
-    // gambitOf(row) reads a row's gambit, enabledOf(row) its checkbox
-    template <typename Row, typename GambitOf, typename EnabledOf>
-    auto fit(const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, EnabledOf&& enabledOf) -> std::vector<Placed<Row>>
+    // Which row of hers each lent row stands in: its index in `own`, or
+    // none. A lent row keeps the row of hers it already stands in --
+    // kept[li], that row's index now, wherever she has carried it -- while
+    // that row still means the same: a duplicate of it she adds, or carries
+    // past it, never takes its place, so the role's row never jumps from
+    // one of her rows to another under her edits (the user, 2026-10-01).
+    // The rest take a row afresh: one naming the same target first, else
+    // the first on the same side; never one another lent row holds. `kept`
+    // may be shorter than `lent`, or empty: nothing kept, a fresh fit
+    template <typename Row, typename GambitOf>
+    auto bindLent(const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, const std::span<const std::optional<std::size_t>> kept = {})
+        -> std::vector<std::optional<std::size_t>>
     {
-        // standsIn[oi]: the lent row that takes her row oi's place, if any:
-        // a row of hers naming the same target first, else the first on
-        // the same side
-        std::vector<std::optional<std::size_t>> standsIn(own.size());
-        std::vector<bool>                       lentOut(lent.size(), false);
-        const auto                              takeOver = [&](const std::size_t li, auto&& same)
+        std::vector<std::optional<std::size_t>> standsIn(lent.size());
+        std::vector<bool>                       taken(own.size(), false);
+        for (std::size_t li = 0; li < lent.size() && li < kept.size(); ++li)
         {
+            const auto oi = kept[li];
+            if (oi.has_value() && *oi < own.size() && !taken[*oi] && overlaps(gambitOf(own[*oi]), gambitOf(lent[li])))
+            {
+                standsIn[li] = *oi;
+                taken[*oi]   = true;
+            }
+        }
+        const auto takeOver = [&](const std::size_t li, auto&& same)
+        {
+            if (standsIn[li].has_value())
+            {
+                return;
+            }
             for (std::size_t oi = 0; oi < own.size(); ++oi)
             {
-                if (!standsIn[oi].has_value() && same(gambitOf(own[oi]), gambitOf(lent[li])))
+                if (!taken[oi] && same(gambitOf(own[oi]), gambitOf(lent[li])))
                 {
-                    standsIn[oi] = li;
-                    lentOut[li]  = true;
+                    standsIn[li] = oi;
+                    taken[oi]    = true;
                     return;
                 }
             }
@@ -208,9 +222,33 @@ namespace cardian::layers
         }
         for (std::size_t li = 0; li < lent.size(); ++li)
         {
-            if (!lentOut[li])
+            takeOver(li, [](const gambits::Gambit_t& a, const gambits::Gambit_t& b) { return overlaps(a, b); });
+        }
+        return standsIn;
+    }
+
+    // Her own rows and the rows her role lends, in the running order: the
+    // role's rows first, in the bundle's order, then her own in hers -- a
+    // role is the quick override (the user, 2026-09-30; RESEARCH §17.13),
+    // so what it lends outranks what she has. A lent row bound to a row of
+    // hers (`binds`, from bindLent above), whatever her checkbox or condition,
+    // takes her row's place instead (Both): the role's row runs there, on,
+    // pinned, while she holds the role, and hers is kept underneath and
+    // comes back when the role goes. A bind out of her rows' range, or onto
+    // a row another lent row holds, counts as none. enabledOf(row) reads a
+    // row's checkbox
+    template <typename Row, typename EnabledOf>
+    auto place(const std::span<Row> own, const std::span<Row> lent, const std::span<const std::optional<std::size_t>> binds, EnabledOf&& enabledOf)
+        -> std::vector<Placed<Row>>
+    {
+        std::vector<std::optional<std::size_t>> standsIn(own.size());
+        std::vector<bool>                       lentOut(lent.size(), false);
+        for (std::size_t li = 0; li < lent.size() && li < binds.size(); ++li)
+        {
+            if (binds[li].has_value() && *binds[li] < own.size() && !standsIn[*binds[li]].has_value())
             {
-                takeOver(li, [](const gambits::Gambit_t& a, const gambits::Gambit_t& b) { return overlaps(a, b); });
+                standsIn[*binds[li]] = li;
+                lentOut[li]          = true;
             }
         }
 
@@ -238,6 +276,15 @@ namespace cardian::layers
         return out;
     }
 
+    // The fit with nothing kept: every lent row binds afresh (bindLent), then
+    // takes its place. gambitOf(row) reads a row's gambit
+    template <typename Row, typename GambitOf, typename EnabledOf>
+    auto fit(const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, EnabledOf&& enabledOf) -> std::vector<Placed<Row>>
+    {
+        const auto binds = bindLent<Row>(own, lent, gambitOf);
+        return place<Row>(own, lent, binds, enabledOf);
+    }
+
     // Her layers with no role lending her anything: her own rows alone,
     // behind the world's in the wild
     template <typename Row>
@@ -252,7 +299,9 @@ namespace cardian::layers
         return out;
     }
 
-    // Her layers with her role's rows fitted onto her own
+    // Her layers with her role's rows fitted onto her own afresh, nothing
+    // kept: for the tests. A live character's rows keep their bindings
+    // across her edits (CGambits::RunningLayers lays them out with place)
     template <typename Row, typename GambitOf, typename EnabledOf>
     auto layersFor(const bool inTheWild, const std::span<Row> world, const std::span<Row> own, const std::span<Row> lent, GambitOf&& gambitOf, EnabledOf&& enabledOf) -> Layers<Row>
     {

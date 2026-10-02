@@ -497,6 +497,99 @@ TEST_CASE("gambit layers: an Attack row is its finder: a lent pull takes the sam
     }
 }
 
+namespace
+{
+    // A fitted order as fitted() writes it
+    auto ids(const std::vector<Placed<Row>>& rows) -> std::vector<std::string>
+    {
+        std::vector<std::string> out;
+        for (const auto& p : rows)
+        {
+            out.push_back(p.origin == Origin::Both ? p.row->id + "*" : p.row->id);
+        }
+        return out;
+    }
+
+    using Binds = std::vector<std::optional<std::size_t>>;
+} // namespace
+
+TEST_CASE("gambit layers: a lent row stays on the row of hers it stands in, whatever she carries past it", "[cardian][gambits][layers][fit]")
+{
+    // Played 2026-10-01 (the user): Zapp held two -na rows of her own, the
+    // first off. The Healer's -na stood in the first; she carried the
+    // second above it, and the role's row jumped onto the row she carried
+    // while the one it left surfaced, off -- as if the row had changed its
+    // words and switched its neighbour off
+    uint32 next = 0;
+    auto   lent = lentRows(kHealer, next); // r1 * Cure, r2 * -na, r3 * Rest
+    auto   own  = ownRows({
+        { "1|9:10000|2:0:4|0", false }, // Ally: status = Enfeeble -> -na (best), off
+        { "1|9:10000|2:0:4|0", true },  // the same, on
+    });
+    const auto fresh = bindLent<Row>(own, lent, gambitOf);
+    REQUIRE(fresh.size() == 3);
+    CHECK(fresh[1] == std::optional<std::size_t>{ 0 }); // the -na takes the first, the one off
+    CHECK(ids(place<Row>(own, lent, fresh, enabledOf)) == std::vector<std::string>{ "r1", "r3", "r2*", "2" });
+
+    // She carries the second above the first: the role's -na keeps its row,
+    // now second, and the row she carried shows as itself
+    std::swap(own[0], own[1]);
+    const Binds kept{ std::nullopt, std::size_t{ 1 }, std::nullopt };
+    const auto  held = bindLent<Row>(own, lent, gambitOf, kept);
+    CHECK(held[1] == std::optional<std::size_t>{ 1 });
+    CHECK(ids(place<Row>(own, lent, held, enabledOf)) == std::vector<std::string>{ "r1", "r3", "2", "r2*" });
+    // a fresh fit, nothing kept, is the jump
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r3", "r2*", "1" });
+}
+
+TEST_CASE("gambit layers: a binding kept for a row gone or no longer the same binds afresh, and a row she adds takes a lent row standing alone", "[cardian][gambits][layers][fit]")
+{
+    uint32 next = 0;
+    auto   lent = lentRows(kHealer, next); // r1 * Cure, r2 * -na, r3 * Rest
+    auto   own  = ownRows({
+        { "0|0:0|100:6:1|0", true }, // Self -> Rest with the player
+        { "1|1:40|2:0:1|0", true },  // Ally: HP < 40% -> Cure (best)
+    });
+
+    // the Cure kept onto a row that is no cure, or onto a place past her
+    // last row: either way it binds afresh, to her cure row
+    for (const auto& kept : { Binds{ std::size_t{ 0 }, std::nullopt, std::nullopt }, Binds{ std::size_t{ 7 }, std::nullopt, std::nullopt } })
+    {
+        CHECK(bindLent<Row>(own, lent, gambitOf, kept)[0] == std::optional<std::size_t>{ 1 });
+    }
+    const auto binds = bindLent<Row>(own, lent, gambitOf, Binds{ std::size_t{ 0 }, std::nullopt, std::nullopt });
+    CHECK(binds[0] == std::optional<std::size_t>{ 1 }); // the Cure takes her cure row
+    CHECK_FALSE(binds[1].has_value());                  // no -na of hers
+    CHECK_FALSE(binds[2].has_value());                  // no Rest of hers: the role's stands at the top
+    // a place past her rows counts as none: the lent row stands at the top
+    CHECK(ids(place<Row>(own, lent, Binds{ std::nullopt, std::nullopt, std::size_t{ 7 } }, enabledOf)) ==
+          std::vector<std::string>{ "r1", "r2", "r3", "1", "2" });
+
+    // she adds a Rest row of her own: the role's Rest, standing alone, takes
+    // it, and the Cure keeps the row it holds
+    auto rest  = ownRows({ { "0|0:0|100:14:1|0", true } }); // Self -> Rest
+    rest[0].id = "3";
+    own.push_back(rest[0]);
+    const auto added = bindLent<Row>(own, lent, gambitOf, binds);
+    CHECK(added[0] == std::optional<std::size_t>{ 1 });
+    CHECK(added[2] == std::optional<std::size_t>{ 2 });
+    CHECK(ids(place<Row>(own, lent, added, enabledOf)) == std::vector<std::string>{ "r2", "1", "r1*", "r3*" });
+}
+
+TEST_CASE("gambit layers: two lent rows never stand in one row of hers", "[cardian][gambits][layers][fit]")
+{
+    uint32 next = 0;
+    auto   lent = lentRows({ { "1|101:0|2:0:1|0", true }, { "1|101:0|2:0:1|0", true } }, next); // two * Cure rows
+    auto   own  = ownRows({ { "1|1:40|2:0:1|0", true } });                                    // one Cure of hers
+
+    const auto binds = bindLent<Row>(own, lent, gambitOf, Binds{ std::size_t{ 0 }, std::size_t{ 0 } });
+    CHECK(binds[0] == std::optional<std::size_t>{ 0 });
+    CHECK_FALSE(binds[1].has_value());
+    CHECK(ids(place<Row>(own, lent, binds, enabledOf)) == std::vector<std::string>{ "r2", "r1*" });
+    // and place, handed both onto it, seats the first alone
+    CHECK(ids(place<Row>(own, lent, Binds{ std::size_t{ 0 }, std::size_t{ 0 } }, enabledOf)) == std::vector<std::string>{ "r2", "r1*" });
+}
+
 TEST_CASE("gambit layers: Damage's bundle is the role's for her job: the trio for a melee job, nothing for a mage", "[cardian][gambits][layers][fit]")
 {
     uint32 next = 0;

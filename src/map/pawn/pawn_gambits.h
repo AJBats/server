@@ -258,7 +258,8 @@ namespace pawn
         // was; else why it was not, for the log
         auto UseHateTool(uint16 ability, CBattleEntity* PTarget, const std::string& why) -> std::optional<std::string>;
         // Her rows as the editor shows them: her own and the rows her party
-        // role lends, in the running order (gambit_layers.h fit), each with
+        // role lends, in the running order (gambit_layers.h place, with the
+        // role's rows where Rebind keeps them), each with
         // whose it is, its number (hers: the one the edits name; a lent one:
         // 0, no edit names it) and its state where it sits
         struct ShownRow
@@ -271,8 +272,10 @@ namespace pawn
         };
         auto Shown() -> std::vector<ShownRow>;
         // Whether her own row at a 1-based place is pinned by her party role
-        // (the role's row stands in its place): shown, edited nowhere. The
-        // edits below refuse such a row themselves, whoever asks
+        // (the role's row stands in its place): the role owns its content,
+        // so it is never switched, rewritten or deleted -- the edits refuse
+        // such a row themselves, whoever asks -- and the player owns its
+        // order, so it moves as any of hers
         auto Locked(std::size_t index) const -> bool;
         // The party role whose rows run with hers now; None for no role
         auto LentBy() const -> cardian::party::Role;
@@ -365,6 +368,17 @@ namespace pawn
         };
         auto Offers() const -> const Offered&;
         void RowsChanged();
+        // Where her role's rows stand among hers (gambit_layers.h bindLent):
+        // Rebind keeps each lent row on the row of hers it already stands
+        // in, by that row's identifier, and binds the rest afresh; every
+        // change to her rows calls it (RowsChanged), and a new role, or a
+        // row appended as her rows load (AddGambit), starts it fresh.
+        // RoleBinds reads the bindings as her rows' places now;
+        // Fitted is her rows and the role's as they run (gambit_layers.h
+        // place)
+        void Rebind();
+        auto RoleBinds() const -> std::vector<std::optional<std::size_t>>;
+        auto Fitted() const -> std::vector<cardian::layers::Placed<const GambitRow>>;
         auto ResolveSpell(const gambits::Action_t& action, CBattleEntity* PTarget) -> Maybe<SpellID>;
         // Behaviour rows (G_REACTION_BEHAVIOR only) flip controller switches
         // and never consume the think; engage rows (Attack) are the door's
@@ -408,9 +422,11 @@ namespace pawn
         HashMap<std::string, timer::time_point> m_worldTimers;
 
         // Her party role's layer (role_bundles.h): its rows (ids "r1",
-        // "r2"... numbered on across rebuilds), the key they were compiled
-        // for, and its own TIMER clocks
+        // "r2"... numbered on across rebuilds), the identifier of the row of
+        // hers each stands in ("" for none: it runs at the top), the key
+        // they were compiled for, and its own TIMER clocks
         std::vector<GambitRow>                  m_roleRows;
+        std::vector<std::string>                m_roleBinds;
         std::optional<RoleKey>                  m_roleKey;
         uint32                                  m_rowsGeneration = 0; // moves with every change to her rows or her layers
         mutable std::optional<Offered>          m_offers;

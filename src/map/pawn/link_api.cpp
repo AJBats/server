@@ -660,14 +660,12 @@ namespace pawn::linkapi
                         });
         }
 
+        // A row her party role pins in her own place moves like any of hers:
+        // the role owns the row's content, the player its order
         void gambitMove(CCharEntity* PChar, const cl_gambit_move& ask, Reply& reply)
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
-                            if (set.Locked(ask.from))
-                            {
-                                return CL_S_ROLE_LOCKED;
-                            }
                             return set.Move(ask.from, ask.to) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
