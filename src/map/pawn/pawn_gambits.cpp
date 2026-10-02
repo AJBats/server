@@ -109,6 +109,35 @@ namespace pawn
         static_assert(cardian::tactician::kBerserk == ABILITY_BERSERK && cardian::tactician::kDefender == ABILITY_DEFENDER &&
                       cardian::tactician::kAggressor == ABILITY_AGGRESSOR && cardian::tactician::kFocus == ABILITY_FOCUS &&
                       cardian::tactician::kDodge == ABILITY_DODGE && cardian::tactician::kBoost == ABILITY_BOOST);
+        static_assert(pawn::bundles::kProvoke == ABILITY_PROVOKE && pawn::bundles::kSpellCure == static_cast<uint16>(SpellID::Cure) &&
+                      pawn::bundles::kSpellPoisona == static_cast<uint16>(SpellID::Poisona));
+
+        // The levels a member's two jobs reach on this server, for the tools
+        // her seat lends (role_bundles.h): the server's cap, and the sub
+        // job's level under it by the server's sub job rule
+        auto seatCaps() -> pawn::bundles::Caps
+        {
+            const auto cap = settings::get<uint8>("main.MAX_LEVEL");
+            return { cap, pawn::bundles::subLevelAt(cap, settings::get<uint8>("map.SUBJOB_RATIO")) };
+        }
+
+        // The level a job learns a seat tool's ability or spell at, from the
+        // game's tables; 0 for never
+        auto toolLevel(const pawn::bundles::Need need, const xi::Job job) -> uint8
+        {
+            if (need.kind == pawn::bundles::Need::Kind::Ability)
+            {
+                auto* PAbility = ability::GetAbility(need.id);
+                return PAbility != nullptr && PAbility->getJob() == job ? PAbility->getLevel() : 0;
+            }
+            if (need.kind == pawn::bundles::Need::Kind::Spell)
+            {
+                auto*       PSpell = spell::GetSpell(static_cast<SpellID>(need.id));
+                const uint8 level  = PSpell != nullptr ? PSpell->getJob(job) : 0;
+                return level == 255 ? 0 : level;
+            }
+            return 0;
+        }
 
         // What each self buff puts on her: up, her tactician has nothing to
         // add (tactician_line.h buffNow)
@@ -414,8 +443,10 @@ namespace pawn
         {
             RebuildWorldLayer();
         }
-        // Her party role's rows run with a player and never in the wild
-        const RoleKey key{ wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner), POwner->GetMJob() };
+        // Her party role's rows run with a player and never in the wild. Her
+        // sub job as she has set it, a zone's restriction of it aside: the
+        // rows stay put, and a restricted tool is never usable anyway
+        const RoleKey key{ wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner), POwner->GetMJob(), POwner->GetSJob(true) };
         if (!m_roleKey.has_value() || *m_roleKey != key)
         {
             RebuildRoleLayer(key);
@@ -435,7 +466,7 @@ namespace pawn
         m_roleRows.clear();
         m_roleBinds.clear();
         m_roleTimers.clear();
-        for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role, key.job))
+        for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role, key.job, key.sub, seatCaps(), toolLevel))
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
             {

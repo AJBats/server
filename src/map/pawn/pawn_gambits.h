@@ -328,20 +328,23 @@ namespace pawn
         }
 
     private:
-        // What her party role's layer was compiled for: the role, and her
-        // job, since a bundle is the role's for her job (role_bundles.h)
+        // What her party role's layer was compiled for: the role, her main
+        // job and her sub job, since a seat lends the tools her two jobs can
+        // ever use (role_bundles.h)
         struct RoleKey
         {
             cardian::party::Role role;
             xi::Job              job;
+            xi::Job              sub;
             auto                 operator==(const RoleKey&) const -> bool = default;
         };
 
         // The layers that run for her now (gambit_layers.h): her world rows
         // while she is in the wild, compiled on first need and again whenever
         // their key changes (world.h brainKey), then her own with her party
-        // role's rows fitted in, compiled again whenever her role or her
-        // job changes
+        // role's rows fitted in, compiled again whenever her role, her main
+        // job or her sub job changes -- never as she levels: a seat lends
+        // what her jobs can ever reach (role_bundles.h)
         auto RunningLayers() -> cardian::layers::Layers<GambitRow>;
         void RebuildWorldLayer();
         void RebuildRoleLayer(RoleKey key);

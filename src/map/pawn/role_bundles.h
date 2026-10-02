@@ -23,8 +23,11 @@
 
 #include "gambit_defaults.h"
 #include "party_roles.h"
+#include "tactician_line.h"
 
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -35,42 +38,162 @@
 // (gambit_layers.h) puts them ahead of hers. Never saved: the role comes
 // off and the rows go with it. Header-only, so xi_test pins the bundles
 // (cardian_gambit_layers_tests.cpp).
+//
+// A seat has its tools, and lends each one her two jobs can ever use on
+// this server (the user, 2026-10-02): her main job by the server's level
+// cap, her sub job by the sub job's level at that cap. Never by her level
+// now, so the rows she is lent stay put as she levels -- a WHM 9 / WAR 4
+// in the Tank seat is lent Provoke, and uses it from her sub's level 5 --
+// and a tool neither job ever reaches is never lent (a sub Warrior's
+// Aggressor, at 45, on a 75 server whose sub jobs stop at 37).
 namespace pawn::bundles
 {
-    // A role's rows for a member of that job, as (row, checkbox) pairs in
-    // the bundle's order. What a role lends depends on her job (RESEARCH
-    // §17.12).
-    //  - Healer lends the marked rows the tactician cures and takes
-    //    ailments off through, and her marked Rest, its MP pacing: on a
-    //    default mage every one is hers already, and the fit adds nothing.
-    //  - Tank lends the pull, marked (the mob an ally is on, the player as
-    //    much as a cardian: her tactician's melee) and Provoke, marked
-    //    (tank_calls.h paces it; the Tank seat is what runs the tank
-    //    tactician).
-    //  - Damage lends a melee job the melee defaults' trio, all orders: on
-    //    a default melee every one is hers already. A mage job is lent
-    //    nothing, the seat only: her damage is a judgement of its own (the
-    //    Black Mage's nuking and MP pacing), and until it exists the melee
-    //    trio would only stand her in the fight with her staff (the user,
-    //    2026-10-01).
-    //  - Puller is a seat only.
-    inline auto bundleFor(const cardian::party::Role role, const xi::Job job) -> const std::vector<std::pair<std::string, bool>>&
+    // What a seat's tool asks of her two jobs: nothing, or a job ability or
+    // a spell one of them can ever learn; and, for a melee tool, a main job
+    // that fights in melee on the Damage seat (meleesOnDamage)
+    struct Need
     {
-        static const std::vector<std::pair<std::string, bool>> healer{
-            { "1|101:0|2:0:1|0", true },    // * Ally -> Cure (best)
-            { "1|101:0|2:0:4|0", true },    // * Ally -> -na (best)
-            { "0|101:0|100:14:1|0", true }, // * Self -> Rest
+        enum class Kind : uint8
+        {
+            Anyone,
+            Ability,
+            Spell,
         };
-        static const std::vector<std::pair<std::string, bool>> tank{
-            { "101|101:0|0:0:0|0", true }, // * Foe: targeted by ally -> Attack
-            { "2|101:0|3:2:35|0", true },  // * Foe -> Provoke
+        Kind   kind  = Kind::Anyone;
+        uint16 id    = 0;     // the ability's or the spell's
+        bool   melee = false; // only for a main job that melees
+    };
+
+    // A row a seat lends, and what it needs
+    struct Tool
+    {
+        std::string_view spec;
+        Need             need;
+    };
+
+    // The highest levels her two jobs reach on this server: the main job's
+    // cap (main.MAX_LEVEL: 75 on prod, 99 on dev) and the sub job's level
+    // under it (subLevelAt)
+    struct Caps
+    {
+        uint8 main = 0;
+        uint8 sub  = 0;
+    };
+
+    // The sub job's level under a main job at mainLevel, by the server's
+    // rule (map.SUBJOB_RATIO, as CBattleEntity::SetSLevel applies it): 0 no
+    // sub job, 1 half, 2 two thirds, 3 equal
+    constexpr auto subLevelAt(const uint8 mainLevel, const uint8 ratio) -> uint8
+    {
+        switch (ratio)
+        {
+            case 1:
+                return mainLevel <= 1 ? mainLevel : static_cast<uint8>(mainLevel / 2);
+            case 2:
+                return mainLevel <= 1 ? mainLevel : static_cast<uint8>(mainLevel * 2 / 3);
+            case 3:
+                return mainLevel;
+            default:
+                return 0;
+        }
+    }
+
+    // Whether a main job melees on the Damage seat. Case by case (the user,
+    // 2026-10-02): the White and the Red Mage do, as orders -- they finish
+    // the fight, and their own marked Rest keeps them down between fights
+    // until they are ready; the Black Mage, the Scholar and the Geomancer
+    // nuke and do not; the Summoner is lent nothing on the seat until her
+    // avatar has gambits of its own
+    constexpr auto meleesOnDamage(const xi::Job main) -> bool
+    {
+        switch (main)
+        {
+            case xi::Job::BLM:
+            case xi::Job::SCH:
+            case xi::Job::GEO:
+            case xi::Job::SMN:
+                return false;
+            default:
+                return true;
+        }
+    }
+
+    // Whether her two jobs can ever use what a tool needs. levelOf(need,
+    // job): the level that job learns the need's ability or spell at, 0
+    // for never -- the game's tables on the server, a few known levels in
+    // the tests
+    template <typename LevelOf>
+    auto reaches(const Need need, const xi::Job main, const xi::Job sub, const Caps caps, LevelOf&& levelOf) -> bool
+    {
+        if (need.melee && !meleesOnDamage(main))
+        {
+            return false;
+        }
+        if (need.kind == Need::Kind::Anyone)
+        {
+            return true;
+        }
+        const auto within = [&](const xi::Job job, const uint8 cap)
+        {
+            if (job == xi::Job::NONE || cap == 0)
+            {
+                return false;
+            }
+            const uint8 level = levelOf(need, job);
+            return level > 0 && level <= cap;
         };
-        static const std::vector<std::pair<std::string, bool>> damage{
-            { "100|0:0|0:0:0|0", true }, // Foe: party leader's target -> Attack
-            { "101|0:0|0:0:0|0", true }, // Foe: targeted by ally -> Attack
-            { "102|0:0|0:0:0|0", true }, // Foe: targeting ally -> Attack
+        return within(main, caps.main) || within(sub, caps.sub);
+    }
+
+    // The game's ids the tools need (static_assert'ed against the game's
+    // enums in pawn_gambits.cpp)
+    inline constexpr uint16 kSpellCure    = 1;
+    inline constexpr uint16 kSpellPoisona = 14; // the first -na a job learns
+    inline constexpr uint16 kProvoke      = 35;
+
+    // A seat's tools, every one, in the bundle's order of priority.
+    //  - Healer: the marked rows the tactician cures and takes ailments off
+    //    through, and her marked Rest, its MP pacing -- for a job that
+    //    learns Cure (the -na, one that learns a -na): on a default mage
+    //    every one is hers already, and the fit adds nothing.
+    //  - Tank: the pull, marked (the mob an ally is on, the player as much
+    //    as a cardian: her tactician's melee), for anyone; then Provoke
+    //    (tank_calls.h paces it; the Tank seat is what runs the tank
+    //    tactician), Defender, Focus and Dodge, marked.
+    //  - Damage: the melee defaults' trio, orders, then Berserk, Aggressor,
+    //    Boost and Focus, marked -- all of them melee tools, for a main job
+    //    that melees (meleesOnDamage: a Black Mage / Warrior is lent no
+    //    Berserk, a Summoner nothing). A buff acts
+    //    where it sits in her think (CGambits::BuffNow), the seat choosing
+    //    between Berserk and Defender (tactician_line.h wrongStance). The
+    //    Thief's Sneak Attack and Trick Attack and the mages' nuking join
+    //    when their judgements exist.
+    //  - Puller is a seat only.
+    inline auto toolsOf(const cardian::party::Role role) -> std::span<const Tool>
+    {
+        using K = Need::Kind;
+        namespace t = cardian::tactician;
+        static const std::vector<Tool> healer{
+            { "1|101:0|2:0:1|0", { K::Spell, kSpellCure } },       // * Ally -> Cure (best)
+            { "1|101:0|2:0:4|0", { K::Spell, kSpellPoisona } },    // * Ally -> -na (best)
+            { "0|101:0|100:14:1|0", { K::Spell, kSpellCure } },    // * Self -> Rest
         };
-        static const std::vector<std::pair<std::string, bool>> none{};
+        static const std::vector<Tool> tank{
+            { "101|101:0|0:0:0|0", { K::Anyone, 0 } },          // * Foe: targeted by ally -> Attack
+            { "2|101:0|3:2:35|0", { K::Ability, kProvoke } },   // * Foe -> Provoke
+            { "0|101:0|3:2:33|0", { K::Ability, t::kDefender } }, // * Self -> Defender
+            { "0|101:0|3:2:36|0", { K::Ability, t::kFocus } },    // * Self -> Focus
+            { "0|101:0|3:2:37|0", { K::Ability, t::kDodge } },    // * Self -> Dodge
+        };
+        static const std::vector<Tool> damage{
+            { "100|0:0|0:0:0|0", { K::Anyone, 0, true } },               // Foe: party leader's target -> Attack
+            { "101|0:0|0:0:0|0", { K::Anyone, 0, true } },               // Foe: targeted by ally -> Attack
+            { "102|0:0|0:0:0|0", { K::Anyone, 0, true } },               // Foe: targeting ally -> Attack
+            { "0|101:0|3:2:31|0", { K::Ability, t::kBerserk, true } },   // * Self -> Berserk
+            { "0|101:0|3:2:34|0", { K::Ability, t::kAggressor, true } }, // * Self -> Aggressor
+            { "0|101:0|3:2:39|0", { K::Ability, t::kBoost, true } },     // * Self -> Boost
+            { "0|101:0|3:2:36|0", { K::Ability, t::kFocus, true } },     // * Self -> Focus
+        };
         switch (role)
         {
             case cardian::party::Role::Healer:
@@ -78,9 +201,26 @@ namespace pawn::bundles
             case cardian::party::Role::Tank:
                 return tank;
             case cardian::party::Role::Damage:
-                return pawn::isMageJob(job) ? none : damage;
+                return damage;
             default:
-                return none;
+                return {};
         }
+    }
+
+    // The rows a seat lends her, as (row, checkbox) pairs in the bundle's
+    // order: its tools her two jobs can ever use (reaches)
+    template <typename LevelOf>
+    auto bundleFor(const cardian::party::Role role, const xi::Job main, const xi::Job sub, const Caps caps, LevelOf&& levelOf)
+        -> std::vector<std::pair<std::string, bool>>
+    {
+        std::vector<std::pair<std::string, bool>> out;
+        for (const auto& tool : toolsOf(role))
+        {
+            if (reaches(tool.need, main, sub, caps, levelOf))
+            {
+                out.emplace_back(std::string(tool.spec), true);
+            }
+        }
+        return out;
     }
 } // namespace pawn::bundles
