@@ -58,6 +58,30 @@ namespace
         { "0|0:0|100:6:1|0", true },
     };
 
+    // A Monk's and a Warrior's: the trio, their tactician's tools, then the
+    // melee set's weapon skill and rest with the player (RESEARCH §17.13)
+    const Rows kMonk{
+        { "100|0:0|0:0:0|0", true },
+        { "101|0:0|0:0:0|0", true },
+        { "102|0:0|0:0:0|0", true },
+        { "0|101:0|3:2:39|0", true },
+        { "0|101:0|3:2:36|0", true },
+        { "0|101:0|3:2:37|0", true },
+        { "2|2:50|4:0:0|0", true },
+        { "0|0:0|100:6:1|0", true },
+    };
+
+    const Rows kWarrior{
+        { "100|0:0|0:0:0|0", true },
+        { "101|0:0|0:0:0|0", true },
+        { "102|0:0|0:0:0|0", true },
+        { "0|101:0|3:2:31|0", true },
+        { "0|101:0|3:2:33|0", true },
+        { "0|101:0|3:2:34|0", true },
+        { "2|2:50|4:0:0|0", true },
+        { "0|0:0|100:6:1|0", true },
+    };
+
     const Rows kMage{
         { "1|101:0|2:0:1|0", true },
         { "1|101:0|2:0:4|0", true },
@@ -114,7 +138,7 @@ namespace
     constexpr auto kRest     = static_cast<uint16>(pawn::Behavior::RestWithPlayer);
 } // namespace
 
-TEST_CASE("gambit defaults: the six mage jobs take the mage set, every other job the melee set", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the six mage jobs take the mage set, the Monk and the Warrior their own, every other job the melee set", "[cardian][gambits][defaults]")
 {
     const auto jobs = allJobs();
     REQUIRE(jobs.size() == 22);
@@ -125,7 +149,8 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set, every other job
         INFO("job " << static_cast<int>(job));
         const bool mage = kMageJobs.contains(job);
         CHECK(isMageJob(job) == mage);
-        CHECK(defaultRowsFor(job) == (mage ? kMage : kMelee));
+        const auto& want = mage ? kMage : job == xi::Job::MNK ? kMonk : job == xi::Job::WAR ? kWarrior : kMelee;
+        CHECK(defaultRowsFor(job) == want);
         if (mage)
         {
             ++mages;
@@ -144,7 +169,7 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set, every other job
 
 TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill and rest with the player, all on, every one an order", "[cardian][gambits][defaults]")
 {
-    const auto& rows = defaultRowsFor(xi::Job::WAR);
+    const auto& rows = defaultRowsFor(xi::Job::THF);
     REQUIRE(rows == kMelee);
     for (const auto& [spec, on] : rows)
     {
@@ -164,6 +189,44 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon sk
     CHECK_FALSE(parseRow("0|0:0|100:11:3|0").has_value());
     CHECK_FALSE(parseRow("0|0:0|100:11:2|0").has_value());
     CHECK_FALSE(parseRow("0|0:0|100:11:1|0").has_value());
+}
+
+TEST_CASE("gambit defaults: the Monk and the Warrior carry their tactician's tools between the trio and the weapon skill", "[cardian][gambits][defaults]")
+{
+    using cardian::tactician::Allowance;
+    using cardian::tactician::State;
+    const auto tool = [](const std::string& spec, const uint32 ability, const Allowance kind)
+    {
+        INFO("row " << spec);
+        requireRow(spec, { G_TARGET::SELF, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::JA, static_cast<uint16>(G_SELECT::SPECIFIC), ability });
+        const auto g = parseRow(spec);
+        REQUIRE(g.has_value());
+        CHECK(cardian::tactician::stateOf(*g) == State::Tool);
+        CHECK(cardian::tactician::allowanceOf(*g) == kind);
+    };
+
+    const auto& monk = defaultRowsFor(xi::Job::MNK);
+    REQUIRE(monk == kMonk);
+    tool(monk[3].first, cardian::tactician::kBoost, Allowance::Boost);
+    tool(monk[4].first, cardian::tactician::kFocus, Allowance::Buff);
+    tool(monk[5].first, cardian::tactician::kDodge, Allowance::Buff);
+
+    const auto& warrior = defaultRowsFor(xi::Job::WAR);
+    REQUIRE(warrior == kWarrior);
+    tool(warrior[3].first, cardian::tactician::kBerserk, Allowance::Buff);
+    tool(warrior[4].first, cardian::tactician::kDefender, Allowance::Buff);
+    tool(warrior[5].first, cardian::tactician::kAggressor, Allowance::Buff);
+
+    // the rest of each is the melee set's, in its order
+    for (const auto* rows : { &monk, &warrior })
+    {
+        CHECK(Rows(rows->begin(), rows->begin() + 3) == Rows(kMelee.begin(), kMelee.begin() + 3));
+        CHECK(Rows(rows->begin() + 6, rows->end()) == Rows(kMelee.begin() + 3, kMelee.end()));
+    }
+
+    // Boost before weapon skills, the switch these tools replace for the
+    // Monk, is retired: the grammar refuses it, saved or sent
+    CHECK_FALSE(parseRow("0|0:0|100:9:1|0").has_value());
 }
 
 TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enfeebles and rest first, then her weapon skill and rest with the player, her marked Attack row last and off", "[cardian][gambits][defaults]")
@@ -193,7 +256,7 @@ TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enf
 
 TEST_CASE("gambit defaults: every default row parses, round-trips through the grammar and pairs as the editor asks", "[cardian][gambits][defaults]")
 {
-    for (const auto* rows : { &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
+    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
     {
         for (const auto& row : *rows)
         {
@@ -208,7 +271,7 @@ TEST_CASE("gambit defaults: every default row parses, round-trips through the gr
 
 TEST_CASE("gambit defaults: no default row avoids aggro or links; every set carries the weapon skill row", "[cardian][gambits][defaults]")
 {
-    for (const auto* rows : { &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
+    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
     {
         for (const auto& row : *rows)
         {

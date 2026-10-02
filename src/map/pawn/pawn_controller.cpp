@@ -1289,6 +1289,51 @@ auto CPawnController::Acting() const -> bool
            POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>() || POwner->PAI->IsCurrentState<CItemState>();
 }
 
+auto CPawnController::ReadyToAct() -> bool
+{
+    // What CPlayerController asks before every action it takes (Ability,
+    // WeaponSkill, RangedAttack, UseItem): able to act, and the state lets
+    // go. The controller ticks before the states update, so an ability
+    // begun in one tick lands in the next and lets go of her in the one
+    // after: asked first, the next action goes out then, with no refusal
+    return canAct() && POwner->PAI->CanChangeState();
+}
+
+auto CPawnController::AbilitiesShutOut() const -> bool
+{
+    // What the ability state refuses a job ability for as it starts:
+    // Amnesia, or Impairment of abilities (power 1, or 3 with weapon skills)
+    auto* PImpairment = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment);
+    return POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia) ||
+           (PImpairment != nullptr && (PImpairment->GetPower() == 0x01 || PImpairment->GetPower() == 0x03));
+}
+
+void CPawnController::NoteOrderedStance(const uint16 ability)
+{
+    m_OrderedBuffs[ability] = m_Tick;
+}
+
+auto CPawnController::PlayersBuff(const uint16 ability, const xi::StatusEffect effect) -> bool
+{
+    const auto it = m_OrderedBuffs.find(ability);
+    if (it == m_OrderedBuffs.end())
+    {
+        return false;
+    }
+    const auto* PEffect = POwner->StatusEffectContainer->GetStatusEffect(effect);
+    if (PEffect != nullptr && cardian::tactician::isOrderedUse(PEffect->GetStartTime() - it->second))
+    {
+        return true;
+    }
+    // His order has had the time to land: the use it put up is over, or it
+    // never landed, and a later one of the same buff is not his
+    if (m_Tick - it->second > cardian::tactician::kOrderLands)
+    {
+        m_OrderedBuffs.erase(it);
+    }
+    return false;
+}
+
 void CPawnController::HeadLook(const CBaseEntity* PAt)
 {
     const uint16 want = PAt != nullptr ? PAt->targid : 0;
@@ -1392,7 +1437,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     // recast, or given as she gets up from a rest
     const EntityId target(PTarget);
     const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
-    std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : Acting() ? "busy" : outOfReach ? "out of reach" : "";
+    std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : !ReadyToAct() ? "busy" : outOfReach ? "out of reach" : "";
     if (heldFor.empty())
     {
         OrderStarted(key, kind, id);
@@ -1420,8 +1465,11 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     }
 
     // A little early is held, too early refused. The wait is the least
-    // she has to wait (an action in progress adds what the state does not
-    // tell), so a refusal here is certain and the deadline judges the rest
+    // she has to wait (an action in progress other than a cast adds what
+    // its state does not tell), so a refusal here is certain and the
+    // deadline judges the rest. The 2.5 s after a spell is the server's
+    // wait for everyone and is never early: an order pressed late in her
+    // cast bar fires the moment it is over
     const auto grace = orderGrace();
     const auto wait  = OrderWait(kind, id);
     if (wait > grace)
@@ -1432,7 +1480,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
         }
         return CL_S_TOO_SOON;
     }
-    m_QueuedOrderDeadline = m_Tick + grace;
+    m_QueuedOrderDeadline = m_Tick + grace + SpellWaitAhead();
     SetQueuedOrder(std::make_pair(key, target));
     ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), heldFor, wholeSeconds(grace));
     if (InManeuver())
@@ -1455,27 +1503,51 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     return CL_S_OK;
 }
 
-auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
+auto CPawnController::CastBarLeft() const -> timer::duration
 {
-    if (kind != 2)
+    const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
+    if (PState == nullptr || PState->IsCompleted())
     {
         return 0s;
+    }
+    return std::max<timer::duration>(PState->GetStartTime() + PState->GetCastTime() - m_Tick, 0s);
+}
+
+auto CPawnController::SpellWaitAhead() -> timer::duration
+{
+    // The player controller's canAct: 2.5 s from the moment her last spell
+    // landed. A cast under way starts it afresh as it lands
+    constexpr auto kAfterSpell = 2500ms;
+    const auto*    PState      = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
+    if (PState != nullptr && !PState->IsCompleted())
+    {
+        return kAfterSpell;
+    }
+    return std::max<timer::duration>(getLastSpellFinishedTime() + kAfterSpell - m_Tick, 0s);
+}
+
+auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
+{
+    const auto bar = CastBarLeft();
+    if (kind != 2)
+    {
+        return bar;
     }
     const auto spellId = static_cast<SpellID>(id);
     if (const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState()); PState != nullptr)
     {
         if (auto* PSpell = PState->GetSpell(); PSpell != nullptr && PSpell->getID() == spellId)
         {
-            return PState->GetRecast(); // the same spell again: its timer starts when this cast lands
+            return bar + PState->GetRecast(); // the same spell again: its timer starts when this cast lands
         }
     }
     const auto* recast = static_cast<CCharEntity*>(POwner)->PRecastContainer->GetRecast(RECAST_MAGIC, static_cast<Recast>(spellId));
     if (recast == nullptr || recast->RecastTime <= 0s)
     {
-        return 0s;
+        return bar;
     }
     const auto left = recast->TimeStamp + recast->RecastTime - m_Tick;
-    return left > timer::duration::zero() ? left : timer::duration::zero();
+    return std::max(bar, left > timer::duration::zero() ? left : timer::duration::zero());
 }
 
 auto CPawnController::OrderName(const unsigned kind, const unsigned id) const -> std::string
@@ -1647,15 +1719,15 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             {
                 return CL_S_ON_RECAST;
             }
-            // An order is never second-guessed: straight to the base
+            // An order is never second-guessed: straight to the player
             // controller's cast, past the gambit engine's redundancy rule
-            // (which declines a cure on a healthy friend) and past the
-            // player controller's 2.5 s post-spell delay. The magic state
-            // is the only gate, as it is for a player.
+            // (which declines a cure on a healthy friend). It waits the 2.5 s
+            // after her last spell as the player's own cast does (the pacer
+            // holds it until then)
             const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
             FaceTarget(castTarget);
             HeadLook(castTarget.resolve<CBattleEntity>());
-            fired = CController::Cast(castTarget, spellId);
+            fired = CPlayerController::Cast(castTarget, spellId);
             break;
         }
         case 3:
@@ -1664,6 +1736,12 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
                 return CL_S_MALFORMED;
             }
             fired = Ability(target, static_cast<uint16>(id));
+            // His Berserk or Defender is never taken off by her tactician's
+            // stance (PlayersBuff)
+            if (fired && cardian::tactician::isStanceAbility(id))
+            {
+                NoteOrderedStance(static_cast<uint16>(id));
+            }
             break;
         case 4:
             if (mode != 2)
@@ -1842,7 +1920,7 @@ void CPawnController::FireQueuedOrder()
     {
         SetQueuedOrder(std::nullopt);
         const auto wait = OrderWait(kind, id);
-        const bool busy = Acting() || wait <= 0s;
+        const bool busy = !ReadyToAct() || wait <= 0s;
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, busy ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait)));
         auto note   = cardian::link::make<cl_note>();
         note.kind   = CL_NOTE_LET_GO;
@@ -1851,7 +1929,8 @@ void CPawnController::FireQueuedOrder()
         Note(note, CL_S_TOO_SOON);
         return;
     }
-    if (Acting())
+    // The pacer: it goes out the first tick the server would take it
+    if (!ReadyToAct())
     {
         return;
     }
@@ -3058,13 +3137,14 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     m_LastFoughtId = PTarget->id;
     m_LastFought   = EntityId(PTarget);
 
-    // The weapon skill held behind a Boost goes out now, before anything
+    // The weapon skill held behind a Boost goes out the first tick the
+    // pacer allows -- Boost landed and let go of her -- before anything
     // else can spend the Boost; given up after a few ticks
     if (m_WsAfterBoost.has_value() && m_Tick > m_WsAfterBoost->at)
     {
         const auto held = *m_WsAfterBoost;
         if (auto* PHeld = held.target.resolve<CBattleEntity>(); PHeld != nullptr && !PHeld->isDead() &&
-            (CPlayerController::WeaponSkill(held.target, held.wsid) || m_Tick - held.at > 2s))
+            ((ReadyToAct() && CPlayerController::WeaponSkill(held.target, held.wsid)) || m_Tick - held.at > 2s))
         {
             m_WsAfterBoost.reset();
             co_return;
@@ -4692,23 +4772,19 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
     return CastAndStop(castTarget, spellid);
 }
 
-namespace
-{
-    constexpr uint16 kBoostAbility = 39;
-} // namespace
-
 // Boost is spent by the next blow, so it is worth nothing unless the
-// weapon skill follows at once: ready, known, not already up
+// weapon skill follows at once: her marked Boost row offers it (the
+// tactician's tool, RESEARCH §17.13), ready, known, not already up
 auto CPawnController::BoostReady() const -> bool
 {
-    if (Behavior(pawn::Behavior::BoostBeforeWs).value_or(0) == 0)
+    if (!m_Gambits->OffersBoost())
     {
         return false;
     }
-    const auto* PBoost = ability::GetAbility(kBoostAbility);
+    const auto* PBoost = ability::GetAbility(cardian::tactician::kBoost);
     auto*       PChar  = static_cast<CCharEntity*>(POwner);
-    return PBoost != nullptr && charutils::hasAbility(PChar, kBoostAbility) && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Boost) &&
-           !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PBoost->getRecastId(), 0s);
+    return PBoost != nullptr && !AbilitiesShutOut() && charutils::hasAbility(PChar, cardian::tactician::kBoost) &&
+           !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Boost) && !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PBoost->getRecastId(), 0s);
 }
 
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
@@ -4719,16 +4795,17 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     }
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
-    // Boost first, the weapon skill on the very next tick (DoCombatTick) --
-    // only in reach of the mob, or the walk in spends it on a punch
+    // Boost first, the weapon skill the moment Boost has landed and lets go
+    // of her, two ticks on (DoCombatTick) -- only in reach of the mob, or
+    // the walk in spends it on a punch
     auto*      PTarget = target.resolve<CBattleEntity>();
     // (in reach and engaged is enough: a member repositions all fight long,
     // and a standing-still gate never opened for her)
     const bool inReach = PTarget != nullptr && POwner->PAI->IsEngaged() && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
-    if (inReach && BoostReady() && CPlayerController::Ability(POwner->entityId(), kBoostAbility))
+    if (inReach && BoostReady() && CPlayerController::Ability(POwner->entityId(), cardian::tactician::kBoost))
     {
         m_WsAfterBoost = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
-        ShowInfoFmt("pawn: {} boosts; weapon skill {} follows next tick", POwner->getName(), wsid);
+        ShowInfoFmt("tactics: {} boosts (her Boost row); weapon skill {} follows as it lands", POwner->getName(), wsid);
         return true;
     }
     return CPlayerController::WeaponSkill(target, wsid);

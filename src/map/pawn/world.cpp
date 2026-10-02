@@ -13,6 +13,7 @@
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
+#include "tactician_line.h"
 
 #include "common/database.h"
 #include "common/earth_time.h"
@@ -525,7 +526,8 @@ namespace
     //   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n |
     //              has <status> | lacks <status> | top enmity | not top enmity
     //   action     avoid aggro | avoid links | rest | rest with leader | home point with leader |
-    //              boost before weapon skills | formation <lead|flank left|flank right|
+    //              boost before weapon skills (self only: the marked Boost row, the one
+    //              tactician's row the world carries) | formation <lead|flank left|flank right|
     //              rear left|rear right|behind> | cast best <spell>
     //              (the best of its family) | cast <spell> | cast random damage |
     //              ability <name> | best weapon skill | random weapon skill
@@ -671,9 +673,10 @@ namespace
 
         // the action
         std::string actSpec;
+        bool        marked = false;
         static const std::unordered_map<std::string, std::string> switches{
             { "avoid aggro", "100:1:1" }, { "avoid links", "100:13:1" }, { "rest with leader", "100:6:1" }, { "home point with leader", "100:7:1" },
-            { "boost before weapon skills", "100:9:1" }, { "rest", "100:14:1" }
+            { "rest", "100:14:1" }
         };
         static const std::unordered_map<std::string, int> seats{
             { "lead", 1 }, { "flank left", 2 }, { "flank right", 3 }, { "rear left", 4 }, { "rear right", 5 }, { "behind", 6 }
@@ -681,6 +684,20 @@ namespace
         if (const auto it = switches.find(act); it != switches.end())
         {
             actSpec = it->second;
+        }
+        else if (act == "boost before weapon skills")
+        {
+            // Boost right before her weapon skill is the tactician's tool, a
+            // marked Self -> Boost row (RESEARCH §17.13): no order can say
+            // "right before the weapon skill", so this is the one row the
+            // world marks
+            if (whoIt->second != 0)
+            {
+                ShowErrorFmt("world: brains: '{}': boost before weapon skills is a self row", text);
+                return std::nullopt;
+            }
+            actSpec = fmt::format("3:2:{}", cardian::tactician::kBoost);
+            marked  = true;
         }
         else if (act.starts_with("formation "))
         {
@@ -738,6 +755,10 @@ namespace
         {
             ShowErrorFmt("world: brains: '{}': cannot read the action '{}'", text, act);
             return std::nullopt;
+        }
+        if (marked)
+        {
+            condSpec = condSpec == "0:0" ? "101:0" : condSpec + "&101:0";
         }
         return fmt::format("{}|{}|{}|{}", whoIt->second, condSpec, actSpec, retry);
     }

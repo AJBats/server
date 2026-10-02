@@ -36,8 +36,9 @@
 // (cardian_gambit_defaults_tests.cpp).
 namespace pawn
 {
-    // A mage takes the mage defaults; every other job is melee. The one
-    // list of mage jobs, so a world body's layer and her own rows agree.
+    // A mage takes the mage defaults; every other job is melee, the Monk
+    // and the Warrior with their own tools (defaultRowsFor). The one list
+    // of mage jobs, so a world body's layer and her own rows agree.
     constexpr auto isMageJob(const xi::Job job) -> bool
     {
         switch (job)
@@ -62,6 +63,11 @@ namespace pawn
     //    fall), then rest with the player. The trio takes the party leader's
     //    fight first, and another cardian's only after it, so a cardian
     //    whose mob has died joins the player's fight before anyone else's.
+    //    A Monk and a Warrior carry their tactician's tools between the trio
+    //    and the weapon skill, so they go out first (RESEARCH §17.13): the
+    //    Monk's Boost (right before her weapon skill), Focus and Dodge, the
+    //    Warrior's Berserk (never as the party's Tank), Defender (only as
+    //    the Tank) and Aggressor.
     //  - Mage: the tactician's tools first -- the Cure, the -na and the
     //    enfeebles left to its judgement, so curing outranks everything
     //    below, and her rest, the MP pacing -- then her weapon skill and
@@ -84,6 +90,26 @@ namespace pawn
             { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
         };
+        static const std::vector<std::pair<std::string, bool>> monk{
+            { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
+            { "101|0:0|0:0:0|0", true },   // Foe: targeted by ally -> Attack
+            { "102|0:0|0:0:0|0", true },   // Foe: targeting ally -> Attack
+            { "0|101:0|3:2:39|0", true },  // * Self -> Boost
+            { "0|101:0|3:2:36|0", true },  // * Self -> Focus
+            { "0|101:0|3:2:37|0", true },  // * Self -> Dodge
+            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+        };
+        static const std::vector<std::pair<std::string, bool>> warrior{
+            { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
+            { "101|0:0|0:0:0|0", true },   // Foe: targeted by ally -> Attack
+            { "102|0:0|0:0:0|0", true },   // Foe: targeting ally -> Attack
+            { "0|101:0|3:2:31|0", true },  // * Self -> Berserk
+            { "0|101:0|3:2:33|0", true },  // * Self -> Defender
+            { "0|101:0|3:2:34|0", true },  // * Self -> Aggressor
+            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+        };
         static const std::vector<std::pair<std::string, bool>> mage{
             { "1|101:0|2:0:1|0", true },   // * Ally -> Cure (best)
             { "1|101:0|2:0:4|0", true },   // * Ally -> -na (best)
@@ -93,6 +119,10 @@ namespace pawn
             { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
             { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
         };
-        return isMageJob(job) ? mage : melee;
+        if (isMageJob(job))
+        {
+            return mage;
+        }
+        return job == xi::Job::MNK ? monk : job == xi::Job::WAR ? warrior : melee;
     }
 } // namespace pawn

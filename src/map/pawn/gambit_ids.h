@@ -88,7 +88,9 @@ namespace pawn
         RestWithPlayer      = 6, // switch: kneel when the player kneels
         HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
         // 8: retired Rest; resting is owned by the shared policy.
-        BoostBeforeWs       = 9, // switch: a Monk's Boost goes out right before her weapon skill, nothing between (D5)
+        // 9: retired BoostBeforeWs, the switch for a Monk's Boost right
+        // before her weapon skill: a marked `Self -> Boost` row is that
+        // tool now (RESEARCH §17.13).
         // 10: retired RestInBattle. Never reuse persisted behavior IDs.
         // 11: retired Role, the tactician line (Support Mage 1, Tank 2, and
         // Damage 3 before it): what she is for is her party role, and what
@@ -104,7 +106,7 @@ namespace pawn
     // one, saved or imported, so an old meaning never comes back
     constexpr auto isRetiredBehavior(const uint32 behavior) -> bool
     {
-        return behavior == 8 || behavior == 10 || behavior == 11 || behavior == 12;
+        return behavior == 8 || behavior == 9 || behavior == 10 || behavior == 11 || behavior == 12;
     }
 
     // A switch row carries the value 1 and its checkbox is the switch; a
@@ -130,13 +132,11 @@ namespace pawn
     static_assert(static_cast<uint16>(Behavior::Formation) == 4);
     static_assert(static_cast<uint16>(Behavior::RestWithPlayer) == 6);
     static_assert(static_cast<uint16>(Behavior::HomePointWithPlayer) == 7);
-    static_assert(static_cast<uint16>(Behavior::BoostBeforeWs) == 9);
     static_assert(static_cast<uint16>(Behavior::AvoidLinks) == 13);
     static_assert(static_cast<uint16>(Behavior::Rest) == 14);
     static_assert(BehaviorCount == 15);
-    static_assert(isRetiredBehavior(8) && isRetiredBehavior(10) && isRetiredBehavior(11) && isRetiredBehavior(12));
+    static_assert(isRetiredBehavior(8) && isRetiredBehavior(9) && isRetiredBehavior(10) && isRetiredBehavior(11) && isRetiredBehavior(12));
     static_assert(!isRetiredBehavior(static_cast<uint16>(Behavior::AvoidAggro)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Formation)) &&
                   !isRetiredBehavior(static_cast<uint16>(Behavior::RestWithPlayer)) && !isRetiredBehavior(static_cast<uint16>(Behavior::HomePointWithPlayer)) &&
-                  !isRetiredBehavior(static_cast<uint16>(Behavior::BoostBeforeWs)) && !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)) &&
-                  !isRetiredBehavior(static_cast<uint16>(Behavior::Rest)));
+                  !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Rest)));
 } // namespace pawn

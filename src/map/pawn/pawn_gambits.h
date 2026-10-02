@@ -251,6 +251,10 @@ namespace pawn
         auto OffersTools() const -> bool;
         auto OffersSpells() const -> bool;
         auto OffersRest() -> bool;
+        // Her marked Boost row, on, its gate holding now, in any layer that
+        // runs (a wild Monk's brains carry one): Boost goes out right before
+        // her weapon skill (RESEARCH §17.13)
+        auto OffersBoost() -> bool;
         // The tank tactician's door (RESEARCH §17.11): the first enabled
         // marked row that lets her use this hate tool on this target now --
         // the row names the ability and the target, its retry has run, its
@@ -385,6 +389,12 @@ namespace pawn
         // (EngageRows) and never consume it either
         auto IsBehavior(const gambits::Gambit_t& gambit) const -> bool;
         void ApplyBehavior(const gambits::Gambit_t& gambit);
+        // A marked self buff's call where it sits in her think: its when
+        // (tactician_line.h buffNow), the ability hers and off its recast
+        auto BuffNow(const gambits::Gambit_t& gambit, bool engaged) const -> bool;
+        // A marked Berserk or Defender row, its gate holding: the other
+        // stance buff taken off, unless the player ordered it
+        void KeepStance(const gambits::Gambit_t& gambit);
 
         // A row's actions in order until one fires; `index` is the row's
         // 1-based place, the conveyor's order among her rows

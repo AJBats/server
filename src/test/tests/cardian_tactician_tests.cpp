@@ -401,7 +401,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Tool });
 
     std::vector<std::string> melee;
-    for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::WAR))
+    for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::THF))
     {
         melee.push_back(spec);
     }
@@ -409,4 +409,83 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     {
         CHECK(state == State::Order);
     }
+
+    // a Monk's and a Warrior's: the trio, her three tools, her weapon
+    // skill and rest with the player
+    for (const auto job : { xi::Job::MNK, xi::Job::WAR })
+    {
+        std::vector<std::string> specs;
+        for (const auto& [spec, on] : pawn::defaultRowsFor(job))
+        {
+            specs.push_back(spec);
+        }
+        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order });
+    }
+}
+
+TEST_CASE("tactician: the self buffs and Boost are tools on a Self row, each with its own when", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::Allowance;
+    using cardian::tactician::allowanceOf;
+    using cardian::tactician::buffNow;
+    using cardian::tactician::actsAlone;
+    namespace t = cardian::tactician;
+
+    // On a Self row each is a tool; on a Foe row none has a judgement;
+    // unmarked, each is an order
+    for (const auto ability : { t::kBerserk, t::kDefender, t::kAggressor, t::kFocus, t::kDodge })
+    {
+        INFO("ability " << ability);
+        const auto self = "0|101:0|3:2:" + std::to_string(ability) + "|0";
+        CHECK(stateOf(self) == State::Tool);
+        CHECK(allowanceOf(row(self)) == Allowance::Buff);
+        CHECK(stateOf("2|101:0|3:2:" + std::to_string(ability) + "|0") == State::NoJudgement);
+        CHECK(stateOf("0|0:0|3:2:" + std::to_string(ability) + "|0") == State::Order);
+        // a buff never acts alone: its when does (CGambits::BuffNow)
+        CHECK_FALSE(actsAlone(State::Tool, row(self), true));
+    }
+    CHECK(stateOf("0|101:0|3:2:39|0") == State::Tool); // * Self -> Boost
+    CHECK(allowanceOf(row("0|101:0|3:2:39|0")) == Allowance::Boost);
+    CHECK(stateOf("2|101:0|3:2:39|0") == State::NoJudgement);
+    CHECK(stateOf(marked("0|3:30|3:2:31|0")) == State::Tool); // * Self: MP < 30% -> Berserk: gated
+    CHECK_FALSE(t::isBuffAbility(t::kBoost));                // Boost waits for the weapon skill, not its clock
+    CHECK_FALSE(t::isBuffAbility(35));                       // Provoke is the tank's hate tool
+
+    // The when: fighting, not on her already, the seat allowing
+    for (const auto ability : { t::kAggressor, t::kFocus, t::kDodge })
+    {
+        INFO("ability " << ability);
+        CHECK(buffNow(ability, true, false, false));
+        CHECK(buffNow(ability, true, false, true)); // any seat
+        CHECK_FALSE(buffNow(ability, false, false, false)); // not fighting
+        CHECK_FALSE(buffNow(ability, true, true, false));   // already up
+    }
+    CHECK(buffNow(t::kBerserk, true, false, false));
+    CHECK_FALSE(buffNow(t::kBerserk, true, false, true));  // never seated Tank
+    CHECK(buffNow(t::kDefender, true, false, true));
+    CHECK_FALSE(buffNow(t::kDefender, true, false, false)); // only seated Tank
+    CHECK_FALSE(buffNow(t::kBoost, true, false, false));    // Boost is no clock buff
+    CHECK_FALSE(buffNow(35, true, false, true));            // nor Provoke
+
+    // Berserk and Defender are a stance: seated Tank, Berserk is the one to
+    // take off; any other seat, Defender (both up, their numbers cancel)
+    CHECK(t::isStanceAbility(t::kBerserk));
+    CHECK(t::isStanceAbility(t::kDefender));
+    CHECK_FALSE(t::isStanceAbility(t::kAggressor));
+    CHECK_FALSE(t::isStanceAbility(t::kBoost));
+    CHECK(t::wrongStance(true) == t::kBerserk);
+    CHECK(t::wrongStance(false) == t::kDefender);
+    CHECK(t::otherStance(t::kBerserk) == t::kDefender);
+    CHECK(t::otherStance(t::kDefender) == t::kBerserk);
+
+    // The player's own stance is his for the one use it put up: the effect
+    // that went up as it landed, never one older than the order, nor a
+    // later one of the tactician's
+    using namespace std::chrono_literals;
+    CHECK(t::isOrderedUse(0ms));
+    CHECK(t::isOrderedUse(800ms)); // landed two ticks on
+    CHECK(t::isOrderedUse(5s));
+    CHECK_FALSE(t::isOrderedUse(-1ms));   // up before the order: not his
+    CHECK_FALSE(t::isOrderedUse(5001ms)); // up after his use: the tactician's
+    CHECK_FALSE(t::isOrderedUse(std::chrono::minutes(5)));
 }

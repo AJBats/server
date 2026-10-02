@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string_view>
@@ -42,7 +43,9 @@
 // Position means nothing: a marked row and an order sit anywhere, and the
 // list's order is their priority. A marked row never runs as an order --
 // but for her -na and Erase rows, which run as written while her tactician
-// runs, until it has a judgement of its own for ailments (actsAlone). A
+// runs, until it has a judgement of its own for ailments (actsAlone), and
+// her self buffs, which act where they sit in the think when their own
+// when says now (buffNow). A
 // mark on a tool the tactician has no judgement for is struck out: kept,
 // shown, and doing nothing. The rules are pure, over a row, so xi_test
 // pins them; the gambit engine (CGambits) asks.
@@ -203,6 +206,70 @@ namespace cardian::tactician
         return std::ranges::find(kHateAbilities, ability) != kHateAbilities.end();
     }
 
+    // The self buffs her tactician uses on their own clocks while she
+    // fights, and Boost, which waits for her weapon skill (RESEARCH §17.13,
+    // the tool table), by ability id (ability.h, asserted in
+    // pawn_gambits.cpp)
+    inline constexpr uint16                kBerserk   = 31;
+    inline constexpr uint16                kDefender  = 33;
+    inline constexpr uint16                kAggressor = 34;
+    inline constexpr uint16                kFocus     = 36;
+    inline constexpr uint16                kDodge     = 37;
+    inline constexpr uint16                kBoost     = 39;
+    inline constexpr std::array<uint16, 5> kBuffAbilities{ kBerserk, kDefender, kAggressor, kFocus, kDodge };
+
+    constexpr auto isBuffAbility(const uint32 ability) -> bool
+    {
+        return std::ranges::find(kBuffAbilities, ability) != kBuffAbilities.end();
+    }
+
+    // Berserk and Defender are a Warrior's stance: both may be up at once,
+    // and then their numbers cancel, so her tactician keeps the one her
+    // seat calls for and takes the other off (the user, 2026-10-02). Seated
+    // Tank, Defender's stance; any other seat, Berserk's
+    constexpr auto isStanceAbility(const uint32 ability) -> bool
+    {
+        return ability == kBerserk || ability == kDefender;
+    }
+
+    // The stance buff her seat does not want: the one to take off
+    constexpr auto wrongStance(const bool tankSeat) -> uint16
+    {
+        return tankSeat ? kBerserk : kDefender;
+    }
+
+    // Berserk for Defender, Defender for Berserk
+    constexpr auto otherStance(const uint16 stance) -> uint16
+    {
+        return stance == kBerserk ? kDefender : kBerserk;
+    }
+
+    // The player's own Berserk or Defender -- his order, or a plain row of
+    // his firing it -- is never taken off by her tactician, for the one use
+    // it put up: the effect that went up within this long of it firing
+    // (an ability lands a tick or two after it starts), not a later one
+    inline constexpr auto kOrderLands = std::chrono::seconds(5);
+
+    template <typename Rep, typename Period>
+    constexpr auto isOrderedUse(const std::chrono::duration<Rep, Period> effectStartAfterOrder) -> bool
+    {
+        return effectStartAfterOrder >= effectStartAfterOrder.zero() && effectStartAfterOrder <= kOrderLands;
+    }
+
+    // A self buff's when: she is fighting, it is not on her already, and
+    // her seat allows it -- Defender is the Tank seat's, Berserk is never
+    // the Tank seat's (wrongStance), Aggressor, Focus and Dodge are any
+    // seat's. Whether the ability is hers and off its recast is the
+    // caller's to ask
+    constexpr auto buffNow(const uint32 ability, const bool engaged, const bool up, const bool tankSeat) -> bool
+    {
+        if (!engaged || up || !isBuffAbility(ability))
+        {
+            return false;
+        }
+        return ability != wrongStance(tankSeat);
+    }
+
     // Who a marked Cure may be for: someone on the party's side
     constexpr auto curesTarget(const gambits::G_TARGET target) -> bool
     {
@@ -228,8 +295,10 @@ namespace cardian::tactician
     // the party's side, a debuff she prices on a Foe row's foe (Enfeeble:
     // the single-target ones), the melee of a fight a Foe row finds
     // (decision 19), a -na or Erase for someone on the party's side, a
-    // hate tool on a Foe row's foe, or her rest (a Self -> Rest row: the
-    // MP pacing, RESEARCH §17.13). None: a mark with no judgement behind it
+    // hate tool on a Foe row's foe, her rest (a Self -> Rest row: the MP
+    // pacing, RESEARCH §17.13), a self buff on its clock (a Self row:
+    // Berserk, Defender, Aggressor, Focus, Dodge), or Boost before her
+    // weapon skill (Self). None: a mark with no judgement behind it
     enum class Allowance : uint8
     {
         None,
@@ -239,6 +308,8 @@ namespace cardian::tactician
         Ailments,
         Hate,
         Rest,
+        Buff,
+        Boost,
     };
 
     // The tools her tactician offers the party's casting: cures, priced
@@ -271,8 +342,20 @@ namespace cardian::tactician
         }
         if (a.reaction == G_REACTION::JA)
         {
-            const bool hate = a.select == G_SELECT::SPECIFIC && isHateAbility(a.select_arg);
-            return hate && engage::isFoeTarget(g.target_selector) ? Allowance::Hate : Allowance::None;
+            if (a.select != G_SELECT::SPECIFIC)
+            {
+                return Allowance::None;
+            }
+            if (isHateAbility(a.select_arg))
+            {
+                return engage::isFoeTarget(g.target_selector) ? Allowance::Hate : Allowance::None;
+            }
+            const bool self = g.target_selector == gambits::G_TARGET::SELF;
+            if (a.select_arg == kBoost)
+            {
+                return self ? Allowance::Boost : Allowance::None;
+            }
+            return isBuffAbility(a.select_arg) && self ? Allowance::Buff : Allowance::None;
         }
         if (a.reaction == pawn::G_REACTION_BEHAVIOR)
         {

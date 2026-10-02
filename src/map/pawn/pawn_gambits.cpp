@@ -106,6 +106,30 @@ namespace pawn
         };
 
         static_assert(cardian::tactician::kHateAbilities[0] == ABILITY_PROVOKE);
+        static_assert(cardian::tactician::kBerserk == ABILITY_BERSERK && cardian::tactician::kDefender == ABILITY_DEFENDER &&
+                      cardian::tactician::kAggressor == ABILITY_AGGRESSOR && cardian::tactician::kFocus == ABILITY_FOCUS &&
+                      cardian::tactician::kDodge == ABILITY_DODGE && cardian::tactician::kBoost == ABILITY_BOOST);
+
+        // What each self buff puts on her: up, her tactician has nothing to
+        // add (tactician_line.h buffNow)
+        auto buffEffect(const uint32 ability) -> std::optional<xi::StatusEffect>
+        {
+            switch (ability)
+            {
+                case ABILITY_BERSERK:
+                    return xi::StatusEffect::Berserk;
+                case ABILITY_DEFENDER:
+                    return xi::StatusEffect::Defender;
+                case ABILITY_AGGRESSOR:
+                    return xi::StatusEffect::Aggressor;
+                case ABILITY_FOCUS:
+                    return xi::StatusEffect::Focus;
+                case ABILITY_DODGE:
+                    return xi::StatusEffect::Dodge;
+                default:
+                    return std::nullopt;
+            }
+        }
         static_assert(cardian::tactician::kTargetEnemy == TARGET_ENEMY);
         static_assert(cardian::tactician::kTargetFriendly == (TARGET_SELF | TARGET_PLAYER_PARTY | TARGET_PLAYER_ALLIANCE | TARGET_PLAYER | TARGET_PLAYER_DEAD |
                                                               TARGET_PLAYER_PARTY_PIANISSIMO | TARGET_PET | TARGET_PLAYER_PARTY_ENTRUST));
@@ -467,9 +491,11 @@ namespace pawn
     {
         TracyZoneScoped;
 
-        if (POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>() ||
-            POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CWeaponSkillState>() ||
-            POwner->PAI->IsCurrentState<CMobSkillState>() || POwner->PAI->IsCurrentState<CPetSkillState>())
+        // The pacer (CPawnController::ReadyToAct): her think waits until the
+        // server would take a new action from her, and thinks the first tick
+        // it would -- an ability's animation does not hold her once it has
+        // landed; a spell, a weapon skill, a shot, an item, a stun do
+        if (!m_PController->ReadyToAct())
         {
             return;
         }
@@ -524,7 +550,7 @@ namespace pawn
         // for nobody. Asked only while she can act at all (the emergency
         // cure's own gate): a call the server would refuse -- mid-item,
         // stunned, asleep -- is not made, so nothing is pushed at her
-        if (tank && m_PController->RestAllowsAction() && !m_PController->Acting() && m_PController->canAct() && POwner->PAI->CanChangeState())
+        if (tank && m_PController->RestAllowsAction() && m_PController->ReadyToAct())
         {
             if (const auto call = pawn::tactics::tankCall(POwner, engaged); call.has_value())
             {
@@ -575,8 +601,9 @@ namespace pawn
         // Her rows in the running order (the world's first in the wild),
         // top down; the first to act ends the think. An order acts, and so
         // does a marked -na or Erase row while her tactician runs, which
-        // has no judgement of its own for them yet; every other marked row
-        // is her tactician's to read, and a struck-out row does nothing
+        // has no judgement of its own for them yet, and a marked self buff
+        // whose when says now (BuffNow); every other marked row is her
+        // tactician's to read, and a struck-out row does nothing
         // (tactician_line.h actsAlone)
         const auto layers = RunningLayers();
         const auto states = RunningStates(layers);
@@ -584,7 +611,12 @@ namespace pawn
                                     {
                                         auto&      gambit = row.gambit;
                                         const auto state  = states[index - 1];
-                                        if (!on || !cardian::tactician::actsAlone(state, gambit, spells || tank) || IsBehavior(gambit) ||
+                                        if (on && state == cardian::tactician::State::Tool)
+                                        {
+                                            KeepStance(gambit);
+                                        }
+                                        const bool buff = on && state == cardian::tactician::State::Tool && BuffNow(gambit, engaged);
+                                        if (!on || !(cardian::tactician::actsAlone(state, gambit, spells || tank) || buff) || IsBehavior(gambit) ||
                                             cardian::engage::isEngageRow(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
                                         {
                                             return false;
@@ -604,6 +636,12 @@ namespace pawn
                                         if (!Execute(gambit, PTarget, engaged, index))
                                         {
                                             return false;
+                                        }
+                                        if (buff)
+                                        {
+                                            auto* PAbility = ability::GetAbility(static_cast<uint16>(gambit.actions.front().select_arg));
+                                            ShowInfoFmt("tactics: {} uses {} (row {}: fighting, not up, ready)", POwner->getName(),
+                                                        PAbility != nullptr ? titleCase(PAbility->getName()) : "?", index);
                                         }
                                         if (gambit.retry_delay != 0)
                                         {
@@ -1655,6 +1693,109 @@ namespace pawn
                                    });
     }
 
+    auto CGambits::OffersBoost() -> bool
+    {
+        // Her marked Boost row, on, the player's gate on it holding now:
+        // Boost goes out right before her weapon skill and nothing between
+        // (CPawnController::WeaponSkill). Read over the running layers, the
+        // world's included: a wild Monk's brains carry it (brains.yaml)
+        if (!m_masterOn)
+        {
+            return false;
+        }
+        const auto layers = RunningLayers();
+        const auto states = RunningStates(layers);
+        return cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t place, const bool on)
+                                           {
+                                               const auto& g = row.gambit;
+                                               if (!on || states[place - 1] != cardian::tactician::State::Tool || cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Boost)
+                                               {
+                                                   return false;
+                                               }
+                                               for (std::size_t group = 0; group < g.predicate_groups.size(); ++group)
+                                               {
+                                                   if (!CheckTrigger(POwner, g, group, true))
+                                                   {
+                                                       return false;
+                                                   }
+                                               }
+                                               return true;
+                                           });
+    }
+
+    auto CGambits::BuffNow(const Gambit_t& g, const bool engaged) const -> bool
+    {
+        // A marked self buff where it sits in her think: its when
+        // (tactician_line.h buffNow, her seat read off the party's roles),
+        // and the ability hers and usable now -- asked here, so a buff she
+        // cannot use passes the think on instead of trying and failing at
+        // the server, which pushes her a battle message every think.
+        // Fighting is her weapon drawn: the think is also run engaged as
+        // she walks in on a fight and while a mage attends one from the
+        // perimeter, and a buff is not spent on either
+        if (cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Buff)
+        {
+            return false;
+        }
+        const auto ability = g.actions.front().select_arg;
+        const auto effect  = buffEffect(ability);
+        const bool up      = effect.has_value() && POwner->StatusEffectContainer->HasStatusEffect(*effect);
+        const bool tank    = pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
+        if (!cardian::tactician::buffNow(ability, engaged && POwner->PAI->IsEngaged(), up, tank))
+        {
+            return false;
+        }
+        // The player's own Berserk or Defender holds her stance while it
+        // lasts: the other one is not put up over it (KeepStance)
+        if (cardian::tactician::isStanceAbility(ability))
+        {
+            const uint16 other = cardian::tactician::otherStance(static_cast<uint16>(ability));
+            if (m_PController->PlayersBuff(other, *buffEffect(other)))
+            {
+                return false;
+            }
+        }
+        // The pacer lets her act now (CPawnController::ReadyToAct), and
+        // nothing on her shuts her job abilities out
+        if (!m_PController->RestAllowsAction() || !m_PController->ReadyToAct() || m_PController->AbilitiesShutOut())
+        {
+            return false;
+        }
+        const auto* PAbility = ability::GetAbility(static_cast<uint16>(ability));
+        return PAbility != nullptr && charutils::hasAbility(POwner, PAbility->getID()) &&
+               !POwner->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), std::chrono::seconds(0));
+    }
+
+    void CGambits::KeepStance(const Gambit_t& g)
+    {
+        // A marked Berserk or Defender row of hers, its gate holding, keeps
+        // her in the stance her seat calls for (tactician_line.h
+        // wrongStance): the other buff, up, is taken off -- both up, their
+        // numbers cancel. Never the player's own, his order's or a plain row
+        // of his (CPawnController::PlayersBuff): his wins while it lasts
+        if (cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Buff || !cardian::tactician::isStanceAbility(g.actions.front().select_arg))
+        {
+            return;
+        }
+        for (std::size_t group = 0; group < g.predicate_groups.size(); ++group)
+        {
+            if (!CheckTrigger(POwner, g, group, true))
+            {
+                return;
+            }
+        }
+        const bool   tank   = pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
+        const uint16 wrong  = cardian::tactician::wrongStance(tank);
+        const auto   effect = *buffEffect(wrong);
+        if (!POwner->StatusEffectContainer->HasStatusEffect(effect) || m_PController->PlayersBuff(wrong, effect))
+        {
+            return;
+        }
+        POwner->StatusEffectContainer->DelStatusEffect(effect);
+        ShowInfoFmt("tactics: {} drops {} ({})", POwner->getName(), wrong == cardian::tactician::kBerserk ? "Berserk" : "Defender",
+                    tank ? "seated Tank: Defender's stance" : "not the Tank: Berserk's stance");
+    }
+
     auto CGambits::Admits(const uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>
     {
         if (!m_masterOn || PTarget == nullptr)
@@ -1807,7 +1948,7 @@ namespace pawn
     {
         // One name per behaviour value, "?" for the gaps and the retired
         // values; the assert keeps the list in step with the enum
-        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "boost before weapon skills", "?", "?", "?", "avoid links", "rest" });
+        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "?", "?", "?", "?", "avoid links", "rest" });
         static_assert(names.size() == pawn::BehaviorCount);
         const auto name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool sw   = pawn::isSwitch(behavior);
@@ -2157,8 +2298,6 @@ namespace pawn
                     return fmt::format("Rest with the player{}", off);
                 case pawn::Behavior::HomePointWithPlayer:
                     return fmt::format("Home point with the player{}", off);
-                case pawn::Behavior::BoostBeforeWs:
-                    return fmt::format("Boost before weapon skills{}", off);
                 case pawn::Behavior::Rest:
                     return fmt::format("Rest{}", off);
                 default:
@@ -2399,6 +2538,14 @@ namespace pawn
                 case G_REACTION::JA:
                 {
                     executed = ExecuteAbility(action, PTarget, engaged);
+                    // A plain row's Berserk or Defender is the player's
+                    // command, as his order is: the tactician's stance leaves
+                    // it be (dumb gambits overrule, the user, 2026-10-02)
+                    if (executed && action.select == G_SELECT::SPECIFIC && !cardian::tactician::isMarked(gambit) &&
+                        cardian::tactician::isStanceAbility(action.select_arg))
+                    {
+                        m_PController->NoteOrderedStance(static_cast<uint16>(action.select_arg));
+                    }
                     break;
                 }
                 case G_REACTION::WS:

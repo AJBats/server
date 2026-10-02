@@ -1204,8 +1204,9 @@ typedef struct cl_cancel
 
 // The command window: one action now, on a target. An order she cannot start
 // at once -- busy, on recast, out of reach, the game paused -- is held as her
-// one queued order within cardian.ORDER_GRACE (QUEUE tells it); one that could
-// not start in that time is refused CL_S_TOO_SOON. Answered by the outcome.
+// one queued order within cardian.ORDER_GRACE, the server's 2.5 s after a spell
+// added on (QUEUE tells it); one that could not start in that time is refused
+// CL_S_TOO_SOON. Answered by the outcome.
 typedef struct cl_do
 {
     cl_header h;

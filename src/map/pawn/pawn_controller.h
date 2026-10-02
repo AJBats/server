@@ -32,6 +32,7 @@
 #include "rest_math.h"
 
 #include "ai/controllers/player_controller.h"
+#include "data/enums/status_effect.h"
 
 #include <array>
 #include <chrono>
@@ -39,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace pawn::world
@@ -299,6 +301,26 @@ public:
 
     // Mid-action: casting, readying a weapon skill or ability, or shooting
     auto Acting() const -> bool;
+    // The pacer: the server's own test for a new action -- she can act (the
+    // player controller's canAct: 2.5 s after her last spell finished) and
+    // her state lets go (an ability once it has landed, not its animation;
+    // a spell, a weapon skill, a shot or an item not before it ends). Every
+    // action a cardian sends waits on it -- her think, his queued orders,
+    // the weapon skill held behind a Boost, her tactician's calls -- so it
+    // fires on the first tick the server would take it, never refused for
+    // coming too soon and never cutting into one under way
+    auto ReadyToAct() -> bool;
+    // Something on her the ability state refuses every job ability for:
+    // Amnesia, or Impairment of abilities
+    auto AbilitiesShutOut() const -> bool;
+    // The player's own Berserk or Defender has just fired, by its ability
+    // id: his order (TryAction), or a plain row of his (CGambits::Execute)
+    void NoteOrderedStance(uint16 ability);
+    // Whether the Berserk or Defender on her now is the one the player's
+    // own fired (NoteOrderedStance; tactician_line.h isOrderedUse): her
+    // tactician's stance never takes it off. That one use only: once it is
+    // over, a later one of the tactician's is the tactician's again
+    auto PlayersBuff(uint16 ability, xi::StatusEffect effect) -> bool;
 
     // A fidget now and then while standing about -- motion only, no text,
     // to everyone in range; a stare goes to the player. Never mid-walk,
@@ -325,10 +347,12 @@ public:
     // The order given a little early -- while she acts, or while the
     // spell is on recast -- is held and fired the moment both allow, the
     // way the client queues one action behind a cast. Held only within
-    // cardian.ORDER_GRACE of the press: an order that cannot fire in that
-    // time is refused at once (a spell on a long recast, the same spell
-    // pressed twice mid-cast), and a held order the grace runs out on is
-    // let go with a note to the addon. A newer order replaces it.
+    // cardian.ORDER_GRACE of the press, the 2.5 s the server makes anyone
+    // wait after a spell added on: an order that cannot fire in that time
+    // is refused at once (pressed early in a long cast bar, a spell on a
+    // long recast, the same spell pressed twice mid-cast), and a held
+    // order the grace runs out on is let go with a note to the addon. A
+    // newer order replaces it.
     void FireQueuedOrder();
     auto HasQueuedOrder() const -> bool
     {
@@ -1075,12 +1099,18 @@ private:
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
     timer::time_point                               m_QueuedOrderDeadline;
 
-    // The least an order has to wait before she could take it: a spell's
+    // The least an order has to wait before she could take it, the 2.5 s
+    // after a spell aside: the cast bar she is under, and for a spell its
     // recast left, or the recast the cast in progress will set when it is
-    // the same spell. 0 for the rest -- abilities and weapon skills carry
-    // their own refusals, and the states do not tell how long an action
-    // in progress has left
+    // the same spell. Abilities and weapon skills carry their own recast
+    // refusals, and the other states do not tell how long they have left
     auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
+    // What is left of the cast bar she is under; 0 when she is not casting
+    auto CastBarLeft() const -> timer::duration;
+    // How much of the 2.5 s the server makes anyone wait after a spell
+    // (CPlayerController::canAct) is still ahead of her: all of it while
+    // she casts, else what is left since her last spell landed
+    auto SpellWaitAhead() -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     // What came of one of the player's orders, to his addon (the Link's NOTE,
     // cardian_link_protocol.h): the note as the caller filled it, and why
@@ -1131,6 +1161,9 @@ private:
         timer::time_point at;
     };
     std::optional<HeldWs> m_WsAfterBoost;
+    // The stance buffs the player's own fired (Berserk, Defender), by ability
+    // id: when it fired (NoteOrderedStance, PlayersBuff)
+    std::unordered_map<uint16, timer::time_point> m_OrderedBuffs;
     auto                  BoostReady() const -> bool;
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;

@@ -7,7 +7,8 @@
 #   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n
 #              | has <status> | lacks <status> | top enmity | not top enmity
 #   action     avoid aggro | avoid links | rest | rest with leader | home point
-#              with leader | boost before weapon skills | formation <lead|flank
+#              with leader | boost before weapon skills (a self row only) |
+#              formation <lead|flank
 #              left|flank right|rear left|rear right|behind> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
 #              cast <spell> | cast random damage | ability <name> | best weapon
@@ -34,7 +35,9 @@
 # in her party, and the tank leads the camp; the others and the fighters
 # are melee; the mages are White, Black, Red Mage, Summoner, Scholar and
 # Geomancer, the jobs whose own defaults cure for the party. These rows are
-# all orders: the tactician's mark is a row of her own, never the world's.
+# orders, but for one: "boost before weapon skills" compiles to the
+# tactician's marked Self -> Boost row, since no order can say "right before
+# the weapon skill" (RESEARCH 17.13). Every other mark is a row of her own.
 # The file is re-read within seconds of a change and every
 # world body picks it up; these rows are compiled to the same numeric form
 # the addon saves for your own cardians. `tools/world/check.py` compiles
@@ -64,7 +67,7 @@ roles:
 
 jobs:
   MNK:
-    - "self: always -> boost before weapon skills" # Boost, then the weapon skill on the next tick, nothing between
+    - "self: always -> boost before weapon skills" # the tactician's * Self -> Boost: Boost, then the weapon skill the moment Boost has landed, nothing between
   WHM:
     - "party: has poison -> cast poisona"
     - "party: has paralysis -> cast paralyna"
