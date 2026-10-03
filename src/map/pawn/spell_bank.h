@@ -43,6 +43,8 @@ namespace pawn::tactics
     using cardian::tactics::DebuffPrice;
     using cardian::tactics::Exchange;
     using cardian::tactics::FightRecord;
+    using cardian::tactics::NukePrice;
+    using cardian::tactics::NukePricing;
     using cardian::tactics::SpotAverages;
 
     // The MP bank (RESEARCH §12.6, §12.13), slice 2: every spell priced in
@@ -145,6 +147,25 @@ namespace pawn::tactics
         // spends its samples (her allow-list, tactician_line.h)
         auto pricesFor(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob,
                        const std::function<bool(SpellID)>& admitted = {}) -> std::vector<DebuffPrice>;
+
+        // One of her damage spells, what Damage spell (any) casts: a
+        // single-target elemental or divine spell that deals damage, not one
+        // of the enfeebles the bank prices -- Stone to Thunder and their
+        // tiers, the ancient magic, Banish and Holy; never a -ga, Drain, Dia
+        // or Bio
+        auto isNuke(CSpell* PSpell) -> bool;
+
+        // Her nukes' prices on the mob now (RESEARCH §17.13, the Black
+        // Mage): what the server's damage formula expects each to deal with
+        // every die at its average (tactics_bank.lua nukeSeeds, one call for
+        // them all, the answers kept on the fight until one of her nukes
+        // lands), by what her nukes of the element have landed against it
+        // (fight_log.h nukeCorrection), against the mob's life and the
+        // party's rate as the debuff prices read them, and the seconds of
+        // hers each takes. A spell the damage table does not know is left
+        // out; nothing when the formula cannot answer
+        auto priceNukes(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells)
+            -> std::optional<NukePricing>;
 
         // The same, as the lines printed when the fight opens
         auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>;

@@ -529,8 +529,10 @@ namespace
     //              boost before weapon skills (self only: the marked Boost row, the one
     //              tactician's row the world carries) | formation <lead|flank left|flank right|
     //              rear left|rear right|behind> | cast best <spell>
-    //              (the best of its family) | cast <spell> | cast random damage |
-    //              ability <name> | best weapon skill | random weapon skill
+    //              (the best of its family) | cast <spell> | cast random damage
+    //              (one of her damage spells) | cast enfeeble (the first enfeeble
+    //              the mob does not carry) | ability <name> | best weapon skill |
+    //              random weapon skill
     // Names are the game's own (spell_list, abilities, the status enum), spaces
     // for underscores. A row that will not compile is logged and left out.
     auto lower(std::string text) -> std::string
@@ -711,7 +713,11 @@ namespace
         }
         else if (act == "cast random damage")
         {
-            actSpec = "2:3:0";
+            actSpec = "2:3:0"; // Damage spell (any): one of her damage spells
+        }
+        else if (act == "cast enfeeble")
+        {
+            actSpec = fmt::format("2:{}:0", static_cast<uint16>(pawn::G_SELECT_ENFEEBLE)); // the first enfeeble the mob does not carry yet
         }
         else if (act.starts_with("cast best "))
         {

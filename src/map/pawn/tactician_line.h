@@ -297,8 +297,9 @@ namespace cardian::tactician
     // (decision 19), a -na or Erase for someone on the party's side, a
     // hate tool on a Foe row's foe, her rest (a Self -> Rest row: the MP
     // pacing, RESEARCH §17.13), a self buff on its clock (a Self row:
-    // Berserk, Defender, Aggressor, Focus, Dodge), or Boost before her
-    // weapon skill (Self). None: a mark with no judgement behind it
+    // Berserk, Defender, Aggressor, Focus, Dodge), Boost before her weapon
+    // skill (Self), or a damage spell on a Foe row's foe (Damage spell
+    // (any): the Black Mage's nukes). None: a mark with no judgement behind it
     enum class Allowance : uint8
     {
         None,
@@ -310,14 +311,17 @@ namespace cardian::tactician
         Rest,
         Buff,
         Boost,
+        Nuke,
     };
 
-    // The tools her tactician offers the party's casting: cures, priced
-    // debuffs and ailments. A member with a marked row of one of these
-    // attends fights at cure range and feeds the conveyor (RESEARCH §17.13)
+    // The tools her tactician casts in the party's fights: cures, priced
+    // debuffs, ailments and damage spells. A member with a marked row of
+    // one of these attends fights at cure range (RESEARCH §17.13); the first
+    // three feed the conveyor, a damage spell acts in her think
+    // (CGambits::CastNuke)
     constexpr auto isSpellTool(const Allowance allowance) -> bool
     {
-        return allowance == Allowance::Cures || allowance == Allowance::Debuff || allowance == Allowance::Ailments;
+        return allowance == Allowance::Cures || allowance == Allowance::Debuff || allowance == Allowance::Ailments || allowance == Allowance::Nuke;
     }
 
     // An action that takes ailments off: -na (best), a -na or Erase
@@ -380,6 +384,12 @@ namespace cardian::tactician
         if (isRemovalAction(a))
         {
             return curesTarget(g.target_selector) ? Allowance::Ailments : Allowance::None;
+        }
+        // Damage spell (any): marked, her tactician's nukes (RESEARCH §17.13,
+        // the Black Mage) -- when, and which of her damage spells
+        if (a.select == G_SELECT::RANDOM)
+        {
+            return engage::isFoeTarget(g.target_selector) ? Allowance::Nuke : Allowance::None;
         }
         return Allowance::None;
     }

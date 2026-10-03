@@ -50,7 +50,9 @@
 #include "ai/states/petskill_state.h"
 #include "ai/states/range_state.h"
 #include "ai/states/weaponskill_state.h"
+#include "enmity_container.h"
 #include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "recast_container.h"
 #include "status_effect.h"
 #include "status_effect_container.h"
@@ -59,6 +61,7 @@
 #include "weapon_skill.h"
 
 #include <algorithm>
+#include <chrono>
 #include <list>
 #include <set>
 
@@ -522,6 +525,14 @@ namespace pawn
     {
         TracyZoneScoped;
 
+        // Between fights her nuke rows are never asked (offensive rows wait
+        // for an engagement), so why she held is forgotten here: the next
+        // fight's first hold is said even if it is the same
+        if (!engaged)
+        {
+            m_nukeHold.clear();
+        }
+
         // The pacer (CPawnController::ReadyToAct): her think waits until the
         // server would take a new action from her, and thinks the first tick
         // it would -- an ability's animation does not hold her once it has
@@ -647,7 +658,9 @@ namespace pawn
                                             KeepStance(gambit);
                                         }
                                         const bool buff = on && state == cardian::tactician::State::Tool && BuffNow(gambit, engaged);
-                                        if (!on || !(cardian::tactician::actsAlone(state, gambit, spells || tank) || buff) || IsBehavior(gambit) ||
+                                        // A marked Damage spell (any) row, her nukes, is her tactician's to cast where it sits (CastNuke)
+                                        const bool nuke = on && state == cardian::tactician::State::Tool && cardian::tactician::allowanceOf(gambit) == cardian::tactician::Allowance::Nuke;
+                                        if (!on || !(cardian::tactician::actsAlone(state, gambit, spells || tank) || buff || nuke) || IsBehavior(gambit) ||
                                             cardian::engage::isEngageRow(gambit) || tick < gambit.last_used + std::chrono::seconds(gambit.retry_delay))
                                         {
                                             return false;
@@ -664,7 +677,7 @@ namespace pawn
                                             return false;
                                         }
 
-                                        if (!Execute(gambit, PTarget, engaged, index))
+                                        if (!(nuke ? CastNuke(PTarget, engaged, index) : Execute(gambit, PTarget, engaged, index)))
                                         {
                                             return false;
                                         }
@@ -1457,7 +1470,7 @@ namespace pawn
                 return spell.has_value() ? Maybe<SpellID>(static_cast<SpellID>(*spell)) : std::nullopt;
             }
             case G_SELECT::RANDOM:
-                return m_spellBook.GetRandomDamageSpell(PTarget);
+                return m_spellBook.GetRandomDamageSpell();
             case G_SELECT::BEST_INDI:
                 return m_spellBook.GetBestIndiSpell(m_PController->GetLivePlayer());
             case G_SELECT::ENTRUSTED:
@@ -1825,6 +1838,137 @@ namespace pawn
         POwner->StatusEffectContainer->DelStatusEffect(effect);
         ShowInfoFmt("tactics: {} drops {} ({})", POwner->getName(), wrong == cardian::tactician::kBerserk ? "Berserk" : "Defender",
                     tank ? "seated Tank: Defender's stance" : "not the Tank: Berserk's stance");
+    }
+
+    auto CGambits::NukeSpells() -> std::vector<SpellID>
+    {
+        std::vector<SpellID> out;
+        for (const auto id : m_spellBook.DamageSpells())
+        {
+            if (pawn::tactics::bank::isNuke(spell::GetSpell(id)) && pawn::tactics::bank::usable(POwner, id))
+            {
+                out.push_back(id);
+            }
+        }
+        return out;
+    }
+
+    auto CGambits::CastNuke(CBattleEntity* PTarget, const bool engaged, const std::size_t index) -> bool
+    {
+        // Why her nukes hold, said as it changes, not every think
+        const auto hold = [this](std::string why)
+        {
+            if (why == m_nukeHold)
+            {
+                return;
+            }
+            m_nukeHold = std::move(why);
+            if (!m_nukeHold.empty())
+            {
+                ShowInfoFmt("tactics: {} holds her nukes ({})", POwner->getName(), m_nukeHold);
+            }
+        };
+        // Every reason she does not nuke while she is in a fight is said;
+        // out of one (between fights) there is nothing to say
+        if (!engaged || PTarget == nullptr || PTarget->isDead())
+        {
+            hold("");
+            return false;
+        }
+        if (!m_PController->RestAllowsAction())
+        {
+            hold("she is resting or getting up");
+            return false;
+        }
+        // The moment the mob turns on her she stops, until it is on someone
+        // else: a Black Mage can be two-shot (the user, 2026-10-02)
+        if (PTarget->GetBattleTarget() == POwner)
+        {
+            hold(fmt::format("{} is on her", PTarget->getName()));
+            return false;
+        }
+        if (POwner->StatusEffectContainer->HasPreventActionEffect() || POwner->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Silence, xi::StatusEffect::Mute }))
+        {
+            hold("she cannot cast");
+            return false;
+        }
+        const auto spells = NukeSpells();
+        if (spells.empty())
+        {
+            // A nuke she could cast once her MP or its recast allows, or
+            // none at her level and jobs at all (a low White Mage the Damage
+            // seat lent the row)
+            const bool any = std::ranges::any_of(m_spellBook.DamageSpells(), [this](const SpellID id)
+                                                 {
+                                                     auto* PSpell = spell::GetSpell(id);
+                                                     return pawn::tactics::bank::isNuke(PSpell) && CSpellBook::Eligible(POwner, PSpell);
+                                                 });
+            hold(any ? "none she can cast now: her MP, or their recasts" : "no nuke of hers at her level and jobs yet");
+            return false;
+        }
+        if (!pawn::tactics::has(POwner))
+        {
+            hold("no tactician watches her party");
+            return false;
+        }
+        // Timed, for her nuke line: what pricing costs as the party grows
+        const auto started = std::chrono::steady_clock::now();
+        const auto pricing = pawn::tactics::nukePrices(POwner, PTarget, spells);
+        const auto spent   = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        if (!pricing.has_value())
+        {
+            hold(fmt::format("no fight of the party's on {} to price against yet", PTarget->getName()));
+            return false;
+        }
+        if (pricing->prices.empty())
+        {
+            hold("the formula could not price her nukes");
+            return false;
+        }
+        const auto* pick = cardian::tactics::pickNuke(pricing->prices);
+        if (pick == nullptr)
+        {
+            hold(fmt::format("none of her nukes would hurt {}", PTarget->getName()));
+            return false;
+        }
+        auto* PSpell = spell::GetSpell(static_cast<SpellID>(pick->id));
+        if (distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
+        {
+            hold(fmt::format("{} is out of her reach", PTarget->getName()));
+            return false;
+        }
+        if (!m_PController->CastAssigned(PTarget->entityId(), static_cast<SpellID>(pick->id)))
+        {
+            hold(fmt::format("the server would not start her {}", pick->spell));
+            return false;
+        }
+        hold("");
+
+        // Where she stands against whoever holds the mob: logged for tuning,
+        // never a gate (she pushes as hard as she can; the stop is the mob
+        // turning on her). Read, not GetHighestEnmity, which prunes as it reads
+        std::string enmity;
+        if (auto* PMob = dynamic_cast<CMobEntity*>(PTarget); PMob != nullptr && PMob->PEnmityContainer != nullptr)
+        {
+            const int32          mine    = PMob->PEnmityContainer->GetCE(POwner) + PMob->PEnmityContainer->GetVE(POwner);
+            const CBattleEntity* PHolder = nullptr;
+            int32                theirs  = 0;
+            for (const auto& [id, entry] : *PMob->PEnmityContainer->GetEnmityList())
+            {
+                if (entry.active && entry.PEnmityOwner != nullptr && entry.PEnmityOwner != POwner && entry.CE + entry.VE > theirs)
+                {
+                    PHolder = entry.PEnmityOwner;
+                    theirs  = entry.CE + entry.VE;
+                }
+            }
+            if (PHolder != nullptr)
+            {
+                enmity = fmt::format("; enmity {}% of {}'s", mine * 100 / theirs, PHolder->getName());
+            }
+        }
+        const auto cost = pricing->seeded > 0 ? fmt::format("; {} seeded in {:.2f} ms", pricing->seeded, spent) : fmt::format("; priced from kept seeds in {:.2f} ms", spent);
+        ShowInfoFmt("tactics: {} nukes {} (row {}): {}{}{}", POwner->getName(), PTarget->getName(), index, pick->line(), enmity, cost);
+        return true;
     }
 
     auto CGambits::Admits(const uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>
@@ -2358,7 +2502,7 @@ namespace pawn
                         case G_SELECT::LOWEST:
                             return familyName(a.select_arg) + " (lowest)";
                         case G_SELECT::RANDOM:
-                            return "Damage spell (any)"; // ResolveSpell ignores the family: any damage spell she knows
+                            return "Damage spell (any)"; // any of her damage spells (spell_bank.h isNuke); marked, her tactician's pick
                         case G_SELECT::MB_ELEMENT:
                             return "Magic burst";
                         case G_SELECT::ENTRUSTED:
@@ -3057,6 +3201,29 @@ namespace pawn
                 VocabAction enfeeble{ G_REACTION::MA, pawn::G_SELECT_ENFEEBLE, 0, "Enfeeble", ActionGroup::Magic, TARGET_ENEMY };
                 enfeeble.usable = usable;
                 v.actions.push_back(std::move(enfeeble));
+            }
+        }
+
+        // Damage spell (any) follows when her jobs cast any damage spell
+        // (spell_bank.h isNuke), usable once she can cast one
+        {
+            bool ofHers = false;
+            bool usable = false;
+            for (uint16 id = 1; id < MAX_SPELL_ID && !usable; ++id)
+            {
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
+                if (PSpell == nullptr || !pawn::tactics::bank::isNuke(PSpell) || !ofHerJobs(PSpell))
+                {
+                    continue;
+                }
+                ofHers = true;
+                usable = CSpellBook::Eligible(PPawn, PSpell);
+            }
+            if (ofHers)
+            {
+                VocabAction nuke{ G_REACTION::MA, G_SELECT::RANDOM, 0, "Damage spell (any)", ActionGroup::Magic, TARGET_ENEMY };
+                nuke.usable = usable;
+                v.actions.push_back(std::move(nuke));
             }
         }
 

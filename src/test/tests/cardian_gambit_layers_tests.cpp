@@ -667,23 +667,39 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
         });
         CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1" });
     }
-    SECTION("the White and the Red Mage melee on the seat; the Black Mage, the Scholar, the Geomancer and the Summoner are lent nothing, their sub jobs' melee tools included (RESEARCH §17.12)")
+    SECTION("the White and the Red Mage melee and nuke on the seat; the Black Mage, the Scholar and the Geomancer only nuke, their sub jobs' melee tools left out; every nuker rests on her tactician's pacing; the Summoner is lent nothing (RESEARCH §17.12, §17.13)")
     {
+        const std::pair<std::string, bool> nuke{ "2|101:0|2:3:0|0", true };
+        const std::pair<std::string, bool> rest{ "0|101:0|100:14:1|0", true };
         for (const auto job : { xi::Job::WHM, xi::Job::RDM })
         {
             INFO("job " << static_cast<int>(job));
-            CHECK(bundle(cardian::party::Role::Damage, job) == bundle(cardian::party::Role::Damage, xi::Job::THF));
+            auto want = bundle(cardian::party::Role::Damage, xi::Job::THF);
+            want.push_back(nuke);
+            want.push_back(rest);
+            CHECK(bundle(cardian::party::Role::Damage, job) == want);
         }
-        for (const auto job : { xi::Job::BLM, xi::Job::SCH, xi::Job::GEO, xi::Job::SMN })
+        for (const auto job : { xi::Job::BLM, xi::Job::SCH, xi::Job::GEO })
         {
             INFO("job " << static_cast<int>(job));
-            CHECK(bundle(cardian::party::Role::Damage, job).empty());
-            CHECK(bundle(cardian::party::Role::Damage, job, xi::Job::WAR).empty());
-            CHECK(bundle(cardian::party::Role::Damage, job, xi::Job::MNK, k99).empty());
+            const std::vector<std::pair<std::string, bool>> want{ nuke, rest };
+            CHECK(bundle(cardian::party::Role::Damage, job) == want);
+            CHECK(bundle(cardian::party::Role::Damage, job, xi::Job::WAR) == want);
+            CHECK(bundle(cardian::party::Role::Damage, job, xi::Job::MNK, k99) == want);
         }
+        CHECK(bundle(cardian::party::Role::Damage, xi::Job::SMN).empty());
+        CHECK(bundle(cardian::party::Role::Damage, xi::Job::SMN, xi::Job::WAR).empty());
+        // a melee main never nukes on the seat, her sub job's spells aside
+        CHECK(bundle(cardian::party::Role::Damage, xi::Job::WAR, xi::Job::BLM) == kDamage);
+        // the seat's Damage spell (any) and Rest stand in the Black Mage's own
         auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::BLM), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::BLM));
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "3", "4", "5", "6", "7" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "3", "r1*", "r2*", "6", "7", "8" });
+        // a Black Mage whose own rows have no Rest (a Warrior's, kept through a
+        // job change) is lent it: her MP pacing comes with the seat
+        auto melee = ownRows(pawn::defaultRowsFor(xi::Job::WAR));
+        auto again = lentRows(bundle(cardian::party::Role::Damage, xi::Job::BLM), next);
+        CHECK(fitted(melee, again) == std::vector<std::string>{ "r3", "r4", "1", "2", "3", "4", "5", "6", "7", "8" });
     }
 }
 
@@ -742,7 +758,7 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
     CHECK(specs(bundle(Role::Damage, xi::Job::WAR)) == plus(trio, { berserk, aggressor }));
     CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::MNK)) == plus(trio, { berserk, aggressor, boost, focus }));
     CHECK(specs(bundle(Role::Damage, xi::Job::THF, xi::Job::WAR)) == plus(trio, { berserk }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::RDM, xi::Job::WAR)) == plus(trio, { berserk }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::RDM, xi::Job::WAR)) == plus(trio, { berserk, "2|101:0|2:3:0|0", "0|101:0|100:14:1|0" }));
 
     // Healer: a job that learns Cure is lent the Cure and the Rest, and the
     // -na only one that learns a -na (the White Mage, main or sub)

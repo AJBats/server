@@ -130,4 +130,54 @@ describe('Cardian tactics bank', function()
 
         assert(healed == expected, string.format('the cast healed %d, the sampler said %d', healed, expected))
     end)
+
+    -- The nuke seed reads the resist roll's own locals rather than copying
+    -- its formula; an upstream rename of them fails here, not in play
+    it('nukeSeeds prices nukes on a mob without rolling, each tier above the last', function()
+        local blm = xi.test.world:spawnPlayer({ job = xi.job.BLM, level = 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = blm.entities:moveTo(17190976) -- a Forest Hare (data/zones/East_Ronfaure/mobs.yaml)
+        mob:respawn()
+
+        local function nuke(id, element, family)
+            return { id = id, element = element, skillType = xi.skill.ELEMENTAL_MAGIC, spellGroup = xi.magic.spellGroup.BLACK, family = family }
+        end
+
+        local spells =
+        {
+            nuke(xi.magic.spell.FIRE, xi.element.FIRE, 1),
+            nuke(xi.magic.spell.FIRE_II, xi.element.FIRE, 1),
+            nuke(xi.magic.spell.STONE, xi.element.EARTH, 2),
+        }
+
+        local randomInt, randomFloat = math.randomInt, math.randomFloat
+        local seeds                  = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        assert(math.randomInt == randomInt and math.randomFloat == randomFloat, 'the dice are put back')
+
+        for _, s in ipairs(spells) do
+            assert(type(seeds[s.id]) == 'number' and seeds[s.id] > 0, string.format('spell %d should seed to a positive number: %s', s.id, tostring(seeds[s.id])))
+        end
+        assert(seeds[xi.magic.spell.FIRE_II] > seeds[xi.magic.spell.FIRE], string.format('Fire II should out-deal Fire: %.1f against %.1f', seeds[xi.magic.spell.FIRE_II], seeds[xi.magic.spell.FIRE]))
+
+        -- Nothing rolled, so the same answer twice
+        local again = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        for _, s in ipairs(spells) do
+            assert(again[s.id] == seeds[s.id], string.format('spell %d seeded %s, then %s', s.id, tostring(seeds[s.id]), tostring(again[s.id])))
+        end
+
+        -- A partial chance to nullify is priced as if it never happens (so
+        -- nothing is rolled); a certain one zeroes the element and no other
+        local earthNull = xi.data.element.getElementalNullificationModifier(xi.element.EARTH)
+        mob:setMod(earthNull, 50)
+        local partial = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        assert(partial[xi.magic.spell.STONE] == seeds[xi.magic.spell.STONE], string.format('a half chance to nullify earth moved Stone: %s against %s', tostring(partial[xi.magic.spell.STONE]), tostring(seeds[xi.magic.spell.STONE])))
+        mob:setMod(earthNull, 100)
+        local certain = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        assert(certain[xi.magic.spell.STONE] == 0, string.format('earth nullified, Stone should seed 0: %s', tostring(certain[xi.magic.spell.STONE])))
+        assert(certain[xi.magic.spell.FIRE] == seeds[xi.magic.spell.FIRE], 'earth nullified, Fire should not move')
+        mob:setMod(earthNull, 0)
+
+        -- A spell the damage table does not know is left out
+        local protect = xi.cardian.bank.nukeSeeds(blm, mob, { { id = xi.magic.spell.PROTECT, element = xi.element.LIGHT, skillType = xi.skill.ENHANCING_MAGIC, spellGroup = xi.magic.spellGroup.WHITE, family = 3 } })
+        assert(protect[xi.magic.spell.PROTECT] == nil, 'Protect is not in the damage table')
+    end)
 end)

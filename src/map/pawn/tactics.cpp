@@ -30,6 +30,7 @@
 #include "pawn_gambits.h"
 #include "role_support.h"
 #include "rest_policy.h"
+#include "spell_bank.h"
 #include "tank_calls.h"
 
 #include "common/logging.h"
@@ -851,6 +852,36 @@ namespace pawn::tactics
         {
             role::think(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), engaged, seconds(timer::now()));
         }
+    }
+
+    auto nukePrices(CCharEntity* PPawn, CBattleEntity* PTarget, const std::vector<SpellID>& spells) -> std::optional<cardian::tactics::NukePricing>
+    {
+        auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        auto* PMob       = dynamic_cast<CMobEntity*>(PTarget);
+        if (PTactician == nullptr || PMob == nullptr)
+        {
+            return std::nullopt;
+        }
+        for (auto& r : PTactician->log().open())
+        {
+            if (r.mobId != PMob->id || r.settling())
+            {
+                continue;
+            }
+            std::vector<CSpell*> asked;
+            for (const auto id : spells)
+            {
+                if (auto* PSpell = spell::GetSpell(id); PSpell != nullptr)
+                {
+                    asked.push_back(PSpell);
+                }
+            }
+            const auto  scope  = scopeOf(PPawn);
+            const auto& spot   = spotAverages(r.zone, r.mobName);
+            auto        priced = bank::priceNukes(r, spot, scope.members, PPawn, PMob, asked);
+            return priced.has_value() ? std::move(*priced) : cardian::tactics::NukePricing{};
+        }
+        return std::nullopt;
     }
 
     auto tankCall(CCharEntity* PPawn, const bool engaged) -> std::optional<TankCall>

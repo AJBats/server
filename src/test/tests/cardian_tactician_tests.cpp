@@ -489,3 +489,27 @@ TEST_CASE("tactician: the self buffs and Boost are tools on a Self row, each wit
     CHECK_FALSE(t::isOrderedUse(5001ms)); // up after his use: the tactician's
     CHECK_FALSE(t::isOrderedUse(std::chrono::minutes(5)));
 }
+
+TEST_CASE("tactician: Damage spell (any) marked is her nukes, a tool on a Foe row, her tactician's when and which; an order unmarked", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::Allowance;
+    using cardian::tactician::allowanceOf;
+    using cardian::tactician::actsAlone;
+    namespace t = cardian::tactician;
+
+    const std::string nuke = "2|101:0|2:3:0|0"; // * Foe -> Damage spell (any)
+    CHECK(stateOf(nuke) == State::Tool);
+    CHECK(allowanceOf(row(nuke)) == Allowance::Nuke);
+    // a spell tool: she attends the party's fights at cure range for it
+    CHECK(t::isSpellTool(Allowance::Nuke));
+    // it never acts alone: her tactician's judgement does (CGambits::CastNuke)
+    CHECK_FALSE(actsAlone(State::Tool, row(nuke), true));
+    // gated, it is still hers to judge; on a Self or Ally row it has nothing to aim at
+    CHECK(stateOf(marked("2|2:50|2:3:0|0")) == State::Tool);
+    CHECK(stateOf("0|101:0|2:3:0|0") == State::NoJudgement);
+    CHECK(stateOf("1|101:0|2:3:0|0") == State::NoJudgement);
+    // unmarked, an order: a random one of her damage spells whenever its condition holds
+    CHECK(stateOf("2|0:0|2:3:0|0") == State::Order);
+    // it lends no spell to the conveyor's admission (Cures and Debuffs do)
+    CHECK_FALSE(t::allowsSpell(row(nuke), 144)); // Fire
+}

@@ -11,8 +11,9 @@
 #              formation <lead|flank
 #              left|flank right|rear left|rear right|behind> | cast
 #              best <spell> (the best tier of that spell's family she knows) |
-#              cast <spell> | cast random damage | ability <name> | best weapon
-#              skill | random weapon skill
+#              cast <spell> | cast random damage (one of her damage spells) |
+#              cast enfeeble (the first enfeeble the mob does not carry) |
+#              ability <name> | best weapon skill | random weapon skill
 #
 # Names are the game's own: spells and abilities as in the database
 # (spaces for underscores: "cure ii", "sneak attack"), statuses as the
@@ -62,7 +63,8 @@ roles:
   mage:
     - "party: hp < 60 -> cast best cure"          # Zapp's row
     - "party: has sleep -> cast cure"             # a Cure wakes her; "sleep" answers Sleep II and Lullaby too
-    - "mob: hp >= 50 -> cast random damage"       # never one the mob already carries
+    - "mob: hp >= 50 -> cast enfeeble"            # the first enfeeble the mob does not carry yet
+    - "mob: hp >= 50 -> cast random damage"       # one of her damage spells
     - "self: mp < 30 -> rest"                     # low on MP, out of a fight: rest to full (a solo mage; a camp mage's own marked Rest row paces her ahead of this)
 
 jobs:

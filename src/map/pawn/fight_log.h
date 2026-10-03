@@ -49,6 +49,7 @@ namespace pawn::tactics
     using cardian::tactics::CureTally;
     using cardian::tactics::DebuffValue;
     using cardian::tactics::FightRecord;
+    using cardian::tactics::NukeCorrection;
     using cardian::tactics::ProcValue;
     using cardian::tactics::SpotAverages;
 
@@ -186,6 +187,12 @@ namespace pawn::tactics
     auto cureEstimate(uint32 caster, CSpell* PSpell) -> std::pair<int32, bool>; // what she heals for, and whether that is exact; the floor when she has never cast it
     auto cureLines(uint32 caster, std::string_view name) -> std::vector<std::string>;
     auto debuffMemory(uint16 zone, const std::string& mob, uint16 spell, std::string_view name) -> DebuffMemory&;
+    // What a caster's nukes of one element land against the formula's seed
+    // (RESEARCH §17.13), wherever and on whatever she cast them: the seed
+    // makes each mob's numbers, this learns what it leaves out. The seed's
+    // own word when she has landed none
+    auto nukeCorrection(uint32 caster, uint8 element) -> NukeCorrection;
+    void learnNuke(uint32 caster, uint8 element, int32 dealt, double seed);
     auto procValue(uint16 zone, const std::string& mob) -> ProcValue&;
     auto debuffLines(uint16 zone) -> std::vector<std::string>;
 } // namespace pawn::tactics

@@ -92,6 +92,18 @@ namespace
         { "102|101:0|0:0:0|0", false },
     };
 
+    // The Black Mage's: the mage set with her nukes after the enfeebles
+    const Rows kBlackMage{
+        { "1|101:0|2:0:1|0", true },
+        { "1|101:0|2:0:4|0", true },
+        { "2|101:0|2:100:0|0", true },
+        { "2|101:0|2:3:0|0", true },
+        { "0|101:0|100:14:1|0", true },
+        { "2|2:50|4:0:0|0", true },
+        { "0|0:0|100:6:1|0", true },
+        { "102|101:0|0:0:0|0", false },
+    };
+
     const std::set<xi::Job> kMageJobs{ xi::Job::WHM, xi::Job::BLM, xi::Job::RDM, xi::Job::SMN, xi::Job::SCH, xi::Job::GEO };
 
     // Every job a character can hold, WAR through RUN
@@ -138,7 +150,7 @@ namespace
     constexpr auto kRest     = static_cast<uint16>(pawn::Behavior::RestWithPlayer);
 } // namespace
 
-TEST_CASE("gambit defaults: the six mage jobs take the mage set, the Monk and the Warrior their own, every other job the melee set", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage's with her nukes), the Monk and the Warrior their own, every other job the melee set", "[cardian][gambits][defaults]")
 {
     const auto jobs = allJobs();
     REQUIRE(jobs.size() == 22);
@@ -149,7 +161,7 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set, the Monk and th
         INFO("job " << static_cast<int>(job));
         const bool mage = kMageJobs.contains(job);
         CHECK(isMageJob(job) == mage);
-        const auto& want = mage ? kMage : job == xi::Job::MNK ? kMonk : job == xi::Job::WAR ? kWarrior : kMelee;
+        const auto& want = job == xi::Job::BLM ? kBlackMage : mage ? kMage : job == xi::Job::MNK ? kMonk : job == xi::Job::WAR ? kWarrior : kMelee;
         CHECK(defaultRowsFor(job) == want);
         if (mage)
         {
@@ -254,9 +266,24 @@ TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enf
     requireRow(rows[6].first, { pawn::G_TARGET_TARGETING_ALLY, pawn::G_CONDITION_TACTICIANS_CHOICE, kAttack, 0, 0 });
 }
 
+TEST_CASE("gambit defaults: the Black Mage's set is the mage set with her tactician's nukes after the enfeebles", "[cardian][gambits][defaults]")
+{
+    const auto& rows = defaultRowsFor(xi::Job::BLM);
+    REQUIRE(rows == kBlackMage);
+    // the mage set, row for row, with the marked Damage spell (any) row slotted in after Enfeeble
+    Rows withoutNuke = rows;
+    withoutNuke.erase(withoutNuke.begin() + 3);
+    CHECK(withoutNuke == kMage);
+    requireRow(rows[3].first, { G_TARGET::TARGET, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::RANDOM), 0 });
+    const auto nuke = *parseRow(rows[3].first);
+    CHECK(cardian::tactician::stateOf(nuke) == cardian::tactician::State::Tool);
+    CHECK(cardian::tactician::allowanceOf(nuke) == cardian::tactician::Allowance::Nuke);
+    CHECK(rows[3].second);
+}
+
 TEST_CASE("gambit defaults: every default row parses, round-trips through the grammar and pairs as the editor asks", "[cardian][gambits][defaults]")
 {
-    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
+    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM), &defaultRowsFor(xi::Job::BLM) })
     {
         for (const auto& row : *rows)
         {
@@ -271,7 +298,7 @@ TEST_CASE("gambit defaults: every default row parses, round-trips through the gr
 
 TEST_CASE("gambit defaults: no default row avoids aggro or links; every set carries the weapon skill row", "[cardian][gambits][defaults]")
 {
-    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM) })
+    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM), &defaultRowsFor(xi::Job::BLM) })
     {
         for (const auto& row : *rows)
         {

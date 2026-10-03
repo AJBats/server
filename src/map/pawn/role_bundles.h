@@ -50,7 +50,8 @@ namespace pawn::bundles
 {
     // What a seat's tool asks of her two jobs: nothing, or a job ability or
     // a spell one of them can ever learn; and, for a melee tool, a main job
-    // that fights in melee on the Damage seat (meleesOnDamage)
+    // that fights in melee on the Damage seat (meleesOnDamage), for a nuke
+    // one that nukes there (nukesOnDamage)
     struct Need
     {
         enum class Kind : uint8
@@ -62,6 +63,7 @@ namespace pawn::bundles
         Kind   kind  = Kind::Anyone;
         uint16 id    = 0;     // the ability's or the spell's
         bool   melee = false; // only for a main job that melees
+        bool   nuker = false; // only for a main job that nukes
     };
 
     // A row a seat lends, and what it needs
@@ -118,6 +120,24 @@ namespace pawn::bundles
         }
     }
 
+    // Whether a main job nukes on the Damage seat: the mages whose damage is
+    // spells, the Summoner aside (the user, 2026-10-02) -- the Black, the
+    // White (Banish) and the Red Mage, the Scholar and the Geomancer
+    constexpr auto nukesOnDamage(const xi::Job main) -> bool
+    {
+        switch (main)
+        {
+            case xi::Job::BLM:
+            case xi::Job::WHM:
+            case xi::Job::RDM:
+            case xi::Job::SCH:
+            case xi::Job::GEO:
+                return true;
+            default:
+                return false;
+        }
+    }
+
     // Whether her two jobs can ever use what a tool needs. levelOf(need,
     // job): the level that job learns the need's ability or spell at, 0
     // for never -- the game's tables on the server, a few known levels in
@@ -125,7 +145,7 @@ namespace pawn::bundles
     template <typename LevelOf>
     auto reaches(const Need need, const xi::Job main, const xi::Job sub, const Caps caps, LevelOf&& levelOf) -> bool
     {
-        if (need.melee && !meleesOnDamage(main))
+        if ((need.melee && !meleesOnDamage(main)) || (need.nuker && !nukesOnDamage(main)))
         {
             return false;
         }
@@ -165,9 +185,12 @@ namespace pawn::bundles
     //    that melees (meleesOnDamage: a Black Mage / Warrior is lent no
     //    Berserk, a Summoner nothing). A buff acts
     //    where it sits in her think (CGambits::BuffNow), the seat choosing
-    //    between Berserk and Defender (tactician_line.h wrongStance). The
-    //    Thief's Sneak Attack and Trick Attack and the mages' nuking join
-    //    when their judgements exist.
+    //    between Berserk and Defender (tactician_line.h wrongStance). Then
+    //    Damage spell (any), marked -- her nukes -- and her marked Rest,
+    //    the MP pacing that sits her down between fights, for a main job
+    //    that nukes (nukesOnDamage: her tactician's when and which,
+    //    CGambits::CastNuke). The Thief's Sneak
+    //    Attack and Trick Attack join when their judgement exists.
     //  - Puller is a seat only.
     inline auto toolsOf(const cardian::party::Role role) -> std::span<const Tool>
     {
@@ -193,6 +216,8 @@ namespace pawn::bundles
             { "0|101:0|3:2:34|0", { K::Ability, t::kAggressor, true } }, // * Self -> Aggressor
             { "0|101:0|3:2:39|0", { K::Ability, t::kBoost, true } },     // * Self -> Boost
             { "0|101:0|3:2:36|0", { K::Ability, t::kFocus, true } },     // * Self -> Focus
+            { "2|101:0|2:3:0|0", { K::Anyone, 0, false, true } },        // * Foe -> Damage spell (any)
+            { "0|101:0|100:14:1|0", { K::Anyone, 0, false, true } },     // * Self -> Rest
         };
         switch (role)
         {

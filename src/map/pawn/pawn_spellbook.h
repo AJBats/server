@@ -60,10 +60,10 @@ namespace pawn
         auto GetHelixDay() const -> Maybe<SpellID>;
         auto GetBestIndiSpell(CBattleEntity* PFor) const -> Maybe<SpellID>;
         auto GetBestEntrustedSpell(CBattleEntity* PFor) const -> Maybe<SpellID>;
-        // A random spell that hurts the target -- a nuke, or an enfeeble
-        // whose effect the target does not already carry (no Paralyze on
-        // Paralyze; user, D5 dogfood)
-        auto GetRandomDamageSpell(const CBattleEntity* PTarget = nullptr) const -> Maybe<SpellID>;
+        // A random one of her damage spells she can cast now (spell_bank.h
+        // isNuke): Damage spell (any) as an order. Enfeebles are Enfeeble's
+        // (the user, 2026-10-02: a row of each, when both are wanted)
+        auto GetRandomDamageSpell() const -> Maybe<SpellID>;
 
         // Single-target damage spells, ascending id (magic-burst selection)
         auto DamageSpells() const -> const std::vector<SpellID>&

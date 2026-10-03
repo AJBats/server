@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "bank_math.h"
+
 #include "common/cbasetypes.h"
 #include "common/timer.h"
 
@@ -131,6 +133,13 @@ namespace pawn::tactics
     // Emergency aid is measured/selected centrally in the party tick;
     // a casting mage's ordinary needs are fed on her think.
     void roleThink(CCharEntity* PPawn, bool engaged);
+
+    // Her nukes priced on this mob now (RESEARCH §17.13, the Black Mage;
+    // spell_bank.h priceNukes), in the order given, a spell the bank cannot
+    // price left out. Nothing without a tactician, or before the party's
+    // fight on the mob is open: a first nuke on a mob nobody has struck is
+    // a pull. No prices when the formula could not answer (the bank logs why)
+    auto nukePrices(CCharEntity* PPawn, CBattleEntity* PTarget, const std::vector<SpellID>& spells) -> std::optional<cardian::tactics::NukePricing>;
 
     // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h
     // has the rules): the mob to Provoke now and why, or none and why not,

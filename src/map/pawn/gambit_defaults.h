@@ -76,7 +76,8 @@ namespace pawn
     //    tactician leaves a fight to rest (RESEARCH §14.12 decisions 19
     //    and 20; an unmarked Attack row would be an order that keeps her
     //    in). With tools to offer a fight she attends it at cure range
-    //    without engaging.
+    //    without engaging. The Black Mage adds her nukes, marked, after the
+    //    enfeebles (RESEARCH §17.13): her tactician's when and which.
     // The weapon skill row is in every set (the user, 2026-09-26): it costs
     // nothing, and comes up only once she is engaged with the TP for one.
     // Neither set avoids aggro (that is the world's, not the party's): the
@@ -119,6 +120,20 @@ namespace pawn
             { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
             { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
         };
+        static const std::vector<std::pair<std::string, bool>> blackMage{
+            { "1|101:0|2:0:1|0", true },    // * Ally -> Cure (best)
+            { "1|101:0|2:0:4|0", true },    // * Ally -> -na (best)
+            { "2|101:0|2:100:0|0", true },  // * Foe -> Enfeeble
+            { "2|101:0|2:3:0|0", true },  // * Foe -> Damage spell (any)
+            { "0|101:0|100:14:1|0", true }, // * Self -> Rest
+            { "2|2:50|4:0:0|0", true },     // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
+            { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
+        };
+        if (job == xi::Job::BLM)
+        {
+            return blackMage;
+        }
         if (isMageJob(job))
         {
             return mage;

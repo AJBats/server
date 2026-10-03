@@ -398,6 +398,17 @@ namespace pawn
         // A marked Berserk or Defender row, its gate holding: the other
         // stance buff taken off, unless the player ordered it
         void KeepStance(const gambits::Gambit_t& gambit);
+        // The nukes she can cast now (spell_bank.h isNuke)
+        auto NukeSpells() -> std::vector<SpellID>;
+        // Her tactician's nuke at a marked Damage spell (any) row (RESEARCH
+        // §17.13, the Black Mage), on the foe its gate found, while she is in
+        // the fight: never while the foe is on her -- she holds until it is
+        // on someone else -- and never one dealing nothing; else the nuke
+        // that deals the most a second of hers (bank_math.h pickNuke), cast,
+        // a dying mob finished by the quickest that covers it. Every reason
+        // she holds in a fight is said once, as it changes. Whether it went
+        // out
+        auto CastNuke(CBattleEntity* PTarget, bool engaged, std::size_t index) -> bool;
 
         // A row's actions in order until one fires; `index` is the row's
         // 1-based place, the conveyor's order among her rows
@@ -451,5 +462,7 @@ namespace pawn
         std::string                             m_tankMind;
         std::string                             m_tankRefusal;
         bool                                    m_tankOnDuty = false;
+        // Why her nukes hold, as last said (said as it changes)
+        std::string                             m_nukeHold;
     };
 } // namespace pawn
