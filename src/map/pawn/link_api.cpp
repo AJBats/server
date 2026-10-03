@@ -1484,7 +1484,7 @@ namespace pawn::linkapi
             ordersChanged(PChar, ask, reply, status);
         }
 
-        // Every cardian of his in his zone fights his target
+        // Every cardian in his party and his zone fights his target
         void engage(CCharEntity* PChar, const cl_engage& ask, Reply& reply)
         {
             reply.finish(ask, pawn::partyEngage(PChar, ask.target));
