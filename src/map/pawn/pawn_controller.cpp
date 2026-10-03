@@ -40,6 +40,7 @@
 
 #include "common/settings.h"
 #include "enums/char_persist.h"
+#include "enums/msg_basic.h"
 #include "common/utils.h"
 #include "common/xirand.h"
 
@@ -161,18 +162,30 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     m_WaitOrdered  = on && ordered;
     if (on)
     {
-        m_Approach.reset();
-        m_HoldForPlayer = false;
+        // A walk in on the player's own Attack outlives the hold: she draws
+        // on it from where she stands once it is near enough (ApproachTick).
+        // Any other walk in -- the party's fight, her hunt -- ends here
+        const bool hisAttack = m_Mode == Mode::Approach && m_Approach.has_value() && m_Approach->kind == ApproachKind::Order;
+        if (!hisAttack)
+        {
+            m_Approach.reset();
+        }
+        // Holding, she keeps no seat on the fight ring: one kept would push
+        // the party's others to worse seats for a place she never walks to
+        m_FightSeat = {};
+        m_SeatVia   = false;
         if (POwner->PAI->PathFind)
         {
             POwner->PAI->PathFind->Clear();
         }
-        // A wait never ends a fight: told to wait mid-fight, she finishes
-        // it and waits after (IdleMode at the fight's exit)
-        const bool fighting = m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Attend;
+        // A hold never ends a fight, nor a draw waiting on the player's first
+        // strike: told to hold mid-fight, she fights on from where she stands
+        // (Move takes no step for her) and holds after it (IdleMode at the
+        // fight's exit)
+        const bool fighting = m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Attend || hisAttack;
         if ((!was || m_Mode != Mode::Wait) && !fighting)
         {
-            Transition(Mode::Wait, why.empty() ? (ordered ? "told to wait here" : "waits where she stands") : why);
+            Transition(Mode::Wait, why.empty() ? (ordered ? "told to hold position" : "waits where she stands") : why);
         }
     }
     else if (was && m_Mode == Mode::Wait)
@@ -1384,6 +1397,26 @@ namespace
     // is reached through item:<id> alone: the item gate (cardianDo) reads that
     // word, so the catalogue's form may not name it
     constexpr unsigned kItemOrder = 5;
+
+    // The catalogue's kind for a weapon skill
+    constexpr unsigned kWeaponSkillOrder = 4;
+
+    // How far a weapon skill reaches, as the game judges it when the skill
+    // lands (CCharEntity::OnWeaponSkillFinished): its own range -- 3 for a
+    // blade, 14 for Gust Slash, 20 for an archery skill -- and both hitboxes,
+    // a shade inside. The game takes the TP as the skill starts, so one out of
+    // this reach is never tried (CPawnController::WeaponSkill). A skill used
+    // on herself reaches wherever she is
+    auto weaponSkillReach(const CBattleEntity* PUser, const uint16 wsid, const CBattleEntity* PTarget) -> float
+    {
+        if (battleutils::isValidSelfTargetWeaponskill(wsid))
+        {
+            return std::numeric_limits<float>::max();
+        }
+        const auto* PSkill = battleutils::GetWeaponSkill(wsid);
+        return PSkill != nullptr ? PSkill->getRange() + PUser->modelHitboxSize + PTarget->modelHitboxSize - 0.3f : PUser->GetMeleeRange(PTarget) - 0.3f;
+    }
+
     auto parseOrderKey(const std::string& key, unsigned& kind, unsigned& mode, unsigned& id) -> bool
     {
         if (std::sscanf(key.c_str(), "item:%u", &id) == 1)
@@ -1450,10 +1483,19 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     // tick clock stands still with the simulation, so its grace runs from the release.
     // Out of the action's reach, the order is queued too: she walks in first
     // (OrderApproach) and the queue's grace waits for her. So too an order on its
-    // recast, or given as she gets up from a rest
+    // recast, or given as she gets up from a rest. Holding her position she never
+    // walks in: a weapon skill out of reach is refused, and anything else she tries
+    // from where she stands, the game's own refusal reaching him as a note. A
+    // paused maneuver's route may bring her into reach first, so its order's
+    // reach is judged as it fires (FireQueuedOrder)
     const EntityId target(PTarget);
     const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
-    std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : !ReadyToAct() ? "busy" : outOfReach ? "out of reach" : "";
+    if (outOfReach && m_Waiting && kind == kWeaponSkillOrder && !(cardian::pause::isHeld() && InManeuver()))
+    {
+        return CL_S_UNREACHED;
+    }
+    const bool       walksIn = outOfReach && !m_Waiting;
+    std::string_view heldFor = cardian::pause::isHeld() ? "paused" : !ReadyToAct() ? "busy" : walksIn ? "out of reach" : "";
     if (heldFor.empty())
     {
         OrderStarted(key, kind, id);
@@ -1687,6 +1729,21 @@ void CPawnController::ToldAfterOrder(const uint16 message, const std::string& sa
     {
         return;
     }
+    // Her auto-attack's own word -- a swing at a target beyond her reach,
+    // every round while she holds her position out of it -- is no order's
+    // refusal. A pet's skill out of range is told the same way, so after a
+    // pet's ability it still is one
+    if (static_cast<MsgBasic>(message) == MsgBasic::TargetOutOfRange)
+    {
+        unsigned    kind     = 0;
+        unsigned    mode     = 0;
+        unsigned    id       = 0;
+        const auto* PAbility = parseOrderKey(m_StartedOrderKey, kind, mode, id) && kind == 3 ? ability::GetAbility(static_cast<uint16>(id)) : nullptr;
+        if (PAbility == nullptr || !PAbility->isPetAbility())
+        {
+            return;
+        }
+    }
     ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), m_StartedOrder, said);
     auto note    = cardian::link::make<cl_note>();
     note.kind    = CL_NOTE_REFUSED;
@@ -1813,7 +1870,7 @@ void CPawnController::FireQueuedOrder()
             ShowInfoFmt("pawn: {} has walked the route", POwner->getName());
             if (key == "movewait")
             {
-                SetWaiting(true, true, "the route walked, waiting there: the maneuver ends");
+                SetWaiting(true, true, "the route walked, holding there: the maneuver ends");
             }
             else
             {
@@ -1889,9 +1946,31 @@ void CPawnController::FireQueuedOrder()
         return;
     }
 
+    // Holding her position she never walks in: a weapon skill out of reach is
+    // let go, so it spends no TP on nothing; anything else is tried from where
+    // she stands below, and a refusal the game gives reaches him as a note
+    const auto beyond = OrderOutOfReach();
+    if (beyond.has_value() && m_Waiting && kind == kWeaponSkillOrder)
+    {
+        ShowInfoFmt("pawn: {} lets the queued {} go (holding position, out of reach of {})", POwner->getName(), key, beyond->first->getName());
+        auto note   = cardian::link::make<cl_note>();
+        note.kind   = CL_NOTE_LET_GO;
+        note.action = pawn::actionOfKey(key);
+        note.target = beyond->first->targid;
+        cardian::link::setText(note.about, beyond->first->getName());
+        SetQueuedOrder(std::nullopt);
+        Note(note, CL_S_UNREACHED);
+        if (InManeuver() && m_ManeuverComposed)
+        {
+            m_ManeuverComposed = false;
+            EndManeuver("holding position, out of reach: the maneuver ends");
+        }
+        return;
+    }
+
     // Out of the action's reach: the walk in first (OrderApproach, taken by the
     // tick's mover), the grace waiting, up to kOrderApproachMax of walking
-    if (const auto beyond = OrderOutOfReach(); beyond.has_value())
+    if (beyond.has_value() && !m_Waiting)
     {
         constexpr auto kOrderApproachMax = 30s;
         if (!m_OrderApproaching)
@@ -2556,6 +2635,22 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
         return AvoidAction::None;
     }
 
+    // Holding her position (SetWaiting), she takes no step of her own: no
+    // chase, no fight seat, no perimeter, no walk into a spell's range, no
+    // step out of an aggro circle, and no walk in for the player's order.
+    // She keeps her target in front of her, and whatever needs no step runs
+    // from where she stands. The hold lasts until he lifts it or moves it
+    // with a maneuver; a maneuver's route is his walk order, not a step of
+    // hers, and is never stopped here
+    if (m_Waiting)
+    {
+        Intent stand;
+        stand.target   = intent.target;
+        stand.fighting = intent.fighting;
+        stand.vet      = false;
+        return Walk(std::move(stand));
+    }
+
     // The player's order walks her in ahead of everything (OrderApproach)
     if (auto order = OrderApproach(); order.has_value())
     {
@@ -2564,7 +2659,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
 
     // Spell approaches seek range and line of sight through the shared
     // avoidance checks. They may leave the camp's formation boundary.
-    if (!m_Retreat && !m_Waiting && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
+    if (!m_Retreat && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
     {
         const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
         if (const auto cast = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged); cast.has_value() && cast->approach)
@@ -3109,7 +3204,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         const bool moved     = PSwitched != nullptr && PSwitched != PTarget;
         if (moved)
         {
-            const auto rows    = EngageChoice(PPlayer, place != nullptr ? place->position() : POwner->loc.p);
+            const auto rows    = EngageChoice(PPlayer, place != nullptr && !m_Waiting ? place->position() : POwner->loc.p);
             const auto facts   = EngageFactsFor(PSwitched);
             const bool mayDraw = cardian::rules::mayFight(facts) && Refusal(PSwitched, facts).empty();
             const auto step    = cardian::engage::holdStep(moved, rows.target == PSwitched, mayDraw);
@@ -3156,8 +3251,9 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // The weapon skill held behind its opener (Sneak Attack, Boost) goes
     // out the first tick the pacer allows -- the opener landed and let go
     // of her -- before anything else can spend it; given up after a few
-    // ticks. Behind Sneak Attack it goes through Boost when her row offers
-    // that too: Sneak Attack, Boost, the weapon skill
+    // ticks, and never tried beyond its reach (BoostOrWeaponSkill). Behind
+    // Sneak Attack it goes through Boost when her row offers that too:
+    // Sneak Attack, Boost, the weapon skill
     if (m_HeldWs.has_value() && m_Tick > m_HeldWs->at)
     {
         const auto held  = *m_HeldWs;
@@ -3340,7 +3436,15 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         RefreshDangers(PTarget);
 
         std::optional<Intent> intent;
-        if (m_HoldForPlayer && PPlayer != nullptr)
+        if (m_Waiting)
+        {
+            // Holding her position: no seat, no tow, no step back -- Move
+            // would take none of them -- only her target kept in front of her
+            intent           = Intent{};
+            intent->target   = PTarget;
+            intent->fighting = true;
+        }
+        else if (m_HoldForPlayer && PPlayer != nullptr)
         {
             // Walking in with the player, in formation, never within reach
             // of the mob: the strike is the player's, and the pounce after
@@ -3726,9 +3830,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // her gambits off neither is hers: she takes no fight of her own, and
     // only an order (EngageOn, the command window's Attack) sends her in.
     // A walk in already under way passed the door once; the approach
-    // below draws.
+    // below draws. Fights are looked for round the party's place -- or,
+    // holding her position, round her own: she can draw only on what she
+    // can reach from where she stands, and a mob on her far from the
+    // player is still hers
     namespace engage        = cardian::engage;
-    const position_t from   = place != nullptr ? place->position() : POwner->loc.p;
+    const position_t from   = place != nullptr && !m_Waiting ? place->position() : POwner->loc.p;
     const bool       spells = pawn::tactics::offersSpells(POwner);
     FightPick        party;
     engage::How      how = engage::How::Draw;
@@ -4327,7 +4434,7 @@ auto CPawnController::ComposeMove(const bool wait) -> uint16
     }
     m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(std::string(wait ? "movewait" : "move"), EntityId(POwner)));
-    MarkComposed(fmt::format("walk the route{}", wait ? ", then wait there" : ""));
+    MarkComposed(fmt::format("walk the route{}", wait ? ", then hold there" : ""));
     return CL_S_OK;
 }
 
@@ -4428,9 +4535,9 @@ auto CPawnController::DisengageOrder() -> uint16
     return CL_S_OK;
 }
 
-// How close an order needs her: the spell's or ability's own range, melee
-// reach for a weapon skill, the ranged attack's distance; a shade inside
-// each, the game's own check being the judge
+// How close an order needs her: the spell's or ability's own range, a weapon
+// skill's own range and both hitboxes (weaponSkillReach), the ranged attack's
+// distance; a shade inside each, the game's own check being the judge
 auto CPawnController::OrderReach(const unsigned kind, const unsigned id, const CBattleEntity* PTarget) const -> float
 {
     switch (kind)
@@ -4448,6 +4555,8 @@ auto CPawnController::OrderReach(const unsigned kind, const unsigned id, const C
             const float range    = PAbility != nullptr ? PAbility->getRange() : 0.0f;
             return range > 0.0f ? range - 0.5f : POwner->GetMeleeRange(PTarget) - 0.3f;
         }
+        case kWeaponSkillOrder:
+            return weaponSkillReach(POwner, static_cast<uint16>(id), PTarget);
         default:
             return POwner->GetMeleeRange(PTarget) - 0.3f;
     }
@@ -4969,8 +5078,9 @@ auto CPawnController::NakedSneakDue(const CBattleEntity* PTarget) -> bool
     {
         return false;
     }
+    // Holding her position she walks to no back: only one she stands at
     const bool there = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) && BehindFor(PTarget);
-    return there || POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget));
+    return there || (!m_Waiting && POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)));
 }
 
 void CPawnController::NakedSneak(const EntityId target)
@@ -5013,9 +5123,10 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     // while the mob is on her or has nobody to face): at once when she
     // stands behind the mob in reach, else after the walk there (the
     // combat tick's sneak step), which her weapon skill waits on -- unless
-    // its back is off the mesh (against a wall), when the weapon skill goes
-    // alone. Her rows' weapon skill only, on the mob she fights: his orders
-    // go through OrderedWeaponSkill
+    // its back is off the mesh (against a wall), or she holds her position
+    // and walks nowhere, when the weapon skill goes alone. Her rows' weapon
+    // skill only, on the mob she fights: his orders go through
+    // OrderedWeaponSkill
     if (m_SneakStep.has_value() && m_SneakStep->wsid != 0 && PTarget != nullptr && m_SneakStep->target == PTarget)
     {
         return true; // on her way already
@@ -5026,7 +5137,7 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
         {
             return SneakThenWs(target, wsid);
         }
-        if (POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
+        if (!m_Waiting && POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
         {
             m_SneakStep = SneakStep{ .target = target, .wsid = wsid, .since = m_Tick };
             ShowInfoFmt("tactics: {} steps round to {}'s back for Sneak Attack (her Sneak Attack row); weapon skill {} waits", POwner->getName(), PTarget->getName(), wsid);
@@ -5076,10 +5187,18 @@ auto CPawnController::SneakThenWs(const EntityId target, const uint16 wsid) -> b
 
 auto CPawnController::BoostOrWeaponSkill(const EntityId target, const uint16 wsid) -> bool
 {
+    // The game takes her TP as a weapon skill starts and judges its reach
+    // only as it lands: one beyond its reach (weaponSkillReach) is never
+    // tried -- her rows', his order's, or one held behind its opener -- so it
+    // never spends her TP on nothing
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (PTarget != nullptr && PTarget != POwner && distance(POwner->loc.p, PTarget->loc.p) > weaponSkillReach(POwner, wsid, PTarget))
+    {
+        return false;
+    }
     // Boost first, the weapon skill the moment Boost has landed and lets go
     // of her, two ticks on (DoCombatTick) -- only in reach of the mob, or
     // the walk in spends it on a punch
-    auto* PTarget = target.resolve<CBattleEntity>();
     // (in reach and engaged is enough: a member repositions all fight long,
     // and a standing-still gate never opened for her)
     const bool inReach = PTarget != nullptr && POwner->PAI->IsEngaged() && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);

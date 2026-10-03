@@ -1469,7 +1469,7 @@ namespace pawn::linkapi
             reply.finish(ask, pawn::partyEngage(PChar, ask.target));
         }
 
-        // Wait here, or follow him. Follow from another zone is a travel
+        // Hold position, or follow him. Follow from another zone is a travel
         // order to his: she treks the world to meet him.
         void wait(CCharEntity* PChar, const cl_wait& ask, Reply& reply)
         {
@@ -1485,7 +1485,7 @@ namespace pawn::linkapi
             if (on)
             {
                 pawn::clearTravelOrder(PPawn->id);
-                ShowInfoFmt("pawn: {} waits here (ordered)", PPawn->getName());
+                ShowInfoFmt("pawn: {} holds position (ordered)", PPawn->getName());
             }
             else if (PPawn->loc.zone != PChar->loc.zone)
             {
