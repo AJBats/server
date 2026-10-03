@@ -151,7 +151,7 @@ enum
     CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
     CL_S_COOLING_DOWN      = 0x0133, // a cooldown runs: the answer says how long (RESCUE's cooldownLeft, SHOUT's waitMs)
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
-    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target
+    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target, or holds her position out of a weapon skill's reach
     CL_S_CANNOT_RECOVER    = 0x0136, // resting, she cannot recover right now (a poison, an avatar out)
 
     // The pause button
@@ -203,7 +203,7 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
-    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: shown, edited nowhere
+    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: its content edited nowhere
 
     // His cardians, and the party finder
     CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
@@ -250,7 +250,7 @@ enum
     CL_AK_ATTACK      = 6,  // the command window's Attack: fight the target
     CL_AK_DISENGAGE   = 7,
     CL_AK_MOVE        = 8,  // a paused maneuver's order: walk the route the ring laid
-    CL_AK_MOVE_WAIT   = 9,  // the same, then wait at its end
+    CL_AK_MOVE_WAIT   = 9,  // the same, then hold position at its end
     CL_AK_REST        = 10, // id: rest until this percent of HP and MP
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
@@ -736,7 +736,7 @@ typedef struct cl_give_use
 // A cardian's gambit rows (M3.85, the gambit editor) and the pickers'
 // catalogue, for a cardian he commands -- or for himself, when `cardian` is
 // his own charid: his own set, run by his hands while he plays (protocol 33;
-// no behaviour and no Tactician's choice in his catalogue). A row crosses as
+// no behaviour in his catalogue). A row crosses as
 // the gambit engine's own fields; its label is for people. Every edit is
 // answered by her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS
 // (CL_F_MORE) -- and then its outcome, refused or not, so the editor never
@@ -792,23 +792,25 @@ typedef struct cl_gambit
     cl_gambit_action    actions[8];
 } cl_gambit;
 
+// A row's meaning (RESEARCH 17.13): a plain row is an order; a row carrying
+// the tactician's mark (the Tactician's choice condition) is a tool its
+// judgement uses, or struck out. 1 and 5 were the tactician line's, retired
+// with it and never sent
 enum
 {
-    CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
-    CL_GS_LINE      = 1, // her Support Mage or Tank row: the line itself
-    CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
-    CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
-    CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
-    CL_GS_NO_CHOICE = 5, // Tactician's choice with no tactician above it: struck out
-    CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
-    CL_GS_CLIENT    = 7, // a behaviour row in the player's own list: only a cardian runs one, struck out
+    CL_GS_ORDER        = 0, // an order
+    CL_GS_TOOL         = 2, // marked: something her tactician may use
+    CL_GS_NO_JUDGEMENT = 3, // marked, and nothing her tactician has a judgement for: struck out
+    CL_GS_CLOCK        = 4, // marked, on a timer or a chance: struck out
+    CL_GS_MISFIT       = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_CLIENT       = 7, // a behaviour row in the player's own list: only a cardian runs one, struck out
 };
 
 enum
 {
     CL_GO_OWN  = 0, // her own row
     CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §17): shown, never edited
-    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
+    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, its content pinned, moved as hers; hers comes back when the role goes
 };
 
 // One of her rows, as the editor shows it: an answer to GAMBITS and to every
@@ -1051,7 +1053,7 @@ enum
     CL_MV_BEGIN     = 0, // he takes the wheel: her maneuver begins, live
     CL_MV_OFF       = 1, // it ends
     CL_MV_MOVE      = 2, // a paused maneuver's order: walk the route the ring laid
-    CL_MV_MOVE_WAIT = 3, // the same, then wait at its end
+    CL_MV_MOVE_WAIT = 3, // the same, then hold position at its end
     CL_MV_REST      = 4, // rest until percent of HP and MP
 };
 
@@ -1165,13 +1167,13 @@ typedef struct cl_engage
     uint16_t  spare;
 } cl_engage;
 
-// Wait here, or follow him: from another zone, following is a trek to his.
+// Hold position, or follow him: from another zone, following is a trek to his.
 // Answered by the outcome alone; her roster line says it next time it is read.
 typedef struct cl_wait
 {
     cl_header h;
     uint32_t  cardian; // charid
-    uint8_t   on;      // 1 wait here, 0 follow
+    uint8_t   on;      // 1 hold position, 0 follow
     uint8_t   spare[3];
 } cl_wait;
 
@@ -1207,8 +1209,9 @@ typedef struct cl_cancel
 
 // The command window: one action now, on a target. An order she cannot start
 // at once -- busy, on recast, out of reach, the game paused -- is held as her
-// one queued order within cardian.ORDER_GRACE (QUEUE tells it); one that could
-// not start in that time is refused CL_S_TOO_SOON. Answered by the outcome.
+// one queued order within cardian.ORDER_GRACE, the server's 2.5 s after a spell
+// added on (QUEUE tells it); one that could not start in that time is refused
+// CL_S_TOO_SOON. Answered by the outcome.
 typedef struct cl_do
 {
     cl_header h;

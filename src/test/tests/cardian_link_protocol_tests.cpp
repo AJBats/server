@@ -233,7 +233,7 @@ TEST_CASE("Cardian link: a gambit row crosses as its fields and back", "[cardian
     // The default rows, rows of several groups, an any-of group and two
     // actions, and the Cardian-only ids: -na (best), the Enfeeble action
     // (select 100) and the Enfeeble status (10000)
-    for (const std::string row : { "100|0:0|0:0:0|0", "2|2:50|4:0:0|0", "0|0:0|100:11:3|0", "1|101:0|2:0:1|0",
+    for (const std::string row : { "100|0:0|0:0:0|0", "2|2:50|4:0:0|0", "0|0:0|100:4:2|0", "1|101:0|2:0:1|0", "1|1:45&101:0|2:0:1|0",
                                    "1|3:40&?12:3,12:4|2:2:1+2:2:2|5", "0|?12:3,12:4&13:6|3:2:35|0",
                                    "1|101:0|2:0:4|0", "2|101:0|2:100:0|0", "1|9:10000|2:0:4|0" })
     {
@@ -275,6 +275,11 @@ TEST_CASE("Cardian link: a gambit row's fields that no row makes are refused", "
     auto retired       = valid("0|0:0|100:6:1|0");
     retired.actions[0] = cl_gambit_action{ 100, 8, 1 };
     CHECK_FALSE(pawn::wire::fromWire(retired).has_value());
+    // And the retired Role row (11), whatever it named; a formation row crosses
+    retired.actions[0] = cl_gambit_action{ 100, 11, 2 };
+    CHECK_FALSE(pawn::wire::fromWire(retired).has_value());
+    retired.actions[0] = cl_gambit_action{ 100, 4, 2 };
+    CHECK(pawn::wire::fromWire(retired).has_value());
 
     // A group with no condition, which the fields cannot name
     gambits::Gambit_t gap;

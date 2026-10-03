@@ -143,6 +143,34 @@ namespace cardian::tactics
         double hpStopped = 0.0;
     };
 
+    // What one caster's nukes of an element land against the formula's
+    // seed (RESEARCH §17.13): a running ratio that starts at the seed's own
+    // word, counted as four nukes that landed on it, so one resist moves it
+    // a little; from her sixth nuke on, the recent ones weigh the most
+    struct NukeCorrection
+    {
+        static constexpr uint32 kSeedNukes = 4;
+        static constexpr double kRecent    = 0.1;
+
+        Running ratio{ .mean = 1.0, .n = kSeedNukes };
+        uint32  landed = 0; // her nukes it has learned from
+
+        void learn(const double dealt, const double seed)
+        {
+            if (seed <= 0.0)
+            {
+                return;
+            }
+            ++landed;
+            ratio.fold(dealt / seed, kRecent);
+        }
+
+        auto factor() const -> double
+        {
+            return ratio.mean;
+        }
+    };
+
     // What a debuff on the mob dealt for us, the exact number for Dia
     // (RESEARCH §12.13), booked by the bank: its share of the extra our
     // physical hits dealt for the defence it took, and its share of the
@@ -173,12 +201,45 @@ namespace cardian::tactics
         uint32      targeted     = 0; // the mob turned onto her this many times
         uint32      deaths       = 0;
         uint32      paralysed    = 0; // her swings and casts a paralysis proc stopped
+        uint32      sneakAttacks = 0;   // before her weapon skill, from the mob's back
+        double      sneakWait    = 0.0; // seconds they stood ready, waiting for it
+        uint32      sneakNaked   = 0;   // on a plain hit: her weapon skill row could not take one
+        double      sneakUnused  = 0.0; // seconds it stood ready and the fight ended without it
 
         auto meanHit() const -> double
         {
             return hits > 0 ? static_cast<double>(damageTaken) / hits : 0.0;
         }
     };
+
+    // How a Thief's Sneak Attack went (RESEARCH §17.13 item 5): before her
+    // weapon skill, naked on a plain hit, or ready and never used before the
+    // fight ended
+    enum class SneakUse : uint8
+    {
+        BeforeWs,
+        Naked,
+        Unused,
+    };
+
+    // A Sneak Attack booked on her figures: the seconds are how long it
+    // stood ready first
+    inline void bookSneak(MemberFigures& m, const SneakUse use, const double seconds)
+    {
+        switch (use)
+        {
+            case SneakUse::BeforeWs:
+                ++m.sneakAttacks;
+                m.sneakWait += seconds;
+                break;
+            case SneakUse::Naked:
+                ++m.sneakNaked;
+                break;
+            case SneakUse::Unused:
+                m.sneakUnused += seconds;
+                break;
+        }
+    }
 
     struct CastNote
     {
@@ -190,6 +251,8 @@ namespace cardian::tactics
         int32       landed      = 0;
         bool        cure        = false;
         bool        debuff      = false;
+        bool        nuke        = false; // a damage spell (spell_bank.h isNuke)
+        double      expected    = -1.0;  // a nuke: what her price expected it to deal (the seed by her correction); unknown when negative
         bool        tookEffect  = false;
         bool        toppedUp    = false;
     };
@@ -266,6 +329,12 @@ namespace cardian::tactics
             double biggest   = 0.0; // one swing at the biggest pDIF sampled
         };
         std::map<std::pair<uint32, uint32>, std::optional<MeleeGuess>> meleeCache; // actor, target; a miss is remembered too
+        // The formula's seed for each of a caster's nukes on the mob
+        // (spell_bank.cpp seedNukes), kept until one of her nukes lands:
+        // her buffs and the mob's debuffs move it, a cast at a time. A seed
+        // under one HP is never kept (asked again next think, since a shield
+        // lifts). Negative: the damage table does not know the spell
+        std::map<uint32, std::map<uint16, double>> nukeSeeds; // caster -> spell -> seed
         double priorTaken = -1.0; // the formulas' taken/s and dealt/s, as the bank first priced the fight
         double priorDealt = -1.0;
         std::vector<std::string>                        priceList;
@@ -483,6 +552,44 @@ namespace cardian::tactics
         {
             line += fmt::format("; {} {} cast, {} landed", name, counts.first, counts.second);
         }
+
+        // Each nuker's part in the kill (RESEARCH §17.13, the Black Mage):
+        // her nukes, their MP, what they landed against what her price
+        // expected of them (the check on the price: its mean counts the
+        // resist rolls, so one cast off it is no news, a fight's worth is),
+        // and all she dealt as a share of what the mob lost
+        for (const auto& m : r.members)
+        {
+            uint32 nukes    = 0;
+            int32  mp       = 0;
+            int32  landed   = 0;
+            double expected = 0.0;
+            uint32 judged   = 0; // the nukes her tactician chose, the formula's number on them
+            for (const auto& c : r.casts)
+            {
+                if (c.nuke && c.caster == m.id)
+                {
+                    ++nukes;
+                    mp += c.mp;
+                    if (c.expected >= 0.0)
+                    {
+                        ++judged;
+                        landed += c.landed;
+                        expected += c.expected;
+                    }
+                }
+            }
+            if (nukes > 0)
+            {
+                const int32 lost = std::max(r.mobDamage, r.dealt());
+                line += fmt::format("; {} nuked {} time{} for {} MP", m.name, nukes, nukes == 1 ? "" : "s", mp);
+                if (judged > 0)
+                {
+                    line += fmt::format(", landed {} against ~{:.0f} expected", landed, expected);
+                }
+                line += fmt::format(", dealt {} ({}% of the kill)", m.damageDealt, lost > 0 ? m.damageDealt * 100 / lost : 0);
+            }
+        }
         if (r.procs > 0)
         {
             line += fmt::format(", {} proc{}", r.procs, r.procs == 1 ? "" : "s");
@@ -535,6 +642,41 @@ namespace cardian::tactics
         if (!paralysed.empty())
         {
             line += "; paralysed: " + paralysed;
+        }
+        // Each Thief's Sneak Attacks (RESEARCH §17.13 item 5): those held for
+        // her weapon skill and what the waiting cost -- the number that says
+        // when a plain hit's starts to pay -- those spent on a plain hit, and
+        // the time it stood ready and went unused
+        std::string sneaks;
+        for (const auto& m : r.members)
+        {
+            const bool unused = m.sneakUnused >= 0.5;
+            if (m.sneakAttacks == 0 && m.sneakNaked == 0 && !unused)
+            {
+                continue;
+            }
+            std::vector<std::string> parts;
+            if (m.sneakAttacks > 0)
+            {
+                parts.push_back(fmt::format("{} before her weapon skill (held {:.0f} s)", m.sneakAttacks, m.sneakWait));
+            }
+            if (m.sneakNaked > 0)
+            {
+                parts.push_back(fmt::format("{} on a plain hit", m.sneakNaked));
+            }
+            if (unused)
+            {
+                parts.push_back(fmt::format("ready {:.0f} s unused", m.sneakUnused));
+            }
+            sneaks += fmt::format("{}{} ", sneaks.empty() ? "" : "; ", m.name);
+            for (std::size_t i = 0; i < parts.size(); ++i)
+            {
+                sneaks += (i == 0 ? "" : ", ") + parts[i];
+            }
+        }
+        if (!sneaks.empty())
+        {
+            line += "; Sneak Attack: " + sneaks;
         }
         std::string interrupted;
         for (const auto& m : r.members)

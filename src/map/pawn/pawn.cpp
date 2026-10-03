@@ -2607,9 +2607,14 @@ namespace pawn
         const auto  about   = PAbout != nullptr && PAbout != PPawn ? fmt::format(" (about {})", PAbout->getName()) : std::string();
         ShowInfoFmt("pawn: {} is told {}{}", PPawn->getName(), said, about);
 
-        // A skill rising is the game's word after an action that worked, not a refusal
-        const auto msg = static_cast<MsgBasic>(message);
-        if (msg == MsgBasic::SkillGain || msg == MsgBasic::SkillLevelUp)
+        // What says something happened is not a refusal: a skill rising, a
+        // mob defeated (a party member's kill just after her ordered Cure),
+        // an effect wearing off -- 206, "<target>'s <effect> effect wears
+        // off", as when the weapon skill just ordered spends her Sneak Attack
+        // and Boost (MsgBasic names no 206)
+        constexpr uint16 kEffectWearsOff = 206;
+        const auto       msg             = static_cast<MsgBasic>(message);
+        if (msg == MsgBasic::SkillGain || msg == MsgBasic::SkillLevelUp || msg == MsgBasic::DefeatsTarget || message == kEffectWearsOff)
         {
             return;
         }

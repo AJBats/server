@@ -25,6 +25,7 @@
 #include "gambit_ids.h"
 
 #include "common/cbasetypes.h"
+#include "data/enums/status_effect.h"
 #include "entities/entity_id.h"
 
 class CBattleEntity;
@@ -58,9 +59,20 @@ namespace pawn
         virtual auto RangedAttack(EntityId target) -> bool = 0;
 
         // The behaviour layer: what her behaviour rows assert this tick
-        virtual void ClearGambitBehaviors()                      = 0;
+        virtual void ClearGambitBehaviors()                         = 0;
         virtual void SetGambitBehavior(uint16 behavior, uint16 arg) = 0;
-        virtual auto HoldsRole(Role role) const -> bool          = 0;
+
+        // The pacer: the server would take a new action from her now
+        virtual auto ReadyToAct() -> bool = 0;
+        // Something on her refuses every job ability (Amnesia, Impairment)
+        virtual auto AbilitiesShutOut() const -> bool = 0;
+        // The stance buff on her now is the one the player's own order fired
+        // (her tactician's stance never takes that one off), and the note of
+        // one he just fired
+        virtual auto PlayersBuff(uint16 ability, xi::StatusEffect effect) -> bool = 0;
+        virtual void NoteOrderedStance(uint16 ability)                          = 0;
+        // Her tactician's Sneak Attack can go before her weapon skill now
+        virtual auto SneakAttackNow(const CBattleEntity* PTarget) -> bool = 0;
 
         // The player's order from her command window waits as her next action
         virtual auto HasQueuedOrder() const -> bool = 0;

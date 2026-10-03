@@ -178,7 +178,27 @@ namespace
         void SetGambitBehavior(const uint16 /*behavior*/, const uint16 /*arg*/) override
         {
         }
-        auto HoldsRole(const pawn::Role /*role*/) const -> bool override
+        // The game would take a new action from him now (the controller's
+        // own tick waits for it too, CLiveController::Ready)
+        auto ReadyToAct() -> bool override
+        {
+            return m_PChar->PAI->CanChangeState() && m_controller.canAct();
+        }
+        auto AbilitiesShutOut() const -> bool override
+        {
+            const auto* PImpairment = m_PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment);
+            return Amnesic() || (PImpairment != nullptr && (PImpairment->GetPower() == 0x01 || PImpairment->GetPower() == 0x03));
+        }
+        // Every buff on him is his own doing; his tactician's stances and
+        // Sneak Attack are marked rows, which run for him in a later step
+        auto PlayersBuff(const uint16 /*ability*/, const xi::StatusEffect /*effect*/) -> bool override
+        {
+            return true;
+        }
+        void NoteOrderedStance(const uint16 /*ability*/) override
+        {
+        }
+        auto SneakAttackNow(const CBattleEntity* /*PTarget*/) -> bool override
         {
             return false;
         }
@@ -285,9 +305,7 @@ namespace
         // check runs on a copy, as the state's does
         auto AbilityWouldTake(CAbility* PAbility, CBattleEntity* PTarget) -> bool
         {
-            const auto* PImpairment = m_PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment);
-            if (m_PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()) || Amnesic() ||
-                (PImpairment != nullptr && (PImpairment->GetPower() == 0x01 || PImpairment->GetPower() == 0x03)) ||
+            if (m_PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()) || AbilitiesShutOut() ||
                 !charutils::hasAbility(m_PChar, PAbility->getID()))
             {
                 return false;

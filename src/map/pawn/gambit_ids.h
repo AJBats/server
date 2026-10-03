@@ -48,10 +48,11 @@ namespace pawn
     // No strategy exists yet, so a row with it never fires.
     constexpr auto G_CONDITION_STRATEGY = static_cast<gambits::G_CONDITION>(100);
 
-    // Cardian-only gambit condition for the tactician (RESEARCH §14.12): the
-    // row leaves the when to her judgement. Below her Support Mage row
-    // (tactician_line.h) it holds, and her tactician decides; as an ordinary
-    // condition it never holds, so a row carrying it never fires as an order.
+    // The tactician's mark (RESEARCH §17.13): a row carrying this condition
+    // is the tactician's -- the row's other conditions and its target say
+    // whom it may be for, and the tactician decides the when. The row never
+    // fires as an order, and the tactician reaches its tool through it
+    // (tactician_line.h). The editor shows the mark, not a clause.
     constexpr auto G_CONDITION_TACTICIANS_CHOICE = static_cast<gambits::G_CONDITION>(101);
 
     // Cardian-only gambit targets: a foe around the party that is not her
@@ -63,9 +64,9 @@ namespace pawn
     constexpr auto G_TARGET_TARGETING_SELF   = static_cast<gambits::G_TARGET>(103); // a mob on her
 
     // Cardian-only spell select: Enfeeble, the single-target enfeebles her
-    // tactician prices (tactician_line.h kEnfeebleOrder). Below her Support
-    // Mage row it lets her tactician cast any of them; as an order it casts
-    // the first she can that the foe does not carry yet. Never a -ga spell.
+    // tactician prices (tactician_line.h kEnfeebleOrder). On a marked row
+    // it lets her tactician cast any of them; as an order it casts the
+    // first she can that the foe does not carry yet. Never a -ga spell.
     constexpr auto G_SELECT_ENFEEBLE = static_cast<gambits::G_SELECT>(100);
 
     // Cardian-only status a status condition can name: Enfeeble, a group,
@@ -87,53 +88,33 @@ namespace pawn
         RestWithPlayer      = 6, // switch: kneel when the player kneels
         HomePointWithPlayer = 7, // switch: a KO'd cardian home points when the player does
         // 8: retired Rest; resting is owned by the shared policy.
-        BoostBeforeWs       = 9, // switch: a Monk's Boost goes out right before her weapon skill, nothing between (D5)
+        // 9: retired BoostBeforeWs, the switch for a Monk's Boost right
+        // before her weapon skill: a marked `Self -> Boost` row is that
+        // tool now (RESEARCH §17.13).
         // 10: retired RestInBattle. Never reuse persisted behavior IDs.
-        Role                = 11, // a parameter: the role she plays (pawn::Role); the tactician's conveyor assigns her casts (RESEARCH §12.12 item 2)
+        // 11: retired Role, the tactician line (Support Mage 1, Tank 2, and
+        // Damage 3 before it): what she is for is her party role, and what
+        // the tactician may use is her marked rows (RESEARCH §17.13).
         // 12: retired MeleeMage; an Attack row that claims the mob decides whether a
-        // Support Mage fights it. The grammar refuses 12, so no row carries it.
+        // mage fights it. The grammar refuses 12, so no row carries it.
         AvoidLinks          = 13, // switch: keep clear of the idle kin of every mob fighting her, whatever AvoidAggro says
+        Rest                = 14, // switch: when it holds and no fight is on, her own rest order, down until full; marked, the tactician's MP pacing (RESEARCH §17.13)
     };
-    constexpr uint16 BehaviorCount = 14; // one past the highest value ever given, retired ones included
+    constexpr uint16 BehaviorCount = 15; // one past the highest value ever given, retired ones included
 
     // The retired behaviour values: the grammar refuses a row that names
     // one, saved or imported, so an old meaning never comes back
     constexpr auto isRetiredBehavior(const uint32 behavior) -> bool
     {
-        return behavior == 8 || behavior == 10 || behavior == 12;
+        return behavior == 8 || behavior == 9 || behavior == 10 || behavior == 11 || behavior == 12;
     }
 
     // A switch row carries the value 1 and its checkbox is the switch; a
-    // parameter row (the formation slot, the role) carries its value
+    // parameter row (the formation slot) carries its value
     constexpr auto isSwitch(const Behavior b) -> bool
     {
-        return b != Behavior::Formation && b != Behavior::Role;
+        return b != Behavior::Formation;
     }
-
-    // The roles a Role row can name (the argument of Behavior::Role). Values
-    // are frozen like the behaviours: they appear in rows and are persisted
-    enum class Role : uint16
-    {
-        None        = 0,
-        SupportMage = 1,
-        Tank        = 2, // stands in (RESEARCH §12.16): at a stake she tows the mob to it and holds its 3 o'clock; the rest of the role comes later
-        MeleeDamage = 3, // the Damage role, standing in: a name and an editor entry; the rear seat, sneak attack and trick attack come later
-    };
-    constexpr auto roleName(const Role role) -> std::string_view
-    {
-        switch (role)
-        {
-            case Role::SupportMage:
-                return "Support Mage";
-            case Role::Tank:
-                return "Tank";
-            case Role::MeleeDamage:
-                return "Damage";
-            default:
-                return "none";
-        }
-    }
-    constexpr std::array<Role, 3> kRoles{ Role::SupportMage, Role::Tank, Role::MeleeDamage };
 
     // The persisted numbers, pinned: a renumbered value fails the build
     // before it can reread a saved row as something else
@@ -151,18 +132,11 @@ namespace pawn
     static_assert(static_cast<uint16>(Behavior::Formation) == 4);
     static_assert(static_cast<uint16>(Behavior::RestWithPlayer) == 6);
     static_assert(static_cast<uint16>(Behavior::HomePointWithPlayer) == 7);
-    static_assert(static_cast<uint16>(Behavior::BoostBeforeWs) == 9);
-    static_assert(static_cast<uint16>(Behavior::Role) == 11);
     static_assert(static_cast<uint16>(Behavior::AvoidLinks) == 13);
-    static_assert(BehaviorCount == 14);
-    static_assert(isRetiredBehavior(8) && isRetiredBehavior(10) && isRetiredBehavior(12));
+    static_assert(static_cast<uint16>(Behavior::Rest) == 14);
+    static_assert(BehaviorCount == 15);
+    static_assert(isRetiredBehavior(8) && isRetiredBehavior(9) && isRetiredBehavior(10) && isRetiredBehavior(11) && isRetiredBehavior(12));
     static_assert(!isRetiredBehavior(static_cast<uint16>(Behavior::AvoidAggro)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Formation)) &&
                   !isRetiredBehavior(static_cast<uint16>(Behavior::RestWithPlayer)) && !isRetiredBehavior(static_cast<uint16>(Behavior::HomePointWithPlayer)) &&
-                  !isRetiredBehavior(static_cast<uint16>(Behavior::BoostBeforeWs)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Role)) &&
-                  !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)));
-
-    static_assert(static_cast<uint16>(Role::None) == 0);
-    static_assert(static_cast<uint16>(Role::SupportMage) == 1);
-    static_assert(static_cast<uint16>(Role::Tank) == 2);
-    static_assert(static_cast<uint16>(Role::MeleeDamage) == 3);
+                  !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Rest)));
 } // namespace pawn

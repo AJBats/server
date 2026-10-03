@@ -193,6 +193,16 @@ TEST_CASE("summary: the one line the map log gets", "[cardian][tactics]")
     walkedAway.mobMaxHp    = 218;
     walkedAway.mobHpLeft   = 98;
     CHECK_THAT(summary(walkedAway), ContainsSubstring("left: took 0 (0.0/s), dealt 40, left it at 98 HP (44%)"));
+
+    // A nuker's part in the kill: her nukes, their MP, what the ones her
+    // tactician chose landed against what the formula expected, and her share
+    FightRecord nuked = quiet;
+    nuked.mobDamage   = 100;
+    nuked.member(2, "Jevyak").damageDealt += 60;
+    nuked.casts.push_back(CastNote{ .caster = 2, .spell = 159, .spellName = "stone", .mp = 4, .landed = 14, .nuke = true, .expected = 12.0 });
+    nuked.casts.push_back(CastNote{ .caster = 2, .spell = 159, .spellName = "stone", .mp = 4, .landed = 6, .nuke = true, .expected = 12.0 });
+    nuked.casts.push_back(CastNote{ .caster = 2, .spell = 159, .spellName = "stone", .mp = 4, .landed = 40, .nuke = true }); // a plain row's: the formula never asked
+    CHECK_THAT(summary(nuked), ContainsSubstring("; Jevyak nuked 3 times for 12 MP, landed 20 against ~24 expected, dealt 60 (60% of the kill)"));
 }
 
 TEST_CASE("SpotAverages fold a fight and read back as one line", "[cardian][tactics]")
@@ -449,4 +459,139 @@ TEST_CASE("Explicit best-Cure rows choose an affordable tier even at full HP", "
     CHECK(pickCure(options, 60, true) == 0);
     options.clear();
     CHECK(pickCure(options, 0, true) == kNoPick); // no available spell
+}
+
+TEST_CASE("NukePrice: the seed by her correction, capped by what the mob has left, and the pick by damage a second of hers", "[cardian][tactics][bank]")
+{
+    // LSB's Thunder tiers: base damage, MP, and her seconds a cast (the
+    // cast, then the 2.5 s before her next action)
+    const auto thunder = [](const std::string& name, const uint16 id, const int32 mp, const double seed, const double seconds)
+    {
+        return NukePrice{ .id = id, .spell = name, .mp = mp, .seconds = seconds, .seed = seed };
+    };
+
+    // What she expects is the seed by what her nukes of the element have
+    // landed against it, and what it takes off the mob is capped by its HP:
+    // overkill counts for nothing
+    NukePrice corrected  = thunder("Thunder IV", 167, 195, 541.0, 7.5);
+    corrected.correction = 0.9;
+    corrected.learned    = 3;
+    priceNukeDamage(corrected, 4000, 25.0, 200.0);
+    CHECK_THAT(corrected.expected, WithinAbs(486.9, 1e-9));
+    CHECK_THAT(corrected.dealt, WithinAbs(486.9, 1e-9));
+    CHECK_THAT(corrected.perSecond(), WithinAbs(64.92, 1e-9));
+    CHECK_THAT(corrected.line(), ContainsSubstring("; the formula's ~541 x0.90 from 3 landed"));
+
+    NukePrice capped = thunder("Thunder IV", 167, 195, 541.0, 7.5);
+    priceNukeDamage(capped, 50, 20.0, 2.5);
+    CHECK_THAT(capped.dealt, WithinAbs(50.0, 1e-9));
+    CHECK_THAT(capped.cut, WithinAbs(2.5, 1e-9)); // never more than the mob has left
+    CHECK_THAT(capped.line(), ContainsSubstring("Thunder IV ~50 of ~541"));
+
+    // On a tough mob the biggest she has ready wins: damage a second of
+    // hers, not damage a MP (Thunder is 6.7 a MP, Thunder IV 2.8)
+    NukePrice one  = thunder("Thunder", 164, 9, 60.0, 3.0);      // 20 a second
+    NukePrice two  = thunder("Thunder II", 165, 37, 178.0, 4.0); // 44.5 a second
+    NukePrice four = thunder("Thunder IV", 167, 195, 541.0, 7.5); // 72 a second
+    for (auto* p : { &one, &two, &four })
+    {
+        priceNukeDamage(*p, 4000, 25.0, 200.0);
+    }
+    std::vector<NukePrice> tough{ one, two, four };
+    REQUIRE(pickNuke(tough) != nullptr);
+    CHECK(pickNuke(tough)->spell == "Thunder IV");
+    CHECK_THAT(four.line(), ContainsSubstring("Thunder IV ~541 for 195 MP in 7.5 s: 72 a second of hers, the fight ~21.6 s shorter"));
+
+    // Near the end the quickest that finishes it wins -- no "too late" rule
+    // (a cast whose mob dies first is cancelled before it spends her MP)
+    for (auto* p : { &one, &two, &four })
+    {
+        priceNukeDamage(*p, 50, 25.0, 2.0);
+    }
+    std::vector<NukePrice> end{ one, two, four };
+    REQUIRE(pickNuke(end) != nullptr);
+    CHECK(pickNuke(end)->spell == "Thunder");
+
+    // Equal a second of hers: the cheaper
+    NukePrice dear  = thunder("Dear", 1, 20, 60.0, 3.0);
+    NukePrice cheap = thunder("Cheap", 2, 10, 60.0, 3.0);
+    priceNukeDamage(dear, 4000, 25.0, 200.0);
+    priceNukeDamage(cheap, 4000, 25.0, 200.0);
+    std::vector<NukePrice> tie{ dear, cheap };
+    CHECK(pickNuke(tie)->spell == "Cheap");
+
+    // Nothing that deals nothing (an element the mob nullifies or absorbs)
+    NukePrice nullified = thunder("Thunder", 164, 9, 0.0, 3.0);
+    priceNukeDamage(nullified, 4000, 25.0, 200.0);
+    std::vector<NukePrice> none{ nullified };
+    CHECK(pickNuke(none) == nullptr);
+
+    // With the party's rate unknown she is still ranked a second of hers;
+    // there is just no fight cut to say
+    NukePrice blindOne  = thunder("Thunder", 164, 9, 60.0, 3.0);
+    NukePrice blindFour = thunder("Thunder IV", 167, 195, 541.0, 7.5);
+    priceNukeDamage(blindOne, 4000, 0.0, -1.0);
+    priceNukeDamage(blindFour, 4000, 0.0, -1.0);
+    CHECK(blindFour.noRate);
+    std::vector<NukePrice> blind{ blindOne, blindFour };
+    CHECK(pickNuke(blind)->spell == "Thunder IV");
+    CHECK_THAT(blindFour.line(), ContainsSubstring("72 a second of hers, the party's rate unknown"));
+}
+
+TEST_CASE("summary: each Thief's Sneak Attacks, held for her weapon skill with what the waiting cost, and spent on a plain hit", "[cardian][tactics]")
+{
+    FightRecord r;
+    r.mobName  = "Forest_Hare";
+    r.zoneName = "West_Ronfaure";
+    r.closeWhy = "killed";
+
+    auto& paired        = r.member(2, "Jevyak");
+    paired.sneakAttacks = 2;
+    paired.sneakWait    = 41.0;
+    CHECK_THAT(summary(r), ContainsSubstring("; Sneak Attack: Jevyak 2 before her weapon skill (held 41 s)"));
+
+    paired.sneakNaked = 1;
+    CHECK_THAT(summary(r), ContainsSubstring("; Sneak Attack: Jevyak 2 before her weapon skill (held 41 s), 1 on a plain hit"));
+
+    auto& naked      = r.member(3, "Ilani");
+    naked.sneakNaked = 3;
+    CHECK_THAT(summary(r), ContainsSubstring("1 on a plain hit; Ilani 3 on a plain hit"));
+
+    // Ready and never used before the fight ended is booked too: holding it
+    // cost that time as well
+    bookSneak(naked, SneakUse::Unused, 30.4);
+    bookSneak(naked, SneakUse::BeforeWs, 12.0);
+    CHECK_THAT(summary(r), ContainsSubstring("Ilani 1 before her weapon skill (held 12 s), 3 on a plain hit, ready 30 s unused"));
+    FightRecord idle;
+    bookSneak(idle.member(4, "Thaata"), SneakUse::Unused, 45.0);
+    CHECK_THAT(summary(idle), ContainsSubstring("; Sneak Attack: Thaata ready 45 s unused"));
+
+    // Nobody's Sneak Attack, no section
+    FightRecord quiet;
+    quiet.member(2, "Jevyak");
+    CHECK_THAT(summary(quiet), !ContainsSubstring("Sneak Attack"));
+}
+
+TEST_CASE("NukeCorrection: the seed's word counts as four nukes, so one resist moves it a little, and her landed nukes teach it", "[cardian][tactics][bank]")
+{
+    NukeCorrection fresh;
+    CHECK_THAT(fresh.factor(), WithinAbs(1.0, 1e-12));
+    CHECK(fresh.landed == 0);
+
+    // A half resist on her first nuke is one fifth of what it knows
+    fresh.learn(50.0, 100.0);
+    CHECK_THAT(fresh.factor(), WithinAbs(0.9, 1e-12));
+    CHECK(fresh.landed == 1);
+
+    // No seed, nothing to learn from
+    fresh.learn(10.0, 0.0);
+    CHECK(fresh.landed == 1);
+
+    // A seed that runs high is learned down to what she lands
+    NukeCorrection high;
+    for (int i = 0; i < 40; ++i)
+    {
+        high.learn(80.0, 100.0);
+    }
+    CHECK_THAT(high.factor(), WithinAbs(0.8, 0.01));
 }

@@ -34,9 +34,9 @@
 #include <vector>
 
 // The party's roles (RESEARCH §17): who tanks, who heals, who deals damage
-// and who pulls, as the party screen shows them. A party role is the
-// party's word for a member; it is not the Role row of her gambits
-// (gambit_ids.h pawn::Role), whose values are gambits of their own.
+// and who pulls, as the party screen shows them. A party role is what the
+// party needs from a member -- the stance her tactician reads (§17.13) --
+// and what she may do is her rows.
 //
 // The join rule says every member's role until the player says otherwise:
 // it is settled again whenever the roster changes, a role the player chose
