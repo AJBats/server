@@ -177,7 +177,7 @@ public:
         double next     = 0.0;
         double interval = 0.0;
     };
-    auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
+    auto WeaponSkill(EntityId target, uint16 wsid) -> bool override; // her rows' weapon skill; never tried beyond its reach (BoostOrWeaponSkill)
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
 
@@ -256,7 +256,7 @@ public:
     // Composed, the maneuver no longer needs his eye on her: at the release
     // she walks the route, the order fires at its end, and that is the
     // maneuver's end. ComposeMove is the route with no order: end at its
-    // end, waiting there if `wait`. Answers CL_S_OK or why not.
+    // end, holding position there if `wait`. Answers CL_S_OK or why not.
     auto ComposeMove(bool wait) -> uint16;
     // The maneuver's "Rest until N%", her queued order either way: live,
     // composed at once where she stands, his camera handed back; paused,
@@ -275,13 +275,13 @@ public:
     auto OwnMaster() const -> bool;
     void SetOwnMaster(bool on);
 
-    // Wait here / follow me. Waiting, she has nowhere to go by order: no
-    // following, hunting or travel, so she idles where she stands -- the
-    // floor every cardian falls to when nothing sends her anywhere (just
-    // spawned, signed in, out of the party). An ordered wait holds until
-    // told otherwise; an automatic one (left behind by a warp or a
-    // teleport, or carried off alone) ends when the player is back in her
-    // zone.
+    // Hold position / follow me. Holding, she has nowhere to go by order: no
+    // following, hunting or travel, and no step of her own at all (Move),
+    // in a fight or out of one -- she fights and casts from where she
+    // stands, and a weapon skill out of her reach is refused rather than
+    // walked to. An ordered hold lasts until told otherwise; an automatic
+    // one (left behind by a warp or a teleport, or carried off alone) ends
+    // when the player is back in her zone.
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
@@ -386,7 +386,8 @@ public:
 
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line
-    // of sight, its own script's word -- which the player hears as a note.
+    // of sight, its own script's word -- which the player hears as a note. Her
+    // auto-attack's own "target out of range" is not, after any order but a pet's.
     void ToldAfterOrder(uint16 message, const std::string& said);
 
     // The attack order, fired once her beat is served: the front row draws
@@ -952,8 +953,11 @@ private:
     };
     mutable std::vector<SightMemo> m_SightMemo;
 
-    std::unique_ptr<pawn::CGambits> m_Gambits;
-    bool                            m_BrainLoaded = false;
+    // What her gambit engine asks of her (gambit_host.h): this controller,
+    // through an adapter, so its names stay the engine's
+    std::unique_ptr<pawn::GambitHost> m_Host;
+    std::unique_ptr<pawn::CGambits>   m_Gambits;
+    bool                              m_BrainLoaded = false;
 
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
@@ -1228,7 +1232,8 @@ private:
     // Sneak Attack, then her weapon skill the moment it lands
     auto                  SneakThenWs(const EntityId target, uint16 wsid) -> bool;
     // The weapon skill without Sneak Attack: Boost first when her row
-    // offers it, else the weapon skill now
+    // offers it, else the weapon skill now; never beyond the skill's own
+    // reach (weaponSkillReach), since the game takes the TP as it starts
     auto                  BoostOrWeaponSkill(const EntityId target, uint16 wsid) -> bool;
     // The player's weapon skill order: it goes now and never walks; with
     // her Sneak Attack row on and Sneak Attack up, a skill that takes it

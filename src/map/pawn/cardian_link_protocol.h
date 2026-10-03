@@ -33,8 +33,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 33: the orders' Dia or Bio (ORDERS'
-// diaBio, CL_HUNT_DIA_BIO); 32: ROLE_LOCKED, and a GAMBIT_ROW's on
+// compatible, the user, 2026-09-14). 34: the orders' Dia or Bio (ORDERS'
+// diaBio, CL_HUNT_DIA_BIO); 33: the gambit messages name the player
+// himself too (his own set), and CL_GS_CLIENT; 32: ROLE_LOCKED, and a GAMBIT_ROW's on
 // is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
 // own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
 // numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
@@ -73,7 +74,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 33 };
+enum { CL_PROTOCOL = 34 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -151,7 +152,7 @@ enum
     CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
     CL_S_COOLING_DOWN      = 0x0133, // a cooldown runs: the answer says how long (RESCUE's cooldownLeft, SHOUT's waitMs)
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
-    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target
+    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target, or holds her position out of a weapon skill's reach
     CL_S_CANNOT_RECOVER    = 0x0136, // resting, she cannot recover right now (a poison, an avatar out)
 
     // The pause button
@@ -250,7 +251,7 @@ enum
     CL_AK_ATTACK      = 6,  // the command window's Attack: fight the target
     CL_AK_DISENGAGE   = 7,
     CL_AK_MOVE        = 8,  // a paused maneuver's order: walk the route the ring laid
-    CL_AK_MOVE_WAIT   = 9,  // the same, then wait at its end
+    CL_AK_MOVE_WAIT   = 9,  // the same, then hold position at its end
     CL_AK_REST        = 10, // id: rest until this percent of HP and MP
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
@@ -734,10 +735,13 @@ typedef struct cl_give_use
 // ---- 0x03xx: gambits -------------------------------------------------------
 //
 // A cardian's gambit rows (M3.85, the gambit editor) and the pickers'
-// catalogue, for a cardian he commands. A row crosses as the gambit
-// engine's own fields; its label is for people. Every edit is answered by
-// her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS (CL_F_MORE)
-// -- and then its outcome, refused or not, so the editor never keeps a guess.
+// catalogue, for a cardian he commands -- or for himself, when `cardian` is
+// his own charid: his own set, run by his hands while he plays (protocol 33;
+// no behaviour in his catalogue). A row crosses as
+// the gambit engine's own fields; its label is for people. Every edit is
+// answered by her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS
+// (CL_F_MORE) -- and then its outcome, refused or not, so the editor never
+// keeps a guess.
 
 enum
 {
@@ -800,6 +804,7 @@ enum
     CL_GS_NO_JUDGEMENT = 3, // marked, and nothing her tactician has a judgement for: struck out
     CL_GS_CLOCK        = 4, // marked, on a timer or a chance: struck out
     CL_GS_MISFIT       = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_CLIENT       = 7, // a behaviour row in the player's own list: only a cardian runs one, struck out
 };
 
 enum
@@ -1049,7 +1054,7 @@ enum
     CL_MV_BEGIN     = 0, // he takes the wheel: her maneuver begins, live
     CL_MV_OFF       = 1, // it ends
     CL_MV_MOVE      = 2, // a paused maneuver's order: walk the route the ring laid
-    CL_MV_MOVE_WAIT = 3, // the same, then wait at its end
+    CL_MV_MOVE_WAIT = 3, // the same, then hold position at its end
     CL_MV_REST      = 4, // rest until percent of HP and MP
 };
 
@@ -1164,13 +1169,13 @@ typedef struct cl_engage
     uint16_t  spare;
 } cl_engage;
 
-// Wait here, or follow him: from another zone, following is a trek to his.
+// Hold position, or follow him: from another zone, following is a trek to his.
 // Answered by the outcome alone; her roster line says it next time it is read.
 typedef struct cl_wait
 {
     cl_header h;
     uint32_t  cardian; // charid
-    uint8_t   on;      // 1 wait here, 0 follow
+    uint8_t   on;      // 1 hold position, 0 follow
     uint8_t   spare[3];
 } cl_wait;
 

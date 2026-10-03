@@ -117,8 +117,6 @@ namespace pawn::tactics
         {
             switch (r.source)
             {
-                case Source::Reflex:
-                    return fmt::format("the reflex ({})", r.why);
                 case Source::Row:
                     return fmt::format("{}'s row {}", nameOf(scope, r.caster), r.row);
                 case Source::Role:
@@ -165,14 +163,10 @@ namespace pawn::tactics
         }
 
         // A request still stands: a row the player has not changed or
-        // deleted since it fed, a proposal whose allow-list row is still
-        // there, and the reflex always
+        // deleted since it fed, and a proposal whose allow-list row is still
+        // there
         auto requestStands(const Need& n, const Request& r, CBattleEntity* PTarget) -> bool
         {
-            if (r.source == Source::Reflex)
-            {
-                return true;
-            }
             auto* PCaster    = zoneutils::GetChar(r.caster);
             auto* controller = controllerOf(PCaster);
             if (controller == nullptr)
@@ -430,7 +424,7 @@ namespace pawn::tactics
             // her tactician's own proposals
             for (const auto& r : n->requests)
             {
-                if (r.source == Source::Reflex || r.rowId.empty())
+                if (r.rowId.empty())
                 {
                     continue;
                 }
@@ -631,8 +625,6 @@ namespace pawn::tactics
         const auto& lead = n.lead();
         switch (lead.source)
         {
-            case Source::Reflex:
-                return fmt::format("the reflex: {}{}", lead.why, after);
             case Source::Row:
                 return (lead.caster == n.assigned ? fmt::format("her row {}", lead.row) : fmt::format("{}'s row {}", nameOf(scope, lead.caster), lead.row)) + after;
             case Source::Role:
