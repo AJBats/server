@@ -44,6 +44,7 @@
 
 #include <magic_enum/magic_enum.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -69,10 +70,11 @@ namespace pawn::tactics
             { SpellID::Diaga, Model::DefenceDown, xi::StatusEffect::Dia, 1, xi::Mod::INT, 0, 60, 3.0 },
             { SpellID::Poison, Model::Dot, xi::StatusEffect::Poison, 1, xi::Mod::INT, 0, 0, 3.0 },
             { SpellID::Poisonga, Model::Dot, xi::StatusEffect::Poison, 1, xi::Mod::INT, 0, 0, 3.0 },
-            { SpellID::Bio, Model::Dot, xi::StatusEffect::Bio, 2, xi::Mod::INT, 0, 60, 3.0 }, // the ticks only
-            // The elemental debuffs, the ticks only, as Bio: the stat each
-            // takes down is not priced
-            { SpellID::Burn, Model::Dot, xi::StatusEffect::Burn, 1, xi::Mod::INT, 0, 0, 3.0 },
+            { SpellID::Bio, Model::AttackDown, xi::StatusEffect::Bio, 2, xi::Mod::INT, 0, 60, 3.0 },
+            // The elemental debuffs: Burn's INT down by the nukes it
+            // strengthens, and its ticks; the other five their ticks alone,
+            // as a Poison's, the stat each takes down not priced
+            { SpellID::Burn, Model::IntDown, xi::StatusEffect::Burn, 1, xi::Mod::INT, 0, 0, 3.0 },
             { SpellID::Frost, Model::Dot, xi::StatusEffect::Frost, 1, xi::Mod::INT, 0, 0, 3.0 },
             { SpellID::Choke, Model::Dot, xi::StatusEffect::Choke, 1, xi::Mod::INT, 0, 0, 3.0 },
             { SpellID::Rasp, Model::Dot, xi::StatusEffect::Rasp, 1, xi::Mod::INT, 0, 0, 3.0 },
@@ -371,8 +373,9 @@ namespace pawn::tactics
         // spot's before
         struct Rates
         {
-            double dealtPerSecond = 0.0;
-            double takenPerSecond = 0.0;
+            double dealtPerSecond      = 0.0;
+            double meleeDealtPerSecond = 0.0; // the party's plain swings alone: what a defence down strengthens
+            double takenPerSecond      = 0.0;
             double meleePerRound  = 0.0;
             double roundDelay     = 0.0;
             double remaining      = -1.0;
@@ -380,15 +383,46 @@ namespace pawn::tactics
             bool   formula        = false; // the formulas' word: nothing measured, nothing on record
         };
 
+        // The party's melee on the mob a second, by the formulas: whoever
+        // does not attend this fight from the perimeter (a Support Mage no
+        // Attack row of hers sends onto the mob), who stands back by design.
+        // A member not yet sampled takes one fresh pDIF sample when `sampled`
+        // is still false, and sets it: one a call, never all at once.
+        // `complete`: every member's number was there
+        auto partyMelee(FightRecord& r, CMobEntity* PMob, const std::vector<CBattleEntity*>& members, bool& sampled, bool& complete) -> double
+        {
+            double dealt = 0.0;
+            complete     = true;
+            for (auto* PMember : members)
+            {
+                if (PMember == nullptr || PMember->isDead() || PMember->loc.zone != PMob->loc.zone || attendsFight(PMember, PMob))
+                {
+                    continue;
+                }
+                const bool before = r.meleeCache.contains({ PMember->id, PMob->id });
+                const auto g      = bank::melee(r, PMember, PMob, !sampled);
+                sampled           = sampled || (!before && r.meleeCache.contains({ PMember->id, PMob->id }));
+                if (g.has_value())
+                {
+                    dealt += g->perSecond;
+                }
+                else if (!r.meleeCache.contains({ PMember->id, PMob->id }))
+                {
+                    complete = false;
+                }
+            }
+            return dealt;
+        }
+
         // The mob's melee on its target and the party's melee on it, by the
         // formulas (RESEARCH §12.2 item 5): the prior before the fight or
         // the spot has a number. The mob's target is whoever it is on, else
         // the sturdiest member; the party is every member in the zone
-        void priorRates(Rates& x, FightRecord& r, CMobEntity* PMob, const std::vector<CBattleEntity*>* members, const bool wantTaken, const bool wantDealt)
+        void priorRates(Rates& x, FightRecord& r, CMobEntity* PMob, const std::vector<CBattleEntity*>* members, const bool wantTaken, const bool wantDealt, bool& sampled)
         {
-            // One fresh pDIF sample a call: the first think at a new spot
-            // gets the party's rate as the samples come in, never all at once
-            bool           sampled = false;
+            // One fresh pDIF sample a call (`sampled`, the caller's): the
+            // first think at a new spot gets the party's rate as the samples
+            // come in, never all at once
             CBattleEntity* PTarget = PMob->GetBattleTarget();
             if (PTarget == nullptr && members != nullptr)
             {
@@ -415,32 +449,12 @@ namespace pawn::tactics
                 }
                 sampled = sampled || (!before && r.meleeCache.contains({ PMob->id, PTarget->id }));
             }
-            // The party's melee: whoever does not attend this fight from the
-            // perimeter (a Support Mage no Attack row of hers sends onto
-            // the mob), who stands back by design; the measured rate
-            // replaces the guess at ten seconds either way
+            // The party's melee (partyMelee); the measured rate replaces the
+            // guess at ten seconds either way
             if (wantDealt && members != nullptr)
             {
-                double dealt    = 0.0;
-                bool   complete = true;
-                for (auto* PMember : *members)
-                {
-                    if (PMember == nullptr || PMember->isDead() || PMember->loc.zone != PMob->loc.zone || attendsFight(PMember, PMob))
-                    {
-                        continue;
-                    }
-                    const bool before = r.meleeCache.contains({ PMember->id, PMob->id });
-                    const auto g      = bank::melee(r, PMember, PMob, !sampled);
-                    sampled           = sampled || (!before && r.meleeCache.contains({ PMember->id, PMob->id }));
-                    if (g.has_value())
-                    {
-                        dealt += g->perSecond;
-                    }
-                    else if (!r.meleeCache.contains({ PMember->id, PMob->id }))
-                    {
-                        complete = false;
-                    }
-                }
+                bool         complete = true;
+                const double dealt    = partyMelee(r, PMob, *members, sampled, complete);
                 if (dealt > 0.0)
                 {
                     x.dealtPerSecond = dealt;
@@ -478,9 +492,28 @@ namespace pawn::tactics
 
             const bool haveTaken = (live && liveTaken > 0.0) || spot.fights > 0;
             const bool haveDealt = (live && liveDealt > 0.0) || spot.fights > 0;
+            bool       sampled   = false;
             if (!haveTaken || !haveDealt)
             {
-                priorRates(x, r, PMob, members, !haveTaken, !haveDealt);
+                priorRates(x, r, PMob, members, !haveTaken, !haveDealt, sampled);
+            }
+            // The party's swings once the fight has its own numbers, even
+            // none (a party of nukers gains nothing from a defence down);
+            // before, the formulas' melee (a spot's rate is all the party
+            // dealt there, its nukes too). With no members to ask (a cast
+            // line's pricing), the rate the fight is priced on
+            if (live)
+            {
+                x.meleeDealtPerSecond = r.meleePerSecond(now);
+            }
+            else if (members != nullptr)
+            {
+                bool complete         = true;
+                x.meleeDealtPerSecond = partyMelee(r, PMob, *members, sampled, complete);
+            }
+            else
+            {
+                x.meleeDealtPerSecond = x.dealtPerSecond;
             }
             return x;
         }
@@ -547,7 +580,8 @@ namespace pawn::tactics
 
         // Whose melee the forecast weighs: the scope's members when the list
         // prints at open (the enmity list is empty until the first hit),
-        // else whoever holds enmity on the mob; each by what she has dealt
+        // else whoever holds enmity on the mob; each by what her swings have
+        // dealt (a nuker's spells are no melee of hers)
         auto meleeCandidates(const FightRecord& r, CMobEntity* PMob, const std::vector<CBattleEntity*>* members) -> std::vector<std::pair<CCharEntity*, double>>
         {
             std::vector<std::pair<CCharEntity*, double>> out;
@@ -558,7 +592,7 @@ namespace pawn::tactics
                     return;
                 }
                 const auto* figures = r.find(PEntity->id);
-                out.emplace_back(static_cast<CCharEntity*>(PEntity), figures != nullptr ? std::max(1, figures->damageDealt) : 1.0);
+                out.emplace_back(static_cast<CCharEntity*>(PEntity), figures != nullptr ? std::max(1, figures->meleeDealt) : 1.0);
             };
             if (members != nullptr)
             {
@@ -619,6 +653,363 @@ namespace pawn::tactics
             }
             const auto other = res.get<uint16>(0);
             return other != 0 && PTarget->StatusEffectContainer->HasStatusEffect(static_cast<xi::StatusEffect>(other));
+        }
+
+        // The seeds kept on a fight were worked at the mob's INT as it stood:
+        // once it moves (a Burn landing or wearing off), every one goes
+        void keepSeedsFresh(FightRecord& r, CMobEntity* PMob)
+        {
+            const auto now = static_cast<int32>(PMob->INT());
+            if (r.seedInt != now)
+            {
+                r.nukeSeeds.clear();
+                r.intSeeds.clear();
+                r.seedInt = now;
+            }
+        }
+
+        // tactics_bank.lua nukeSeeds for these spells, one call: each spell's
+        // seed by id, -1 for one the damage table does not know; with an INT
+        // down (a raise, when negative), the second answer from the same
+        // pass. Nothing when the formula could not answer
+        struct Seeded
+        {
+            std::map<uint16, double> now;
+            std::map<uint16, double> moved;
+        };
+
+        auto askSeeds(CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells, const int32 intDown) -> std::optional<Seeded>
+        {
+            auto fn = bankFunction("nukeSeeds");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            sol::table ask = ::lua.create_table();
+            for (std::size_t i = 0; i < spells.size(); ++i)
+            {
+                sol::table s    = ::lua.create_table();
+                s["id"]         = static_cast<uint16>(spells[i]->getID());
+                s["element"]    = spells[i]->getElement();
+                s["skillType"]  = static_cast<uint8>(spells[i]->getSkillType());
+                s["spellGroup"] = static_cast<uint8>(spells[i]->getSpellGroup());
+                s["family"]     = static_cast<uint16>(spells[i]->getSpellFamily());
+                ask[i + 1]      = s;
+            }
+            auto res = (*fn)(CLuaBaseEntity(PCaster), CLuaBaseEntity(PMob), ask, intDown);
+            if (failed("nukeSeeds", res) || res.get_type(0) != sol::type::table || (intDown != 0 && res.get_type(1) != sol::type::table))
+            {
+                return std::nullopt;
+            }
+            Seeded           out;
+            const sol::table now = res.get<sol::table>(0);
+            for (auto* PSpell : spells)
+            {
+                const auto                  id     = static_cast<uint16>(PSpell->getID());
+                const sol::optional<double> answer = now[id];
+                out.now[id]                        = answer.value_or(-1.0);
+            }
+            if (intDown != 0)
+            {
+                const sol::table moved = res.get<sol::table>(1);
+                for (auto* PSpell : spells)
+                {
+                    const auto                  id     = static_cast<uint16>(PSpell->getID());
+                    const sol::optional<double> answer = moved[id];
+                    out.moved[id]                      = answer.value_or(-1.0);
+                }
+            }
+            return out;
+        }
+
+        // A seed worth keeping: one the damage table does not know (never
+        // priced), or one of a single HP or more. Under that -- the mob
+        // nullifies or absorbs the element, or a shield stops all magic --
+        // she asks again at her next think, and nukes once it lifts
+        auto keepsSeed(const double seed) -> bool
+        {
+            return seed < 0.0 || seed >= 1.0;
+        }
+
+        // The formula's seed for each of her nukes on the mob
+        // (tactics_bank.lua nukeSeeds), asked in one call for the spells the
+        // fight has not kept for her, every answer for this pricing put in
+        // `seeds`; with intDown and `moved`, the same nukes with the mob's
+        // INT moved that much, from the same call (a Burn's price). Both are
+        // kept until one of her nukes lands (fight_log.cpp), and every kept
+        // seed goes once the mob's INT moves (keepSeedsFresh). How many it
+        // asked for; nothing when the formula could not answer
+        auto seedNukes(FightRecord& r, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells, std::map<uint16, double>& seeds,
+                       const int32 intDown = 0, std::map<uint16, double>* moved = nullptr) -> std::optional<uint32>
+        {
+            keepSeedsFresh(r, PMob);
+            const bool           both      = intDown != 0 && moved != nullptr;
+            auto&                kept      = r.nukeSeeds[PCaster->id];
+            auto*                keptMoved = both ? &r.intSeeds[{ PCaster->id, intDown }] : nullptr;
+            std::vector<CSpell*> asked;
+            for (auto* PSpell : spells)
+            {
+                const auto id = static_cast<uint16>(PSpell->getID());
+                if (kept.contains(id) && (!both || keptMoved->contains(id)))
+                {
+                    seeds[id] = kept[id];
+                    if (both)
+                    {
+                        (*moved)[id] = (*keptMoved)[id];
+                    }
+                }
+                else
+                {
+                    asked.push_back(PSpell);
+                }
+            }
+            if (asked.empty())
+            {
+                return 0;
+            }
+            const auto answers = askSeeds(PCaster, PMob, asked, both ? intDown : 0);
+            if (!answers.has_value())
+            {
+                return std::nullopt;
+            }
+            for (const auto& [id, seed] : answers->now)
+            {
+                seeds[id] = seed;
+                if (keepsSeed(seed))
+                {
+                    kept[id] = seed;
+                }
+            }
+            if (both)
+            {
+                for (const auto& [id, seed] : answers->moved)
+                {
+                    (*moved)[id] = seed;
+                    if (keepsSeed(seed))
+                    {
+                        (*keptMoved)[id] = seed;
+                    }
+                }
+            }
+            return static_cast<uint32>(asked.size());
+        }
+
+        // Her time per cast of a spell: its cast time, then the wait before
+        // her next action -- the player rule's 2.5 s from the moment the
+        // spell lands (CPlayerController::canAct), or its animation if
+        // longer. The spell's own cast time: Fast Cast, the arts and Quick
+        // Magic are not counted (the server's reckoning of them needs a
+        // magic state, and rolls Quick Magic as it reckons)
+        auto secondsPerCast(CSpell* PSpell) -> double
+        {
+            const double cast = std::chrono::duration<double>(PSpell->getCastTime()).count();
+            return cast + std::max(2.5, std::chrono::duration<double>(PSpell->getAnimationTime()).count());
+        }
+
+        // A nuke's price on the mob from its seed: the seed by her
+        // correction, capped by what the mob has left, with her MP and
+        // seconds per cast (bank_math.h priceNukeDamage)
+        auto nukePriceOf(CBattleEntity* PCaster, CSpell* PSpell, const double seed, CMobEntity* PMob, const Rates& rt) -> NukePrice
+        {
+            const auto learned = nukeCorrection(PCaster->id, static_cast<uint8>(PSpell->getElement()));
+            NukePrice  price;
+            price.id         = static_cast<uint16>(PSpell->getID());
+            price.spell      = PSpell->getName();
+            price.mp         = battleutils::CalculateSpellCost(PCaster, PSpell);
+            price.seconds    = secondsPerCast(PSpell);
+            price.seed       = seed;
+            price.correction = learned.factor();
+            price.learned    = learned.landed;
+            priceNukeDamage(price, PMob->health.hp, rt.dealtPerSecond, rt.remaining);
+            return price;
+        }
+
+        // Someone in the fight by id: among the scope's members when given,
+        // else among whoever holds enmity on the mob
+        auto fighterOf(const uint32 id, CMobEntity* PMob, const std::vector<CBattleEntity*>* members) -> CBattleEntity*
+        {
+            if (members != nullptr)
+            {
+                for (auto* PMember : *members)
+                {
+                    if (PMember != nullptr && PMember->id == id)
+                    {
+                        return PMember;
+                    }
+                }
+                return nullptr;
+            }
+            for (const auto& [eid, enmity] : *PMob->PEnmityContainer->GetEnmityList())
+            {
+                if (enmity.PEnmityOwner != nullptr && enmity.PEnmityOwner->id == id)
+                {
+                    return enmity.PEnmityOwner;
+                }
+            }
+            return nullptr;
+        }
+
+        // A nuker's pick both ways (bank_math.h pickNuke): among her nukes,
+        // the one she would cast at the mob's INT now, and the one she would
+        // cast with it moved by intDown, from the one seed call's two
+        // answers. Nothing when no nuke of hers deals anything
+        struct EachWay
+        {
+            NukeOption  now;
+            NukeOption  moved;
+            std::string nameNow;
+            std::string nameMoved;
+        };
+
+        auto pickEachWay(FightRecord& r, CBattleEntity* PNuker, CMobEntity* PMob, const std::vector<CSpell*>& spells, const int32 intDown, const Rates& rt) -> std::optional<EachWay>
+        {
+            std::map<uint16, double> seeds;
+            std::map<uint16, double> moved;
+            if (spells.empty() || !seedNukes(r, PNuker, PMob, spells, seeds, intDown, &moved).has_value())
+            {
+                return std::nullopt;
+            }
+            std::vector<NukePrice> pricesNow;
+            std::vector<NukePrice> pricesMoved;
+            for (auto* PSpell : spells)
+            {
+                const auto id  = static_cast<uint16>(PSpell->getID());
+                const auto now = seeds.find(id);
+                const auto mv  = moved.find(id);
+                if (now == seeds.end() || mv == moved.end() || now->second < 0.0)
+                {
+                    continue;
+                }
+                pricesNow.push_back(nukePriceOf(PNuker, PSpell, now->second, PMob, rt));
+                pricesMoved.push_back(nukePriceOf(PNuker, PSpell, mv->second, PMob, rt));
+            }
+            const auto* pickNow   = pickNuke(pricesNow);
+            const auto* pickMoved = pickNuke(pricesMoved);
+            if (pickNow == nullptr || pickMoved == nullptr)
+            {
+                return std::nullopt;
+            }
+            const auto option = [](const NukePrice& p)
+            {
+                return NukeOption{ p.dealt, p.seconds, static_cast<double>(p.mp) };
+            };
+            return EachWay{ option(*pickNow), option(*pickMoved), pickNow->spell, pickMoved->spell };
+        }
+
+        // A Burn on the mob judged by damage (RESEARCH §17.13; bank_math.h
+        // burnPlan): every nuker of the party -- each cardian whose marked
+        // Damage spell (any) row runs, with the nukes she has learned at her
+        // jobs and level, and anyone else who has nuked the mob this fight
+        // (the player), with the last nuke he cast -- her pick without the
+        // Burn and under it, and her MP; the party's damage over the window
+        // each way. A caster who nukes pays the Burn's seconds and MP in the
+        // plan; one who does not (casterNukes false) is judged on the gain
+        // against its MP. At a cast line her MP is as it stood before the
+        // cast, and when the Burn landed (on) its seeds now are the ones under
+        // it, the moved ones the INT raised back. Nothing when nobody nukes
+        struct BurnPlans
+        {
+            BurnPlan    plan;
+            double      damagePerMp = 0.0;   // her nuke's, or the first nuker's: what the gain is worth in MP
+            bool        casterNukes = false; // the Burn's caster is in the plan, paying for it there
+            std::string detail;
+        };
+
+        auto burnPlans(FightRecord& r, const Rates& rt, CBattleEntity* PCaster, CMobEntity* PMob, CSpell* PBurn, const DebuffPrice& price, const int32 down, const bool on, const bool justCast,
+                       const double ticks, const std::vector<CBattleEntity*>* members) -> std::optional<BurnPlans>
+        {
+            std::vector<std::pair<CBattleEntity*, std::vector<CSpell*>>> nukers;
+            const auto add = [&](CBattleEntity* PNuker, std::vector<CSpell*> spells)
+            {
+                if (PNuker == nullptr || spells.empty() ||
+                    std::ranges::any_of(nukers, [PNuker](const auto& n) { return n.first == PNuker; }))
+                {
+                    return;
+                }
+                nukers.emplace_back(PNuker, std::move(spells));
+            };
+            std::vector<CBattleEntity*> candidates;
+            if (members != nullptr)
+            {
+                candidates = *members;
+            }
+            else
+            {
+                for (const auto& [id, enmity] : *PMob->PEnmityContainer->GetEnmityList())
+                {
+                    candidates.push_back(enmity.PEnmityOwner);
+                }
+            }
+            for (auto* PMember : candidates)
+            {
+                std::vector<CSpell*> spells;
+                for (const auto id : nukesOf(PMember))
+                {
+                    if (auto* PSpell = spell::GetSpell(id); PSpell != nullptr)
+                    {
+                        spells.push_back(PSpell);
+                    }
+                }
+                add(PMember, std::move(spells));
+            }
+            std::map<uint32, uint16> lastNuke;
+            for (const auto& c : r.casts)
+            {
+                if (c.nuke)
+                {
+                    lastNuke[c.caster] = c.spell;
+                }
+            }
+            for (const auto& [id, spellId] : lastNuke)
+            {
+                if (auto* PSpell = spell::GetSpell(static_cast<SpellID>(spellId)); PSpell != nullptr)
+                {
+                    add(fighterOf(id, PMob, members), { PSpell });
+                }
+            }
+
+            std::vector<BurnNuker> plan;
+            std::string            said;
+            double                 casterPerMp = 0.0;
+            double                 firstPerMp  = 0.0;
+            bool                   casterNukes = false;
+            for (const auto& [PNuker, spells] : nukers)
+            {
+                const auto each = pickEachWay(r, PNuker, PMob, spells, on ? -down : down, rt);
+                if (!each.has_value())
+                {
+                    continue;
+                }
+                const auto&  without     = on ? each->moved : each->now;
+                const auto&  with        = on ? each->now : each->moved;
+                const auto&  nameWithout = on ? each->nameMoved : each->nameNow;
+                const auto&  nameWith    = on ? each->nameNow : each->nameMoved;
+                const bool   casts       = PNuker == PCaster;
+                const double mp          = PNuker->health.mp + (casts && justCast ? price.mp : 0);
+                plan.push_back({ mp, without, with, casts });
+                const double perMp = without.mp > 0.0 ? without.dealt / without.mp : 0.0;
+                if (casts)
+                {
+                    casterPerMp = perMp;
+                    casterNukes = true;
+                }
+                if (firstPerMp <= 0.0)
+                {
+                    firstPerMp = perMp;
+                }
+                said += fmt::format("{}{} {} ~{:.0f} -> {} ~{:.0f} ({:.0f} MP)", said.empty() ? "" : ", ", PNuker->getName(), nameWithout, without.dealt, nameWith, with.dealt, mp);
+            }
+            if (plan.empty())
+            {
+                return std::nullopt;
+            }
+            BurnPlans out;
+            out.plan        = burnPlan(plan, price.window, secondsPerCast(PBurn), price.mp, price.landChance, ticks);
+            out.damagePerMp = casterPerMp > 0.0 ? casterPerMp : firstPerMp;
+            out.casterNukes = casterNukes;
+            out.detail      = fmt::format("-{} INT; over {:.0f} s {}: ~{:.0f} with it (its ticks ~{:.0f}) against ~{:.0f} without{}", down, price.window, said, out.plan.with, ticks, out.plan.without,
+                                          casterNukes ? "" : fmt::format(", {} nuking none of hers", PCaster->getName()));
+            return out;
         }
 
         // justCast: the line for a cast the log saw, priced as the spell
@@ -721,92 +1112,67 @@ namespace pawn::tactics
                         price.detail = "nobody meleeing it on record";
                         break;
                     }
-                    const double byDefence = defenceDownExtra(ratio->ratio, rt.dealtPerSecond, price.window);
+                    const double byDefence = defenceDownExtra(ratio->ratio, rt.meleeDealtPerSecond, price.window);
                     const double byTicks   = dotDamage(*pot, p.tick, price.window);
                     priceExtraDamage(price, byDefence + byTicks, rt.dealtPerSecond, rt.takenPerSecond, rt.remaining,
                                      fmt::format("melee x{:.2f} at -{}% defence{} (+{:.0f}), {:.0f} a tick (+{:.0f})", ratio->ratio, ratio->percent, ratio->assumed ? " (assumed)" : "", byDefence, *pot, byTicks));
                     break;
                 }
+                case Model::IntDown:
+                {
+                    // The INT the effect takes, at its power: judged by the
+                    // damage the party's nukes deal over its window with it
+                    // against without, its ticks added (burnPlans). Its worth
+                    // in MP for the conveyor is the gain at a nuke's damage
+                    // per MP: on top of its cost when its caster nukes and has
+                    // paid for it in the plan, so it goes when the gain does;
+                    // alone when she does not, so the gain must cover its MP.
+                    // With nobody nuking, its ticks alone, as a Poison's
+                    const int32  down  = burnIntDown(*pot);
+                    const double ticks = dotDamage(*pot, p.tick, price.window);
+                    if (const auto plans = burnPlans(r, rt, PCaster, PMob, PSpell, price, down, PEffect != nullptr, justCast, ticks, members); plans.has_value())
+                    {
+                        price.byDamage     = true;
+                        price.damageGain   = plans->plan.gain();
+                        price.detail       = plans->detail;
+                        const double inMp  = plans->damagePerMp > 0.0 ? price.damageGain / plans->damagePerMp : price.damageGain;
+                        price.mpWorth      = plans->casterNukes ? price.mp + inMp : inMp;
+                        break;
+                    }
+                    priceExtraDamage(price, ticks, rt.dealtPerSecond, rt.takenPerSecond, rt.remaining, fmt::format("nobody nuking, {:.0f} a tick", *pot));
+                    break;
+                }
+                case Model::AttackDown:
+                {
+                    // Bio does three things (scripts/actions/spells/black/
+                    // bio.lua and effects/bio.lua; the user, 2026-10-03:
+                    // everything it does): an opening dark hit -- the damage
+                    // formula's seed, as a nuke's -- and its ticks, which
+                    // shorten the fight as a Poison's do, and the mob's
+                    // attack down by the effect's subPower for its duration,
+                    // which takes that share of the mob's melee as Slow's
+                    // lost rounds do
+                    constexpr double kBioAttackDown = 0.10; // bio.lua: subPower 10, as ATTP
+                    std::map<uint16, double> seeds;
+                    double                   hit = 0.0;
+                    if (seedNukes(r, PCaster, PMob, { PSpell }, seeds).has_value())
+                    {
+                        hit = std::max(0.0, seeds[static_cast<uint16>(PSpell->getID())]);
+                    }
+                    const double ticks = dotDamage(*pot, p.tick, price.window);
+                    priceExtraDamage(price, hit + ticks, rt.dealtPerSecond, rt.takenPerSecond, rt.remaining,
+                                     fmt::format("its hit ~{:.0f} and {:.0f} a tick (+{:.0f})", hit, *pot, ticks));
+                    const double saved = attackDownSaved(price.landChance, price.window, rt.roundDelay, rt.meleePerRound, kBioAttackDown);
+                    price.hpSaved += saved;
+                    price.detail += fmt::format(", attack -{:.0f}% takes ~{:.0f} of its melee over {:.0f} s at {:.0f} a round", kBioAttackDown * 100.0, saved, price.window, rt.meleePerRound);
+                    break;
+                }
             }
-            price.mpWorth = x.mp(price.hpSaved);
+            if (!price.byDamage)
+            {
+                price.mpWorth = x.mp(price.hpSaved);
+            }
             return price;
-        }
-
-        // The formula's seed for each of her nukes on the mob
-        // (tactics_bank.lua nukeSeeds), asked in one call for the spells the
-        // fight has not kept for her, every answer for this pricing put in
-        // `seeds`. A seed is kept until one of her nukes lands
-        // (fight_log.cpp). One under a single HP -- the mob nullifies or
-        // absorbs the element, or a shield stops all magic -- is not kept:
-        // she asks again at her next think, and nukes once it lifts. How
-        // many it asked for; nothing when the formula could not answer
-        auto seedNukes(FightRecord& r, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells, std::map<uint16, double>& seeds) -> std::optional<uint32>
-        {
-            constexpr double kNothing = 1.0; // a seed under one HP of damage
-            auto&            kept     = r.nukeSeeds[PCaster->id];
-            std::vector<CSpell*> asked;
-            for (auto* PSpell : spells)
-            {
-                const auto id = static_cast<uint16>(PSpell->getID());
-                if (const auto it = kept.find(id); it != kept.end())
-                {
-                    seeds[id] = it->second;
-                }
-                else
-                {
-                    asked.push_back(PSpell);
-                }
-            }
-            if (asked.empty())
-            {
-                return 0;
-            }
-            auto fn = bankFunction("nukeSeeds");
-            if (!fn.has_value())
-            {
-                return std::nullopt;
-            }
-            sol::table ask = ::lua.create_table();
-            for (std::size_t i = 0; i < asked.size(); ++i)
-            {
-                sol::table s    = ::lua.create_table();
-                s["id"]         = static_cast<uint16>(asked[i]->getID());
-                s["element"]    = asked[i]->getElement();
-                s["skillType"]  = static_cast<uint8>(asked[i]->getSkillType());
-                s["spellGroup"] = static_cast<uint8>(asked[i]->getSpellGroup());
-                s["family"]     = static_cast<uint16>(asked[i]->getSpellFamily());
-                ask[i + 1]      = s;
-            }
-            auto res = (*fn)(CLuaBaseEntity(PCaster), CLuaBaseEntity(PMob), ask);
-            if (failed("nukeSeeds", res) || res.get_type(0) != sol::type::table)
-            {
-                return std::nullopt;
-            }
-            const sol::table answers = res.get<sol::table>(0);
-            for (auto* PSpell : asked)
-            {
-                const auto                  id     = static_cast<uint16>(PSpell->getID());
-                const sol::optional<double> answer = answers[id];
-                const double                seed   = answer.value_or(-1.0); // a spell the damage table does not know: never priced
-                seeds[id]                          = seed;
-                if (seed < 0.0 || seed >= kNothing)
-                {
-                    kept[id] = seed;
-                }
-            }
-            return static_cast<uint32>(asked.size());
-        }
-
-        // Her time per cast of a spell: its cast time, then the wait before
-        // her next action -- the player rule's 2.5 s from the moment the
-        // spell lands (CPlayerController::canAct), or its animation if
-        // longer. The spell's own cast time: Fast Cast, the arts and Quick
-        // Magic are not counted (the server's reckoning of them needs a
-        // magic state, and rolls Quick Magic as it reckons)
-        auto secondsPerCast(CSpell* PSpell) -> double
-        {
-            const double cast = std::chrono::duration<double>(PSpell->getCastTime()).count();
-            return cast + std::max(2.5, std::chrono::duration<double>(PSpell->getAnimationTime()).count());
         }
 
         // A spell the bank has no model for: its skill and family, so the
@@ -877,6 +1243,14 @@ namespace pawn::tactics
             if (r == nullptr)
             {
                 return ""; // a buff between fights: nothing to price yet
+            }
+            // A nuke is no spell the bank leaves unpriced: her tactician's
+            // was priced in her nuke line as it went out (CGambits::CastNuke),
+            // a row's in its own cast line, and the fight's close line totals
+            // each nuker's
+            if (isNuke(PSpell))
+            {
+                return "";
             }
             return unpricedLine(PCaster->getName(), PSpell->getName(), PTarget != nullptr ? PTarget->getName() : "nobody", familyOf(PSpell));
         }
@@ -992,17 +1366,7 @@ namespace pawn::tactics
                 {
                     continue;
                 }
-                const auto learned = nukeCorrection(PCaster->id, static_cast<uint8>(PSpell->getElement()));
-                NukePrice  price;
-                price.id         = static_cast<uint16>(PSpell->getID());
-                price.spell      = PSpell->getName();
-                price.mp         = battleutils::CalculateSpellCost(PCaster, PSpell);
-                price.seconds    = secondsPerCast(PSpell);
-                price.seed       = it->second;
-                price.correction = learned.factor();
-                price.learned    = learned.landed;
-                priceNukeDamage(price, PMob->health.hp, rt.dealtPerSecond, rt.remaining);
-                out.prices.push_back(std::move(price));
+                out.prices.push_back(nukePriceOf(PCaster, PSpell, it->second, PMob, rt));
             }
             return out;
         }

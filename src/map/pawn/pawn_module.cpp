@@ -250,6 +250,10 @@ class PawnModule : public CPPModule
     void OnInit() override
     {
         pawn::cleanupStaleRows();
+        // The orders' table as this build reads it, made or brought up to
+        // date here: dbtool's update skips module SQL on a database it
+        // thinks current
+        pawn::ensureOrdersTable();
         // The cardian API's messages on the Cardian Link (link_api.cpp), and
         // the Lua libraries two of them are answered from
         pawn::linkapi::registerHandlers();

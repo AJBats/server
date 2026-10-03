@@ -93,6 +93,10 @@ namespace pawn::tactics
                 case NeedKind::Cure:
                     return "Cure";
                 case NeedKind::Status:
+                    if (key.arg == cardian::tactics::kDiaOrBio)
+                    {
+                        return "Dia or Bio";
+                    }
                     if ((key.arg & cardian::tactics::kStatusBySpell) != 0)
                     {
                         auto* PSpell = spell::GetSpell(static_cast<SpellID>(key.arg & ~cardian::tactics::kStatusBySpell));
@@ -200,6 +204,14 @@ namespace pawn::tactics
         const auto family = PSpell->getSpellFamily();
         if (family != SPELLFAMILY_NONE && (PSpell->isDebuff() || PSpell->isBuff() || PSpell->isHeal()))
         {
+            // Dia, Diaga and Bio hold one place on a mob (a Dia under a Bio
+            // of its tier or more cannot land; bio.lua wipes a weaker Dia):
+            // one need, so a row of each kind never has one in flight beside
+            // the other
+            if (family == SPELLFAMILY_DIA || family == SPELLFAMILY_DIAGA || family == SPELLFAMILY_BIO)
+            {
+                return { NeedKind::Status, cardian::tactics::kDiaOrBio, target };
+            }
             // The elemental debuffs share one family, but each writes an
             // effect of its own: a need per spell
             if (family == SPELLFAMILY_ELE_DOT)
@@ -586,7 +598,10 @@ namespace pawn::tactics
         }
         // A row's named spell takes precedence, including when another
         // mage casts it. With no row, use this role holder's own proposal.
-        uint16 id = n.askedSpell();
+        // The one need Dia, Diaga and Bio share holds different spells: there
+        // a mage who asked for one casts her own, never another's row
+        const bool shared = n.key.kind == NeedKind::Status && n.key.arg == cardian::tactics::kDiaOrBio;
+        uint16     id     = shared ? 0 : n.askedSpell();
         for (const auto& r : n.requests)
         {
             if (id == 0 && r.caster == PCaster->id && r.spell != 0)

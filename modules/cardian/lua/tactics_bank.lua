@@ -21,9 +21,11 @@
 --     -> what a Cure tier heals off this caster, before the target's missing
 --        HP caps it. No dice in this one: the server's cure helpers, with
 --        each tier's power bands mirrored from its spell script.
---   xi.cardian.bank.nukeSeeds(caster, target, spells)
+--   xi.cardian.bank.nukeSeeds(caster, target, spells, intDown)
 --     -> what each nuke deals the target on average, rolling nothing: the
---        server's damage chain with every die taken at its expectation.
+--        server's damage chain with every die taken at its expectation;
+--        with intDown, a second table in the same pass, as if the target's
+--        INT were that much lower (Burn).
 --
 -- A library, not a module: it overrides nothing, so the pawn module loads
 -- it at init (bank::load) rather than init.txt, and xi_test -- which has
@@ -370,6 +372,36 @@ local function remembered(entity)
     })
 end
 
+-- A stand-in whose INT reads lower by intDown (higher, when negative),
+-- everything else as the stand-in it wraps: the target as it would be under
+-- a stat-down debuff (Burn), or with one lifted, for both the damage formula
+-- and the resist roll, which read the stat through getStat. Passed into a
+-- server call, it goes in as its entity
+local function withIntDown(proxy, intDown)
+    if intDown == nil or intDown == 0 then
+        return proxy
+    end
+    local wrapper = {}
+    entityOf[wrapper] = entityOf[proxy]
+    return setmetatable(wrapper, {
+        __index = function(self, method)
+            local call = proxy[method]
+            if method == 'getStat' then
+                call = function(_, stat, ...)
+                    local value = proxy:getStat(stat, ...)
+                    if stat == xi.mod.INT then
+                        -- held in the server's own range (CBattleEntity::INT)
+                        value = utils.clamp(value - intDown, 0, 999)
+                    end
+                    return value
+                end
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
 -- A step's expectation over its one percent roll (`math.randomInt(1, 100)
 -- <= chance` in the server's code): the step run as if the roll hit and as
 -- if it missed, the two weighed by the chance. The step rolls nothing else
@@ -509,8 +541,10 @@ end
 
 -- What every nuke of one element, skill, group and stat shares: a certain
 -- nullification or absorption, the resist roll's setup, and the chain's
--- steps that do not ask for the spell, each die at its expectation
-local function kindOf(caster, target, s, statUsed, alwaysApply)
+-- steps that do not ask for the spell, each die at its expectation. With
+-- `moved`, the target with its INT moved (withIntDown), the resist roll's
+-- setup on it as well: the only shared step that reads the INT
+local function kindOf(caster, target, s, statUsed, alwaysApply, moved)
     local damage = xi.spells.damage
     if
         certainOnly(damage.calculateNullification, target, s.element, false, true, false, false) == 0 or
@@ -554,7 +588,11 @@ local function kindOf(caster, target, s, statUsed, alwaysApply)
         spellGroup     = s.spellGroup,
         bonusMacc      = 0,
     }
-    return { factor = factor, resist = resistOf(caster, target, fed) }
+    local kind = { factor = factor, resist = resistOf(caster, target, fed) }
+    if moved ~= nil then
+        kind.movedResist = resistOf(caster, moved, fed)
+    end
+    return kind
 end
 
 -- What each of her nukes deals the target on average (RESEARCH §17.13):
@@ -568,16 +606,26 @@ end
 -- Ninjutsu and automaton steps (never a nuke's), Phalanx, Stoneskin, a
 -- damage cap, and a partial chance to nullify or absorb. What her nukes
 -- really land against this is learned beside it (fight_log.cpp). spells:
--- { id, element, skillType, spellGroup, family } each; the answer is the
+-- { id, element, skillType, spellGroup, family } each. The answer is the
 -- seed by spell id, 0 when the target certainly nullifies or absorbs the
--- element, nothing for a spell the damage table does not know
-xi.cardian.bank.nukeSeeds = function(caster, target, spells)
+-- element, nothing for a spell the damage table does not know. With
+-- intDown, a second answer in the same pass: each seed with the target's
+-- INT that much lower, as a Burn would leave it (higher when negative, as
+-- if one on it were lifted) -- only the base damage and the resist roll
+-- read the INT, so everything else is worked out once for both
+xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
     local damage = xi.spells.damage
     local c      = remembered(caster)
     local t      = remembered(target)
+    local moved  = nil
     local kinds  = {}
     local bonus  = {}
     local seeds  = {}
+    local seedsMoved = nil
+    if intDown ~= nil and intDown ~= 0 then
+        moved      = withIntDown(t, intDown)
+        seedsMoved = {}
+    end
 
     for _, s in ipairs(spells) do
         local row = damage.pTable[s.id]
@@ -592,12 +640,15 @@ xi.cardian.bank.nukeSeeds = function(caster, target, spells)
             local kindKey = table.concat({ s.element, s.skillType, s.spellGroup, statUsed, tostring(alwaysApply) }, ':')
             local kind    = kinds[kindKey]
             if kind == nil then
-                kind           = kindOf(c, t, s, statUsed, alwaysApply)
+                kind           = kindOf(c, t, s, statUsed, alwaysApply, moved)
                 kinds[kindKey] = kind
             end
 
             if kind.none then
                 seeds[s.id] = 0
+                if seedsMoved ~= nil then
+                    seedsMoved[s.id] = 0
+                end
             else
                 -- The magic attack against the magic defence asks for the
                 -- spell only by its family (the ancient magic's merits)
@@ -608,14 +659,18 @@ xi.cardian.bank.nukeSeeds = function(caster, target, spells)
                     bonus[bonusKey] = mab
                 end
 
+                local rest  = kind.factor * mab * damage.calculateHelixMeritMultiplier(c, s.id)
                 seeds[s.id] = damage.calculateBaseDamage(c, t, s.id, s.spellGroup, s.skillType, statUsed) *
-                    kind.factor *
                     resistFor(kind.resist, bonusMacc) *
-                    mab *
-                    damage.calculateHelixMeritMultiplier(c, s.id)
+                    rest
+                if seedsMoved ~= nil then
+                    seedsMoved[s.id] = damage.calculateBaseDamage(c, moved, s.id, s.spellGroup, s.skillType, statUsed) *
+                        resistFor(kind.movedResist, bonusMacc) *
+                        rest
+                end
             end
         end
     end
 
-    return seeds
+    return seeds, seedsMoved
 end

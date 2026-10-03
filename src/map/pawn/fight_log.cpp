@@ -592,12 +592,18 @@ namespace pawn::tactics
                 // It teaches her correction against the seed she was priced
                 // on only when what cut it was her own dice: not an NM (its
                 // nuke wall, which the seed leaves out), not Stoneskin or
-                // Phalanx on the mob. Her kept seeds go with any landing,
-                // since the cast changed what the next one meets
+                // Phalanx on the mob, not a mob whose INT has moved since the
+                // seed (a Burn landed or wore off). Her kept seeds go with any
+                // landing, since the cast changed what the next one meets
+                std::erase_if(r->intSeeds, [&](const auto& kept)
+                              {
+                                  return kept.first.first == PCaster->id;
+                              });
                 if (const auto kept = r->nukeSeeds.find(PCaster->id); kept != r->nukeSeeds.end())
                 {
                     const bool clean = damage && (PMob->m_Type & xi::MobType::Notorious) == xi::MobType::Normal &&
-                                       !PMob->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Stoneskin, xi::StatusEffect::Phalanx });
+                                       !PMob->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Stoneskin, xi::StatusEffect::Phalanx }) &&
+                                       r->seedInt == static_cast<int32>(PMob->INT());
                     if (const auto seed = kept->second.find(note.spell); clean && seed != kept->second.end() && seed->second > 0.0)
                     {
                         const auto element = static_cast<uint8>(PSpell->getElement());
@@ -754,6 +760,7 @@ namespace pawn::tactics
             // A melee swing met the mob's defence; magic, ranged, skillchains
             // and weapon skills (their own attack and defence terms) are not
             // priced on it
+            m.meleeDealt += landed;
             bank::defenceSplit(r, PAttacker, PMob, landed);
         }
         if (debug())

@@ -279,6 +279,11 @@ namespace pawn
         auto OffersTools() const -> bool;
         auto OffersSpells() const -> bool;
         auto OffersRest() -> bool;
+        // The nukes her tactician may cast for her -- learned, at her jobs
+        // and level, whatever her MP and recasts say this instant -- while a
+        // marked Damage spell (any) row of hers runs; none otherwise. What a
+        // Burn on her mob is priced against (spell_bank.cpp burnPlans)
+        auto OfferedNukes() -> std::vector<SpellID>;
         // Her marked row of a tool that goes out right before her weapon
         // skill -- Boost, or Sneak Attack from the mob's back -- on, its
         // gate holding now, in any layer that runs (a wild Monk's brains
@@ -401,13 +406,14 @@ namespace pawn
         auto RunningStates(const cardian::layers::Layers<GambitRow>& layers) const -> std::vector<cardian::tactician::State>;
         // Whether a marked row that runs names a tool of the kind wanted
         auto OffersAny(const std::function<bool(cardian::tactician::Allowance)>& wanted) const -> bool;
-        // The two answers that move only with her rows, kept per generation
-        // of them; every edit, load and layer rebuild calls RowsChanged
+        // The answers that move only with her rows, kept per generation of
+        // them; every edit, load and layer rebuild calls RowsChanged
         struct Offered
         {
             uint32 generation = 0;
             bool   tools      = false;
             bool   spells     = false;
+            bool   nukes      = false;
         };
         auto Offers() const -> const Offered&;
         void RowsChanged();

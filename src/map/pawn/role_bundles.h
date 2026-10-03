@@ -48,10 +48,12 @@
 // Aggressor, at 45, on a 75 server whose sub jobs stop at 37).
 namespace pawn::bundles
 {
-    // What a seat's tool asks of her two jobs: nothing, or a job ability or
-    // a spell one of them can ever learn; and, for a melee tool, a main job
-    // that fights in melee on the Damage seat (meleesOnDamage), for a nuke
-    // one that nukes there (nukesOnDamage)
+    // What a seat's tool asks of her two jobs: nothing, or a job ability, a
+    // spell, or any debuff her tactician prices (tactician_line.h
+    // kPricedDebuffs) one of them can ever learn; and, for a melee tool, a
+    // main job that fights in melee on the Damage seat (meleesOnDamage), for
+    // a nuke one that nukes there (nukesOnDamage), for a healer's tool a
+    // pair of jobs that learns Cure
     struct Need
     {
         enum class Kind : uint8
@@ -59,11 +61,13 @@ namespace pawn::bundles
             Anyone,
             Ability,
             Spell,
+            Enfeeble,
         };
-        Kind   kind  = Kind::Anyone;
-        uint16 id    = 0;     // the ability's or the spell's
-        bool   melee = false; // only for a main job that melees
-        bool   nuker = false; // only for a main job that nukes
+        Kind   kind   = Kind::Anyone;
+        uint16 id     = 0;     // the ability's or the spell's
+        bool   melee  = false; // only for a main job that melees
+        bool   nuker  = false; // only for a main job that nukes
+        bool   healer = false; // only for a main or sub job that learns Cure
     };
 
     // A row a seat lends, and what it needs
@@ -138,14 +142,24 @@ namespace pawn::bundles
         }
     }
 
+    // The game's ids the tools need (static_assert'ed against the game's
+    // enums in pawn_gambits.cpp)
+    inline constexpr uint16 kSpellCure    = 1;
+    inline constexpr uint16 kSpellPoisona = 14; // the first -na a job learns
+    inline constexpr uint16 kProvoke      = 35;
+
     // Whether her two jobs can ever use what a tool needs. levelOf(need,
-    // job): the level that job learns the need's ability or spell at, 0
-    // for never -- the game's tables on the server, a few known levels in
-    // the tests
+    // job): the level that job learns the need's ability or spell at (for
+    // Enfeeble, the first priced debuff it learns), 0 for never -- the
+    // game's tables on the server, a few known levels in the tests
     template <typename LevelOf>
     auto reaches(const Need need, const xi::Job main, const xi::Job sub, const Caps caps, LevelOf&& levelOf) -> bool
     {
         if ((need.melee && !meleesOnDamage(main)) || (need.nuker && !nukesOnDamage(main)))
+        {
+            return false;
+        }
+        if (need.healer && !reaches(Need{ Need::Kind::Spell, kSpellCure }, main, sub, caps, levelOf))
         {
             return false;
         }
@@ -165,17 +179,12 @@ namespace pawn::bundles
         return within(main, caps.main) || within(sub, caps.sub);
     }
 
-    // The game's ids the tools need (static_assert'ed against the game's
-    // enums in pawn_gambits.cpp)
-    inline constexpr uint16 kSpellCure    = 1;
-    inline constexpr uint16 kSpellPoisona = 14; // the first -na a job learns
-    inline constexpr uint16 kProvoke      = 35;
-
     // A seat's tools, every one, in the bundle's order of priority.
     //  - Healer: the marked rows the tactician cures and takes ailments off
-    //    through, and her marked Rest, its MP pacing -- for a job that
-    //    learns Cure (the -na, one that learns a -na): on a default mage
-    //    every one is hers already, and the fit adds nothing.
+    //    through, its enfeebles, and her marked Rest, its MP pacing -- for a
+    //    job that learns Cure (the -na, one that learns a -na; the enfeebles,
+    //    a pair of jobs that learns Cure and a priced debuff): on a default
+    //    mage every one is hers already, and the fit adds nothing.
     //  - Tank: the pull, marked (the mob an ally is on, the player as much
     //    as a cardian: her tactician's melee), for anyone; then Provoke
     //    (tank_calls.h paces it; the Tank seat is what runs the tank
@@ -186,12 +195,14 @@ namespace pawn::bundles
     //    is lent no Berserk, a Summoner nothing). A buff acts
     //    where it sits in her think (CGambits::BuffNow), the seat choosing
     //    between Berserk and Defender (tactician_line.h wrongStance). Then
-    //    Damage spell (any), marked -- her nukes -- and her marked Rest,
-    //    the MP pacing that sits her down between fights, for a main job
-    //    that nukes (nukesOnDamage: her tactician's when and which,
-    //    CGambits::CastNuke). The Thief's Trick Attack joins when its
-    //    judgement exists.
-    //  - Puller is a seat only.
+    //    her enfeebles, marked, for a main job that nukes and a pair that
+    //    learns a priced debuff; Damage spell (any), marked -- her nukes --
+    //    and her marked Rest, the MP pacing that sits her down between
+    //    fights, for a main job that nukes (nukesOnDamage: her tactician's
+    //    when and which, CGambits::CastNuke). The Thief's Trick Attack joins
+    //    when its judgement exists.
+    //  - Puller: the Damage seat's tools. Between pulls a puller fights as
+    //    damage does; the pull itself waits on the puller's own judgement.
     inline auto toolsOf(const cardian::party::Role role) -> std::span<const Tool>
     {
         using K = Need::Kind;
@@ -199,6 +210,7 @@ namespace pawn::bundles
         static const std::vector<Tool> healer{
             { "1|101:0|2:0:1|0", { K::Spell, kSpellCure } },       // * Ally -> Cure (best)
             { "1|101:0|2:0:4|0", { K::Spell, kSpellPoisona } },    // * Ally -> -na (best)
+            { "2|101:0|2:100:0|0", { K::Enfeeble, 0, false, false, true } }, // * Foe -> Enfeeble
             { "0|101:0|100:14:1|0", { K::Spell, kSpellCure } },    // * Self -> Rest
         };
         static const std::vector<Tool> tank{
@@ -217,6 +229,7 @@ namespace pawn::bundles
             { "0|101:0|3:2:39|0", { K::Ability, t::kBoost, true } },     // * Self -> Boost
             { "0|101:0|3:2:44|0", { K::Ability, t::kSneakAttack, true } }, // * Self -> Sneak Attack
             { "0|101:0|3:2:36|0", { K::Ability, t::kFocus, true } },     // * Self -> Focus
+            { "2|101:0|2:100:0|0", { K::Enfeeble, 0, false, true } },    // * Foe -> Enfeeble
             { "2|101:0|2:3:0|0", { K::Anyone, 0, false, true } },        // * Foe -> Damage spell (any)
             { "0|101:0|100:14:1|0", { K::Anyone, 0, false, true } },     // * Self -> Rest
         };
@@ -227,6 +240,7 @@ namespace pawn::bundles
             case cardian::party::Role::Tank:
                 return tank;
             case cardian::party::Role::Damage:
+            case cardian::party::Role::Puller:
                 return damage;
             default:
                 return {};

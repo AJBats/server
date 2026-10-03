@@ -142,7 +142,7 @@ namespace
             o.rules.maxCheck   = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
             o.rules.aggressive = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
             o.rules.links      = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
-            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links FROM cardian_orders WHERE charid = ?", ownerCharID);
+            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio FROM cardian_orders WHERE charid = ?", ownerCharID);
             if (rset && rset->next())
             {
                 o.rules.minCheck   = rset->get<uint8>("hunt_min");
@@ -150,6 +150,7 @@ namespace
                 o.rules.pullFirst  = rset->get<uint8>("pull_first");
                 o.rules.aggressive = rset->get<uint8>("aggressive") != 0;
                 o.rules.links      = rset->get<uint8>("links") != 0;
+                o.rules.preferBio  = rset->get<uint8>("prefer_bio") != 0;
             }
         }
         return o;
@@ -1636,6 +1637,21 @@ namespace pawn
         return ordersFor(ownerCharID).rules;
     }
 
+    void ensureOrdersTable()
+    {
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_orders` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`hunt_min` tinyint(3) unsigned NOT NULL DEFAULT '3', "
+                         "`hunt_max` tinyint(3) unsigned NOT NULL DEFAULT '5', "
+                         "`pull_first` tinyint(3) unsigned NOT NULL DEFAULT '1', "
+                         "`aggressive` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`links` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
+                         "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `links`");
+    }
+
     auto setHuntRule(CCharEntity* POwner, const uint8 rule, const int value) -> uint16
     {
         if (POwner == nullptr)
@@ -1668,17 +1684,21 @@ namespace pawn
         {
             r.links = value != 0;
         }
+        else if (rule == CL_HUNT_DIA_BIO && check(value, 0, 1))
+        {
+            r.preferBio = value != 0;
+        }
         else
         {
             return CL_S_MALFORMED;
         }
-        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links) VALUES (?, ?, ?, ?, ?, ?) "
+        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio) VALUES (?, ?, ?, ?, ?, ?, ?) "
                          "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
-                         "aggressive = VALUES(aggressive), links = VALUES(links)",
-                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0);
-        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}", POwner->getName(),
+                         "aggressive = VALUES(aggressive), links = VALUES(links), prefer_bio = VALUES(prefer_bio)",
+                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0, r.preferBio ? 1 : 0);
+        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}; {} preferred", POwner->getName(),
                     magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
-                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided");
+                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided", r.preferBio ? "Bio" : "Dia");
         return CL_S_OK;
     }
 
