@@ -124,7 +124,8 @@ namespace cardian::link
     X(CALENDAR, cl_calendar)     \
     X(AH_SHELF, cl_ah_shelf)     \
     X(AH_HISTORY, cl_ah_history) \
-    X(AH_BID, cl_ah_bid)
+    X(AH_BID, cl_ah_bid)         \
+    X(JOB_CHANGE, cl_job_change)
 
     template <typename T>
     struct MessageType;
