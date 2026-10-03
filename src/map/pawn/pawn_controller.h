@@ -915,8 +915,11 @@ private:
     };
     mutable std::vector<SightMemo> m_SightMemo;
 
-    std::unique_ptr<pawn::CGambits> m_Gambits;
-    bool                            m_BrainLoaded = false;
+    // What her gambit engine asks of her (gambit_host.h): this controller,
+    // through an adapter, so its names stay the engine's
+    std::unique_ptr<pawn::GambitHost> m_Host;
+    std::unique_ptr<pawn::CGambits>   m_Gambits;
+    bool                              m_BrainLoaded = false;
 
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;

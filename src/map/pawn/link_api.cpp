@@ -27,6 +27,7 @@
 #include "engage_math.h"
 #include "gambit_wire.h"
 #include "gate_guards.h"
+#include "live_controller.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_gambits.h"
@@ -540,7 +541,7 @@ namespace pawn::linkapi
         static_assert(static_cast<uint8>(cardian::tactician::State::Order) == CL_GS_ORDER && static_cast<uint8>(cardian::tactician::State::Line) == CL_GS_LINE &&
                       static_cast<uint8>(cardian::tactician::State::Allows) == CL_GS_ALLOWS && static_cast<uint8>(cardian::tactician::State::NotBelow) == CL_GS_NOT_BELOW &&
                       static_cast<uint8>(cardian::tactician::State::Clock) == CL_GS_CLOCK && static_cast<uint8>(cardian::tactician::State::NoChoice) == CL_GS_NO_CHOICE &&
-                      static_cast<uint8>(cardian::tactician::State::Misfit) == CL_GS_MISFIT,
+                      static_cast<uint8>(cardian::tactician::State::Misfit) == CL_GS_MISFIT && static_cast<uint8>(cardian::tactician::State::Client) == CL_GS_CLIENT,
                       "a row's state crosses as its number");
         static_assert(static_cast<uint8>(pawn::Side::Self) == CL_SIDE_SELF && static_cast<uint8>(pawn::Side::Ally) == CL_SIDE_ALLY && static_cast<uint8>(pawn::Side::Foe) == CL_SIDE_FOE);
         static_assert(static_cast<uint8>(pawn::Takes::Nothing) == CL_VC_NOTHING && static_cast<uint8>(pawn::Takes::Number) == CL_VC_NUMBER &&
@@ -549,11 +550,24 @@ namespace pawn::linkapi
                       static_cast<uint8>(pawn::ActionGroup::Magic) == CL_AG_MAGIC && static_cast<uint8>(pawn::ActionGroup::Abilities) == CL_AG_ABILITIES &&
                       static_cast<uint8>(pawn::ActionGroup::WeaponSkills) == CL_AG_WEAPON_SKILLS && static_cast<uint8>(pawn::ActionGroup::Ranged) == CL_AG_RANGED);
 
-        // Her gambit set: a cardian he commands
-        auto gambitsOf(CCharEntity* PPawn) -> pawn::CGambits*
+        // The gambit set a request names, and whose it is: a cardian he
+        // commands, or his own when it names him (live_controller.h)
+        struct GambitSet
         {
+            CCharEntity*    PWho = nullptr;
+            pawn::CGambits* PSet = nullptr;
+        };
+
+        auto gambitSetOf(CCharEntity* PChar, const uint32 id) -> GambitSet
+        {
+            if (id == PChar->id)
+            {
+                auto* PLive = dynamic_cast<CLiveController*>(PChar->PAI->GetController());
+                return { PChar, PLive != nullptr ? &PLive->Gambits() : nullptr };
+            }
+            auto* PPawn       = pawn::findCommandablePawn(PChar, id);
             auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr ? &PController->Gambits() : nullptr;
+            return { PPawn, PController != nullptr ? &PController->Gambits() : nullptr };
         }
 
         // Her rows as they now stand, each a GAMBIT_ROW answer, and the GAMBITS
@@ -593,14 +607,13 @@ namespace pawn::linkapi
 
         void gambits(CCharEntity* PChar, const cl_gambits& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
-            auto* PSet  = gambitsOf(PPawn);
+            const auto [PWho, PSet] = gambitSetOf(PChar, ask.cardian);
             if (PSet == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(rowsOf(PPawn, *PSet, reply), CL_S_OK);
+            reply.finish(rowsOf(PWho, *PSet, reply), CL_S_OK);
         }
 
         // An edit of her rows: made by edit(set), which returns its outcome,
@@ -609,8 +622,7 @@ namespace pawn::linkapi
         template <typename Message, typename Edit>
         void editGambits(CCharEntity* PChar, const Message& ask, Reply& reply, Edit&& edit)
         {
-            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
-            auto* PSet  = gambitsOf(PPawn);
+            const auto [PWho, PSet] = gambitSetOf(PChar, ask.cardian);
             if (PSet == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
@@ -619,9 +631,9 @@ namespace pawn::linkapi
             const uint16 status = edit(*PSet);
             if (status == CL_S_OK)
             {
-                pawn::saveGambits(PPawn);
+                pawn::saveGambits(PWho);
             }
-            reply.more(rowsOf(PPawn, *PSet, reply));
+            reply.more(rowsOf(PWho, *PSet, reply));
             reply.finish(ask, status);
         }
 
@@ -748,13 +760,14 @@ namespace pawn::linkapi
         // statuses and actions in parts, then her jobs and levels
         void gambitVocab(CCharEntity* PChar, const cl_gambit_vocab& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            const bool own   = ask.cardian == PChar->id;
+            auto*      PPawn = own ? PChar : pawn::findCommandablePawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            const auto vocab = pawn::vocabularyFor(PPawn);
+            const auto vocab = pawn::vocabularyFor(PPawn, own);
             inParts(reply, PPawn->id, &cl_vocab_conditions::conditions, vocab.conditions, [](const pawn::VocabCondition& c, cl_vocab_condition& out)
                     {
                         out.target    = static_cast<uint16_t>(c.target);

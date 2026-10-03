@@ -23,6 +23,7 @@
 
 #include "formation_math.h"
 #include "gambit_defaults.h"
+#include "gambit_host.h"
 #include "gambit_ids.h"
 #include "gambit_layers.h"
 #include "party_roles.h"
@@ -50,7 +51,7 @@
 class CAbility;
 class CBattleEntity;
 class CCharEntity;
-class CPawnController;
+class CSpell;
 
 namespace pawn
 {
@@ -92,7 +93,9 @@ namespace pawn
     // the row ("Ally: HP < *%") -- the statuses a status condition names,
     // and the actions of her jobs at every level -- her spells, abilities
     // and weapon skills, plus the behaviours -- each marked whether she can
-    // use it now.
+    // use it now. A character his own client drives (gambit_host.h
+    // OwnClient) is offered what his hands do: no behaviour, and no
+    // Tactician's choice, since he has no tactician.
     enum class Side : uint8
     {
         Self,
@@ -149,7 +152,25 @@ namespace pawn
         std::vector<VocabStatus>    statuses;
         std::vector<VocabAction>    actions;
     };
-    auto vocabularyFor(CCharEntity* PPawn) -> Vocabulary;
+    auto vocabularyFor(CCharEntity* PPawn, bool ownClient = false) -> Vocabulary;
+
+    // Another of the caster's party is already casting what would make this
+    // cast redundant on this target: the same buff or debuff family no
+    // stronger, a cure on someone above half HP, the same -na
+    auto partyAlreadyCasting(CCharEntity* PCaster, CSpell* PSpell, const CBattleEntity* PTarget) -> bool;
+
+    // Whoever a character's battle target hates most; nobody without one
+    auto topEnmityOf(const CBattleEntity* PEntity) -> CBattleEntity*;
+
+    // An ally of hers engaged on this foe: any character of her party in
+    // her zone but herself, the player as much as a cardian
+    auto allyOn(const CCharEntity* PSelf, const CBattleEntity* PFoe) -> const CCharEntity*;
+
+    // A foe around a character's party as the engage door's finders see it
+    // (engage_math.h Foe): whether the leader is engaged on it, an ally of
+    // his, and whether it is on him or on his party. `heldOff` is the
+    // asker's own hold-off on it
+    auto foeFacts(const CCharEntity* PSelf, CBattleEntity* PFoe, const CCharEntity* PLeader, bool heldOff = false) -> cardian::engage::Foe;
 
     // Her main and support job's abilities at every level (a pet's command,
     // outside the character bitfield, left out), and of those the ones she
@@ -188,10 +209,16 @@ namespace pawn
     // (Admits and UseHateTool, and the engage door's melee rows), never
     // orders, and a row with no meaning where it sits is struck out. The
     // world's layer has no line: its rows are orders.
+    //
+    // It runs for whoever hosts it (gambit_host.h): a cardian's controller,
+    // or the controller of a character his own client drives. His rows are
+    // his own alone -- no world layer, no party role's, no line -- and run
+    // as orders: what his hands do. A behaviour row in his list is struck
+    // out (tactician_line.h ownClientStateOf).
     class CGambits
     {
     public:
-        CGambits(CCharEntity* PPawn, CPawnController* PController);
+        CGambits(CCharEntity* POwner, GambitHost* PHost);
 
         auto AddGambit(gambits::Gambit_t gambit, bool enabled = true) -> std::string;
         void RemoveGambit(const std::string& id);
@@ -363,9 +390,12 @@ namespace pawn
         auto PartyHasTank() const -> bool;
         auto IsOffensive(const gambits::Gambit_t& gambit) const -> bool;
         void Debug(std::string_view what, uint32 id, const CBattleEntity* PTarget) const;
+        // Her spell rows feed her scope's conveyor: a tactician watches it,
+        // and she is a cardian (a played character's casts are his own)
+        auto Conveyed() const -> bool;
 
         CCharEntity*      POwner;
-        CPawnController*  m_PController;
+        GambitHost*       m_host;
         CSpellBook        m_spellBook;
         timer::time_point m_lastAction;
         uint32            m_nextId = 0;

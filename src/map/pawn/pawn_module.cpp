@@ -29,6 +29,7 @@
 #include "pawn_controller.h"
 #include "gambit_text.h"
 #include "link_api.h"
+#include "live_controller.h"
 #include "pawn_gambits.h"
 #include "spell_bank.h"
 #include "tactics.h"
@@ -42,6 +43,7 @@
 #include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
 #include "enums/party_kind.h"
+#include "packets/c2s/0x01a_action.h"
 #include "packets/c2s/0x06e_group_solicit_req.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
@@ -612,14 +614,20 @@ class PawnModule : public CPPModule
     }
 
     // A character entering a zone -- a login, a zone change, a cardian's
-    // stand -- is a body the fight log's hitch must be on if she is routed
+    // stand -- is a body the fight log's hitch must be on if she is routed.
+    // A played character gets his gambits (live_controller.h): the zone
+    // loaded him afresh with upstream's player controller, and this one is
+    // that controller and his gambit engine
     void OnCharZoneIn(CCharEntity* PChar) override
     {
         pawn::tactics::zoneIn(PChar);
+        CLiveController::InstallOn(PChar);
     }
 
     // A held simulation (pause/pause.h) takes no step here either: the world's
     // bodies, the seat ladder and the tacticians wait, and only the outboxes drain.
+    // A played character whose controller upstream swapped back to its own
+    // mid-session (a charm ending, a jail) gets his gambits back on the next tick
     void OnZoneTick(CZone* PZone) override
     {
         if (cardian::pause::isHeld())
@@ -628,6 +636,10 @@ class PawnModule : public CPPModule
             return;
         }
 
+        PZone->ForEachChar([](CCharEntity* PChar)
+                           {
+                               CLiveController::InstallOn(PChar);
+                           });
         pawn::onZoneTick(PZone);
     }
 
@@ -637,7 +649,9 @@ class PawnModule : public CPPModule
     // And the game's own party invite (UniqueNo is the invitee's charid
     // whether she was targeted or named): one of the world's adventurers
     // is refused and the packet dropped, a faded cardian of the player's
-    // own is stood so the handler finds her
+    // own is stood so the handler finds her. And a disengage of his own
+    // (his "attack off", or a talk, which ends a fight) is noted for his
+    // gambits before the handler disengages him (live_controller.h)
     auto OnIncomingPacket(MapSession* PSession, CCharEntity* PChar, CBasicPacket& packet) -> bool override
     {
         std::ignore = PSession;
@@ -648,6 +662,15 @@ class PawnModule : public CPPModule
         if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
         {
             pawn::notePositionPacket(PChar);
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_ACTION))
+        {
+            const auto action = packet.as<GP_CLI_COMMAND_ACTION>()->ActionID;
+            auto*      PLive  = dynamic_cast<CLiveController*>(PChar->PAI->GetController());
+            if (PLive != nullptr && (action == GP_CLI_COMMAND_ACTION_ACTIONID::AttackOff || action == GP_CLI_COMMAND_ACTION_ACTIONID::Talk))
+            {
+                PLive->LeavingByHand();
+            }
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_SOLICIT_REQ))
         {

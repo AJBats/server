@@ -432,3 +432,23 @@ TEST_CASE("tactician line: the default sets mean what they say where they sit", 
     }
 }
 
+TEST_CASE("tactician line: a played character's list has no line, and his behaviour rows are struck out", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::ownClientStateOf;
+    // What his hands do is an order wherever it sits
+    CHECK(ownClientStateOf(row("0|1:50|2:2:2|0")) == State::Order);  // Self: HP < 50% -> Cure II
+    CHECK(ownClientStateOf(row("2|0:0|4:2:1|0")) == State::Order);   // Foe -> a weapon skill
+    CHECK(ownClientStateOf(row("101|0:0|0:0:0|0")) == State::Order); // Foe: targeted by ally -> Attack
+
+    // A behaviour row -- a line row, a role, Rest with the player -- moves a
+    // cardian or speaks to her tactician: struck out in his list
+    CHECK(ownClientStateOf(row(kSupportMage)) == State::Client);
+    CHECK(ownClientStateOf(row(kTank)) == State::Client);
+    CHECK(ownClientStateOf(row(kRest)) == State::Client);
+    CHECK(cardian::tactician::struck(State::Client));
+
+    // Tactician's choice has nobody to choose; a misfit is one in his list too
+    CHECK(ownClientStateOf(row(kCureBest)) == State::NoChoice);
+    CHECK(ownClientStateOf(row("0|0:0|2:2:2|0"), false) == State::Misfit);
+}
+

@@ -35,6 +35,7 @@
 #include "pawn_travel.h"
 #include "pawn_gambits.h"
 #include "gambit_text.h"
+#include "live_controller.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -1992,24 +1993,34 @@ namespace pawn
         }
     } // namespace
 
-    void saveGambits(CCharEntity* PPawn)
+    namespace
     {
-        auto* PController = controllerOf(PPawn);
-        if (PController == nullptr)
+        void saveGambitSet(const CCharEntity* PChar, const uint8 setId, const CGambits& gambits, const bool master)
         {
-            return;
+            std::string blob;
+            for (const auto& row : gambits.Rows())
+            {
+                blob += row.enabled ? "1 " : "0 ";
+                blob += text::formatRow(row.gambit);
+                blob += '\n';
+            }
+            db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, ?, ?, ?) "
+                             "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
+                             PChar->id, setId, static_cast<uint8>(master ? 1 : 0), blob);
         }
-        std::string blob;
-        for (const auto& row : PController->Gambits().Rows())
+    } // namespace
+
+    void saveGambits(CCharEntity* PChar)
+    {
+        if (auto* PController = controllerOf(PChar); PController != nullptr)
         {
-            blob += row.enabled ? "1 " : "0 ";
-            blob += text::formatRow(row.gambit);
-            blob += '\n';
+            // Her own switch, never a maneuver's hold on it (OwnMaster)
+            saveGambitSet(PChar, 0, PController->Gambits(), PController->OwnMaster());
         }
-        // Her own switch, never a maneuver's hold on it (OwnMaster)
-        db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, 0, ?, ?) "
-                         "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
-                         PPawn->id, static_cast<uint8>(PController->OwnMaster() ? 1 : 0), blob);
+        else if (auto* PLive = PChar != nullptr ? dynamic_cast<CLiveController*>(PChar->PAI->GetController()) : nullptr; PLive != nullptr)
+        {
+            saveGambitSet(PChar, kOwnClientSet, PLive->Gambits(), PLive->Gambits().MasterOn());
+        }
     }
 
     bool loadSavedGambits(CCharEntity* PPawn)
@@ -2019,15 +2030,26 @@ namespace pawn
         {
             return false;
         }
-        auto*      PGambits = &PController->Gambits();
-        const auto rset     = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
-        if (!rset || !rset->next())
+        const auto master = loadGambitSet(PPawn, 0, PController->Gambits());
+        if (!master.has_value())
         {
             return false;
         }
+        PController->SetOwnMaster(*master);
+        return true;
+    }
+
+    auto loadGambitSet(CCharEntity* PChar, const uint8 setId, CGambits& gambits) -> std::optional<bool>
+    {
+        auto*      PGambits = &gambits;
+        const auto rset     = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = ?", PChar->id, setId);
+        if (!rset || !rset->next())
+        {
+            return std::nullopt;
+        }
 
         PGambits->RemoveAllGambits();
-        PController->SetOwnMaster(rset->get<uint8>("master_on") != 0);
+        const bool master = rset->get<uint8>("master_on") != 0;
 
         const auto  blob  = rset->get<std::string>("set_rows");
         std::size_t count = 0;
@@ -2060,8 +2082,9 @@ namespace pawn
                 ++bad;
             }
         }
-        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{})", PPawn->getName(), count, bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
-        return true;
+        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{}{})", PChar->getName(), count, setId == kOwnClientSet ? ", his own set" : "",
+                    bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
+        return master;
     }
 
     void forgetGambits(CCharEntity* PPawn)
@@ -2518,9 +2541,9 @@ namespace pawn
         PChar->SpawnPETList.clear();
         PChar->SpawnTRUSTList.clear();
 
-        // Back to a player's action surface: the stock controller, no
-        // server-side pathing, stock speed
-        PChar->PAI->SetController(std::make_unique<CPlayerController>(PChar.get()));
+        // Back to a player's action surface: the stock controller with his
+        // own gambits (live_controller.h), no server-side pathing, stock speed
+        PChar->PAI->SetController(std::make_unique<CLiveController>(PChar.get()));
         PChar->PAI->PathFind.reset();
         PChar->baseSpeed = settings::get<uint8>("map.BASE_SPEED");
         PChar->UpdateSpeed();

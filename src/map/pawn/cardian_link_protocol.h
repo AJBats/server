@@ -33,7 +33,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 32: ROLE_LOCKED, and a GAMBIT_ROW's on
+// compatible, the user, 2026-09-14). 33: the gambit messages name the player
+// himself too (his own set), and CL_GS_CLIENT; 32: ROLE_LOCKED, and a GAMBIT_ROW's on
 // is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
 // own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
 // numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
@@ -72,7 +73,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 32 };
+enum { CL_PROTOCOL = 33 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -733,10 +734,13 @@ typedef struct cl_give_use
 // ---- 0x03xx: gambits -------------------------------------------------------
 //
 // A cardian's gambit rows (M3.85, the gambit editor) and the pickers'
-// catalogue, for a cardian he commands. A row crosses as the gambit
-// engine's own fields; its label is for people. Every edit is answered by
-// her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS (CL_F_MORE)
-// -- and then its outcome, refused or not, so the editor never keeps a guess.
+// catalogue, for a cardian he commands -- or for himself, when `cardian` is
+// his own charid: his own set, run by his hands while he plays (protocol 33;
+// no behaviour and no Tactician's choice in his catalogue). A row crosses as
+// the gambit engine's own fields; its label is for people. Every edit is
+// answered by her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS
+// (CL_F_MORE) -- and then its outcome, refused or not, so the editor never
+// keeps a guess.
 
 enum
 {
@@ -797,6 +801,7 @@ enum
     CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
     CL_GS_NO_CHOICE = 5, // Tactician's choice with no tactician above it: struck out
     CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_CLIENT    = 7, // a behaviour row in the player's own list: only a cardian runs one, struck out
 };
 
 enum

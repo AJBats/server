@@ -50,6 +50,8 @@ class CZone;
 // Gated behind pawn.ENABLE_PAWNS.
 namespace pawn
 {
+    class CGambits;
+
     bool isEnabled();
 
     // The account that owns what this character can summon or possess: the
@@ -341,9 +343,16 @@ namespace pawn
     // grammar, one "on spec" line each, and her own master switch
     // (CPawnController::OwnMaster). Saved after every edit and when her
     // defaults are seeded; loaded at spawn instead of the defaults when
-    // present.
-    void saveGambits(CCharEntity* PPawn);
+    // present. A character his own client drives keeps his own set apart
+    // (kOwnClientSet, live_controller.h): what his hands do while he plays
+    // is not what a cardian's body does while someone else drives her.
+    // saveGambits saves whichever set the character's controller runs.
+    constexpr uint8 kOwnClientSet = 100; // cardian_gambits.set_id of a played character's own set
+    void saveGambits(CCharEntity* PChar);
     bool loadSavedGambits(CCharEntity* PPawn);
+    // One set by charid and set id, into the engine: its rows replace what
+    // the engine held. The saved master switch, or nothing with no set saved
+    auto loadGambitSet(CCharEntity* PChar, uint8 setId, CGambits& gambits) -> std::optional<bool>;
     void forgetGambits(CCharEntity* PPawn);
     bool reloadBrainByName(const std::string& targetName);
     bool reloadBrain(CCharEntity* PPawn);

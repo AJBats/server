@@ -138,11 +138,12 @@ namespace cardian::tactician
         Clock,    // below the line on a timer or a chance, which her judgement has no use for: struck out
         NoChoice, // Tactician's choice with no tactician above it: struck out
         Misfit,   // an action that cannot be aimed at the side its condition names: struck out, wherever it sits
+        Client,   // a behaviour row in the list of a character his own client drives: only a cardian runs one, struck out
     };
 
     constexpr auto struck(const State state) -> bool
     {
-        return state == State::NotBelow || state == State::Clock || state == State::NoChoice || state == State::Misfit;
+        return state == State::NotBelow || state == State::Clock || state == State::NoChoice || state == State::Misfit || state == State::Client;
     }
 
     // An action's target flags, as upstream's TARGETTYPE writes them
@@ -387,6 +388,28 @@ namespace cardian::tactician
                 return State::Clock;
             }
             return State::Allows;
+        }
+        return carries(g, pawn::G_CONDITION_TACTICIANS_CHOICE) ? State::NoChoice : State::Order;
+    }
+
+    // A row's state in the list of a character his own client drives
+    // (gambit_host.h OwnClient). He has no tactician, so his list has no
+    // line and every row is an order -- but a behaviour row (a role, a line
+    // row, Avoid aggro...) moves a cardian or speaks to her tactician, and
+    // does nothing for him; Tactician's choice has nobody to choose
+    inline auto ownClientStateOf(const gambits::Gambit_t& g, const bool fits = true) -> State
+    {
+        if (!fits)
+        {
+            return State::Misfit;
+        }
+        const bool behaviour = !g.actions.empty() && std::ranges::all_of(g.actions, [](const gambits::Action_t& a)
+                                                                         {
+                                                                             return a.reaction == pawn::G_REACTION_BEHAVIOR;
+                                                                         });
+        if (behaviour)
+        {
+            return State::Client;
         }
         return carries(g, pawn::G_CONDITION_TACTICIANS_CHOICE) ? State::NoChoice : State::Order;
     }
