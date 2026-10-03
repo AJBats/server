@@ -150,7 +150,7 @@ enum
     CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
     CL_S_COOLING_DOWN      = 0x0133, // a cooldown runs: the answer says how long (RESCUE's cooldownLeft, SHOUT's waitMs)
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
-    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target
+    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target, or holds her position out of a weapon skill's reach
     CL_S_CANNOT_RECOVER    = 0x0136, // resting, she cannot recover right now (a poison, an avatar out)
 
     // The pause button
@@ -249,7 +249,7 @@ enum
     CL_AK_ATTACK      = 6,  // the command window's Attack: fight the target
     CL_AK_DISENGAGE   = 7,
     CL_AK_MOVE        = 8,  // a paused maneuver's order: walk the route the ring laid
-    CL_AK_MOVE_WAIT   = 9,  // the same, then wait at its end
+    CL_AK_MOVE_WAIT   = 9,  // the same, then hold position at its end
     CL_AK_REST        = 10, // id: rest until this percent of HP and MP
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
@@ -1046,7 +1046,7 @@ enum
     CL_MV_BEGIN     = 0, // he takes the wheel: her maneuver begins, live
     CL_MV_OFF       = 1, // it ends
     CL_MV_MOVE      = 2, // a paused maneuver's order: walk the route the ring laid
-    CL_MV_MOVE_WAIT = 3, // the same, then wait at its end
+    CL_MV_MOVE_WAIT = 3, // the same, then hold position at its end
     CL_MV_REST      = 4, // rest until percent of HP and MP
 };
 
@@ -1160,13 +1160,13 @@ typedef struct cl_engage
     uint16_t  spare;
 } cl_engage;
 
-// Wait here, or follow him: from another zone, following is a trek to his.
+// Hold position, or follow him: from another zone, following is a trek to his.
 // Answered by the outcome alone; her roster line says it next time it is read.
 typedef struct cl_wait
 {
     cl_header h;
     uint32_t  cardian; // charid
-    uint8_t   on;      // 1 wait here, 0 follow
+    uint8_t   on;      // 1 hold position, 0 follow
     uint8_t   spare[3];
 } cl_wait;
 
