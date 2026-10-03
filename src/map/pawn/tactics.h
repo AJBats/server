@@ -80,6 +80,10 @@ namespace pawn::tactics
     // Her rows offer the tactician her rest: a marked Self -> Rest row that
     // is on, the MP pacing's handle (RESEARCH §17.13)
     auto offersRest(CBattleEntity* PMember) -> bool;
+    // The nukes her tactician may cast for her: a cardian's learned ones at
+    // her jobs and level, while a marked Damage spell (any) row of hers runs
+    // (CGambits::OfferedNukes); none for anyone else
+    auto nukesOf(CBattleEntity* PMember) -> std::vector<SpellID>;
     // She attends the fight on this mob from the perimeter rather than
     // fighting it: a mage with spells to offer, no Attack row of hers
     // sending her onto it

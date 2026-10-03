@@ -776,6 +776,20 @@ namespace pawn::tactics
         return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersRest();
     }
 
+    auto nukesOf(CBattleEntity* PMember) -> std::vector<SpellID>
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
+        {
+            return {};
+        }
+        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
+        if (PController == nullptr || !PController->Gambits().MasterOn())
+        {
+            return {};
+        }
+        return PController->Gambits().OfferedNukes();
+    }
+
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool
     {
         if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)

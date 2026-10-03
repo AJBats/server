@@ -60,6 +60,8 @@ namespace pawn::tactics
         Misses,
         DefenceDown,
         Dot,
+        IntDown,    // Burn: the INT it takes, priced by the party's nukes it strengthens, and its ticks
+        AttackDown, // Bio: its opening hit and its ticks shorten the fight, its attack down takes a share of the mob's melee
     };
 
     // A spell the bank prices, with what the server's tables say of it.
@@ -90,7 +92,7 @@ namespace pawn::tactics
         // What the log saw cast, as one line: a cure's tier table against
         // the gap it faced and the bank's pick (no record needed), a
         // debuff's price, or "unpriced" with its family. Nothing when there
-        // is nothing to say
+        // is nothing to say, a nuke included (its price is in the nuke line)
         auto castLine(FightRecord* r, const Exchange& x, CBattleEntity* PCaster, CBattleEntity* PTarget, CSpell* PSpell, int32 missing) -> std::string;
 
         // A spell she knows, can use, can afford now and is not on recast

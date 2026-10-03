@@ -103,6 +103,10 @@ namespace pawn::tactics
                 case NeedKind::Cure:
                     return "Cure";
                 case NeedKind::Status:
+                    if (key.arg == cardian::tactics::kDiaOrBio)
+                    {
+                        return "Dia or Bio";
+                    }
                     if ((key.arg & cardian::tactics::kStatusBySpell) != 0)
                     {
                         auto* PSpell = spell::GetSpell(static_cast<SpellID>(key.arg & ~cardian::tactics::kStatusBySpell));
@@ -209,6 +213,14 @@ namespace pawn::tactics
         const auto family = PSpell->getSpellFamily();
         if (family != SPELLFAMILY_NONE && (PSpell->isDebuff() || PSpell->isBuff() || PSpell->isHeal()))
         {
+            // Dia, Diaga and Bio hold one place on a mob (a Dia under a Bio
+            // of its tier or more cannot land; bio.lua wipes a weaker Dia):
+            // one need, so a row of each kind never has one in flight beside
+            // the other
+            if (family == SPELLFAMILY_DIA || family == SPELLFAMILY_DIAGA || family == SPELLFAMILY_BIO)
+            {
+                return { NeedKind::Status, cardian::tactics::kDiaOrBio, target };
+            }
             // The elemental debuffs share one family, but each writes an
             // effect of its own: a need per spell
             if (family == SPELLFAMILY_ELE_DOT)
@@ -670,7 +682,9 @@ namespace pawn::tactics
             return bank::pickTier(allowedTiers(), PTarget, true); // a row's: every tier when it is her order
         }
         // Her own request's spell: her row's, else her role's proposal. A
-        // row another mage fed names nothing for her
+        // row another mage fed names nothing for her -- which is also what
+        // the one need Dia, Diaga and Bio share (kDiaOrBio) asks: each mage
+        // casts the one she asked for
         uint16 id = order ? ownAsk(n, PCaster->id) : uint16(0);
         for (const auto& r : n.requests)
         {
