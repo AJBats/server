@@ -732,6 +732,83 @@ namespace pawn::tactics
             return price;
         }
 
+        // The formula's seed for each of her nukes on the mob
+        // (tactics_bank.lua nukeSeeds), asked in one call for the spells the
+        // fight has not kept for her, every answer for this pricing put in
+        // `seeds`. A seed is kept until one of her nukes lands
+        // (fight_log.cpp). One under a single HP -- the mob nullifies or
+        // absorbs the element, or a shield stops all magic -- is not kept:
+        // she asks again at her next think, and nukes once it lifts. How
+        // many it asked for; nothing when the formula could not answer
+        auto seedNukes(FightRecord& r, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells, std::map<uint16, double>& seeds) -> std::optional<uint32>
+        {
+            constexpr double kNothing = 1.0; // a seed under one HP of damage
+            auto&            kept     = r.nukeSeeds[PCaster->id];
+            std::vector<CSpell*> asked;
+            for (auto* PSpell : spells)
+            {
+                const auto id = static_cast<uint16>(PSpell->getID());
+                if (const auto it = kept.find(id); it != kept.end())
+                {
+                    seeds[id] = it->second;
+                }
+                else
+                {
+                    asked.push_back(PSpell);
+                }
+            }
+            if (asked.empty())
+            {
+                return 0;
+            }
+            auto fn = bankFunction("nukeSeeds");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            sol::table ask = ::lua.create_table();
+            for (std::size_t i = 0; i < asked.size(); ++i)
+            {
+                sol::table s    = ::lua.create_table();
+                s["id"]         = static_cast<uint16>(asked[i]->getID());
+                s["element"]    = asked[i]->getElement();
+                s["skillType"]  = static_cast<uint8>(asked[i]->getSkillType());
+                s["spellGroup"] = static_cast<uint8>(asked[i]->getSpellGroup());
+                s["family"]     = static_cast<uint16>(asked[i]->getSpellFamily());
+                ask[i + 1]      = s;
+            }
+            auto res = (*fn)(CLuaBaseEntity(PCaster), CLuaBaseEntity(PMob), ask);
+            if (failed("nukeSeeds", res) || res.get_type(0) != sol::type::table)
+            {
+                return std::nullopt;
+            }
+            const sol::table answers = res.get<sol::table>(0);
+            for (auto* PSpell : asked)
+            {
+                const auto                  id     = static_cast<uint16>(PSpell->getID());
+                const sol::optional<double> answer = answers[id];
+                const double                seed   = answer.value_or(-1.0); // a spell the damage table does not know: never priced
+                seeds[id]                          = seed;
+                if (seed < 0.0 || seed >= kNothing)
+                {
+                    kept[id] = seed;
+                }
+            }
+            return static_cast<uint32>(asked.size());
+        }
+
+        // Her time per cast of a spell: its cast time, then the wait before
+        // her next action -- the player rule's 2.5 s from the moment the
+        // spell lands (CPlayerController::canAct), or its animation if
+        // longer. The spell's own cast time: Fast Cast, the arts and Quick
+        // Magic are not counted (the server's reckoning of them needs a
+        // magic state, and rolls Quick Magic as it reckons)
+        auto secondsPerCast(CSpell* PSpell) -> double
+        {
+            const double cast = std::chrono::duration<double>(PSpell->getCastTime()).count();
+            return cast + std::max(2.5, std::chrono::duration<double>(PSpell->getAnimationTime()).count());
+        }
+
         // A spell the bank has no model for: its skill and family, so the
         // log shows what the party leans on
         auto familyOf(CSpell* PSpell) -> std::string
@@ -786,7 +863,7 @@ namespace pawn::tactics
                 }
                 else
                 {
-                    line += fmt::format("; cast {} under the line", PSpell->getName());
+                    line += fmt::format("; cast {} by her tactician", PSpell->getName());
                 }
                 return line;
             }
@@ -873,6 +950,61 @@ namespace pawn::tactics
                 return false;
             }
             return battleutils::CalculateSpellCost(PCaster, PSpell) <= PCaster->health.mp;
+        }
+
+        auto isNuke(CSpell* PSpell) -> bool
+        {
+            if (PSpell == nullptr || !PSpell->dealsDamage() || PSpell->getAOE() > 0 || !PSpell->canTargetEnemy() ||
+                cardian::tactician::isEnfeebleSpell(static_cast<uint16>(PSpell->getID())))
+            {
+                return false;
+            }
+            const auto skill = PSpell->getSkillType();
+            return skill == xi::SkillType::ElementalMagic || skill == xi::SkillType::DivineMagic;
+        }
+
+        auto priceNukes(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells)
+            -> std::optional<NukePricing>
+        {
+            if (PCaster == nullptr || PMob == nullptr)
+            {
+                return std::nullopt;
+            }
+            std::map<uint16, double> seeds;
+            const auto               seeded = seedNukes(r, PCaster, PMob, spells, seeds);
+            if (!seeded.has_value())
+            {
+                return std::nullopt;
+            }
+
+            // The mob's life and the party's rate as the debuff prices read
+            // them. No "too late" rule, as a debuff has: a nuke's damage is
+            // capped by the HP the mob has left, so the quickest that
+            // finishes it wins, and a cast whose mob dies first is cancelled
+            // before it spends her MP
+            const double now = seconds(timer::now());
+            const auto   rt  = ratesOf(r, spot, PMob, now, &members);
+            NukePricing  out{ .seeded = *seeded };
+            for (auto* PSpell : spells)
+            {
+                const auto it = seeds.find(static_cast<uint16>(PSpell->getID()));
+                if (it == seeds.end() || it->second < 0.0)
+                {
+                    continue;
+                }
+                const auto learned = nukeCorrection(PCaster->id, static_cast<uint8>(PSpell->getElement()));
+                NukePrice  price;
+                price.id         = static_cast<uint16>(PSpell->getID());
+                price.spell      = PSpell->getName();
+                price.mp         = battleutils::CalculateSpellCost(PCaster, PSpell);
+                price.seconds    = secondsPerCast(PSpell);
+                price.seed       = it->second;
+                price.correction = learned.factor();
+                price.learned    = learned.landed;
+                priceNukeDamage(price, PMob->health.hp, rt.dealtPerSecond, rt.remaining);
+                out.prices.push_back(std::move(price));
+            }
+            return out;
         }
 
         auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<int32>

@@ -135,9 +135,9 @@ defaults.
 Roles: a Warrior or Paladin is the **tank** when she is the highest of them
 in her party and leads the camp; the others and the fighters are **melee**;
 White, Black and Red Mage, Summoner, Scholar and Geomancer are **mages**
-(the jobs whose own defaults make them a Support Mage). No block carries a
-`role` row: her role is her own row. Her role is worked out afresh as her
-camp changes. The file is re-read within seconds of a change (at once on
+(the jobs whose own defaults cure for the party). Every row here is an
+order; the tactician's mark is a row of her own, never the world's. Her
+role is worked out afresh as her camp changes. The file is re-read within seconds of a change (at once on
 `!pawnbrain`), and every world body's layer picks it up; the header of the
 file explains the grammar's numbers.
 

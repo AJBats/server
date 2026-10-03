@@ -334,6 +334,106 @@ namespace cardian::tactics
         }
     }
 
+    // --- a nuke's price (RESEARCH §17.13, the Black Mage) ---------------
+    //
+    // A Black Mage's currency is time to kill, not the cure MP a support
+    // caster's spells are priced in: a nuke is worth the damage it lands for
+    // each second of hers it takes -- its cast, then the wait before her next
+    // action -- so on a tough mob the biggest she has ready wins, and her MP
+    // is her Rest row's business (the user, 2026-10-02). What a nuke deals
+    // is capped by the HP the mob has left: overkill counts for nothing, so
+    // near the end the quickest spell that finishes it wins, and a cast
+    // whose mob dies first is cancelled before it spends her MP. Where MP
+    // efficiency belongs is open until late-game play; for now it only
+    // settles a tie
+
+    struct NukePrice
+    {
+        uint16      id = 0; // the spell
+        std::string spell;
+        int32       mp         = 0;
+        double      seconds    = 0.0;   // her time per cast: the cast, and the wait after it
+        double      seed       = 0.0;   // the formula's expectation, every die at its average
+        double      correction = 1.0;   // what her nukes of the element land against the seed, learned
+        uint32      learned    = 0;     // the nukes of hers the correction has seen
+        double      expected   = 0.0;   // the seed by the correction
+        double      dealt      = 0.0;   // what it takes off the mob: the expected, capped by what the mob has left
+        double      cut        = 0.0;   // seconds of fight it cuts at the party's damage rate
+        bool        noRate     = false; // the party's damage rate is unknown: no fight cut to say
+
+        // Damage a second of hers: what she is ranked by
+        auto perSecond() const -> double
+        {
+            return seconds > 0.0 ? dealt / seconds : dealt;
+        }
+
+        // "Thunder IV ~541 for 195 MP in 7.5 s: 72 a second of hers, the
+        // fight ~5.4 s shorter", and the correction once she has landed any
+        auto line() const -> std::string
+        {
+            std::string out = fmt::format("{} ~{:.0f}", spell, dealt);
+            if (dealt < expected)
+            {
+                out += fmt::format(" of ~{:.0f}", expected);
+            }
+            out += fmt::format(" for {} MP in {:.1f} s: {:.0f} a second of hers", mp, seconds, perSecond());
+            out += noRate ? std::string(", the party's rate unknown") : fmt::format(", the fight ~{:.1f} s shorter", cut);
+            if (learned > 0)
+            {
+                out += fmt::format("; the formula's ~{:.0f} x{:.2f} from {} landed", seed, correction, learned);
+            }
+            return out;
+        }
+    };
+
+    // Her nukes priced at once, and how many of them the formula was asked
+    // for (the rest it had answered already this fight)
+    struct NukePricing
+    {
+        std::vector<NukePrice> prices;
+        uint32                 seeded = 0;
+    };
+
+    // What a nuke takes off a mob with this much HP left -- the seed by her
+    // correction, set on the price beforehand -- and the seconds that cuts
+    // at the party's damage rate (secondsCut: never more than the mob has
+    // left). Overkill counts for nothing
+    inline void priceNukeDamage(NukePrice& p, const int32 mobHp, const double dealtPerSecond, const double remaining)
+    {
+        p.expected = p.seed * p.correction;
+        p.dealt    = std::min(p.expected, static_cast<double>(std::max<int32>(mobHp, 0)));
+        p.noRate   = dealtPerSecond <= 0.0;
+        p.cut      = secondsCut(p.dealt, dealtPerSecond, remaining);
+    }
+
+    // The nuke to cast among the priced: the most damage a second of hers,
+    // the cheaper among equals; never one that deals nothing (an element
+    // the mob nullifies or absorbs)
+    inline auto pickNuke(const std::vector<NukePrice>& prices) -> const NukePrice*
+    {
+        constexpr double kSame = 1e-9;
+        const NukePrice* best  = nullptr;
+        for (const auto& p : prices)
+        {
+            if (p.dealt <= 0.0)
+            {
+                continue;
+            }
+            if (best == nullptr)
+            {
+                best = &p;
+                continue;
+            }
+            const double mine   = p.perSecond();
+            const double theirs = best->perSecond();
+            if (mine > theirs + kSame || (std::abs(mine - theirs) <= kSame && p.mp < best->mp))
+            {
+                best = &p;
+            }
+        }
+        return best;
+    }
+
     // What the party's melee deals over the window with the mob's defence
     // lowered: the pDIF expectation's ratio, less one
     inline auto defenceDownExtra(const double ratio, const double dealtPerSecond, const double window) -> double

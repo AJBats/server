@@ -36,8 +36,9 @@
 // (cardian_gambit_defaults_tests.cpp).
 namespace pawn
 {
-    // A mage takes the mage defaults; every other job is melee. The one
-    // list of mage jobs, so a world body's layer and her own Role row agree.
+    // A mage takes the mage defaults; every other job is melee, the Monk
+    // and the Warrior with their own tools (defaultRowsFor). The one list
+    // of mage jobs, so a world body's layer and her own rows agree.
     constexpr auto isMageJob(const xi::Job job) -> bool
     {
         switch (job)
@@ -54,21 +55,30 @@ namespace pawn
         }
     }
 
-    // A job's default set, as (row, checkbox) pairs in list order.
+    // A job's default set, as (row, checkbox) pairs in list order. The
+    // list's order is its priority, for the tactician's rows (marked, the
+    // tactician deciding the when) and orders alike (RESEARCH §17.13).
     //  - Melee: the assist trio, her best weapon skill on a target with half
     //    its HP or more (the user, 2026-09-26: TP not spent on a mob about to
-    //    fall), then rest with the player, then the Damage role. The trio
-    //    takes the party leader's fight first, and another cardian's only
-    //    after it, so a cardian whose mob has died joins the player's fight
-    //    before anyone else's.
-    //  - Mage: a Support Mage who attends fights without engaging monsters,
-    //    cures, takes ailments off and enfeebles. Her weapon skill row and
-    //    Rest with the player are orders, above her role row (her tactician
-    //    line, tactician_line.h, where a weapon skill means something);
-    //    below it, her allow-list: the Cure, the -na and the enfeebles left
-    //    to her judgement, and her Attack row, shipped unchecked -- checking
-    //    it makes her a melee mage whose tactician leaves a fight to rest
-    //    (RESEARCH §14.12 decisions 19 and 20).
+    //    fall), then rest with the player. The trio takes the party leader's
+    //    fight first, and another cardian's only after it, so a cardian
+    //    whose mob has died joins the player's fight before anyone else's.
+    //    A Monk, a Warrior and a Thief carry their tactician's tools between
+    //    the trio and the weapon skill, so they go out first (RESEARCH
+    //    §17.13): the Monk's Boost (right before her weapon skill), Focus
+    //    and Dodge, the Warrior's Berserk (never as the party's Tank),
+    //    Defender (only as the Tank) and Aggressor, the Thief's Sneak
+    //    Attack (right before her weapon skill, from the mob's back).
+    //  - Mage: the tactician's tools first -- the Cure, the -na and the
+    //    enfeebles left to its judgement, so curing outranks everything
+    //    below, and her rest, the MP pacing -- then her weapon skill and
+    //    Rest with the player as orders, and her Attack row, marked and
+    //    shipped unchecked: checking it makes her a melee mage whose
+    //    tactician leaves a fight to rest (RESEARCH §14.12 decisions 19
+    //    and 20; an unmarked Attack row would be an order that keeps her
+    //    in). With tools to offer a fight she attends it at cure range
+    //    without engaging. The Black Mage adds her nukes, marked, after the
+    //    enfeebles (RESEARCH §17.13): her tactician's when and which.
     // The weapon skill row is in every set (the user, 2026-09-26): it costs
     // nothing, and comes up only once she is engaged with the TP for one.
     // Neither set avoids aggro (that is the world's, not the party's): the
@@ -81,17 +91,72 @@ namespace pawn
             { "102|0:0|0:0:0|0", true },  // Foe: targeting ally -> Attack
             { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
-            { "0|0:0|100:11:3|0", true }, // Self -> Role: Damage
         };
-        static const std::vector<std::pair<std::string, bool>> mage{
+        static const std::vector<std::pair<std::string, bool>> monk{
+            { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
+            { "101|0:0|0:0:0|0", true },   // Foe: targeted by ally -> Attack
+            { "102|0:0|0:0:0|0", true },   // Foe: targeting ally -> Attack
+            { "0|101:0|3:2:39|0", true },  // * Self -> Boost
+            { "0|101:0|3:2:36|0", true },  // * Self -> Focus
+            { "0|101:0|3:2:37|0", true },  // * Self -> Dodge
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
-            { "0|0:0|100:11:1|0", true },  // Self -> Role: Support Mage
-            { "1|101:0|2:0:1|0", true },   // Ally: tactician's choice -> Cure (best)
-            { "1|101:0|2:0:4|0", true },   // Ally: tactician's choice -> -na (best)
-            { "2|101:0|2:100:0|0", true }, // Foe: tactician's choice -> Enfeeble
-            { "102|0:0|0:0:0|0", false },  // Foe: targeting ally -> Attack
         };
-        return isMageJob(job) ? mage : melee;
+        static const std::vector<std::pair<std::string, bool>> thief{
+            { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
+            { "101|0:0|0:0:0|0", true },   // Foe: targeted by ally -> Attack
+            { "102|0:0|0:0:0|0", true },   // Foe: targeting ally -> Attack
+            { "0|101:0|3:2:44|0", true },  // * Self -> Sneak Attack
+            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+        };
+        static const std::vector<std::pair<std::string, bool>> warrior{
+            { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
+            { "101|0:0|0:0:0|0", true },   // Foe: targeted by ally -> Attack
+            { "102|0:0|0:0:0|0", true },   // Foe: targeting ally -> Attack
+            { "0|101:0|3:2:31|0", true },  // * Self -> Berserk
+            { "0|101:0|3:2:33|0", true },  // * Self -> Defender
+            { "0|101:0|3:2:34|0", true },  // * Self -> Aggressor
+            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+        };
+        static const std::vector<std::pair<std::string, bool>> mage{
+            { "1|101:0|2:0:1|0", true },   // * Ally -> Cure (best)
+            { "1|101:0|2:0:4|0", true },   // * Ally -> -na (best)
+            { "2|101:0|2:100:0|0", true }, // * Foe -> Enfeeble
+            { "0|101:0|100:14:1|0", true }, // * Self -> Rest
+            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
+            { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
+        };
+        static const std::vector<std::pair<std::string, bool>> blackMage{
+            { "1|101:0|2:0:1|0", true },    // * Ally -> Cure (best)
+            { "1|101:0|2:0:4|0", true },    // * Ally -> -na (best)
+            { "2|101:0|2:100:0|0", true },  // * Foe -> Enfeeble
+            { "2|101:0|2:3:0|0", true },  // * Foe -> Damage spell (any)
+            { "0|101:0|100:14:1|0", true }, // * Self -> Rest
+            { "2|2:50|4:0:0|0", true },     // Foe: HP >= 50% -> Weapon skill (best)
+            { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
+            { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
+        };
+        if (job == xi::Job::BLM)
+        {
+            return blackMage;
+        }
+        if (isMageJob(job))
+        {
+            return mage;
+        }
+        switch (job)
+        {
+            case xi::Job::MNK:
+                return monk;
+            case xi::Job::WAR:
+                return warrior;
+            case xi::Job::THF:
+                return thief;
+            default:
+                return melee;
+        }
     }
 } // namespace pawn

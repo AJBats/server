@@ -2,8 +2,8 @@
 -- Cardian: the MP bank's samplers (RESEARCH §12.13)
 --
 -- The server's own formulas, asked once from Lua instead of a hundred round
--- trips from C++ (src/map/pawn/spell_bank.cpp). Two of them roll dice
--- inside, so the bank samples those here:
+-- trips from C++ (src/map/pawn/spell_bank.cpp). Where a formula rolls dice
+-- inside, the bank samples it here or takes each die at its expectation:
 --
 --   xi.cardian.bank.landChance(caster, target, fed, rolls)
 --     -> the fraction of rolls where the cast's own gates pass -- immunity,
@@ -21,6 +21,9 @@
 --     -> what a Cure tier heals off this caster, before the target's missing
 --        HP caps it. No dice in this one: the server's cure helpers, with
 --        each tier's power bands mirrored from its spell script.
+--   xi.cardian.bank.nukeSeeds(caster, target, spells)
+--     -> what each nuke deals the target on average, rolling nothing: the
+--        server's damage chain with every die taken at its expectation.
 --
 -- A library, not a module: it overrides nothing, so the pawn module loads
 -- it at init (bank::load) rather than init.txt, and xi_test -- which has
@@ -305,4 +308,314 @@ xi.cardian.bank.expectedCure = function(caster, spellId, element, target)
         final = final + (final * (target:getMod(xi.mod.CURE_POTENCY_RCVD) / 100))
     end
     return math.floor(final * xi.settings.main.CURE_POWER)
+end
+
+-----------------------------------
+-- The nuke seed (RESEARCH §17.13, the Black Mage)
+-----------------------------------
+local unpack = unpack or table.unpack
+
+local function pack(...)
+    return { n = select('#', ...), ... }
+end
+
+-- A stand-in for an entity that asks it once per method and arguments and
+-- answers from memory after. Pricing her nukes reads the same few stats for
+-- every spell; through this each read crosses into the server once a
+-- pricing. Every read the damage chain makes is pure, so nothing it
+-- remembers goes stale within one pricing
+local entityOf = setmetatable({}, { __mode = 'k' })
+local kNil     = {} -- a nil argument, as a key
+local kAnswer  = {} -- where a call's answer is kept, under its arguments
+
+local function remembered(entity)
+    local proxy = {}
+    entityOf[proxy] = entity
+    return setmetatable(proxy, {
+        __index = function(self, method)
+            local answers = {}
+            local call    = function(_, ...)
+                local n    = select('#', ...)
+                local node = answers
+                for i = 1, n do
+                    local arg = select(i, ...)
+                    if arg == nil then
+                        arg = kNil
+                    end
+                    local nextNode = node[arg]
+                    if nextNode == nil then
+                        nextNode  = {}
+                        node[arg] = nextNode
+                    end
+                    node = nextNode
+                end
+                local answer = node[kAnswer]
+                if answer == nil then
+                    -- another stand-in passed along goes in as its entity
+                    local args = { ... }
+                    for i = 1, n do
+                        local real = args[i] ~= nil and entityOf[args[i]] or nil
+                        if real ~= nil then
+                            args[i] = real
+                        end
+                    end
+                    answer        = pack(entity[method](entity, unpack(args, 1, n)))
+                    node[kAnswer] = answer
+                end
+                return unpack(answer, 1, answer.n)
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
+-- A step's expectation over its one percent roll (`math.randomInt(1, 100)
+-- <= chance` in the server's code): the step run as if the roll hit and as
+-- if it missed, the two weighed by the chance. The step rolls nothing else
+local function overRoll(chance, step, ...)
+    local p         = utils.clamp(chance, 0, 100) / 100
+    local randomInt = math.randomInt
+    local hit, miss = 0, 0
+    local ok, err   = pcall(function(...)
+        if p > 0 then
+            math.randomInt = function()
+                return 1
+            end
+            hit = step(...)
+        end
+        if p < 1 then
+            math.randomInt = function(_, hi)
+                return hi
+            end
+            miss = step(...)
+        end
+    end, ...)
+    math.randomInt = randomInt
+    if not ok then
+        error(err, 0)
+    end
+    return p * hit + (1 - p) * miss
+end
+
+-- A step's answer with every percent roll in it missing: only a certain
+-- proc (a chance of 100) happens. The nullification and the absorption
+-- roll their chances; a partial chance is priced as if it never happens
+local function certainOnly(step, ...)
+    local randomInt = math.randomInt
+    math.randomInt  = function(_, hi)
+        return hi
+    end
+    local ok, result = pcall(step, ...)
+    math.randomInt   = randomInt
+    if not ok then
+        error(result, 0)
+    end
+    return result
+end
+
+-- calculateMagicHitRate, a local of the resist roll's script: the hit rate
+-- from an accuracy and an evasion. Found again if the script is reloaded
+local hitRate, hitRateOf
+
+local function magicHitRate(params)
+    local roll = xi.combat.magicHitRate.calculateResistRate
+    if hitRateOf ~= roll then
+        hitRate, hitRateOf = nil, roll
+        for i = 1, 64 do
+            local name, value = debug.getupvalue(roll, i)
+            if name == nil then
+                break
+            end
+            if name == 'calculateMagicHitRate' then
+                hitRate = value
+                break
+            end
+        end
+    end
+    if hitRate == nil then
+        error('calculateResistRate no longer reaches calculateMagicHitRate (scripts/combat/basic/magic_hit_rate.lua)', 0)
+    end
+    return hitRate(params)
+end
+
+-- The resist roll as calculateResistRate sets it up, read instead of rolled:
+-- the hit rate it rolls against and the tiers it may roll, from its own
+-- locals, so its expectation needs no copy of the formula. Its weather
+-- accuracy is taken unproc'd (a third of casts gain or lose 5 to 10). A rate
+-- it gives without a roll (Magic Shield, an auto-resist) is kept as given
+local function resistOf(caster, target, fed)
+    local seen
+    local randomFloat, randomInt = math.randomFloat, math.randomInt
+    math.randomInt = function(_, hi)
+        return hi
+    end
+    math.randomFloat = function()
+        seen = {}
+        for i = 1, 32 do
+            local name, value = debug.getlocal(2, i)
+            if name == nil then
+                break
+            end
+            seen[name] = value
+        end
+        return 0 -- the first roll lands, which ends the call
+    end
+    local ok, rate = pcall(xi.combat.magicHitRate.calculateResistRate, caster, target, fed)
+    math.randomFloat, math.randomInt = randomFloat, randomInt
+    if not ok then
+        error(rate, 0)
+    end
+    if seen == nil then
+        return { fixed = rate }
+    end
+    if type(seen.params) ~= 'table' or type(seen.maxResistTier) ~= 'number' then
+        error('the resist roll no longer keeps params and maxResistTier (scripts/combat/basic/magic_hit_rate.lua)', 0)
+    end
+    return
+    {
+        macc    = seen.params.actorMagicAccuracy,
+        meva    = seen.params.targetMagicEvasion,
+        floored = seen.params.resistanceRank >= 10, -- the rate is held at its floor, whatever the accuracy
+        rate    = seen.params.magicHitRate,
+        tiers   = seen.maxResistTier,
+    }
+end
+
+-- What the resist roll leaves of a nuke on average: it halves the damage
+-- once for each roll that misses the hit rate, up to its tiers
+local function expectedResist(p, tiers)
+    local sum, reach = 0, 1
+    for k = 0, tiers - 1 do
+        sum   = sum + reach * p / 2 ^ k
+        reach = reach * (1 - p)
+    end
+    return sum + reach / 2 ^ tiers
+end
+
+-- The resist's expectation for a spell with this accuracy bonus. The bonus
+-- is added past the accuracy's food factor: exact without a food's magic
+-- accuracy, a point or two off with one
+local function resistFor(resist, bonusMacc)
+    if resist.fixed ~= nil then
+        return resist.fixed
+    end
+    local p = resist.rate
+    if not resist.floored then
+        p = magicHitRate({ actorMagicAccuracy = resist.macc + bonusMacc, targetMagicEvasion = resist.meva })
+    end
+    return expectedResist(p, resist.tiers)
+end
+
+-- What every nuke of one element, skill, group and stat shares: a certain
+-- nullification or absorption, the resist roll's setup, and the chain's
+-- steps that do not ask for the spell, each die at its expectation
+local function kindOf(caster, target, s, statUsed, alwaysApply)
+    local damage = xi.spells.damage
+    if
+        certainOnly(damage.calculateNullification, target, s.element, false, true, false, false) == 0 or
+        certainOnly(damage.calculateAbsorption, target, s.element, false, true, false, false) < 0
+    then
+        return { none = true }
+    end
+
+    -- What the chain asks of the spell, for one target that is the primary
+    local spell =
+    {
+        getTotalTargets    = function() return 1 end,
+        getPrimaryTargetID = function() return target:getID() end,
+    }
+
+    local factor = damage.calculateMTDR(caster, spell) *
+        damage.calculateElementalStaffBonus(caster, s.element) *
+        damage.calculateElementalAffinityBonus(caster, s.element) *
+        damage.calculateAdditionalResistTier(caster, target, s.element) *
+        overRoll(33, damage.calculateDayAndWeather, caster, s.element, alwaysApply) *
+        xi.combat.damage.calculateDamageAdjustment(target, false, true, false, false) *
+        xi.combat.damage.magicalElementSDT(target, s.element) *
+        xi.combat.damage.ecosystemMultiplier(caster, target, 0) *
+        overRoll(caster:getMod(xi.mod.MAGIC_CRITHITRATE_II), damage.calculateMagicCriticalMultiplier, caster) *
+        damage.calculateDivineSealMultiplier(caster, target, s.skillType) *
+        damage.calculateDivineEmblemMultiplier(caster, s.skillType) *
+        damage.calculateEnhancedElementalSealMultiplier(caster, s.skillType, s.element) *
+        damage.calculateEbullienceMultiplier(caster, s.spellGroup) *
+        damage.calculateSkillTypeMultiplier(s.skillType) *
+        damage.calculateUndeadDivinePenalty(target, s.skillType) *
+        xi.combat.damage.scarletDeliriumMultiplier(caster) *
+        damage.calculateAreaOfEffectResistance(target, spell) *
+        damage.calculateSpellActionTypeMultiplier(caster)
+
+    local fed =
+    {
+        magicBurstTier = 0,
+        magicalElement = s.element,
+        actorStat      = statUsed,
+        skillType      = s.skillType,
+        spellGroup     = s.spellGroup,
+        bonusMacc      = 0,
+    }
+    return { factor = factor, resist = resistOf(caster, target, fed) }
+end
+
+-- What each of her nukes deals the target on average (RESEARCH §17.13):
+-- the chain of xi.spells.damage.useDamageSpell on the real caster and
+-- target with every die at its expectation -- the resist roll, the day and
+-- weather, the magic attack's crit, the magic crit -- and no floors between
+-- steps. What the spells of an element share is worked out once, the base
+-- damage and the accuracy bonus per spell. Left out, each for a reason: a
+-- magic burst (no skillchains yet), Cardinal Chant's crit chance and the
+-- nuke wall (locals of that script: a Geomancer's, and an NM's), the
+-- Ninjutsu and automaton steps (never a nuke's), Phalanx, Stoneskin, a
+-- damage cap, and a partial chance to nullify or absorb. What her nukes
+-- really land against this is learned beside it (fight_log.cpp). spells:
+-- { id, element, skillType, spellGroup, family } each; the answer is the
+-- seed by spell id, 0 when the target certainly nullifies or absorbs the
+-- element, nothing for a spell the damage table does not know
+xi.cardian.bank.nukeSeeds = function(caster, target, spells)
+    local damage = xi.spells.damage
+    local c      = remembered(caster)
+    local t      = remembered(target)
+    local kinds  = {}
+    local bonus  = {}
+    local seeds  = {}
+
+    for _, s in ipairs(spells) do
+        local row = damage.pTable[s.id]
+        if row then
+            -- The damage table's columns (a local `column` in
+            -- damage_spell.lua): the stat the spell rolls on, its accuracy
+            -- bonus, whether the day and weather always apply
+            local statUsed    = row[1]
+            local bonusMacc   = row[2]
+            local alwaysApply = row[3]
+
+            local kindKey = table.concat({ s.element, s.skillType, s.spellGroup, statUsed, tostring(alwaysApply) }, ':')
+            local kind    = kinds[kindKey]
+            if kind == nil then
+                kind           = kindOf(c, t, s, statUsed, alwaysApply)
+                kinds[kindKey] = kind
+            end
+
+            if kind.none then
+                seeds[s.id] = 0
+            else
+                -- The magic attack against the magic defence asks for the
+                -- spell only by its family (the ancient magic's merits)
+                local bonusKey = table.concat({ s.element, s.skillType, s.family }, ':')
+                local mab      = bonus[bonusKey]
+                if mab == nil then
+                    mab             = overRoll(c:getMod(xi.mod.MAGIC_CRITHITRATE), damage.calculateMagicBonusDiff, c, t, s.id, s.skillType, s.element, 0)
+                    bonus[bonusKey] = mab
+                end
+
+                seeds[s.id] = damage.calculateBaseDamage(c, t, s.id, s.spellGroup, s.skillType, statUsed) *
+                    kind.factor *
+                    resistFor(kind.resist, bonusMacc) *
+                    mab *
+                    damage.calculateHelixMeritMultiplier(c, s.id)
+            end
+        end
+    end
+
+    return seeds
 end

@@ -19,10 +19,11 @@
 ===========================================================================
 */
 
-// The tactician line (ROADMAP K, RESEARCH §14.12 decisions 17-20): where
-// the line sits, what each row means where it sits, which spells a row
-// below it lets her tactician cast, and when her tactician's melee gives way
-// to her rest.
+// The tactician's mark (RESEARCH §17.13; before it the tactician line,
+// ROADMAP K, RESEARCH §14.12 decisions 17-20): which rows are the
+// tactician's and what each means, wherever it sits; which spells a marked
+// row lets her tactician cast; and when her tactician's melee gives way to
+// her rest.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -33,6 +34,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -61,48 +64,37 @@ namespace
         return out;
     }
 
-    auto fullLineOf(const std::vector<Gambit_t>& list) -> std::optional<cardian::tactician::Line>
-    {
-        return cardian::tactician::lineOf(list, [](const Gambit_t& g) -> const Gambit_t& { return g; });
-    }
-
-    auto lineOf(const std::vector<Gambit_t>& list) -> std::optional<std::size_t>
-    {
-        const auto line = fullLineOf(list);
-        return line.has_value() ? std::optional<std::size_t>(line->place) : std::nullopt;
-    }
-
     auto statesOf(const std::vector<Gambit_t>& list) -> std::vector<State>
     {
         std::vector<State> out;
-        const auto         line = fullLineOf(list);
-        for (std::size_t i = 0; i < list.size(); ++i)
+        for (const auto& g : list)
         {
-            out.push_back(cardian::tactician::stateOf(list[i], i + 1, line));
+            out.push_back(cardian::tactician::stateOf(g));
         }
         return out;
     }
 
-    // The state of one row placed below a Support Mage row
-    auto below(const std::string& spec) -> State
+    auto stateOf(const std::string& spec) -> State
     {
-        return statesOf(rows({ "0|0:0|100:11:1|0", spec }))[1];
+        return cardian::tactician::stateOf(row(spec));
     }
 
-    // The state of one row placed below a Tank row
-    auto belowTank(const std::string& spec) -> State
+    // The spec with the tactician's mark added to its conditions: the row
+    // as the editor's Alt menu makes it, its own condition kept as the gate
+    auto marked(const std::string& spec) -> std::string
     {
-        return statesOf(rows({ "0|0:0|100:11:2|0", spec }))[1];
+        const auto first  = spec.find('|');
+        const auto second = spec.find('|', first + 1);
+        return spec.substr(0, second) + "&101:0" + spec.substr(second);
     }
 
-    const std::string kSupportMage = "0|0:0|100:11:1|0";
-    const std::string kTank        = "0|0:0|100:11:2|0";
-    const std::string kRest        = "0|0:0|100:6:1|0";
-    const std::string kCureBest    = "1|101:0|2:0:1|0";
-    const std::string kProvoke     = "2|101:0|3:2:35|0"; // Foe: tactician's choice -> Provoke
+    const std::string kRest     = "0|0:0|100:6:1|0";
+    const std::string kCureBest = "1|101:0|2:0:1|0"; // * Ally -> Cure (best)
+    const std::string kProvoke  = "2|101:0|3:2:35|0"; // * Foe -> Provoke
+    const std::string kPull     = "101|101:0|0:0:0|0"; // * Foe: targeted by ally -> Attack
 } // namespace
 
-TEST_CASE("tactician line: her lists are spell.h's numbers", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: her lists are spell.h's numbers", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::kCureTiers;
     using cardian::tactician::kPricedDebuffs;
@@ -126,110 +118,113 @@ TEST_CASE("tactician line: her lists are spell.h's numbers", "[cardian][gambits]
     }
 }
 
-TEST_CASE("tactician line: the line is her first Support Mage row, whatever its checkbox or condition", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: a row carrying the mark is the tactician's wherever it sits, and every other row is an order", "[cardian][gambits][tactician]")
 {
-    // No Support Mage row, no line: every row is an order
-    CHECK_FALSE(lineOf(rows({ "100|0:0|0:0:0|0", kRest, "0|0:0|100:11:3|0" })).has_value());
+    using cardian::tactician::isMarked;
+    CHECK(isMarked(row(kCureBest)));
+    CHECK(isMarked(row(marked("1|3:45|2:0:1|0"))));
+    CHECK_FALSE(isMarked(row("1|3:45|2:0:1|0")));
+    CHECK_FALSE(isMarked(row(kRest)));
 
-    CHECK(lineOf(rows({ kRest, kSupportMage, kCureBest })) == std::optional<std::size_t>(2));
-    // A Support Mage row under a condition is the line all the same
-    CHECK(lineOf(rows({ kRest, "0|3:50|100:11:1|0", kCureBest })) == std::optional<std::size_t>(2));
+    // Position means nothing: the same rows in any order mean the same
+    CHECK(statesOf(rows({ "100|0:0|0:0:0|0", kRest, kCureBest })) == std::vector<State>{ State::Order, State::Order, State::Tool });
+    CHECK(statesOf(rows({ kCureBest, kRest, "100|0:0|0:0:0|0" })) == std::vector<State>{ State::Tool, State::Order, State::Order });
 
-    // A second Support Mage row below the first is only a behaviour row
-    // below the line: struck out
-    const auto states = statesOf(rows({ kSupportMage, kCureBest, kSupportMage }));
-    CHECK(states == std::vector<State>{ State::Line, State::Allows, State::NotBelow });
+    // A gated Cure is an order wherever it sits; marked, the gate stays and
+    // the tactician decides the when
+    CHECK(stateOf("1|1:50|2:0:1|0") == State::Order);
+    CHECK(stateOf(marked("1|1:50|2:0:1|0")) == State::Tool);
+    CHECK(cardian::tactician::carries(row(marked("1|1:50|2:0:1|0")), G_CONDITION::HPP_LT));
+
+    // The Role row, the line's, is retired with it: the grammar refuses it
+    // whatever it says (Support Mage 1, Tank 2, Damage 3), so no list has
+    // a line any more
+    for (const auto value : { 1, 2, 3 })
+    {
+        CHECK_FALSE(parseRow("0|0:0|100:11:" + std::to_string(value) + "|0").has_value());
+    }
+    CHECK(pawn::isRetiredBehavior(11));
 }
 
-TEST_CASE("tactician line: a Tank row is a line as Support Mage's is, and its tactician reads melee and hate", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: the tank's tools are the marked pull and the marked hate tool", "[cardian][gambits][tactician]")
 {
-    using cardian::tactician::Line;
-    // The Tank row is a line, and the line knows whose tactician it is
-    CHECK(fullLineOf(rows({ kRest, kTank, kProvoke })) == std::optional<Line>(Line{ 2, pawn::Role::Tank }));
-    CHECK(fullLineOf(rows({ kRest, kSupportMage, kCureBest })) == std::optional<Line>(Line{ 2, pawn::Role::SupportMage }));
-    // A Damage row is a role and no line
-    CHECK_FALSE(lineOf(rows({ "100|0:0|0:0:0|0", kRest, "0|0:0|100:11:3|0" })).has_value());
-    // The first line row wins, whichever role: one line a list
-    CHECK(fullLineOf(rows({ kTank, kSupportMage })) == std::optional<Line>(Line{ 1, pawn::Role::Tank }));
-    CHECK(statesOf(rows({ kTank, kSupportMage })) == std::vector<State>{ State::Line, State::NotBelow });
+    CHECK(stateOf(kPull) == State::Tool);     // the fight her tactician picks (RESEARCH §17.11)
+    CHECK(stateOf(kProvoke) == State::Tool);
+    CHECK(stateOf("2|0:0|3:2:35|0") == State::Order);           // Foe -> Provoke, unmarked: an order, hers to fire
+    CHECK(stateOf("0|101:0|3:2:35|0") == State::NoJudgement);   // * Self -> Provoke: a hate tool wants a foe
+    CHECK(stateOf("2|101:0|3:2:16|0") == State::NoJudgement);   // * Foe -> Mighty Strikes: no judgement for it yet
 
-    // Below a Tank line: the pull and Provoke are her tactician's; a cure,
-    // a debuff or a -na is nothing the tank's tactician reads
-    CHECK(belowTank("101|0:0|0:0:0|0") == State::Allows); // Foe: targeted by ally -> Attack
-    CHECK(belowTank(kProvoke) == State::Allows);
-    CHECK(belowTank("2|0:0|3:2:35|0") == State::Allows); // Foe -> Provoke, no condition: still the tactician's
-    CHECK(belowTank(kCureBest) == State::NotBelow);
-    CHECK(belowTank("1|101:0|2:0:4|0") == State::NotBelow); // -na (best)
-    CHECK(belowTank("2|101:0|2:100:0|0") == State::NotBelow); // Enfeeble
-    CHECK(belowTank("2|101:0|3:2:16|0") == State::NotBelow); // Foe -> Mighty Strikes: no hate tool
-    CHECK(belowTank("0|101:0|3:2:35|0") == State::NotBelow); // Self -> Provoke: a hate tool wants a foe
-    // Below a Support Mage line Provoke is nothing hers reads
-    CHECK(below(kProvoke) == State::NotBelow);
-
-    // Which rows name the tool
+    // Which rows name the tool: a marked one that does
     CHECK(cardian::tactician::allowsAbility(row(kProvoke), 35));
     CHECK_FALSE(cardian::tactician::allowsAbility(row(kProvoke), 16));
     CHECK_FALSE(cardian::tactician::allowsAbility(row(kCureBest), 35));
+    CHECK_FALSE(cardian::tactician::allowsAbility(row("2|0:0|3:2:35|0"), 35)); // unmarked: the order's, not the tactician's
 }
 
-TEST_CASE("tactician line: above the line every row is an order, and Tactician's choice is struck out", "[cardian][gambits][tactician]")
-{
-    const auto states = statesOf(rows({ "2|0:0|4:2:1|0", kRest, "1|101:0|2:0:1|0", kSupportMage }));
-    CHECK(states == std::vector<State>{ State::Order, State::Order, State::NoChoice, State::Line });
-
-    // With no line at all, Tactician's choice has no tactician to leave it to
-    CHECK(statesOf(rows({ kCureBest, kRest })) == std::vector<State>{ State::NoChoice, State::Order });
-}
-
-TEST_CASE("tactician line: below the line only her cures, her priced debuffs and the melee fit", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: a marked row is a tool when it names her cures, her priced debuffs, her melee or her -na, and struck out otherwise", "[cardian][gambits][tactician]")
 {
     // Her cures, for someone on the party's side
-    CHECK(below(kCureBest) == State::Allows);
-    CHECK(below("0|1:50|2:2:2|0") == State::Allows);  // Self: HP < 50% -> Cure II
-    CHECK(below("4|101:0|2:0:1|0") == State::Allows); // Ally: tank, tactician's choice -> Cure (best)
-    CHECK(below("3|0:0|2:2:1|0") == State::Allows);   // The player -> Cure
-    CHECK(below("2|101:0|2:0:1|0") == State::NotBelow); // a Cure on the mob is no cure of hers
-    CHECK(below("10|0:0|2:2:1|0") == State::NotBelow);  // nor one on the dead
+    CHECK(stateOf(kCureBest) == State::Tool);
+    CHECK(stateOf(marked("0|1:50|2:2:2|0")) == State::Tool); // * Self: HP < 50% -> Cure II
+    CHECK(stateOf("4|101:0|2:0:1|0") == State::Tool);        // * Ally: tank -> Cure (best)
+    CHECK(stateOf(marked("3|0:0|2:2:1|0")) == State::Tool);  // * The player -> Cure
+    CHECK(stateOf("2|101:0|2:0:1|0") == State::NoJudgement); // a Cure on the mob is no cure of hers
+    CHECK(stateOf(marked("10|0:0|2:2:1|0")) == State::NoJudgement); // nor one on the dead
 
     // Her priced debuffs, on the mob, by id or by family
-    CHECK(below("2|101:0|2:2:58|0") == State::Allows); // Foe: tactician's choice -> Paralyze
-    CHECK(below("2|1:50|2:2:23|0") == State::Allows);  // Foe: HP < 50% -> Dia
-    CHECK(below("2|101:0|2:0:6|0") == State::Allows);  // Foe: tactician's choice -> Dia (best)
-    CHECK(below("1|101:0|2:2:58|0") == State::NotBelow); // Paralyze on a party member
+    CHECK(stateOf("2|101:0|2:2:58|0") == State::Tool);        // * Foe -> Paralyze
+    CHECK(stateOf(marked("2|1:50|2:2:23|0")) == State::Tool); // * Foe: HP < 50% -> Dia
+    CHECK(stateOf("2|101:0|2:0:6|0") == State::Tool);         // * Foe -> Dia (best)
+    CHECK(stateOf("1|101:0|2:2:58|0") == State::NoJudgement); // Paralyze on a party member
 
     // Any Foe row's debuff, on her fight when it is of the row's kind
-    CHECK(below("100|0:0|2:2:58|0") == State::Allows); // Foe: party leader's target -> Paralyze
+    CHECK(stateOf(marked("100|0:0|2:2:58|0")) == State::Tool); // * Foe: party leader's target -> Paralyze
 
     // The melee of a fight a Foe row finds (decision 19)
-    CHECK(below("102|0:0|0:0:0|0") == State::Allows);
-    CHECK(below("100|0:0|0:0:0|0") == State::Allows);
-    CHECK(below("2|2:75|0:0:0|0") == State::Allows); // Foe: HP >= 75% -> Attack
+    CHECK(stateOf(marked("102|0:0|0:0:0|0")) == State::Tool);
+    CHECK(stateOf(marked("100|0:0|0:0:0|0")) == State::Tool);
+    CHECK(stateOf(marked("2|2:75|0:0:0|0")) == State::Tool); // * Foe: HP >= 75% -> Attack
 
     // Enfeeble, every priced debuff at once, on the mob
-    CHECK(below("2|101:0|2:100:0|0") == State::Allows);   // Foe: tactician's choice -> Enfeeble
-    CHECK(below("100|0:0|2:100:0|0") == State::Allows);   // Foe: party leader's target -> Enfeeble
-    CHECK(below("1|101:0|2:100:0|0") == State::NotBelow); // Enfeeble on a party member
+    CHECK(stateOf("2|101:0|2:100:0|0") == State::Tool);          // * Foe -> Enfeeble
+    CHECK(stateOf(marked("100|0:0|2:100:0|0")) == State::Tool);  // * Foe: party leader's target -> Enfeeble
+    CHECK(stateOf("1|101:0|2:100:0|0") == State::NoJudgement);   // Enfeeble on a party member
 
     // Her -na and Erase, for someone on the party's side
-    CHECK(below("1|101:0|2:0:4|0") == State::Allows);     // Ally: tactician's choice -> -na (best)
-    CHECK(below("1|9:10000|2:0:4|0") == State::Allows);   // Ally: status = Enfeeble -> -na (best)
-    CHECK(below("1|9:3|2:2:14|0") == State::Allows);      // Ally: status = Poison -> Poisona
-    CHECK(below("0|0:0|2:2:143|0") == State::Allows);     // Self -> Erase
-    CHECK(below("2|0:0|2:0:4|0") == State::NotBelow);     // -na (best) on the mob
-    CHECK(below("1|0:0|2:2:95|0") == State::NotBelow);    // Esuna, a -na family spell on herself alone
-    CHECK(below("1|39:30|2:0:4|0") == State::Clock);      // on a timer
+    CHECK(stateOf("1|101:0|2:0:4|0") == State::Tool);            // * Ally -> -na (best)
+    CHECK(stateOf(marked("1|9:10000|2:0:4|0")) == State::Tool);  // * Ally: status = Enfeeble -> -na (best)
+    CHECK(stateOf(marked("1|9:3|2:2:14|0")) == State::Tool);     // * Ally: status = Poison -> Poisona
+    CHECK(stateOf(marked("0|0:0|2:2:143|0")) == State::Tool);    // * Self -> Erase
+    CHECK(stateOf(marked("2|0:0|2:0:4|0")) == State::NoJudgement);  // -na (best) on the mob
+    CHECK(stateOf(marked("1|0:0|2:2:95|0")) == State::NoJudgement); // Esuna, a -na family spell on herself alone
+    CHECK(stateOf(marked("1|39:30|2:0:4|0")) == State::Clock);      // on a timer
 
-    // Everything else is struck out there
-    CHECK(below("1|0:0|2:2:43|0") == State::NotBelow);  // Protect
-    CHECK(below("2|0:0|2:2:144|0") == State::NotBelow); // Fire
-    CHECK(below("2|0:0|3:2:35|0") == State::NotBelow);  // an ability (Provoke)
-    CHECK(below("2|0:0|4:2:1|0") == State::NotBelow);   // a weapon skill
-    CHECK(below("2|0:0|1:0:0|0") == State::NotBelow);   // a ranged attack
-    CHECK(below(kRest) == State::NotBelow);               // a behaviour row
-    CHECK(below("1|0:0|2:0:1+2:2:58|0") == State::NotBelow); // two actions
+    // Her rest: the MP pacing's handle, a Self -> Rest row (RESEARCH §17.13)
+    CHECK(stateOf("0|101:0|100:14:1|0") == State::Tool);         // * Self -> Rest
+    CHECK(stateOf("0|0:0|100:14:1|0") == State::Order);          // Self -> Rest: an order, her own rest until full when it holds
+    CHECK(stateOf("0|3:30&101:0|100:14:1|0") == State::Tool);    // * Self: MP < 30% -> Rest: the pacing, gated
+    CHECK(stateOf("1|101:0|100:14:1|0") == State::NoJudgement);  // Ally -> Rest: nobody rests another
+    CHECK(cardian::tactician::allowanceOf(row("0|101:0|100:14:1|0")) == cardian::tactician::Allowance::Rest);
+    CHECK_FALSE(cardian::tactician::isSpellTool(cardian::tactician::Allowance::Rest));
+
+    // Everything else the tactician has no judgement for: struck out
+    CHECK(stateOf(marked("1|0:0|2:2:43|0")) == State::NoJudgement);  // Protect
+    CHECK(stateOf(marked("2|0:0|2:2:144|0")) == State::NoJudgement); // Fire
+    CHECK(stateOf(marked("2|0:0|4:2:1|0")) == State::NoJudgement);   // a weapon skill
+    CHECK(stateOf(marked("2|0:0|1:0:0|0")) == State::NoJudgement);   // a ranged attack
+    CHECK(stateOf(marked(kRest)) == State::NoJudgement);             // a behaviour row takes no mark
+    CHECK(stateOf(marked("1|0:0|2:0:1+2:2:58|0")) == State::NoJudgement); // two actions
+
+    // Unmarked, every one of them is an order
+    for (const auto* spec : { "1|0:0|2:2:43|0", "2|0:0|2:2:144|0", "2|0:0|4:2:1|0", "2|1:50|2:2:23|0", "1|9:3|2:2:14|0", "102|0:0|0:0:0|0" })
+    {
+        INFO("row " << spec);
+        CHECK(stateOf(spec) == State::Order);
+    }
+    CHECK(stateOf(kRest) == State::Order);
 }
 
-TEST_CASE("tactician line: an action aimed at the wrong side is a misfit, struck out wherever it sits", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: an action aimed at the wrong side is a misfit, struck out marked or not", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::fitsSide;
     using cardian::tactician::kTargetEnemy;
@@ -253,39 +248,25 @@ TEST_CASE("tactician line: an action aimed at the wrong side is a misfit, struck
     CHECK_FALSE(fitsSide(gambits::G_TARGET::PARTY, kTargetEnemy, true)); // Ally: status = Sleep -> a weapon skill
     CHECK_FALSE(fitsSide(gambits::G_TARGET::SELF, kTargetEnemy));        // Self -> Dia: a spell goes where the row names
 
-    // A misfit is struck out above the line, below it, and as no line at all
-    const auto g = row("1|9:2|0:0:0|0");
-    CHECK(cardian::tactician::stateOf(g, 1, std::nullopt, false) == State::Misfit);
-    CHECK(cardian::tactician::stateOf(g, 3, cardian::tactician::Line{ 1, pawn::Role::SupportMage }, false) == State::Misfit);
+    // A misfit is struck out, an order or a marked row alike
+    CHECK(cardian::tactician::stateOf(row("1|9:2|0:0:0|0"), false) == State::Misfit);
+    CHECK(cardian::tactician::stateOf(row(marked("1|9:2|0:0:0|0")), false) == State::Misfit);
     CHECK(cardian::tactician::struck(State::Misfit));
 }
 
-TEST_CASE("tactician line: a timer or a chance below the line is struck out", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: a marked row on a timer or a chance is struck out", "[cardian][gambits][tactician]")
 {
-    CHECK(below("1|39:30|2:0:1|0") == State::Clock);
-    CHECK(below("2|22:50|2:2:58|0") == State::Clock);
+    CHECK(stateOf(marked("1|39:30|2:0:1|0")) == State::Clock);
+    CHECK(stateOf(marked("2|22:50|2:2:58|0")) == State::Clock);
+    // as an order a clock is what it always was
+    CHECK(stateOf("1|39:30|2:0:1|0") == State::Order);
     CHECK(cardian::tactician::struck(State::Clock));
-    CHECK(cardian::tactician::struck(State::NotBelow));
-    CHECK(cardian::tactician::struck(State::NoChoice));
-    CHECK_FALSE(cardian::tactician::struck(State::Allows));
-    CHECK_FALSE(cardian::tactician::struck(State::Line));
+    CHECK(cardian::tactician::struck(State::NoJudgement));
+    CHECK_FALSE(cardian::tactician::struck(State::Tool));
     CHECK_FALSE(cardian::tactician::struck(State::Order));
 }
 
-TEST_CASE("tactician line: moving her row swallows and releases rows", "[cardian][gambits][tactician]")
-{
-    // Her row moved up past Rest with the player: that row now sits below
-    // her and is struck out; moved down past her Cure: the Cure is above her
-    // and, left to a tactician that is not there, struck out
-    CHECK(statesOf(rows({ kSupportMage, kRest, kCureBest })) == std::vector<State>{ State::Line, State::NotBelow, State::Allows });
-    CHECK(statesOf(rows({ kRest, kCureBest, kSupportMage })) == std::vector<State>{ State::Order, State::NoChoice, State::Line });
-
-    // Her row deleted: a gated Cure becomes a real order, Tactician's
-    // choice is struck out
-    CHECK(statesOf(rows({ kRest, "1|1:50|2:0:1|0", kCureBest })) == std::vector<State>{ State::Order, State::Order, State::NoChoice });
-}
-
-TEST_CASE("tactician line: which spells a row below the line lets her cast", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: which spells a marked row lets her cast", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::allowsSpell;
     const auto best = row(kCureBest);
@@ -324,41 +305,41 @@ TEST_CASE("tactician line: which spells a row below the line lets her cast", "[c
     // A -na row is no spell of her tactician's: it runs as written (actsAlone)
     CHECK_FALSE(allowsSpell(row("1|101:0|2:0:4|0"), static_cast<uint16>(SpellID::Poisona)));
 
-    // Nothing that does not fit below the line allows a spell
-    CHECK_FALSE(allowsSpell(row("1|0:0|2:2:43|0"), static_cast<uint16>(SpellID::Protect)));
-    CHECK_FALSE(allowsSpell(row("102|0:0|0:0:0|0"), static_cast<uint16>(SpellID::Cure)));
+    // An unmarked Cure is an order's, not the tactician's; nothing the
+    // tactician has no judgement for allows a spell
+    CHECK_FALSE(allowsSpell(row("1|1:50|2:0:1|0"), static_cast<uint16>(SpellID::Cure)));
+    CHECK_FALSE(allowsSpell(row(marked("1|0:0|2:2:43|0")), static_cast<uint16>(SpellID::Protect)));
+    CHECK_FALSE(allowsSpell(row(marked("102|0:0|0:0:0|0")), static_cast<uint16>(SpellID::Cure)));
 }
 
-TEST_CASE("tactician line: an order acts alone, and below the line only a -na or Erase row does", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: an order acts alone, and of the marked rows only a -na or Erase does", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::actsAlone;
     const auto na = row("1|101:0|2:0:4|0");
     CHECK(actsAlone(State::Order, row(kRest), true));
-    CHECK(actsAlone(State::Order, na, true));
-    CHECK(actsAlone(State::Allows, na, true));
-    CHECK(actsAlone(State::Allows, row("1|9:3|2:2:14|0"), true));  // Ally: status = Poison -> Poisona
-    CHECK(actsAlone(State::Allows, row("0|0:0|2:2:143|0"), true)); // Self -> Erase
+    CHECK(actsAlone(State::Order, row("1|9:3|2:2:14|0"), true));
+    CHECK(actsAlone(State::Tool, na, true));
+    CHECK(actsAlone(State::Tool, row(marked("1|9:3|2:2:14|0")), true));  // * Ally: status = Poison -> Poisona
+    CHECK(actsAlone(State::Tool, row(marked("0|0:0|2:2:143|0")), true)); // * Self -> Erase
 
     // Her cures, her enfeebles and her melee wait for her tactician
-    CHECK_FALSE(actsAlone(State::Allows, row(kCureBest), true));
-    CHECK_FALSE(actsAlone(State::Allows, row("2|101:0|2:100:0|0"), true));
-    CHECK_FALSE(actsAlone(State::Allows, row("102|0:0|0:0:0|0"), true));
+    CHECK_FALSE(actsAlone(State::Tool, row(kCureBest), true));
+    CHECK_FALSE(actsAlone(State::Tool, row("2|101:0|2:100:0|0"), true));
+    CHECK_FALSE(actsAlone(State::Tool, row(kPull), true));
 
-    // With her tactician not running (her Support Mage row unchecked, her
-    // gambits off), a -na row below the line waits as her Cure rows do; an
-    // order still acts
-    CHECK_FALSE(actsAlone(State::Allows, na, false));
-    CHECK_FALSE(actsAlone(State::Allows, row("0|0:0|2:2:143|0"), false));
-    CHECK(actsAlone(State::Order, na, false));
+    // With her tactician not running (her gambits off), a marked -na row
+    // waits as her marked Cure rows do; an order still acts
+    CHECK_FALSE(actsAlone(State::Tool, na, false));
+    CHECK_FALSE(actsAlone(State::Tool, row(marked("0|0:0|2:2:143|0")), false));
+    CHECK(actsAlone(State::Order, row("1|9:3|2:2:14|0"), false));
 
-    // Struck out, or the line itself, never
+    // Struck out, never
     CHECK_FALSE(actsAlone(State::Clock, na, true));
-    CHECK_FALSE(actsAlone(State::NoChoice, na, true));
+    CHECK_FALSE(actsAlone(State::NoJudgement, na, true));
     CHECK_FALSE(actsAlone(State::Misfit, na, true));
-    CHECK_FALSE(actsAlone(State::Line, row(kSupportMage), true));
 }
 
-TEST_CASE("tactician line: an Enfeeble order casts the first single-target enfeeble she can that the foe lacks", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: an Enfeeble order casts the first single-target enfeeble she can that the foe lacks", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::firstEnfeeble;
     using cardian::tactician::kEnfeebleOrder;
@@ -388,7 +369,7 @@ TEST_CASE("tactician line: an Enfeeble order casts the first single-target enfee
     CHECK_FALSE(firstEnfeeble(only({})).has_value());
 }
 
-TEST_CASE("tactician line: her tactician's melee, and when it gives way to her rest", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: her tactician's melee, and when it gives way to her rest", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::leavesToRest;
     using cardian::tactician::meleeAllowed;
@@ -404,31 +385,196 @@ TEST_CASE("tactician line: her tactician's melee, and when it gives way to her r
     // is due
     CHECK(leavesToRest(true, true, false, true, false));
     CHECK_FALSE(leavesToRest(true, false, false, true, false)); // recovery not due
-    CHECK_FALSE(leavesToRest(true, true, true, true, false));   // an order above the line claims the mob
+    CHECK_FALSE(leavesToRest(true, true, true, true, false));   // an order claims the mob
     CHECK_FALSE(leavesToRest(true, true, false, false, false)); // no row of hers took it (a pull, an answer)
     CHECK_FALSE(leavesToRest(true, true, false, true, true));   // the player ordered this fight himself
     CHECK_FALSE(leavesToRest(false, true, false, true, false)); // her tactician is not running
 }
 
-TEST_CASE("tactician line: the default sets mean what they say where they sit", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][tactician]")
 {
     std::vector<std::string> mage;
     for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::WHM))
     {
         mage.push_back(spec);
     }
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Order, State::Order, State::Line, State::Allows, State::Allows, State::Allows, State::Allows });
+    // the tactician's tools first (her cures, her rest), then her orders,
+    // and her marked Attack row (off: the melee mage's switch) last
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Tool });
 
     std::vector<std::string> melee;
-    for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::WAR))
+    for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::PLD))
     {
         melee.push_back(spec);
     }
-    const auto states = statesOf(rows(melee));
-    CHECK_FALSE(lineOf(rows(melee)).has_value());
-    for (const auto state : states)
+    for (const auto state : statesOf(rows(melee)))
     {
         CHECK(state == State::Order);
     }
+
+    // a Monk's and a Warrior's: the trio, her three tools, her weapon
+    // skill and rest with the player
+    for (const auto job : { xi::Job::MNK, xi::Job::WAR })
+    {
+        std::vector<std::string> specs;
+        for (const auto& [spec, on] : pawn::defaultRowsFor(job))
+        {
+            specs.push_back(spec);
+        }
+        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order });
+    }
 }
 
+TEST_CASE("tactician: the self buffs, Boost and Sneak Attack are tools on a Self row, each with its own when", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::Allowance;
+    using cardian::tactician::allowanceOf;
+    using cardian::tactician::buffNow;
+    using cardian::tactician::actsAlone;
+    namespace t = cardian::tactician;
+
+    // On a Self row each is a tool; on a Foe row none has a judgement;
+    // unmarked, each is an order
+    for (const auto ability : { t::kBerserk, t::kDefender, t::kAggressor, t::kFocus, t::kDodge })
+    {
+        INFO("ability " << ability);
+        const auto self = "0|101:0|3:2:" + std::to_string(ability) + "|0";
+        CHECK(stateOf(self) == State::Tool);
+        CHECK(allowanceOf(row(self)) == Allowance::Buff);
+        CHECK(stateOf("2|101:0|3:2:" + std::to_string(ability) + "|0") == State::NoJudgement);
+        CHECK(stateOf("0|0:0|3:2:" + std::to_string(ability) + "|0") == State::Order);
+        // a buff never acts alone: its when does (CGambits::BuffNow)
+        CHECK_FALSE(actsAlone(State::Tool, row(self), true));
+    }
+    CHECK(stateOf("0|101:0|3:2:39|0") == State::Tool); // * Self -> Boost
+    CHECK(allowanceOf(row("0|101:0|3:2:39|0")) == Allowance::Boost);
+    CHECK(stateOf("2|101:0|3:2:39|0") == State::NoJudgement);
+    CHECK(stateOf("0|101:0|3:2:44|0") == State::Tool); // * Self -> Sneak Attack
+    CHECK(allowanceOf(row("0|101:0|3:2:44|0")) == Allowance::SneakAttack);
+    CHECK(stateOf("2|101:0|3:2:44|0") == State::NoJudgement);
+    CHECK(stateOf("0|0:0|3:2:44|0") == State::Order); // plain: Sneak Attack whenever it holds, a plain hit's
+    CHECK_FALSE(actsAlone(State::Tool, row("0|101:0|3:2:44|0"), true)); // it waits for her weapon skill
+    CHECK(stateOf(marked("0|3:30|3:2:31|0")) == State::Tool); // * Self: MP < 30% -> Berserk: gated
+    CHECK_FALSE(t::isBuffAbility(t::kBoost));                // Boost waits for the weapon skill, not its clock
+    CHECK_FALSE(t::isBuffAbility(t::kSneakAttack));          // so does Sneak Attack
+    CHECK_FALSE(t::isBuffAbility(35));                       // Provoke is the tank's hate tool
+
+    // The when: fighting, not on her already, the seat allowing
+    for (const auto ability : { t::kAggressor, t::kFocus, t::kDodge })
+    {
+        INFO("ability " << ability);
+        CHECK(buffNow(ability, true, false, false));
+        CHECK(buffNow(ability, true, false, true)); // any seat
+        CHECK_FALSE(buffNow(ability, false, false, false)); // not fighting
+        CHECK_FALSE(buffNow(ability, true, true, false));   // already up
+    }
+    CHECK(buffNow(t::kBerserk, true, false, false));
+    CHECK_FALSE(buffNow(t::kBerserk, true, false, true));  // never seated Tank
+    CHECK(buffNow(t::kDefender, true, false, true));
+    CHECK_FALSE(buffNow(t::kDefender, true, false, false)); // only seated Tank
+    CHECK_FALSE(buffNow(t::kBoost, true, false, false));    // Boost is no clock buff
+    CHECK_FALSE(buffNow(35, true, false, true));            // nor Provoke
+
+    // Berserk and Defender are a stance: seated Tank, Berserk is the one to
+    // take off; any other seat, Defender (both up, their numbers cancel)
+    CHECK(t::isStanceAbility(t::kBerserk));
+    CHECK(t::isStanceAbility(t::kDefender));
+    CHECK_FALSE(t::isStanceAbility(t::kAggressor));
+    CHECK_FALSE(t::isStanceAbility(t::kBoost));
+    CHECK(t::wrongStance(true) == t::kBerserk);
+    CHECK(t::wrongStance(false) == t::kDefender);
+    CHECK(t::otherStance(t::kBerserk) == t::kDefender);
+    CHECK(t::otherStance(t::kDefender) == t::kBerserk);
+
+    // The player's own stance is his for the one use it put up: the effect
+    // that went up as it landed, never one older than the order, nor a
+    // later one of the tactician's
+    using namespace std::chrono_literals;
+    CHECK(t::isOrderedUse(0ms));
+    CHECK(t::isOrderedUse(800ms)); // landed two ticks on
+    CHECK(t::isOrderedUse(5s));
+    CHECK_FALSE(t::isOrderedUse(-1ms));   // up before the order: not his
+    CHECK_FALSE(t::isOrderedUse(5001ms)); // up after his use: the tactician's
+    CHECK_FALSE(t::isOrderedUse(std::chrono::minutes(5)));
+}
+
+TEST_CASE("tactician: Damage spell (any) marked is her nukes, a tool on a Foe row, her tactician's when and which; an order unmarked", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::Allowance;
+    using cardian::tactician::allowanceOf;
+    using cardian::tactician::actsAlone;
+    namespace t = cardian::tactician;
+
+    const std::string nuke = "2|101:0|2:3:0|0"; // * Foe -> Damage spell (any)
+    CHECK(stateOf(nuke) == State::Tool);
+    CHECK(allowanceOf(row(nuke)) == Allowance::Nuke);
+    // a spell tool: she attends the party's fights at cure range for it
+    CHECK(t::isSpellTool(Allowance::Nuke));
+    // it never acts alone: her tactician's judgement does (CGambits::CastNuke)
+    CHECK_FALSE(actsAlone(State::Tool, row(nuke), true));
+    // gated, it is still hers to judge; on a Self or Ally row it has nothing to aim at
+    CHECK(stateOf(marked("2|2:50|2:3:0|0")) == State::Tool);
+    CHECK(stateOf("0|101:0|2:3:0|0") == State::NoJudgement);
+    CHECK(stateOf("1|101:0|2:3:0|0") == State::NoJudgement);
+    // unmarked, an order: a random one of her damage spells whenever its condition holds
+    CHECK(stateOf("2|0:0|2:3:0|0") == State::Order);
+    // it lends no spell to the conveyor's admission (Cures and Debuffs do)
+    CHECK_FALSE(t::allowsSpell(row(nuke), 144)); // Fire
+}
+
+TEST_CASE("tactician: a weapon skill takes Sneak Attack when its own script goes through the server's physical path", "[cardian][gambits][tactician]")
+{
+    // The real scripts, read as CPawnController::TakesSneakAttack reads
+    // them (xi_test runs from the server's root)
+    const auto takes = [](const std::string& name)
+    {
+        std::ifstream file("./scripts/actions/weaponskills/" + name + ".lua");
+        INFO("weapon skill " << name);
+        REQUIRE(file.is_open());
+        const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        return cardian::tactician::scriptTakesSneakAttack(source);
+    };
+
+    // The physical dagger skills a Thief reaches
+    for (const auto* name : { "wasp_sting", "viper_bite", "shadowstitch", "dancing_edge", "shark_bite", "evisceration" })
+    {
+        CHECK(takes(name));
+    }
+    // Magical (Gust Slash, Cyclone, Aeolian Edge), ranged (Sidewinder), and
+    // scripts of their own (Energy Steal, Energy Drain, Spirits Within)
+    for (const auto* name : { "gust_slash", "cyclone", "aeolian_edge", "sidewinder", "energy_steal", "energy_drain", "spirits_within" })
+    {
+        CHECK_FALSE(takes(name));
+    }
+}
+
+TEST_CASE("tactician: a weapon skill row takes Sneak Attack only when it would fire and its skill would take it", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::wsRowTakesSneak;
+    // Wasp Sting (16) is hers and takes it; Gust Slash (19) is hers and
+    // does not; Viper Bite (17) would, but is not hers
+    const auto takesIfHers = [](const uint16 wsid)
+    {
+        return wsid == 16;
+    };
+
+    // Weapon skill (best), an order: while one of hers takes it
+    const auto best = row("2|2:50|4:0:0|0");
+    CHECK(wsRowTakesSneak(best, State::Order, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(best, State::Order, false, takesIfHers));
+
+    // A row naming a weapon skill: as named, the player's wish kept
+    CHECK(wsRowTakesSneak(row("2|2:50|4:2:16|0"), State::Order, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(row("2|2:50|4:2:19|0"), State::Order, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(row("2|2:50|4:2:17|0"), State::Order, true, takesIfHers));
+
+    // A row that never fires does not count: a marked weapon skill row has
+    // no judgement behind it, and a struck-out row does nothing
+    const auto markedBest = row("2|101:0|4:0:0|0");
+    CHECK(cardian::tactician::stateOf(markedBest) == State::NoJudgement);
+    CHECK_FALSE(wsRowTakesSneak(markedBest, State::NoJudgement, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(best, State::Misfit, true, takesIfHers));
+
+    // A row with no weapon skill in it
+    CHECK_FALSE(wsRowTakesSneak(row(kRest), State::Order, true, takesIfHers));
+}

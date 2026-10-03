@@ -353,20 +353,21 @@ namespace cardian::engage
     }
 
     // She attends the fight on a mob from the perimeter instead of
-    // fighting it: she holds the Support Mage role and no row of hers
-    // claims the mob. A row that claims it makes her fight it
-    constexpr auto attendsFight(const bool supportMage, const bool claimed) -> bool
+    // fighting it: her rows offer the fight spells (a marked Cure, -na or
+    // Enfeeble row; RESEARCH §17.13) and no row of hers claims the mob. A
+    // row that claims it makes her fight it
+    constexpr auto attendsFight(const bool spells, const bool claimed) -> bool
     {
-        return supportMage && !claimed;
+        return spells && !claimed;
     }
 
     // The hunt (the Orders page's Pull: the party's strategy, never gated
-    // by her gambits). A Support Mage whose rows take no fight at all never
-    // pulls, since she attends. One enabled Attack row makes her a fighter,
-    // and a pull she chose is hers to fight, never an attend
-    constexpr auto huntsForParty(const bool supportMage, const bool anyEngageRow) -> bool
+    // by her gambits). A mage with spells to offer whose rows take no fight
+    // at all never pulls, since she attends. One enabled Attack row makes
+    // her a fighter, and a pull she chose is hers to fight, never an attend
+    constexpr auto huntsForParty(const bool spells, const bool anyEngageRow) -> bool
     {
-        return !supportMage || anyEngageRow;
+        return !spells || anyEngageRow;
     }
 
     // How she takes the fight the door answers with
@@ -376,9 +377,9 @@ namespace cardian::engage
         Attend, // she attends it from the perimeter, weapon away
     };
 
-    // The door's answer. A row's pick is drawn on. With none, a Support
-    // Mage with somewhere to keep cure range to (an anchor or a stake)
-    // attends the party's fight, so by default she attends without
+    // The door's answer. A row's pick is drawn on. With none, a mage with
+    // spells to offer and somewhere to keep cure range to (an anchor or a
+    // stake) attends the party's fight, so by default she attends without
     // engaging monsters; with nowhere, she takes only what her rows take,
     // which by default is nothing, not even a mob on her. A camp member out
     // in the wild (campMember) draws on the party's fight: a camp takes its
@@ -386,14 +387,14 @@ namespace cardian::engage
     // so her own rows -- whatever they have been edited to -- never leave
     // her camp idle. Otherwise the door has nothing: with her gambits off
     // she takes no fight of her own
-    constexpr auto doorAnswer(const bool rowPicked, const bool partyFight, const bool supportMage, const bool hasPlace, const bool campMember = false)
+    constexpr auto doorAnswer(const bool rowPicked, const bool partyFight, const bool spells, const bool hasPlace, const bool campMember = false)
         -> std::optional<How>
     {
         if (rowPicked)
         {
             return How::Draw;
         }
-        if (supportMage && hasPlace && partyFight)
+        if (spells && hasPlace && partyFight)
         {
             return How::Attend;
         }
@@ -417,16 +418,16 @@ namespace cardian::engage
     {
         Attend, // she still attends it
         Draw,   // a row now claims that same mob: she fights it (the melee-mage upgrade)
-        Stop,   // she stops attending: her gambits are off, or no row speaks for her role
+        Stop,   // she stops attending: her gambits are off, or her rows no longer offer the fight a spell
     };
 
-    constexpr auto keptAttendance(const bool supportMage, const bool claimed) -> Kept
+    constexpr auto keptAttendance(const bool spells, const bool claimed) -> Kept
     {
         if (claimed)
         {
             return Kept::Draw;
         }
-        return supportMage ? Kept::Attend : Kept::Stop;
+        return spells ? Kept::Attend : Kept::Stop;
     }
 
     // Holding for the player's strike, while he is engaged

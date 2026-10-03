@@ -35,9 +35,11 @@ xi.settings.cardian =
     -- An order from the command window given a little early -- she is
     -- mid-action, or the spell is still on recast -- is held and fires the
     -- moment it can, as long as that moment is within this many seconds of
-    -- the press. Later than that the order is refused with the wait, and a
-    -- held order the grace runs out on is let go with a note: a spell
-    -- pressed twice is one cast, not two.
+    -- the press, the 2.5 s the server makes anyone wait after a spell
+    -- added on: an order pressed late in her cast bar fires as soon as
+    -- that wait is over. Later than that the order is refused with the
+    -- wait, and a held order the grace runs out on is let go with a note:
+    -- a spell pressed twice is one cast, not two.
     ORDER_GRACE = 3.0,
 
     -- The combat pause (ROADMAP B): the addon's pause button holds the whole
