@@ -209,7 +209,7 @@ namespace pawn::roster
         {
             return Role::None;
         }
-        // The real player in her party, else her summoner: the orders' owner.
+        // The real player in her party: the orders' owner (ordersOwnerOf).
         // Out of his party (an alt standing by) she holds no role. Between
         // zones, his (not to be found) or hers (off the party's list for the
         // moment), the party is unchanged: her last role holds for a while
