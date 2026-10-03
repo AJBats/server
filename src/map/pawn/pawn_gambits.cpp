@@ -126,8 +126,18 @@ namespace pawn
             return { cap, pawn::bundles::subLevelAt(cap, settings::get<uint8>("map.SUBJOB_RATIO")) };
         }
 
-        // The level a job learns a seat tool's ability or spell at, from the
-        // game's tables; 0 for never
+        // The level a job learns a spell at, from the game's tables; 0 for
+        // never
+        auto spellLevel(const uint16 id, const xi::Job job) -> uint8
+        {
+            auto*       PSpell = spell::GetSpell(static_cast<SpellID>(id));
+            const uint8 level  = PSpell != nullptr ? PSpell->getJob(job) : 0;
+            return level == 255 ? 0 : level;
+        }
+
+        // The level a job learns a seat tool's ability or spell at -- for
+        // Enfeeble, the first debuff her tactician prices that it learns --
+        // from the game's tables; 0 for never
         auto toolLevel(const pawn::bundles::Need need, const xi::Job job) -> uint8
         {
             if (need.kind == pawn::bundles::Need::Kind::Ability)
@@ -137,9 +147,20 @@ namespace pawn
             }
             if (need.kind == pawn::bundles::Need::Kind::Spell)
             {
-                auto*       PSpell = spell::GetSpell(static_cast<SpellID>(need.id));
-                const uint8 level  = PSpell != nullptr ? PSpell->getJob(job) : 0;
-                return level == 255 ? 0 : level;
+                return spellLevel(need.id, job);
+            }
+            if (need.kind == pawn::bundles::Need::Kind::Enfeeble)
+            {
+                uint8 first = 0;
+                for (const auto& debuff : cardian::tactician::kPricedDebuffs)
+                {
+                    const uint8 level = spellLevel(debuff.id, job);
+                    if (level > 0 && (first == 0 || level < first))
+                    {
+                        first = level;
+                    }
+                }
+                return first;
             }
             return 0;
         }
@@ -581,6 +602,18 @@ namespace pawn
             ShowInfoFmt("tactics: {}'s tank tactician {}", POwner->getName(), tank ? "takes her think" : "stands down");
         }
 
+        // The tactician's own needs for the spells she offers, on her
+        // staggered think (below; the pricing is not every tick's), fed
+        // before her assignment is read, so a need that think finds -- a
+        // fight's first debuff (her Burn ahead of her first nuke), a cure --
+        // is hers that think, not the next
+        const auto positionOffset = std::chrono::milliseconds(m_PController->GetPawnPartyPosition() * 100);
+        const bool thinkDue       = tick + positionOffset >= m_lastAction;
+        if (spells && thinkDue)
+        {
+            pawn::tactics::roleThink(POwner, engaged);
+        }
+
         // The shared party tick measures and assigns emergency aid before
         // ordinary needs. Each mage reads that same decision here.
         if (conveyor && CastAssignment(engaged))
@@ -631,8 +664,7 @@ namespace pawn
         }
 
         // Stagger pawns so a party doesn't think in lockstep
-        const auto positionOffset = std::chrono::milliseconds(m_PController->GetPawnPartyPosition() * 100);
-        if (tick + positionOffset < m_lastAction)
+        if (!thinkDue)
         {
             return;
         }
@@ -696,12 +728,6 @@ namespace pawn
                                         }
                                         return true;
                                     });
-
-        // The tactician's own needs for the spells she offers, on her think
-        if (spells)
-        {
-            pawn::tactics::roleThink(POwner, engaged);
-        }
     }
 
     auto CGambits::CastAssignment(const bool engaged) -> bool
@@ -1700,7 +1726,8 @@ namespace pawn
         // her rows do: laid out once per generation of them
         if (!m_offers.has_value() || m_offers->generation != m_rowsGeneration)
         {
-            m_offers = Offered{ m_rowsGeneration, OffersAny([](cardian::tactician::Allowance) { return true; }), OffersAny(cardian::tactician::isSpellTool) };
+            m_offers = Offered{ m_rowsGeneration, OffersAny([](cardian::tactician::Allowance) { return true; }), OffersAny(cardian::tactician::isSpellTool),
+                                OffersAny([](const cardian::tactician::Allowance a) { return a == cardian::tactician::Allowance::Nuke; }) };
         }
         return *m_offers;
     }
@@ -1870,6 +1897,26 @@ namespace pawn
         POwner->StatusEffectContainer->DelStatusEffect(effect);
         ShowInfoFmt("tactics: {} drops {} ({})", POwner->getName(), wrong == cardian::tactician::kBerserk ? "Berserk" : "Defender",
                     tank ? "seated Tank: Defender's stance" : "not the Tank: Berserk's stance");
+    }
+
+    auto CGambits::OfferedNukes() -> std::vector<SpellID>
+    {
+        // What she can cast at all -- learned, her jobs and level allowing --
+        // not what her MP and recasts allow this instant: a Burn's plan
+        // spans its whole window, and her MP is counted there
+        std::vector<SpellID> out;
+        if (!Offers().nukes)
+        {
+            return out;
+        }
+        for (const auto id : m_spellBook.DamageSpells())
+        {
+            if (auto* PSpell = spell::GetSpell(id); pawn::tactics::bank::isNuke(PSpell) && CSpellBook::Eligible(POwner, PSpell))
+            {
+                out.push_back(id);
+            }
+        }
+        return out;
     }
 
     auto CGambits::NukeSpells() -> std::vector<SpellID>

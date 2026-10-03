@@ -407,6 +407,26 @@ TEST_CASE("DebuffPrice: on already, moot and unpriced read as such", "[cardian][
     CHECK_THAT(summary(tiny), !ContainsSubstring("debuffs dealt"));
 }
 
+TEST_CASE("Defence down's rate: the party's plain swings alone, never its magic", "[cardian][tactics][bank]")
+{
+    FightRecord r;
+    r.openedAt = 100.0;
+    // a Monk's swings and a Black Mage's nukes: the defence down's rate is
+    // the swings alone, while all the party dealt is both
+    auto& monk       = r.member(1, "Misha");
+    monk.damageDealt = 300;
+    monk.meleeDealt  = 300;
+    auto& nuker       = r.member(2, "Jevyak");
+    nuker.damageDealt = 1000;
+    CHECK_THAT(r.meleePerSecond(110.0), WithinAbs(30.0, 1e-9));
+    CHECK_THAT(r.dealtPerSecond(110.0), WithinAbs(130.0, 1e-9));
+    // nobody swinging, nothing for a defence down to strengthen
+    FightRecord mages;
+    mages.openedAt                        = 100.0;
+    mages.member(2, "Jevyak").damageDealt = 1000;
+    CHECK(mages.meleePerSecond(110.0) == 0.0);
+}
+
 TEST_CASE("Defence down, the exact number: a hit without it, and the split per effect", "[cardian][tactics][bank]")
 {
     CHECK_THAT(withoutDefenceDown(41, 1.10, 1.00), WithinAbs(41.0 / 1.10, 1e-9));
@@ -570,6 +590,73 @@ TEST_CASE("summary: each Thief's Sneak Attacks, held for her weapon skill with w
     FightRecord quiet;
     quiet.member(2, "Jevyak");
     CHECK_THAT(summary(quiet), !ContainsSubstring("Sneak Attack"));
+}
+
+TEST_CASE("Bio's attack down: its share of the mob's melee over the window, if it lands", "[cardian][tactics][bank]")
+{
+    using cardian::tactics::attackDownSaved;
+
+    // 60 s at a 3 s delay is 20 rounds; 10 a round is 200 of melee; 10% of
+    // it is 20 HP, or 18 at a 90% chance to land
+    CHECK_THAT(attackDownSaved(1.0, 60.0, 3.0, 10.0, 0.10), WithinAbs(20.0, 1e-9));
+    CHECK_THAT(attackDownSaved(0.9, 60.0, 3.0, 10.0, 0.10), WithinAbs(18.0, 1e-9));
+    // a harder hitter makes it worth more, a shorter window less
+    CHECK_THAT(attackDownSaved(1.0, 60.0, 3.0, 30.0, 0.10), WithinAbs(60.0, 1e-9));
+    CHECK_THAT(attackDownSaved(1.0, 30.0, 3.0, 10.0, 0.10), WithinAbs(10.0, 1e-9));
+    // no delay on record, nothing
+    CHECK(attackDownSaved(1.0, 60.0, 0.0, 10.0, 0.10) == 0.0);
+}
+
+TEST_CASE("Burn: its INT down by power, and the party's nukes over its window with it against without", "[cardian][tactics][bank]")
+{
+    using cardian::tactics::BurnNuker;
+    using cardian::tactics::burnIntDown;
+    using cardian::tactics::burnPlan;
+    using cardian::tactics::NukeOption;
+    using cardian::tactics::nukesWithin;
+
+    // scripts/effects/burn.lua: (power - 1) x 2 + 5
+    CHECK(burnIntDown(1.0) == 5);
+    CHECK(burnIntDown(3.0) == 9);
+    CHECK(burnIntDown(5.0) == 13);
+
+    // Fire II, 300 a cast, 330 under Burn, 5.5 s and 34 MP a cast
+    const NukeOption fire{ 300.0, 5.5, 34.0 };
+    const NukeOption burned{ 330.0, 5.5, 34.0 };
+
+    // The casts she makes: the tighter of her time and her MP
+    CHECK_THAT(nukesWithin(40.0, 200.0, fire), WithinAbs(200.0 / 34.0, 1e-9)); // MP runs out first
+    CHECK_THAT(nukesWithin(40.0, 600.0, fire), WithinAbs(40.0 / 5.5, 1e-9));   // the window ends first
+    CHECK(nukesWithin(0.0, 600.0, fire) == 0.0);
+    CHECK(nukesWithin(40.0, -10.0, fire) == 0.0);
+
+    // One Black Mage alone, short of MP over a 40 s window: the Burn's 25 MP
+    // is most of a Fire II, so the plan without it deals more (RESEARCH
+    // §17.13, the worked example: ~1,765 against ~1,739)
+    const BurnNuker jevyak{ 200.0, fire, burned, true };
+    const auto      alone = burnPlan({ jevyak }, 40.0, 5.0, 25.0, 1.0, 40.0);
+    CHECK_THAT(alone.without, WithinAbs(200.0 / 34.0 * 300.0, 1e-6));
+    CHECK_THAT(alone.with, WithinAbs(175.0 / 34.0 * 330.0 + 40.0, 1e-6));
+    CHECK(alone.gain() < 0.0);
+
+    // Two more nukers with the same numbers: theirs land harder at no cost to
+    // them, and the plan with it wins (~5,621 against ~5,294)
+    const BurnNuker other{ 200.0, fire, burned, false };
+    const auto      three = burnPlan({ jevyak, other, other }, 40.0, 5.0, 25.0, 1.0, 40.0);
+    CHECK_THAT(three.gain(), WithinAbs(alone.gain() + 2.0 * (200.0 / 34.0 * 30.0), 1e-6));
+    CHECK(three.gain() > 300.0);
+
+    // A Burn that may not land: the nukes after it land harder only by its
+    // chance, and its cost is paid either way
+    const auto half = burnPlan({ jevyak, other, other }, 40.0, 5.0, 25.0, 0.5, 40.0);
+    CHECK_THAT(half.with, WithinAbs(0.5 * three.with + 0.5 * (175.0 / 34.0 * 300.0 + 2.0 * 200.0 / 34.0 * 300.0), 1e-6));
+
+    // With MP to spare the window binds instead: the Burn's 5 s are what
+    // it costs, judged by damage a second
+    const BurnNuker rich{ 600.0, fire, burned, true };
+    const auto      timed = burnPlan({ rich }, 40.0, 5.0, 25.0, 1.0, 0.0);
+    CHECK_THAT(timed.without, WithinAbs(40.0 / 5.5 * 300.0, 1e-6));
+    CHECK_THAT(timed.with, WithinAbs(35.0 / 5.5 * 330.0, 1e-6));
 }
 
 TEST_CASE("NukeCorrection: the seed's word counts as four nukes, so one resist moves it a little, and her landed nukes teach it", "[cardian][tactics][bank]")

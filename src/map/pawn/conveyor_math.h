@@ -63,6 +63,12 @@ namespace cardian::tactics
     // rather than its family, clear of every family number
     inline constexpr uint32 kStatusBySpell = 0x10000;
 
+    // The Status need Dia, Diaga and Bio share on a mob: they hold one place
+    // there (a Dia under a Bio of its tier cannot land, a Bio I wipes a Dia
+    // I), so one is in flight at a time, whichever row asked for it (the
+    // user, 2026-10-03). Clear of every family number and of kStatusBySpell
+    inline constexpr uint32 kDiaOrBio = 0x20000;
+
     struct NeedKey
     {
         NeedKind kind   = NeedKind::Other;

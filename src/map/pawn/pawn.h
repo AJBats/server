@@ -268,6 +268,11 @@ namespace pawn
         uint8 pullFirst  = 1;     // 0 nearest, 1 easiest, 2 toughest
         bool  aggressive = false; // prey inside an aggressive mob's circle: allowed = that mob (the guard) is the pull, avoided = skipped, and no circle across the approach
         bool  links      = false; // pull with a linking family member near the target
+        // Not a hunt rule but an order saved with them (the user, 2026-10-03):
+        // which of Dia and Bio, which block each other, the tactician casts
+        // while anyone it can ask is able to; the other once nobody is.
+        // Plain rows ignore it (role_support.cpp)
+        bool preferBio = false;
         // A world body's home pull (ROADMAP D3, user): the farther she is from
         // her starting point, the more the errand favours prey that leads back
         // toward it. roam is the distance at which the pull weighs as much as
@@ -277,7 +282,12 @@ namespace pawn
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
-    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS. CL_S_OK, or
+    // cardian_orders as this build reads and writes it, the Dia or Bio
+    // column included: made, or a column added, at boot. The same as
+    // modules/cardian/sql/cardian_orders.sql, which dbtool's update skips on
+    // a database whose upstream SQL has not moved
+    void ensureOrdersTable();
+    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS | DIA_BIO. CL_S_OK, or
     // CL_S_MALFORMED for a rule or value out of range. A band end pushed past
     // the other drags it along.
     auto setHuntRule(CCharEntity* POwner, uint8 rule, int value) -> uint16;

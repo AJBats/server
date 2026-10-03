@@ -220,10 +220,14 @@ namespace cardian::tactics
         double      moot        = -1.0;  // the mob dies before it lands: its seconds left
         bool        priced      = true;
         std::string family;              // when unpriced: what it is
+        bool        byDamage    = false; // judged by the damage it adds to the party's nukes (Burn), not by HP saved
+        double      damageGain  = 0.0;   // byDamage: what the plan with it deals over the plan without
 
         // The verdict as the role reads it: cast, or not. Nothing is cast
         // blind: with the formulas pricing a fight from its first second,
-        // "no data" only ever means the samples are still coming in
+        // "no data" only ever means the samples are still coming in. Judged
+        // by damage, its worth in MP is the cost plus what the gain is worth
+        // at the caster's nuke's damage per MP, so it goes when the gain does
         auto go() const -> bool
         {
             return priced && onFor < 0.0 && !blocked && moot < 0.0 && !noData && mpWorth > mp;
@@ -276,6 +280,10 @@ namespace cardian::tactics
             {
                 line += ", " + detail;
             }
+            if (byDamage)
+            {
+                return line + fmt::format(", {:+.0f} with it -> {}", damageGain, verdict());
+            }
             line += fmt::format(", saves ~{:.0f} HP = {:.0f} MP, costs {} -> {}", hpSaved, mpWorth, mp, verdict());
             if (formula)
             {
@@ -308,6 +316,15 @@ namespace cardian::tactics
     inline auto dotDamage(const double power, const double tick, const double window) -> double
     {
         return tick > 0.0 ? power * std::floor(window / tick) : 0.0;
+    }
+
+    // An attack down's share of the mob's melee over the window: its rounds
+    // at its delay, each landing what its melee lands a round on record, by
+    // the share the effect takes (Bio I's 10%: its damage falls about as its
+    // attack does while pDIF is short of its cap), if it lands
+    inline auto attackDownSaved(const double landChance, const double window, const double roundDelay, const double meleePerRound, const double share) -> double
+    {
+        return roundDelay > 0.0 ? landChance * (window / roundDelay) * meleePerRound * share : 0.0;
     }
 
     // Extra damage the party deals shortens the fight, and a shorter fight
@@ -439,6 +456,83 @@ namespace cardian::tactics
     inline auto defenceDownExtra(const double ratio, const double dealtPerSecond, const double window) -> double
     {
         return std::max(0.0, ratio - 1.0) * dealtPerSecond * window;
+    }
+
+    // --- an INT down priced by the nukes it strengthens (Burn) -----------
+
+    // Burn's INT down at the effect's power (its tick, 1 to 5 by the
+    // caster's INT and merits): scripts/effects/burn.lua's onEffectGain
+    inline auto burnIntDown(const double power) -> int32
+    {
+        return static_cast<int32>((power - 1.0) * 2.0 + 5.0);
+    }
+
+    // A way of nuking: what one cast deals, her seconds per cast (the cast
+    // and the wait after it), its MP
+    struct NukeOption
+    {
+        double dealt   = 0.0;
+        double seconds = 0.0;
+        double mp      = 0.0;
+    };
+
+    // The casts of it she makes in this many seconds with this much MP: as
+    // many as the tighter of the two allows
+    inline auto nukesWithin(const double seconds, const double mp, const NukeOption& n) -> double
+    {
+        if (seconds <= 0.0 || n.seconds <= 0.0)
+        {
+            return 0.0;
+        }
+        const double byTime = seconds / n.seconds;
+        return n.mp > 0.0 ? std::min(byTime, std::max(0.0, mp) / n.mp) : byTime;
+    }
+
+    // A nuker over Burn's window: her MP, the nuke she would cast without
+    // the Burn and under it (her pick each way: a bigger tier can gain the
+    // most), and whether she is the one who casts the Burn
+    struct BurnNuker
+    {
+        double     mp = 0.0;
+        NukeOption without;
+        NukeOption with;
+        bool       casts = false;
+    };
+
+    // The party's nuke damage over the window, without the Burn and with it
+    // (RESEARCH §17.13; the user, 2026-10-03: one score for kill time and MP
+    // efficiency). Without, each nuker nukes the window through; with it,
+    // the one who casts it first spends its seconds and MP, and the nukes
+    // after land harder if it landed. Each nuker casts as many as the
+    // tighter of her time and her MP allows, so where MP runs out first the
+    // Burn is judged by damage per MP, and where the mob dies first by
+    // damage per second. Its ticks join the plan with it. MP left when the
+    // window ends counts for nothing: her Rest's to recover
+    struct BurnPlan
+    {
+        double without = 0.0;
+        double with    = 0.0;
+
+        auto gain() const -> double
+        {
+            return with - without;
+        }
+    };
+
+    inline auto burnPlan(const std::vector<BurnNuker>& nukers, const double window, const double burnSeconds, const double burnMp, const double landChance, const double ticks) -> BurnPlan
+    {
+        BurnPlan plan;
+        for (const auto& n : nukers)
+        {
+            plan.without += nukesWithin(window, n.mp, n.without) * n.without.dealt;
+            const double seconds = n.casts ? window - burnSeconds : window;
+            const double mp      = n.casts ? n.mp - burnMp : n.mp;
+            const double landed  = nukesWithin(seconds, mp, n.with) * n.with.dealt;
+            const double missed  = nukesWithin(seconds, mp, n.without) * n.without.dealt;
+            plan.with += landChance * landed + (1.0 - landChance) * missed;
+        }
+        plan.with += landChance * ticks;
+        return plan;
     }
 
     // What was cast and its family, so the log shows what the party leans on

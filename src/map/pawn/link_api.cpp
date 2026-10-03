@@ -1317,6 +1317,7 @@ namespace pawn::linkapi
             msg.aggressive = rules.aggressive ? 1 : 0;
             msg.links      = rules.links ? 1 : 0;
             msg.staked     = stake.has_value() ? 1 : 0;
+            msg.diaBio     = rules.preferBio ? 1 : 0;
             msg.stakeZone  = stake.has_value() ? static_cast<uint16_t>(stake->zone) : 0;
             return msg;
         }

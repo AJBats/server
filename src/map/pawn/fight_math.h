@@ -191,6 +191,7 @@ namespace cardian::tactics
         uint32      hits         = 0;
         int32       tpMoveDamage = 0;
         int32       damageDealt  = 0;
+        int32       meleeDealt   = 0; // her plain swings alone: what a defence down on the mob strengthens
         int32       wsDamage     = 0;
         uint32      wsCount      = 0;
         uint32      casts        = 0;
@@ -335,6 +336,11 @@ namespace cardian::tactics
         // under one HP is never kept (asked again next think, since a shield
         // lifts). Negative: the damage table does not know the spell
         std::map<uint32, std::map<uint16, double>> nukeSeeds; // caster -> spell -> seed
+        // The seed call's second answer, each nuke with the mob's INT moved
+        // by a Burn's amount, for pricing the Burn by the nukes it
+        // strengthens: kept and dropped with her seeds
+        std::map<std::pair<uint32, int32>, std::map<uint16, double>> intSeeds; // (caster, INT down) -> spell -> seed
+        int32 seedInt = -1; // the mob's INT the kept seeds were worked at: once it moves (a Burn on or off), every kept seed goes
         double priorTaken = -1.0; // the formulas' taken/s and dealt/s, as the bank first priced the fight
         double priorDealt = -1.0;
         std::vector<std::string>                        priceList;
@@ -384,6 +390,19 @@ namespace cardian::tactics
         {
             const double secs = seconds(now);
             return secs > 0.0 ? dealt() / secs : 0.0;
+        }
+
+        // The party's plain swings a second: what a defence down (Dia)
+        // strengthens -- not its magic, nor its weapon skills
+        auto meleePerSecond(const double now) const -> double
+        {
+            const double secs  = seconds(now);
+            int32        swung = 0;
+            for (const auto& m : members)
+            {
+                swung += m.meleeDealt;
+            }
+            return secs > 0.0 ? swung / secs : 0.0;
         }
 
         auto takenPerSecond(const double now) const -> double

@@ -33,7 +33,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 32: ROLE_LOCKED, and a GAMBIT_ROW's on
+// compatible, the user, 2026-09-14). 33: the orders' Dia or Bio (ORDERS'
+// diaBio, CL_HUNT_DIA_BIO); 32: ROLE_LOCKED, and a GAMBIT_ROW's on
 // is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
 // own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
 // numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
@@ -72,7 +73,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 32 };
+enum { CL_PROTOCOL = 33 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1089,7 +1090,7 @@ typedef struct cl_orders
     uint8_t   aggressive; // answered: 1 when aggressive company is allowed
     uint8_t   links;      // answered: 1 when links are allowed
     uint8_t   staked;     // answered: 1 while a camp stands
-    uint8_t   spare;
+    uint8_t   diaBio;     // answered: which of the two, which block each other, her tactician prefers: 0 Dia, 1 Bio
     uint16_t  stakeZone;  // answered: the camp's zone id
 } cl_orders;
 
@@ -1114,6 +1115,7 @@ enum
     CL_HUNT_PULL       = 2, // value: 0 nearest, 1 easiest, 2 toughest
     CL_HUNT_AGGRESSIVE = 3, // value: 0 or 1
     CL_HUNT_LINKS      = 4, // value: 0 or 1
+    CL_HUNT_DIA_BIO    = 5, // value: 0 Dia, 1 Bio -- not a hunt rule but an order kept with them
 };
 
 typedef struct cl_set_hunt

@@ -176,6 +176,21 @@ describe('Cardian tactics bank', function()
         assert(certain[xi.magic.spell.FIRE] == seeds[xi.magic.spell.FIRE], 'earth nullified, Fire should not move')
         mob:setMod(earthNull, 0)
 
+        -- Burn's INT down, asked of the seed, comes back as a second answer
+        -- in the same pass: the mob's INT lowered as the effect lowers it,
+        -- so the same seed as the mob with the mod on, never less than
+        -- without it; the first answer is unmoved
+        local plain, burned = xi.cardian.bank.nukeSeeds(blm, mob, spells, 9)
+        mob:addMod(xi.mod.INT, -9)
+        local modded = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        mob:delMod(xi.mod.INT, -9)
+        assert(select(2, xi.cardian.bank.nukeSeeds(blm, mob, spells)) == nil, 'no INT down asked, no second answer')
+        for _, s in ipairs(spells) do
+            assert(plain[s.id] == seeds[s.id], string.format('spell %d: the first answer moved with an INT down asked: %s against %s', s.id, tostring(plain[s.id]), tostring(seeds[s.id])))
+            assert(burned[s.id] == modded[s.id], string.format('spell %d: INT down seeded %s, the mod %s', s.id, tostring(burned[s.id]), tostring(modded[s.id])))
+            assert(burned[s.id] >= seeds[s.id], string.format('spell %d: INT down seeded %s, under %s', s.id, tostring(burned[s.id]), tostring(seeds[s.id])))
+        end
+
         -- A spell the damage table does not know is left out
         local protect = xi.cardian.bank.nukeSeeds(blm, mob, { { id = xi.magic.spell.PROTECT, element = xi.element.LIGHT, skillType = xi.skill.ENHANCING_MAGIC, spellGroup = xi.magic.spellGroup.WHITE, family = 3 } })
         assert(protect[xi.magic.spell.PROTECT] == nil, 'Protect is not in the damage table')
