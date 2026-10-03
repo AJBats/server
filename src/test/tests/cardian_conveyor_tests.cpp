@@ -52,11 +52,6 @@ namespace
         return Request{ .source = Source::Role, .caster = caster, .score = score, .landChance = landChance };
     }
 
-    auto reflexRequest(const double score, const uint32 caster = 0) -> Request
-    {
-        return Request{ .source = Source::Reflex, .caster = caster, .score = score };
-    }
-
     auto needWith(const uint32 assigned, std::vector<Request> requests) -> Need
     {
         Need n;
@@ -107,13 +102,6 @@ TEST_CASE("Needs::feed merges by key and replaces the same voice", "[cardian][ta
     CHECK_THAT(role_holders.needs[0].requests[0].landChance, WithinAbs(0.4, 1e-9));
     CHECK(role_holders.needs[0].requests[1].caster == 8);
     CHECK_THAT(role_holders.needs[0].requests[1].landChance, WithinAbs(0.9, 1e-9));
-
-    // the reflex is a voice of its own: the same holder re-feeding replaces it
-    role_holders.feed(paralyzeOnNine, reflexRequest(-1.0, 7));
-    CHECK(role_holders.needs[0].requests.size() == 3);
-    role_holders.feed(paralyzeOnNine, reflexRequest(-4.0, 7));
-    REQUIRE(role_holders.needs[0].requests.size() == 3);
-    CHECK_THAT(role_holders.needs[0].requests[2].score, WithinAbs(-4.0, 1e-9));
 }
 
 TEST_CASE("Needs::open returns the existing need or opens an empty one", "[cardian][tactics][conveyor]")
@@ -196,13 +184,12 @@ TEST_CASE("Needs::forget removes exactly the key", "[cardian][tactics][conveyor]
     CHECK(needs.needs.size() == 2);
 }
 
-TEST_CASE("Need: preferred, rowFed, fedBy, held, reflex", "[cardian][tactics][conveyor]")
+TEST_CASE("Need: preferred, rowFed, fedBy, held", "[cardian][tactics][conveyor]")
 {
     Need roleOnly;
     roleOnly.requests.push_back(role(5.0, 7));
     CHECK(roleOnly.preferred() == 0); // the role names nobody
     CHECK_FALSE(roleOnly.rowFed());
-    CHECK_FALSE(roleOnly.reflex());
     CHECK(roleOnly.fedBy(7)); // she is the voice, not the preference
     CHECK_FALSE(roleOnly.fedBy(5));
 
@@ -218,10 +205,6 @@ TEST_CASE("Need: preferred, rowFed, fedBy, held, reflex", "[cardian][tactics][co
     n.requests.push_back(role(1.0, 7));
     CHECK(n.fedBy(7));
     CHECK(n.preferred() == 5); // a role holder joining changes nothing
-    CHECK_FALSE(n.reflex());
-
-    n.requests.push_back(reflexRequest(-3.0, 7));
-    CHECK(n.reflex());
 
     CHECK(n.held()); // nobody assigned, nothing in flight
     n.assigned = 6;
@@ -247,9 +230,9 @@ TEST_CASE("Need::lead and askedSpell agree: the preferred caster's lowest row", 
     CHECK(n.lead().row == 1);
     CHECK(n.lead().spell == 4);
 
-    n.requests.push_back(reflexRequest(-3.0, 6));
-    CHECK(n.lead().source == Source::Reflex); // the reflex speaks before everything
-    CHECK(n.askedSpell() == 4);               // and leaves the asked tier alone
+    n.requests.push_back(role(-3.0, 6));
+    CHECK(n.lead().source == Source::Row); // the role speaks after every row
+    CHECK(n.askedSpell() == 4);            // and leaves the asked tier alone
 
     const Need empty; // a cast in flight nobody asked for
     CHECK(empty.lead().source == Source::Row);
@@ -313,43 +296,38 @@ TEST_CASE("pickCaster: standing before kneeling, the preferred before the rest, 
     CHECK(pickCaster(n, nobodyOpen) == nullptr); // the need is held
 }
 
-TEST_CASE("rankFor and slotOrder: the reflex, her rows in order, others' rows, then the role by score", "[cardian][tactics][conveyor]")
+TEST_CASE("rankFor and slotOrder: her rows in order, others' rows, then the role by score", "[cardian][tactics][conveyor]")
 {
     std::vector<Need> needs;
-    needs.push_back(needWith(1, { role(5.0) }));         // 0: A
-    needs.push_back(needWith(1, { row(1, 3) }));         // 1: B
-    needs.push_back(needWith(1, { row(1, 1) }));         // 2: C
-    needs.push_back(needWith(1, { reflexRequest(0.0) })); // 3: D
-    needs.push_back(needWith(1, { row(9, 2) }));         // 4: E, another's row
-    needs.push_back(needWith(1, { role(-2.0) }));        // 5: F
-    needs.push_back(needWith(0, { row(1, 0) }));         // 6: G, a cast in flight
+    needs.push_back(needWith(1, { role(5.0) }));  // 0: A
+    needs.push_back(needWith(1, { row(1, 3) }));  // 1: B
+    needs.push_back(needWith(1, { row(1, 1) }));  // 2: C
+    needs.push_back(needWith(1, { row(9, 2) }));  // 3: D, another's row
+    needs.push_back(needWith(1, { role(-2.0) })); // 4: E
+    needs.push_back(needWith(0, { row(1, 0) }));  // 5: F, a cast in flight
     needs.back().lockedBy = 9;
-    needs.push_back(needWith(2, { row(2, 1) }));         // 7: H, another caster's
-    needs.push_back(needWith(1, { role(-1.0) }));        // 8: I, her top-up of another's cure in flight
+    needs.push_back(needWith(2, { row(2, 1) }));  // 6: G, another caster's
+    needs.push_back(needWith(1, { role(-1.0) })); // 7: H, her top-up of another's cure in flight
     needs.back().lockedBy = 9;
 
     const auto order = slotOrder(needs, 1);
-    CHECK(order == std::vector<std::size_t>{ 3, 2, 1, 4, 5, 8, 0 });
+    CHECK(order == std::vector<std::size_t>{ 2, 1, 3, 4, 7, 0 });
 
     CHECK(slotOrder(needs, 0).empty()); // nothing for nobody
 
-    CHECK(rankFor(needs[3], 1).tier == 0); // the reflex
     const auto herRow = rankFor(needs[2], 1);
-    CHECK(herRow.tier == 1);
+    CHECK(herRow.tier == 0);
     CHECK_THAT(herRow.order, WithinAbs(1.0, 1e-9));
-    CHECK(rankFor(needs[4], 1).tier == 2); // another's row
-    CHECK(rankFor(needs[0], 1).tier == 3); // the role
+    CHECK(rankFor(needs[3], 1).tier == 1); // another's row
+    CHECK(rankFor(needs[0], 1).tier == 2); // the role
 
     const auto both = rankFor(needWith(1, { row(1, 4), role(-9.0) }), 1);
-    CHECK(both.tier == 1); // the best of its requests speaks
+    CHECK(both.tier == 0); // the best of its requests speaks
     CHECK_THAT(both.order, WithinAbs(4.0, 1e-9));
 }
 
-TEST_CASE("margin and cureWanted", "[cardian][tactics][conveyor]")
+TEST_CASE("cureWanted", "[cardian][tactics][conveyor]")
 {
-    CHECK_THAT(margin(70, 40.0, 3.0, 2.0), WithinAbs(24.0, 1e-9));
-    CHECK_THAT(margin(44, 40.0, 3.0, 2.0), WithinAbs(-2.0, 1e-9)); // waiting is unsafe
-
     CHECK(cureWanted(25, 22));
     CHECK_FALSE(cureWanted(15, 22)); // the tier would overcure
     CHECK_FALSE(cureWanted(25, 0));  // no tier priced

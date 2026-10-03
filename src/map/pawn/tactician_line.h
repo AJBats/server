@@ -141,11 +141,12 @@ namespace cardian::tactician
         NoJudgement = 3, // marked, and nothing her tactician has a judgement for: struck out
         Clock       = 4, // marked, on a timer or a chance, which her judgement has no use for: struck out
         Misfit      = 6, // an action that cannot be aimed at the side its condition names: struck out, marked or not
+        Client      = 7, // a behaviour row in the list of a character his own client drives: only a cardian runs one, struck out
     };
 
     constexpr auto struck(const State state) -> bool
     {
-        return state == State::NoJudgement || state == State::Clock || state == State::Misfit;
+        return state == State::NoJudgement || state == State::Clock || state == State::Misfit || state == State::Client;
     }
 
     // An action's target flags, as upstream's TARGETTYPE writes them
@@ -427,6 +428,27 @@ namespace cardian::tactician
             return State::Clock;
         }
         return State::Tool;
+    }
+
+    // A row's state in the list of a character his own client drives
+    // (gambit_host.h OwnClient). No tactician runs for him yet, so his plain
+    // rows are orders and a marked row has nothing to judge it; a behaviour
+    // row moves a cardian or speaks to her tactician, and does nothing for him
+    inline auto ownClientStateOf(const gambits::Gambit_t& g, const bool fits = true) -> State
+    {
+        if (!fits)
+        {
+            return State::Misfit;
+        }
+        const bool behaviour = !g.actions.empty() && std::ranges::all_of(g.actions, [](const gambits::Action_t& a)
+                                                                         {
+                                                                             return a.reaction == pawn::G_REACTION_BEHAVIOR;
+                                                                         });
+        if (behaviour)
+        {
+            return State::Client;
+        }
+        return isMarked(g) ? State::NoJudgement : State::Order;
     }
 
     // Whether a marked row lets her tactician cast this spell: Cure (best)

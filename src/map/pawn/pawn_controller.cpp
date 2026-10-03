@@ -105,9 +105,128 @@ namespace
     }
 } // namespace
 
+namespace
+{
+    // A cardian as her gambit engine sees her (gambit_host.h): her controller's
+    // own answers and actions
+    class PawnHost final : public pawn::GambitHost
+    {
+    public:
+        explicit PawnHost(CPawnController& controller)
+        : m_controller(controller)
+        {
+        }
+
+        auto OwnClient() const -> bool override
+        {
+            return false;
+        }
+        auto Cast(const EntityId target, const SpellID spell) -> bool override
+        {
+            return m_controller.Cast(target, spell);
+        }
+        auto CastAssigned(const EntityId target, const SpellID spell) -> bool override
+        {
+            return m_controller.CastAssigned(target, spell);
+        }
+        auto Ability(const EntityId target, const uint16 ability) -> bool override
+        {
+            return m_controller.Ability(target, ability);
+        }
+        auto WeaponSkill(const EntityId target, const uint16 skill) -> bool override
+        {
+            return m_controller.WeaponSkill(target, skill);
+        }
+        auto RangedAttack(const EntityId target) -> bool override
+        {
+            return m_controller.RangedAttack(target);
+        }
+        void ClearGambitBehaviors() override
+        {
+            m_controller.ClearGambitBehaviors();
+        }
+        void SetGambitBehavior(const uint16 behavior, const uint16 arg) override
+        {
+            m_controller.SetGambitBehavior(behavior, arg);
+        }
+        auto ReadyToAct() -> bool override
+        {
+            return m_controller.ReadyToAct();
+        }
+        auto AbilitiesShutOut() const -> bool override
+        {
+            return m_controller.AbilitiesShutOut();
+        }
+        auto PlayersBuff(const uint16 ability, const xi::StatusEffect effect) -> bool override
+        {
+            return m_controller.PlayersBuff(ability, effect);
+        }
+        void NoteOrderedStance(const uint16 ability) override
+        {
+            m_controller.NoteOrderedStance(ability);
+        }
+        auto SneakAttackNow(const CBattleEntity* PTarget) -> bool override
+        {
+            return m_controller.SneakAttackNow(PTarget);
+        }
+        auto HasQueuedOrder() const -> bool override
+        {
+            return m_controller.HasQueuedOrder();
+        }
+        auto IsRetreating() const -> bool override
+        {
+            return m_controller.IsRetreating();
+        }
+        auto RestAllowsAction() const -> bool override
+        {
+            return m_controller.RestAllowsAction();
+        }
+        auto Acting() const -> bool override
+        {
+            return m_controller.Acting();
+        }
+        auto CanAct() -> bool override
+        {
+            return m_controller.canAct();
+        }
+        auto PartyPosition() const -> uint8 override
+        {
+            return m_controller.GetPawnPartyPosition();
+        }
+        auto TacticianRuns() const -> bool override
+        {
+            return m_controller.TacticianRuns();
+        }
+        auto IsWorld() const -> bool override
+        {
+            return m_controller.IsWorld();
+        }
+        auto GetLivePlayer() const -> CCharEntity* override
+        {
+            return m_controller.GetLivePlayer();
+        }
+        auto GetTopEnmity() const -> CBattleEntity* override
+        {
+            return m_controller.GetTopEnmity();
+        }
+        auto FoeOfKind(const cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool override
+        {
+            return m_controller.FoeOfKind(finder, PFoe);
+        }
+        auto PartyFightTarget() const -> CBattleEntity* override
+        {
+            return m_controller.PartyFightTarget();
+        }
+
+    private:
+        CPawnController& m_controller;
+    };
+} // namespace
+
 CPawnController::CPawnController(CCharEntity* PPawn)
 : CPlayerController(PPawn)
-, m_Gambits(std::make_unique<pawn::CGambits>(PPawn, this))
+, m_Host(std::make_unique<PawnHost>(*this))
+, m_Gambits(std::make_unique<pawn::CGambits>(PPawn, m_Host.get()))
 {
 }
 
@@ -2314,7 +2433,7 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     // spots. Out of it she walks to its nearest point; in it she holds
     // where she stands, so the tank's small moves never drag her round the
     // fight (the user, 2026-09-17). The mob on her lifts the ring: running
-    // with a mob on her is kiting, and the reflex covers her HP
+    // with a mob on her is kiting, and the emergency cure covers her HP
     RestoreNormalSpeed();
     m_HasSlot = false; // a crescent point is no formation slot for the vet to re-seat
     Intent intent;
@@ -5264,42 +5383,7 @@ void CPawnController::FaceTarget(const EntityId target) const
 
 auto CPawnController::PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool
 {
-    auto* PPawn    = static_cast<CCharEntity*>(POwner);
-    bool  redundant = false;
-
-    PPawn->ForParty([&](const CBattleEntity* PMember)
-                    {
-                        if (redundant || PMember == POwner || !PMember->PAI->IsCurrentState<CMagicState>())
-                        {
-                            return;
-                        }
-
-                        auto*       MState  = static_cast<CMagicState*>(PMember->PAI->GetCurrentState());
-                        auto*       MSpell  = MState->GetSpell();
-                        const auto* MTarget = MState->target().resolve();
-                        if (MSpell == nullptr || PTarget == nullptr || MTarget != PTarget)
-                        {
-                            return;
-                        }
-
-                        const bool sameFamily = PSpell->getSpellFamily() == MSpell->getSpellFamily();
-                        const bool weakerOrSame = PSpell->getID() <= MSpell->getID();
-
-                        if ((PSpell->isBuff() || PSpell->isDebuff()) && sameFamily && weakerOrSame)
-                        {
-                            redundant = true;
-                        }
-                        else if (PSpell->isCure() && MSpell->isCure() && PTarget->GetHPP() > 50)
-                        {
-                            redundant = true;
-                        }
-                        else if (PSpell->isNa() && MSpell->isNa() && sameFamily && PSpell->getID() == MSpell->getID())
-                        {
-                            redundant = true;
-                        }
-                    });
-
-    return redundant;
+    return pawn::partyAlreadyCasting(static_cast<CCharEntity*>(POwner), PSpell, PTarget);
 }
 
 namespace
@@ -5318,58 +5402,13 @@ namespace
         }
         return view;
     }
-
-    // An ally of hers engaged on this foe: any character of her party in
-    // her zone but herself, the player as much as a cardian (the user,
-    // 2026-10-01: "I am her ally, am I not?"). The leader's target is the
-    // specific finder; this one reads whoever has it
-    auto allyOn(const CCharEntity* PPawn, const CBattleEntity* PFoe) -> const CCharEntity*
-    {
-        if (PPawn->PParty == nullptr)
-        {
-            return nullptr;
-        }
-        for (auto* PMember : PPawn->PParty->members)
-        {
-            const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
-            if (PChar != nullptr && PChar != PPawn && PChar->loc.zone == PPawn->loc.zone && PChar->PAI->IsEngaged() &&
-                PChar->GetBattleTarget() == PFoe)
-            {
-                return PChar;
-            }
-        }
-        return nullptr;
-    }
 } // namespace
 
+// The allies a finder reads are any of her party in her zone but herself,
+// the player as much as a cardian (pawn::allyOn)
 auto CPawnController::FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe
 {
-    cardian::engage::Foe f;
-    if (PFoe == nullptr)
-    {
-        return f;
-    }
-    const auto* PPawn = static_cast<const CCharEntity*>(POwner);
-    auto*       PMob  = dynamic_cast<CMobEntity*>(PFoe);
-    f.leadersTarget   = PMob != nullptr && PLeader != nullptr && PLeader->PAI->IsEngaged() && PLeader->GetBattleTarget() == PFoe;
-    f.allysFight      = allyOn(PPawn, PFoe) != nullptr;
-    if (PMob != nullptr && PMob->PAI->IsEngaged())
-    {
-        // The departing player's old aggro is not a new fight here
-        auto*       PVictim = PMob->GetBattleTarget();
-        const auto* PChar   = dynamic_cast<const CCharEntity*>(PVictim);
-        if (PVictim != nullptr && (PChar == nullptr || !PChar->requestedZoneChange))
-        {
-            f.onSelf  = PVictim == POwner;
-            f.onParty = f.onSelf || (PPawn->PParty != nullptr && PVictim->PParty == PPawn->PParty);
-        }
-    }
-    // Underground with no fight on, it is not a fight yet: the party waits,
-    // weapons away, and takes it when it surfaces (the combat tick lets such
-    // a target go)
-    f.underground = PMob != nullptr && pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged();
-    f.heldOff     = HoldingOff(PFoe);
-    return f;
+    return pawn::foeFacts(static_cast<const CCharEntity*>(POwner), PFoe, PLeader, PFoe != nullptr && HoldingOff(PFoe));
 }
 
 auto CPawnController::FoeOfKind(const cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool
@@ -5392,7 +5431,7 @@ auto CPawnController::FoeWhy(const cardian::engage::Finder finder, CBattleEntity
             return fmt::format("{}'s target", PLeader != nullptr ? PLeader->getName() : std::string("the leader"));
         case cardian::engage::Finder::AllysFight:
         {
-            const auto* PChar = allyOn(static_cast<const CCharEntity*>(POwner), PFoe);
+            const auto* PChar = pawn::allyOn(static_cast<const CCharEntity*>(POwner), PFoe);
             return fmt::format("with {}", PChar != nullptr ? PChar->getName() : std::string("an ally"));
         }
         case cardian::engage::Finder::OnAlly:
@@ -5869,11 +5908,7 @@ auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* sk
 
 auto CPawnController::GetTopEnmity() const -> CBattleEntity*
 {
-    if (const auto* PMob = dynamic_cast<CMobEntity*>(POwner->GetBattleTarget()))
-    {
-        return PMob->PEnmityContainer->GetHighestEnmity();
-    }
-    return nullptr;
+    return pawn::topEnmityOf(POwner);
 }
 
 namespace

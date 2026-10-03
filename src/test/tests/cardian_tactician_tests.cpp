@@ -578,3 +578,24 @@ TEST_CASE("tactician: a weapon skill row takes Sneak Attack only when it would f
     // A row with no weapon skill in it
     CHECK_FALSE(wsRowTakesSneak(row(kRest), State::Order, true, takesIfHers));
 }
+
+TEST_CASE("tactician: a played character's plain rows are orders; his marked and behaviour rows are struck out", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::ownClientStateOf;
+    // What his hands do is an order wherever it sits
+    CHECK(ownClientStateOf(row("0|1:50|2:2:2|0")) == State::Order);  // Self: HP < 50% -> Cure II
+    CHECK(ownClientStateOf(row("2|0:0|4:2:1|0")) == State::Order);   // Foe -> a weapon skill
+    CHECK(ownClientStateOf(row("101|0:0|0:0:0|0")) == State::Order); // Foe: targeted by ally -> Attack
+
+    // A behaviour row moves a cardian or speaks to her tactician: struck
+    // out in his list
+    CHECK(ownClientStateOf(row(kRest)) == State::Client);              // Rest with the player
+    CHECK(ownClientStateOf(row("0|0:0|100:1:1|0")) == State::Client); // Avoid aggro
+    CHECK(cardian::tactician::struck(State::Client));
+
+    // No tactician runs for him yet: a marked row has nothing to judge it;
+    // a misfit is one in his list too
+    CHECK(ownClientStateOf(row(kCureBest)) == State::NoJudgement);
+    CHECK(ownClientStateOf(row(kPull)) == State::NoJudgement);
+    CHECK(ownClientStateOf(row("0|0:0|2:2:2|0"), false) == State::Misfit);
+}
