@@ -51,10 +51,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <numbers>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 #include "ai/ai_container.h"
@@ -355,6 +358,17 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_Towing        = false;
         m_TowingMob.reset();
         m_HoldForPlayer = false;
+        // Sneak Attack ready and never used before the fight ended is part
+        // of what holding it costs: booked on the fight it was ready for
+        if (m_SneakReadySince.has_value() && m_Gambits->OffersBeforeWs(cardian::tactician::Allowance::SneakAttack))
+        {
+            pawn::tactics::noteSneakAttack(static_cast<CCharEntity*>(POwner), m_LastFoughtId, cardian::tactics::SneakUse::Unused,
+                                           std::chrono::duration<double>(m_Tick - *m_SneakReadySince).count());
+        }
+        m_SneakStep.reset();
+        m_SneakHold.reset();
+        m_SneakRest.reset();
+        m_SneakReadySince.reset();
     }
     if (from == Mode::Approach && to != Mode::Approach)
     {
@@ -436,7 +450,9 @@ void CPawnController::StandDown(const std::string_view why)
     // Cancel delayed joins/orders before changing mode. Otherwise an Order,
     // which normally survives a transition, could restart the old fight.
     m_Pending.reset();
-    m_WsAfterBoost.reset();
+    m_HeldWs.reset();
+    m_SneakStep.reset();
+    m_SneakHold.reset();
     m_Approach.reset();
     m_HoldForPlayer = false;
     if (POwner->PAI->PathFind != nullptr)
@@ -1748,7 +1764,7 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             {
                 return CL_S_MALFORMED;
             }
-            fired = WeaponSkill(target, static_cast<uint16>(id));
+            fired = OrderedWeaponSkill(target, static_cast<uint16>(id));
             break;
         case kItemOrder:
         {
@@ -3137,22 +3153,109 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     m_LastFoughtId = PTarget->id;
     m_LastFought   = EntityId(PTarget);
 
-    // The weapon skill held behind a Boost goes out the first tick the
-    // pacer allows -- Boost landed and let go of her -- before anything
-    // else can spend the Boost; given up after a few ticks
-    if (m_WsAfterBoost.has_value() && m_Tick > m_WsAfterBoost->at)
+    // The weapon skill held behind its opener (Sneak Attack, Boost) goes
+    // out the first tick the pacer allows -- the opener landed and let go
+    // of her -- before anything else can spend it; given up after a few
+    // ticks. Behind Sneak Attack it goes through Boost when her row offers
+    // that too: Sneak Attack, Boost, the weapon skill
+    if (m_HeldWs.has_value() && m_Tick > m_HeldWs->at)
     {
-        const auto held = *m_WsAfterBoost;
-        if (auto* PHeld = held.target.resolve<CBattleEntity>(); PHeld != nullptr && !PHeld->isDead() &&
-            ((ReadyToAct() && CPlayerController::WeaponSkill(held.target, held.wsid)) || m_Tick - held.at > 2s))
+        const auto held  = *m_HeldWs;
+        auto*      PHeld = held.target.resolve<CBattleEntity>();
+        if (PHeld == nullptr || PHeld->isDead() || m_Tick - held.at > 2s)
         {
-            m_WsAfterBoost.reset();
-            co_return;
+            m_HeldWs.reset();
         }
-        if (m_Tick - held.at > 2s)
+        else if (ReadyToAct())
         {
-            m_WsAfterBoost.reset();
+            m_HeldWs.reset();
+            if (BoostOrWeaponSkill(held.target, held.wsid))
+            {
+                co_return;
+            }
+            m_HeldWs = held; // refused: tried again until the few ticks are up
         }
+    }
+
+    // How long Sneak Attack has stood ready in this fight: what holding it
+    // for her weapon skill costs, said as it goes out (SneakThenWs) and
+    // booked unused as the fight ends. Not usable (spent by any road, his
+    // order included, or on recast), the clock starts over
+    if (SneakAttackUsable())
+    {
+        if (!m_SneakReadySince.has_value())
+        {
+            m_SneakReadySince = m_Tick;
+        }
+    }
+    else
+    {
+        m_SneakReadySince.reset();
+    }
+
+    // The walk to the mob's back for Sneak Attack (WeaponSkill, or a naked
+    // one: NakedSneakDue): it goes the first tick she is behind, in reach
+    // and free to act; given up if the mob turns on her or the walk runs
+    // long, her weapon skill then going alone
+    if (m_SneakStep.has_value())
+    {
+        constexpr auto kSneakWalk = 5s;
+        const auto     step       = *m_SneakStep;
+        auto*          PStep      = step.target.resolve<CBattleEntity>();
+        const bool     onHer      = PStep != nullptr && PStep->GetBattleTarget() == POwner;
+        if (PStep == nullptr || PStep->isDead() || PStep != PTarget)
+        {
+            m_SneakStep.reset();
+        }
+        else if (onHer || m_Tick - step.since > kSneakWalk)
+        {
+            if (ReadyToAct())
+            {
+                m_SneakStep.reset();
+                RestSneak(PStep);
+                ShowInfoFmt("tactics: {} gives up on Sneak Attack ({}){}", POwner->getName(),
+                            onHer ? fmt::format("{} is on her", PStep->getName()) : fmt::format("she could not reach {}'s back", PStep->getName()),
+                            step.wsid != 0 ? "; her weapon skill goes alone" : "");
+                if (step.wsid != 0 && BoostOrWeaponSkill(step.target, step.wsid))
+                {
+                    co_return;
+                }
+            }
+        }
+        else if (ReadyToAct() && distance(POwner->loc.p, PStep->loc.p) <= POwner->GetMeleeRange(PStep) && BehindFor(PStep))
+        {
+            m_SneakStep.reset();
+            if (step.wsid == 0)
+            {
+                NakedSneak(step.target);
+                co_return;
+            }
+            if (SneakThenWs(step.target, step.wsid))
+            {
+                co_return;
+            }
+        }
+    }
+
+    // After a naked Sneak Attack she keeps the mob's back until her swing
+    // has spent it (the effect seen on her, then gone), the mob turns on
+    // her, or a few seconds pass
+    if (m_SneakHold.has_value())
+    {
+        auto*      PHeld = m_SneakHold->target.resolve<CBattleEntity>();
+        const bool up    = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack);
+        m_SneakHold->landed = m_SneakHold->landed || up;
+        if (PHeld == nullptr || PHeld != PTarget || PHeld->GetBattleTarget() == POwner || m_Tick > m_SneakHold->until || (m_SneakHold->landed && !up))
+        {
+            m_SneakHold.reset();
+        }
+    }
+
+    // A naked Sneak Attack when no weapon skill row of hers can take one
+    if (!m_SneakStep.has_value() && !m_SneakHold.has_value() && NakedSneakDue(PTarget))
+    {
+        m_SneakStep = SneakStep{ .target = EntityId(PTarget), .wsid = 0, .since = m_Tick };
+        ShowInfoFmt("tactics: {} steps round to {}'s back for a Sneak Attack on her next swing (her weapon skill row cannot take one)", POwner->getName(), PTarget->getName());
     }
 
     // The hold ends the moment the player has struck or the mob has come,
@@ -3251,9 +3354,14 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             // Her place on the mob: a seat on the fight ring, or, as its
             // target, wherever she stands -- the front. The tank at a
             // stake takes no seat: she tows (TowIntent)
-            const bool       tows  = TowsAtStake();
-            const auto       seat  = tows ? std::nullopt : TakeFightSeat(PTarget);
-            const position_t point = HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
+            const bool tows = TowsAtStake();
+            const auto seat = tows ? std::nullopt : TakeFightSeat(PTarget);
+            // Bound for the mob's back for Sneak Attack, or keeping it for
+            // the swing that spends a naked one, she stands there rather
+            // than on her seat, reached round the mob's side as a seat is
+            const bool       sneaking = !tows && ((m_SneakStep.has_value() && m_SneakStep->target == PTarget) ||
+                                            (m_SneakHold.has_value() && m_SneakHold->target == PTarget));
+            const position_t point    = sneaking ? SneakPoint(PTarget) : HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
 
             // An idle target is a pull on its way in, judged by the pull rule
             // the pick used (PullBlocker), never by the shape of her own
@@ -3291,9 +3399,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             intent             = tows ? std::optional<Intent>(TowIntent(PTarget)) : StepBackIntent(PTarget);
             if (!intent.has_value())
             {
-                if (seat.has_value())
+                if (sneaking && inReach && BehindFor(PTarget))
                 {
-                    intent = SeatIntent(PTarget, point, inReach);
+                    intent = Intent{}; // in the cone at its back and in reach: she stands, a swing from there is the point
+                }
+                else if (seat.has_value() || sneaking)
+                {
+                    intent = SeatIntent(PTarget, point, inReach, false, !sneaking);
                 }
                 else
                 {
@@ -4777,7 +4889,7 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
 // tactician's tool, RESEARCH §17.13), ready, known, not already up
 auto CPawnController::BoostReady() const -> bool
 {
-    if (!m_Gambits->OffersBoost())
+    if (!m_Gambits->OffersBeforeWs(cardian::tactician::Allowance::Boost))
     {
         return false;
     }
@@ -4785,6 +4897,105 @@ auto CPawnController::BoostReady() const -> bool
     auto*       PChar  = static_cast<CCharEntity*>(POwner);
     return PBoost != nullptr && !AbilitiesShutOut() && charutils::hasAbility(PChar, cardian::tactician::kBoost) &&
            !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Boost) && !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PBoost->getRecastId(), 0s);
+}
+
+// Sneak Attack is hers to use now: known, not shut out, not up already,
+// off its recast -- whatever her rows say
+auto CPawnController::SneakAttackUsable() const -> bool
+{
+    const auto* PSneak = ability::GetAbility(cardian::tactician::kSneakAttack);
+    auto*       PChar  = static_cast<CCharEntity*>(POwner);
+    return PSneak != nullptr && charutils::hasAbility(PChar, cardian::tactician::kSneakAttack) && !AbilitiesShutOut() &&
+           !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack) && !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PSneak->getRecastId(), 0s);
+}
+
+auto CPawnController::SneakAttackReady() const -> bool
+{
+    return m_Gambits->OffersBeforeWs(cardian::tactician::Allowance::SneakAttack) && SneakAttackUsable();
+}
+
+auto CPawnController::SneakAttackNow(const CBattleEntity* PTarget) -> bool
+{
+    if (PTarget == nullptr || !POwner->PAI->IsEngaged())
+    {
+        return false;
+    }
+    const auto* PFront = PTarget->GetBattleTarget();
+    if (PFront == nullptr || PFront == POwner)
+    {
+        return false;
+    }
+    if (m_SneakRest.has_value() && m_Tick < m_SneakRest->until && m_SneakRest->front == PFront->id)
+    {
+        return false;
+    }
+    return SneakAttackReady();
+}
+
+void CPawnController::RestSneak(const CBattleEntity* PTarget)
+{
+    constexpr auto kSneakRest = 10s;
+    const auto*    PFront     = PTarget != nullptr ? PTarget->GetBattleTarget() : nullptr;
+    m_SneakRest               = SneakRest{ .until = m_Tick + kSneakRest, .front = PFront != nullptr ? PFront->id : 0 };
+}
+
+auto CPawnController::TakesSneakAttack(const uint16 wsid) -> bool
+{
+    // Read once per weapon skill, off its own script: the answer cannot
+    // change while the server runs
+    static std::unordered_map<uint16, bool> known;
+    if (const auto it = known.find(wsid); it != known.end())
+    {
+        return it->second;
+    }
+    bool takes = false;
+    if (auto* PSkill = battleutils::GetWeaponSkill(wsid); PSkill != nullptr)
+    {
+        std::ifstream     file(fmt::format("./scripts/actions/weaponskills/{}.lua", PSkill->getName()));
+        const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        takes = cardian::tactician::scriptTakesSneakAttack(source);
+    }
+    known.emplace(wsid, takes);
+    return takes;
+}
+
+auto CPawnController::NakedSneakDue(const CBattleEntity* PTarget) -> bool
+{
+    // Cheapest first: Sneak Attack hers now and no weapon skill due (one
+    // would spend it, whatever it is); then her rows, read each think (no
+    // weapon skill row that can take it: CGambits::NakedSneak); then the
+    // fight (SneakAttackNow), and the mob's back somewhere she can stand
+    if (PTarget == nullptr || POwner->health.tp >= 1000 || !SneakAttackUsable() || !m_Gambits->NakedSneak() || !SneakAttackNow(PTarget))
+    {
+        return false;
+    }
+    const bool there = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) && BehindFor(PTarget);
+    return there || POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget));
+}
+
+void CPawnController::NakedSneak(const EntityId target)
+{
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (!CPlayerController::Ability(POwner->entityId(), cardian::tactician::kSneakAttack))
+    {
+        RestSneak(PTarget);
+        return;
+    }
+    m_SneakHold = SneakHold{ .target = target, .until = m_Tick + 5s };
+    m_SneakReadySince.reset();
+    ShowInfoFmt("tactics: {} sneak attacks from {}'s back for her next swing (naked: no weapon skill row of hers can take it)", POwner->getName(),
+                PTarget != nullptr ? PTarget->getName() : "?");
+    pawn::tactics::noteSneakAttack(static_cast<CCharEntity*>(POwner), PTarget != nullptr ? PTarget->id : 0, cardian::tactics::SneakUse::Naked, 0.0);
+}
+
+auto CPawnController::BehindFor(const CBattleEntity* PTarget) const -> bool
+{
+    return PTarget != nullptr && ::behind(POwner->loc.p, PTarget->loc.p, 64);
+}
+
+auto CPawnController::SneakPoint(const CBattleEntity* PTarget) const -> position_t
+{
+    return nearPosition(PTarget->loc.p, FightRadius(PTarget), std::numbers::pi_v<float>);
 }
 
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
@@ -4795,16 +5006,86 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     }
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
+    auto* PTarget = target.resolve<CBattleEntity>();
+
+    // Sneak Attack first, from the mob's back (her Sneak Attack row), when
+    // this weapon skill takes it and it can go now (SneakAttackNow: not
+    // while the mob is on her or has nobody to face): at once when she
+    // stands behind the mob in reach, else after the walk there (the
+    // combat tick's sneak step), which her weapon skill waits on -- unless
+    // its back is off the mesh (against a wall), when the weapon skill goes
+    // alone. Her rows' weapon skill only, on the mob she fights: his orders
+    // go through OrderedWeaponSkill
+    if (m_SneakStep.has_value() && m_SneakStep->wsid != 0 && PTarget != nullptr && m_SneakStep->target == PTarget)
+    {
+        return true; // on her way already
+    }
+    if (PTarget != nullptr && PTarget == POwner->GetBattleTarget() && TakesSneakAttack(wsid) && SneakAttackNow(PTarget))
+    {
+        if (distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) && BehindFor(PTarget))
+        {
+            return SneakThenWs(target, wsid);
+        }
+        if (POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
+        {
+            m_SneakStep = SneakStep{ .target = target, .wsid = wsid, .since = m_Tick };
+            ShowInfoFmt("tactics: {} steps round to {}'s back for Sneak Attack (her Sneak Attack row); weapon skill {} waits", POwner->getName(), PTarget->getName(), wsid);
+            return true;
+        }
+    }
+    return BoostOrWeaponSkill(target, wsid);
+}
+
+auto CPawnController::OrderedWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
+    FaceTarget(target);
+    HeadLook(target.resolve<CBattleEntity>());
+    m_SneakStep.reset();
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (PTarget != nullptr && TakesSneakAttack(wsid) && SneakAttackNow(PTarget) && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) &&
+        BehindFor(PTarget))
+    {
+        return SneakThenWs(target, wsid);
+    }
+    return BoostOrWeaponSkill(target, wsid);
+}
+
+auto CPawnController::SneakThenWs(const EntityId target, const uint16 wsid) -> bool
+{
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (!CPlayerController::Ability(POwner->entityId(), cardian::tactician::kSneakAttack))
+    {
+        RestSneak(PTarget);
+        return BoostOrWeaponSkill(target, wsid);
+    }
+    m_HeldWs = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
+
+    // How long it stood ready for this weapon skill: the cost of holding it
+    // rather than spending it on a plain hit (RESEARCH §17.13, the Thief)
+    const double waited = m_SneakReadySince.has_value() ? std::chrono::duration<double>(m_Tick - *m_SneakReadySince).count() : 0.0;
+    m_SneakReadySince.reset();
+    ShowInfoFmt("tactics: {} sneak attacks from {}'s back (her Sneak Attack row), ready {:.0f} s before her weapon skill; weapon skill {} follows as it lands",
+                POwner->getName(), PTarget != nullptr ? PTarget->getName() : "?", waited, wsid);
+    pawn::tactics::noteSneakAttack(static_cast<CCharEntity*>(POwner), PTarget != nullptr ? PTarget->id : 0, cardian::tactics::SneakUse::BeforeWs, waited);
+    return true;
+}
+
+auto CPawnController::BoostOrWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
     // Boost first, the weapon skill the moment Boost has landed and lets go
     // of her, two ticks on (DoCombatTick) -- only in reach of the mob, or
     // the walk in spends it on a punch
-    auto*      PTarget = target.resolve<CBattleEntity>();
+    auto* PTarget = target.resolve<CBattleEntity>();
     // (in reach and engaged is enough: a member repositions all fight long,
     // and a standing-still gate never opened for her)
     const bool inReach = PTarget != nullptr && POwner->PAI->IsEngaged() && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
     if (inReach && BoostReady() && CPlayerController::Ability(POwner->entityId(), cardian::tactician::kBoost))
     {
-        m_WsAfterBoost = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
+        m_HeldWs = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
         ShowInfoFmt("tactics: {} boosts (her Boost row); weapon skill {} follows as it lands", POwner->getName(), wsid);
         return true;
     }
@@ -6607,7 +6888,7 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
     return seat;
 }
 
-auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute) -> Intent
+auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
 {
     using cardian::formation::Circle;
     using cardian::formation::seatName;
@@ -6641,7 +6922,7 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
         {
             m_TowRoute.reset();
         }
-        if (m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
+        if (ownSeat && m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
         {
             m_FightSeat.settled = true;
             m_FightSeat.frame   = LiveFrame(PTarget);
@@ -6664,8 +6945,12 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
             return intent;
         }
         // The seat has left the mesh (the mob against a wall): given up,
-        // and another is picked next tick
-        m_FightSeat = {};
+        // and another is picked next tick. Not her seat (the mob's back for
+        // Sneak Attack): she stands, and the walk's own clock gives it up
+        if (ownSeat)
+        {
+            m_FightSeat = {};
+        }
         return intent;
     }
 

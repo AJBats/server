@@ -538,6 +538,40 @@ TEST_CASE("NukePrice: the seed by her correction, capped by what the mob has lef
     CHECK_THAT(blindFour.line(), ContainsSubstring("72 a second of hers, the party's rate unknown"));
 }
 
+TEST_CASE("summary: each Thief's Sneak Attacks, held for her weapon skill with what the waiting cost, and spent on a plain hit", "[cardian][tactics]")
+{
+    FightRecord r;
+    r.mobName  = "Forest_Hare";
+    r.zoneName = "West_Ronfaure";
+    r.closeWhy = "killed";
+
+    auto& paired        = r.member(2, "Jevyak");
+    paired.sneakAttacks = 2;
+    paired.sneakWait    = 41.0;
+    CHECK_THAT(summary(r), ContainsSubstring("; Sneak Attack: Jevyak 2 before her weapon skill (held 41 s)"));
+
+    paired.sneakNaked = 1;
+    CHECK_THAT(summary(r), ContainsSubstring("; Sneak Attack: Jevyak 2 before her weapon skill (held 41 s), 1 on a plain hit"));
+
+    auto& naked      = r.member(3, "Ilani");
+    naked.sneakNaked = 3;
+    CHECK_THAT(summary(r), ContainsSubstring("1 on a plain hit; Ilani 3 on a plain hit"));
+
+    // Ready and never used before the fight ended is booked too: holding it
+    // cost that time as well
+    bookSneak(naked, SneakUse::Unused, 30.4);
+    bookSneak(naked, SneakUse::BeforeWs, 12.0);
+    CHECK_THAT(summary(r), ContainsSubstring("Ilani 1 before her weapon skill (held 12 s), 3 on a plain hit, ready 30 s unused"));
+    FightRecord idle;
+    bookSneak(idle.member(4, "Thaata"), SneakUse::Unused, 45.0);
+    CHECK_THAT(summary(idle), ContainsSubstring("; Sneak Attack: Thaata ready 45 s unused"));
+
+    // Nobody's Sneak Attack, no section
+    FightRecord quiet;
+    quiet.member(2, "Jevyak");
+    CHECK_THAT(summary(quiet), !ContainsSubstring("Sneak Attack"));
+}
+
 TEST_CASE("NukeCorrection: the seed's word counts as four nukes, so one resist moves it a little, and her landed nukes teach it", "[cardian][tactics][bank]")
 {
     NukeCorrection fresh;

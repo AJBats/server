@@ -62,6 +62,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <list>
 #include <set>
 
@@ -111,7 +112,8 @@ namespace pawn
         static_assert(cardian::tactician::kHateAbilities[0] == ABILITY_PROVOKE);
         static_assert(cardian::tactician::kBerserk == ABILITY_BERSERK && cardian::tactician::kDefender == ABILITY_DEFENDER &&
                       cardian::tactician::kAggressor == ABILITY_AGGRESSOR && cardian::tactician::kFocus == ABILITY_FOCUS &&
-                      cardian::tactician::kDodge == ABILITY_DODGE && cardian::tactician::kBoost == ABILITY_BOOST);
+                      cardian::tactician::kDodge == ABILITY_DODGE && cardian::tactician::kBoost == ABILITY_BOOST &&
+                      cardian::tactician::kSneakAttack == ABILITY_SNEAK_ATTACK);
         static_assert(pawn::bundles::kProvoke == ABILITY_PROVOKE && pawn::bundles::kSpellCure == static_cast<uint16>(SpellID::Cure) &&
                       pawn::bundles::kSpellPoisona == static_cast<uint16>(SpellID::Poisona));
 
@@ -637,6 +639,7 @@ namespace pawn
 
         m_spellBook.Refresh();
         RefreshWeaponSkills();
+        m_nakedSneak = NakedSneakNow();
 
         m_lastAction = tick + std::chrono::milliseconds(xirand::GetRandomNumber(2000, 3000));
 
@@ -1737,12 +1740,13 @@ namespace pawn
                                    });
     }
 
-    auto CGambits::OffersBoost() -> bool
+    auto CGambits::OffersBeforeWs(const cardian::tactician::Allowance tool) -> bool
     {
-        // Her marked Boost row, on, the player's gate on it holding now:
-        // Boost goes out right before her weapon skill and nothing between
-        // (CPawnController::WeaponSkill). Read over the running layers, the
-        // world's included: a wild Monk's brains carry it (brains.yaml)
+        // Her marked Boost or Sneak Attack row, on, the player's gate on it
+        // holding now: it goes out right before her weapon skill and
+        // nothing between (CPawnController::WeaponSkill). Read over the
+        // running layers, the world's included: a wild Monk's brains carry
+        // a Boost row (brains.yaml)
         if (!m_masterOn)
         {
             return false;
@@ -1752,7 +1756,7 @@ namespace pawn
         return cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t place, const bool on)
                                            {
                                                const auto& g = row.gambit;
-                                               if (!on || states[place - 1] != cardian::tactician::State::Tool || cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Boost)
+                                               if (!on || states[place - 1] != cardian::tactician::State::Tool || cardian::tactician::allowanceOf(g) != tool)
                                                {
                                                    return false;
                                                }
@@ -1765,6 +1769,34 @@ namespace pawn
                                                }
                                                return true;
                                            });
+    }
+
+    auto CGambits::NakedSneakNow() -> bool
+    {
+        // A Thief, main or sub, with her marked Sneak Attack row, and no
+        // weapon skill row of hers that would fire taking it: one naming a
+        // weapon skill that cannot is respected as written, and Weapon skill
+        // (best) or (any) takes it while one of hers can (RESEARCH §17.13
+        // item 5; tactician_line.h wsRowTakesSneak)
+        if ((POwner->GetMJob() != xi::Job::THF && POwner->GetSJob() != xi::Job::THF) || !OffersBeforeWs(cardian::tactician::Allowance::SneakAttack))
+        {
+            return false;
+        }
+        const bool anyTakes = std::ranges::any_of(m_tpSkills, [](const TrustSkill_t& s)
+                                                  {
+                                                      return CPawnController::TakesSneakAttack(static_cast<uint16>(s.skill_id));
+                                                  });
+        const auto takesIfHers = [this](const uint16 wsid)
+        {
+            return charutils::hasWeaponSkill(POwner, wsid) && charutils::canUseWeaponSkill(POwner, wsid) && CPawnController::TakesSneakAttack(wsid);
+        };
+        const auto layers = RunningLayers();
+        const auto states = RunningStates(layers);
+        const bool pairs  = cardian::layers::forEachRow(layers, [&](GambitRow& row, const std::size_t place, const bool on)
+                                                       {
+                                                           return on && cardian::tactician::wsRowTakesSneak(row.gambit, states[place - 1], anyTakes, takesIfHers);
+                                                       });
+        return !pairs;
     }
 
     auto CGambits::BuffNow(const Gambit_t& g, const bool engaged) const -> bool
@@ -2914,6 +2946,20 @@ namespace pawn
                     return false;
                 }
                 wsid = static_cast<uint16>(m_tpSkills.back().skill_id);
+                // Her best is hers to choose: with Sneak Attack able to go
+                // now, the best that takes it (RESEARCH §17.13 item 5); any
+                // other would spend it for nothing
+                if (!CPawnController::TakesSneakAttack(wsid) && m_PController->SneakAttackNow(POwner->GetBattleTarget()))
+                {
+                    for (auto it = m_tpSkills.rbegin(); it != m_tpSkills.rend(); ++it)
+                    {
+                        if (CPawnController::TakesSneakAttack(static_cast<uint16>(it->skill_id)))
+                        {
+                            wsid = static_cast<uint16>(it->skill_id);
+                            break;
+                        }
+                    }
+                }
                 break;
             }
             case G_SELECT::RANDOM:
@@ -2923,6 +2969,19 @@ namespace pawn
                     return false;
                 }
                 wsid = static_cast<uint16>(xirand::GetRandomElement(m_tpSkills).skill_id);
+                // Any of hers, and with Sneak Attack able to go now any that takes it
+                if (!CPawnController::TakesSneakAttack(wsid) && m_PController->SneakAttackNow(POwner->GetBattleTarget()))
+                {
+                    std::vector<TrustSkill_t> physical;
+                    std::ranges::copy_if(m_tpSkills, std::back_inserter(physical), [](const TrustSkill_t& s)
+                                         {
+                                             return CPawnController::TakesSneakAttack(static_cast<uint16>(s.skill_id));
+                                         });
+                    if (!physical.empty())
+                    {
+                        wsid = static_cast<uint16>(xirand::GetRandomElement(physical).skill_id);
+                    }
+                }
                 break;
             }
             default:

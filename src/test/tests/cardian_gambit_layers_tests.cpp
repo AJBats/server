@@ -139,7 +139,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
 {
     uint32     next  = 0;
     auto       world = worldRows(kWorldBlock, next);
-    auto       own   = ownRows(pawn::defaultRowsFor(xi::Job::THF));
+    auto       own   = ownRows(pawn::defaultRowsFor(xi::Job::PLD));
     const auto wild  = layersFor<Row>(true, world, own);
     const auto party = layersFor<Row>(false, world, own);
 
@@ -257,7 +257,7 @@ TEST_CASE("gambit layers: a row is found in the layer its id names, while that l
 {
     uint32 next  = 0;
     auto   world = worldRows(kWorldBlock, next);
-    auto   own   = ownRows(pawn::defaultRowsFor(xi::Job::THF));
+    auto   own   = ownRows(pawn::defaultRowsFor(xi::Job::PLD));
     auto   wild  = layersFor<Row>(true, world, own);
     auto   party = layersFor<Row>(false, world, own);
 
@@ -348,6 +348,8 @@ namespace
                     return job == xi::Job::MNK ? 15 : 0;
                 case t::kFocus:
                     return job == xi::Job::MNK ? 25 : 0;
+                case t::kSneakAttack:
+                    return job == xi::Job::THF ? 15 : 0;
                 default:
                     return 0;
             }
@@ -661,7 +663,7 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
     }
     SECTION("a melee job with a hand-made list is lent the trio as orders, ahead of hers")
     {
-        auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::THF), next);
+        auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::PLD), next);
         auto own  = ownRows({
             { "2|2:50|4:0:0|0", true }, // Foe: HP >= 50% -> Weapon skill (best)
         });
@@ -674,7 +676,7 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
         for (const auto job : { xi::Job::WHM, xi::Job::RDM })
         {
             INFO("job " << static_cast<int>(job));
-            auto want = bundle(cardian::party::Role::Damage, xi::Job::THF);
+            auto want = bundle(cardian::party::Role::Damage, xi::Job::PLD);
             want.push_back(nuke);
             want.push_back(rest);
             CHECK(bundle(cardian::party::Role::Damage, job) == want);
@@ -727,7 +729,7 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
         }
         return out;
     };
-    const auto trio = specs(bundle(Role::Damage, xi::Job::THF));
+    const auto trio = specs(bundle(Role::Damage, xi::Job::PLD));
     const auto plus = [&](std::vector<std::string> rows, std::initializer_list<std::string> more)
     {
         rows.insert(rows.end(), more);
@@ -757,8 +759,15 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
     CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::WAR, k99)) == plus(trio, { berserk, aggressor, boost, focus }));
     CHECK(specs(bundle(Role::Damage, xi::Job::WAR)) == plus(trio, { berserk, aggressor }));
     CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::MNK)) == plus(trio, { berserk, aggressor, boost, focus }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::THF, xi::Job::WAR)) == plus(trio, { berserk }));
     CHECK(specs(bundle(Role::Damage, xi::Job::RDM, xi::Job::WAR)) == plus(trio, { berserk, "2|101:0|2:3:0|0", "0|101:0|100:14:1|0" }));
+    // a Thief's Sneak Attack (15), from her main or her sub, to a main job
+    // that melees; never to a Black Mage, whose seat is her nukes
+    const std::string sneak = pawn::defaultRowsFor(xi::Job::THF)[3].first;
+    CHECK(specs(bundle(Role::Damage, xi::Job::THF)) == plus(trio, { sneak }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::THF, xi::Job::WAR)) == plus(trio, { berserk, sneak }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::THF)) == plus(trio, { berserk, aggressor, sneak }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::THF)) == plus(trio, { boost, sneak, focus }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::BLM, xi::Job::THF)) == std::vector<std::string>{ "2|101:0|2:3:0|0", "0|101:0|100:14:1|0" });
 
     // Healer: a job that learns Cure is lent the Cure and the Rest, and the
     // -na only one that learns a -na (the White Mage, main or sub)
@@ -814,7 +823,7 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(bundle(cardian::party::Role::Healer, xi::Job::WHM) == kHealer);
     // Damage lends a melee job the melee defaults' trio, and a Warrior her
     // own marked Berserk and Aggressor
-    const auto& melee   = pawn::defaultRowsFor(xi::Job::THF);
+    const auto& melee   = pawn::defaultRowsFor(xi::Job::PLD);
     const auto& warrior = pawn::defaultRowsFor(xi::Job::WAR);
     REQUIRE(kDamage.size() == 5);
     CHECK(kDamage[0].first == melee[0].first);

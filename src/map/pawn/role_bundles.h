@@ -181,16 +181,16 @@ namespace pawn::bundles
     //    (tank_calls.h paces it; the Tank seat is what runs the tank
     //    tactician), Defender, Focus and Dodge, marked.
     //  - Damage: the melee defaults' trio, orders, then Berserk, Aggressor,
-    //    Boost and Focus, marked -- all of them melee tools, for a main job
-    //    that melees (meleesOnDamage: a Black Mage / Warrior is lent no
-    //    Berserk, a Summoner nothing). A buff acts
+    //    Boost, Sneak Attack and Focus, marked -- all of them melee tools,
+    //    for a main job that melees (meleesOnDamage: a Black Mage / Warrior
+    //    is lent no Berserk, a Summoner nothing). A buff acts
     //    where it sits in her think (CGambits::BuffNow), the seat choosing
     //    between Berserk and Defender (tactician_line.h wrongStance). Then
     //    Damage spell (any), marked -- her nukes -- and her marked Rest,
     //    the MP pacing that sits her down between fights, for a main job
     //    that nukes (nukesOnDamage: her tactician's when and which,
-    //    CGambits::CastNuke). The Thief's Sneak
-    //    Attack and Trick Attack join when their judgement exists.
+    //    CGambits::CastNuke). The Thief's Trick Attack joins when its
+    //    judgement exists.
     //  - Puller is a seat only.
     inline auto toolsOf(const cardian::party::Role role) -> std::span<const Tool>
     {
@@ -215,6 +215,7 @@ namespace pawn::bundles
             { "0|101:0|3:2:31|0", { K::Ability, t::kBerserk, true } },   // * Self -> Berserk
             { "0|101:0|3:2:34|0", { K::Ability, t::kAggressor, true } }, // * Self -> Aggressor
             { "0|101:0|3:2:39|0", { K::Ability, t::kBoost, true } },     // * Self -> Boost
+            { "0|101:0|3:2:44|0", { K::Ability, t::kSneakAttack, true } }, // * Self -> Sneak Attack
             { "0|101:0|3:2:36|0", { K::Ability, t::kFocus, true } },     // * Self -> Focus
             { "2|101:0|2:3:0|0", { K::Anyone, 0, false, true } },        // * Foe -> Damage spell (any)
             { "0|101:0|100:14:1|0", { K::Anyone, 0, false, true } },     // * Self -> Rest

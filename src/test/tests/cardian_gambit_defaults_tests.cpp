@@ -82,6 +82,17 @@ namespace
         { "0|0:0|100:6:1|0", true },
     };
 
+    // A Thief's: the trio, her Sneak Attack before her weapon skill, then
+    // the melee set's weapon skill and rest with the player
+    const Rows kThief{
+        { "100|0:0|0:0:0|0", true },
+        { "101|0:0|0:0:0|0", true },
+        { "102|0:0|0:0:0|0", true },
+        { "0|101:0|3:2:44|0", true },
+        { "2|2:50|4:0:0|0", true },
+        { "0|0:0|100:6:1|0", true },
+    };
+
     const Rows kMage{
         { "1|101:0|2:0:1|0", true },
         { "1|101:0|2:0:4|0", true },
@@ -150,7 +161,7 @@ namespace
     constexpr auto kRest     = static_cast<uint16>(pawn::Behavior::RestWithPlayer);
 } // namespace
 
-TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage's with her nukes), the Monk and the Warrior their own, every other job the melee set", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage's with her nukes), the Monk, the Warrior and the Thief their own, every other job the melee set", "[cardian][gambits][defaults]")
 {
     const auto jobs = allJobs();
     REQUIRE(jobs.size() == 22);
@@ -161,7 +172,12 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage'
         INFO("job " << static_cast<int>(job));
         const bool mage = kMageJobs.contains(job);
         CHECK(isMageJob(job) == mage);
-        const auto& want = job == xi::Job::BLM ? kBlackMage : mage ? kMage : job == xi::Job::MNK ? kMonk : job == xi::Job::WAR ? kWarrior : kMelee;
+        const auto& want = job == xi::Job::BLM ? kBlackMage
+                           : mage              ? kMage
+                           : job == xi::Job::MNK ? kMonk
+                           : job == xi::Job::WAR ? kWarrior
+                           : job == xi::Job::THF ? kThief
+                                                 : kMelee;
         CHECK(defaultRowsFor(job) == want);
         if (mage)
         {
@@ -181,7 +197,7 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage'
 
 TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill and rest with the player, all on, every one an order", "[cardian][gambits][defaults]")
 {
-    const auto& rows = defaultRowsFor(xi::Job::THF);
+    const auto& rows = defaultRowsFor(xi::Job::PLD);
     REQUIRE(rows == kMelee);
     for (const auto& [spec, on] : rows)
     {
@@ -203,7 +219,7 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon sk
     CHECK_FALSE(parseRow("0|0:0|100:11:1|0").has_value());
 }
 
-TEST_CASE("gambit defaults: the Monk and the Warrior carry their tactician's tools between the trio and the weapon skill", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the Monk, the Warrior and the Thief carry their tactician's tools between the trio and the weapon skill", "[cardian][gambits][defaults]")
 {
     using cardian::tactician::Allowance;
     using cardian::tactician::State;
@@ -229,11 +245,16 @@ TEST_CASE("gambit defaults: the Monk and the Warrior carry their tactician's too
     tool(warrior[4].first, cardian::tactician::kDefender, Allowance::Buff);
     tool(warrior[5].first, cardian::tactician::kAggressor, Allowance::Buff);
 
+    const auto& thief = defaultRowsFor(xi::Job::THF);
+    REQUIRE(thief == kThief);
+    tool(thief[3].first, cardian::tactician::kSneakAttack, Allowance::SneakAttack);
+
     // the rest of each is the melee set's, in its order
-    for (const auto* rows : { &monk, &warrior })
+    for (const auto* rows : { &monk, &warrior, &thief })
     {
+        const auto tools = static_cast<std::ptrdiff_t>(rows->size() - kMelee.size());
         CHECK(Rows(rows->begin(), rows->begin() + 3) == Rows(kMelee.begin(), kMelee.begin() + 3));
-        CHECK(Rows(rows->begin() + 6, rows->end()) == Rows(kMelee.begin() + 3, kMelee.end()));
+        CHECK(Rows(rows->begin() + 3 + tools, rows->end()) == Rows(kMelee.begin() + 3, kMelee.end()));
     }
 
     // Boost before weapon skills, the switch these tools replace for the
@@ -283,7 +304,7 @@ TEST_CASE("gambit defaults: the Black Mage's set is the mage set with her tactic
 
 TEST_CASE("gambit defaults: every default row parses, round-trips through the grammar and pairs as the editor asks", "[cardian][gambits][defaults]")
 {
-    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM), &defaultRowsFor(xi::Job::BLM) })
+    for (const auto* rows : { &defaultRowsFor(xi::Job::PLD), &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM), &defaultRowsFor(xi::Job::BLM) })
     {
         for (const auto& row : *rows)
         {
@@ -298,7 +319,7 @@ TEST_CASE("gambit defaults: every default row parses, round-trips through the gr
 
 TEST_CASE("gambit defaults: no default row avoids aggro or links; every set carries the weapon skill row", "[cardian][gambits][defaults]")
 {
-    for (const auto* rows : { &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM), &defaultRowsFor(xi::Job::BLM) })
+    for (const auto* rows : { &defaultRowsFor(xi::Job::PLD), &defaultRowsFor(xi::Job::THF), &defaultRowsFor(xi::Job::MNK), &defaultRowsFor(xi::Job::WAR), &defaultRowsFor(xi::Job::WHM), &defaultRowsFor(xi::Job::BLM) })
     {
         for (const auto& row : *rows)
         {

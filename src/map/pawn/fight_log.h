@@ -117,6 +117,7 @@ namespace pawn::tactics
         void onMobTpMove(CMobEntity* PMob, uint16 skillId);
         void onMobParalyzed(CMobEntity* PMob);
         void onMemberParalyzed(CBattleEntity* PMember);
+        void onSneakAttack(CBattleEntity* PMember, uint32 mobId, cardian::tactics::SneakUse use, double seconds); // on the fight with that mob
 
         // The bank's price list for each open fight, as printed at its open
         auto priceLists() const -> std::vector<std::string>;

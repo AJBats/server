@@ -207,15 +207,16 @@ namespace cardian::tactician
     }
 
     // The self buffs her tactician uses on their own clocks while she
-    // fights, and Boost, which waits for her weapon skill (RESEARCH §17.13,
-    // the tool table), by ability id (ability.h, asserted in
-    // pawn_gambits.cpp)
-    inline constexpr uint16                kBerserk   = 31;
-    inline constexpr uint16                kDefender  = 33;
-    inline constexpr uint16                kAggressor = 34;
-    inline constexpr uint16                kFocus     = 36;
-    inline constexpr uint16                kDodge     = 37;
-    inline constexpr uint16                kBoost     = 39;
+    // fights, and Boost and Sneak Attack, which wait for her weapon skill
+    // (RESEARCH §17.13, the tool table), by ability id (ability.h, asserted
+    // in pawn_gambits.cpp)
+    inline constexpr uint16                kBerserk     = 31;
+    inline constexpr uint16                kDefender    = 33;
+    inline constexpr uint16                kAggressor   = 34;
+    inline constexpr uint16                kFocus       = 36;
+    inline constexpr uint16                kDodge       = 37;
+    inline constexpr uint16                kBoost       = 39;
+    inline constexpr uint16                kSneakAttack = 44;
     inline constexpr std::array<uint16, 5> kBuffAbilities{ kBerserk, kDefender, kAggressor, kFocus, kDodge };
 
     constexpr auto isBuffAbility(const uint32 ability) -> bool
@@ -298,8 +299,9 @@ namespace cardian::tactician
     // hate tool on a Foe row's foe, her rest (a Self -> Rest row: the MP
     // pacing, RESEARCH §17.13), a self buff on its clock (a Self row:
     // Berserk, Defender, Aggressor, Focus, Dodge), Boost before her weapon
-    // skill (Self), or a damage spell on a Foe row's foe (Damage spell
-    // (any): the Black Mage's nukes). None: a mark with no judgement behind it
+    // skill (Self), Sneak Attack before it from the mob's back (Self), or a
+    // damage spell on a Foe row's foe (Damage spell (any): the Black Mage's
+    // nukes). None: a mark with no judgement behind it
     enum class Allowance : uint8
     {
         None,
@@ -312,6 +314,7 @@ namespace cardian::tactician
         Buff,
         Boost,
         Nuke,
+        SneakAttack,
     };
 
     // The tools her tactician casts in the party's fights: cures, priced
@@ -358,6 +361,10 @@ namespace cardian::tactician
             if (a.select_arg == kBoost)
             {
                 return self ? Allowance::Boost : Allowance::None;
+            }
+            if (a.select_arg == kSneakAttack)
+            {
+                return self ? Allowance::SneakAttack : Allowance::None;
             }
             return isBuffAbility(a.select_arg) && self ? Allowance::Buff : Allowance::None;
         }
@@ -482,5 +489,43 @@ namespace cardian::tactician
     constexpr auto leavesToRest(const bool runs, const bool recoveryDue, const bool claimedByOrder, const bool claimedByMark, const bool playersOrder) -> bool
     {
         return runs && recoveryDue && claimedByMark && !claimedByOrder && !playersOrder;
+    }
+
+    // Whether a weapon skill takes Sneak Attack, read off its own script
+    // (scripts/actions/weaponskills/<name>.lua): only the server's physical
+    // weapon skill path applies it. The magical path (Gust Slash), the
+    // ranged one (Sidewinder) and the scripts of their own (Energy Steal,
+    // Energy Drain, Spirits Within) ignore it -- and spend it all the same,
+    // since it goes with the next weapon skill or swing (RESEARCH §17.13
+    // item 5)
+    constexpr auto scriptTakesSneakAttack(const std::string_view source) -> bool
+    {
+        return source.find("doPhysicalWeaponskill") != std::string_view::npos;
+    }
+
+    // Whether a weapon skill row of hers takes Sneak Attack as it fires: only
+    // an order fires (a marked weapon skill row has no judgement behind it);
+    // one naming a skill does when the skill is hers and takes it; Weapon
+    // skill (best) or (any) does while one of hers takes it. No row that
+    // does, and her Sneak Attack goes naked (CGambits::NakedSneakNow)
+    template <typename Takes>
+    auto wsRowTakesSneak(const gambits::Gambit_t& g, const State state, const bool anyOfHersTakes, Takes&& takesIfHers) -> bool
+    {
+        if (state != State::Order)
+        {
+            return false;
+        }
+        return std::ranges::any_of(g.actions, [&](const gambits::Action_t& a)
+                                   {
+                                       if (a.reaction != gambits::G_REACTION::WS)
+                                       {
+                                           return false;
+                                       }
+                                       if (a.select == gambits::G_SELECT::SPECIFIC)
+                                       {
+                                           return takesIfHers(static_cast<uint16>(a.select_arg));
+                                       }
+                                       return (a.select == gambits::G_SELECT::HIGHEST || a.select == gambits::G_SELECT::RANDOM) && anyOfHersTakes;
+                                   });
     }
 } // namespace cardian::tactician

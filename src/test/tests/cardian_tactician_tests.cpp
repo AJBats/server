@@ -34,6 +34,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <fstream>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -401,7 +403,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Tool });
 
     std::vector<std::string> melee;
-    for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::THF))
+    for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::PLD))
     {
         melee.push_back(spec);
     }
@@ -423,7 +425,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     }
 }
 
-TEST_CASE("tactician: the self buffs and Boost are tools on a Self row, each with its own when", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: the self buffs, Boost and Sneak Attack are tools on a Self row, each with its own when", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::Allowance;
     using cardian::tactician::allowanceOf;
@@ -447,8 +449,14 @@ TEST_CASE("tactician: the self buffs and Boost are tools on a Self row, each wit
     CHECK(stateOf("0|101:0|3:2:39|0") == State::Tool); // * Self -> Boost
     CHECK(allowanceOf(row("0|101:0|3:2:39|0")) == Allowance::Boost);
     CHECK(stateOf("2|101:0|3:2:39|0") == State::NoJudgement);
+    CHECK(stateOf("0|101:0|3:2:44|0") == State::Tool); // * Self -> Sneak Attack
+    CHECK(allowanceOf(row("0|101:0|3:2:44|0")) == Allowance::SneakAttack);
+    CHECK(stateOf("2|101:0|3:2:44|0") == State::NoJudgement);
+    CHECK(stateOf("0|0:0|3:2:44|0") == State::Order); // plain: Sneak Attack whenever it holds, a plain hit's
+    CHECK_FALSE(actsAlone(State::Tool, row("0|101:0|3:2:44|0"), true)); // it waits for her weapon skill
     CHECK(stateOf(marked("0|3:30|3:2:31|0")) == State::Tool); // * Self: MP < 30% -> Berserk: gated
     CHECK_FALSE(t::isBuffAbility(t::kBoost));                // Boost waits for the weapon skill, not its clock
+    CHECK_FALSE(t::isBuffAbility(t::kSneakAttack));          // so does Sneak Attack
     CHECK_FALSE(t::isBuffAbility(35));                       // Provoke is the tank's hate tool
 
     // The when: fighting, not on her already, the seat allowing
@@ -512,4 +520,61 @@ TEST_CASE("tactician: Damage spell (any) marked is her nukes, a tool on a Foe ro
     CHECK(stateOf("2|0:0|2:3:0|0") == State::Order);
     // it lends no spell to the conveyor's admission (Cures and Debuffs do)
     CHECK_FALSE(t::allowsSpell(row(nuke), 144)); // Fire
+}
+
+TEST_CASE("tactician: a weapon skill takes Sneak Attack when its own script goes through the server's physical path", "[cardian][gambits][tactician]")
+{
+    // The real scripts, read as CPawnController::TakesSneakAttack reads
+    // them (xi_test runs from the server's root)
+    const auto takes = [](const std::string& name)
+    {
+        std::ifstream file("./scripts/actions/weaponskills/" + name + ".lua");
+        INFO("weapon skill " << name);
+        REQUIRE(file.is_open());
+        const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        return cardian::tactician::scriptTakesSneakAttack(source);
+    };
+
+    // The physical dagger skills a Thief reaches
+    for (const auto* name : { "wasp_sting", "viper_bite", "shadowstitch", "dancing_edge", "shark_bite", "evisceration" })
+    {
+        CHECK(takes(name));
+    }
+    // Magical (Gust Slash, Cyclone, Aeolian Edge), ranged (Sidewinder), and
+    // scripts of their own (Energy Steal, Energy Drain, Spirits Within)
+    for (const auto* name : { "gust_slash", "cyclone", "aeolian_edge", "sidewinder", "energy_steal", "energy_drain", "spirits_within" })
+    {
+        CHECK_FALSE(takes(name));
+    }
+}
+
+TEST_CASE("tactician: a weapon skill row takes Sneak Attack only when it would fire and its skill would take it", "[cardian][gambits][tactician]")
+{
+    using cardian::tactician::wsRowTakesSneak;
+    // Wasp Sting (16) is hers and takes it; Gust Slash (19) is hers and
+    // does not; Viper Bite (17) would, but is not hers
+    const auto takesIfHers = [](const uint16 wsid)
+    {
+        return wsid == 16;
+    };
+
+    // Weapon skill (best), an order: while one of hers takes it
+    const auto best = row("2|2:50|4:0:0|0");
+    CHECK(wsRowTakesSneak(best, State::Order, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(best, State::Order, false, takesIfHers));
+
+    // A row naming a weapon skill: as named, the player's wish kept
+    CHECK(wsRowTakesSneak(row("2|2:50|4:2:16|0"), State::Order, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(row("2|2:50|4:2:19|0"), State::Order, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(row("2|2:50|4:2:17|0"), State::Order, true, takesIfHers));
+
+    // A row that never fires does not count: a marked weapon skill row has
+    // no judgement behind it, and a struck-out row does nothing
+    const auto markedBest = row("2|101:0|4:0:0|0");
+    CHECK(cardian::tactician::stateOf(markedBest) == State::NoJudgement);
+    CHECK_FALSE(wsRowTakesSneak(markedBest, State::NoJudgement, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(best, State::Misfit, true, takesIfHers));
+
+    // A row with no weapon skill in it
+    CHECK_FALSE(wsRowTakesSneak(row(kRest), State::Order, true, takesIfHers));
 }

@@ -852,6 +852,23 @@ namespace pawn::tactics
         }
     }
 
+    void FightLog::onSneakAttack(CBattleEntity* PMember, const uint32 mobId, const cardian::tactics::SneakUse use, const double seconds)
+    {
+        if (PMember == nullptr || mobId == 0)
+        {
+            return;
+        }
+        // The fight on that mob, settling after its kill included
+        for (auto& r : m_open)
+        {
+            if (r.mobId == mobId)
+            {
+                cardian::tactics::bookSneak(r.member(PMember->id, PMember->getName()), use, seconds);
+                return;
+            }
+        }
+    }
+
     auto FightLog::priceLists() const -> std::vector<std::string>
     {
         std::vector<std::string> out;

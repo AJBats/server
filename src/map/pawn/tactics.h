@@ -22,6 +22,7 @@
 #pragma once
 
 #include "bank_math.h"
+#include "fight_math.h"
 
 #include "common/cbasetypes.h"
 #include "common/timer.h"
@@ -140,6 +141,11 @@ namespace pawn::tactics
     // fight on the mob is open: a first nuke on a mob nobody has struck is
     // a pull. No prices when the formula could not answer (the bank logs why)
     auto nukePrices(CCharEntity* PPawn, CBattleEntity* PTarget, const std::vector<SpellID>& spells) -> std::optional<cardian::tactics::NukePricing>;
+
+    // How her Sneak Attack went on the fight with that mob (before her
+    // weapon skill, naked, or ready and unused), and how long it stood
+    // ready: booked for the fight's close line
+    void noteSneakAttack(CCharEntity* PPawn, uint32 mobId, cardian::tactics::SneakUse use, double seconds);
 
     // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h
     // has the rules): the mob to Provoke now and why, or none and why not,

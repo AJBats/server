@@ -884,6 +884,14 @@ namespace pawn::tactics
         return std::nullopt;
     }
 
+    void noteSneakAttack(CCharEntity* PPawn, const uint32 mobId, const cardian::tactics::SneakUse use, const double seconds)
+    {
+        if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
+        {
+            PTactician->log().onSneakAttack(PPawn, mobId, use, seconds);
+        }
+    }
+
     auto tankCall(CCharEntity* PPawn, const bool engaged) -> std::optional<TankCall>
     {
         auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;

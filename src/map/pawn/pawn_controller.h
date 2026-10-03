@@ -313,6 +313,19 @@ public:
     // Something on her the ability state refuses every job ability for:
     // Amnesia, or Impairment of abilities
     auto AbilitiesShutOut() const -> bool;
+    // Sneak Attack is spent by the next blow and lands only from behind, so
+    // it goes right before her weapon skill: her marked Sneak Attack row
+    // offers it (the tactician's tool, RESEARCH §17.13), and it is hers to
+    // use now
+    auto SneakAttackReady() const -> bool;
+    // Sneak Attack can go now, before her weapon skill or naked: ready, she
+    // is engaged on this mob, the mob faces someone else (its back away
+    // from her side), and no give-up of hers rests on it (m_SneakRest)
+    auto SneakAttackNow(const CBattleEntity* PTarget) -> bool;
+    // A weapon skill Sneak Attack works with: one whose script goes through
+    // the server's physical path (tactician_line.h scriptTakesSneakAttack),
+    // read once per weapon skill. Any other spends it all the same
+    static auto TakesSneakAttack(uint16 wsid) -> bool;
     // The player's own Berserk or Defender has just fired, by its ability
     // id: his order (TryAction), or a plain row of his (CGambits::Execute)
     void NoteOrderedStance(uint16 ability);
@@ -722,7 +735,7 @@ private:
     auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t; // by the live frame
-    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side
+    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false, bool ownSeat = true) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side; not her own ring seat (the walk for Sneak Attack): her seat's bookkeeping left alone
 
     // The beat: how long she takes to act on a decision -- to set off on
     // a hunt, to draw with the party, to close when the hold ends, to step
@@ -1153,18 +1166,75 @@ private:
     int m_RestTicks = 0;
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;
-    // Boost before weapon skills: the weapon skill held one tick while Boost goes out first
+    // Sneak Attack or Boost before weapon skills: the weapon skill held one
+    // tick while the opener goes out first
     struct HeldWs
     {
         EntityId          target;
         uint16            wsid = 0;
         timer::time_point at;
     };
-    std::optional<HeldWs> m_WsAfterBoost;
+    std::optional<HeldWs> m_HeldWs;
+    // Sneak Attack wants the mob's back: her weapon skill waits while she
+    // walks there (SneakPoint), a few seconds at most, and goes without it
+    // if she cannot get there or the mob turns on her. No weapon skill (0):
+    // the walk is for a naked Sneak Attack, on her next swing
+    struct SneakStep
+    {
+        EntityId          target;
+        uint16            wsid = 0;
+        timer::time_point since;
+    };
+    std::optional<SneakStep>         m_SneakStep;
+    // After a naked Sneak Attack she stays at the mob's back until her next
+    // swing has spent it, a few seconds at most. Spent is the effect seen
+    // on her and then gone: the ability lands a tick after it starts
+    struct SneakHold
+    {
+        EntityId          target;
+        timer::time_point until;
+        bool              landed = false;
+    };
+    std::optional<SneakHold>         m_SneakHold;
+    // A walk to the mob's back given up, or Sneak Attack refused: she leaves
+    // it alone a while, unless the mob turns to someone else first, so a
+    // back she cannot reach is not walked at every tick
+    struct SneakRest
+    {
+        timer::time_point until;
+        uint32            front = 0; // whom the mob faced
+    };
+    std::optional<SneakRest>         m_SneakRest;
+    void                             RestSneak(const CBattleEntity* PTarget);
+    std::optional<timer::time_point> m_SneakReadySince; // Sneak Attack ready in this fight, since: what holding it for her weapon skill costs
     // The stance buffs the player's own fired (Berserk, Defender), by ability
     // id: when it fired (NoteOrderedStance, PlayersBuff)
     std::unordered_map<uint16, timer::time_point> m_OrderedBuffs;
     auto                  BoostReady() const -> bool;
+    auto                  SneakAttackUsable() const -> bool;
+    // A naked Sneak Attack is due (RESEARCH §17.13 item 5): no weapon skill
+    // row of hers can take it, no weapon skill is about to spend it (TP
+    // under 1000), Sneak Attack can go now, and its back is somewhere she
+    // can stand
+    auto                  NakedSneakDue(const CBattleEntity* PTarget) -> bool;
+    // A naked Sneak Attack, from the mob's back: she holds there for her swing
+    void                  NakedSneak(const EntityId target);
+    // Behind the mob as the server judges Sneak Attack: in the cone at its
+    // back, by its own facing (utils.h behind, the same 64 the hit asks)
+    auto                  BehindFor(const CBattleEntity* PTarget) const -> bool;
+    // The spot straight behind the mob by its own facing, at her fight
+    // radius: where the walk for Sneak Attack heads
+    auto                  SneakPoint(const CBattleEntity* PTarget) const -> position_t;
+    // Sneak Attack, then her weapon skill the moment it lands
+    auto                  SneakThenWs(const EntityId target, uint16 wsid) -> bool;
+    // The weapon skill without Sneak Attack: Boost first when her row
+    // offers it, else the weapon skill now
+    auto                  BoostOrWeaponSkill(const EntityId target, uint16 wsid) -> bool;
+    // The player's weapon skill order: it goes now and never walks; with
+    // her Sneak Attack row on and Sneak Attack up, a skill that takes it
+    // goes with it when she stands behind the mob already (the user,
+    // 2026-10-02). It replaces a walk under way
+    auto                  OrderedWeaponSkill(const EntityId target, uint16 wsid) -> bool;
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;

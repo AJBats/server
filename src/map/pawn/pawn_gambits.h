@@ -251,10 +251,18 @@ namespace pawn
         auto OffersTools() const -> bool;
         auto OffersSpells() const -> bool;
         auto OffersRest() -> bool;
-        // Her marked Boost row, on, its gate holding now, in any layer that
-        // runs (a wild Monk's brains carry one): Boost goes out right before
-        // her weapon skill (RESEARCH §17.13)
-        auto OffersBoost() -> bool;
+        // Her marked row of a tool that goes out right before her weapon
+        // skill -- Boost, or Sneak Attack from the mob's back -- on, its
+        // gate holding now, in any layer that runs (a wild Monk's brains
+        // carry a Boost row) (RESEARCH §17.13)
+        auto OffersBeforeWs(cardian::tactician::Allowance tool) -> bool;
+        // Her Sneak Attack goes naked, on a plain hit (RESEARCH §17.13 item
+        // 5): her marked Sneak Attack row offers it and no weapon skill row
+        // of hers that is on can take it. Read each think
+        auto NakedSneak() const -> bool
+        {
+            return m_nakedSneak;
+        }
         // The tank tactician's door (RESEARCH §17.11): the first enabled
         // marked row that lets her use this hate tool on this target now --
         // the row names the ability and the target, its retry has run, its
@@ -400,6 +408,8 @@ namespace pawn
         void KeepStance(const gambits::Gambit_t& gambit);
         // The nukes she can cast now (spell_bank.h isNuke)
         auto NukeSpells() -> std::vector<SpellID>;
+        // Whether her Sneak Attack goes naked, worked out (NakedSneak)
+        auto NakedSneakNow() -> bool;
         // Her tactician's nuke at a marked Damage spell (any) row (RESEARCH
         // §17.13, the Black Mage), on the foe its gate found, while she is in
         // the fight: never while the foe is on her -- she holds until it is
@@ -464,5 +474,7 @@ namespace pawn
         bool                                    m_tankOnDuty = false;
         // Why her nukes hold, as last said (said as it changes)
         std::string                             m_nukeHold;
+        // NakedSneak's answer, as of her last think (NakedSneakNow)
+        bool                                    m_nakedSneak = false;
     };
 } // namespace pawn

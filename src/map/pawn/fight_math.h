@@ -201,12 +201,45 @@ namespace cardian::tactics
         uint32      targeted     = 0; // the mob turned onto her this many times
         uint32      deaths       = 0;
         uint32      paralysed    = 0; // her swings and casts a paralysis proc stopped
+        uint32      sneakAttacks = 0;   // before her weapon skill, from the mob's back
+        double      sneakWait    = 0.0; // seconds they stood ready, waiting for it
+        uint32      sneakNaked   = 0;   // on a plain hit: her weapon skill row could not take one
+        double      sneakUnused  = 0.0; // seconds it stood ready and the fight ended without it
 
         auto meanHit() const -> double
         {
             return hits > 0 ? static_cast<double>(damageTaken) / hits : 0.0;
         }
     };
+
+    // How a Thief's Sneak Attack went (RESEARCH §17.13 item 5): before her
+    // weapon skill, naked on a plain hit, or ready and never used before the
+    // fight ended
+    enum class SneakUse : uint8
+    {
+        BeforeWs,
+        Naked,
+        Unused,
+    };
+
+    // A Sneak Attack booked on her figures: the seconds are how long it
+    // stood ready first
+    inline void bookSneak(MemberFigures& m, const SneakUse use, const double seconds)
+    {
+        switch (use)
+        {
+            case SneakUse::BeforeWs:
+                ++m.sneakAttacks;
+                m.sneakWait += seconds;
+                break;
+            case SneakUse::Naked:
+                ++m.sneakNaked;
+                break;
+            case SneakUse::Unused:
+                m.sneakUnused += seconds;
+                break;
+        }
+    }
 
     struct CastNote
     {
@@ -609,6 +642,41 @@ namespace cardian::tactics
         if (!paralysed.empty())
         {
             line += "; paralysed: " + paralysed;
+        }
+        // Each Thief's Sneak Attacks (RESEARCH §17.13 item 5): those held for
+        // her weapon skill and what the waiting cost -- the number that says
+        // when a plain hit's starts to pay -- those spent on a plain hit, and
+        // the time it stood ready and went unused
+        std::string sneaks;
+        for (const auto& m : r.members)
+        {
+            const bool unused = m.sneakUnused >= 0.5;
+            if (m.sneakAttacks == 0 && m.sneakNaked == 0 && !unused)
+            {
+                continue;
+            }
+            std::vector<std::string> parts;
+            if (m.sneakAttacks > 0)
+            {
+                parts.push_back(fmt::format("{} before her weapon skill (held {:.0f} s)", m.sneakAttacks, m.sneakWait));
+            }
+            if (m.sneakNaked > 0)
+            {
+                parts.push_back(fmt::format("{} on a plain hit", m.sneakNaked));
+            }
+            if (unused)
+            {
+                parts.push_back(fmt::format("ready {:.0f} s unused", m.sneakUnused));
+            }
+            sneaks += fmt::format("{}{} ", sneaks.empty() ? "" : "; ", m.name);
+            for (std::size_t i = 0; i < parts.size(); ++i)
+            {
+                sneaks += (i == 0 ? "" : ", ") + parts[i];
+            }
+        }
+        if (!sneaks.empty())
+        {
+            line += "; Sneak Attack: " + sneaks;
         }
         std::string interrupted;
         for (const auto& m : r.members)
