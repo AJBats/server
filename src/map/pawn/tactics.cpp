@@ -30,6 +30,7 @@
 #include "pawn_gambits.h"
 #include "role_support.h"
 #include "rest_policy.h"
+#include "spell_bank.h"
 #include "tank_calls.h"
 
 #include "common/logging.h"
@@ -80,8 +81,8 @@ namespace pawn::tactics
         }
 
         // Her scope as the game holds it this instant: the alliance's
-        // characters, and which of them hold the role. Built fresh for
-        // every call; nothing keeps an entity pointer across ticks
+        // characters, and which of them offer the party spells. Built fresh
+        // for every call; nothing keeps an entity pointer across ticks
         auto scopeOf(CCharEntity* PChar) -> Conveyor::Scope
         {
             Conveyor::Scope scope;
@@ -90,7 +91,7 @@ namespace pawn::tactics
                                    if (PMember != nullptr && PMember->objtype == TYPE_PC)
                                    {
                                        scope.members.push_back(PMember);
-                                       if (supportMage(PMember))
+                                       if (offersSpells(PMember))
                                        {
                                            scope.holders.insert(PMember->id);
                                        }
@@ -720,14 +721,24 @@ namespace pawn::tactics
         return PPawn != nullptr ? Conveyor::resolve(scopeOf(PPawn), id) : nullptr;
     }
 
-    auto supportMage(CBattleEntity* PMember) -> bool
+    auto offersSpells(CBattleEntity* PMember) -> bool
     {
         if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
         {
             return false;
         }
         auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->HoldsRole(pawn::Role::SupportMage);
+        return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersSpells();
+    }
+
+    auto offersRest(CBattleEntity* PMember) -> bool
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
+        {
+            return false;
+        }
+        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
+        return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersRest();
     }
 
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool
@@ -840,6 +851,44 @@ namespace pawn::tactics
         if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
         {
             role::think(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), engaged, seconds(timer::now()));
+        }
+    }
+
+    auto nukePrices(CCharEntity* PPawn, CBattleEntity* PTarget, const std::vector<SpellID>& spells) -> std::optional<cardian::tactics::NukePricing>
+    {
+        auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        auto* PMob       = dynamic_cast<CMobEntity*>(PTarget);
+        if (PTactician == nullptr || PMob == nullptr)
+        {
+            return std::nullopt;
+        }
+        for (auto& r : PTactician->log().open())
+        {
+            if (r.mobId != PMob->id || r.settling())
+            {
+                continue;
+            }
+            std::vector<CSpell*> asked;
+            for (const auto id : spells)
+            {
+                if (auto* PSpell = spell::GetSpell(id); PSpell != nullptr)
+                {
+                    asked.push_back(PSpell);
+                }
+            }
+            const auto  scope  = scopeOf(PPawn);
+            const auto& spot   = spotAverages(r.zone, r.mobName);
+            auto        priced = bank::priceNukes(r, spot, scope.members, PPawn, PMob, asked);
+            return priced.has_value() ? std::move(*priced) : cardian::tactics::NukePricing{};
+        }
+        return std::nullopt;
+    }
+
+    void noteSneakAttack(CCharEntity* PPawn, const uint32 mobId, const cardian::tactics::SneakUse use, const double seconds)
+    {
+        if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
+        {
+            PTactician->log().onSneakAttack(PPawn, mobId, use, seconds);
         }
     }
 
@@ -1008,7 +1057,7 @@ namespace pawn::tactics
                     holders += (holders.empty() ? "" : ", ") + PMember->getName();
                 }
             }
-            out.push_back(fmt::format("conveyor: {} need{}, Support Mage held by {}", PTactician->conveyor().needs().size(), PTactician->conveyor().needs().size() == 1 ? "" : "s", holders.empty() ? "nobody" : holders));
+            out.push_back(fmt::format("conveyor: {} need{}, spells offered by {}", PTactician->conveyor().needs().size(), PTactician->conveyor().needs().size() == 1 ? "" : "s", holders.empty() ? "nobody" : holders));
             for (const auto& line : PTactician->conveyor().lines(scope))
             {
                 out.push_back(line);

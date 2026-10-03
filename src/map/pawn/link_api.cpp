@@ -537,9 +537,8 @@ namespace pawn::linkapi
 
         // ---- gambits (the gambit editor, M3.85) ----------------------------
 
-        static_assert(static_cast<uint8>(cardian::tactician::State::Order) == CL_GS_ORDER && static_cast<uint8>(cardian::tactician::State::Line) == CL_GS_LINE &&
-                      static_cast<uint8>(cardian::tactician::State::Allows) == CL_GS_ALLOWS && static_cast<uint8>(cardian::tactician::State::NotBelow) == CL_GS_NOT_BELOW &&
-                      static_cast<uint8>(cardian::tactician::State::Clock) == CL_GS_CLOCK && static_cast<uint8>(cardian::tactician::State::NoChoice) == CL_GS_NO_CHOICE &&
+        static_assert(static_cast<uint8>(cardian::tactician::State::Order) == CL_GS_ORDER && static_cast<uint8>(cardian::tactician::State::Tool) == CL_GS_TOOL &&
+                      static_cast<uint8>(cardian::tactician::State::NoJudgement) == CL_GS_NO_JUDGEMENT && static_cast<uint8>(cardian::tactician::State::Clock) == CL_GS_CLOCK &&
                       static_cast<uint8>(cardian::tactician::State::Misfit) == CL_GS_MISFIT,
                       "a row's state crosses as its number");
         static_assert(static_cast<uint8>(pawn::Side::Self) == CL_SIDE_SELF && static_cast<uint8>(pawn::Side::Ally) == CL_SIDE_ALLY && static_cast<uint8>(pawn::Side::Foe) == CL_SIDE_FOE);
@@ -661,14 +660,12 @@ namespace pawn::linkapi
                         });
         }
 
+        // A row her party role pins in her own place moves like any of hers:
+        // the role owns the row's content, the player its order
         void gambitMove(CCharEntity* PChar, const cl_gambit_move& ask, Reply& reply)
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
-                            if (set.Locked(ask.from))
-                            {
-                                return CL_S_ROLE_LOCKED;
-                            }
                             return set.Move(ask.from, ask.to) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }

@@ -51,10 +51,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
 #include <limits>
 #include <numbers>
 #include <string>
 #include <tuple>
+#include <unordered_map>
 #include <vector>
 
 #include "ai/ai_container.h"
@@ -69,6 +72,7 @@
 #include "entities/char_entity.h"
 #include "status_effect_container.h"
 #include "entities/mob_entity.h"
+#include "party_roster.h"
 #include "tactics.h"
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
@@ -109,21 +113,11 @@ CPawnController::CPawnController(CCharEntity* PPawn)
 void CPawnController::ClearGambitBehaviors()
 {
     m_Behaviors.fill(std::nullopt);
-    m_RolesHeld = 0;
 }
 
 void CPawnController::SetGambitBehavior(const uint16 behavior, const uint16 arg)
 {
     cardian::layers::speak(m_Behaviors, behavior, arg);
-    if (behavior == static_cast<uint16>(pawn::Behavior::Role))
-    {
-        cardian::layers::holdRole(m_RolesHeld, arg);
-    }
-}
-
-auto CPawnController::HoldsRole(const pawn::Role role) const -> bool
-{
-    return cardian::layers::holdsRole(m_RolesHeld, static_cast<uint16>(role));
 }
 
 auto CPawnController::Behavior(const pawn::Behavior behavior) const -> std::optional<uint16>
@@ -249,8 +243,8 @@ auto CPawnController::AttendsFight(CBattleEntity* PTarget) const -> bool
     {
         return false;
     }
-    const bool supportMage = pawn::tactics::supportMage(POwner);
-    return cardian::engage::attendsFight(supportMage, supportMage && ClaimingRow(PTarget).has_value());
+    const bool spells = pawn::tactics::offersSpells(POwner);
+    return cardian::engage::attendsFight(spells, spells && ClaimingRow(PTarget).has_value());
 }
 
 auto CPawnController::PlayersOrderOn(const CBattleEntity* PTarget) const -> bool
@@ -364,6 +358,17 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_Towing        = false;
         m_TowingMob.reset();
         m_HoldForPlayer = false;
+        // Sneak Attack ready and never used before the fight ended is part
+        // of what holding it costs: booked on the fight it was ready for
+        if (m_SneakReadySince.has_value() && m_Gambits->OffersBeforeWs(cardian::tactician::Allowance::SneakAttack))
+        {
+            pawn::tactics::noteSneakAttack(static_cast<CCharEntity*>(POwner), m_LastFoughtId, cardian::tactics::SneakUse::Unused,
+                                           std::chrono::duration<double>(m_Tick - *m_SneakReadySince).count());
+        }
+        m_SneakStep.reset();
+        m_SneakHold.reset();
+        m_SneakRest.reset();
+        m_SneakReadySince.reset();
     }
     if (from == Mode::Approach && to != Mode::Approach)
     {
@@ -445,7 +450,9 @@ void CPawnController::StandDown(const std::string_view why)
     // Cancel delayed joins/orders before changing mode. Otherwise an Order,
     // which normally survives a transition, could restart the old fight.
     m_Pending.reset();
-    m_WsAfterBoost.reset();
+    m_HeldWs.reset();
+    m_SneakStep.reset();
+    m_SneakHold.reset();
     m_Approach.reset();
     m_HoldForPlayer = false;
     if (POwner->PAI->PathFind != nullptr)
@@ -769,7 +776,14 @@ void CPawnController::RoamTick()
 
     auto* PPathFind = POwner->PAI->PathFind.get();
 
-    RestTick(false); // the solo-farmer rest stand-in is retired
+    // Her rest: the world's plain Rest rows (brains.yaml: half HP, low MP)
+    // start her own rest order, down until full, and a camp mage's marked
+    // Rest row paces her MP by the bank (RESEARCH §17.13). Kneeling, or
+    // on her row's order -- stood up by danger or her camp's fight, to
+    // kneel again after -- she holds her ground: a mob that has come for
+    // her and her camp's fight are answered, and nothing else of the
+    // roamer's runs
+    const bool down = RestTick(PPathFind == nullptr || !PPathFind->IsFollowingPath());
 
     // Her ground is hers to hold: a mob that has come for her is answered
     if (auto* PMob = SelfDefenceTarget(); PMob != nullptr)
@@ -790,6 +804,10 @@ void CPawnController::RoamTick()
             }
             return;
         }
+    }
+    if (down || m_RestOrder.active())
+    {
+        return;
     }
 
     if (PPathFind == nullptr || POwner->GetSpeed() <= 0)
@@ -1287,6 +1305,51 @@ auto CPawnController::Acting() const -> bool
            POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>() || POwner->PAI->IsCurrentState<CItemState>();
 }
 
+auto CPawnController::ReadyToAct() -> bool
+{
+    // What CPlayerController asks before every action it takes (Ability,
+    // WeaponSkill, RangedAttack, UseItem): able to act, and the state lets
+    // go. The controller ticks before the states update, so an ability
+    // begun in one tick lands in the next and lets go of her in the one
+    // after: asked first, the next action goes out then, with no refusal
+    return canAct() && POwner->PAI->CanChangeState();
+}
+
+auto CPawnController::AbilitiesShutOut() const -> bool
+{
+    // What the ability state refuses a job ability for as it starts:
+    // Amnesia, or Impairment of abilities (power 1, or 3 with weapon skills)
+    auto* PImpairment = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment);
+    return POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia) ||
+           (PImpairment != nullptr && (PImpairment->GetPower() == 0x01 || PImpairment->GetPower() == 0x03));
+}
+
+void CPawnController::NoteOrderedStance(const uint16 ability)
+{
+    m_OrderedBuffs[ability] = m_Tick;
+}
+
+auto CPawnController::PlayersBuff(const uint16 ability, const xi::StatusEffect effect) -> bool
+{
+    const auto it = m_OrderedBuffs.find(ability);
+    if (it == m_OrderedBuffs.end())
+    {
+        return false;
+    }
+    const auto* PEffect = POwner->StatusEffectContainer->GetStatusEffect(effect);
+    if (PEffect != nullptr && cardian::tactician::isOrderedUse(PEffect->GetStartTime() - it->second))
+    {
+        return true;
+    }
+    // His order has had the time to land: the use it put up is over, or it
+    // never landed, and a later one of the same buff is not his
+    if (m_Tick - it->second > cardian::tactician::kOrderLands)
+    {
+        m_OrderedBuffs.erase(it);
+    }
+    return false;
+}
+
 void CPawnController::HeadLook(const CBaseEntity* PAt)
 {
     const uint16 want = PAt != nullptr ? PAt->targid : 0;
@@ -1390,7 +1453,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     // recast, or given as she gets up from a rest
     const EntityId target(PTarget);
     const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
-    std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : Acting() ? "busy" : outOfReach ? "out of reach" : "";
+    std::string_view heldFor  = cardian::pause::isHeld() ? "paused" : !ReadyToAct() ? "busy" : outOfReach ? "out of reach" : "";
     if (heldFor.empty())
     {
         OrderStarted(key, kind, id);
@@ -1418,8 +1481,11 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     }
 
     // A little early is held, too early refused. The wait is the least
-    // she has to wait (an action in progress adds what the state does not
-    // tell), so a refusal here is certain and the deadline judges the rest
+    // she has to wait (an action in progress other than a cast adds what
+    // its state does not tell), so a refusal here is certain and the
+    // deadline judges the rest. The 2.5 s after a spell is the server's
+    // wait for everyone and is never early: an order pressed late in her
+    // cast bar fires the moment it is over
     const auto grace = orderGrace();
     const auto wait  = OrderWait(kind, id);
     if (wait > grace)
@@ -1430,7 +1496,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
         }
         return CL_S_TOO_SOON;
     }
-    m_QueuedOrderDeadline = m_Tick + grace;
+    m_QueuedOrderDeadline = m_Tick + grace + SpellWaitAhead();
     SetQueuedOrder(std::make_pair(key, target));
     ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), heldFor, wholeSeconds(grace));
     if (InManeuver())
@@ -1453,27 +1519,51 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     return CL_S_OK;
 }
 
-auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
+auto CPawnController::CastBarLeft() const -> timer::duration
 {
-    if (kind != 2)
+    const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
+    if (PState == nullptr || PState->IsCompleted())
     {
         return 0s;
+    }
+    return std::max<timer::duration>(PState->GetStartTime() + PState->GetCastTime() - m_Tick, 0s);
+}
+
+auto CPawnController::SpellWaitAhead() -> timer::duration
+{
+    // The player controller's canAct: 2.5 s from the moment her last spell
+    // landed. A cast under way starts it afresh as it lands
+    constexpr auto kAfterSpell = 2500ms;
+    const auto*    PState      = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
+    if (PState != nullptr && !PState->IsCompleted())
+    {
+        return kAfterSpell;
+    }
+    return std::max<timer::duration>(getLastSpellFinishedTime() + kAfterSpell - m_Tick, 0s);
+}
+
+auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
+{
+    const auto bar = CastBarLeft();
+    if (kind != 2)
+    {
+        return bar;
     }
     const auto spellId = static_cast<SpellID>(id);
     if (const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState()); PState != nullptr)
     {
         if (auto* PSpell = PState->GetSpell(); PSpell != nullptr && PSpell->getID() == spellId)
         {
-            return PState->GetRecast(); // the same spell again: its timer starts when this cast lands
+            return bar + PState->GetRecast(); // the same spell again: its timer starts when this cast lands
         }
     }
     const auto* recast = static_cast<CCharEntity*>(POwner)->PRecastContainer->GetRecast(RECAST_MAGIC, static_cast<Recast>(spellId));
     if (recast == nullptr || recast->RecastTime <= 0s)
     {
-        return 0s;
+        return bar;
     }
     const auto left = recast->TimeStamp + recast->RecastTime - m_Tick;
-    return left > timer::duration::zero() ? left : timer::duration::zero();
+    return std::max(bar, left > timer::duration::zero() ? left : timer::duration::zero());
 }
 
 auto CPawnController::OrderName(const unsigned kind, const unsigned id) const -> std::string
@@ -1645,15 +1735,15 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             {
                 return CL_S_ON_RECAST;
             }
-            // An order is never second-guessed: straight to the base
+            // An order is never second-guessed: straight to the player
             // controller's cast, past the gambit engine's redundancy rule
-            // (which declines a cure on a healthy friend) and past the
-            // player controller's 2.5 s post-spell delay. The magic state
-            // is the only gate, as it is for a player.
+            // (which declines a cure on a healthy friend). It waits the 2.5 s
+            // after her last spell as the player's own cast does (the pacer
+            // holds it until then)
             const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
             FaceTarget(castTarget);
             HeadLook(castTarget.resolve<CBattleEntity>());
-            fired = CController::Cast(castTarget, spellId);
+            fired = CPlayerController::Cast(castTarget, spellId);
             break;
         }
         case 3:
@@ -1662,13 +1752,19 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
                 return CL_S_MALFORMED;
             }
             fired = Ability(target, static_cast<uint16>(id));
+            // His Berserk or Defender is never taken off by her tactician's
+            // stance (PlayersBuff)
+            if (fired && cardian::tactician::isStanceAbility(id))
+            {
+                NoteOrderedStance(static_cast<uint16>(id));
+            }
             break;
         case 4:
             if (mode != 2)
             {
                 return CL_S_MALFORMED;
             }
-            fired = WeaponSkill(target, static_cast<uint16>(id));
+            fired = OrderedWeaponSkill(target, static_cast<uint16>(id));
             break;
         case kItemOrder:
         {
@@ -1840,7 +1936,7 @@ void CPawnController::FireQueuedOrder()
     {
         SetQueuedOrder(std::nullopt);
         const auto wait = OrderWait(kind, id);
-        const bool busy = Acting() || wait <= 0s;
+        const bool busy = !ReadyToAct() || wait <= 0s;
         ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, busy ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait)));
         auto note   = cardian::link::make<cl_note>();
         note.kind   = CL_NOTE_LET_GO;
@@ -1849,7 +1945,8 @@ void CPawnController::FireQueuedOrder()
         Note(note, CL_S_TOO_SOON);
         return;
     }
-    if (Acting())
+    // The pacer: it goes out the first tick the server would take it
+    if (!ReadyToAct())
     {
         return;
     }
@@ -1955,8 +2052,10 @@ auto CPawnController::Refusal(CBattleEntity* PTarget, const cardian::rules::Enga
 auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, const std::string_view how, const bool hold) -> bool
 {
     // Resting on his order she takes no fight, the party's or her own
-    // defence: only his own engage order ends it (EngageOn)
-    if (m_RestOrder.active() && kind != ApproachKind::Order)
+    // defence: only his own engage order ends it (EngageOn). Her own Rest
+    // row's order is no such hold: a fight calls her up, and she kneels
+    // again after it (RestTick)
+    if (m_RestOrder.active() && !m_RestOrder.byRow && kind != ApproachKind::Order)
     {
         SayRefusal(PTarget, fmt::format("resting until {}% on the player's order", m_RestOrder.percent));
         return false;
@@ -1977,9 +2076,9 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         m_KeepCampFightSpot = false;
         m_CampSettlement = {};
     }
-    // A fight she attends (AttendsFight: the Support Mage role, no Attack
-    // row of hers claims the mob, and it is not the mob the player's own
-    // Attack named) is taken the way her role says, attending, whatever
+    // A fight she attends (AttendsFight: her rows offer the fight spells,
+    // no Attack row of hers claims the mob, and it is not the mob the
+    // player's own Attack named) is taken attending, whatever
     // else brought her to the door, the party's engage chord included:
     // distance and the draw cooldown are the fight ring's
     // business, not hers. Attending needs a place to keep cure range to,
@@ -2761,6 +2860,23 @@ auto CPawnController::RestsWithPlayer() const -> bool
     return Behavior(pawn::Behavior::RestWithPlayer).value_or(0) != 0;
 }
 
+auto CPawnController::RestsByRow() const -> bool
+{
+    // A plain Self -> Rest row whose conditions hold this tick: it starts
+    // her own rest order, down until full (RestTick). The marked one is
+    // the tactician's and never speaks here
+    return Behavior(pawn::Behavior::Rest).value_or(0) != 0;
+}
+
+auto CPawnController::RestRowDue() const -> bool
+{
+    // Her Rest row asks for its order: it speaks, she has something to
+    // rest for, and no rest order is on yet. RestTick takes it where she
+    // could kneel now; the party's hunt pick stands aside for it
+    return !m_RestOrder.active() && m_Gambits->MasterOn() && RestsByRow() &&
+           (POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP());
+}
+
 auto CPawnController::HomePointsWithPlayer() const -> bool
 {
     return Behavior(pawn::Behavior::HomePointWithPlayer).value_or(0) != 0;
@@ -3017,13 +3133,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Her tactician's melee -- a row below her Support Mage row took this
-    // fight, and none above it claims the mob -- gives way to her rest the
-    // moment her recovery is due: she leaves the fight, the door has her
-    // attend it, and she rests as her rest policy says until it stands her
-    // (tactician_line.h leavesToRest; RESEARCH §14.12 decision 19). An order
-    // above the line, or the player's own Attack, keeps her in. A tank's
-    // recovery is never due (RecoveryDue): she leaves no fight to rest
+    // Her tactician's melee -- a marked Attack row took this fight, and no
+    // order claims the mob -- gives way to her rest the moment her recovery
+    // is due: she leaves the fight, the door has her attend it, and she
+    // rests as her rest policy says until it stands her (tactician_line.h
+    // leavesToRest; RESEARCH §14.12 decision 19). An order, or the player's
+    // own Attack, keeps her in. A tank's recovery is never due
+    // (RecoveryDue): she leaves no fight to rest
     if (const bool runs = TacticianRuns(), due = RecoveryDue();
         due && cardian::tactician::leavesToRest(runs, due, ClaimingRowAs(PTarget, false).has_value(), ClaimingRowAs(PTarget, true).has_value(), PlayersOrderOn(PTarget)))
     {
@@ -3037,21 +3153,109 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     m_LastFoughtId = PTarget->id;
     m_LastFought   = EntityId(PTarget);
 
-    // The weapon skill held behind a Boost goes out now, before anything
-    // else can spend the Boost; given up after a few ticks
-    if (m_WsAfterBoost.has_value() && m_Tick > m_WsAfterBoost->at)
+    // The weapon skill held behind its opener (Sneak Attack, Boost) goes
+    // out the first tick the pacer allows -- the opener landed and let go
+    // of her -- before anything else can spend it; given up after a few
+    // ticks. Behind Sneak Attack it goes through Boost when her row offers
+    // that too: Sneak Attack, Boost, the weapon skill
+    if (m_HeldWs.has_value() && m_Tick > m_HeldWs->at)
     {
-        const auto held = *m_WsAfterBoost;
-        if (auto* PHeld = held.target.resolve<CBattleEntity>(); PHeld != nullptr && !PHeld->isDead() &&
-            (CPlayerController::WeaponSkill(held.target, held.wsid) || m_Tick - held.at > 2s))
+        const auto held  = *m_HeldWs;
+        auto*      PHeld = held.target.resolve<CBattleEntity>();
+        if (PHeld == nullptr || PHeld->isDead() || m_Tick - held.at > 2s)
         {
-            m_WsAfterBoost.reset();
-            co_return;
+            m_HeldWs.reset();
         }
-        if (m_Tick - held.at > 2s)
+        else if (ReadyToAct())
         {
-            m_WsAfterBoost.reset();
+            m_HeldWs.reset();
+            if (BoostOrWeaponSkill(held.target, held.wsid))
+            {
+                co_return;
+            }
+            m_HeldWs = held; // refused: tried again until the few ticks are up
         }
+    }
+
+    // How long Sneak Attack has stood ready in this fight: what holding it
+    // for her weapon skill costs, said as it goes out (SneakThenWs) and
+    // booked unused as the fight ends. Not usable (spent by any road, his
+    // order included, or on recast), the clock starts over
+    if (SneakAttackUsable())
+    {
+        if (!m_SneakReadySince.has_value())
+        {
+            m_SneakReadySince = m_Tick;
+        }
+    }
+    else
+    {
+        m_SneakReadySince.reset();
+    }
+
+    // The walk to the mob's back for Sneak Attack (WeaponSkill, or a naked
+    // one: NakedSneakDue): it goes the first tick she is behind, in reach
+    // and free to act; given up if the mob turns on her or the walk runs
+    // long, her weapon skill then going alone
+    if (m_SneakStep.has_value())
+    {
+        constexpr auto kSneakWalk = 5s;
+        const auto     step       = *m_SneakStep;
+        auto*          PStep      = step.target.resolve<CBattleEntity>();
+        const bool     onHer      = PStep != nullptr && PStep->GetBattleTarget() == POwner;
+        if (PStep == nullptr || PStep->isDead() || PStep != PTarget)
+        {
+            m_SneakStep.reset();
+        }
+        else if (onHer || m_Tick - step.since > kSneakWalk)
+        {
+            if (ReadyToAct())
+            {
+                m_SneakStep.reset();
+                RestSneak(PStep);
+                ShowInfoFmt("tactics: {} gives up on Sneak Attack ({}){}", POwner->getName(),
+                            onHer ? fmt::format("{} is on her", PStep->getName()) : fmt::format("she could not reach {}'s back", PStep->getName()),
+                            step.wsid != 0 ? "; her weapon skill goes alone" : "");
+                if (step.wsid != 0 && BoostOrWeaponSkill(step.target, step.wsid))
+                {
+                    co_return;
+                }
+            }
+        }
+        else if (ReadyToAct() && distance(POwner->loc.p, PStep->loc.p) <= POwner->GetMeleeRange(PStep) && BehindFor(PStep))
+        {
+            m_SneakStep.reset();
+            if (step.wsid == 0)
+            {
+                NakedSneak(step.target);
+                co_return;
+            }
+            if (SneakThenWs(step.target, step.wsid))
+            {
+                co_return;
+            }
+        }
+    }
+
+    // After a naked Sneak Attack she keeps the mob's back until her swing
+    // has spent it (the effect seen on her, then gone), the mob turns on
+    // her, or a few seconds pass
+    if (m_SneakHold.has_value())
+    {
+        auto*      PHeld = m_SneakHold->target.resolve<CBattleEntity>();
+        const bool up    = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack);
+        m_SneakHold->landed = m_SneakHold->landed || up;
+        if (PHeld == nullptr || PHeld != PTarget || PHeld->GetBattleTarget() == POwner || m_Tick > m_SneakHold->until || (m_SneakHold->landed && !up))
+        {
+            m_SneakHold.reset();
+        }
+    }
+
+    // A naked Sneak Attack when no weapon skill row of hers can take one
+    if (!m_SneakStep.has_value() && !m_SneakHold.has_value() && NakedSneakDue(PTarget))
+    {
+        m_SneakStep = SneakStep{ .target = EntityId(PTarget), .wsid = 0, .since = m_Tick };
+        ShowInfoFmt("tactics: {} steps round to {}'s back for a Sneak Attack on her next swing (her weapon skill row cannot take one)", POwner->getName(), PTarget->getName());
     }
 
     // The hold ends the moment the player has struck or the mob has come,
@@ -3150,9 +3354,14 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             // Her place on the mob: a seat on the fight ring, or, as its
             // target, wherever she stands -- the front. The tank at a
             // stake takes no seat: she tows (TowIntent)
-            const bool       tows  = TowsAtStake();
-            const auto       seat  = tows ? std::nullopt : TakeFightSeat(PTarget);
-            const position_t point = HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
+            const bool tows = TowsAtStake();
+            const auto seat = tows ? std::nullopt : TakeFightSeat(PTarget);
+            // Bound for the mob's back for Sneak Attack, or keeping it for
+            // the swing that spends a naked one, she stands there rather
+            // than on her seat, reached round the mob's side as a seat is
+            const bool       sneaking = !tows && ((m_SneakStep.has_value() && m_SneakStep->target == PTarget) ||
+                                            (m_SneakHold.has_value() && m_SneakHold->target == PTarget));
+            const position_t point    = sneaking ? SneakPoint(PTarget) : HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
 
             // An idle target is a pull on its way in, judged by the pull rule
             // the pick used (PullBlocker), never by the shape of her own
@@ -3190,9 +3399,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             intent             = tows ? std::optional<Intent>(TowIntent(PTarget)) : StepBackIntent(PTarget);
             if (!intent.has_value())
             {
-                if (seat.has_value())
+                if (sneaking && inReach && BehindFor(PTarget))
                 {
-                    intent = SeatIntent(PTarget, point, inReach);
+                    intent = Intent{}; // in the cone at its back and in reach: she stands, a swing from there is the point
+                }
+                else if (seat.has_value() || sneaking)
+                {
+                    intent = SeatIntent(PTarget, point, inReach, false, !sneaking);
                 }
                 else
                 {
@@ -3364,8 +3577,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    // Resting on his order she finishes before she sets out after him. A
-    // trek to meet him follows him, and ends where he already is (meetTrek)
+    // Resting on his order, or her Rest row's, she finishes before she sets
+    // out after him. A trek to meet him follows him, and ends where he
+    // already is (meetTrek)
     if (!m_RestOrder.active() && pawn::meetTrek(static_cast<const CCharEntity*>(POwner)).has_value())
     {
         if (m_Mode != Mode::Travel)
@@ -3493,12 +3707,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // the player, or the stake -- and the hunt round the player. Waiting,
     // she has neither, whatever the party's plan. The hunt is the party's
     // strategy, not a gambit, so her gambit switch does not gate it; a
-    // Support Mage whose rows take no fight never pulls, since she attends
+    // mage whose rows take no fight never pulls, since she attends
     // (RESEARCH §12.15), and one with an Attack row fights her own pull
     const Place* place         = CurrentPlace(PPlayer);
     const bool   somewhereToGo = place != nullptr && !m_Waiting;
     const bool   hunting       = somewhereToGo && PPlayer != nullptr && IsHunting() &&
-                         cardian::engage::huntsForParty(pawn::tactics::supportMage(POwner), TakesFights());
+                         cardian::engage::huntsForParty(pawn::tactics::offersSpells(POwner), TakesFights());
 
     TidyBag();
     m_Gambits->TickBehaviors();
@@ -3506,15 +3720,16 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // The engage door (engage_math.h): the fight her Attack rows take
     // (EngageChoice), drawn on through the one door (Draw) -- the rules,
     // then the draw, or the walk in when it is farther than she may draw
-    // from; with none, a Support Mage with a place to keep cure range to
-    // attends the party's fight (PartyFightScan) from the perimeter, so by
-    // default she attends without engaging monsters. With her gambits off
-    // neither is hers: she takes no fight of her own, and only an order
-    // (EngageOn, the command window's Attack) sends her in. A walk in
-    // already under way passed the door once; the approach below draws.
-    namespace engage             = cardian::engage;
-    const position_t from        = place != nullptr ? place->position() : POwner->loc.p;
-    const bool       supportMage = pawn::tactics::supportMage(POwner);
+    // from; with none, a mage with spells to offer and a place to keep cure
+    // range to attends the party's fight (PartyFightScan) from the
+    // perimeter, so by default she attends without engaging monsters. With
+    // her gambits off neither is hers: she takes no fight of her own, and
+    // only an order (EngageOn, the command window's Attack) sends her in.
+    // A walk in already under way passed the door once; the approach
+    // below draws.
+    namespace engage        = cardian::engage;
+    const position_t from   = place != nullptr ? place->position() : POwner->loc.p;
+    const bool       spells = pawn::tactics::offersSpells(POwner);
     FightPick        party;
     engage::How      how = engage::How::Draw;
     // An attendance she has committed to -- the mob engaged, or the
@@ -3528,7 +3743,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     if (auto* PAttended = AttendedTarget(); PAttended != nullptr && (AttendedEngaged() || m_AttendedOrdered))
     {
         const auto claim = ClaimingRow(PAttended);
-        switch (engage::keptAttendance(supportMage, claim.has_value()))
+        switch (engage::keptAttendance(spells, claim.has_value()))
         {
             case engage::Kept::Attend:
                 party = { PAttended, "the fight she is attending" };
@@ -3539,7 +3754,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 how   = engage::How::Draw;
                 break;
             case engage::Kept::Stop:
-                Transition(IdleMode(), fmt::format("stops attending {} (her gambits no longer make her a Support Mage)", PAttended->getName()));
+                Transition(IdleMode(), fmt::format("stops attending {} (her rows no longer offer the fight a spell)", PAttended->getName()));
                 break;
         }
     }
@@ -3550,8 +3765,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         // stands idle through a fight (engage_math.h doorAnswer)
         const bool campMember = m_World && PPlayer != nullptr && pawn::world::campLeaderOf(POwner->id) == PPlayer->id;
         party                 = EngageChoice(PPlayer, from);
-        const auto fight      = party.target == nullptr && (supportMage || campMember) ? PartyFightScan(PPlayer, from) : FightPick{};
-        const auto answer     = engage::doorAnswer(party.target != nullptr, fight.target != nullptr, supportMage, place != nullptr, campMember);
+        const auto fight      = party.target == nullptr && (spells || campMember) ? PartyFightScan(PPlayer, from) : FightPick{};
+        const auto answer     = engage::doorAnswer(party.target != nullptr, fight.target != nullptr, spells, place != nullptr, campMember);
         if (party.target == nullptr && answer.has_value())
         {
             party = fight;
@@ -3638,8 +3853,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 ShowInfoFmt("pawn: {} keeps her spot at ({:.1f}, {:.1f}) after the fight ({:.1f} y from her seat)", POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, distance(POwner->loc.p, held.point, true));
                 held.point = POwner->loc.p;
             }
-            Transition(IdleMode(), !supportMage && PAttended != nullptr && !PAttended->isDead()
-                                       ? fmt::format("stops attending {} (her gambits no longer make her a Support Mage)", PAttended->getName())
+            Transition(IdleMode(), !spells && PAttended != nullptr && !PAttended->isDead()
+                                       ? fmt::format("stops attending {} (her rows no longer offer the fight a spell)", PAttended->getName())
                                        : AttendExitReason());
         }
     }
@@ -3680,8 +3895,10 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
 
     // A hunter picks the party's next fight itself, the moment it is free
-    // to: the choice is never throttled, only the draw
-    if (hunting && !m_Approach.has_value() && !m_RestOrder.active())
+    // to: the choice is never throttled, only the draw. Resting on an
+    // order, or with her Rest row asking for one (RestTick, below the
+    // pick), she picks nothing
+    if (hunting && !m_Approach.has_value() && !m_RestOrder.active() && !RestRowDue())
     {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
@@ -3740,7 +3957,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         proposal = AttendIntent(PAttended, place);
     }
-    else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, she stays where she kneels
+    else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, or her Rest row's, she stays where she kneels
     {
         proposal = FormationIntent(*place, PPlayer, nullptr);
     }
@@ -4667,23 +4884,118 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
     return CastAndStop(castTarget, spellid);
 }
 
-namespace
-{
-    constexpr uint16 kBoostAbility = 39;
-} // namespace
-
 // Boost is spent by the next blow, so it is worth nothing unless the
-// weapon skill follows at once: ready, known, not already up
+// weapon skill follows at once: her marked Boost row offers it (the
+// tactician's tool, RESEARCH §17.13), ready, known, not already up
 auto CPawnController::BoostReady() const -> bool
 {
-    if (Behavior(pawn::Behavior::BoostBeforeWs).value_or(0) == 0)
+    if (!m_Gambits->OffersBeforeWs(cardian::tactician::Allowance::Boost))
     {
         return false;
     }
-    const auto* PBoost = ability::GetAbility(kBoostAbility);
+    const auto* PBoost = ability::GetAbility(cardian::tactician::kBoost);
     auto*       PChar  = static_cast<CCharEntity*>(POwner);
-    return PBoost != nullptr && charutils::hasAbility(PChar, kBoostAbility) && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Boost) &&
-           !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PBoost->getRecastId(), 0s);
+    return PBoost != nullptr && !AbilitiesShutOut() && charutils::hasAbility(PChar, cardian::tactician::kBoost) &&
+           !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Boost) && !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PBoost->getRecastId(), 0s);
+}
+
+// Sneak Attack is hers to use now: known, not shut out, not up already,
+// off its recast -- whatever her rows say
+auto CPawnController::SneakAttackUsable() const -> bool
+{
+    const auto* PSneak = ability::GetAbility(cardian::tactician::kSneakAttack);
+    auto*       PChar  = static_cast<CCharEntity*>(POwner);
+    return PSneak != nullptr && charutils::hasAbility(PChar, cardian::tactician::kSneakAttack) && !AbilitiesShutOut() &&
+           !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack) && !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PSneak->getRecastId(), 0s);
+}
+
+auto CPawnController::SneakAttackReady() const -> bool
+{
+    return m_Gambits->OffersBeforeWs(cardian::tactician::Allowance::SneakAttack) && SneakAttackUsable();
+}
+
+auto CPawnController::SneakAttackNow(const CBattleEntity* PTarget) -> bool
+{
+    if (PTarget == nullptr || !POwner->PAI->IsEngaged())
+    {
+        return false;
+    }
+    const auto* PFront = PTarget->GetBattleTarget();
+    if (PFront == nullptr || PFront == POwner)
+    {
+        return false;
+    }
+    if (m_SneakRest.has_value() && m_Tick < m_SneakRest->until && m_SneakRest->front == PFront->id)
+    {
+        return false;
+    }
+    return SneakAttackReady();
+}
+
+void CPawnController::RestSneak(const CBattleEntity* PTarget)
+{
+    constexpr auto kSneakRest = 10s;
+    const auto*    PFront     = PTarget != nullptr ? PTarget->GetBattleTarget() : nullptr;
+    m_SneakRest               = SneakRest{ .until = m_Tick + kSneakRest, .front = PFront != nullptr ? PFront->id : 0 };
+}
+
+auto CPawnController::TakesSneakAttack(const uint16 wsid) -> bool
+{
+    // Read once per weapon skill, off its own script: the answer cannot
+    // change while the server runs
+    static std::unordered_map<uint16, bool> known;
+    if (const auto it = known.find(wsid); it != known.end())
+    {
+        return it->second;
+    }
+    bool takes = false;
+    if (auto* PSkill = battleutils::GetWeaponSkill(wsid); PSkill != nullptr)
+    {
+        std::ifstream     file(fmt::format("./scripts/actions/weaponskills/{}.lua", PSkill->getName()));
+        const std::string source((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        takes = cardian::tactician::scriptTakesSneakAttack(source);
+    }
+    known.emplace(wsid, takes);
+    return takes;
+}
+
+auto CPawnController::NakedSneakDue(const CBattleEntity* PTarget) -> bool
+{
+    // Cheapest first: Sneak Attack hers now and no weapon skill due (one
+    // would spend it, whatever it is); then her rows, read each think (no
+    // weapon skill row that can take it: CGambits::NakedSneak); then the
+    // fight (SneakAttackNow), and the mob's back somewhere she can stand
+    if (PTarget == nullptr || POwner->health.tp >= 1000 || !SneakAttackUsable() || !m_Gambits->NakedSneak() || !SneakAttackNow(PTarget))
+    {
+        return false;
+    }
+    const bool there = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) && BehindFor(PTarget);
+    return there || POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget));
+}
+
+void CPawnController::NakedSneak(const EntityId target)
+{
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (!CPlayerController::Ability(POwner->entityId(), cardian::tactician::kSneakAttack))
+    {
+        RestSneak(PTarget);
+        return;
+    }
+    m_SneakHold = SneakHold{ .target = target, .until = m_Tick + 5s };
+    m_SneakReadySince.reset();
+    ShowInfoFmt("tactics: {} sneak attacks from {}'s back for her next swing (naked: no weapon skill row of hers can take it)", POwner->getName(),
+                PTarget != nullptr ? PTarget->getName() : "?");
+    pawn::tactics::noteSneakAttack(static_cast<CCharEntity*>(POwner), PTarget != nullptr ? PTarget->id : 0, cardian::tactics::SneakUse::Naked, 0.0);
+}
+
+auto CPawnController::BehindFor(const CBattleEntity* PTarget) const -> bool
+{
+    return PTarget != nullptr && ::behind(POwner->loc.p, PTarget->loc.p, 64);
+}
+
+auto CPawnController::SneakPoint(const CBattleEntity* PTarget) const -> position_t
+{
+    return nearPosition(PTarget->loc.p, FightRadius(PTarget), std::numbers::pi_v<float>);
 }
 
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
@@ -4694,16 +5006,87 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     }
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
-    // Boost first, the weapon skill on the very next tick (DoCombatTick) --
-    // only in reach of the mob, or the walk in spends it on a punch
-    auto*      PTarget = target.resolve<CBattleEntity>();
+    auto* PTarget = target.resolve<CBattleEntity>();
+
+    // Sneak Attack first, from the mob's back (her Sneak Attack row), when
+    // this weapon skill takes it and it can go now (SneakAttackNow: not
+    // while the mob is on her or has nobody to face): at once when she
+    // stands behind the mob in reach, else after the walk there (the
+    // combat tick's sneak step), which her weapon skill waits on -- unless
+    // its back is off the mesh (against a wall), when the weapon skill goes
+    // alone. Her rows' weapon skill only, on the mob she fights: his orders
+    // go through OrderedWeaponSkill
+    if (m_SneakStep.has_value() && m_SneakStep->wsid != 0 && PTarget != nullptr && m_SneakStep->target == PTarget)
+    {
+        return true; // on her way already
+    }
+    if (PTarget != nullptr && PTarget == POwner->GetBattleTarget() && TakesSneakAttack(wsid) && SneakAttackNow(PTarget))
+    {
+        if (distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) && BehindFor(PTarget))
+        {
+            return SneakThenWs(target, wsid);
+        }
+        if (POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
+        {
+            m_SneakStep = SneakStep{ .target = target, .wsid = wsid, .since = m_Tick };
+            ShowInfoFmt("tactics: {} steps round to {}'s back for Sneak Attack (her Sneak Attack row); weapon skill {} waits", POwner->getName(), PTarget->getName(), wsid);
+            return true;
+        }
+    }
+    return BoostOrWeaponSkill(target, wsid);
+}
+
+auto CPawnController::OrderedWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
+    FaceTarget(target);
+    HeadLook(target.resolve<CBattleEntity>());
+    m_SneakStep.reset();
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (PTarget != nullptr && TakesSneakAttack(wsid) && SneakAttackNow(PTarget) && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) &&
+        BehindFor(PTarget))
+    {
+        return SneakThenWs(target, wsid);
+    }
+    return BoostOrWeaponSkill(target, wsid);
+}
+
+auto CPawnController::SneakThenWs(const EntityId target, const uint16 wsid) -> bool
+{
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (!CPlayerController::Ability(POwner->entityId(), cardian::tactician::kSneakAttack))
+    {
+        RestSneak(PTarget);
+        return BoostOrWeaponSkill(target, wsid);
+    }
+    m_HeldWs = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
+
+    // How long it stood ready for this weapon skill: the cost of holding it
+    // rather than spending it on a plain hit (RESEARCH §17.13, the Thief)
+    const double waited = m_SneakReadySince.has_value() ? std::chrono::duration<double>(m_Tick - *m_SneakReadySince).count() : 0.0;
+    m_SneakReadySince.reset();
+    ShowInfoFmt("tactics: {} sneak attacks from {}'s back (her Sneak Attack row), ready {:.0f} s before her weapon skill; weapon skill {} follows as it lands",
+                POwner->getName(), PTarget != nullptr ? PTarget->getName() : "?", waited, wsid);
+    pawn::tactics::noteSneakAttack(static_cast<CCharEntity*>(POwner), PTarget != nullptr ? PTarget->id : 0, cardian::tactics::SneakUse::BeforeWs, waited);
+    return true;
+}
+
+auto CPawnController::BoostOrWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
+    // Boost first, the weapon skill the moment Boost has landed and lets go
+    // of her, two ticks on (DoCombatTick) -- only in reach of the mob, or
+    // the walk in spends it on a punch
+    auto* PTarget = target.resolve<CBattleEntity>();
     // (in reach and engaged is enough: a member repositions all fight long,
     // and a standing-still gate never opened for her)
     const bool inReach = PTarget != nullptr && POwner->PAI->IsEngaged() && distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
-    if (inReach && BoostReady() && CPlayerController::Ability(POwner->entityId(), kBoostAbility))
+    if (inReach && BoostReady() && CPlayerController::Ability(POwner->entityId(), cardian::tactician::kBoost))
     {
-        m_WsAfterBoost = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
-        ShowInfoFmt("pawn: {} boosts; weapon skill {} follows next tick", POwner->getName(), wsid);
+        m_HeldWs = HeldWs{ .target = target, .wsid = wsid, .at = m_Tick };
+        ShowInfoFmt("tactics: {} boosts (her Boost row); weapon skill {} follows as it lands", POwner->getName(), wsid);
         return true;
     }
     return CPlayerController::WeaponSkill(target, wsid);
@@ -5050,15 +5433,20 @@ auto CPawnController::TakesFights() const -> bool
 
 auto CPawnController::TacticianRuns() const -> bool
 {
-    // Her line row must speak (HoldsRole): unchecked, or under a condition
-    // that fails, her tactician is off and the rows below the line wait
-    const auto line = m_Gambits->LineRole();
-    return m_Gambits->MasterOn() && line.has_value() && HoldsRole(*line) && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
+    // Her tactician runs while her rows offer it a tool: a marked row that
+    // is on (RESEARCH §17.13). With every one unchecked, or her master
+    // switch off, it has nothing of hers to judge
+    return m_Gambits->MasterOn() && m_Gambits->OffersTools() && pawn::tactics::has(static_cast<const CCharEntity*>(POwner));
 }
 
 auto CPawnController::RecoveryDue() const -> bool
 {
-    return TacticianRuns() && m_Gambits->LineRole() == pawn::Role::SupportMage && pawn::tactics::recoveryDue(static_cast<const CCharEntity*>(POwner));
+    // The MP pacing is her marked Rest row's, its conditions holding: she
+    // leaves a fight to rest only while one runs (RESEARCH §17.13). The
+    // party's Tank never does, whatever her rows: the seat is what she is
+    // for, and a tank leaves no fight to rest (§17.11)
+    return TacticianRuns() && m_Gambits->OffersRest() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) != cardian::party::Role::Tank &&
+           pawn::tactics::recoveryDue(static_cast<const CCharEntity*>(POwner));
 }
 
 auto CPawnController::TacticianMelee() const -> bool
@@ -6217,7 +6605,10 @@ auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::
 
 auto CPawnController::TowsAtStake() const -> bool
 {
-    return Staked() && HoldsRole(pawn::Role::Tank);
+    // The party's Tank tows, with her gambits on: the seat is what she is
+    // for (RESEARCH §17.13), and with the master switch off nothing of her
+    // rows or her seat moves her
+    return Staked() && m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank;
 }
 
 auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
@@ -6497,7 +6888,7 @@ auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::option
     return seat;
 }
 
-auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute) -> Intent
+auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
 {
     using cardian::formation::Circle;
     using cardian::formation::seatName;
@@ -6531,7 +6922,7 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
         {
             m_TowRoute.reset();
         }
-        if (m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
+        if (ownSeat && m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
         {
             m_FightSeat.settled = true;
             m_FightSeat.frame   = LiveFrame(PTarget);
@@ -6554,8 +6945,12 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
             return intent;
         }
         // The seat has left the mesh (the mob against a wall): given up,
-        // and another is picked next tick
-        m_FightSeat = {};
+        // and another is picked next tick. Not her seat (the mob's back for
+        // Sneak Attack): she stands, and the walk's own clock gives it up
+        if (ownSeat)
+        {
+            m_FightSeat = {};
+        }
         return intent;
     }
 

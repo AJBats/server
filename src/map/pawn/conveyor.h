@@ -61,7 +61,7 @@ namespace pawn::tactics
         struct Scope
         {
             std::vector<CBattleEntity*> members; // the alliance's characters, the player included
-            std::unordered_set<uint32>  holders; // those whose Role row says Support Mage
+            std::unordered_set<uint32>  holders; // those whose rows offer the party spells (tactics::offersSpells)
         };
 
         // A need's key from what would be cast: a cure on a member, a

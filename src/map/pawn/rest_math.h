@@ -228,10 +228,14 @@ namespace cardian::rest
 
     // The player's rest order, a maneuver's "Rest until N%": she is down
     // until her HP and MP both reach N% (MP only when she has any). It is
-    // an order, not a policy: it ends there, or at the player's next order
+    // an order, not a policy: it ends there, or at the player's next order.
+    // A plain Rest row of hers starts the same order at 100% when its
+    // conditions hold and no fight is on (RESEARCH §17.13: predictable and
+    // no judgement -- down until full, the player's command the way out)
     struct Order
     {
-        int percent = 0; // 0: none
+        int  percent = 0;     // 0: none
+        bool byRow   = false; // her Rest row's, not the player's: nothing is said to him when it cannot be kept
 
         auto active() const -> bool
         {
@@ -262,7 +266,7 @@ namespace cardian::rest
         bool routinePosition = false; // an ongoing rest may defer this move
         bool recovered = false;
         bool tickLanded = false;
-        bool ordered = false; // the player's rest order: a request no recovery tick ends; the caller blocks it only for what makes a kneel impossible
+        bool ordered = false; // a rest order: a request no recovery tick ends; the caller blocks the player's only for what makes a kneel impossible, her Rest row's for danger and the party's fight too
     };
 
     struct State

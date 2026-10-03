@@ -202,7 +202,7 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
-    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: shown, edited nowhere
+    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: its content edited nowhere
 
     // His cardians, and the party finder
     CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
@@ -788,22 +788,24 @@ typedef struct cl_gambit
     cl_gambit_action    actions[8];
 } cl_gambit;
 
+// A row's meaning (RESEARCH 17.13): a plain row is an order; a row carrying
+// the tactician's mark (the Tactician's choice condition) is a tool its
+// judgement uses, or struck out. 1 and 5 were the tactician line's, retired
+// with it and never sent
 enum
 {
-    CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
-    CL_GS_LINE      = 1, // her Support Mage or Tank row: the line itself
-    CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
-    CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
-    CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
-    CL_GS_NO_CHOICE = 5, // Tactician's choice with no tactician above it: struck out
-    CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_ORDER        = 0, // an order
+    CL_GS_TOOL         = 2, // marked: something her tactician may use
+    CL_GS_NO_JUDGEMENT = 3, // marked, and nothing her tactician has a judgement for: struck out
+    CL_GS_CLOCK        = 4, // marked, on a timer or a chance: struck out
+    CL_GS_MISFIT       = 6, // an action that cannot be aimed at the side its condition names: struck out
 };
 
 enum
 {
     CL_GO_OWN  = 0, // her own row
     CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §17): shown, never edited
-    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
+    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, its content pinned, moved as hers; hers comes back when the role goes
 };
 
 // One of her rows, as the editor shows it: an answer to GAMBITS and to every
@@ -1202,8 +1204,9 @@ typedef struct cl_cancel
 
 // The command window: one action now, on a target. An order she cannot start
 // at once -- busy, on recast, out of reach, the game paused -- is held as her
-// one queued order within cardian.ORDER_GRACE (QUEUE tells it); one that could
-// not start in that time is refused CL_S_TOO_SOON. Answered by the outcome.
+// one queued order within cardian.ORDER_GRACE, the server's 2.5 s after a spell
+// added on (QUEUE tells it); one that could not start in that time is refused
+// CL_S_TOO_SOON. Answered by the outcome.
 typedef struct cl_do
 {
     cl_header h;
