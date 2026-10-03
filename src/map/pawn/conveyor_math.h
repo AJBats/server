@@ -73,13 +73,13 @@ namespace cardian::tactics
     };
 
     // Who fed a request: a row names its mage; the role names its holder
-    // but prefers nobody, and the bank assigns; the reflex is the role's
-    // one shortcut, a member about to die
+    // but prefers nobody, and the bank assigns. A member about to die is
+    // no request: the emergency cure is chosen apart (cure_math.h) and read
+    // ahead of every need (Conveyor::assignment)
     enum class Source : uint8
     {
         Row,
         Role,
-        Reflex,
     };
 
     struct Request
@@ -124,14 +124,6 @@ namespace cardian::tactics
             return 0;
         }
 
-        auto reflex() const -> bool
-        {
-            return std::any_of(requests.begin(), requests.end(), [](const Request& r)
-                               {
-                                   return r.source == Source::Reflex;
-                               });
-        }
-
         auto held() const -> bool
         {
             return lockedBy == 0 && assigned == 0;
@@ -151,8 +143,8 @@ namespace cardian::tactics
         }
 
         // The request that speaks for the need, one rule for every reader:
-        // the reflex; else the preferred caster's lowest row; else another's
-        // lowest row; else the role's best score. A need with no requests
+        // the preferred caster's lowest row; else another's lowest row;
+        // else the role's best score. A need with no requests
         // (a cast in flight nobody asked for) speaks with an empty one
         auto lead() const -> const Request&
         {
@@ -189,14 +181,12 @@ namespace cardian::tactics
         {
             switch (r.source)
             {
-                case Source::Reflex:
-                    return { 0, r.score };
                 case Source::Row:
-                    return { r.caster == preferred() ? 1 : 2, static_cast<double>(r.row) };
+                    return { r.caster == preferred() ? 0 : 1, static_cast<double>(r.row) };
                 case Source::Role:
-                    return { 3, r.score };
+                    return { 2, r.score };
             }
-            return { 4, 0.0 };
+            return { 3, 0.0 };
         }
     };
 
@@ -339,12 +329,12 @@ namespace cardian::tactics
 
     // --- one caster's slot ----------------------------------------------
 
-    // Where a need sits in one caster's slot: the reflex, then her own
-    // rows in row order, then another's rows the bank handed her, then the
-    // role's by score. That is "rows first, then the role"
+    // Where a need sits in one caster's slot: her own rows in row order,
+    // then another's rows the bank handed her, then the role's by score.
+    // That is "rows first, then the role"
     struct Rank
     {
-        uint8  tier  = 4;
+        uint8  tier  = 3;
         double order = 0.0;
 
         auto operator<=>(const Rank&) const = default;
@@ -358,14 +348,11 @@ namespace cardian::tactics
             Rank rank;
             switch (r.source)
             {
-                case Source::Reflex:
-                    rank = { 0, r.score };
-                    break;
                 case Source::Row:
-                    rank = { static_cast<uint8>(r.caster == caster ? 1 : 2), static_cast<double>(r.row) };
+                    rank = { static_cast<uint8>(r.caster == caster ? 0 : 1), static_cast<double>(r.row) };
                     break;
                 case Source::Role:
-                    rank = { 3, r.score };
+                    rank = { 2, r.score };
                     break;
             }
             best = std::min(best, rank);
@@ -398,14 +385,6 @@ namespace cardian::tactics
     }
 
     // --- the role's lines -----------------------------------------------
-
-    // The HP a member keeps after the mob's biggest hit on record and what
-    // she takes before a cure lands. Below zero, waiting is unsafe: the
-    // reflex
-    inline auto margin(const int32 hp, const double biggestHit, const double takenPerSecond, const double secondsToLand) -> double
-    {
-        return hp - biggestHit - takenPerSecond * secondsToLand;
-    }
 
     // The role's efficiency line: the missing HP has piled up to where her
     // smallest tier lands whole (bank_math.h wholeAt), so nothing overcures

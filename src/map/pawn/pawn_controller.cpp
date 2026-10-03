@@ -2136,7 +2136,7 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     // spots. Out of it she walks to its nearest point; in it she holds
     // where she stands, so the tank's small moves never drag her round the
     // fight (the user, 2026-09-17). The mob on her lifts the ring: running
-    // with a mob on her is kiting, and the reflex covers her HP
+    // with a mob on her is kiting, and the emergency cure covers her HP
     RestoreNormalSpeed();
     m_HasSlot = false; // a crescent point is no formation slot for the vet to re-seat
     Intent intent;
