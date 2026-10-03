@@ -271,9 +271,9 @@ namespace cardian::tactics
 
     // --- the pick -------------------------------------------------------
 
-    // One who could cast the need; the caller lists only the eligible: the
-    // rows' mages, the holders who fed it, and for a need a row asked for,
-    // every role holder
+    // One who could cast the need; the caller lists only the eligible:
+    // whoever fed it, the rows' mages and the role holders who proposed it.
+    // A plain row is never handed to another mage (the user, 2026-10-03)
     struct Candidate
     {
         uint32 id         = 0;
@@ -330,8 +330,9 @@ namespace cardian::tactics
     // --- one caster's slot ----------------------------------------------
 
     // Where a need sits in one caster's slot: her own rows in row order,
-    // then another's rows the bank handed her, then the role's by score.
-    // That is "rows first, then the role"
+    // then a need another mage's row also asked for (hers by her role's
+    // proposal), then the role's by score. That is "rows first, then the
+    // role"
     struct Rank
     {
         uint8  tier  = 3;

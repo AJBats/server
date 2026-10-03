@@ -352,6 +352,30 @@ namespace pawn
             return cardian::tactician::isRemovalAction(*spell) ? &*spell : nullptr;
         }
 
+        // A Cure action: a "best Cure" or a Cure tier by name (the Cure
+        // family alone, as the conveyor keys a Cure need)
+        auto isCureAction(const Action_t& action) -> bool
+        {
+            if (action.reaction != G_REACTION::MA)
+            {
+                return false;
+            }
+            if (action.select == G_SELECT::SPECIFIC)
+            {
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(action.select_arg));
+                return PSpell != nullptr && PSpell->getSpellFamily() == SPELLFAMILY_CURE;
+            }
+            return (action.select == G_SELECT::HIGHEST || action.select == G_SELECT::LOWEST || action.select == G_SELECT::RANDOM) &&
+                   action.select_arg == SPELLFAMILY_CURE;
+        }
+
+        // The row's spell is a Cure: its first spell, the one a think casts
+        auto cureOf(const Gambit_t& g) -> const Action_t*
+        {
+            const auto spell = std::ranges::find(g.actions, G_REACTION::MA, &Action_t::reaction);
+            return spell != g.actions.end() && isCureAction(*spell) ? &*spell : nullptr;
+        }
+
         // An enfeeble an Enfeeble order may cast on the foe: not on it
         // already, not nullified by what is on it, and not one it is immune
         // to (the bank's verdicts, the ones her tactician's pricing asks)
@@ -369,6 +393,10 @@ namespace pawn
         // own pick weighed the rest (an immunity never changes)
         auto stillAnswers(const Action_t& action, const uint16 spellId, CBattleEntity* PTarget) -> bool
         {
+            if (isCureAction(action))
+            {
+                return !pawn::tactics::bank::curesNothing(PTarget);
+            }
             if (cardian::tactician::isRemovalAction(action))
             {
                 return cardian::ailments::cures(spellId, effectsOn(PTarget), spellId == cardian::ailments::kErase && erasableOn(PTarget));
@@ -393,7 +421,7 @@ namespace pawn
 
     auto CGambits::Conveyed() const -> bool
     {
-        return !m_host->OwnClient() && pawn::tactics::has(POwner);
+        return pawn::tactics::has(POwner);
     }
 
     auto CGambits::AddGambit(Gambit_t gambit, const bool enabled) -> std::string
@@ -583,11 +611,11 @@ namespace pawn
         // marked row under a conveyor is her tactician running
         // (CPawnController::TacticianRuns); the tank tactician is the Tank
         // seat's (RESEARCH §17.13: the seat is what she is for). A played
-        // character's rows cast for him: the conveyor watches his casts,
-        // never assigns them
+        // character's spell rows feed it as hers do; his marked rows are
+        // not yet a tactician of his, so no seat calls for him
         const bool conveyor = Conveyed();
         const bool spells   = conveyor && pawn::tactics::offersSpells(POwner);
-        const bool tank     = conveyor && pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
+        const bool tank     = conveyor && !m_host->OwnClient() && pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
         if (tank != m_tankOnDuty)
         {
             m_tankOnDuty = tank;
@@ -1020,7 +1048,11 @@ namespace pawn
         // mage may be taking it off already. It is asked of whom the spell
         // lands on, and before the row's conditions, so a candidate passed
         // over never spends the row's timer
+        // A Cure row passes over whom it would do nothing for, so "Ally:
+        // any -> Cure" is "Ally: HP < 100% -> Cure" (spell_bank.h
+        // curesNothing)
         const auto* removal = removalOf(gambit);
+        const auto* cure    = cureOf(gambit);
         for (auto* PCandidate : Candidates(gambit.target_selector))
         {
             CBattleEntity* PActionTarget = PCandidate;
@@ -1034,6 +1066,11 @@ namespace pawn
                     break;
                 default:
                     break;
+            }
+
+            if (cure != nullptr && (PActionTarget == nullptr || pawn::tactics::bank::curesNothing(PActionTarget)))
+            {
+                continue;
             }
 
             if (removal != nullptr)

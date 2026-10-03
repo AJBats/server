@@ -30,6 +30,7 @@
 
 class CBattleEntity;
 class CCharEntity;
+class CSpell;
 enum class SpellID : uint16;
 
 namespace pawn
@@ -48,12 +49,19 @@ namespace pawn
 
         // Whose the rows are: a character his own client drives. His rows
         // are orders alone -- no tactician line, no party role's rows, no
-        // behaviour -- and his casts are his own, never the conveyor's
+        // behaviour -- and his feet are his client's: nothing walks him
+        // into range
         virtual auto OwnClient() const -> bool = 0;
 
         virtual auto Cast(EntityId target, SpellID spell) -> bool = 0;
-        // A cast her tactician's conveyor assigned (a cardian's alone)
+        // A cast her tactician's conveyor assigned: the conveyor has already
+        // weighed the party's other casts
         virtual auto CastAssigned(EntityId target, SpellID spell) -> bool = 0;
+        // She could take this cast from the conveyor now: nothing keeps her
+        // from acting and nothing of the player's waits ahead of it. A
+        // cardian walks into range herself; a character his own client
+        // drives must already stand where the cast would start
+        virtual auto FreeToCast(CSpell* PSpell, CBattleEntity* PTarget) -> bool = 0;
         virtual auto Ability(EntityId target, uint16 ability) -> bool = 0;
         virtual auto WeaponSkill(EntityId target, uint16 skill) -> bool = 0;
         virtual auto RangedAttack(EntityId target) -> bool = 0;

@@ -129,6 +129,10 @@ namespace
         {
             return m_controller.CastAssigned(target, spell);
         }
+        auto FreeToCast(CSpell* /*PSpell*/, CBattleEntity* /*PTarget*/) -> bool override
+        {
+            return m_controller.RestAllowsAction() && !m_controller.Acting() && !m_controller.HasQueuedOrder() && m_controller.canAct();
+        }
         auto Ability(const EntityId target, const uint16 ability) -> bool override
         {
             return m_controller.Ability(target, ability);

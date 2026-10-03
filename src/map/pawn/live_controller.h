@@ -62,6 +62,8 @@ public:
 
     auto Gambits() -> pawn::CGambits&;
 
+    // Whether his rows may start anything now
+    auto Ready() -> bool;
     // He has stood where he is for long enough that a cast would not be
     // interrupted by his next step (kStillFor)
     auto StandingStill() const -> bool;
@@ -80,8 +82,6 @@ public:
     static void InstallOn(CCharEntity* PChar);
 
 private:
-    // Whether his rows may start anything now
-    auto Ready() -> bool;
     // His Attack rows' door: a fight for him while he is out of one
     void EngageDoor();
 

@@ -102,26 +102,26 @@ namespace
             return true;
         }
 
+        // A row's own cast, where no tactician watches his party: another
+        // member's cast of it already under way passes it by
         auto Cast(const EntityId target, const SpellID spell) -> bool override
         {
-            auto* PSpell = spell::GetSpell(spell);
-            if (PSpell == nullptr)
-            {
-                return false;
-            }
-            const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(m_PChar) : target;
-            auto*          PTarget    = castTarget.resolve<CBattleEntity>();
-            if (PTarget == nullptr || PTarget->loc.zone != m_PChar->loc.zone || !m_controller.StandingStill() ||
-                !CastWouldTake(PSpell, castTarget, PTarget) || pawn::partyAlreadyCasting(m_PChar, PSpell, PTarget))
-            {
-                return false;
-            }
-            return Started(m_PChar->PAI->Cast(castTarget, spell), "casts", PSpell->getName(), PTarget);
+            return CastIfTaken(target, spell, true);
         }
 
-        auto CastAssigned(const EntityId /*target*/, const SpellID /*spell*/) -> bool override
+        auto CastAssigned(const EntityId target, const SpellID spell) -> bool override
         {
-            return false; // the conveyor assigns a cardian's casts, never his
+            return CastIfTaken(target, spell, false);
+        }
+
+        auto FreeToCast(CSpell* PSpell, CBattleEntity* PTarget) -> bool override
+        {
+            if (PSpell == nullptr || PTarget == nullptr)
+            {
+                return false;
+            }
+            auto* PCastTarget = PSpell->getValidTarget() == TARGET_SELF ? m_PChar : PTarget;
+            return m_controller.Ready() && m_controller.StandingStill() && CastWouldTake(PSpell, EntityId(PCastTarget), PCastTarget);
         }
 
         auto Ability(const EntityId target, const uint16 ability) -> bool override
@@ -262,6 +262,25 @@ namespace
         auto Amnesic() const -> bool
         {
             return m_PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia);
+        }
+
+        // A cast started only where the game would take it from where he
+        // stands; `party` also passes it by while another member casts it
+        auto CastIfTaken(const EntityId target, const SpellID spell, const bool party) -> bool
+        {
+            auto* PSpell = spell::GetSpell(spell);
+            if (PSpell == nullptr)
+            {
+                return false;
+            }
+            const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(m_PChar) : target;
+            auto*          PTarget    = castTarget.resolve<CBattleEntity>();
+            if (PTarget == nullptr || PTarget->loc.zone != m_PChar->loc.zone || !m_controller.StandingStill() ||
+                !CastWouldTake(PSpell, castTarget, PTarget) || (party && pawn::partyAlreadyCasting(m_PChar, PSpell, PTarget)))
+            {
+                return false;
+            }
+            return Started(m_PChar->PAI->Cast(castTarget, spell), "casts", PSpell->getName(), PTarget);
         }
 
         // The game would take this cast now: the checks the magic state

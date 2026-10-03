@@ -117,6 +117,13 @@ namespace pawn::tactics
         // Rapture, which the formula's last step would consume
         auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget = nullptr) -> std::optional<int32>;
 
+        // A Cure would do nothing for her: a character missing no HP and
+        // awake (a Cure wakes a sleeping member at any HP). No Cure, a row's
+        // or the tactician's, is cast on her (the user, 2026-10-03: "Ally:
+        // any -> Cure" means "Ally: HP < 100% -> Cure"). Never a mob: a
+        // Cure harms the undead
+        auto curesNothing(const CBattleEntity* PTarget) -> bool;
+
         // Eligible tiers include spells on recast or beyond current MP.
         // Ready also applies the bank's MP/recast policy; the controller
         // still owns standing, action timing and target reach.

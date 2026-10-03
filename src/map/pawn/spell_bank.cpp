@@ -1007,6 +1007,12 @@ namespace pawn::tactics
             return out;
         }
 
+        auto curesNothing(const CBattleEntity* PTarget) -> bool
+        {
+            return PTarget->objtype != TYPE_MOB && PTarget->health.hp >= PTarget->GetMaxHP() &&
+                   !PTarget->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::SleepI, xi::StatusEffect::SleepIi, xi::StatusEffect::Lullaby });
+        }
+
         auto expectedCure(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> std::optional<int32>
         {
             if (PCaster == nullptr || PSpell == nullptr)

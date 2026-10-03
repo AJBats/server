@@ -363,6 +363,13 @@ namespace pawn
             return m_spellBook;
         }
 
+        // Whoever she runs for (gambit_host.h): what the tactician asks of a
+        // caster -- free to cast, resting, a queued order -- it asks here
+        auto Host() -> GambitHost&
+        {
+            return *m_host;
+        }
+
     private:
         // What her party role's layer was compiled for: the role, her main
         // job and her sub job, since a seat lends the tools her two jobs can
@@ -462,8 +469,10 @@ namespace pawn
         auto PartyHasTank() const -> bool;
         auto IsOffensive(const gambits::Gambit_t& gambit) const -> bool;
         void Debug(std::string_view what, uint32 id, const CBattleEntity* PTarget) const;
-        // Her spell rows feed her scope's conveyor: a tactician watches it,
-        // and she is a cardian (a played character's casts are his own)
+        // Her spell rows feed her scope's conveyor: a live tactician watches
+        // it. A played character's too, so the party's casts are weighed
+        // together: his rows hold back while a cure is in flight and top
+        // up where theirs lands whole
         auto Conveyed() const -> bool;
 
         CCharEntity*      POwner;

@@ -96,8 +96,9 @@ namespace pawn::tactics
     auto allows(CBattleEntity* PHolder, SpellID spell) -> bool;
 
     // The conveyor's doors (RESEARCH §12.12 item 2; conveyor.h), for the
-    // gambit engine. A scope no tactician watches has no conveyor, and its
-    // rows cast as they always have
+    // gambit engine. A scope no tactician watches -- none made, or none
+    // ticked in the last 2 s -- has no conveyor, and its rows cast as they
+    // always have
     auto has(const CCharEntity* PPawn) -> bool;
 
     // A spell row whose condition holds, fed to her scope's conveyor: a
