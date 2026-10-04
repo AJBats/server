@@ -27,6 +27,8 @@
 #include "engage_math.h"
 #include "gambit_wire.h"
 #include "gate_guards.h"
+#include "live_controller.h"
+#include "mog_house.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_gambits.h"
@@ -120,16 +122,18 @@ namespace pawn::linkapi
         }
 
         // What the player himself stands by, worked out once for all the lines
-        // that tell it: the auction counter and the gate guard within his reach
+        // that tell it: the auction counter and the gate guard within his
+        // reach, and his Mog House or a Nomad Moogle
         struct PlayerReach
         {
-            const CBaseEntity* counter = nullptr;
-            bool               byGuard = false;
+            const CBaseEntity*     counter  = nullptr;
+            bool                   byGuard  = false;
+            pawn::moghouse::Place  mogHouse = {};
         };
 
         auto reachOf(CCharEntity* PPlayer) -> PlayerReach
         {
-            return PlayerReach{ pawn::auction::counterNear(PPlayer), pawn::guards::guardNear(PPlayer) != nullptr };
+            return PlayerReach{ pawn::auction::counterNear(PPlayer), pawn::guards::guardNear(PPlayer) != nullptr, pawn::moghouse::placeOf(PPlayer) };
         }
 
         // One cardian as his roster shows her; managed: she is his to manage
@@ -171,6 +175,10 @@ namespace pawn::linkapi
             if (reach.byGuard)
             {
                 flags |= CL_MEMBER_BY_GUARD;
+            }
+            if (pawn::moghouse::reaches(reach.mogHouse, PPlayer, PPawn) == CL_S_OK)
+            {
+                flags |= CL_MEMBER_BY_MOG_HOUSE;
             }
             member.flags = flags;
             return member;
@@ -537,10 +545,9 @@ namespace pawn::linkapi
 
         // ---- gambits (the gambit editor, M3.85) ----------------------------
 
-        static_assert(static_cast<uint8>(cardian::tactician::State::Order) == CL_GS_ORDER && static_cast<uint8>(cardian::tactician::State::Line) == CL_GS_LINE &&
-                      static_cast<uint8>(cardian::tactician::State::Allows) == CL_GS_ALLOWS && static_cast<uint8>(cardian::tactician::State::NotBelow) == CL_GS_NOT_BELOW &&
-                      static_cast<uint8>(cardian::tactician::State::Clock) == CL_GS_CLOCK && static_cast<uint8>(cardian::tactician::State::NoChoice) == CL_GS_NO_CHOICE &&
-                      static_cast<uint8>(cardian::tactician::State::Misfit) == CL_GS_MISFIT,
+        static_assert(static_cast<uint8>(cardian::tactician::State::Order) == CL_GS_ORDER && static_cast<uint8>(cardian::tactician::State::Tool) == CL_GS_TOOL &&
+                      static_cast<uint8>(cardian::tactician::State::NoJudgement) == CL_GS_NO_JUDGEMENT && static_cast<uint8>(cardian::tactician::State::Clock) == CL_GS_CLOCK &&
+                      static_cast<uint8>(cardian::tactician::State::Misfit) == CL_GS_MISFIT && static_cast<uint8>(cardian::tactician::State::Client) == CL_GS_CLIENT,
                       "a row's state crosses as its number");
         static_assert(static_cast<uint8>(pawn::Side::Self) == CL_SIDE_SELF && static_cast<uint8>(pawn::Side::Ally) == CL_SIDE_ALLY && static_cast<uint8>(pawn::Side::Foe) == CL_SIDE_FOE);
         static_assert(static_cast<uint8>(pawn::Takes::Nothing) == CL_VC_NOTHING && static_cast<uint8>(pawn::Takes::Number) == CL_VC_NUMBER &&
@@ -549,11 +556,24 @@ namespace pawn::linkapi
                       static_cast<uint8>(pawn::ActionGroup::Magic) == CL_AG_MAGIC && static_cast<uint8>(pawn::ActionGroup::Abilities) == CL_AG_ABILITIES &&
                       static_cast<uint8>(pawn::ActionGroup::WeaponSkills) == CL_AG_WEAPON_SKILLS && static_cast<uint8>(pawn::ActionGroup::Ranged) == CL_AG_RANGED);
 
-        // Her gambit set: a cardian he commands
-        auto gambitsOf(CCharEntity* PPawn) -> pawn::CGambits*
+        // The gambit set a request names, and whose it is: a cardian he
+        // commands, or his own when it names him (live_controller.h)
+        struct GambitSet
         {
+            CCharEntity*    PWho = nullptr;
+            pawn::CGambits* PSet = nullptr;
+        };
+
+        auto gambitSetOf(CCharEntity* PChar, const uint32 id) -> GambitSet
+        {
+            if (id == PChar->id)
+            {
+                auto* PLive = dynamic_cast<CLiveController*>(PChar->PAI->GetController());
+                return { PChar, PLive != nullptr ? &PLive->Gambits() : nullptr };
+            }
+            auto* PPawn       = pawn::findCommandablePawn(PChar, id);
             auto* PController = PPawn != nullptr ? dynamic_cast<CPawnController*>(PPawn->PAI->GetController()) : nullptr;
-            return PController != nullptr ? &PController->Gambits() : nullptr;
+            return { PPawn, PController != nullptr ? &PController->Gambits() : nullptr };
         }
 
         // Her rows as they now stand, each a GAMBIT_ROW answer, and the GAMBITS
@@ -593,14 +613,13 @@ namespace pawn::linkapi
 
         void gambits(CCharEntity* PChar, const cl_gambits& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
-            auto* PSet  = gambitsOf(PPawn);
+            const auto [PWho, PSet] = gambitSetOf(PChar, ask.cardian);
             if (PSet == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(rowsOf(PPawn, *PSet, reply), CL_S_OK);
+            reply.finish(rowsOf(PWho, *PSet, reply), CL_S_OK);
         }
 
         // An edit of her rows: made by edit(set), which returns its outcome,
@@ -609,8 +628,7 @@ namespace pawn::linkapi
         template <typename Message, typename Edit>
         void editGambits(CCharEntity* PChar, const Message& ask, Reply& reply, Edit&& edit)
         {
-            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
-            auto* PSet  = gambitsOf(PPawn);
+            const auto [PWho, PSet] = gambitSetOf(PChar, ask.cardian);
             if (PSet == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
@@ -619,9 +637,9 @@ namespace pawn::linkapi
             const uint16 status = edit(*PSet);
             if (status == CL_S_OK)
             {
-                pawn::saveGambits(PPawn);
+                pawn::saveGambits(PWho);
             }
-            reply.more(rowsOf(PPawn, *PSet, reply));
+            reply.more(rowsOf(PWho, *PSet, reply));
             reply.finish(ask, status);
         }
 
@@ -661,14 +679,12 @@ namespace pawn::linkapi
                         });
         }
 
+        // A row her party role pins in her own place moves like any of hers:
+        // the role owns the row's content, the player its order
         void gambitMove(CCharEntity* PChar, const cl_gambit_move& ask, Reply& reply)
         {
             editGambits(PChar, ask, reply, [&](pawn::CGambits& set) -> uint16
                         {
-                            if (set.Locked(ask.from))
-                            {
-                                return CL_S_ROLE_LOCKED;
-                            }
                             return set.Move(ask.from, ask.to) ? CL_S_OK : CL_S_NO_SUCH_ROW;
                         });
         }
@@ -748,13 +764,14 @@ namespace pawn::linkapi
         // statuses and actions in parts, then her jobs and levels
         void gambitVocab(CCharEntity* PChar, const cl_gambit_vocab& ask, Reply& reply)
         {
-            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            const bool own   = ask.cardian == PChar->id;
+            auto*      PPawn = own ? PChar : pawn::findCommandablePawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            const auto vocab = pawn::vocabularyFor(PPawn);
+            const auto vocab = pawn::vocabularyFor(PPawn, own);
             inParts(reply, PPawn->id, &cl_vocab_conditions::conditions, vocab.conditions, [](const pawn::VocabCondition& c, cl_vocab_condition& out)
                     {
                         out.target    = static_cast<uint16_t>(c.target);
@@ -1320,6 +1337,7 @@ namespace pawn::linkapi
             msg.aggressive = rules.aggressive ? 1 : 0;
             msg.links      = rules.links ? 1 : 0;
             msg.staked     = stake.has_value() ? 1 : 0;
+            msg.diaBio     = rules.preferBio ? 1 : 0;
             msg.stakeZone  = stake.has_value() ? static_cast<uint16_t>(stake->zone) : 0;
             return msg;
         }
@@ -1466,13 +1484,13 @@ namespace pawn::linkapi
             ordersChanged(PChar, ask, reply, status);
         }
 
-        // Every cardian of his in his zone fights his target
+        // Every cardian in his party and his zone fights his target
         void engage(CCharEntity* PChar, const cl_engage& ask, Reply& reply)
         {
             reply.finish(ask, pawn::partyEngage(PChar, ask.target));
         }
 
-        // Wait here, or follow him. Follow from another zone is a travel
+        // Hold position, or follow him. Follow from another zone is a travel
         // order to his: she treks the world to meet him.
         void wait(CCharEntity* PChar, const cl_wait& ask, Reply& reply)
         {
@@ -1488,7 +1506,7 @@ namespace pawn::linkapi
             if (on)
             {
                 pawn::clearTravelOrder(PPawn->id);
-                ShowInfoFmt("pawn: {} waits here (ordered)", PPawn->getName());
+                ShowInfoFmt("pawn: {} holds position (ordered)", PPawn->getName());
             }
             else if (PPawn->loc.zone != PChar->loc.zone)
             {
@@ -2044,7 +2062,7 @@ namespace pawn::linkapi
             reply.finish(answer, CL_S_OK);
         }
 
-        // Her level in every job
+        // Her level in every job, and the jobs she has unlocked
         void jobs(CCharEntity* PChar, const cl_jobs& ask, Reply& reply)
         {
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
@@ -2058,7 +2076,37 @@ namespace pawn::linkapi
             {
                 answer.levels[job] = PPawn->jobs.job[job];
             }
+            answer.unlocked = PPawn->jobs.unlocked;
             reply.finish(answer, CL_S_OK);
+        }
+
+        // Her jobs changed at the Mog House: a cardian of his to manage, while
+        // he stands in his own or by a Nomad Moogle and she is nearby
+        // (pawn/mog_house.h)
+        void jobChange(CCharEntity* PChar, const cl_job_change& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (const auto where = pawn::moghouse::reaches(pawn::moghouse::placeOf(PChar), PChar, PPawn); where != CL_S_OK)
+            {
+                reply.finish(ask, where);
+                return;
+            }
+            if (PChar->isInEvent())
+            {
+                reply.finish(ask, CL_S_IN_EVENT);
+                return;
+            }
+            const auto status = pawn::moghouse::changeJobs(PPawn, ask.mainJob, ask.subJob);
+            if (status == CL_S_OK)
+            {
+                reply.more(memberOf(PChar, PPawn, reachOf(PChar), true));
+            }
+            reply.finish(ask, status);
         }
 
         // The combat or the magic skills her jobs can raise, each at its level
@@ -2183,5 +2231,6 @@ namespace pawn::linkapi
         handle<cl_profile>(profile);
         handle<cl_jobs>(jobs);
         handle<cl_skills>(skills);
+        handle<cl_job_change>(jobChange);
     }
 } // namespace pawn::linkapi

@@ -67,6 +67,35 @@ TEST_CASE("Finishing the stand does not cancel its emergency, but receiving heal
     CHECK(choose(std::vector<Option>{casting, cure(2, 2)}, std::vector<Target>{injured}, up).empty());
 }
 
+TEST_CASE("Below the floor a member is in danger whatever the hits on record", "[cardian][cure]")
+{
+    // A weak mob's 3-point hits: at 20% of 400 HP she is safe by the record
+    const Target chipped{99, 80, 400, 3, 0.4};
+    CHECK(plan({cure(1, 3, 39)}, chipped).empty());
+
+    // With a 25% floor she is in danger, and first aid lifts her above it:
+    // one Cure for 39 takes her from 80 past the floor of 100, so one mage
+    // is enough
+    const auto floored = plan({cure(1, 3, 39), cure(2, 3, 39)}, withFloor(chipped, 0.25));
+    REQUIRE(floored.size() == 1);
+    CHECK(floored[0].cast);
+    CHECK(floored[0].cure.caster == 1);
+
+    // Deeper under it, one Cure falls short and a second mage joins
+    auto deep = chipped;
+    deep.hp = 40;
+    CHECK(plan({cure(1, 3, 39), cure(2, 3, 39)}, withFloor(deep, 0.25)).size() == 2);
+
+    // Above the floor, nothing changes
+    auto healthy = chipped;
+    healthy.hp = 200;
+    CHECK(plan({cure(1, 3, 39)}, withFloor(healthy, 0.25)).empty());
+
+    // The floor never lowers a bigger hit on record
+    const Target hurt{99, 150, 400, 160, 5};
+    CHECK(withFloor(hurt, 0.25).biggest == 160);
+}
+
 TEST_CASE("Ready healer beats travel, active casting, and unavailable spells", "[cardian][cure]")
 {
     auto unknown = cure(1, unavailable, 200);

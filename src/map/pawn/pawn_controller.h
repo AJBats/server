@@ -32,6 +32,7 @@
 #include "rest_math.h"
 
 #include "ai/controllers/player_controller.h"
+#include "data/enums/status_effect.h"
 
 #include <array>
 #include <chrono>
@@ -39,6 +40,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace pawn::world
@@ -111,7 +113,7 @@ public:
     auto GetAnchor() const -> CCharEntity*;
 
     // The perimeter (RESEARCH §12.15). She attends the fight on this mob
-    // instead of drawing on it when she holds the Support Mage role and no
+    // instead of drawing on it when her rows offer the party spells and no
     // Attack row of hers claims the mob (engage_math.h attendsFight): from
     // the nearest safe spot outside the mob's TP reach and inside cure range
     // of the tank (AttendIntent). She may act offensively once the mob is
@@ -128,6 +130,9 @@ public:
     // order to her and sets nothing here (RESEARCH §14.12 decision 16)
     auto PlayersOrderOn(const CBattleEntity* PTarget) const -> bool;
     auto HasPlayersOrder() const -> bool;
+    // A target refused at the door is left alone for a while (HoldOff), so
+    // a standing refusal (claimed, unclean) is not tried every beat
+    auto HoldingOff(const CBattleEntity* PTarget) const -> bool;
     // The beat before she takes a fight: the reaction beat for a draw or a
     // walk in, none for a fight she attends, since she is not walking in
     auto JoinBeat(CBattleEntity* PTarget) const -> timer::duration;
@@ -159,21 +164,14 @@ public:
     // True while the policy keeps her kneeling; defer routine positioning then.
     auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false) -> bool;
     // The player's rest order (ComposeRest): down until her HP and MP both
-    // reach N%. Only a Support Mage's emergency cure stands her meanwhile;
-    // any order of his, or her leaving his party, ends it first
-    void SetRestOrder(int percent, std::string_view why);
+    // reach N%. Only the emergency cure stands her meanwhile; any order of
+    // his, or her leaving his party, ends it first. byRow: her own plain
+    // Rest row's, the same order at 100% (RESEARCH §17.13) -- danger and
+    // the party's fight stand her up meanwhile, and she kneels again after
+    void SetRestOrder(int percent, std::string_view why, bool byRow = false);
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
-    // Her kneel: Healing's ticks so far, and seconds to the next and between
-    // ticks (zero while standing)
-    struct RestClock
-    {
-        bool   down     = false;
-        int    ticks    = 0;
-        double next     = 0.0;
-        double interval = 0.0;
-    };
-    auto WeaponSkill(EntityId target, uint16 wsid) -> bool override;
+    auto WeaponSkill(EntityId target, uint16 wsid) -> bool override; // her rows' weapon skill; never tried beyond its reach (BoostOrWeaponSkill)
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
 
@@ -211,11 +209,11 @@ public:
     auto IsHunting() const -> bool;
     void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
     auto IsRetreating() const -> bool;
-    // Her tactician (tactician_line.h) runs: her line row (a Support Mage
-    // or Tank row) speaks, her gambits are on, and a tactician watches her
-    // scope
+    // Her tactician (tactician_line.h) runs: her rows offer it a tool (a
+    // marked row that is on), her gambits are on, and a tactician watches
+    // her scope
     auto TacticianRuns() const -> bool;
-    // Her tactician's recovery is due: a Support Mage's MP, as her rest
+    // Her tactician's recovery is due: a casting mage's MP, as her rest
     // policy says. A tank's never is: she leaves no fight to rest
     auto RecoveryDue() const -> bool;
     // The stake (RESEARCH §12.16): the party's place whenever it stands,
@@ -252,7 +250,7 @@ public:
     // Composed, the maneuver no longer needs his eye on her: at the release
     // she walks the route, the order fires at its end, and that is the
     // maneuver's end. ComposeMove is the route with no order: end at its
-    // end, waiting there if `wait`. Answers CL_S_OK or why not.
+    // end, holding position there if `wait`. Answers CL_S_OK or why not.
     auto ComposeMove(bool wait) -> uint16;
     // The maneuver's "Rest until N%", her queued order either way: live,
     // composed at once where she stands, his camera handed back; paused,
@@ -271,13 +269,13 @@ public:
     auto OwnMaster() const -> bool;
     void SetOwnMaster(bool on);
 
-    // Wait here / follow me. Waiting, she has nowhere to go by order: no
-    // following, hunting or travel, so she idles where she stands -- the
-    // floor every cardian falls to when nothing sends her anywhere (just
-    // spawned, signed in, out of the party). An ordered wait holds until
-    // told otherwise; an automatic one (left behind by a warp or a
-    // teleport, or carried off alone) ends when the player is back in her
-    // zone.
+    // Hold position / follow me. Holding, she has nowhere to go by order: no
+    // following, hunting or travel, and no step of her own at all (Move),
+    // in a fight or out of one -- she fights and casts from where she
+    // stands, and a weapon skill out of her reach is refused rather than
+    // walked to. An ordered hold lasts until told otherwise; an automatic
+    // one (left behind by a warp or a teleport, or carried off alone) ends
+    // when the player is back in her zone.
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
     void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
@@ -297,6 +295,39 @@ public:
 
     // Mid-action: casting, readying a weapon skill or ability, or shooting
     auto Acting() const -> bool;
+    // The pacer: the server's own test for a new action -- she can act (the
+    // player controller's canAct: 2.5 s after her last spell finished) and
+    // her state lets go (an ability once it has landed, not its animation;
+    // a spell, a weapon skill, a shot or an item not before it ends). Every
+    // action a cardian sends waits on it -- her think, his queued orders,
+    // the weapon skill held behind a Boost, her tactician's calls -- so it
+    // fires on the first tick the server would take it, never refused for
+    // coming too soon and never cutting into one under way
+    auto ReadyToAct() -> bool;
+    // Something on her the ability state refuses every job ability for:
+    // Amnesia, or Impairment of abilities
+    auto AbilitiesShutOut() const -> bool;
+    // Sneak Attack is spent by the next blow and lands only from behind, so
+    // it goes right before her weapon skill: her marked Sneak Attack row
+    // offers it (the tactician's tool, RESEARCH §17.13), and it is hers to
+    // use now
+    auto SneakAttackReady() const -> bool;
+    // Sneak Attack can go now, before her weapon skill or naked: ready, she
+    // is engaged on this mob, the mob faces someone else (its back away
+    // from her side), and no give-up of hers rests on it (m_SneakRest)
+    auto SneakAttackNow(const CBattleEntity* PTarget) -> bool;
+    // A weapon skill Sneak Attack works with: one whose script goes through
+    // the server's physical path (tactician_line.h scriptTakesSneakAttack),
+    // read once per weapon skill. Any other spends it all the same
+    static auto TakesSneakAttack(uint16 wsid) -> bool;
+    // The player's own Berserk or Defender has just fired, by its ability
+    // id: his order (TryAction), or a plain row of his (CGambits::Execute)
+    void NoteOrderedStance(uint16 ability);
+    // Whether the Berserk or Defender on her now is the one the player's
+    // own fired (NoteOrderedStance; tactician_line.h isOrderedUse): her
+    // tactician's stance never takes it off. That one use only: once it is
+    // over, a later one of the tactician's is the tactician's again
+    auto PlayersBuff(uint16 ability, xi::StatusEffect effect) -> bool;
 
     // A fidget now and then while standing about -- motion only, no text,
     // to everyone in range; a stare goes to the player. Never mid-walk,
@@ -323,10 +354,12 @@ public:
     // The order given a little early -- while she acts, or while the
     // spell is on recast -- is held and fired the moment both allow, the
     // way the client queues one action behind a cast. Held only within
-    // cardian.ORDER_GRACE of the press: an order that cannot fire in that
-    // time is refused at once (a spell on a long recast, the same spell
-    // pressed twice mid-cast), and a held order the grace runs out on is
-    // let go with a note to the addon. A newer order replaces it.
+    // cardian.ORDER_GRACE of the press, the 2.5 s the server makes anyone
+    // wait after a spell added on: an order that cannot fire in that time
+    // is refused at once (pressed early in a long cast bar, a spell on a
+    // long recast, the same spell pressed twice mid-cast), and a held
+    // order the grace runs out on is let go with a note to the addon. A
+    // newer order replaces it.
     void FireQueuedOrder();
     auto HasQueuedOrder() const -> bool
     {
@@ -347,7 +380,8 @@ public:
 
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line
-    // of sight, its own script's word -- which the player hears as a note.
+    // of sight, its own script's word -- which the player hears as a note. Her
+    // auto-attack's own "target out of range" is not, after any order but a pet's.
     void ToldAfterOrder(uint16 message, const std::string& said);
 
     // The attack order, fired once her beat is served: the front row draws
@@ -364,10 +398,6 @@ public:
     void ClearGambitBehaviors();
     void SetGambitBehavior(uint16 behavior, uint16 arg);
     auto Behavior(pawn::Behavior behavior) const -> std::optional<uint16>;
-    // The roles her Role rows hold this tick, every one that speaks and
-    // not the first alone (gambit_layers.h holdsRole): a lent Support Mage
-    // row beside her own Damage row makes her both
-    auto HoldsRole(pawn::Role role) const -> bool;
 
     auto FormationSlot() const -> pawn::Slot;
 
@@ -379,6 +409,8 @@ public:
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
     auto RestsWithPlayer() const -> bool;
+    auto RestsByRow() const -> bool;
+    auto RestRowDue() const -> bool; // her plain Rest row speaks, she is short, and no rest order is on
     auto HomePointsWithPlayer() const -> bool;
 
     static constexpr float RoamDistance     = 3.0f;
@@ -698,7 +730,7 @@ private:
     auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
     auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t; // by the live frame
-    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side
+    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false, bool ownSeat = true) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side; not her own ring seat (the walk for Sneak Attack): her seat's bookkeeping left alone
 
     // The beat: how long she takes to act on a decision -- to set off on
     // a hunt, to draw with the party, to close when the hold ends, to step
@@ -723,70 +755,21 @@ private:
     // cast redundant (same buff family, a cure on the same healthy target...)
     auto PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool;
 
-    // The engage door (ROADMAP K3; the rules are engage_math.h). The foes
-    // around the party are the leader's engaged target, the fights of the
-    // party's other cardians, and the engaged mobs on her or on a member of
-    // her party, each within the leash (pawn.HUNT_LEASH) of `from`, the
-    // party's place: a pull is not the party's fight until it is dragged
-    // inside. PLeader is the one she follows (GetAnchor: the player, or her
-    // camp's leader); with none, the party's own fights alone. A foe below
-    // ground with no fight on, or one her door holds off, is absent, and
-    // the next one gets its turn. Nothing while she retreats.
-    //  - PartyFightScan: the party's fight whatever her rows say -- the
-    //    leader's target, else another cardian's fight (how a hunter's
-    //    pull propagates), else a mob on one of us. What a Support Mage
-    //    attends, what her rest watches for, and what a camp leader joins.
-    //  - EngageChoice: the fight her rows take -- her enabled Attack rows
-    //    top down (none with her gambits off), each row's foe the first of
-    //    its kind whose conditions hold on it. `row` numbers the row, and
-    //    the why line names it with its layer. A row below her tactician
-    //    line counts only while her tactician lets her melee
-    //    (TacticianMelee).
-    struct FightPick
-    {
-        CBattleEntity* target = nullptr;
-        std::string    why;
-        // The Attack row that took it, numbered within its layer (the
-        // editor's number for one of her own); 0 for the party's fight
-        std::size_t row = 0;
-    };
+    // The engage door (ROADMAP K3), her engine's (CGambits PartyFightScan,
+    // EngageChoice and the rest), the same for every character whose rows
+    // run: these forward to it. PLeader is the one she follows (GetAnchor:
+    // the player, or her camp's leader)
+    using FightPick = pawn::CGambits::FightPick;
+    using RowClaim  = pawn::CGambits::RowClaim;
     auto PartyFightScan(CCharEntity* PLeader, const position_t& from) const -> FightPick;
     auto EngageChoice(CCharEntity* PLeader, const position_t& from) const -> FightPick;
-    // The first of her Attack rows that claims this mob, wherever it
-    // stands (engage_math.h claimingRow), and its finder: nothing when none
-    // does
-    struct RowClaim
-    {
-        cardian::engage::Finder   finder = cardian::engage::Finder::LeadersTarget;
-        pawn::CGambits::EngageRow row;
-    };
     auto ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>;
-    // The same, with the rows below her tactician line counted or not
     auto ClaimingRowAs(CBattleEntity* PTarget, bool melee) const -> std::optional<RowClaim>;
-    // Whether any of her Attack rows takes fights now: one above the line,
-    // or one below it while her tactician lets her melee
     auto TakesFights() const -> bool;
-
-    // Her tactician lets her melee a fight a row below the line claims
-    // while it runs (TacticianRuns), her recovery is not due and she is not
-    // down resting (RESEARCH §14.12 decision 19)
     auto TacticianMelee() const -> bool;
-
-    // The foes around the party this tick (as above), gathered once a tick
-    // for the place asked about, in the finders' order; and what a foe is
-    // to the party (the finders' facts, engage_math.h Foe) and the words
-    // for how a finder found it
     auto FoesAround(CCharEntity* PLeader, const position_t& from) const -> std::vector<CBattleEntity*>;
     auto FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe;
     auto FoeWhy(cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string;
-    struct FoesMemo
-    {
-        timer::time_point     tick{ timer::time_point::min() };
-        uint32                leader = 0;
-        position_t            from{};
-        std::vector<EntityId> foes;
-    };
-    mutable FoesMemo m_FoesMemo;
 
     // A world body's idle tick (ROADMAP D1): rest when low, answer a mob on
     // her, and farming, pick a mob in her band within reach or head toward
@@ -915,8 +898,11 @@ private:
     };
     mutable std::vector<SightMemo> m_SightMemo;
 
-    std::unique_ptr<pawn::CGambits> m_Gambits;
-    bool                            m_BrainLoaded = false;
+    // What her gambit engine asks of her (gambit_host.h): this controller,
+    // through an adapter, so its names stay the engine's
+    std::unique_ptr<pawn::GambitHost> m_Host;
+    std::unique_ptr<pawn::CGambits>   m_Gambits;
+    bool                              m_BrainLoaded = false;
 
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
@@ -1069,18 +1055,23 @@ private:
     uint32            m_HoldOffTarget = 0;
     timer::time_point m_HoldOffUntil{ timer::time_point::min() };
     void              HoldOff(const CBattleEntity* PTarget);
-    auto              HoldingOff(const CBattleEntity* PTarget) const -> bool;
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
     timer::time_point                               m_QueuedOrderDeadline;
 
-    // The least an order has to wait before she could take it: a spell's
+    // The least an order has to wait before she could take it, the 2.5 s
+    // after a spell aside: the cast bar she is under, and for a spell its
     // recast left, or the recast the cast in progress will set when it is
-    // the same spell. 0 for the rest -- abilities and weapon skills carry
-    // their own refusals, and the states do not tell how long an action
-    // in progress has left
+    // the same spell. Abilities and weapon skills carry their own recast
+    // refusals, and the other states do not tell how long they have left
     auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
+    // What is left of the cast bar she is under; 0 when she is not casting
+    auto CastBarLeft() const -> timer::duration;
+    // How much of the 2.5 s the server makes anyone wait after a spell
+    // (CPlayerController::canAct) is still ahead of her: all of it while
+    // she casts, else what is left since her last spell landed
+    auto SpellWaitAhead() -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     // What came of one of the player's orders, to his addon (the Link's NOTE,
     // cardian_link_protocol.h): the note as the caller filled it, and why
@@ -1119,19 +1110,77 @@ private:
     timer::time_point m_LastHuntLogTime;
     cardian::rest::State m_Rest;
     cardian::rest::Follow m_RestFollow;
-    cardian::rest::Order m_RestOrder; // the player's "Rest until N%", none by default
+    cardian::rest::Order m_RestOrder; // the player's "Rest until N%", or her own Rest row's at 100%; none by default
     int m_RestTicks = 0;
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;
-    // Boost before weapon skills: the weapon skill held one tick while Boost goes out first
+    // Sneak Attack or Boost before weapon skills: the weapon skill held one
+    // tick while the opener goes out first
     struct HeldWs
     {
         EntityId          target;
         uint16            wsid = 0;
         timer::time_point at;
     };
-    std::optional<HeldWs> m_WsAfterBoost;
+    std::optional<HeldWs> m_HeldWs;
+    // Sneak Attack wants the mob's back: her weapon skill waits while she
+    // walks there (SneakPoint), a few seconds at most, and goes without it
+    // if she cannot get there or the mob turns on her. No weapon skill (0):
+    // the walk is for a naked Sneak Attack, on her next swing
+    struct SneakStep
+    {
+        EntityId          target;
+        uint16            wsid = 0;
+        timer::time_point since;
+    };
+    std::optional<SneakStep>         m_SneakStep;
+    // After a naked Sneak Attack she stays at the mob's back until her next
+    // swing has spent it, a few seconds at most. Spent is the effect seen
+    // on her and then gone: the ability lands a tick after it starts
+    struct SneakHold
+    {
+        EntityId          target;
+        timer::time_point until;
+        bool              landed = false;
+    };
+    std::optional<SneakHold>         m_SneakHold;
+    // A walk to the mob's back given up, or Sneak Attack refused: she leaves
+    // it alone a while, unless the mob turns to someone else first, so a
+    // back she cannot reach is not walked at every tick
+    struct SneakRest
+    {
+        timer::time_point until;
+        uint32            front = 0; // whom the mob faced
+    };
+    std::optional<SneakRest>         m_SneakRest;
+    void                             RestSneak(const CBattleEntity* PTarget);
+    std::optional<timer::time_point> m_SneakReadySince; // Sneak Attack ready in this fight, since: what holding it for her weapon skill costs
     auto                  BoostReady() const -> bool;
+    auto                  SneakAttackUsable() const -> bool;
+    // A naked Sneak Attack is due (RESEARCH §17.13 item 5): no weapon skill
+    // row of hers can take it, no weapon skill is about to spend it (TP
+    // under 1000), Sneak Attack can go now, and its back is somewhere she
+    // can stand
+    auto                  NakedSneakDue(const CBattleEntity* PTarget) -> bool;
+    // A naked Sneak Attack, from the mob's back: she holds there for her swing
+    void                  NakedSneak(const EntityId target);
+    // Behind the mob as the server judges Sneak Attack: in the cone at its
+    // back, by its own facing (utils.h behind, the same 64 the hit asks)
+    auto                  BehindFor(const CBattleEntity* PTarget) const -> bool;
+    // The spot straight behind the mob by its own facing, at her fight
+    // radius: where the walk for Sneak Attack heads
+    auto                  SneakPoint(const CBattleEntity* PTarget) const -> position_t;
+    // Sneak Attack, then her weapon skill the moment it lands
+    auto                  SneakThenWs(const EntityId target, uint16 wsid) -> bool;
+    // The weapon skill without Sneak Attack: Boost first when her row
+    // offers it, else the weapon skill now; never beyond the skill's own
+    // reach (weaponSkillReach), since the game takes the TP as it starts
+    auto                  BoostOrWeaponSkill(const EntityId target, uint16 wsid) -> bool;
+    // The player's weapon skill order: it goes now and never walks; with
+    // her Sneak Attack row on and Sneak Attack up, a skill that takes it
+    // goes with it when she stands behind the mob already (the user,
+    // 2026-10-02). It replaces a walk under way
+    auto                  OrderedWeaponSkill(const EntityId target, uint16 wsid) -> bool;
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;
@@ -1156,8 +1205,7 @@ private:
     bool       m_Sprinting           = false;
     bool       m_PlayerMoving        = false;  // as of the last LeadPoint
 
-    std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{}; // the behaviour layer, by pawn::Behavior
-    uint32                                                  m_RolesHeld = 0; // the roles her Role rows hold this tick, a bit per pawn::Role
+    std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{};             // the behaviour layer, by pawn::Behavior
     bool                                                    m_PlayerSeenDead = false; // while KO'd: the player has been seen dead since
 
     // Aggro avoidance state

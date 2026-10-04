@@ -13,6 +13,7 @@
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
+#include "tactician_line.h"
 
 #include "common/database.h"
 #include "common/earth_time.h"
@@ -642,11 +643,14 @@ namespace
     //   who        self | party | mob
     //   condition  always | hp < n | hp >= n | mp < n | mp >= n | tp < n | tp >= n |
     //              has <status> | lacks <status> | top enmity | not top enmity
-    //   action     avoid aggro | avoid links | rest with leader | home point with leader |
-    //              boost before weapon skills | formation <lead|flank left|flank right|
-    //              rear left|rear right|behind> | role <support mage|tank|damage> | cast best <spell>
-    //              (the best of its family) | cast <spell> | cast random damage |
-    //              ability <name> | best weapon skill | random weapon skill
+    //   action     avoid aggro | avoid links | rest | rest with leader | home point with leader |
+    //              boost before weapon skills (self only: the marked Boost row, the one
+    //              tactician's row the world carries) | formation <lead|flank left|flank right|
+    //              rear left|rear right|behind> | cast best <spell>
+    //              (the best of its family) | cast <spell> | cast random damage
+    //              (one of her damage spells) | cast enfeeble (the first enfeeble
+    //              the mob does not carry) | ability <name> | best weapon skill |
+    //              random weapon skill
     // Names are the game's own (spell_list, abilities, the status enum), spaces
     // for underscores. A row that will not compile is logged and left out.
     auto lower(std::string text) -> std::string
@@ -789,9 +793,10 @@ namespace
 
         // the action
         std::string actSpec;
+        bool        marked = false;
         static const std::unordered_map<std::string, std::string> switches{
             { "avoid aggro", "100:1:1" }, { "avoid links", "100:13:1" }, { "rest with leader", "100:6:1" }, { "home point with leader", "100:7:1" },
-            { "boost before weapon skills", "100:9:1" }
+            { "rest", "100:14:1" }
         };
         static const std::unordered_map<std::string, int> seats{
             { "lead", 1 }, { "flank left", 2 }, { "flank right", 3 }, { "rear left", 4 }, { "rear right", 5 }, { "behind", 6 }
@@ -799,6 +804,20 @@ namespace
         if (const auto it = switches.find(act); it != switches.end())
         {
             actSpec = it->second;
+        }
+        else if (act == "boost before weapon skills")
+        {
+            // Boost right before her weapon skill is the tactician's tool, a
+            // marked Self -> Boost row (RESEARCH §17.13): no order can say
+            // "right before the weapon skill", so this is the one row the
+            // world marks
+            if (whoIt->second != 0)
+            {
+                ShowErrorFmt("world: brains: '{}': boost before weapon skills is a self row", text);
+                return std::nullopt;
+            }
+            actSpec = fmt::format("3:2:{}", cardian::tactician::kBoost);
+            marked  = true;
         }
         else if (act.starts_with("formation "))
         {
@@ -810,21 +829,13 @@ namespace
             }
             actSpec = fmt::format("100:4:{}", seat->second);
         }
-        else if (act.starts_with("role "))
-        {
-            // "damage" names the Damage role, and "melee damage" reads the same
-            static const std::unordered_map<std::string, int> roles{ { "support mage", 1 }, { "tank", 2 }, { "damage", 3 }, { "melee damage", 3 } };
-            const auto                                        role = roles.find(trim(act.substr(5)));
-            if (role == roles.end())
-            {
-                ShowErrorFmt("world: brains: '{}': no role called '{}'", text, trim(act.substr(5)));
-                return std::nullopt;
-            }
-            actSpec = fmt::format("100:11:{}", role->second);
-        }
         else if (act == "cast random damage")
         {
-            actSpec = "2:3:0";
+            actSpec = "2:3:0"; // Damage spell (any): one of her damage spells
+        }
+        else if (act == "cast enfeeble")
+        {
+            actSpec = fmt::format("2:{}:0", static_cast<uint16>(pawn::G_SELECT_ENFEEBLE)); // the first enfeeble the mob does not carry yet
         }
         else if (act.starts_with("cast best "))
         {
@@ -868,6 +879,10 @@ namespace
         {
             ShowErrorFmt("world: brains: '{}': cannot read the action '{}'", text, act);
             return std::nullopt;
+        }
+        if (marked)
+        {
+            condSpec = condSpec == "0:0" ? "101:0" : condSpec + "&101:0";
         }
         return fmt::format("{}|{}|{}|{}", whoIt->second, condSpec, actSpec, retry);
     }
@@ -937,7 +952,7 @@ namespace
     // Her role: the tank is the highest Warrior or Paladin of her party (ties
     // by name), any other of them and the fighters are melee, and the mages
     // are the jobs that take the mage defaults (pawn::isMageJob), so her
-    // world layer and her own Role row agree
+    // world layer and her own rows agree
     auto roleOf(const CCharEntity* PPawn) -> std::string
     {
         if (pawn::isMageJob(PPawn->GetMJob()))

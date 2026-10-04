@@ -37,6 +37,7 @@
 #include "lua/lua_spell.h"
 #include "mobskill.h"
 #include "spell.h"
+#include "status_effect_container.h"
 #include "utils/battleutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -86,6 +87,7 @@ namespace pawn::tactics
         std::map<std::pair<uint32, uint16>, CureMemory>                      cures;
         std::map<std::tuple<uint16, std::string, uint16>, DebuffMemory>      debuffs;
         std::map<std::pair<uint16, std::string>, ProcValue>                  procs;
+        std::map<std::pair<uint32, uint8>, NukeCorrection>                   nukes; // caster, element
     } // namespace
 
     auto seconds(const timer::time_point tp) -> double
@@ -574,7 +576,43 @@ namespace pawn::tactics
         }
         else if (auto* PMob = asMob(PTarget); PMob != nullptr)
         {
-            r = &recordFor(PMob, true);
+            r         = &recordFor(PMob, true);
+            // Judged by the server's own copy of the spell: the cast's copy
+            // carries the message its script set, which no longer reads as
+            // damage when the mob absorbed or nullified it
+            note.nuke = bank::isNuke(spell::GetSpell(PSpell->getID()));
+            if (note.nuke)
+            {
+                // What it landed: damage only, not a heal the mob absorbed,
+                // nor the 1 a shadow took
+                const auto msg    = PLuaAction != nullptr ? PLuaAction->getMsg(PMob->id) : std::nullopt;
+                const bool damage = msg.has_value() && (*msg == MsgBasic::MagicDamage || *msg == MsgBasic::MagicBurstDamage);
+                note.landed       = damage ? PLuaAction->getParam(PMob->id) : 0;
+
+                // It teaches her correction against the seed she was priced
+                // on only when what cut it was her own dice: not an NM (its
+                // nuke wall, which the seed leaves out), not Stoneskin or
+                // Phalanx on the mob, not a mob whose INT has moved since the
+                // seed (a Burn landed or wore off). Her kept seeds go with any
+                // landing, since the cast changed what the next one meets
+                std::erase_if(r->intSeeds, [&](const auto& kept)
+                              {
+                                  return kept.first.first == PCaster->id;
+                              });
+                if (const auto kept = r->nukeSeeds.find(PCaster->id); kept != r->nukeSeeds.end())
+                {
+                    const bool clean = damage && (PMob->m_Type & xi::MobType::Notorious) == xi::MobType::Normal &&
+                                       !PMob->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Stoneskin, xi::StatusEffect::Phalanx }) &&
+                                       r->seedInt == static_cast<int32>(PMob->INT());
+                    if (const auto seed = kept->second.find(note.spell); clean && seed != kept->second.end() && seed->second > 0.0)
+                    {
+                        const auto element = static_cast<uint8>(PSpell->getElement());
+                        note.expected      = seed->second * nukeCorrection(PCaster->id, element).factor();
+                        learnNuke(PCaster->id, element, note.landed, seed->second);
+                    }
+                    r->nukeSeeds.erase(kept);
+                }
+            }
             if (PSpell->isDebuff())
             {
                 note.debuff     = true;
@@ -722,6 +760,7 @@ namespace pawn::tactics
             // A melee swing met the mob's defence; magic, ranged, skillchains
             // and weapon skills (their own attack and defence terms) are not
             // priced on it
+            m.meleeDealt += landed;
             bank::defenceSplit(r, PAttacker, PMob, landed);
         }
         if (debug())
@@ -820,6 +859,23 @@ namespace pawn::tactics
         }
     }
 
+    void FightLog::onSneakAttack(CBattleEntity* PMember, const uint32 mobId, const cardian::tactics::SneakUse use, const double seconds)
+    {
+        if (PMember == nullptr || mobId == 0)
+        {
+            return;
+        }
+        // The fight on that mob, settling after its kill included
+        for (auto& r : m_open)
+        {
+            if (r.mobId == mobId)
+            {
+                cardian::tactics::bookSneak(r.member(PMember->id, PMember->getName()), use, seconds);
+                return;
+            }
+        }
+    }
+
     auto FightLog::priceLists() const -> std::vector<std::string>
     {
         std::vector<std::string> out;
@@ -859,6 +915,17 @@ namespace pawn::tactics
             memory.estimate.floor = minimumCure(PSpell);
         }
         return memory;
+    }
+
+    auto nukeCorrection(const uint32 caster, const uint8 element) -> NukeCorrection
+    {
+        const auto it = nukes.find({ caster, element });
+        return it != nukes.end() ? it->second : NukeCorrection{};
+    }
+
+    void learnNuke(const uint32 caster, const uint8 element, const int32 dealt, const double seed)
+    {
+        nukes[{ caster, element }].learn(dealt, seed);
     }
 
     auto cureEstimate(const uint32 caster, CSpell* PSpell) -> std::pair<int32, bool>

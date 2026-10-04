@@ -50,6 +50,8 @@ class CZone;
 // Gated behind pawn.ENABLE_PAWNS.
 namespace pawn
 {
+    class CGambits;
+
     bool isEnabled();
 
     // The account that owns what this character can summon or possess: the
@@ -213,14 +215,14 @@ namespace pawn
     auto partyStrategy(const CCharEntity* PPawn) -> uint16;
 
     // The party strategy channel (M3.9): one set of orders per player, read
-    // by every cardian of theirs and every wild cardian in their party.
-    // Strategy 0 = Hold, 1 = Pull (the hunters pull). Retreat is the "on me"
-    // switch over it: nobody engages, nobody avoids aggro, hunting pauses,
-    // until it clears. Orders live in memory; a map restart starts everyone
-    // at Hold.
+    // by every cardian in their party, theirs and wild alike. Strategy 0 =
+    // Hold, 1 = Pull (the hunters pull). Retreat is the "on me" switch over
+    // it: nobody engages, nobody avoids aggro, hunting pauses, until it
+    // clears. Orders live in memory; a map restart starts everyone at Hold.
     constexpr uint16 kStrategyCount = 2;
-    // Whose orders she follows: her summoner, or for a wild cardian the real
-    // player in her party; 0 for nobody's
+    // Whose orders she follows: the real player in her party, or the one she
+    // was with while he crosses a zone line; 0 for nobody's. Out of his party
+    // she takes none of his party's orders, his own alt included
     auto ordersOwnerOf(const CCharEntity* PPawn) -> uint32;
     // Her retreat and hunt flags from the orders she follows, as she joins
     void applyOrdersTo(CCharEntity* PPawn);
@@ -247,8 +249,8 @@ namespace pawn
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 
-    // Every cardian of the owner's in the zone fights the entity with this
-    // targid. CL_S_OK when they go; otherwise why not.
+    // Every cardian in the owner's party and his zone fights the entity with
+    // this targid. CL_S_OK when they go; otherwise why not.
     auto partyEngage(CCharEntity* POwner, uint16 targid) -> uint16;
 
     // A mob nobody can hit right now: a worm underground (the game's own
@@ -268,6 +270,11 @@ namespace pawn
         uint8 pullFirst  = 1;     // 0 nearest, 1 easiest, 2 toughest
         bool  aggressive = false; // prey inside an aggressive mob's circle: allowed = that mob (the guard) is the pull, avoided = skipped, and no circle across the approach
         bool  links      = false; // pull with a linking family member near the target
+        // Not a hunt rule but an order saved with them (the user, 2026-10-03):
+        // which of Dia and Bio, which block each other, the tactician casts
+        // while anyone it can ask is able to; the other once nobody is.
+        // Plain rows ignore it (role_support.cpp)
+        bool preferBio = false;
         // A world body's home pull (ROADMAP D3, user): the farther she is from
         // her starting point, the more the errand favours prey that leads back
         // toward it. roam is the distance at which the pull weighs as much as
@@ -277,7 +284,12 @@ namespace pawn
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
-    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS. CL_S_OK, or
+    // cardian_orders as this build reads and writes it, the Dia or Bio
+    // column included: made, or a column added, at boot. The same as
+    // modules/cardian/sql/cardian_orders.sql, which dbtool's update skips on
+    // a database whose upstream SQL has not moved
+    void ensureOrdersTable();
+    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS | DIA_BIO. CL_S_OK, or
     // CL_S_MALFORMED for a rule or value out of range. A band end pushed past
     // the other drags it along.
     auto setHuntRule(CCharEntity* POwner, uint8 rule, int value) -> uint16;
@@ -341,9 +353,22 @@ namespace pawn
     // grammar, one "on spec" line each, and her own master switch
     // (CPawnController::OwnMaster). Saved after every edit and when her
     // defaults are seeded; loaded at spawn instead of the defaults when
-    // present.
-    void saveGambits(CCharEntity* PPawn);
+    // present. A character his own client drives keeps his own set apart
+    // (kOwnClientSet, live_controller.h): what his hands do while he plays
+    // is not what a cardian's body does while someone else drives her.
+    // saveGambits saves whichever set the character's controller runs.
+    constexpr uint8 kOwnClientSet = 100; // cardian_gambits.set_id of a played character's own set
+    void saveGambits(CCharEntity* PChar);
     bool loadSavedGambits(CCharEntity* PPawn);
+    // One set by charid and set id, into the engine: its rows replace what
+    // the engine held. The saved master switch, or nothing with no set saved
+    auto loadGambitSet(CCharEntity* PChar, uint8 setId, CGambits& gambits) -> std::optional<bool>;
+
+    // A character's gambit engine, whoever drives her: a cardian's
+    // (CPawnController) or a played character's own (CLiveController);
+    // nothing for anyone else. The engine answers for its host
+    // (CGambits::Host), so the tactician reads both alike
+    auto gambitsOf(CBattleEntity* PMember) -> CGambits*;
     void forgetGambits(CCharEntity* PPawn);
     bool reloadBrainByName(const std::string& targetName);
     bool reloadBrain(CCharEntity* PPawn);

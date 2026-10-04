@@ -35,6 +35,7 @@
 #include "pawn_travel.h"
 #include "pawn_gambits.h"
 #include "gambit_text.h"
+#include "live_controller.h"
 
 #include "common/cardian_lobby.h"
 #include "common/database.h"
@@ -142,7 +143,7 @@ namespace
             o.rules.maxCheck   = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
             o.rules.aggressive = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
             o.rules.links      = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
-            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links FROM cardian_orders WHERE charid = ?", ownerCharID);
+            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio FROM cardian_orders WHERE charid = ?", ownerCharID);
             if (rset && rset->next())
             {
                 o.rules.minCheck   = rset->get<uint8>("hunt_min");
@@ -150,6 +151,7 @@ namespace
                 o.rules.pullFirst  = rset->get<uint8>("pull_first");
                 o.rules.aggressive = rset->get<uint8>("aggressive") != 0;
                 o.rules.links      = rset->get<uint8>("links") != 0;
+                o.rules.preferBio  = rset->get<uint8>("prefer_bio") != 0;
             }
         }
         return o;
@@ -464,7 +466,7 @@ namespace
     }
 
     // The player she is with: the one whose orders she follows
-    // (pawn::ordersOwnerOf -- the real player in her party, else her summoner)
+    // (pawn::ordersOwnerOf -- the real player in her party)
     auto invitingPlayer(const CCharEntity* PPawn) -> CCharEntity*
     {
         return zoneutils::GetChar(pawn::ordersOwnerOf(PPawn));
@@ -1269,19 +1271,23 @@ namespace pawn
             {
                 finder::noteLeft(charid);
             }
-            // A wild body's orders end with the party: nobody can reach her
-            // to lift a wait, a hunt or a retreat once she is out of it, or
-            // once no real player is left in it
+            // The party's orders -- a hunt, a retreat, a camp -- end with the
+            // party, his own alt's as a wild body's: out of it, or with no
+            // real player left in it, she follows nobody's (ordersOwnerOf).
+            // A wild body's wait ends too: nobody can reach her to lift it
             const bool nobodyReal = playerLeft && partyPlayer(PPawn.get()) == nullptr;
-            if (wild && (herself || nobodyReal) && !withHim)
+            if ((herself || nobodyReal) && !withHim && PController != nullptr)
             {
-                if (PController != nullptr)
+                if (wild)
                 {
                     PController->SetWaiting(false, false, "out of the party");
-                    PController->SetHunting(false);
-                    PController->SetRetreat(false);
-                    PController->SetStake(std::nullopt);
                 }
+                PController->SetHunting(false);
+                PController->SetRetreat(false);
+                PController->SetStake(std::nullopt);
+            }
+            if (wild && (herself || nobodyReal) && !withHim)
+            {
                 // A wild cardian's saved gambits are only ever a guest's --
                 // the player's edits while she was in the party (the user,
                 // 2026-09-14) -- so they end with it: her census job's
@@ -1414,7 +1420,10 @@ namespace pawn
         {
             return PPlayer->id;
         }
-        return summonerOf(PPawn->id);
+        // His body is out of the party for seconds at a zone line; the party
+        // is still his (playerByPawn ends with it, leftParty)
+        const auto it = playerByPawn.find(PPawn->id);
+        return it != playerByPawn.end() ? it->second : 0;
     }
 
     auto strategyName(const uint16 strategy) -> std::string_view
@@ -1644,6 +1653,21 @@ namespace pawn
         return ordersFor(ownerCharID).rules;
     }
 
+    void ensureOrdersTable()
+    {
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_orders` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`hunt_min` tinyint(3) unsigned NOT NULL DEFAULT '3', "
+                         "`hunt_max` tinyint(3) unsigned NOT NULL DEFAULT '5', "
+                         "`pull_first` tinyint(3) unsigned NOT NULL DEFAULT '1', "
+                         "`aggressive` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`links` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
+                         "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `links`");
+    }
+
     auto setHuntRule(CCharEntity* POwner, const uint8 rule, const int value) -> uint16
     {
         if (POwner == nullptr)
@@ -1676,17 +1700,21 @@ namespace pawn
         {
             r.links = value != 0;
         }
+        else if (rule == CL_HUNT_DIA_BIO && check(value, 0, 1))
+        {
+            r.preferBio = value != 0;
+        }
         else
         {
             return CL_S_MALFORMED;
         }
-        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links) VALUES (?, ?, ?, ?, ?, ?) "
+        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio) VALUES (?, ?, ?, ?, ?, ?, ?) "
                          "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
-                         "aggressive = VALUES(aggressive), links = VALUES(links)",
-                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0);
-        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}", POwner->getName(),
+                         "aggressive = VALUES(aggressive), links = VALUES(links), prefer_bio = VALUES(prefer_bio)",
+                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0, r.preferBio ? 1 : 0);
+        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}; {} preferred", POwner->getName(),
                     magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
-                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided");
+                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided", r.preferBio ? "Bio" : "Dia");
         return CL_S_OK;
     }
 
@@ -2001,24 +2029,52 @@ namespace pawn
         }
     } // namespace
 
-    void saveGambits(CCharEntity* PPawn)
+    namespace
     {
-        auto* PController = controllerOf(PPawn);
-        if (PController == nullptr)
+        void saveGambitSet(const CCharEntity* PChar, const uint8 setId, const CGambits& gambits, const bool master)
         {
-            return;
+            std::string blob;
+            for (const auto& row : gambits.Rows())
+            {
+                blob += row.enabled ? "1 " : "0 ";
+                blob += text::formatRow(row.gambit);
+                blob += '\n';
+            }
+            db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, ?, ?, ?) "
+                             "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
+                             PChar->id, setId, static_cast<uint8>(master ? 1 : 0), blob);
         }
-        std::string blob;
-        for (const auto& row : PController->Gambits().Rows())
+    } // namespace
+
+    void saveGambits(CCharEntity* PChar)
+    {
+        if (auto* PController = controllerOf(PChar); PController != nullptr)
         {
-            blob += row.enabled ? "1 " : "0 ";
-            blob += text::formatRow(row.gambit);
-            blob += '\n';
+            // Her own switch, never a maneuver's hold on it (OwnMaster)
+            saveGambitSet(PChar, 0, PController->Gambits(), PController->OwnMaster());
         }
-        // Her own switch, never a maneuver's hold on it (OwnMaster)
-        db::preparedStmt("INSERT INTO cardian_gambits (pawn_charid, set_id, master_on, set_rows) VALUES (?, 0, ?, ?) "
-                         "ON DUPLICATE KEY UPDATE master_on = VALUES(master_on), set_rows = VALUES(set_rows)",
-                         PPawn->id, static_cast<uint8>(PController->OwnMaster() ? 1 : 0), blob);
+        else if (auto* PLive = PChar != nullptr ? dynamic_cast<CLiveController*>(PChar->PAI->GetController()) : nullptr; PLive != nullptr)
+        {
+            saveGambitSet(PChar, kOwnClientSet, PLive->Gambits(), PLive->Gambits().MasterOn());
+        }
+    }
+
+    auto gambitsOf(CBattleEntity* PMember) -> CGambits*
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
+        {
+            return nullptr;
+        }
+        auto* PController = PMember->PAI->GetController();
+        if (auto* PPawn = dynamic_cast<CPawnController*>(PController); PPawn != nullptr)
+        {
+            return &PPawn->Gambits();
+        }
+        if (auto* PLive = dynamic_cast<CLiveController*>(PController); PLive != nullptr)
+        {
+            return &PLive->Gambits();
+        }
+        return nullptr;
     }
 
     bool loadSavedGambits(CCharEntity* PPawn)
@@ -2028,15 +2084,26 @@ namespace pawn
         {
             return false;
         }
-        auto*      PGambits = &PController->Gambits();
-        const auto rset     = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", PPawn->id);
-        if (!rset || !rset->next())
+        const auto master = loadGambitSet(PPawn, 0, PController->Gambits());
+        if (!master.has_value())
         {
             return false;
         }
+        PController->SetOwnMaster(*master);
+        return true;
+    }
+
+    auto loadGambitSet(CCharEntity* PChar, const uint8 setId, CGambits& gambits) -> std::optional<bool>
+    {
+        auto*      PGambits = &gambits;
+        const auto rset     = db::preparedStmt("SELECT master_on, set_rows FROM cardian_gambits WHERE pawn_charid = ? AND set_id = ?", PChar->id, setId);
+        if (!rset || !rset->next())
+        {
+            return std::nullopt;
+        }
 
         PGambits->RemoveAllGambits();
-        PController->SetOwnMaster(rset->get<uint8>("master_on") != 0);
+        const bool master = rset->get<uint8>("master_on") != 0;
 
         const auto  blob  = rset->get<std::string>("set_rows");
         std::size_t count = 0;
@@ -2069,8 +2136,9 @@ namespace pawn
                 ++bad;
             }
         }
-        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{})", PPawn->getName(), count, bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
-        return true;
+        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{}{})", PChar->getName(), count, setId == kOwnClientSet ? ", his own set" : "",
+                    bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
+        return master;
     }
 
     void forgetGambits(CCharEntity* PPawn)
@@ -2527,9 +2595,9 @@ namespace pawn
         PChar->SpawnPETList.clear();
         PChar->SpawnTRUSTList.clear();
 
-        // Back to a player's action surface: the stock controller, no
-        // server-side pathing, stock speed
-        PChar->PAI->SetController(std::make_unique<CPlayerController>(PChar.get()));
+        // Back to a player's action surface: the stock controller with his
+        // own gambits (live_controller.h), no server-side pathing, stock speed
+        PChar->PAI->SetController(std::make_unique<CLiveController>(PChar.get()));
         PChar->PAI->PathFind.reset();
         PChar->baseSpeed = settings::get<uint8>("map.BASE_SPEED");
         PChar->UpdateSpeed();
@@ -2593,9 +2661,14 @@ namespace pawn
         const auto  about   = PAbout != nullptr && PAbout != PPawn ? fmt::format(" (about {})", PAbout->getName()) : std::string();
         ShowInfoFmt("pawn: {} is told {}{}", PPawn->getName(), said, about);
 
-        // A skill rising is the game's word after an action that worked, not a refusal
-        const auto msg = static_cast<MsgBasic>(message);
-        if (msg == MsgBasic::SkillGain || msg == MsgBasic::SkillLevelUp)
+        // What says something happened is not a refusal: a skill rising, a
+        // mob defeated (a party member's kill just after her ordered Cure),
+        // an effect wearing off -- 206, "<target>'s <effect> effect wears
+        // off", as when the weapon skill just ordered spends her Sneak Attack
+        // and Boost (MsgBasic names no 206)
+        constexpr uint16 kEffectWearsOff = 206;
+        const auto       msg             = static_cast<MsgBasic>(message);
+        if (msg == MsgBasic::SkillGain || msg == MsgBasic::SkillLevelUp || msg == MsgBasic::DefeatsTarget || message == kEffectWearsOff)
         {
             return;
         }

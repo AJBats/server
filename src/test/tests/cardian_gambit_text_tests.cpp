@@ -126,7 +126,7 @@ TEST_CASE("row grammar: retired rest actions cannot return through numeric impor
     REQUIRE_FALSE(parseRow("0|0:0|100:10:0|0").has_value());
     REQUIRE_FALSE(parseRow("0|0:0|100:6:1+100:8:1|0").has_value());
     REQUIRE(parseRow("0|0:0|100:6:1|0").has_value());
-    REQUIRE(parseRow("0|0:0|100:11:1|0").has_value());
+    REQUIRE(parseRow("0|0:0|100:13:1|0").has_value());
     REQUIRE(parseRow("1|1:50|2:2:8|0").has_value());
     REQUIRE(parseRow("1|1:50|2:2:10|0").has_value());
 }
@@ -137,6 +137,36 @@ TEST_CASE("row grammar: the retired melee mage switch cannot return", "[cardian]
     REQUIRE_FALSE(parseRow("0|0:0|100:12:0|0").has_value());
     REQUIRE_FALSE(parseRow("0|0:0|100:6:1+100:12:1|0").has_value());
     REQUIRE(parseRow("1|1:50|2:2:12|0").has_value()); // spell 12 is a spell, not the behaviour
+}
+
+TEST_CASE("row grammar: the retired Role row cannot return, whatever it named", "[cardian][gambits]")
+{
+    // The tactician line's row (behaviour 11: Support Mage 1, Tank 2, and
+    // Damage 3 before it) is retired with the line (RESEARCH §17.13):
+    // refused saved or imported, so a list that carried one loads without
+    // it and the mark on her rows carries what the line once did
+    for (const auto value : { 0, 1, 2, 3 })
+    {
+        const auto spec = "0|0:0|100:11:" + std::to_string(value) + "|0";
+        INFO("row " << spec);
+        REQUIRE_FALSE(parseRow(spec).has_value());
+    }
+    REQUIRE_FALSE(parseRow("0|0:0|100:6:1+100:11:1|0").has_value());
+    REQUIRE(parseRow("0|0:0|100:4:3|0").has_value()); // seat 3 of the formation is a seat, not the row
+    CHECK(pawn::isRetiredBehavior(11));
+}
+
+TEST_CASE("row grammar: the tactician's mark is a condition the grammar keeps beside the row's own", "[cardian][gambits]")
+{
+    // A marked row (RESEARCH §17.13): the mark alone, or AND-ed with a gate
+    // of the player's, round-trips as written
+    for (const auto* spec : { "1|101:0|2:0:1|0", "1|1:45&101:0|2:0:1|0", "2|101:0|3:2:35|0", "101|101:0|0:0:0|0" })
+    {
+        INFO("row " << spec);
+        const auto g = parseRow(spec);
+        REQUIRE(g.has_value());
+        CHECK(formatRow(*g) == spec);
+    }
 }
 
 TEST_CASE("row grammar: Avoid links is its own switch, beside Avoid aggro", "[cardian][gambits][avoid]")
@@ -305,8 +335,9 @@ TEST_CASE("row pairing: every other row stands as it did", "[cardian][gambits][e
 {
     CHECK(pairing("1|1:50|2:0:1|0").empty());      // Ally: HP < 50% -> Cure (best)
     CHECK(pairing("0|0:0|100:6:1|0").empty());     // Self -> Rest with the player
-    CHECK(pairing("0|0:0|100:11:1|0").empty());    // Self -> Role: Support Mage
-    CHECK(pairing("1|101:0|2:0:1|0").empty());     // Ally: tactician's choice -> Cure (best)
+    CHECK(pairing("0|0:0|100:4:1|0").empty());     // Self -> Formation: lead
+    CHECK(pairing("1|101:0|2:0:1|0").empty());     // * Ally -> Cure (best)
+    CHECK(pairing("101|101:0|0:0:0|0").empty());   // * Foe: targeted by ally -> Attack: the mark is no clock
     CHECK(pairing("2|2:60|4:0:0|0").empty());      // Foe: HP >= 60% -> Weapon skill (best)
     CHECK(pairing("2|0:0|1:0:0|0").empty());       // Foe: any -> Ranged Attack
 }

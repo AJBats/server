@@ -90,6 +90,16 @@ namespace cardian::cure
         return hp - target.damageRate * (horizon - at) - target.biggest;
     }
 
+    // A member as first aid weighs her with a floor (a fraction of her max
+    // HP): the biggest hit planned for is at least that much, so below the
+    // floor she is in danger whatever the record says, and first aid lifts
+    // her back above it
+    inline auto withFloor(Target target, const double floor) -> Target
+    {
+        target.biggest = std::max(target.biggest, target.maximum * floor);
+        return target;
+    }
+
     inline auto choose(std::span<const Option> measured, std::span<const Target> targets,
                        std::span<const Choice> previous = {}) -> std::vector<Choice>
     {

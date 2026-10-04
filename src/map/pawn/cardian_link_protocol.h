@@ -14,7 +14,8 @@
 //     type number is never reused. The high byte is the area: 0x00 the link
 //     itself, 0x01 a cardian's state, 0x02 items and gear, 0x03 gambits, 0x04
 //     orders and control, 0x05 the pause and the server's other notices, 0x06
-//     the party finder, 0x07 the conquest exchange, 0x08 the Auction House.
+//     the party finder, 0x07 the conquest exchange, 0x08 the Auction House,
+//     0x09 the Mog House.
 //   - A request carries req != 0. Every answer echoes req with CL_F_REPLY; all
 //     but the last also carry CL_F_MORE. The last answer is the request's own
 //     message and carries the outcome in status. req 0 is one-way: nobody answers.
@@ -33,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 32: ROLE_LOCKED, and a GAMBIT_ROW's on
+// compatible, the user, 2026-09-14). 35: the Mog House, JOB_CHANGE, the
+// roster's CL_MEMBER_BY_MOG_HOUSE, and JOBS' unlocked; 34: the orders' Dia or Bio (ORDERS'
+// diaBio, CL_HUNT_DIA_BIO); 33: the gambit messages name the player
+// himself too (his own set), and CL_GS_CLIENT; 32: ROLE_LOCKED, and a GAMBIT_ROW's on
 // is the row as it runs; 31: a GAMBIT_ROW says whose it is, her
 // own or lent by her party role (origin, lender); 30: a PARTY_ROLE carries the member's
 // numbers and gear, and CL_ROLE_AUTO takes a choice back; 29: the party's roles,
@@ -72,7 +76,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 32 };
+enum { CL_PROTOCOL = 35 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -150,7 +154,7 @@ enum
     CL_S_TOO_FAR           = 0x0132, // beyond the rescue's reach: the answer's away and range
     CL_S_COOLING_DOWN      = 0x0133, // a cooldown runs: the answer says how long (RESCUE's cooldownLeft, SHOUT's waitMs)
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
-    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target
+    CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target, or holds her position out of a weapon skill's reach
     CL_S_CANNOT_RECOVER    = 0x0136, // resting, she cannot recover right now (a poison, an avatar out)
 
     // The pause button
@@ -202,7 +206,7 @@ enum
     CL_S_NO_SUCH_ROW       = 0x0180,
     CL_S_ATTACK_ALONE      = 0x0181, // Attack goes alone on its row
     CL_S_ATTACK_ON_CLOCK   = 0x0182, // an Attack row cannot wait on a timer or a chance
-    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: shown, edited nowhere
+    CL_S_ROLE_LOCKED       = 0x0183, // the row is her party role's, pinned while she holds the role: its content edited nowhere
 
     // His cardians, and the party finder
     CL_S_CANNOT_SPAWN      = 0x0190, // not his, online already, out already, or pawns switched off
@@ -233,6 +237,14 @@ enum
     CL_S_TOO_FEW_POINTS    = 0x01B6, // her conquest points fall short: the answer's have and need
     CL_S_RANK_TOO_LOW      = 0x01B7, // her rank is below the item's: the answer's have and need
     CL_S_GUARD_REFUSED     = 0x01B8, // the guard's own rules refused it, for none of the reasons above
+
+    // The Mog House (KO'd: CL_S_KNOCKED_OUT; an event, hers or his: CL_S_IN_EVENT)
+    CL_S_NO_MOG_HOUSE      = 0x01C0, // the player is neither in his Mog House nor by a Nomad Moogle
+    CL_S_JOB_LOCKED        = 0x01C1, // she has not unlocked that job
+    CL_S_NO_SUPPORT_JOBS   = 0x01C2, // she has not unlocked support jobs
+    CL_S_SAME_JOB          = 0x01C3, // the support job asked for is her main job
+    CL_S_IN_A_FIGHT        = 0x01C4, // not while she fights
+    CL_S_FAR_FROM_MOOGLE   = 0x01C5, // she stands beyond 20 yalms of the Nomad Moogle he stands by
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -249,7 +261,7 @@ enum
     CL_AK_ATTACK      = 6,  // the command window's Attack: fight the target
     CL_AK_DISENGAGE   = 7,
     CL_AK_MOVE        = 8,  // a paused maneuver's order: walk the route the ring laid
-    CL_AK_MOVE_WAIT   = 9,  // the same, then wait at its end
+    CL_AK_MOVE_WAIT   = 9,  // the same, then hold position at its end
     CL_AK_REST        = 10, // id: rest until this percent of HP and MP
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
@@ -414,10 +426,11 @@ typedef struct cl_roster
 
 enum
 {
-    CL_MEMBER_WAITING    = 0x01, // holding her ground, ordered or left behind by magic
-    CL_MEMBER_OWNED      = 0x02, // his to manage; else a wild cardian in his party, orders only
-    CL_MEMBER_BY_COUNTER = 0x04, // she stands by the auction counter he stands at
-    CL_MEMBER_BY_GUARD   = 0x08, // a gate guard stands within his reach: the conquest exchange sells to her
+    CL_MEMBER_WAITING      = 0x01, // holding her ground, ordered or left behind by magic
+    CL_MEMBER_OWNED        = 0x02, // his to manage; else a wild cardian in his party, orders only
+    CL_MEMBER_BY_COUNTER   = 0x04, // she stands by the auction counter he stands at
+    CL_MEMBER_BY_GUARD     = 0x08, // a gate guard stands within his reach: the conquest exchange sells to her
+    CL_MEMBER_BY_MOG_HOUSE = 0x10, // he is in his Mog House, she in that city, or by a Nomad Moogle, she within 20 yalms of it: her jobs can be changed
 };
 
 // One cardian as the roster shows her: an answer to ROSTER and SYNC
@@ -536,12 +549,14 @@ typedef struct cl_profile
     char      homeName[32]; // answered: her home point's zone, for people
 } cl_profile;
 
-// Her level in every job, by job id (0 for a job she has none in)
+// Her level in every job, by job id (0 for a job she has none in), and the
+// jobs she has unlocked: a bit per job id, bit 0 her support jobs
 typedef struct cl_jobs
 {
     cl_header h;
     uint32_t  cardian;    // charid
     uint8_t   levels[24]; // answered
+    uint32_t  unlocked;   // answered
 } cl_jobs;
 
 enum
@@ -733,10 +748,13 @@ typedef struct cl_give_use
 // ---- 0x03xx: gambits -------------------------------------------------------
 //
 // A cardian's gambit rows (M3.85, the gambit editor) and the pickers'
-// catalogue, for a cardian he commands. A row crosses as the gambit
-// engine's own fields; its label is for people. Every edit is answered by
-// her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS (CL_F_MORE)
-// -- and then its outcome, refused or not, so the editor never keeps a guess.
+// catalogue, for a cardian he commands -- or for himself, when `cardian` is
+// his own charid: his own set, run by his hands while he plays (protocol 33;
+// no behaviour in his catalogue). A row crosses as
+// the gambit engine's own fields; its label is for people. Every edit is
+// answered by her rows as they now stand -- each a GAMBIT_ROW, then GAMBITS
+// (CL_F_MORE) -- and then its outcome, refused or not, so the editor never
+// keeps a guess.
 
 enum
 {
@@ -788,22 +806,25 @@ typedef struct cl_gambit
     cl_gambit_action    actions[8];
 } cl_gambit;
 
+// A row's meaning (RESEARCH 17.13): a plain row is an order; a row carrying
+// the tactician's mark (the Tactician's choice condition) is a tool its
+// judgement uses, or struck out. 1 and 5 were the tactician line's, retired
+// with it and never sent
 enum
 {
-    CL_GS_ORDER     = 0, // an order, as every row above her tactician line is
-    CL_GS_LINE      = 1, // her Support Mage or Tank row: the line itself
-    CL_GS_ALLOWS    = 2, // below the line: something her tactician may use
-    CL_GS_NOT_BELOW = 3, // below the line, and nothing her tactician uses: struck out
-    CL_GS_CLOCK     = 4, // below the line on a timer or a chance: struck out
-    CL_GS_NO_CHOICE = 5, // Tactician's choice with no tactician above it: struck out
-    CL_GS_MISFIT    = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_ORDER        = 0, // an order
+    CL_GS_TOOL         = 2, // marked: something her tactician may use
+    CL_GS_NO_JUDGEMENT = 3, // marked, and nothing her tactician has a judgement for: struck out
+    CL_GS_CLOCK        = 4, // marked, on a timer or a chance: struck out
+    CL_GS_MISFIT       = 6, // an action that cannot be aimed at the side its condition names: struck out
+    CL_GS_CLIENT       = 7, // a behaviour row in the player's own list: only a cardian runs one, struck out
 };
 
 enum
 {
     CL_GO_OWN  = 0, // her own row
     CL_GO_LENT = 1, // a row her party role lends her (RESEARCH §17): shown, never edited
-    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, pinned; hers comes back when the role goes
+    CL_GO_BOTH = 2, // the role's row standing in the place of one of hers that meant the same: shown under her number, its content pinned, moved as hers; hers comes back when the role goes
 };
 
 // One of her rows, as the editor shows it: an answer to GAMBITS and to every
@@ -1046,7 +1067,7 @@ enum
     CL_MV_BEGIN     = 0, // he takes the wheel: her maneuver begins, live
     CL_MV_OFF       = 1, // it ends
     CL_MV_MOVE      = 2, // a paused maneuver's order: walk the route the ring laid
-    CL_MV_MOVE_WAIT = 3, // the same, then wait at its end
+    CL_MV_MOVE_WAIT = 3, // the same, then hold position at its end
     CL_MV_REST      = 4, // rest until percent of HP and MP
 };
 
@@ -1087,7 +1108,7 @@ typedef struct cl_orders
     uint8_t   aggressive; // answered: 1 when aggressive company is allowed
     uint8_t   links;      // answered: 1 when links are allowed
     uint8_t   staked;     // answered: 1 while a camp stands
-    uint8_t   spare;
+    uint8_t   diaBio;     // answered: which of the two, which block each other, her tactician prefers: 0 Dia, 1 Bio
     uint16_t  stakeZone;  // answered: the camp's zone id
 } cl_orders;
 
@@ -1112,6 +1133,7 @@ enum
     CL_HUNT_PULL       = 2, // value: 0 nearest, 1 easiest, 2 toughest
     CL_HUNT_AGGRESSIVE = 3, // value: 0 or 1
     CL_HUNT_LINKS      = 4, // value: 0 or 1
+    CL_HUNT_DIA_BIO    = 5, // value: 0 Dia, 1 Bio -- not a hunt rule but an order kept with them
 };
 
 typedef struct cl_set_hunt
@@ -1160,13 +1182,13 @@ typedef struct cl_engage
     uint16_t  spare;
 } cl_engage;
 
-// Wait here, or follow him: from another zone, following is a trek to his.
+// Hold position, or follow him: from another zone, following is a trek to his.
 // Answered by the outcome alone; her roster line says it next time it is read.
 typedef struct cl_wait
 {
     cl_header h;
     uint32_t  cardian; // charid
-    uint8_t   on;      // 1 wait here, 0 follow
+    uint8_t   on;      // 1 hold position, 0 follow
     uint8_t   spare[3];
 } cl_wait;
 
@@ -1202,8 +1224,9 @@ typedef struct cl_cancel
 
 // The command window: one action now, on a target. An order she cannot start
 // at once -- busy, on recast, out of reach, the game paused -- is held as her
-// one queued order within cardian.ORDER_GRACE (QUEUE tells it); one that could
-// not start in that time is refused CL_S_TOO_SOON. Answered by the outcome.
+// one queued order within cardian.ORDER_GRACE, the server's 2.5 s after a spell
+// added on (QUEUE tells it); one that could not start in that time is refused
+// CL_S_TOO_SOON. Answered by the outcome.
 typedef struct cl_do
 {
     cl_header h;
@@ -1756,5 +1779,31 @@ typedef struct cl_ah_bid
     uint16_t  notWorn;   // answered with equip and equipped 0: why (CL_S_*)
     uint16_t  spare2;
 } cl_ah_bid;
+
+// ---- 0x09xx: the Mog House -------------------------------------------------
+//
+// A cardian cannot walk into the player's Mog House, but what the Mog House
+// does for her is done while he stands in his own, or by a Nomad Moogle (the
+// roster's CL_MEMBER_BY_MOG_HOUSE), for a cardian of his to manage nearby:
+// anywhere in the city of his Mog House (else CL_S_NOT_IN_CITY), within 20
+// yalms of the moogle (else CL_S_OTHER_ZONE or CL_S_FAR_FROM_MOOGLE). Her
+// jobs change by the game's own job change (packet 0x100).
+
+enum
+{
+    CL_T_JOB_CHANGE = 0x0901,
+};
+
+// Change her main job, her support job, or both; 0 keeps the one she has.
+// Answered with her roster line as she stands now (MEMBER, CL_F_MORE) when
+// the change is made, then this
+typedef struct cl_job_change
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   mainJob; // a job id, or 0
+    uint8_t   subJob;  // a job id, or 0
+    uint16_t  spare;
+} cl_job_change;
 
 #pragma pack(pop)

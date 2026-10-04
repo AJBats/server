@@ -23,7 +23,10 @@
 
 #include "conveyor.h"
 #include "fight_log.h"
+#include "pawn.h"
+#include "pawn_spellbook.h"
 #include "spell_bank.h"
+#include "tactician_line.h"
 #include "tactics.h"
 
 #include "common/logging.h"
@@ -33,6 +36,7 @@
 #include "ipc_client.h"
 #include "party.h"
 #include "spell.h"
+#include "status_effect_container.h"
 #include "utils/zoneutils.h"
 
 #include <algorithm>
@@ -87,11 +91,82 @@ namespace pawn::tactics::role
         {
             return PMember != nullptr && PMember->objtype == TYPE_PC && !PMember->isDead() && PMember->loc.zone == PHolder->loc.zone;
         }
+
+        // Dia and Diaga, or Bio: the two sides of the party's Dia or Bio
+        // order, which block each other on a mob
+        auto isDiaSide(const uint32 family) -> bool
+        {
+            return family == SPELLFAMILY_DIA || family == SPELLFAMILY_DIAGA;
+        }
+
+        // The party's Dia or Bio order (pawn.h HuntRules::preferBio; the
+        // user, 2026-10-03): her tactician casts the one preferred while
+        // anyone it can ask is able to -- a member in the zone and alive,
+        // with a marked row admitting it on the mob, who has learned it and
+        // whose jobs and level allow it (CSpellBook::Eligible; her MP or its
+        // recast only a pause) -- and the other once nobody is. The
+        // preferred one up on the mob already, whoever cast it, is the order
+        // kept: the other is not cast over it (Bio I would wipe a Dia I).
+        // Plain rows ignore the order and race through the conveyor's one
+        // Dia-or-Bio need
+        auto setAsideByOrder(CCharEntity* PHolder, const uint16 spell, CMobEntity* PMob, const Conveyor::Scope& scope) -> bool
+        {
+            auto* PSpell = spell::GetSpell(static_cast<SpellID>(spell));
+            if (PSpell == nullptr)
+            {
+                return false;
+            }
+            const auto family = static_cast<uint32>(PSpell->getSpellFamily());
+            const bool dia    = isDiaSide(family);
+            const bool bio    = family == SPELLFAMILY_BIO;
+            if (!dia && !bio)
+            {
+                return false;
+            }
+            const bool preferBio = pawn::huntRulesOf(pawn::ordersOwnerOf(PHolder)).preferBio;
+            if (bio == preferBio)
+            {
+                return false;
+            }
+            if (PMob->StatusEffectContainer->HasStatusEffect(preferBio ? xi::StatusEffect::Bio : xi::StatusEffect::Dia))
+            {
+                return true;
+            }
+            for (auto* PMember : scope.members)
+            {
+                if (PMember == nullptr || PMember->isDead() || PMember->loc.zone != PMob->loc.zone)
+                {
+                    continue;
+                }
+                for (const auto& debuff : cardian::tactician::kPricedDebuffs)
+                {
+                    auto* PWanted = spell::GetSpell(static_cast<SpellID>(debuff.id));
+                    if (PWanted == nullptr)
+                    {
+                        continue;
+                    }
+                    const auto wantedFamily = static_cast<uint32>(PWanted->getSpellFamily());
+                    const bool wanted       = preferBio ? wantedFamily == SPELLFAMILY_BIO : isDiaSide(wantedFamily);
+                    if (wanted && CSpellBook::Eligible(PMember, PWanted) && admittedBy(PMember, static_cast<SpellID>(debuff.id), PMob).has_value())
+                    {
+                        if (debug())
+                        {
+                            ShowInfoFmt("tactics: {} sets {} aside on {}: the party prefers {}, and {} can cast {}", PHolder->getName(), PSpell->getName(), PMob->getName(),
+                                        preferBio ? "Bio" : "Dia", PMember->getName(), PWanted->getName());
+                        }
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
     } // namespace
 
     void sayParty(CCharEntity* PChar, const std::string& text)
     {
-        if (PChar->PParty == nullptr)
+        // A played character's party chat is his own: the tactician never
+        // speaks in his name
+        if (PChar->PParty == nullptr || PChar->PSession != nullptr)
         {
             return;
         }
@@ -170,23 +245,44 @@ namespace pawn::tactics::role
             {
                 return admittedBy(PHolder, id, PMob).has_value();
             };
-            for (const auto& p : bank::pricesFor(r, spotAverages(r.zone, r.mobName), log.exchange(), scope.members, PHolder, PMob, admitted))
+            const auto feed = [&](const cardian::tactics::DebuffPrice& p, const std::string& by)
             {
-                const auto by = admittedBy(PHolder, static_cast<SpellID>(p.id), PMob);
-                if (!p.go() || !by.has_value() || !bank::usable(PHolder, static_cast<SpellID>(p.id)))
-                {
-                    continue;
-                }
                 conveyor.feed(Conveyor::keyFor(spell::GetSpell(static_cast<SpellID>(p.id)), PMob->id, PHolder->id),
                               Request{ .source     = Source::Role,
                                        .caster     = PHolder->id,
-                                       .rowId      = *by,
+                                       .rowId      = by,
                                        .spell      = p.id,
                                        .fedAt      = now,
                                        .score      = p.noData ? 0.0 : p.mp - p.mpWorth,
                                        .landChance = p.landChance,
                                        .why        = fmt::format("worth {:.0f} MP against {}", p.mpWorth, p.mp) },
                               scope);
+            };
+            // Dia, Diaga and Bio share one need on the mob, where her
+            // proposals would replace one another in the price list's order:
+            // she proposes the one that is worth the most past its cost
+            std::optional<std::pair<cardian::tactics::DebuffPrice, std::string>> diaOrBio;
+            for (const auto& p : bank::pricesFor(r, spotAverages(r.zone, r.mobName), log.exchange(), scope.members, PHolder, PMob, admitted))
+            {
+                const auto by = admittedBy(PHolder, static_cast<SpellID>(p.id), PMob);
+                if (!p.go() || !by.has_value() || !bank::usable(PHolder, static_cast<SpellID>(p.id)) || setAsideByOrder(PHolder, p.id, PMob, scope))
+                {
+                    continue;
+                }
+                const auto key = Conveyor::keyFor(spell::GetSpell(static_cast<SpellID>(p.id)), PMob->id, PHolder->id);
+                if (key.kind == NeedKind::Status && key.arg == cardian::tactics::kDiaOrBio)
+                {
+                    if (!diaOrBio.has_value() || p.mpWorth - p.mp > diaOrBio->first.mpWorth - diaOrBio->first.mp)
+                    {
+                        diaOrBio.emplace(p, *by);
+                    }
+                    continue;
+                }
+                feed(p, *by);
+            }
+            if (diaOrBio.has_value())
+            {
+                feed(diaOrBio->first, diaOrBio->second);
             }
         }
     }

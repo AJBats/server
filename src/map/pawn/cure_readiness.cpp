@@ -1,7 +1,9 @@
 // Cardian: observation only. No standing, walking, casting, or request feeding.
 #include "cure_readiness.h"
 
-#include "pawn_controller.h"
+#include "pawn.h"
+#include "pawn_gambits.h"
+#include "ai/controllers/player_controller.h"
 #include "fight_log.h"
 #include "tactics.h"
 #include "ai/ai_container.h"
@@ -26,9 +28,13 @@ namespace pawn::tactics
 
         // The active magic state's resolved timing includes its actual cast
         // modifiers and Quick Magic roll. Never call its mutating calculator.
-        auto busyUntil(CCharEntity* body, CPawnController* control, const double now) -> double
+        auto busyUntil(CCharEntity* body, pawn::GambitHost& host, const double now) -> double
         {
-            double until = seconds(control->getLastSpellFinishedTime()) + 2.5;
+            // Every body whose rows run has a player controller under it
+            // (a cardian's and a played character's alike): the game's wait
+            // after her last cast
+            auto*  control = dynamic_cast<CPlayerController*>(body->PAI->GetController());
+            double until   = control != nullptr ? seconds(control->getLastSpellFinishedTime()) + 2.5 : 0.0;
             const auto* state = body->PAI->GetCurrentState();
             if (const auto* magic = dynamic_cast<const CMagicState*>(state))
             {
@@ -50,7 +56,7 @@ namespace pawn::tactics
             {
                 until = std::max(until, seconds(ws->GetStartTime()) + duration(ws->GetSkill()->getAnimationTime()));
             }
-            else if (control->Acting())
+            else if (host.Acting())
             {
                 return cardian::cure::unavailable; // ranged attack has no exposed finish estimate
             }
@@ -65,7 +71,7 @@ namespace pawn::tactics
         {
             auto* body = dynamic_cast<CCharEntity*>(member);
             if (body == nullptr || body->isDead() || body->PAI == nullptr) continue;
-            auto* control = dynamic_cast<CPawnController*>(body->PAI->GetController());
+            auto*       gambits = pawn::gambitsOf(body);
             const auto* casting = dynamic_cast<const CMagicState*>(body->PAI->GetCurrentState());
             // Observe actual player and pawn Cures already in flight too.
             if (casting != nullptr && !casting->IsCompleted() && casting->GetSpell()->getSpellFamily() == SPELLFAMILY_CURE)
@@ -80,12 +86,15 @@ namespace pawn::tactics
                         {0.0, std::max(0.0, seconds(casting->GetStartTime()) + duration(casting->GetCastTime()) - now)}, 0.0, true});
                 }
             }
-            if (control == nullptr || !scope.holders.contains(body->id) || !control->Gambits().MasterOn()) continue;
+            if (gambits == nullptr || !scope.holders.contains(body->id) || !gambits->MasterOn()) continue;
 
-            const double busy = busyUntil(body, control, now);
-            const double stand = control->RestReadyIn(now);
-            const double wakeCost = control->RestInterruptionCost();
-            const bool blocked = control->HasQueuedOrder() || body->StatusEffectContainer->HasPreventActionEffect() ||
+            auto&        host     = gambits->Host();
+            const double busy     = busyUntil(body, host, now);
+            const double stand    = host.RestReadyIn(now);
+            const double wakeCost = host.RestInterruptionCost();
+            // Moving, a played character starts no cast until he has stood
+            // still, and nobody knows when that will be
+            const bool blocked = host.HasQueuedOrder() || !host.StandsToCast() || body->StatusEffectContainer->HasPreventActionEffect() ||
                 body->StatusEffectContainer->HasStatusEffect({xi::StatusEffect::Silence, xi::StatusEffect::Mute});
             // MP is charged when an active cast lands. Reserve that cost
             // before advertising a follow-up Cure we cannot actually afford.
@@ -120,7 +129,9 @@ namespace pawn::tactics
                     const double gap = std::max(0.0, static_cast<double>(distance(body->loc.p, target->loc.p) - bank::castRange(body, spell, target)));
                     // Path movement is a speed/40 step per 400-ms map tick.
                     // This is straight-line travel, not a navmesh/LOS promise.
-                    const double walk = gap == 0.0 ? 0.0 : body->GetSpeed() > 0 &&
+                    // Nothing walks a played character: out of reach, his
+                    // cure is not on offer
+                    const double walk = gap == 0.0 ? 0.0 : !host.OwnClient() && body->GetSpeed() > 0 &&
                         !body->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Bind) ?
                         (gap + 0.5) / (body->GetSpeed() / 16.0) : cardian::cure::unavailable;
                     // Future casts use base duration: no Quick Magic roll or

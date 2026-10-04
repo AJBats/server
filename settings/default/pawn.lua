@@ -332,6 +332,14 @@ xi.settings.pawn =
     -- playtest variable (RESEARCH §12.12 item 2).
     TACTICS_REQUEST_LIFE = 4,
 
+    -- First aid's floor, in percent of a member's max HP: in a fight, a
+    -- member below it is in danger whatever the hits on record say, as if
+    -- the next hit could take this much (the user, 2026-10-03: no game of
+    -- chicken with death). The danger estimate knows only what it has seen;
+    -- the floor covers a TP move, a crit or a link it has not. 0 turns it
+    -- off. Read once, at boot.
+    TACTICS_FIRST_AID_FLOOR = 25,
+
     -- The perimeter (RESEARCH §12.15): a Support Mage attends a fight that
     -- no Attack row of hers claims, standing outside the mob's TP reach,
     -- read off its own skill list, plus this many yalms.

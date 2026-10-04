@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include "bank_math.h"
+#include "fight_math.h"
+
 #include "common/cbasetypes.h"
 #include "common/timer.h"
 
@@ -40,8 +43,8 @@ namespace pawn::tactics
     // alliance when there is one, found by the pointers the game already
     // holds. It owns the fight log; the MP bank, the conveyor and the rest
     // policy come in their slices. Pull-ticked: every cardian's controller
-    // asks each tick, KO'd or not, and the first to ask advances the
-    // party's picture.
+    // and every played character's asks each tick, KO'd or not, and the
+    // first to ask advances the party's picture.
     //
     // Slice 1 watches only. A scope with no real player in it (a world camp
     // of its own) is watched under pawn.TACTICS_WORLD alone.
@@ -71,25 +74,35 @@ namespace pawn::tactics
     // characters first, the zone-coded mob lookup for the rest
     auto entity(CCharEntity* PPawn, uint32 id) -> CBattleEntity*;
 
-    // Her Role row says Support Mage (a real player never does)
-    auto supportMage(CBattleEntity* PMember) -> bool;
+    // Her rows offer the tactician spells for the party -- a marked Cure,
+    // -na or Enfeeble row that is on (a real player's never do)
+    auto offersSpells(CBattleEntity* PMember) -> bool;
+    // Her rows offer the tactician her rest: a marked Self -> Rest row that
+    // is on, the MP pacing's handle (RESEARCH §17.13)
+    auto offersRest(CBattleEntity* PMember) -> bool;
+    // The nukes her tactician may cast for her: a cardian's learned ones at
+    // her jobs and level, while a marked Damage spell (any) row of hers runs
+    // (CGambits::OfferedNukes); none for anyone else
+    auto nukesOf(CBattleEntity* PMember) -> std::vector<SpellID>;
     // She attends the fight on this mob from the perimeter rather than
-    // fighting it: a Support Mage no Attack row of hers sends onto it
+    // fighting it: a mage with spells to offer, no Attack row of hers
+    // sending her onto it
     // (CPawnController::AttendsFight; a real player never does)
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool;
 
-    // Her allow-list (tactician_line.h; CGambits::Admits): the id of the row
-    // below her Support Mage row that lets her tactician cast this spell on
-    // this target now. Nothing when no row does, or she is no cardian. Every
+    // Her tools (tactician_line.h; CGambits::Admits): the id of the marked
+    // row that lets her tactician cast this spell on this target now.
+    // Nothing when no row does, or she is no cardian. Every
     // cast her tactician chooses asks it first: without a row it is not hers
     // to cast, emergency aid included
     auto admittedBy(CBattleEntity* PHolder, SpellID spell, CBattleEntity* PTarget) -> std::optional<std::string>;
-    // Whether a row below her line names this spell at all (CGambits::AllowsSpell)
+    // Whether a marked row of hers names this spell at all (CGambits::AllowsSpell)
     auto allows(CBattleEntity* PHolder, SpellID spell) -> bool;
 
     // The conveyor's doors (RESEARCH §12.12 item 2; conveyor.h), for the
-    // gambit engine. A scope no tactician watches has no conveyor, and its
-    // rows cast as they always have
+    // gambit engine. A scope no tactician watches -- none made, or none
+    // ticked in the last 2 s -- has no conveyor, and its rows cast as they
+    // always have
     auto has(const CCharEntity* PPawn) -> bool;
 
     // A spell row whose condition holds, fed to her scope's conveyor: a
@@ -124,8 +137,20 @@ namespace pawn::tactics
     auto assignment(CCharEntity* PPawn, bool engaged) -> std::optional<Assignment>;
 
     // Emergency aid is measured/selected centrally in the party tick;
-    // the Support Mage's ordinary needs are fed on her think.
+    // a casting mage's ordinary needs are fed on her think.
     void roleThink(CCharEntity* PPawn, bool engaged);
+
+    // Her nukes priced on this mob now (RESEARCH §17.13, the Black Mage;
+    // spell_bank.h priceNukes), in the order given, a spell the bank cannot
+    // price left out. Nothing without a tactician, or before the party's
+    // fight on the mob is open: a first nuke on a mob nobody has struck is
+    // a pull. No prices when the formula could not answer (the bank logs why)
+    auto nukePrices(CCharEntity* PPawn, CBattleEntity* PTarget, const std::vector<SpellID>& spells) -> std::optional<cardian::tactics::NukePricing>;
+
+    // How her Sneak Attack went on the fight with that mob (before her
+    // weapon skill, naked, or ready and unused), and how long it stood
+    // ready: booked for the fight's close line
+    void noteSneakAttack(CCharEntity* PPawn, uint32 mobId, cardian::tactics::SneakUse use, double seconds);
 
     // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h
     // has the rules): the mob to Provoke now and why, or none and why not,
