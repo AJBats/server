@@ -719,6 +719,7 @@ namespace cardian::tactics
         Running seconds;
         Running cureMp;
         Running biggestHit;
+        double  worstHit = 0.0; // the biggest hit any of its fights here has landed: the risk first aid plans for
         Running takenPerSecond;
         Running dealtPerSecond;
 
@@ -730,14 +731,15 @@ namespace cardian::tactics
             cureMp.fold(r.cureMp());
             const auto* top = r.biggest();
             biggestHit.fold(top != nullptr ? top->biggestHit : 0);
+            worstHit = std::max(worstHit, top != nullptr ? static_cast<double>(top->biggestHit) : 0.0);
             takenPerSecond.fold(r.takenPerSecond(r.closedAt));
             dealtPerSecond.fold(r.dealtPerSecond(r.closedAt));
         }
 
         auto line(const std::string_view mob) const -> std::string
         {
-            return fmt::format("{} x{}: {:.0f} s, {:.0f} MP of cures, biggest hit {:.0f}, {:.1f} taken/s, {:.1f} dealt/s",
-                               mob, fights, seconds.mean, cureMp.mean, biggestHit.mean, takenPerSecond.mean, dealtPerSecond.mean);
+            return fmt::format("{} x{}: {:.0f} s, {:.0f} MP of cures, biggest hit {:.0f} (worst {:.0f}), {:.1f} taken/s, {:.1f} dealt/s",
+                               mob, fights, seconds.mean, cureMp.mean, biggestHit.mean, worstHit, takenPerSecond.mean, dealtPerSecond.mean);
         }
     };
 } // namespace cardian::tactics

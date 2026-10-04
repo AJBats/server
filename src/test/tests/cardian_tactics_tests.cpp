@@ -221,7 +221,25 @@ TEST_CASE("SpotAverages fold a fight and read back as one line", "[cardian][tact
     CHECK(spot.fights == 2);
     CHECK_THAT(spot.seconds.mean, WithinAbs(50.0, 1e-9));
 
-    CHECK_THAT(spot.line("Orcish_Grunt"), ContainsSubstring("Orcish_Grunt x2: 50 s, 56 MP of cures, biggest hit 88"));
+    CHECK_THAT(spot.line("Orcish_Grunt"), ContainsSubstring("Orcish_Grunt x2: 50 s, 56 MP of cures, biggest hit 88 (worst 88)"));
+}
+
+TEST_CASE("SpotAverages keep the worst hit of any fight, the risk first aid plans for", "[cardian][tactics]")
+{
+    SpotAverages spot;
+    spot.fold(sampleFight());
+    auto softer = sampleFight();
+    for (auto& m : softer.members)
+    {
+        m.biggestHit = std::min(m.biggestHit, 30);
+    }
+    for (int i = 0; i < 5; ++i)
+    {
+        spot.fold(softer);
+    }
+    // The average forgets the one hard hit; the worst on record does not
+    CHECK(spot.biggestHit.mean < 40.0);
+    CHECK_THAT(spot.worstHit, WithinAbs(88.0, 1e-9));
 }
 
 // --- the MP bank (RESEARCH §12.6, §12.13) ----------------------------------

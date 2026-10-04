@@ -1114,6 +1114,8 @@ private:
     int m_RestTicks = 0;
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;
+    uint32 m_KneelHeldFor = 0;   // the member a kneel would put at risk, as last said; 0: none
+    uint32 m_SaidMpShortFor = 0; // the fight's mob whose "My MP won't last" she has said
     // Sneak Attack or Boost before weapon skills: the weapon skill held one
     // tick while the opener goes out first
     struct HeldWs

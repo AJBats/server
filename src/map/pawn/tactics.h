@@ -183,6 +183,24 @@ namespace pawn::tactics
         std::string why;
     };
     auto restAdvice(CCharEntity* PPawn) -> std::optional<RestAdvice>;
+
+    // A kneel's question while a fight is under way (RESEARCH §12.8): would
+    // a member be at risk of death before its first tick? First aid's
+    // predictor asked that far ahead, counting the cures in flight and the
+    // next cure of each other cardian mage on her feet. Nothing when no
+    // fight is on, or nobody would be at risk
+    struct KneelRisk
+    {
+        uint32      member = 0;
+        std::string name;
+        double      hp        = 0.0;
+        double      perSecond = 0.0;  // what the fight takes from her
+        double      biggest   = 0.0;  // the one more hit planned for
+        double      horizon   = 0.0;  // seconds to the kneel's first tick
+        double      fightLeft = -1.0; // seconds the fight has left at the party's rate; negative: unknown
+        uint32      mob       = 0;    // the fight's mob, the longest-lived when more than one
+    };
+    auto kneelRisk(CCharEntity* PPawn) -> std::optional<KneelRisk>;
     void resetRestMemory(CCharEntity* PPawn);
     // Her recovery is due, as the rest planner last said, read without
     // sampling her MP again (restAdvice samples): what her tactician's

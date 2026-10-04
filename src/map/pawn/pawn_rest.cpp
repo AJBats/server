@@ -126,13 +126,49 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // With Player stays an explicit input beside it; neither overwrites
     // the other with the MP decision
     const bool supportRecovery = support && advice->recover;
-    const bool want            = townKneel || (support && place != nullptr && (supportRecovery || (healing != nullptr && POwner->health.mp < POwner->GetMaxMP())));
-    const int ticks = healing != nullptr ? healing->GetElapsedTickCount() : 0;
+    const bool mpMissing       = POwner->health.mp < POwner->GetMaxMP();
+    // At a camp with no fight on, a mage short of MP kneels whatever her
+    // pace says: ticks between pulls are free (the user, 2026-10-03: mages
+    // are greedy for their ticks). Following the player, her pace alone
+    // kneels her, so she does not kneel at his every stop
+    const bool campKneel = support && place != nullptr && place->fixed() && mpMissing && healing == nullptr && !fightOn();
+    // In a fight a kneel first asks first aid's predictor as far as its
+    // first tick: a patient who would be at risk of death before it keeps
+    // her on her feet (tactics.h kneelRisk). Down, she stays down while MP
+    // is missing; first aid's call, danger or an order stands her
+    bool kneel = support && place != nullptr && healing == nullptr && (supportRecovery || campKneel);
+    std::optional<pawn::tactics::KneelRisk> risk;
+    if (kneel)
+    {
+        risk  = pawn::tactics::kneelRisk(static_cast<CCharEntity*>(POwner));
+        kneel = !risk.has_value();
+    }
+    // Said as it changes: whom a kneel would put at risk. And once a fight,
+    // when she needs her MP back, cannot kneel for it, and is spending
+    // faster than the fight will last, that her MP will run out first --
+    // the player's to solve, not hers (the user, 2026-10-03)
+    const uint32 heldFor = risk.has_value() ? risk->member : 0;
+    if (heldFor != m_KneelHeldFor)
+    {
+        m_KneelHeldFor = heldFor;
+        if (risk.has_value())
+        {
+            ShowInfoFmt("rest: {} stays up: {} would be at risk before her first tick ({:.0f} HP, taking {:.1f}/s over {:.0f} s, one more hit of {:.0f})",
+                        POwner->getName(), risk->name, risk->hp, risk->perSecond, risk->horizon, risk->biggest);
+        }
+    }
+    if (risk.has_value() && supportRecovery && risk->mob != 0 && risk->mob != m_SaidMpShortFor &&
+        (advice->criticalMp || (risk->fightLeft > 0.0 && advice->spentPerSecond * risk->fightLeft > POwner->health.mp)))
+    {
+        m_SaidMpShortFor = risk->mob;
+        ShowInfoFmt("rest: {}: her MP will run out before the fight ends (MP {}/{}, spending {:.1f}/s, the fight ~{:.0f} s left{})", POwner->getName(),
+                    POwner->health.mp, POwner->GetMaxMP(), advice->spentPerSecond, risk->fightLeft, advice->criticalMp ? ", critical" : "");
+        pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), "My MP won't last this fight.");
+    }
+    const bool want   = townKneel || kneel || (support && place != nullptr && healing != nullptr && mpMissing);
+    const int  ticks  = healing != nullptr ? healing->GetElapsedTickCount() : 0;
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
-    m_RestTicks = ticks;
-    const bool mpMissing = POwner->health.mp < POwner->GetMaxMP();
-    // No fight on while she is down with MP missing: a useful rest goes on
-    const bool campClear = support && place != nullptr && healing != nullptr && mpMissing && !fightOn();
+    m_RestTicks       = ticks;
 
     // Ordinary DoTs share REGEN_DOWN. Helix and nightmare Bio tick directly.
     const auto* pet = dynamic_cast<CPetEntity*>(POwner->PPet);
@@ -201,17 +237,15 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool deferPosition = routinePosition && ((support && place != nullptr) || ordered);
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
-        .campClear = campClear, .mpMissing = mpMissing,
         .urgent = urgent, .blocked = blocked,
         .moving = !stationary, .routinePosition = deferPosition,
-        .recovered = support && place != nullptr && !supportRecovery, .tickLanded = landed,
         .ordered = ordered});
     if (decision == cardian::rest::Decision::Stand)
     {
         StandFromRest(urgent ? advice->why : unsafe && !deliberate ? "danger" : noRecovery ? "recovery blocked" :
             rowRest && fightOn() ? "the party's fight" :
             HasQueuedOrder() && !m_ManeuverResting ? "the player's action order" :
-            support && place != nullptr && landed && !supportRecovery && !withPlayer && !campClear ? "recovery tick: pace and reserve ready" : "rest request ended or movement needed");
+            support && place != nullptr && !mpMissing ? "her MP is full" : "rest request ended or movement needed");
     }
     else if (decision == cardian::rest::Decision::Kneel)
     {
@@ -219,13 +253,14 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, interval, 0s);
         m_RestTicks = 0;
         ShowInfoFmt("rest: {} kneels ({}, hp {}%, mp {}%)", POwner->getName(),
-                    ordered ? (m_RestOrder.byRow ? "her Rest row" : "the player's rest order") : townKneel ? "town" : withPlayer ? "with the player" : "the tactician's recovery",
+                    ordered ? (m_RestOrder.byRow ? "her Rest row" : "the player's rest order") : townKneel ? "town" : withPlayer ? "with the player" :
+                    campKneel && !supportRecovery ? "between pulls at the camp" : "the tactician's recovery",
                     POwner->GetHPP(), POwner->GetMPP());
     }
-    else if (decision == cardian::rest::Decision::StayDown && campClear && landed && !supportRecovery && !withPlayer)
+    else if (decision == cardian::rest::Decision::StayDown && support && place != nullptr && landed && !supportRecovery && !withPlayer && !ordered)
     {
-        ShowInfoFmt("rest: {} keeps resting after recovery tick: no party enemy within {:.0f} y of {}; MP {}/{} (pace and reserve ready)",
-                    POwner->getName(), settings::get<float>("pawn.HUNT_LEASH"), place->name(), POwner->health.mp, POwner->GetMaxMP());
+        ShowInfoFmt("rest: {} keeps resting past her pace after a tick: MP {}/{} ({})", POwner->getName(), POwner->health.mp, POwner->GetMaxMP(),
+                    fightOn() ? "a fight is on; first aid has not called her" : fmt::format("no party enemy within {:.0f} y of {}", settings::get<float>("pawn.HUNT_LEASH"), place->name()));
     }
     if (support && place != nullptr && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) && now >= m_RestChatAt)
     {

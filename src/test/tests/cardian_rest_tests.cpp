@@ -154,7 +154,7 @@ TEST_CASE("Starting rest early accounts for the real delay until its first payin
     CHECK(pacing(45, 100, {0.5, 0}, 30, true, false, 40, 12, 8).recover);
 }
 
-TEST_CASE("Rest rebuilds reserve and recovery rate then releases on an actual tick", "[cardian][rest][pacing]")
+TEST_CASE("Rest rebuilds reserve and recovery rate, and meeting the pace is no reason to rise", "[cardian][rest][pacing]")
 {
     Flow flow;
     flow.observe(0, 60, 85);
@@ -171,8 +171,10 @@ TEST_CASE("Rest rebuilds reserve and recovery rate then releases on an actual ti
     flow.observe(45, 69, 85);
     p = pacing(69, 85, flow.rates(45), 30, true, true, 20, 12, 8);
     REQUIRE_FALSE(p.recover);
-    CHECK(s.decide({.now=44.9, .resting=true, .want=true, .recovered=true}) == Decision::StayDown);
-    CHECK(s.decide({.now=45, .resting=true, .want=true, .recovered=!p.recover, .tickLanded=true}) == Decision::Stand);
+    // Greedy for her ticks (2026-10-03): her MP still missing, she stays
+    // down past the pace; MP full ends the request and she rises
+    CHECK(s.decide({.now=45, .resting=true, .want=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=65, .resting=true, .want=false}) == Decision::Stand);
     CHECK_FALSE(pacing(69, 85, flow.rates(46), 30, true, false, 20, 12, 8).recover);
 }
 
@@ -183,7 +185,7 @@ TEST_CASE("Full MP ends recovery even when its capped rate remains behind spendi
     CHECK_FALSE(pacing(34, 85, {}, 0, false, true, 20, 12, 8).recover);
 }
 
-TEST_CASE("A recovery after the shared party sample can release the same paying tick", "[cardian][rest][pacing]")
+TEST_CASE("A recovery after the shared party sample meets the pace on the same tick", "[cardian][rest][pacing]")
 {
     Flow flow;
     flow.observe(0, 60, 85);
@@ -193,9 +195,7 @@ TEST_CASE("A recovery after the shared party sample can release the same paying 
     REQUIRE(pacing(55, 85, flow.rates(45), 30, true, true, 20, 12, 8).recover);
     // The mage's own decision refreshes her MP after Healing advances.
     flow.observe(45, 69, 85);
-    const auto fresh = pacing(69, 85, flow.rates(45), 30, true, true, 20, 12, 8);
-    State s;
-    CHECK(s.decide({.now=45, .resting=true, .want=true, .recovered=!fresh.recover, .tickLanded=true}) == Decision::Stand);
+    CHECK_FALSE(pacing(69, 85, flow.rates(45), 30, true, true, 20, 12, 8).recover);
 }
 
 TEST_CASE("Emergency Cure prediction uses actual recast and recovery timing", "[cardian][rest]")
@@ -289,8 +289,7 @@ TEST_CASE("Reaching the MP target or full MP cannot end Rest With Player", "[car
     {
         const auto p = pacing(mp, 85, {0, 1}, 48, true, true, 20, 12, 8);
         REQUIRE_FALSE(p.recover);
-        CHECK(s.decide({.now=mp, .resting=true, .want=true, .withPlayer=true,
-            .recovered=!p.recover, .tickLanded=true}) == Decision::StayDown);
+        CHECK(s.decide({.now=mp, .resting=true, .want=true, .withPlayer=true}) == Decision::StayDown);
     }
 }
 
@@ -298,16 +297,12 @@ TEST_CASE("Support recovery takes over when Rest With Player ends", "[cardian][r
 {
     for (const double mp : {30.0, 73.0})
     {
-        const auto p = pacing(mp, 85, {0, 1}, 48, true, true, 20, 12, 8);
         State s;
-        REQUIRE(s.decide({.now=10, .resting=true, .want=true, .withPlayer=true,
-            .recovered=!p.recover, .tickLanded=true}) == Decision::StayDown);
-        // Once the player's request ends, preserve the normal recovery tick
-        // rule; low MP keeps her down, a satisfied budget releases on a tick.
-        CHECK(s.decide({.now=11, .resting=true, .want=true,
-            .recovered=!p.recover}) == Decision::StayDown);
-        CHECK(s.decide({.now=20, .resting=true, .want=true,
-            .recovered=!p.recover, .tickLanded=true}) == (p.recover ? Decision::StayDown : Decision::Stand));
+        REQUIRE(s.decide({.now=10, .resting=true, .want=true, .withPlayer=true}) == Decision::StayDown);
+        // Once the player's request ends her own keeps her down while MP is
+        // missing, the pace met or not
+        CHECK(s.decide({.now=11, .resting=true, .want=mp < 85}) == Decision::StayDown);
+        CHECK(s.decide({.now=20, .resting=true, .want=mp < 85}) == Decision::StayDown);
     }
 }
 
@@ -457,64 +452,60 @@ TEST_CASE("A quiet place preserves recovery beyond the pacing target until full 
             REQUIRE(mp == 49); // the observed long-pull stand-up
             REQUIRE_FALSE(p.recover);
         }
-        const auto decision = s.decide({.now=now, .resting=true, .want=true,
-            .campClear=true, .mpMissing=mp < 85, .moving=formationMoving, .routinePosition=true,
-            .recovered=!p.recover, .tickLanded=true});
+        const auto decision = s.decide({.now=now, .resting=true, .want=mp < 85,
+            .moving=formationMoving, .routinePosition=true});
         CHECK(decision == (mp < 85 ? Decision::StayDown : Decision::Stand));
         CHECK_FALSE(s.canAct(now, mp < 85));
     }
     CHECK(s.canAct(63, false));
 }
 
-TEST_CASE("An empty camp does not make a standing mage start resting", "[cardian][rest][pacing]")
+TEST_CASE("A standing mage kneels on a request and stays up without one", "[cardian][rest][pacing]")
 {
     const auto p = pacing(78, 85, {7.0/60, 0}, 30.25, true, false, 20, 12, 8);
     REQUIRE_FALSE(p.recover);
     State s;
-    CHECK(s.decide({.now=10, .want=p.recover, .campClear=true, .mpMissing=true}) == Decision::StayUp);
+    CHECK(s.decide({.now=10, .want=p.recover}) == Decision::StayUp);
     CHECK(s.canAct(10, false));
-    // Pacing can still start a rest when the reserve actually needs it.
+    // Pacing starts a rest when the reserve actually needs it; so does a
+    // camp between fights, which RestTick turns into the same request
     const auto low = pacing(24, 85, {23.0/60, 0}, 30.25, true, false, 20, 12, 8);
     REQUIRE(low.recover);
-    CHECK(s.decide({.now=11, .want=low.recover, .campClear=true, .mpMissing=true}) == Decision::Kneel);
+    CHECK(s.decide({.now=11, .want=low.recover}) == Decision::Kneel);
 }
 
-TEST_CASE("An enemy reaching camp resumes pacing without forcing a wake", "[cardian][rest][pacing]")
+TEST_CASE("An enemy reaching camp leaves her down until a reason to rise", "[cardian][rest][pacing]")
 {
     for (const double mp : {18.0, 49.0})
     {
         State s;
-        const auto p = pacing(mp, 85, {23.0/60, 25.0/60}, 30.25, true, true, 20, 12, 8);
-        REQUIRE(s.decide({.now=10, .resting=true, .want=true, .campClear=true,
-            .mpMissing=true, .recovered=!p.recover, .tickLanded=true}) == Decision::StayDown);
-        // Camp engagement now sees the incoming enemy; preserve a partial tick.
-        CHECK(s.decide({.now=11, .resting=true, .want=true, .mpMissing=true,
-            .recovered=!p.recover}) == Decision::StayDown);
-        CHECK(s.decide({.now=20, .resting=true, .want=true, .mpMissing=true,
-            .recovered=!p.recover, .tickLanded=true}) == (p.recover ? Decision::StayDown : Decision::Stand));
+        REQUIRE(s.decide({.now=10, .resting=true, .want=true}) == Decision::StayDown);
+        // The pull arrives: no wake by itself, the pace met or not (the
+        // Sand Hare of 2026-10-03, stood a second before a tick)
+        CHECK(s.decide({.now=11, .resting=true, .want=mp < 85}) == Decision::StayDown);
+        CHECK(s.decide({.now=20, .resting=true, .want=mp < 85}) == Decision::StayDown);
+        // First aid's call stands her
+        CHECK(s.decide({.now=25, .resting=true, .want=true, .urgent=true}) == Decision::Stand);
     }
 }
 
-TEST_CASE("A command-menu order overrides both empty-camp recovery and Rest With Player", "[cardian][rest]")
+TEST_CASE("A command-menu order overrides both her own rest and Rest With Player", "[cardian][rest]")
 {
     State s;
-    REQUIRE(s.decide({.now=10, .resting=true, .want=true, .withPlayer=true,
-        .campClear=true, .mpMissing=true, .recovered=true, .tickLanded=true}) == Decision::StayDown);
+    REQUIRE(s.decide({.now=10, .resting=true, .want=true, .withPlayer=true}) == Decision::StayDown);
     // HasQueuedOrder is a physical blocker in RestTick, even if no enemy exists.
-    REQUIRE(s.decide({.now=11, .resting=true, .want=true, .withPlayer=true,
-        .campClear=true, .mpMissing=true, .blocked=true}) == Decision::Stand);
+    REQUIRE(s.decide({.now=11, .resting=true, .want=true, .withPlayer=true, .blocked=true}) == Decision::Stand);
     CHECK_FALSE(s.canAct(11.9, false));
-    REQUIRE(s.decide({.now=12, .want=true, .withPlayer=true,
-        .campClear=true, .mpMissing=true, .blocked=true}) == Decision::StayUp);
+    REQUIRE(s.decide({.now=12, .want=true, .withPlayer=true, .blocked=true}) == Decision::StayUp);
     CHECK(s.canAct(12, false));
 }
 
-TEST_CASE("An empty camp cannot suppress an emergency, danger or required movement", "[cardian][rest]")
+TEST_CASE("Her own rest cannot suppress an emergency, danger or required movement", "[cardian][rest]")
 {
     for (const auto& facts : {
-        Facts{.now=10, .resting=true, .want=true, .campClear=true, .mpMissing=true, .urgent=true},
-        Facts{.now=10, .resting=true, .want=true, .campClear=true, .mpMissing=true, .blocked=true},
-        Facts{.now=10, .resting=true, .want=true, .campClear=true, .mpMissing=true, .moving=true}})
+        Facts{.now=10, .resting=true, .want=true, .urgent=true},
+        Facts{.now=10, .resting=true, .want=true, .blocked=true},
+        Facts{.now=10, .resting=true, .want=true, .moving=true}})
     {
         State s;
         CHECK(s.decide(facts) == Decision::Stand);
@@ -523,35 +514,34 @@ TEST_CASE("An empty camp cannot suppress an emergency, danger or required moveme
     }
 }
 
-TEST_CASE("The empty-camp hold ends with its role or camp and retains no stale latch", "[cardian][rest]")
+TEST_CASE("Her rest ends with its request and retains no stale latch", "[cardian][rest]")
 {
     State s;
-    REQUIRE(s.decide({.now=10, .resting=true, .want=true, .campClear=true,
-        .mpMissing=true, .recovered=true, .tickLanded=true}) == Decision::StayDown);
-    // With no autonomous request or Rest With Player left, stand immediately.
-    CHECK(s.decide({.now=11, .resting=true, .mpMissing=true}) == Decision::Stand);
-    CHECK(s.decide({.now=12, .mpMissing=true}) == Decision::StayUp);
+    REQUIRE(s.decide({.now=10, .resting=true, .want=true}) == Decision::StayDown);
+    // With no request of hers or Rest With Player left, stand immediately.
+    CHECK(s.decide({.now=11, .resting=true}) == Decision::Stand);
+    CHECK(s.decide({.now=12}) == Decision::StayUp);
 }
 
-TEST_CASE("Rest With Player and an empty camp hand off without losing recovery", "[cardian][rest]")
+TEST_CASE("Rest With Player and her own rest hand off without losing recovery", "[cardian][rest]")
 {
     State s;
-    REQUIRE(s.decide({.now=10, .resting=true, .want=true, .withPlayer=true,
-        .campClear=true, .mpMissing=true, .recovered=true, .tickLanded=true}) == Decision::StayDown);
-    CHECK(s.decide({.now=20, .resting=true, .want=true, .campClear=true,
-        .mpMissing=true, .recovered=true, .tickLanded=true}) == Decision::StayDown);
-    // Full MP ends the camp hold; a renewed player rest can still keep her down.
-    CHECK(s.decide({.now=30, .resting=true, .want=true, .withPlayer=true,
-        .campClear=true, .recovered=true, .tickLanded=true}) == Decision::StayDown);
-    CHECK(s.decide({.now=40, .resting=true, .want=true,
-        .campClear=true, .recovered=true, .tickLanded=true}) == Decision::Stand);
+    REQUIRE(s.decide({.now=10, .resting=true, .want=true, .withPlayer=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=20, .resting=true, .want=true}) == Decision::StayDown);
+    // Full MP ends her request; a renewed player rest can still keep her down.
+    CHECK(s.decide({.now=30, .resting=true, .withPlayer=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=40, .resting=true}) == Decision::Stand);
 }
 
-TEST_CASE("Recovery completion stands just after the tick lands", "[cardian][rest]")
+TEST_CASE("Meeting her pace on a tick is no reason to rise", "[cardian][rest]")
 {
+    // Greedy for her ticks (the user, 2026-10-03): the Sand Hare where Zapp
+    // stood eight seconds into the fight at 70% MP, a tick from more
     State s;
-    REQUIRE(s.decide({.now=10, .resting=true, .want=true, .recovered=true}) == Decision::StayDown);
-    REQUIRE(s.decide({.now=20, .resting=true, .want=true, .recovered=true, .tickLanded=true}) == Decision::Stand);
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    CHECK(s.decide({.now=30, .resting=true, .want=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=40, .resting=true, .want=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=50, .resting=true, .want=false}) == Decision::Stand); // MP full
 }
 
 TEST_CASE("Danger and blocked recovery override every rest request", "[cardian][rest]")
@@ -613,17 +603,15 @@ TEST_CASE("Sustained spell traffic produces recovery cycles before MP exhaustion
     s.stood(0);
     for (int at = 1; at <= 600; ++at)
     {
-        bool tick = false;
         if (down && (at - restStart) % 10 == 0)
         {
             const int ticks = (at - restStart) / 10;
             mp = std::min(85.0, mp + mpAtTick(ticks, 0, 0));
-            tick = ticks >= 2;
         }
         flow.observe(at, mp, 85);
         const auto p = pacing(mp, 85, flow.rates(at), 30, true, down, 20, 12, 8);
-        const auto decision = s.decide({.now=static_cast<double>(at), .resting=down, .want=down || p.recover,
-            .recovered=!p.recover, .tickLanded=tick});
+        // Down, she stays down until full; up, her pace kneels her
+        const auto decision = s.decide({.now=static_cast<double>(at), .resting=down, .want=down ? mp < 85 : p.recover});
         if (decision == Decision::Kneel)
         {
             CHECK(mp > 8); // ordinary pacing gets ahead of an empty MP pool
@@ -693,7 +681,7 @@ TEST_CASE("Rest defers only an ongoing rest's routine positioning", "[cardian][r
                       .moving=true}) == Decision::Stand);
 }
 
-TEST_CASE("Repeated formation requests wait until recovery elects to stand", "[cardian][rest]")
+TEST_CASE("Repeated formation requests wait until her rest ends", "[cardian][rest]")
 {
     State s;
     REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
@@ -702,13 +690,13 @@ TEST_CASE("Repeated formation requests wait until recovery elects to stand", "[c
     for (const double now : {15.0, 17.4, 20.0, 30.0})
     {
         REQUIRE(s.decide({.now=now, .resting=true, .want=true, .moving=true,
-                          .routinePosition=true, .tickLanded=now == 30.0}) == Decision::StayDown);
+                          .routinePosition=true}) == Decision::StayDown);
         REQUIRE_FALSE(s.canAct(now, true));
     }
-    // When recovery completes, the same formation request can resume after
-    // the stand gate. Deferring movement never postpones that decision.
-    REQUIRE(s.decide({.now=40, .resting=true, .want=true, .moving=true,
-                      .routinePosition=true, .recovered=true, .tickLanded=true}) == Decision::Stand);
+    // When her rest ends, the same formation request can resume after the
+    // stand gate. Deferring movement never postpones that decision.
+    REQUIRE(s.decide({.now=40, .resting=true, .want=false, .moving=true,
+                      .routinePosition=true}) == Decision::Stand);
     REQUIRE_FALSE(s.canAct(40, false));
     REQUIRE(s.canAct(41, false));
 }
@@ -726,7 +714,7 @@ TEST_CASE("A rest order kneels her with no gambit asking, and no recovery tick s
 {
     State s;
     REQUIRE(s.decide({.now=10, .ordered=true}) == Decision::Kneel);
-    CHECK(s.decide({.now=20, .resting=true, .recovered=true, .tickLanded=true, .ordered=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=20, .resting=true, .ordered=true}) == Decision::StayDown);
     CHECK_FALSE(s.canAct(20, true));
 }
 
