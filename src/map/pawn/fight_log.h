@@ -161,6 +161,10 @@ namespace pawn::tactics
         int32  m_cureHp    = 0;
         int32  m_cureMp    = 0;
         uint32 m_cureCasts = 0;
+
+        // By member: the Sneak Attack (its start) her last swing line was for,
+        // so a double attack's second hit says nothing more
+        std::unordered_map<uint32, timer::time_point> m_sneakSaid;
     };
 
 

@@ -24,6 +24,7 @@
 #include "tactics.h"
 
 #include "common/logging.h"
+#include "common/utils.h"
 
 #include "action/action.h"
 #include "ai/ai_container.h"
@@ -754,6 +755,11 @@ namespace pawn::tactics
         {
             m.wsDamage += landed;
             ++m.wsCount;
+            // Every weapon skill of the party's, as it lands: what the fight
+            // log's totals are made of, seen one by one (the user, 2026-10-04)
+            const auto* state = PAttacker->PAI->GetCurrentState();
+            auto*       ws    = static_cast<const CWeaponSkillState*>(state)->GetSkill();
+            ShowInfoFmt("tactics: {}'s {} lands on {} for {}", m.name, ws != nullptr ? ws->getName() : "weapon skill", r.mobName, landed);
         }
         if (attackType == xi::AttackType::Physical && !weaponSkill)
         {
@@ -762,6 +768,22 @@ namespace pawn::tactics
             // priced on it
             m.meleeDealt += landed;
             bank::defenceSplit(r, PAttacker, PMob, landed);
+
+            // A Thief's Sneak Attack goes on her next melee hit, and counts
+            // only from the mob's back, as the engine judges it at the swing
+            // (attack.cpp: behind, 64); the effect is still on her while the
+            // hit lands. Said once for each Sneak Attack, however many hits
+            // its round has
+            if (auto* PSneak = PAttacker->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::SneakAttack);
+                PSneak != nullptr && PAttacker->GetMJob() == xi::Job::THF)
+            {
+                if (auto& said = m_sneakSaid[PAttacker->id]; said != PSneak->GetStartTime())
+                {
+                    said = PSneak->GetStartTime();
+                    ShowInfoFmt("tactics: {}'s Sneak Attack goes on a swing at {} for {}, {}", m.name, r.mobName, landed,
+                                behind(PAttacker->loc.p, PMob->loc.p, 64) ? "from its back" : "NOT from its back (wasted)");
+                }
+            }
         }
         if (debug())
         {

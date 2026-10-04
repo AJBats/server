@@ -126,12 +126,9 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // With Player stays an explicit input beside it; neither overwrites
     // the other with the MP decision
     const bool supportRecovery = support && advice->recover;
-    // Short of MP by a tick's worth at least: less than that a kneel cannot
-    // pay for, so she neither kneels for it nor stays down for the last few
-    // points (the user, 2026-10-04: no resting at full MP). Half her pool at
-    // most, for a mage too young to hold a whole tick
-    const double tickMp    = std::min(cardian::rest::mpAtTick(2, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL)), 0.5 * POwner->GetMaxMP());
-    const bool   mpMissing = POwner->GetMaxMP() - POwner->health.mp >= std::max(1.0, tickMp);
+    // Short of MP by a tick's worth at least (rest_math.h shortOfMp)
+    const bool mpMissing = cardian::rest::shortOfMp(POwner->health.mp, POwner->GetMaxMP(),
+                                                    cardian::rest::mpAtTick(2, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL)));
     // At a camp with no fight on, a mage short of MP kneels whatever her
     // pace says: ticks between pulls are free (the user, 2026-10-03: mages
     // are greedy for their ticks). Following the player, her pace alone
@@ -141,7 +138,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // first tick: a patient who would be at risk of death before it keeps
     // her on her feet (tactics.h kneelRisk). Down, she stays down while MP
     // is missing; first aid's call, danger or an order stands her
-    bool kneel = support && place != nullptr && healing == nullptr && (supportRecovery || campKneel);
+    bool kneel = support && place != nullptr && healing == nullptr && cardian::rest::asksToKneel(mpMissing, supportRecovery, campKneel);
     std::optional<pawn::tactics::KneelRisk> risk;
     if (kneel)
     {
@@ -169,6 +166,11 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         ShowInfoFmt("rest: {}: her MP will run out before the fight ends (MP {}/{}, spending {:.1f}/s, the fight ~{:.0f} s left{})", POwner->getName(),
                     POwner->health.mp, POwner->GetMaxMP(), advice->spentPerSecond, risk->fightLeft, advice->criticalMp ? ", critical" : "");
         pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), "My MP won't last this fight.");
+    }
+    // Once a fight, not once a mob: a camp's mob comes back with the same id
+    if (m_SaidMpShortFor != 0 && !fightOn())
+    {
+        m_SaidMpShortFor = 0;
     }
     const bool want   = townKneel || kneel || (support && place != nullptr && healing != nullptr && mpMissing);
     const int  ticks  = healing != nullptr ? healing->GetElapsedTickCount() : 0;
