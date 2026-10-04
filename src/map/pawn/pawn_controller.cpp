@@ -2266,6 +2266,22 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
         return true;
     }
 
+    // At a camp a damage dealer waits for the pull to come in, as the tank
+    // does (CampReceive): until the mob reaches the landing point, turns on
+    // her, or stalls outside the camp, she keeps her seat with her weapon
+    // away, and only then walks in and draws (the user, 2026-10-04, #253:
+    // melee ran out to meet his pull and opened with weapon skills). The
+    // tank has her own receive; an order or her own pull closes at once
+    if (WaitsForThePull(PTarget, kind))
+    {
+        if (!m_Approach.has_value() || m_Approach->target.resolve<CBattleEntity>() != PTarget)
+        {
+            m_Approach = Approach{ EntityId(PTarget), kind };
+            Transition(Mode::Approach, fmt::format("waits for {} to come in to the camp", PTarget->getName()));
+        }
+        return false;
+    }
+
     const auto verdict = cardian::rules::mayFight(facts);
     if (verdict)
     {
@@ -3781,6 +3797,18 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
                 m_Pending.reset();
             }
 
+            // At a camp a damage dealer keeps her seat, weapon away, until
+            // the pull comes in (WaitsForThePull, as the Draw door has it)
+            if (WaitsForThePull(PMob, m_Approach->kind))
+            {
+                if (const auto* place = CurrentPlace(GetAnchor()); place != nullptr && POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
+                {
+                    RefreshDangers(PMob);
+                    Move(FormationIntent(*place, GetAnchor(), nullptr));
+                }
+                return true;
+            }
+
             // The rules gate the DRAW, not the arrival: allowed, she draws
             // where she stands and charges in with her weapon out; still
             // too far, or the draw's wait unserved, she walks in with it
@@ -3811,6 +3839,7 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
                     const std::string how = hunt                  ? std::string(magic_enum::enum_name(charutils::CheckMob(level, PMob))) :
                                             hold                  ? fmt::format("holding for {}'s strike", PPlayer->getName()) :
                                             join && TowsAtStake() ? std::string("it came within reach") :
+                                            join && Staked()      ? std::string("it came in to the camp") :
                                                                     std::string("walked in");
                     Draw(PMob, m_Approach->kind, how, hold);
                 }
@@ -6663,6 +6692,11 @@ auto CPawnController::TowsAtStake() const -> bool
     // for (RESEARCH §17.13), and with the master switch off nothing of her
     // rows or her seat moves her
     return Staked() && m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank;
+}
+
+auto CPawnController::WaitsForThePull(const CBattleEntity* PTarget, const ApproachKind kind) -> bool
+{
+    return kind == ApproachKind::Join && Staked() && !TowsAtStake() && CampReceive(PTarget) != cardian::stake::ReceiveAction::Join;
 }
 
 auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
