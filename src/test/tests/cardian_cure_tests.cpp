@@ -96,6 +96,51 @@ TEST_CASE("Below the floor a member is in danger whatever the hits on record", "
     CHECK(withFloor(hurt, 0.25).biggest == 160);
 }
 
+TEST_CASE("A kneel asks whether a patient would be at risk before its first tick", "[cardian][cure][rest]")
+{
+    // The Snipper (2026-10-03): the tank at 112 of 193 HP, taking about 6 a
+    // second, a 54-point Big Scissors on record. Safe for one cure's few
+    // seconds -- first aid stays quiet -- but not for a kneel's 21
+    const Target tank{7, 112, 193, 54, 5.9};
+    CHECK(plan({cure(1, 3)}, tank).empty());
+    const auto snipper = atRisk(std::vector<Target>{tank}, 21.0, std::vector<Option>{});
+    REQUIRE(snipper.has_value());
+    CHECK(snipper->id == 7);
+
+    // The Sand Hare: the tank at 147, taking under 3 a second, a 36-point
+    // Dust Cloud the worst on record. The kneel risks nobody
+    const Target hare{7, 147, 193, 36, 2.7};
+    CHECK_FALSE(atRisk(std::vector<Target>{hare}, 21.0, std::vector<Option>{}).has_value());
+}
+
+TEST_CASE("A kneel counts the cures promised to land before its first tick, and no others", "[cardian][cure][rest]")
+{
+    const Target tank{7, 112, 193, 54, 3.0};
+    const auto   onTank = [](const uint32_t caster, const double land, const double heals)
+    {
+        auto o   = cure(caster, land, heals);
+        o.target = 7;
+        return o;
+    };
+    REQUIRE(atRisk(std::vector<Target>{tank}, 21.0, std::vector<Option>{}).has_value());
+    // The other mage's Cure II landing in 4 s carries the tank past the kneel's first tick
+    CHECK_FALSE(atRisk(std::vector<Target>{tank}, 21.0, std::vector<Option>{onTank(2, 4, 71)}).has_value());
+    // One landing after the horizon promises nothing to it
+    CHECK(atRisk(std::vector<Target>{tank}, 21.0, std::vector<Option>{onTank(2, 25, 71)}).has_value());
+    // A cure for someone else promises the tank nothing
+    CHECK(atRisk(std::vector<Target>{tank}, 21.0, std::vector<Option>{cure(2, 4, 71)}).has_value());
+}
+
+TEST_CASE("A kneel names the member at the most risk", "[cardian][cure][rest]")
+{
+    const Target tank{7, 100, 193, 40, 3.0};  // 100 - 63 - 40: 3 short
+    const Target mage{8, 60, 150, 40, 1.0};   // 60 - 21 - 40: 1 short
+    const Target melee{9, 180, 200, 40, 2.0}; // safe
+    const auto   who = atRisk(std::vector<Target>{melee, mage, tank}, 21.0, std::vector<Option>{});
+    REQUIRE(who.has_value());
+    CHECK(who->id == 7);
+}
+
 TEST_CASE("Ready healer beats travel, active casting, and unavailable spells", "[cardian][cure]")
 {
     auto unknown = cure(1, unavailable, 200);

@@ -1217,7 +1217,16 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
         return;
     }
     const bool was = m_Stake.has_value();
-    StandFromRest("the camp changed");
+    // A camp moved away stands a kneeling mage, to walk to it. One set down
+    // or lifted where she kneels does not: her new seat is a routine step
+    // her rest puts off, and her ticks go on (the user, 2026-10-03)
+    constexpr float  kKneelsThrough = 10.0f; // yalms from the new camp: its seats and its backline
+    const auto*      anchor         = GetAnchor();
+    const position_t camp           = stake.has_value() ? stake->at : anchor != nullptr ? anchor->loc.p : POwner->loc.p;
+    if ((stake.has_value() && stake->zone != POwner->getZone()) || !isWithinDistance(POwner->loc.p, camp, kKneelsThrough))
+    {
+        StandFromRest("the camp moved away");
+    }
     m_Stake        = std::move(stake);
     pawn::tactics::resetRestMemory(static_cast<CCharEntity*>(POwner));
     // A new place: her seats aim afresh, and a spot kept after a fight goes
@@ -4429,8 +4438,12 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy, uint32* other) -> uint16
         return CL_S_ONE_MANEUVER;
     }
 
+    // Kneeling, she stays down: the wheel taken is no reason to rise. The
+    // ring's first step stands her (WalkOrderTick), an action his order
+    // fires stands her as any does, and a maneuver that rests her keeps
+    // her ticks (the user, 2026-10-03: Zapp stood to take "Rest until
+    // 100%" and lost his)
     EndRestOrder("a maneuver");
-    StandFromRest("a maneuver"); // the ring moves her by path, never through Move's stand
     m_ManeuverBy          = PBy->id;
     m_ManeuverComposed    = false;
     m_ManeuverResting     = false;
@@ -4772,17 +4785,6 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
         POwner->PAI->PathFind->Clear();
         return;
     }
-    // Kneeling, she rises before she walks: the path moves her, and only
-    // Move's stand would otherwise lift her off her knees
-    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
-    {
-        EndRestOrder("a walk order");
-        StandFromRest("a walk order");
-    }
-    if (!RestAllowsAction())
-    {
-        return;
-    }
     auto* PPathFind = POwner->PAI->PathFind.get();
     // A laid route is walked crumb by crumb, each let go as she comes near
     auto crumb = pawn::routeFront(POwner->id);
@@ -4799,6 +4801,18 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
         PPathFind->Clear();
         m_WalkPoint    = *point;
         m_LastWalkStep = now; // standing on the ring: the next step is a period's worth, not the time she stood
+        return;
+    }
+    // Kneeling, she rises before she walks: the path moves her, and only
+    // Move's stand would otherwise lift her off her knees. On her point she
+    // stays down (above)
+    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    {
+        EndRestOrder("a walk order");
+        StandFromRest("a walk order");
+    }
+    if (!RestAllowsAction())
+    {
         return;
     }
     if (PPathFind->IsFollowingPath() && m_WalkPoint.has_value() && distance(*m_WalkPoint, *point) < 0.15f)

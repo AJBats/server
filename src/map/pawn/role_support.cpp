@@ -47,7 +47,8 @@ namespace pawn::tactics::role
 {
     // What the open fights threaten one member with: the biggest hit
     // any has landed on anyone (a switch can bring it to her), the
-    // spot's memory of it, or the formulas' guess before either; and
+    // worst the spot remembers -- the risk of death, not the likely
+    // hit -- or the formulas' guess before either; and
     // the rate she takes -- her own this fight, else the spot's or the
     // guess only when the mob is on her, else nothing
     auto threat(FightLog& log, CBattleEntity* PMember, const double now) -> Threat
@@ -68,7 +69,7 @@ namespace pawn::tactics::role
             {
                 guess = bank::melee(r, PMob, PMember, true);
             }
-            t.biggestHit = std::max({ t.biggestHit, top != nullptr ? static_cast<double>(top->biggestHit) : 0.0, spot.biggestHit.mean, guess ? guess->biggest : 0.0 });
+            t.biggestHit = std::max({ t.biggestHit, top != nullptr ? static_cast<double>(top->biggestHit) : 0.0, spot.worstHit, guess ? guess->biggest : 0.0 });
 
             const double secs = r.seconds(now);
             const auto*  m    = r.find(PMember->id);

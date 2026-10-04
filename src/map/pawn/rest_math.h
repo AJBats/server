@@ -122,8 +122,10 @@ namespace cardian::rest
         out.target = std::min(maximum, std::max(remainingBudget, out.reserve + std::max(0.10 * maximum, firstTickMp)));
         if (resting)
         {
-            // Leave on a real tick once both pace and reserve recover. At
-            // full MP, capped recovery cannot build any more rate credit.
+            // Down, recovery stays due until both pace and reserve recover:
+            // what the party is told and her tactician's melee gives way to.
+            // She stays down past it (State::decide). At full MP, capped
+            // recovery cannot build any more rate credit.
             out.recover = mp < maximum && (out.critical || mp < out.target || rates.recovered < rates.spent);
         }
         else
@@ -258,15 +260,11 @@ namespace cardian::rest
         bool resting = false;
         bool want = false;
         bool withPlayer = false; // explicit Rest With Player request, independent of MP pacing
-        bool campClear = false; // Support Mage: no party enemy within the current place's engagement boundary
-        bool mpMissing = false;
         bool urgent = false;
         bool blocked = false; // unsafe, acting, ordered away, unable to recover
         bool moving = false;
         bool routinePosition = false; // an ongoing rest may defer this move
-        bool recovered = false;
-        bool tickLanded = false;
-        bool ordered = false; // a rest order: a request no recovery tick ends; the caller blocks the player's only for what makes a kneel impossible, her Rest row's for danger and the party's fight too
+        bool ordered = false; // a rest order: the caller blocks the player's only for what makes a kneel impossible, her Rest row's for danger and the party's fight too
     };
 
     struct State
@@ -324,15 +322,14 @@ namespace cardian::rest
         {
             observe(f.resting, f.now);
             const bool movementRequiresStand = f.moving && !(f.resting && f.routinePosition);
-            // A player's rest is another request to this lifecycle, including
-            // for Support Mage. Reaching her MP target cannot cancel it.
-            // While the party's place has no enemy, preserve an existing rest's
-            // recovery ramp until MP is full. This never starts a new rest or
-            // forces a wake when an enemy arrives; ordinary pacing resumes.
-            const bool preserveRecovery = f.resting && f.campClear && f.mpMissing;
+            // A mage is greedy for her ticks (the user, 2026-10-03): once
+            // down she stays down while any request holds -- MP pacing's, the
+            // player's rest, her own row's -- and reaching her MP target is
+            // no reason to rise. She rises for a reason to: first aid's call
+            // (urgent), danger or an order (blocked), a walk she cannot put
+            // off, or the request ending (her MP full)
             const bool up = standPending || f.urgent || f.blocked || movementRequiresStand ||
-                            (!f.want && !f.withPlayer && !f.ordered) ||
-                            (f.resting && f.recovered && f.tickLanded && !f.withPlayer && !f.ordered && !preserveRecovery);
+                            (!f.want && !f.withPlayer && !f.ordered);
             wantsDown = !up;
             if (f.resting)
             {

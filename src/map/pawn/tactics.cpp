@@ -21,7 +21,9 @@
 
 #include "tactics.h"
 
+#include "bank_math.h"
 #include "conveyor.h"
+#include "cure_math.h"
 #include "fight_log.h"
 #include "cure_readiness.h"
 #include "party_roster.h"
@@ -29,6 +31,7 @@
 #include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "role_support.h"
+#include "rest_math.h"
 #include "rest_policy.h"
 #include "spell_bank.h"
 #include "tank_calls.h"
@@ -50,6 +53,7 @@
 #include "lua/luautils.h"
 #include "party.h"
 #include "recast_container.h"
+#include "status_effect_container.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -244,27 +248,120 @@ namespace pawn::tactics
                 return timer::now();
             }
 
+            auto fightUnderWay() -> bool
+            {
+                return std::any_of(m_log.open().begin(), m_log.open().end(), [](const auto& r) { return !r.settling(); });
+            }
+
+            // The members as first aid weighs them while a fight is under
+            // way: each one's danger (role::threat), never less than the
+            // floor (withFloor). Nobody while no fight is
+            auto riskTargets(const Conveyor::Scope& scope, const double at) -> std::vector<cardian::cure::Target>
+            {
+                std::vector<cardian::cure::Target> targets;
+                if (!fightUnderWay())
+                {
+                    return targets;
+                }
+                for (auto* member : scope.members)
+                {
+                    if (member == nullptr || member->isDead()) continue;
+                    const auto threat = role::threat(m_log, member, at);
+                    targets.push_back(cardian::cure::withFloor({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
+                        threat.biggestHit, threat.takenPerSecond}, firstAidFloor()));
+                }
+                return targets;
+            }
+
             // First aid (cure_math.h choose): the cures each mage could
-            // land and those in flight, against each member's danger while
-            // a fight is under way -- never less than the floor
-            // (withFloor) -- the last choice keeping an emergency through
-            // its approach
+            // land and those in flight, against each member's danger -- the
+            // last choice keeping an emergency through its approach
             auto chooseFirstAid(const Conveyor::Scope& scope, const double at) -> std::vector<cardian::cure::Choice>
             {
-                const auto measured = measureCures(scope, at);
-                std::vector<cardian::cure::Target> targets;
-                if (std::any_of(m_log.open().begin(), m_log.open().end(), [](const auto& r) { return !r.settling(); }))
+                return cardian::cure::choose(measureCures(scope, at), riskTargets(scope, at), m_conveyor.emergencies());
+            }
+
+            // A cardian mage on her feet, whose next cure a kneel beside her
+            // can count on: not kneeling herself, and not a played character,
+            // whose casting nothing promises
+            static auto onHerFeet(const Conveyor::Scope& scope, const uint32 id) -> bool
+            {
+                auto* PBody = dynamic_cast<CCharEntity*>(Conveyor::resolve(scope, id));
+                auto* gambits = PBody != nullptr ? pawn::gambitsOf(PBody) : nullptr;
+                return gambits != nullptr && !gambits->Host().OwnClient() && !PBody->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+            }
+
+            // How long the fight has left at the party's rate (bank_math.h
+            // remainingLife), the longest-lived of its mobs, and that mob;
+            // negative when no mob's life is known
+            auto fightLeft(const double at) -> std::pair<double, uint32>
+            {
+                std::pair<double, uint32> out{ -1.0, 0 };
+                for (const auto& r : m_log.open())
                 {
-                    for (auto* member : scope.members)
+                    auto* PMob = r.settling() ? nullptr : dynamic_cast<CMobEntity*>(zoneutils::GetEntity(r.mobId, TYPE_MOB));
+                    if (PMob == nullptr || PMob->isDead())
                     {
-                        if (member == nullptr || member->isDead()) continue;
-                        const auto threat = role::threat(m_log, member, at);
-                        targets.push_back(cardian::cure::withFloor({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
-                            threat.biggestHit, threat.takenPerSecond}, firstAidFloor()));
+                        continue;
+                    }
+                    const double left = cardian::tactics::remainingLife(PMob->health.hp, r.dealtPerSecond(at), r.seconds(at), spotAverages(r.zone, r.mobName).dealtPerSecond.mean);
+                    if (out.second == 0 || left > out.first)
+                    {
+                        out = { left, r.mobId };
                     }
                 }
-                return cardian::cure::choose(measured, targets, m_conveyor.emergencies());
+                return out;
             }
+
+        public:
+            // The kneel's question (tactics.h kneelRisk): the cures promised
+            // to land are those in flight and each other cardian mage's
+            // earliest on each member; the kneeler's own are what the kneel
+            // gives up
+            auto kneelRisk(const Conveyor::Scope& scope, const CCharEntity* PKneeler, const double at) -> std::optional<KneelRisk>
+            {
+                const auto targets = riskTargets(scope, at);
+                if (targets.empty())
+                {
+                    return std::nullopt;
+                }
+                const auto measured = measureCures(scope, at);
+                std::vector<cardian::cure::Option>                          promised;
+                std::unordered_map<uint64, const cardian::cure::Option*> earliest; // by (caster, target)
+                for (const auto& option : measured)
+                {
+                    if (option.inFlight)
+                    {
+                        promised.push_back(option);
+                        continue;
+                    }
+                    if (option.caster == PKneeler->id || !std::isfinite(option.time.land) || option.heals <= 0.0 || !onHerFeet(scope, option.caster))
+                    {
+                        continue;
+                    }
+                    auto& best = earliest[(static_cast<uint64>(option.caster) << 32) | option.target];
+                    if (best == nullptr || option.time.land < best->time.land)
+                    {
+                        best = &option;
+                    }
+                }
+                for (const auto& [key, option] : earliest)
+                {
+                    promised.push_back(*option);
+                }
+                const double horizon = cardian::rest::kKneelSeconds + 2.0 * settings::get<uint8>("map.HEALING_TICK_DELAY");
+                const auto   risk    = cardian::cure::atRisk(targets, horizon, promised);
+                if (!risk.has_value())
+                {
+                    return std::nullopt;
+                }
+                const auto* PMember        = Conveyor::resolve(scope, risk->id);
+                const auto [left, mob]     = fightLeft(at);
+                return KneelRisk{ .member = risk->id, .name = PMember != nullptr ? PMember->getName() : "?", .hp = risk->hp,
+                                  .perSecond = risk->damageRate, .biggest = risk->biggest, .horizon = horizon, .fightLeft = left, .mob = mob };
+            }
+
+        private:
 
             void changed(const timer::time_point)
             {
@@ -1034,6 +1131,12 @@ namespace pawn::tactics
             tactician->resting().observe(PPawn, seconds(timer::now()));
         }
         return tactician != nullptr ? tactician->resting().advice(PPawn->id) : std::nullopt;
+    }
+
+    auto kneelRisk(CCharEntity* PPawn) -> std::optional<KneelRisk>
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr ? tactician->kneelRisk(scopeOf(PPawn), PPawn, seconds(timer::now())) : std::nullopt;
     }
 
     auto recoveryDue(const CCharEntity* PPawn) -> bool

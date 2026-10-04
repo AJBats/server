@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <span>
 #include <unordered_set>
 #include <vector>
@@ -98,6 +99,28 @@ namespace cardian::cure
     {
         target.biggest = std::max(target.biggest, target.maximum * floor);
         return target;
+    }
+
+    // First aid's own test asked over a longer stretch: the member at the
+    // most risk of death by the horizon -- her HP less what the fight takes
+    // from her by then and one more big hit, with only the cures promised
+    // to land by then -- when that runs out for anyone. A kneel asks it to
+    // her first tick: one that leaves a patient at risk to win a tick is
+    // not taken
+    inline auto atRisk(std::span<const Target> targets, const double horizon, std::span<const Option> promised) -> std::optional<Target>
+    {
+        std::optional<Target> worst;
+        double                least = 0.0;
+        for (const auto& target : targets)
+        {
+            const double left = margin(target, horizon, promised);
+            if (left < 0.0 && (!worst.has_value() || left < least))
+            {
+                worst = target;
+                least = left;
+            }
+        }
+        return worst;
     }
 
     inline auto choose(std::span<const Option> measured, std::span<const Target> targets,
