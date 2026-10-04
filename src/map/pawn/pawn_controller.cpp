@@ -1217,15 +1217,13 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
         return;
     }
     const bool was = m_Stake.has_value();
-    // A camp moved away stands a kneeling mage, to walk to it. One set down
-    // or lifted where she kneels does not: her new seat is a routine step
-    // her rest puts off, and her ticks go on (the user, 2026-10-03)
-    constexpr float  kKneelsThrough = 10.0f; // yalms from the new camp: its seats and its backline
-    const auto*      anchor         = GetAnchor();
-    const position_t camp           = stake.has_value() ? stake->at : anchor != nullptr ? anchor->loc.p : POwner->loc.p;
-    if ((stake.has_value() && stake->zone != POwner->getZone()) || !isWithinDistance(POwner->loc.p, camp, kKneelsThrough))
+    // A camp set, moved or lifted leaves a kneeling mage down: she rests on
+    // where she is, and walks to her new seat once topped up or when a mob
+    // comes in (the user, 2026-10-04: "real mages would keep resting").
+    // Only a camp in another zone, a trek away, stands her
+    if (stake.has_value() && stake->zone != POwner->getZone())
     {
-        StandFromRest("the camp moved away");
+        StandFromRest("the camp is in another zone");
     }
     m_Stake        = std::move(stake);
     m_CampWaitPoint.reset(); // planned afresh for the new camp
@@ -2452,6 +2450,7 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     const auto        reach     = ReachOf(PMob);
     const float       mobToTank = distance(mob, tank, true);
     const float       ring      = cardian::perimeter::ringOf(reach, mobToTank);
+    m_AttendRing                = ring;
     const float       toMob     = distance(me, mob, true);
     const float       toTank    = distance(me, tank, true);
     // The aim sits inside the crescent's edges, past the walker's stop
@@ -2549,6 +2548,12 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
     return std::move(path->points);
 }
 
+namespace
+{
+    // At a camp, how far apart two attending mages keep: together, never on one spot (#250)
+    constexpr float kMageSpacing = 2.0f;
+}
+
 auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent
 {
     const auto camp      = place.position();
@@ -2564,6 +2569,7 @@ auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, con
     }
     const float ring = cardian::perimeter::ringOf(ReachOf(PMob), distance(mob, tank, true));
     m_CampRing       = ring; // what the camp's next pull is planned for (CampWaitIntent)
+    m_AttendRing     = ring;
     return CampSpot(place, mob, tank, ring, preparing ? "arrival" : "live");
 }
 
@@ -2591,7 +2597,6 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
     // stands -- are taken, and a spot within kMageSpacing of one costs as
     // much as the AoE would. Only the later mage gives way, so two never
     // dance round each other
-    constexpr float         kMageSpacing = 2.0f;
     std::vector<position_t> taken;
     POwner->ForParty([&](CBattleEntity* PMember)
     {
@@ -2698,6 +2703,23 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
     // rises close to her place in the fight (the user, 2026-10-03)
     m_HasSlot       = false; // a camp spot is no formation slot for the vet to re-seat
     const auto camp = place.position();
+    // Planned in the same tick as an earlier mage of the party, hers may sit
+    // on that one's spot, which was not yet planned to keep clear of: the
+    // later mage plans again (CampSpot gives way to the earlier, #250)
+    if (m_CampWaitPoint.has_value())
+    {
+        bool crowded = false;
+        POwner->ForParty([&](CBattleEntity* PMember)
+        {
+            auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->PAI != nullptr ? dynamic_cast<CPawnController*>(PMember->PAI->GetController()) : nullptr;
+            const auto planned = PPeer != nullptr && PPeer->WaitsAtCampSpot() ? PPeer->CampWaitPoint() : std::nullopt;
+            crowded |= planned.has_value() && distance(*planned, *m_CampWaitPoint, true) < kMageSpacing;
+        });
+        if (crowded)
+        {
+            m_CampWaitPoint.reset();
+        }
+    }
     if (!m_CampWaitPoint.has_value())
     {
         // The pull lands at the flag (kMobAhead), its tank at its 3 o'clock
@@ -2714,8 +2736,10 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
         ShowInfoFmt("pawn: {} plans to wait for the camp's pulls at ({:.1f}, {:.1f}), {:.1f} y from the flag (ring {:.1f}{})", POwner->getName(),
                     m_CampWaitPoint->x, m_CampWaitPoint->z, distance(*m_CampWaitPoint, camp, true), ring, m_CampRing > 0.0f ? ", the last seen at a camp" : ", an ordinary mob's");
     }
+    // Standing, she walks there before she kneels; kneeling when the camp
+    // was set, she rests on where she is and walks over once topped up
+    // (the walk is a routine step her rest puts off)
     Intent intent;
-    intent.kneelSpot = true;
     if (distance(POwner->loc.p, *m_CampWaitPoint, true) > 0.75f)
     {
         intent.kind         = Intent::Kind::Path;
@@ -4234,6 +4258,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     if (auto* PAttended = dynamic_cast<CMobEntity*>(AttendedTarget()); PAttended != nullptr)
     {
         proposal = AttendIntent(PAttended, place);
+        // A kneeling mage puts her move to her attend spot off until the mob
+        // comes in: within its ring and this many yalms more of her, the
+        // seconds it takes to cover them hers to reach the spot (the user,
+        // 2026-10-04: rest until topped up or a monster comes in)
+        constexpr float kComesIn = 8.0f;
+        proposal.comesIn         = m_AttendRing > 0.0f && distance(POwner->loc.p, PAttended->loc.p, true) < m_AttendRing + kComesIn;
     }
     else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, or her Rest row's, she stays where she kneels
     {
@@ -4253,7 +4283,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // RestTick first checks urgent healing, danger and orders. Only when it
     // keeps her down do we suppress the proposal; Move still vets her current
     // position for aggro/link danger and may escape it.
-    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.kneelSpot))
+    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.comesIn))
     {
         proposal.kind = Intent::Kind::Stand;
         proposal.seat = false;

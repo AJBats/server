@@ -622,7 +622,7 @@ private:
         bool                 vet        = true;    // false: the party waved the company through
         bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
         bool                 seat       = false;   // a seat's path: failing it drops the seat
-        bool                 kneelSpot  = false;   // her planned spot to kneel at (CampWaitIntent): a walk there is no routine step her rest puts off
+        bool                 comesIn    = false;   // the mob she attends is coming in on her: a move no rest puts off
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
     };
@@ -661,7 +661,8 @@ private:
     auto CampWaitIntent(const Place& place) -> Intent;
     auto WaitsAtCampSpot() const -> bool; // she attends the camp's fights: a mage whose rows take none
     std::optional<position_t> m_CampWaitPoint; // her planned spot at this camp; reset when the camp is set again
-    float                     m_CampRing = 0.0f; // the ring of the last mob she attended at a camp; 0: none yet
+    float                     m_CampRing   = 0.0f; // the ring of the last mob she attended at a camp; 0: none yet
+    float                     m_AttendRing = 0.0f; // the ring of the mob she attends, as her mover last measured it
 
 public:
     // Where she waits at the camp, planned or not yet: what a fellow mage

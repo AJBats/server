@@ -126,7 +126,12 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // With Player stays an explicit input beside it; neither overwrites
     // the other with the MP decision
     const bool supportRecovery = support && advice->recover;
-    const bool mpMissing       = POwner->health.mp < POwner->GetMaxMP();
+    // Short of MP by a tick's worth at least: less than that a kneel cannot
+    // pay for, so she neither kneels for it nor stays down for the last few
+    // points (the user, 2026-10-04: no resting at full MP). Half her pool at
+    // most, for a mage too young to hold a whole tick
+    const double tickMp    = std::min(cardian::rest::mpAtTick(2, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL)), 0.5 * POwner->GetMaxMP());
+    const bool   mpMissing = POwner->GetMaxMP() - POwner->health.mp >= std::max(1.0, tickMp);
     // At a camp with no fight on, a mage short of MP kneels whatever her
     // pace says: ticks between pulls are free (the user, 2026-10-03: mages
     // are greedy for their ticks). Following the player, her pace alone
@@ -245,7 +250,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         StandFromRest(urgent ? advice->why : unsafe && !deliberate ? "danger" : noRecovery ? "recovery blocked" :
             rowRest && fightOn() ? "the party's fight" :
             HasQueuedOrder() && !m_ManeuverResting ? "the player's action order" :
-            support && place != nullptr && !mpMissing ? "her MP is full" : "rest request ended or movement needed");
+            support && place != nullptr && !mpMissing ? "her MP is within a tick of full" : "rest request ended or movement needed");
     }
     else if (decision == cardian::rest::Decision::Kneel)
     {
