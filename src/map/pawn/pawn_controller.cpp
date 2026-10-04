@@ -496,6 +496,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     if (from == Mode::Approach && to != Mode::Approach)
     {
         m_Approach.reset();
+        m_BackFirst.reset();
         m_Towing = false;
         m_TowingMob.reset();
     }
@@ -577,6 +578,7 @@ void CPawnController::StandDown(const std::string_view why)
     m_SneakStep.reset();
     m_SneakHold.reset();
     m_Approach.reset();
+    m_BackFirst.reset();
     m_HoldForPlayer = false;
     if (POwner->PAI->PathFind != nullptr)
     {
@@ -1823,6 +1825,13 @@ void CPawnController::ToldAfterOrder(const uint16 message, const std::string& sa
     {
         return;
     }
+    // Turned off the mob to keep a Sneak Attack for its back (KeepSwingOff),
+    // her auto-attack is told it cannot see its target every round: her
+    // own swing's word, not the order's
+    if (static_cast<MsgBasic>(message) == MsgBasic::UnableToSeeTarget && KeepsSneakForBack(POwner->GetBattleTarget()))
+    {
+        return;
+    }
     // Her auto-attack's own word -- a swing at a target beyond her reach,
     // every round while she holds her position out of it -- is no order's
     // refusal. A pet's skill out of range is told the same way, so after a
@@ -2296,6 +2305,18 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
             // Retain the target while the body finishes kneeling and rising.
             m_Approach = Approach{ EntityId(PTarget), kind };
             Transition(Mode::Approach, "standing to engage");
+            return false;
+        }
+        // Sneak Attack on her: its back first, weapon away (TakesBackFirst;
+        // the approach walks her there and draws). Not while holding for
+        // the player's strike, which keeps her out of reach anyway
+        if (!hold && !POwner->PAI->IsEngaged() && TakesBackFirst(PTarget))
+        {
+            if (!m_Approach.has_value() || m_Approach->target.resolve<CBattleEntity>() != PTarget)
+            {
+                m_Approach = Approach{ EntityId(PTarget), kind };
+                Transition(Mode::Approach, fmt::format("takes {}'s back before she draws", PTarget->getName()));
+            }
             return false;
         }
         m_Approach.reset();
@@ -3130,8 +3151,11 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     // a tight spot beside the mob -- never swings. (The client draws other
     // characters facing their heading; the strafe itself is not animated
     // for them, a quirk of the protocol. The swings are real.)
-    if (intent.target != nullptr && distance(POwner->loc.p, intent.target->loc.p) <= POwner->GetMeleeRange(intent.target) + LockOnSlack &&
-        !KeepsSneakForBack(intent.target))
+    if (intent.target != nullptr && KeepsSneakForBack(intent.target))
+    {
+        KeepSwingOff(intent.target);
+    }
+    else if (intent.target != nullptr && distance(POwner->loc.p, intent.target->loc.p) <= POwner->GetMeleeRange(intent.target) + LockOnSlack)
     {
         PPathFind->LookAt(intent.target->loc.p);
     }
@@ -3154,6 +3178,66 @@ auto CPawnController::KeepsSneakForBack(const CBattleEntity* PTarget) const -> b
     const bool forWs   = m_SneakStep.has_value() && m_SneakStep->wsid != 0 && m_SneakStep->target.resolve<CBattleEntity>() == PTarget;
     const bool forSwing = m_SneakHold.has_value() && m_SneakHold->target.resolve<CBattleEntity>() == PTarget && !BehindFor(PTarget);
     return forWs || forSwing;
+}
+
+void CPawnController::KeepSwingOff(const CBattleEntity* PTarget)
+{
+    // Not turning to the mob is not enough: walking round it in reach, or
+    // drawn as it walked into her, her heading can hold it in the cone a
+    // swing needs. Held 60 degrees off it, on the side she already leans
+    constexpr int16 kClear = 43;
+    if (PTarget == nullptr || distance(POwner->loc.p, PTarget->loc.p) > POwner->GetMeleeRange(PTarget) + LockOnSlack)
+    {
+        return;
+    }
+    const int16 off = facingAngle(POwner->loc.p, PTarget->loc.p);
+    if (std::abs(off) >= kClear)
+    {
+        return;
+    }
+    POwner->loc.p.rotation = relativeAngle(worldAngle(POwner->loc.p, PTarget->loc.p), off >= 0 ? -kClear : kClear);
+    POwner->updatemask |= UPDATE_POS;
+}
+
+auto CPawnController::TakesBackFirst(const CBattleEntity* PTarget) -> bool
+{
+    // Sneak Attack still on her from a mob that died before her swing: she
+    // takes the next one's back before she draws, so her first swing is
+    // from there (the user, 2026-10-04: position, then engage). Not on a
+    // mob that is on her, nor one whose back she gave up on, nor while she
+    // holds her position or tows at the stake
+    constexpr auto  kBackWalk = 6s;
+    constexpr float kNear     = 3.0f; // yalms beyond her reach: she has arrived, and the walk round it begins
+    if (PTarget == nullptr || !POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack) || PTarget->GetBattleTarget() == POwner ||
+        PTarget->id == m_SneakGaveUpOn || m_Waiting || TowsAtStake() || !POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
+    {
+        m_BackFirst.reset();
+        return false;
+    }
+    const float gap = distance(POwner->loc.p, PTarget->loc.p) - POwner->GetMeleeRange(PTarget);
+    if (gap <= 0.0f && BehindFor(PTarget))
+    {
+        // There: she draws. The walk's clock is kept, so a mob that turns
+        // during the draw's beat buys no fresh walk round it
+        return false;
+    }
+    if (!m_BackFirst.has_value() || m_BackFirst->target.resolve<CBattleEntity>() != PTarget)
+    {
+        m_BackFirst = BackFirst{ EntityId(PTarget), std::nullopt };
+        ShowInfoFmt("tactics: {} takes {}'s back before she draws, for the Sneak Attack still on her", POwner->getName(), PTarget->getName());
+    }
+    if (!m_BackFirst->since.has_value() && gap <= kNear)
+    {
+        m_BackFirst->since = m_Tick;
+    }
+    if (m_BackFirst->since.has_value() && m_Tick - *m_BackFirst->since > kBackWalk)
+    {
+        m_SneakGaveUpOn = PTarget->id;
+        m_BackFirst.reset();
+        ShowInfoFmt("tactics: {} gives up on {}'s back and draws; the Sneak Attack on her goes on her next swing", POwner->getName(), PTarget->getName());
+        return false;
+    }
+    return true;
 }
 
 void CPawnController::WalkToward(CBattleEntity* PTarget)
@@ -3707,6 +3791,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         else if (ReadyToAct())
         {
             m_HeldWs.reset();
+            FaceTarget(held.target);
             if (BoostOrWeaponSkill(held.target, held.wsid))
             {
                 co_return;
@@ -3751,12 +3836,25 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
             {
                 m_SneakStep.reset();
                 RestSneak(PStep);
+                // A Sneak Attack already on her is given up with the back: no
+                // hold or fresh walk for it on this mob, it goes on her next
+                // swing (m_SneakGaveUpOn)
+                if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack))
+                {
+                    m_SneakGaveUpOn = PStep->id;
+                }
                 ShowInfoFmt("tactics: {} gives up on Sneak Attack ({}){}", POwner->getName(),
                             onHer ? fmt::format("{} is on her", PStep->getName()) : fmt::format("she could not reach {}'s back", PStep->getName()),
                             step.wsid != 0 ? "; her weapon skill goes alone" : "");
-                if (step.wsid != 0 && BoostOrWeaponSkill(step.target, step.wsid))
+                // Turned off the mob for the walk (KeepSwingOff): the weapon
+                // skill asks that she face it
+                if (step.wsid != 0)
                 {
-                    co_return;
+                    FaceTarget(step.target);
+                    if (BoostOrWeaponSkill(step.target, step.wsid))
+                    {
+                        co_return;
+                    }
                 }
             }
         }
@@ -3779,15 +3877,17 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     // swing -- is the next mob's: she takes its back before her first
     // swing, and turns to swing only there (KeepsSneakForBack; the user,
     // 2026-10-04: one primed on a goblin was spent on a lizard's flank).
-    // Not while a weapon skill waits behind a Sneak Attack just used, and
-    // not on a mob whose back she has given up on already
+    // Not while a weapon skill waits behind a Sneak Attack just used, not on
+    // a mob whose back she has given up on already, and not where she could
+    // not walk there anyway -- holding her position, towing at the stake, its
+    // back off the mesh -- or the hold would only keep her from swinging
     const bool sneakUp = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack);
     if (!sneakUp)
     {
         m_SneakGaveUpOn = 0;
     }
     if (sneakUp && !m_SneakStep.has_value() && !m_SneakHold.has_value() && !m_HeldWs.has_value() && PTarget->GetBattleTarget() != POwner &&
-        PTarget->id != m_SneakGaveUpOn)
+        PTarget->id != m_SneakGaveUpOn && !m_Waiting && !TowsAtStake() && POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
     {
         m_SneakHold = SneakHold{ .target = EntityId(PTarget), .until = m_Tick + 15s, .landed = true };
         ShowInfoFmt("tactics: {} takes {}'s back for the Sneak Attack still on her", POwner->getName(), PTarget->getName());
@@ -3894,7 +3994,11 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     std::optional<AvoidAction> moved;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
-        if (!facing(POwner->loc.p, PTarget->loc.p, 64) && !KeepsSneakForBack(PTarget))
+        if (KeepsSneakForBack(PTarget))
+        {
+            KeepSwingOff(PTarget);
+        }
+        else if (!facing(POwner->loc.p, PTarget->loc.p, 64))
         {
             POwner->PAI->PathFind->LookAt(PTarget->loc.p);
         }
@@ -4094,6 +4198,21 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
             const auto ready = cardian::rules::mayFight(facts);
             if (ready)
             {
+                // Bound for its back before she draws (the door's
+                // TakesBackFirst): she walks round to it, weapon away, and
+                // draws below once she stands there or gives the back up
+                if (m_BackFirst.has_value() && m_BackFirst->target.resolve<CBattleEntity>() == PMob && !POwner->PAI->IsEngaged() && TakesBackFirst(PMob))
+                {
+                    if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
+                    {
+                        RefreshDangers(PMob);
+                        auto intent     = SeatIntent(PMob, SneakPoint(PMob), distance(POwner->loc.p, PMob->loc.p) <= POwner->GetMeleeRange(PMob), false, false);
+                        intent.target   = PMob;
+                        intent.fighting = true;
+                        Move(intent);
+                    }
+                    return true;
+                }
                 if (!PendingIs(Pending::Act::Draw, PMob))
                 {
                     Schedule(Pending::Act::Draw, PMob, hunt ? m_HuntBeat : timer::duration{});
@@ -4361,7 +4480,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         how = answer.value_or(engage::How::Draw);
     }
     CBattleEntity* PPartyTarget = party.target;
-    const bool     walkingIn    = m_Approach.has_value() && m_Approach->kind == ApproachKind::Join;
+    // Walking in on the party's fight, or on the player's order round its
+    // mob to the back before she draws (TakesBackFirst): the approach has
+    // her, and the door does not draw her again every beat
+    const bool     walkingIn    = m_Approach.has_value() &&
+                              (m_Approach->kind == ApproachKind::Join || (m_Approach->kind == ApproachKind::Order && m_BackFirst.has_value()));
     // The door's state, once a second, while a fight is on around her and she
     // has not passed it: what stands in the way of this tick
     if (settings::get<bool>("pawn.FORMATION_DEBUG") && m_Tick - m_DoorSaidAt >= 1s)

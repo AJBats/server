@@ -24,6 +24,7 @@
 #include "tactics.h"
 
 #include "common/logging.h"
+#include "common/utils.h"
 
 #include "action/action.h"
 #include "ai/ai_container.h"
@@ -767,6 +768,22 @@ namespace pawn::tactics
             // priced on it
             m.meleeDealt += landed;
             bank::defenceSplit(r, PAttacker, PMob, landed);
+
+            // A Thief's Sneak Attack goes on her next melee hit, and counts
+            // only from the mob's back, as the engine judges it at the swing
+            // (attack.cpp: behind, 64); the effect is still on her while the
+            // hit lands. Said once for each Sneak Attack, however many hits
+            // its round has
+            if (auto* PSneak = PAttacker->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::SneakAttack);
+                PSneak != nullptr && PAttacker->GetMJob() == xi::Job::THF)
+            {
+                if (auto& said = m_sneakSaid[PAttacker->id]; said != PSneak->GetStartTime())
+                {
+                    said = PSneak->GetStartTime();
+                    ShowInfoFmt("tactics: {}'s Sneak Attack goes on a swing at {} for {}, {}", m.name, r.mobName, landed,
+                                behind(PAttacker->loc.p, PMob->loc.p, 64) ? "from its back" : "NOT from its back (wasted)");
+                }
+            }
         }
         if (debug())
         {

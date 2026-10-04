@@ -1221,6 +1221,20 @@ private:
     // back, by its own facing (utils.h behind, the same 64 the hit asks)
     auto                  BehindFor(const CBattleEntity* PTarget) const -> bool;
     auto                  KeepsSneakForBack(const CBattleEntity* PTarget) const -> bool; // Sneak Attack on her, the back not yet hers: no turn to swing
+    // The swing goes whenever the mob is in her front cone (facing, 64):
+    // kept for the back, her heading is held clear of it, within reach
+    void                  KeepSwingOff(const CBattleEntity* PTarget);
+    // Sneak Attack on her, weapon away, and the mob's back not hers: she
+    // walks there before she draws, so no swing spends it from the side; a
+    // few seconds from her arrival near it at most, then that back is given
+    // up on and she draws
+    auto                  TakesBackFirst(const CBattleEntity* PTarget) -> bool;
+    struct BackFirst
+    {
+        EntityId                         target;
+        std::optional<timer::time_point> since; // her arrival near the mob: the run in is not the walk round it
+    };
+    std::optional<BackFirst> m_BackFirst;
     auto                  FireWeaponSkill(EntityId target, uint16 wsid) -> bool;           // the weapon skill itself, said as it goes out
     // The spot straight behind the mob by its own facing, at her fight
     // radius: where the walk for Sneak Attack heads
