@@ -11,29 +11,6 @@ templates:
         skill: staff
       resists:
         immune_status: [silence, slow, elegy, light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: -5000
-          piercing: -5000
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:     1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:       1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -69,23 +46,6 @@ templates:
       combat:
         skill: staff
       jobs: [smn, blm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -121,23 +81,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, rdm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -173,23 +116,6 @@ templates:
       combat:
         skill: scythe
       jobs: [drk, blm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -224,23 +150,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -283,23 +192,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -341,23 +233,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -399,23 +274,6 @@ templates:
     attributes:
       combat:
         skill: great_axe
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -451,23 +309,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -509,23 +350,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -548,23 +372,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        rank_element:
-          fire:    1
-          ice:     1
-          wind:    1
-          earth:   1
-          thunder: 1
-          water:   1
-          dark:    4
-        rank_status:
-          paralyze:   1
-          bind:       1
-          silence:    1
-          slow:       1
-          poison:     1
-          dark_sleep: 4
-          blind:      4
       render:
         look:
           type:  standard
@@ -594,24 +401,6 @@ templates:
           piercing: -5000
           blunt:    -5000
           h2h:      -5000
-        rank_element:
-          fire:     1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:       1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -641,29 +430,6 @@ templates:
       jobs: [whm, whm]
       resists:
         immune_status: [silence, slow, elegy, light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: -5000
-          piercing: -5000
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -699,18 +465,6 @@ templates:
       combat:
         skill: sword
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -745,18 +499,6 @@ templates:
       combat:
         skill: axe
       jobs: [bst, bst]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -792,18 +534,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -839,18 +569,6 @@ templates:
       combat:
         skill: scythe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -885,18 +603,6 @@ templates:
       combat:
         skill: polearm
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -930,20 +636,8 @@ templates:
     attributes:
       combat:
         skill: hand_to_hand
-        delay: 480
+        delay: 240
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -979,18 +673,6 @@ templates:
       combat:
         skill: katana
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1026,18 +708,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1072,18 +742,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1119,18 +777,6 @@ templates:
       combat:
         skill: sword
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1165,18 +811,6 @@ templates:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1212,18 +846,6 @@ templates:
       combat:
         skill: club
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1258,18 +880,6 @@ templates:
       combat:
         skill: dagger
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1303,18 +913,6 @@ templates:
     attributes:
       combat:
         skill: great_axe
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1350,18 +948,6 @@ templates:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1397,22 +983,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:     6
-          ice:      6
-          wind:     6
-          earth:    6
-          thunder:  6
-          water:    6
-          light:   11
-        rank_status:
-          paralyze:     6
-          bind:         6
-          silence:      6
-          slow:         6
-          poison:       6
-          light_sleep: 11
       render:
         look:
           type:  standard
@@ -1440,24 +1010,6 @@ templates:
       jobs: [rdm, rdm]
       resists:
         immune_status: [light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: 1250
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -1476,8 +1028,15 @@ templates:
       spawn:
         type: [scripted]
       stats:
-        hp: 3300
-        mp: 1000
+        hp:  3300
+        mp:  1000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
 
   Hydras_Wyvern:
     id:            2033
@@ -1487,27 +1046,8 @@ templates:
     attributes:
       combat:
         skill: polearm
-        delay: 200
+        delay: 240
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1541,24 +1081,6 @@ templates:
           piercing: -5000
           blunt:    -5000
           h2h:      -5000
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:     1
-          earth:    1
-          thunder: -1
-          water:   -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:      1
-          slow:         1
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -1579,18 +1101,13 @@ templates:
 
   Kindred_Bard:
     id:            2232
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 6
     skill_list_id: 358
     attributes:
       combat:
         skill: club
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1619,17 +1136,12 @@ templates:
 
   Kindred_Beastmaster:
     id:            2233
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: axe
       jobs: [bst, bst]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1658,19 +1170,14 @@ templates:
 
   Kindred_Black_Mage:
     id:            2234
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 21
     skill_list_id: 358
     attributes:
       combat:
         skill: staff
-        delay: 290
+        delay: 240
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1699,18 +1206,14 @@ templates:
 
   Kindred_Dark_Knight:
     id:            2235
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 5
     skill_list_id: 358
     attributes:
       combat:
         skill: sword
-      jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
+      jobs:  [drk, drk]
+      speed: 40
       render:
         look:
           type:  standard
@@ -1739,17 +1242,12 @@ templates:
 
   Kindred_Dragoon:
     id:            2236
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: sword
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1778,17 +1276,12 @@ templates:
 
   Kindred_Monk:
     id:            2237
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: axe
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1817,19 +1310,15 @@ templates:
 
   Kindred_Ninja:
     id:            2238
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 7
     skill_list_id: 358
     attributes:
       combat:
         skill: scythe
-        delay: 290
-      jobs: [nin, nin]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
+        delay: 240
+      jobs:  [nin, nin]
+      speed: 40
       render:
         look:
           type:  standard
@@ -1858,18 +1347,13 @@ templates:
 
   Kindred_Paladin:
     id:            2239
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 4
     skill_list_id: 358
     attributes:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1898,17 +1382,12 @@ templates:
 
   Kindred_Ranger:
     id:            2240
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1937,18 +1416,13 @@ templates:
 
   Kindred_Red_Mage:
     id:            2241
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 3
     skill_list_id: 358
     attributes:
       combat:
         skill: club
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1977,17 +1451,13 @@ templates:
 
   Kindred_Samurai:
     id:            2242
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: sword
-      jobs: [sam, sam]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
+      jobs:  [sam, sam]
+      speed: 40
       render:
         look:
           type:  standard
@@ -2016,19 +1486,14 @@ templates:
 
   Kindred_Summoner:
     id:            2243
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 31
     skill_list_id: 358
     attributes:
       combat:
         skill: scythe
-        delay: 290
+        delay: 240
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -2057,17 +1522,12 @@ templates:
 
   Kindred_Thief:
     id:            2248
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: sword
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -2096,16 +1556,11 @@ templates:
 
   Kindred_Warrior:
     id:            2249
-    species:       kindred
+    species:       dynamis_kindred
     skill_list_id: 358
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -2134,18 +1589,13 @@ templates:
 
   Kindred_White_Mage:
     id:            2250
-    species:       kindred
+    species:       dynamis_kindred
     spell_list_id: 20
     skill_list_id: 358
     attributes:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -2181,22 +1631,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:     6
-          ice:      6
-          wind:     6
-          earth:    6
-          thunder:  6
-          water:    6
-          light:   11
-        rank_status:
-          paralyze:     6
-          bind:         6
-          silence:      6
-          slow:         6
-          poison:       6
-          light_sleep: 11
       render:
         look:
           type:  standard
@@ -2218,21 +1652,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:     4
-          ice:      1
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -2246,7 +1665,14 @@ templates:
       spawn:
         type: [scripted]
       stats:
-        hp: 3300
+        hp:  3300
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
 
   Kindreds_Wyvern:
     id:            2247
@@ -2256,27 +1682,8 @@ templates:
     attributes:
       combat:
         skill: scythe
-        delay: 200
+        delay: 240
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2304,29 +1711,6 @@ templates:
       jobs: [blm, blm]
       resists:
         immune_status: [silence, slow, elegy, light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: -5000
-          piercing: -5000
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:     1
-          earth:    1
-          thunder: -1
-          water:   -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:      1
-          slow:         1
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2360,25 +1744,6 @@ templates:
       combat:
         skill: axe
         delay: 300
-      resists:
-        rank_element:
-          fire:     2
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:    2
-          dark:    -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep:  2
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2392,7 +1757,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 5000
+        hp:  5000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2412,25 +1784,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:      3
-          wind:     3
-          earth:    3
-          thunder:  3
-          water:    3
-          light:    3
-          dark:     3
-        rank_status:
-          paralyze:    3
-          bind:        3
-          silence:     3
-          slow:        3
-          poison:      3
-          light_sleep: 3
-          dark_sleep:  3
-          blind:       3
       render:
         look:
           type:  standard
@@ -2445,7 +1798,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 5000
+        hp:  5000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2467,27 +1827,6 @@ templates:
     attributes:
       combat:
         skill: great_axe
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -3
-          wind:     2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:      2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2502,7 +1841,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 5000
+        hp:  5000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2522,23 +1868,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        dmg_physical:
-          blunt: -2500
-          h2h:   -2500
-        rank_element:
-          fire:  -2
-          ice:   -2
-          water:  4
-          light: -3
-          dark:   2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          poison:       4
-          light_sleep: -3
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -2552,7 +1881,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 5000
+        hp:  5000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2574,25 +1910,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          wind:    -2
-          earth:   -2
-          thunder: -3
-          water:    6
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2606,7 +1923,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 5000
+        hp:  5000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2628,28 +1952,6 @@ templates:
         skill: hand_to_hand
         delay: 380
       jobs: [mnk, mnk]
-      resists:
-        dmg_physical:
-          blunt: 5000
-          h2h:   2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -2664,7 +1966,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 10000
+        hp:  10000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2689,22 +1998,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -3
-          earth:    2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -3
-          slow:         2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -2718,7 +2011,14 @@ templates:
       spawn:
         respawn: 300
       stats:
-        hp: 5000
+        hp:  5000
+        str: a
+        dex: a
+        vit: a
+        agi: a
+        int: a
+        mnd: a
+        chr: a
     loot:
       drops:
         - chance: very_rare
@@ -2733,7 +2033,7 @@ templates:
 
   Prototype_Eye:
     id:            5121
-    species:       ahriman
+    species:       dynamis_ahriman
     type:          [notorious]
     spell_list_id: 11
     skill_list_id: 4
@@ -2743,14 +2043,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [elegy, light_sleep, dark_sleep]
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -2779,29 +2071,6 @@ templates:
       jobs: [blm, blm]
       resists:
         immune_status: [silence, slow, elegy, light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: -5000
-          piercing: -5000
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -2
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     -1
-          slow:        -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2844,24 +2113,6 @@ templates:
           piercing: -5000
           blunt:    -5000
           h2h:      -5000
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -2898,24 +2149,6 @@ templates:
           piercing: -5000
           blunt:    -5000
           h2h:      -5000
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -2
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     -1
-          slow:        -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2936,7 +2169,7 @@ templates:
 
   Vanguard_Eye:
     id:            4149
-    species:       ahriman
+    species:       dynamis_ahriman
     type:          [notorious]
     spell_list_id: 11
     skill_list_id: 4
@@ -2946,14 +2179,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [elegy, light_sleep, dark_sleep]
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -3008,59 +2233,59 @@ spawns:
     level:    [80, 80]
   16949255:
     template: Nightmare_Bugard
-    at:       [23.871, -12.546, 44.276, 141]
+    region:   c_7
     level:    [78, 80]
   16949256:
     template: Nightmare_Bugard
-    at:       [30.454, -12.502, 44.152, 127]
+    region:   c_7
     level:    [78, 80]
   16949257:
     template: Nightmare_Worm
-    at:       [1.000, -23.351, 25.521, 110]
+    region:   c_9
     level:    [78, 80]
   16949258:
     template: Nightmare_Worm
-    at:       [-17.477, -22.499, 20.797, 216]
+    region:   c_9
     level:    [78, 80]
   16949259:
     template: Nightmare_Worm
-    at:       [0.161, -24.030, 33.732, 26]
+    region:   c_9
     level:    [78, 80]
   16949260:
     template: Nightmare_Worm
-    at:       [-2.268, -24.000, 35.323, 190]
+    region:   c_9
     level:    [78, 80]
   16949261:
     template: Nightmare_Worm
-    at:       [-21.913, -22.478, -13.886, 45]
+    region:   s_13
     level:    [78, 80]
   16949262:
     template: Nightmare_Worm
-    at:       [-18.776, -22.301, -18.321, 158]
+    region:   s_13
     level:    [78, 80]
   16949263:
     template: Nightmare_Worm
-    at:       [-22.120, -22.424, -14.472, 47]
+    region:   s_13
     level:    [78, 80]
   16949264:
     template: Nightmare_Worm
-    at:       [-23.397, -22.587, -12.544, 174]
+    region:   s_13
     level:    [78, 80]
   16949265:
     template: Nightmare_Worm
-    at:       [26.676, -22.423, -5.240, 152]
+    region:   s_17
     level:    [78, 80]
   16949266:
     template: Nightmare_Worm
-    at:       [26.460, -22.498, -1.784, 189]
+    region:   s_17
     level:    [78, 80]
   16949267:
     template: Nightmare_Worm
-    at:       [13.179, -22.474, -20.795, 81]
+    region:   s_17
     level:    [78, 80]
   16949268:
     template: Nightmare_Worm
-    at:       [5.361, -23.067, -24.060, 118]
+    region:   s_17
     level:    [78, 80]
   16949269:
     template: Adamantking_Effigy
@@ -3068,7 +2293,7 @@ spawns:
     level:    [70, 70]
   16949270:
     template: Adamantking_Effigy
-    at:       [27.313, -22.487, -2.898, 192]
+    region:   s_17
     level:    [70, 70]
   16949271:
     template: Adamantking_Effigy
@@ -3076,71 +2301,71 @@ spawns:
     level:    [70, 70]
   16949272:
     template: Effigy_Prototype
-    at:       [26.360, -22.412, -7.080, 199]
+    region:   s_17
     level:    [70, 70]
   16949273:
     template: Nightmare_Hornet
-    at:       [-48.025, -22.655, 41.577, 119]
+    region:   w_25
     level:    [78, 80]
   16949274:
     template: Nightmare_Hornet
-    at:       [-34.722, -22.804, 32.907, 125]
+    region:   w_25
     level:    [78, 80]
   16949275:
     template: Nightmare_Hornet
-    at:       [-46.364, -22.656, 41.604, 12]
+    region:   w_25
     level:    [78, 80]
   16949276:
     template: Nightmare_Hornet
-    at:       [-44.052, -22.660, 43.771, 164]
+    region:   w_25
     level:    [78, 80]
   16949277:
     template: Nightmare_Hornet
-    at:       [-38.467, -22.879, -42.301, 46]
+    region:   sw_29
     level:    [78, 80]
   16949278:
     template: Nightmare_Hornet
-    at:       [-59.542, -22.633, -45.001, 76]
+    region:   sw_29
     level:    [78, 80]
   16949279:
     template: Nightmare_Hornet
-    at:       [-44.869, -22.654, -42.904, 175]
+    region:   sw_29
     level:    [78, 80]
   16949280:
     template: Nightmare_Hornet
-    at:       [-33.769, -22.767, -33.500, 122]
+    region:   sw_29
     level:    [78, 80]
   16949281:
     template: Hydra_Warrior
-    at:       [-91.478, -27.340, -26.025, 96]
+    region:   sw_33
     level:    [77, 79]
   16949282:
     template: Hydra_Red_Mage
-    at:       [-96.570, -27.360, -16.965, 42]
+    region:   sw_33
     level:    [77, 79]
   16949283:
     template: Hydra_Paladin
-    at:       [-96.407, -27.366, -16.573, 55]
+    region:   sw_33
     level:    [77, 79]
   16949284:
     template: Hydra_Ninja
-    at:       [-96.560, -27.633, -12.114, 201]
+    region:   sw_33
     level:    [77, 79]
   16949285:
     template: Hydra_Monk
-    at:       [-99.500, -27.420, -44.662, 8]
+    region:   sw_37
     level:    [77, 79]
   16949286:
     template: Hydra_White_Mage
-    at:       [-109.493, -27.493, -39.361, 236]
+    region:   sw_37
     level:    [77, 79]
   16949287:
     template: Hydra_Beastmaster
-    at:       [-110.239, -27.449, -36.357, 150]
+    region:   sw_37
     level:    [77, 79]
   16949288:
     template: Hydras_Hound
-    at:       [-107.359, -27.478, -36.484, 133]
+    region:   sw_37
     level:    [77, 79]
   16949289:
     template: Serjeant_Tombstone
@@ -3152,27 +2377,27 @@ spawns:
     level:    [70, 70]
   16949291:
     template: Serjeant_Tombstone
-    at:       [-112.810, -27.540, -49.090, 194]
+    region:   sw_37
     level:    [70, 70]
   16949292:
     template: Tombstone_Prototype
-    at:       [-106.651, -27.581, -42.936, 132]
+    region:   sw_37
     level:    [70, 70]
   16949293:
     template: Hydra_Black_Mage
-    at:       [-96.638, -27.409, 23.690, 120]
+    region:   w_45
     level:    [77, 79]
   16949294:
     template: Hydra_Dark_Knight
-    at:       [-89.854, -27.061, 25.603, 233]
+    region:   w_45
     level:    [77, 79]
   16949295:
     template: Hydra_Bard
-    at:       [-97.274, -27.333, 20.559, 74]
+    region:   w_45
     level:    [77, 79]
   16949296:
     template: Hydra_Dragoon
-    at:       [-96.833, -27.387, 3.995, 236]
+    region:   w_45
     level:    [77, 79]
   16949297:
     template: Hydras_Wyvern
@@ -3180,23 +2405,23 @@ spawns:
     level:    [77, 79]
   16949298:
     template: Hydra_Thief
-    at:       [-103.367, -27.296, 50.013, 234]
+    region:   w_50
     level:    [77, 79]
   16949299:
     template: Hydra_Ranger
-    at:       [-104.862, -27.407, 54.295, 95]
+    region:   w_50
     level:    [77, 79]
   16949300:
     template: Hydra_Samurai
-    at:       [-110.409, -27.419, 48.331, 195]
+    region:   w_50
     level:    [77, 79]
   16949301:
     template: Hydra_Summoner
-    at:       [-97.630, -27.450, 49.399, 30]
+    region:   w_50
     level:    [77, 79]
   16949302:
     template: Hydras_Avatar
-    at:       [-99.329, -27.428, 51.145, 31]
+    region:   w_50
     level:    [77, 79]
   16949303:
     template: Manifest_Icon
@@ -3208,75 +2433,75 @@ spawns:
     level:    [70, 70]
   16949305:
     template: Manifest_Icon
-    at:       [-102.625, -27.346, 46.551, 3]
+    region:   w_50
     level:    [70, 70]
   16949306:
     template: Icon_Prototype
-    at:       [-105.414, -27.320, 48.618, 196]
+    region:   w_50
     level:    [70, 70]
   16949307:
     template: Nightmare_Taurus
-    at:       [-85.608, -14.525, -40.746, 199]
+    region:   sw_59
     level:    [78, 80]
   16949308:
     template: Nightmare_Taurus
-    at:       [-88.664, -18.834, -56.618, 181]
+    region:   sw_60
     level:    [78, 80]
   16949309:
     template: Nightmare_Taurus
-    at:       [-85.729, -14.496, -40.589, 213]
+    region:   sw_59
     level:    [78, 80]
   16949310:
     template: Nightmare_Taurus
-    at:       [-80.283, -20.490, -68.536, 98]
+    region:   sw_62
     level:    [78, 80]
   16949311:
     template: Nightmare_Taurus
-    at:       [-80.290, -20.490, -63.233, 242]
+    region:   sw_62
     level:    [78, 80]
   16949312:
     template: Nightmare_Taurus
-    at:       [-88.321, -14.608, 44.284, 75]
+    region:   w_64
     level:    [78, 80]
   16949313:
     template: Nightmare_Taurus
-    at:       [-87.291, -20.067, 61.371, 191]
+    region:   w_65
     level:    [78, 80]
   16949314:
     template: Nightmare_Taurus
-    at:       [-85.595, -14.353, 38.496, 49]
+    region:   w_65
     level:    [78, 80]
   16949315:
     template: Nightmare_Taurus
-    at:       [-75.147, -20.561, 69.794, 61]
+    region:   w_67
     level:    [78, 80]
   16949316:
     template: Nightmare_Taurus
-    at:       [-80.799, -21.988, 71.441, 71]
+    region:   w_67
     level:    [78, 80]
   16949317:
     template: Nightmare_Makara
-    at:       [-84.818, -13.085, 11.089, 187]
+    region:   w_69
     level:    [78, 80]
   16949318:
     template: Nightmare_Makara
-    at:       [-79.299, -11.973, 7.221, 125]
+    region:   w_69
     level:    [78, 80]
   16949319:
     template: Nightmare_Makara
-    at:       [-87.969, -13.360, 4.338, 193]
+    region:   w_69
     level:    [78, 80]
   16949320:
     template: Nightmare_Makara
-    at:       [-86.147, -13.054, 8.368, 100]
+    region:   w_69
     level:    [78, 80]
   16949321:
     template: Nightmare_Makara
-    at:       [-74.099, -12.204, 0.955, 63]
+    region:   w_69
     level:    [78, 80]
   16949322:
     template: Goblin_Replica
-    at:       [-73.610, -11.653, -5.566, 10]
+    region:   w_74
     level:    [70, 70]
   16949323:
     template: Goblin_Replica
@@ -3288,7 +2513,7 @@ spawns:
     level:    [70, 70]
   16949325:
     template: Statue_Prototype
-    at:       [-72.307, -11.686, -5.761, 11]
+    region:   w_69
     level:    [70, 70]
   16949326:
     template: Diabolos_Somnus
@@ -3314,83 +2539,83 @@ spawns:
     at:       [2.214, -30.304, 150.537, 28]
   16949332:
     template: Nightmare_Cluster
-    at:       [-25.780, -36.490, 14.872, 155]
+    region:   c_84
     level:    [95, 97]
   16949333:
     template: Nightmare_Cluster
-    at:       [-12.750, -36.710, 20.831, 114]
+    region:   c_84
     level:    [95, 97]
   16949334:
     template: Nightmare_Cluster
-    at:       [-24.190, -36.490, 19.534, 157]
+    region:   c_84
     level:    [95, 97]
   16949335:
     template: Nightmare_Cluster
-    at:       [-17.160, -36.380, -20.954, 36]
+    region:   s_87
     level:    [95, 97]
   16949336:
     template: Nightmare_Cluster
-    at:       [-11.980, -36.790, -23.534, 19]
+    region:   s_87
     level:    [95, 97]
   16949337:
     template: Nightmare_Cluster
-    at:       [-11.700, -36.800, -23.642, 17]
+    region:   s_87
     level:    [95, 97]
   16949338:
     template: Nightmare_Cluster
-    at:       [23.218, -36.480, -11.961, 225]
+    region:   s_90
     level:    [95, 97]
   16949339:
     template: Nightmare_Cluster
-    at:       [20.402, -36.380, -17.969, 208]
+    region:   s_90
     level:    [95, 97]
   16949340:
     template: Nightmare_Cluster
-    at:       [19.926, -36.440, -17.238, 226]
+    region:   s_90
     level:    [95, 97]
   16949341:
     template: Nightmare_Leech
-    at:       [57.872, -36.808, 45.794, 151]
+    region:   e_93
     level:    [95, 97]
   16949342:
     template: Nightmare_Leech
-    at:       [57.797, -36.758, 44.514, 248]
+    region:   e_93
     level:    [95, 97]
   16949343:
     template: Nightmare_Leech
-    at:       [35.283, -37.035, 31.851, 58]
+    region:   e_93
     level:    [95, 97]
   16949344:
     template: Nightmare_Leech
-    at:       [43.524, -36.743, 40.859, 252]
+    region:   e_93
     level:    [95, 97]
   16949345:
     template: Nightmare_Leech
-    at:       [58.179, -36.717, -43.435, 124]
+    region:   se_97
     level:    [95, 97]
   16949346:
     template: Nightmare_Leech
-    at:       [32.256, -36.915, -35.288, 142]
+    region:   se_97
     level:    [95, 97]
   16949347:
     template: Nightmare_Leech
-    at:       [43.325, -36.761, -40.748, 242]
+    region:   se_97
     level:    [95, 97]
   16949348:
     template: Nightmare_Leech
-    at:       [33.945, -36.680, -32.737, 160]
+    region:   se_97
     level:    [95, 97]
   16949349:
     template: Kindred_Monk
-    at:       [98.430, -41.598, 13.109, 49]
+    region:   e_101
     level:    [95, 97]
   16949350:
     template: Kindred_Black_Mage
-    at:       [98.623, -41.563, -6.756, 63]
+    region:   e_101
     level:    [95, 97]
   16949351:
     template: Kindred_Beastmaster
-    at:       [98.847, -41.500, 7.399, 184]
+    region:   e_101
     level:    [95, 97]
   16949352:
     template: Kindreds_Vouivre
@@ -3398,15 +2623,15 @@ spawns:
     level:    [95, 97]
   16949353:
     template: Kindred_White_Mage
-    at:       [114.267, -41.640, 50.396, 193]
+    region:   e_105
     level:    [95, 97]
   16949354:
     template: Kindred_Dark_Knight
-    at:       [97.681, -41.470, 43.472, 81]
+    region:   e_105
     level:    [95, 97]
   16949355:
     template: Kindred_Ranger
-    at:       [109.243, -41.511, 56.332, 155]
+    region:   e_105
     level:    [95, 97]
   16949356:
     template: Goblin_Replica
@@ -3418,23 +2643,23 @@ spawns:
     level:    [70, 70]
   16949358:
     template: Goblin_Replica
-    at:       [103.360, -41.290, 52.062, 93]
+    region:   e_105
     level:    [70, 70]
   16949359:
     template: Kindred_Red_Mage
-    at:       [100.540, -41.430, -37.951, 205]
+    region:   se_111
     level:    [95, 97]
   16949360:
     template: Kindred_Paladin
-    at:       [113.300, -41.500, -41.226, 56]
+    region:   se_111
     level:    [95, 97]
   16949361:
     template: Kindred_Samurai
-    at:       [109.100, -41.530, -45.554, 77]
+    region:   se_111
     level:    [95, 97]
   16949362:
     template: Manifest_Icon
-    at:       [96.217, -41.480, -46.854, 235]
+    region:   se_111
     level:    [70, 70]
   16949363:
     template: Manifest_Icon
@@ -3446,19 +2671,19 @@ spawns:
     level:    [70, 70]
   16949365:
     template: Kindred_Warrior
-    at:       [75.084, -34.558, -69.209, 82]
+    region:   se_117
     level:    [95, 97]
   16949366:
     template: Kindred_Thief
-    at:       [80.496, -34.519, -72.879, 68]
+    region:   se_117
     level:    [95, 97]
   16949367:
     template: Kindred_Summoner
-    at:       [73.685, -34.502, -65.114, 175]
+    region:   se_117
     level:    [95, 97]
   16949368:
     template: Kindreds_Avatar
-    at:       [75.946, -34.561, -67.601, 76]
+    region:   se_117
     level:    [95, 97]
   16949369:
     template: Adamantking_Effigy
@@ -3470,19 +2695,19 @@ spawns:
     level:    [70, 70]
   16949371:
     template: Adamantking_Effigy
-    at:       [84.277, -34.522, -63.600, 59]
+    region:   se_117
     level:    [70, 70]
   16949372:
     template: Kindred_Bard
-    at:       [79.081, -36.528, 40.247, 86]
+    region:   e_124
     level:    [95, 97]
   16949373:
     template: Kindred_Ninja
-    at:       [74.831, -34.501, 64.289, 86]
+    region:   e_124
     level:    [95, 97]
   16949374:
     template: Kindred_Dragoon
-    at:       [80.213, -34.670, 60.059, 207]
+    region:   e_124
     level:    [95, 97]
   16949375:
     template: Kindreds_Wyvern
@@ -3498,37 +2723,37 @@ spawns:
     level:    [70, 70]
   16949378:
     template: Serjeant_Tombstone
-    at:       [83.805, -34.548, 73.253, 113]
+    region:   e_124
     level:    [70, 70]
   16949379:
     template: Vanguard_Eye
-    at:       [76.675, -25.349, 1.108, 135]
+    region:   e_131
     level:    [80, 82]
   16949380:
     template: Prototype_Eye
-    at:       [72.709, -25.402, 4.501, 76]
+    region:   e_131
     level:    [80, 82]
   16949381:
     template: Vanguard_Eye
-    at:       [85.351, -27.626, -34.478, 168]
+    region:   se_133
     level:    [80, 82]
   16949382:
     template: Vanguard_Eye
-    at:       [76.064, -25.425, -24.005, 39]
+    region:   se_133
     level:    [80, 82]
   16949383:
     template: Vanguard_Eye
-    at:       [83.092, -27.020, -32.300, 27]
+    region:   se_133
     level:    [80, 82]
   16949384:
     template: Vanguard_Eye
-    at:       [82.632, -27.314, 34.351, 227]
+    region:   e_136
     level:    [80, 82]
   16949385:
     template: Vanguard_Eye
-    at:       [74.971, -25.423, 26.397, 211]
+    region:   e_136
     level:    [80, 82]
   16949386:
     template: Vanguard_Eye
-    at:       [76.819, -25.653, 29.299, 95]
+    region:   e_136
     level:    [80, 82]

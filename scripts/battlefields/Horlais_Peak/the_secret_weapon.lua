@@ -12,7 +12,7 @@ local content = BattlefieldMission:new({
     isMission             = true,
     allowTrusts           = true,
     maxPlayers            = 6,
-    levelCap              = 75,
+    levelCap              = xi.settings.main.MAX_LEVEL,
     timeLimit             = utils.minutes(30),
     index                 = 3,
     entryNpc              = 'BC_Entrance',
@@ -53,7 +53,8 @@ content.groups =
             },
         },
 
-        allDeath = function(battlefield, mob)
+        superlink = true,
+        allDeath  = function(battlefield, mob)
             battlefield:setStatus(xi.battlefield.status.WON)
         end,
     },

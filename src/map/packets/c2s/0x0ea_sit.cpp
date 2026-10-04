@@ -23,12 +23,13 @@
 
 #include "entities/char_entity.h"
 #include "entities/pet_entity.h"
+#include "packets/c2s/validation.h"
 #include "status_effect_container.h"
 
 auto GP_CLI_COMMAND_SIT::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     return PacketValidator(PChar)
-        .blockedBy({ BlockedState::InEvent, BlockedState::AbnormalStatus, BlockedState::Crafting, BlockedState::PreventAction })
+        .blockedBy({ BlockedState::InEvent, BlockedState::Dead, BlockedState::AbnormalStatus, BlockedState::Crafting, BlockedState::PreventAction })
         .oneOf<GP_CLI_COMMAND_SIT_MODE>(this->Mode);
 }
 

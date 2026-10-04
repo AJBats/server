@@ -25,13 +25,24 @@
 #include "entities/battle_entity.h"
 
 #include "ai/ai_container.h"
+#include "entities/char_entity.h"
 #include "packets/s2c/0x028_battle2.h"
 #include "packets/s2c/0x058_assist.h"
 #include "utils/battleutils.h"
+#include "zone.h"
+
+namespace
+{
+
+constexpr timer::duration kEngageDelay    = 3s;     // time from engaging to the first swing
+constexpr timer::duration kEngageCooldown = 1500ms; // shortest wait before engaging again after a fight ends
+
+} // namespace
 
 CAttackState::CAttackState(xi::Badge<CState>, CBattleEntity* PEntity, const EntityId& target)
 : CState(PEntity, target)
 , m_PEntity(PEntity)
+, m_attackTime(kEngageDelay)
 {
     // Capture constructor arguments into members and nothing else. All other logic goes into init().
 }
@@ -40,6 +51,7 @@ auto CAttackState::init() -> StateErrorOr<void>
 {
     m_PEntity->setBattleTarget(target());
     m_PEntity->SetBattleStartTime(timer::now());
+    m_swingDelay = std::chrono::milliseconds(m_PEntity->GetWeaponDelay(false));
     CAttackState::UpdateTarget();
 
     if (!m_PEntity->GetBattleTarget() || m_errorMsg)
@@ -118,6 +130,15 @@ void CAttackState::ResetAttackTimer()
     m_attackTime = std::chrono::milliseconds(m_PEntity->GetWeaponDelay(false));
 }
 
+auto CAttackState::EngageLockout() const -> timer::duration
+{
+    // Uses the delay of the last swing, not the current weapon.
+    const timer::duration timeLeftOnSwing = m_attackTime;
+    const timer::duration longestLockout  = std::max(kEngageCooldown, m_swingDelay - kEngageDelay);
+
+    return std::clamp(timeLeftOnSwing, kEngageCooldown, longestLockout);
+}
+
 void CAttackState::UpdateTarget(const EntityId& target)
 {
     m_errorMsg.reset();
@@ -128,6 +149,8 @@ void CAttackState::UpdateTarget(const EntityId& target)
         PNewTarget = m_PEntity->IsValidTarget(newTarget, TARGET_ENEMY, m_errorMsg);
         if (!PNewTarget)
         {
+            const auto* PLostTarget = newTarget.resolve<CBattleEntity>();
+
             newTarget          = EntityId{};
             CCharEntity* PChar = dynamic_cast<CCharEntity*>(m_PEntity);
             if (PChar && PChar->hasAutoTargetEnabled())
@@ -147,6 +170,13 @@ void CAttackState::UpdateTarget(const EntityId& target)
                     }
                 }
             }
+
+            // target died: restart the swing timer at a full delay
+            if (!newTarget.isSet() && PLostTarget && PLostTarget->isDead())
+            {
+                m_attackTime = m_swingDelay;
+            }
+
             m_PEntity->PAI->ChangeTarget(newTarget);
         }
     }
@@ -171,7 +201,8 @@ auto CAttackState::CanAttack(CBattleEntity* PTarget) -> bool
 
     if (ret && !m_errorMsg)
     {
-        m_attackTime += std::chrono::milliseconds(m_PEntity->GetWeaponDelay(false));
+        m_swingDelay = std::chrono::milliseconds(m_PEntity->GetWeaponDelay(false));
+        m_attackTime += m_swingDelay;
     }
     return ret;
 }

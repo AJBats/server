@@ -321,7 +321,7 @@ class CharswapModule : public CPPModule
 {
     void OnInit() override
     {
-        lua["CBaseEntity"]["swapTo"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        ::lua["CBaseEntity"]["swapTo"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             return charswap::swapTo(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
         };

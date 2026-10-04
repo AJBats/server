@@ -127,9 +127,16 @@ def kill(process):
 
 
 def kill_all():
-    """Send SIGTERM to all running processes."""
+    """Send SIGTERM to all running processes and wait for them to go away."""
     for proc in processes:
         kill(proc)
+    for proc in processes:
+        try:
+            proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            print(f"{proc.args[0]} (PID: {proc.pid}) ignored SIGTERM, killing it.")
+            proc.kill()
+            proc.wait()
 
 
 def reader_thread(proc, output_queue):
@@ -157,6 +164,8 @@ def close(code):
 
 
 def main():
+    global processes
+
     print("Running exe startup checks...({})".format(platform.system()))
 
     # --ci flag only on non-Linux systems. Option exits server as soon as it starts, Linux wants to keep it open to test HXIClient.
@@ -173,6 +182,12 @@ def main():
         ),
         subprocess.Popen(
             [from_server_path("xi_search")],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ),
+        subprocess.Popen(
+            [from_server_path("xi_profile")],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -209,7 +224,7 @@ def main():
                 )
                 db.commit()
                 processes.insert(
-                    3,
+                    4,
                     subprocess.Popen(
                         [
                             from_server_path("xi_map"),

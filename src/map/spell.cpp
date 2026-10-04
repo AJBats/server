@@ -22,13 +22,17 @@
 #include <array>
 #include <cstring>
 
+#include "common/types/hash_map.h"
+
 #include "lua/luautils.h"
 
 #include "blue_spell.h"
 #include "mob_spell_list.h"
 #include "spell.h"
 
+#include "entities/pet_entity.h"
 #include "enums/four_cc.h"
+#include "enums/msg_basic.h"
 #include "status_effect_container.h"
 #include "utils/blueutils.h"
 
@@ -136,6 +140,26 @@ void CSpell::setSkillType(xi::SkillType SkillType)
 bool CSpell::isBuff() const
 {
     return (getValidTarget() & TARGET_SELF) && !(getValidTarget() & TARGET_ENEMY);
+}
+
+auto CSpell::statusEffect() const -> Maybe<xi::StatusEffect>
+{
+    return statusEffect_;
+}
+
+void CSpell::setStatusEffect(const Maybe<xi::StatusEffect> statusEffect)
+{
+    statusEffect_ = statusEffect;
+}
+
+auto CSpell::statusEffectTier() const -> uint8
+{
+    return statusEffectTier_;
+}
+
+void CSpell::setStatusEffectTier(const uint8 tier)
+{
+    statusEffectTier_ = tier;
 }
 
 bool CSpell::tookEffect() const
@@ -455,7 +479,7 @@ std::map<uint16, uint16>          PMobSkillToBlueSpell; // maps the skill id (ke
 void LoadSpellList()
 {
     auto rset = db::preparedStmt("SELECT spellid, name, jobs, `group`, family, validTargets, skill, castTime, recastTime, animation, animationTime, mpCost, "
-                                 "AOE, base, element, zonemisc, multiplier, message, magicBurstMessage, CE, VE, requirements, content_tag, spell_range, radius "
+                                 "AOE, base, element, zonemisc, multiplier, message, magicBurstMessage, CE, VE, requirements, content_tag, spell_range, radius, status_effect, status_effect_tier "
                                  "FROM spell_list");
     FOR_DB_MULTIPLE_RESULTS(rset)
     {
@@ -504,6 +528,13 @@ void LoadSpellList()
 
         PSpell->setRange(rset->get<float>("spell_range") / 10);
         PSpell->setRadius(rset->get<float>("radius") / 10);
+
+        if (!rset->isNull("status_effect"))
+        {
+            PSpell->setStatusEffect(rset->get<xi::StatusEffect>("status_effect"));
+        }
+
+        PSpell->setStatusEffectTier(rset->get<uint8>("status_effect_tier"));
 
         PSpellList[static_cast<uint16>(PSpell->getID())] = PSpell;
 
@@ -641,6 +672,31 @@ CSpell* GetSpell(SpellID SpellID)
     // False positive: this is CSpell*, so it's OK
     // cppcheck-suppress CastIntegerToAddressAtReturn
     return PSpellList[id];
+}
+
+auto lookupIdByName(const std::string_view name) -> Maybe<SpellID>
+{
+    static const auto byName = []
+    {
+        HashMap<std::string, SpellID> names;
+        for (auto* PSpell : PSpellList)
+        {
+            if (PSpell)
+            {
+                names.try_emplace(PSpell->getName(), PSpell->getID());
+            }
+        }
+
+        return names;
+    }();
+
+    const auto entry = byName.find(std::string{ name });
+    if (entry == byName.end())
+    {
+        return std::nullopt;
+    }
+
+    return entry->second;
 }
 
 bool CanUseSpell(CBattleEntity* PCaster, SpellID SpellID)

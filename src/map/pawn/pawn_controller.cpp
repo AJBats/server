@@ -96,6 +96,13 @@
 
 namespace
 {
+    // Her route on the navmesh as her own walk finds it (CPathFind): her
+    // body's half-width kept off the walls, off-mesh links allowed
+    auto routeOf(NavMesh* navMesh, const CBaseEntity* PEntity, const position_t& from, const position_t& to) -> Maybe<PathResult>
+    {
+        return navMesh->findPath(from, to, PEntity->modelHitboxSize * 0.5f, AvoidLinks{ false });
+    }
+
     // A cardian as her gambit engine sees her (gambit_host.h): her controller's
     // own answers and actions
     class PawnHost final : public pawn::GambitHost
@@ -852,7 +859,7 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
     {
         return false;
     }
-    const auto found = navMesh->findPath(POwner->loc.p, goal);
+    const auto found = routeOf(navMesh, POwner, POwner->loc.p, goal);
     if (!found.has_value() || found->points.size() < 2)
     {
         return false;
@@ -2549,7 +2556,7 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
     {
         return std::vector<pathpoint_t>{ pathpoint_t{ .position = point, .wait = {}, .setRotation = false } };
     }
-    auto path = navMesh->findPath(POwner->loc.p, point);
+    auto path = routeOf(navMesh, POwner, POwner->loc.p, point);
     if (!path.has_value() || path->isPartial)
     {
         return std::nullopt;
@@ -4476,7 +4483,7 @@ auto CPawnController::CourtesyStep(const position_t& point) -> position_t
     {
         const float span = distance(me, point, true);
         goal             = position_t(me.x + (point.x - me.x) * edge / span, point.y, me.z + (point.z - me.z) * edge / span, 0, 0);
-        if (const auto path = navMesh->findPath(me, point); path.has_value() && !path->points.empty())
+        if (const auto path = routeOf(navMesh, POwner, me, point); path.has_value() && !path->points.empty())
         {
             float      walked = 0.0f;
             position_t prev   = me;
@@ -6026,7 +6033,7 @@ auto CPawnController::WalkLength(const position_t& to) const -> std::optional<fl
     {
         return distance(POwner->loc.p, to);
     }
-    const auto path = navMesh->findPath(POwner->loc.p, to);
+    const auto path = routeOf(navMesh, POwner, POwner->loc.p, to);
     if (!path.has_value() || path->isPartial)
     {
         return std::nullopt;

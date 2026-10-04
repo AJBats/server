@@ -870,14 +870,15 @@ namespace pawn::finder
         {
             return CL_S_IN_A_PARTY;
         }
-        if (PPawn->InvitePending.UniqueNo != 0)
+        if (PPawn->InvitePending.entity.UniqueNo != 0)
         {
             return CL_S_INVITE_PENDING;
         }
 
         consented[charid] = Consent{ PPlayer->id, asked, timer::now() };
-        PPawn->InvitePending.UniqueNo = PPlayer->id;
-        PPawn->InvitePending.ActIndex = PPlayer->targid;
+        PPawn->InvitePending.entity.UniqueNo = PPlayer->id;
+        PPawn->InvitePending.entity.ActIndex = PPlayer->targid;
+        PPawn->InvitePending.kind            = PartyKind::Party;
         PPawn->pushPacket<GP_SERV_COMMAND_GROUP_SOLICIT_REQ>(PPawn->id, PPawn->targid, PPlayer->getName(), PartyKind::Party);
         ShowInfoFmt("pawn: {} invites {} from the party finder, for {}{}", PPlayer->getName(), PPawn->getName(), kindName(asked), held.has_value() ? ", her open contract" : "");
         return CL_S_OK;
@@ -889,11 +890,11 @@ namespace pawn::finder
         {
             return false;
         }
-        const auto* PInviter = zoneutils::GetCharFromWorld(PPawn->InvitePending.UniqueNo, PPawn->InvitePending.ActIndex);
+        const auto* PInviter = zoneutils::GetCharFromWorld(PPawn->InvitePending.entity.UniqueNo, PPawn->InvitePending.entity.ActIndex);
         // Held for her player while her contract is open: his invite alone
         // (by id: he may be mid-zone as she answers)
         const auto held = openContractOf(PPawn->id);
-        if (held.has_value() && PPawn->InvitePending.UniqueNo != held->playerCharID)
+        if (held.has_value() && PPawn->InvitePending.entity.UniqueNo != held->playerCharID)
         {
             ShowInfoFmt("pawn: {} declines {}'s invite: she is under contract with another player", PPawn->getName(), PInviter != nullptr ? PInviter->getName() : "someone");
             consented.erase(PPawn->id);

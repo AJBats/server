@@ -22,6 +22,7 @@
 #include "0x064_scenarioitem.h"
 
 #include "entities/char_entity.h"
+#include "packets/c2s/validation.h"
 #include "utils/charutils.h"
 
 auto GP_CLI_COMMAND_SCENARIOITEM::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
@@ -45,7 +46,7 @@ void GP_CLI_COMMAND_SCENARIOITEM::process(MapSession* PSession, CCharEntity* PCh
 
             if ((flags >> bit) & 1)
             {
-                charutils::markSeenKeyItem(PChar, static_cast<KeyItem>(keyItemId));
+                charutils::markSeenKeyItem(PChar, static_cast<xi::KeyItem>(keyItemId));
             }
         }
     }

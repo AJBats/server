@@ -19,24 +19,31 @@
 ===========================================================================
 */
 
-#ifndef _CLUABASEENTITY_H
-#define _CLUABASEENTITY_H
+#pragma once
 
 #include "common/cbasetypes.h"
+#include "data/enums/behavior.h"
 #include "data/enums/entity_flags.h"
 #include "data/enums/fame_area.h"
 #include "data/enums/mob_mod.h"
+#include "data/enums/mob_type.h"
 #include "data/enums/music_slot.h"
+#include "data/enums/roam_flag.h"
+#include "data/enums/zone_misc.h"
 #include "enums/mission_log.h"
 #include "lua_trade_container.h"
-#include "luautils.h"
 #include "packets/s2c/0x009_message.h"
 #include "utils/battleutils.h"
 #include "utils/charutils.h"
 
+#include <sol/forward.hpp>
+
+#include <map>
+#include <string>
+#include <tuple>
+
 enum class QuestLog : uint8_t;
 enum class POSMODE : uint8;
-enum class ChocoboColor : uint8_t;
 enum class TerrainType : uint8;
 class CBaseEntity;
 class CCharEntity;
@@ -64,12 +71,12 @@ public:
     friend std::ostream& operator<<(std::ostream& out, const CLuaBaseEntity& entity);
 
     // Messaging System
-    void showText(CLuaBaseEntity* entity, uint16 messageID, const sol::object& p0, const sol::object& p1, const sol::object& p2, const sol::object& p3, const sol::object& p4, const sol::object& p5);
+    void showText(CLuaBaseEntity* entity, uint16 messageID, const sol::object& p0, const sol::object& p1, const sol::object& p2, const sol::object& p3, const sol::object& p4, const sol::object& p5, const sol::object& messageType);
     void messageText(CLuaBaseEntity* PLuaBaseEntity, uint16 messageID, const sol::object& arg2, const sol::object& arg3);
     void printToPlayer(const std::string& message, const sol::object& messageTypeObj, const sol::object& nameObj);
     void printToArea(const std::string& message, const sol::object& arg1, const sol::object& arg2, const sol::object& arg3, const sol::object& arg4);
     void messageBasic(uint16 messageID, const sol::object& p0, const sol::object& p1, const sol::object& target);
-    void messageName(uint16 messageID, const sol::object& entity, const sol::object& p0, const sol::object& p1, const sol::object& p2, const sol::object& p3, const sol::object& chat);
+    void messageName(uint16 messageID, const sol::object& entity, const sol::object& p0, const sol::object& p1, const sol::object& p2, const sol::object& p3, const sol::object& chat, const sol::object& sender);
     void messagePublic(uint16 messageID, const CLuaBaseEntity* PEntity, const sol::object& arg2, const sol::object& arg3);
     void messageSpecial(uint16 messageID, sol::variadic_args va);
     void messageSystem(MsgStd messageID, const sol::object& p0, const sol::object& p1);
@@ -173,7 +180,6 @@ public:
 
     void openDoor(const sol::object& seconds);
     void closeDoor(const sol::object& seconds);
-    void setElevator(uint8 id, uint32 lowerDoor, uint32 upperDoor, uint32 elevatorId, bool reversed);
 
     void addPeriodicTrigger(uint8 id, uint16 period, uint16 minOffset); // Adds a periodic trigger to the NPC that allows time based scripting
     void showNPC(const sol::object& seconds);
@@ -463,14 +469,14 @@ public:
     bool  hasCompletedAssault(uint8 missionID);
     void  completeAssault(uint8 missionID) const;
 
-    void addKeyItem(KeyItem keyItemID) const;
-    auto hasKeyItem(KeyItem keyItemID) const -> bool;
-    void delKeyItem(KeyItem keyItemID) const;
-    auto seenKeyItem(KeyItem keyItemID) const -> bool;
-    void unseenKeyItem(KeyItem keyItemID) const; // Attempt to remove the keyitem from the seen key item collection, only works on logout
+    void addKeyItem(xi::KeyItem keyItemID) const;
+    auto hasKeyItem(xi::KeyItem keyItemID) const -> bool;
+    void delKeyItem(xi::KeyItem keyItemID) const;
+    auto seenKeyItem(xi::KeyItem keyItemID) const -> bool;
+    void unseenKeyItem(xi::KeyItem keyItemID) const; // Attempt to remove the keyitem from the seen key item collection, only works on logout
 
     // Player Points
-    void  addExp(uint32 exp);
+    void  addExp(uint32 exp, const sol::object& allowLimitPointsObj);
     void  addCapacityPoints(uint32 capacity);
     void  delExp(uint32 exp);
     int32 getMerit(uint16 merit);
@@ -500,6 +506,7 @@ public:
     void  addCP(int32 cp);
     void  delCP(int32 cp);
     void  gainConquestInfluence(int32 points);
+    void  addConquestMobKills(int32 count);
 
     int32 getSeals(uint8 sealType);
     void  addSeals(int32 points, uint8 sealType);
@@ -519,6 +526,7 @@ public:
     int32 addHP(int32 hpAdd);                                                                                                                      // Increase hp of Entity
     int32 addHPLeaveSleeping(int32 hpAdd);                                                                                                         // Increase hp of Entity but do not awaken the Entity
     void  setHP(int32 value);                                                                                                                      // Set hp of Entity to value
+    void  die(const sol::object& params);                                                                                                          // Kill a player, describing the circumstances of the death
     void  setMaxHP(int32 value);                                                                                                                   // Set max hp of Entity to value
     int32 restoreHP(int32 restoreAmt);                                                                                                             // Modify hp of Entity, but check if alive first
     void  delHP(int32 delAmt);                                                                                                                     // Decrease hp of Entity
@@ -617,7 +625,8 @@ public:
     uint16 copyConfrontationEffect(uint16 targetID); // copy confrontation effect, param = targetEntity:getTargID()
 
     // Battlefields
-    auto getBattlefield() const -> CBattlefield*;                                                                                                // returns CBattlefield* or nullptr if not available
+    auto getBattlefield() const -> CBattlefield*;
+    auto getRegisteredBattlefield() const -> CBattlefield*;                                                                                      // returns CBattlefield* or nullptr if not available
     auto getBattlefieldID() const -> int32;                                                                                                      // returns entity->PBattlefield->GetID() or -1 if not available
     auto registerBattlefield(const sol::object& arg0, const sol::object& arg1, const sol::object& arg2, const sol::object& arg3) const -> uint8; // attempt to register a battlefield, returns BATTLEFIELD_RETURNCODE
     auto battlefieldAtCapacity(int battlefieldID) const -> bool;                                                                                 // returns 1 if this battlefield is full
@@ -812,11 +821,15 @@ public:
     auto   getMaster() -> CBaseEntity*;
     uint8  getPetElement();
     void   setPet(const sol::object& petObj);
+    void   setPetStats(uint8 petId);
     uint8  getMinimumPetLevel(); // Returns the minimum level of the pet, such as level 23 for Courier Carrie or 0 if non applicable.
 
     auto getPetName() -> const std::string;
     void setPetName(uint8 pType, uint16 value, const sol::object& arg2);
-    void registerChocobo(ChocoboColor color, const sol::table& traits) const;
+    void registerChocobo(const sol::table& chocobo) const;
+    auto getFieldChocobo() const -> sol::object;
+    auto getChocoboUserData() const -> sol::object;
+    void setChocoboUserData(const sol::table& data) const;
 
     void petAttack(CLuaBaseEntity* PEntity);
     void petAbility(uint16 abilityID); // Function exists, but is not implemented.  Warning will be displayed.
@@ -999,5 +1012,3 @@ public:
 
     static void Register();
 };
-
-#endif

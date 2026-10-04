@@ -58,13 +58,22 @@ mission.sections =
                 end,
             },
 
+            -- Event 702 is the door line for players on a mission. Both the door and Iron Eater serve it.
+            ['_6ld']          = mission:event(702),
+            ['Iron_Eater']    = mission:event(702),
+
+            -- The staff comment on the errand while the leg runs.
+            ['Mih_Ketto']     = mission:event(267),
+            ['Moyoyo']        = mission:event(264),
+            ['Topuru-Kuperu'] = mission:event(261),
+
             onEventFinish =
             {
                 [257] = function(player, csid, option, npc)
                     if mission:complete(player) then
                         player:addMission(xi.mission.log_id.WINDURST, xi.mission.id.windurst.THE_THREE_KINGDOMS)
-                        player:delKeyItem(xi.ki.KINDRED_CREST)
-                        npcUtil.giveKeyItem(player, xi.ki.KINDRED_REPORT)
+                        player:delKeyItem(xi.keyItem.KINDRED_CREST)
+                        npcUtil.giveKeyItem(player, xi.keyItem.KINDRED_REPORT)
                         player:setMissionStatus(mission.areaId, 11)
                     end
                 end,
@@ -88,8 +97,8 @@ mission.sections =
                         player:getMissionStatus(mission.areaId) == 10 and
                         player:getLocalVar('battlefieldWin') == xi.battlefield.id.RANK_2_MISSION_2
                     then
-                        npcUtil.giveKeyItem(player, xi.ki.KINDRED_CREST)
-                        player:delKeyItem(xi.ki.DARK_KEY)
+                        npcUtil.giveKeyItem(player, xi.keyItem.KINDRED_CREST)
+                        player:delKeyItem(xi.keyItem.DARK_KEY)
                         player:setMissionStatus(mission.areaId, 11)
                     end
                 end,

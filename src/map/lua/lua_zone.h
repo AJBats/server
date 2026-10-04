@@ -19,13 +19,15 @@
 ===========================================================================
 */
 
-#ifndef _LUAZONE_H
-#define _LUAZONE_H
+#pragma once
 
 #include "common/cbasetypes.h"
 #include "enums/terrain_type.h"
-#include "luautils.h"
 #include "zone.h"
+
+#include <sol/forward.hpp>
+
+#include <string>
 
 class CZone;
 
@@ -48,7 +50,7 @@ public:
     void setLocalVar(const char* key, uint32 value);
     void resetLocalVars();
 
-    void registerCuboidTriggerArea(uint32 triggerAreaID, float xMin, float yMin, float zMin, float xMax, float yMax, float zMax);
+    void registerCuboidTriggerArea(uint32 triggerAreaID, float xMin, float yMin, float zMin, float xMax, float yMax, float zMax, sol::optional<float> rotation);
     void registerCylindricalTriggerArea(uint32 triggerAreaID, float xPos, float zPos, float radius);
     void registerSphericalTriggerArea(uint32 triggerAreaID, float xPos, float yPos, float zPos, float radius);
 
@@ -89,5 +91,3 @@ public:
 
     static void Register();
 };
-
-#endif

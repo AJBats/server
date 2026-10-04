@@ -76,28 +76,28 @@ class CardianTestStubs : public CPPModule
 {
     void OnInit() override
     {
-        lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> bool
+        ::lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> bool
         {
             return false;
         };
 
-        lua["CBaseEntity"]["cardianSignIn"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> std::string
+        ::lua["CBaseEntity"]["cardianSignIn"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> std::string
         {
             return "";
         };
 
         // A mocked cardian is the player's own: the mirror applies to her
-        lua["CBaseEntity"]["cardianOwns"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* name */) -> bool
+        ::lua["CBaseEntity"]["cardianOwns"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* name */) -> bool
         {
             return true;
         };
 
         // The party memory's affinity, grown by the mirror at a completion,
         // and her contract: a mocked cardian is the player's own, under none
-        lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* name */, const std::string& /* why */, sol::optional<bool> /* mission */)
+        ::lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* name */, const std::string& /* why */, sol::optional<bool> /* mission */)
         {
         };
-        lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const uint32 /* playerCharID */) -> std::string
+        ::lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const uint32 /* playerCharID */) -> std::string
         {
             return "";
         };
@@ -105,34 +105,34 @@ class CardianTestStubs : public CPPModule
         // The combat pause is core, so this is the real manager, not a stub: what a
         // Lua test needs to hold the simulation and let it go (scripts/tests/cardian/
         // pause.lua). Held by nobody in particular, so no holder can go offline.
-        lua["xi"]["cardian"].get_or_create<sol::table>();
-        lua["xi"]["cardian"]["pause"]            = lua.create_table();
-        lua["xi"]["cardian"]["pause"]["hold"]    = []() -> bool
+        ::lua["xi"]["cardian"].get_or_create<sol::table>();
+        ::lua["xi"]["cardian"]["pause"]            = ::lua.create_table();
+        ::lua["xi"]["cardian"]["pause"]["hold"]    = []() -> bool
         {
             return cardian::pause::hold(0, "a test") == cardian::pause::Result::Ok;
         };
-        lua["xi"]["cardian"]["pause"]["release"] = []() -> bool
+        ::lua["xi"]["cardian"]["pause"]["release"] = []() -> bool
         {
             return cardian::pause::release("a test") == cardian::pause::Result::Ok;
         };
         // A test that let real time go by in a hold leaves the calendar as it found it
-        lua["xi"]["cardian"]["pause"]["forgetDrift"] = []()
+        ::lua["xi"]["cardian"]["pause"]["forgetDrift"] = []()
         {
             earth_time::calendar_state.store(0);
         };
         // Real seconds going by on the Earth clock, which the harness's skipTime leaves
         // alone: it moves the simulation clock only
-        lua["xi"]["cardian"]["pause"]["realSecondsGoBy"] = [](const uint32 seconds)
+        ::lua["xi"]["cardian"]["pause"]["realSecondsGoBy"] = [](const uint32 seconds)
         {
             earth_time::add_offset(std::chrono::seconds(seconds));
         };
-        lua["xi"]["cardian"]["pause"]["isHeld"]  = []() -> bool
+        ::lua["xi"]["cardian"]["pause"]["isHeld"]  = []() -> bool
         {
             return cardian::pause::isHeld();
         };
         // The command a character has waiting for the release, as its packet id and,
         // for 0x01A, its action id; nothing when he has none.
-        lua["xi"]["cardian"]["pause"]["queued"] = [](const uint32 charid) -> std::tuple<sol::optional<uint16>, sol::optional<uint16>>
+        ::lua["xi"]["cardian"]["pause"]["queued"] = [](const uint32 charid) -> std::tuple<sol::optional<uint16>, sol::optional<uint16>>
         {
             if (const auto command = cardian::pause::input::queued(charid))
             {

@@ -116,13 +116,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        rank_element:
-          fire: -2
-          dark: -2
-        rank_status:
-          dark_sleep: -2
-          blind:      -2
       render:
         look:
           type:  standard
@@ -161,7 +154,7 @@ templates:
   Adaman_Quadav_past:
     id:            5553
     display_name:  Adaman_Quadav
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 5
     skill_list_id: 202
     attributes:
@@ -169,13 +162,6 @@ templates:
         skill: great_sword
         delay: 265
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -276,28 +262,6 @@ templates:
     species:       taurus
     skill_list_id: 240
     attributes:
-      resists:
-        dmg_physical:
-          blunt: 5000
-          h2h:   2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -321,18 +285,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, bst]
-      resists:
-        rank_element:
-          fire:  -1
-          ice:    1
-          light: -1
-          dark:   3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          light_sleep: -1
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -351,19 +303,12 @@ templates:
 
   Ancient_Quadav_past:
     id:            6233
-    species:       quadav
+    species:       quadav_s
     skill_list_id: 202
     attributes:
       combat:
         skill: dagger
         delay: 265
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -394,27 +339,6 @@ templates:
     attributes:
       combat:
         skill: great_sword
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -3
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:  11
-          blind:        4
       render:
         look:
           type:  standard
@@ -437,18 +361,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:  -1
-          ice:    1
-          light: -1
-          dark:   3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          light_sleep: -1
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -531,23 +443,6 @@ templates:
     attributes:
       combat:
         skill: polearm
-      resists:
-        rank_element:
-          fire:     2
-          ice:      2
-          wind:     2
-          earth:   -2
-          thunder:  6
-          water:    2
-          dark:     4
-        rank_status:
-          paralyze:    2
-          bind:        2
-          silence:     2
-          slow:       -2
-          poison:      2
-          dark_sleep:  4
-          blind:       4
       render:
         look:
           type:  standard
@@ -593,15 +488,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -1
-          water:   -1
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          poison:   -1
       render:
         look:
           type:  standard
@@ -620,21 +506,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -3
-          ice:     -3
-          wind:    -3
-          thunder: -3
-          dark:    -3
-        rank_status:
-          paralyze:   -3
-          bind:       -3
-          silence:    -3
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -644,7 +515,7 @@ templates:
 
   Beadeaux_Vanguard:
     id:            381
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 4
     skill_list_id: 202
     attributes:
@@ -652,13 +523,6 @@ templates:
         skill: sword
         delay: 265
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -674,7 +538,7 @@ templates:
   BiGho_Headtaker_past:
     id:            6680
     display_name:  BiGho_Headtaker
-    species:       quadav
+    species:       quadav_s
     type:          [notorious]
     spell_list_id: 5
     skill_list_id: 202
@@ -683,13 +547,6 @@ templates:
         skill: dagger
         delay: 265
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -706,28 +563,12 @@ templates:
 
   Boodlix:
     id:            502
-    species:       goblin
+    species:       goblin_s
     type:          [event]
     skill_list_id: 133
     attributes:
       combat:
         skill: sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -751,21 +592,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:     4
-          ice:      1
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -783,25 +609,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:    4
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -819,21 +626,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:    4
-          light:    4
-          dark:    -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:       4
-          light_sleep:  4
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -852,25 +644,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -911,27 +684,12 @@ templates:
 
   Clan_Reaper_Grunt:
     id:            737
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1009,19 +767,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -1041,18 +786,6 @@ templates:
       jobs: [drk, drk]
       resists:
         immune_status: [blind, light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: -3
-          dark:  11
-        rank_status:
-          light_sleep: -3
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -1078,7 +811,7 @@ templates:
   DeVyu_Headhunter_past:
     id:            6681
     display_name:  DeVyu_Headhunter
-    species:       quadav
+    species:       quadav_s
     type:          [notorious]
     spell_list_id: 4
     skill_list_id: 202
@@ -1087,13 +820,6 @@ templates:
         skill: sword
         delay: 265
       jobs: [pld, rdm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -1110,28 +836,13 @@ templates:
 
   Deathlord_Rojgnoj:
     id:            935
-    species:       orc
+    species:       orc_s
     spell_list_id: 5
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1149,16 +860,11 @@ templates:
 
   Deathwreaker_Demon:
     id:            6609
-    species:       kindred
+    species:       red_demon
     skill_list_id: 169
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1185,28 +891,13 @@ templates:
 
   Dee_Xalmo_the_Grim:
     id:            953
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 360
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1249,11 +940,6 @@ templates:
       combat:
         skill: scythe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1287,11 +973,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1324,11 +1005,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1360,11 +1036,6 @@ templates:
       combat:
         skill: sword
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1397,11 +1068,6 @@ templates:
       combat:
         skill: sword
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1433,11 +1099,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1470,11 +1131,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1504,11 +1160,6 @@ templates:
     skill_list_id: 169
     attributes:
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1540,11 +1191,6 @@ templates:
     skill_list_id: 169
     attributes:
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1576,11 +1222,6 @@ templates:
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1611,11 +1252,6 @@ templates:
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1643,11 +1279,6 @@ templates:
     species:       kindred
     skill_list_id: 169
     attributes:
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -1679,19 +1310,6 @@ templates:
       combat:
         skill: club
       jobs: [drk, war]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: -3
-          dark:  11
-        rank_status:
-          light_sleep: -3
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -1714,22 +1332,6 @@ templates:
     attributes:
       combat:
         skill: sword
-      resists:
-        rank_element:
-          ice:      2
-          wind:    -1
-          earth:    4
-          thunder:  1
-          light:   -1
-          dark:     5
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:         4
-          light_sleep: -1
-          dark_sleep:   5
-          blind:        5
       render:
         look:
           type:  standard
@@ -1759,28 +1361,13 @@ templates:
 
   Divine_Ascetic:
     id:            1055
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 360
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1796,28 +1383,13 @@ templates:
 
   Divine_Assassin:
     id:            1056
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1839,15 +1411,6 @@ templates:
       combat:
         skill: club
       jobs: [war, blm]
-      resists:
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -1967,27 +1530,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:     2
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:      2
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -2021,12 +1563,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, war]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -2051,12 +1587,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, war]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -2076,30 +1606,6 @@ templates:
     species:       pixie
     skill_list_id: 195
     attributes:
-      resists:
-        dmg_physical:
-          slashing: -6250
-          piercing: -6250
-          blunt:    -6250
-          h2h:      -6250
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    11
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    8
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     11
-          slow:         1
-          poison:       1
-          light_sleep:  8
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -2178,27 +1684,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [sch, rdm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:     2
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:      2
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -2220,11 +1705,6 @@ templates:
     skill_list_id: 169
     attributes:
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -2253,7 +1733,7 @@ templates:
   Fortification_NV80:
     id:           6880
     display_name: Fortification
-    species:      unclassified
+    species:      fortifications
     type:         [event]
     attributes:
       combat:
@@ -2278,12 +1758,6 @@ templates:
       combat:
         skill: club
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -2299,20 +1773,13 @@ templates:
 
   GoBhu_Herohunter:
     id:            1779
-    species:       quadav
+    species:       quadav_s
     type:          [notorious]
     skill_list_id: 202
     attributes:
       combat:
         skill: sword
         delay: 265
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -2329,7 +1796,7 @@ templates:
 
   GoBhus_Elite_Raider:
     id:            1780
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 3
     skill_list_id: 202
     attributes:
@@ -2337,13 +1804,6 @@ templates:
         skill: great_sword
         delay: 265
       jobs: [rdm, war]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -2359,27 +1819,11 @@ templates:
 
   Goblin_Lansquenet:
     id:            1681
-    species:       goblin
+    species:       goblin_s
     skill_list_id: 133
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -2424,20 +1868,13 @@ templates:
 
   Gold_Quadav_CZBS:
     id:            6251
-    species:       quadav
+    species:       quadav_s
     skill_list_id: 202
     attributes:
       combat:
         skill: dagger
         delay: 265
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -2498,19 +1935,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [gravity, bind, silence, paralyze]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          fire: -3
-          ice:  11
-          wind: 11
-        rank_status:
-          paralyze: 11
-          bind:     11
-          silence:  11
       render:
         look:
           type:  standard
@@ -2540,25 +1964,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      3
-          wind:     1
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:    3
-          bind:        3
-          silence:     1
-          slow:        1
-          poison:      1
-          light_sleep: 1
-          dark_sleep:  1
-          blind:       1
       render:
         look:
           type:  standard
@@ -2600,7 +2005,7 @@ templates:
 
   Iron_Quadav_CZBS:
     id:            6246
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 4
     skill_list_id: 202
     attributes:
@@ -2608,13 +2013,6 @@ templates:
         skill: sword
         delay: 265
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -2640,28 +2038,13 @@ templates:
 
   Jagidbod_of_Clan_Reaper:
     id:            6677
-    species:       orc
+    species:       orc_s
     type:          [notorious, battlefield]
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2683,25 +2066,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:    4
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep:  4
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2725,25 +2089,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -2
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2794,25 +2139,6 @@ templates:
       combat:
         skill: great_axe
         delay: 380
-      resists:
-        rank_element:
-          fire:    2
-          ice:     2
-          wind:    2
-          earth:   2
-          thunder: 2
-          water:   2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    2
-          bind:        2
-          silence:     2
-          slow:        2
-          poison:      2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -2833,28 +2159,13 @@ templates:
 
   Kazan_the_Peerless:
     id:            2198
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2933,29 +2244,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing:  2500
-          blunt:    -2500
-        rank_element:
-          fire:     1
-          ice:     -3
-          wind:     4
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:      4
-          slow:         1
-          poison:       1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -2975,13 +2263,6 @@ templates:
     species:       tiger
     skill_list_id: 242
     attributes:
-      resists:
-        rank_element:
-          fire:    -3
-          thunder: -3
-          water:   -2
-        rank_status:
-          poison: -2
       render:
         look:
           type:  standard
@@ -3113,7 +2394,8 @@ templates:
         skill:    hand_to_hand
         delay:    480
         dmg_mult: 110
-      jobs: [mnk, none]
+      jobs:  [mnk, none]
+      speed: 60
       render:
         look:
           type:  standard
@@ -3125,7 +2407,7 @@ templates:
 
   Magnes_Quadav_CZBS:
     id:            6255
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 21
     skill_list_id: 202
     attributes:
@@ -3133,13 +2415,6 @@ templates:
         skill: axe
         delay: 265
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -3171,23 +2446,6 @@ templates:
     attributes:
       combat:
         skill: dagger
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3207,18 +2465,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:  -1
-          ice:    1
-          light: -1
-          dark:   3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          light_sleep: -1
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -3234,28 +2480,13 @@ templates:
 
   Muu_Buxu_the_Elusive:
     id:            2776
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3320,16 +2551,6 @@ templates:
     species:       black_wyrm
     skill_list_id: 260
     attributes:
-      resists:
-        rank_element:
-          fire:  11
-          ice:   11
-          water: -2
-          light: -2
-        rank_status:
-          poison:      -2
-          light_sleep:  6
-          dark_sleep:   6
       render:
         look:
           type:  standard
@@ -3377,15 +2598,6 @@ templates:
       combat:
         skill: club
       jobs: [war, blm]
-      resists:
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -3415,28 +2627,13 @@ templates:
 
   Orcish_Augur_CZBS:
     id:            6293
-    species:       orc
+    species:       orc_s
     spell_list_id: 21
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3458,27 +2655,12 @@ templates:
 
   Orcish_Bowshooter_CZBS:
     id:            6275
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3494,28 +2676,13 @@ templates:
 
   Orcish_Champion_CZBS:
     id:            6290
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3540,27 +2707,12 @@ templates:
 
   Orcish_Dragonbrander_CZB:
     id:            6294
-    species:       orc
+    species:       orc_s
     skill_list_id: 713
     attributes:
       combat:
         skill: polearm
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3585,28 +2737,13 @@ templates:
 
   Orcish_Protector_CZBS:
     id:            6292
-    species:       orc
+    species:       orc_s
     spell_list_id: 4
     skill_list_id: 189
     attributes:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3631,26 +2768,11 @@ templates:
 
   Orcish_Veteran_CZBS:
     id:            6285
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: dagger
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3675,28 +2797,13 @@ templates:
 
   Orcish_Warlord_CZBS:
     id:            6295
-    species:       orc
+    species:       orc_s
     spell_list_id: 5
     skill_list_id: 189
     attributes:
       combat:
         skill: sword
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3726,20 +2833,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:     4
-          ice:     -2
-          wind:     4
-          earth:   -2
-          thunder: -2
-          water:   -3
-        rank_status:
-          paralyze: -2
-          bind:     -2
-          silence:   4
-          slow:     -2
-          poison:   -3
       render:
         look:
           type:  standard
@@ -3779,28 +2872,13 @@ templates:
 
   Plenilune_Ronin:
     id:            3158
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3822,20 +2900,6 @@ templates:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          wind:    -3
-          thunder: -3
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3852,19 +2916,6 @@ templates:
     species:       green_poroggo
     skill_list_id: 196
     attributes:
-      resists:
-        rank_element:
-          ice:      2
-          earth:    1
-          thunder: -1
-          water:    8
-          light:    6
-        rank_status:
-          paralyze:    2
-          bind:        2
-          slow:        1
-          poison:      8
-          light_sleep: 6
       render:
         look:
           type:  standard
@@ -3875,22 +2926,9 @@ templates:
 
   Poroggo_Servant:
     id:            3186
-    species:       green_poroggo
+    species:       toad
     skill_list_id: 196
     attributes:
-      resists:
-        rank_element:
-          ice:      2
-          earth:    1
-          thunder: -1
-          water:    8
-          light:    6
-        rank_status:
-          paralyze:    2
-          bind:        2
-          slow:        1
-          poison:      8
-          light_sleep: 6
       render:
         look:
           type:  standard
@@ -3908,28 +2946,6 @@ templates:
         skill: club
       resists:
         immune_status: [silence, paralyze, blind, slow]
-        dmg_physical:
-          slashing: -2500
-          piercing:  2500
-          blunt:    -2500
-        rank_element:
-          fire:     1
-          ice:     -3
-          wind:     4
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:      4
-          slow:         1
-          poison:       1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -3973,7 +2989,7 @@ templates:
 
   Qulun_Heavyshell:
     id:            3293
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 5
     skill_list_id: 202
     attributes:
@@ -3981,13 +2997,6 @@ templates:
         skill: dagger
         delay: 265
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -4010,30 +3019,6 @@ templates:
         skill: club
         delay: 290
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:    2
-          thunder: -1
-          water:   -1
-          light:   -3
-          dark:     3
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:         2
-          poison:      -1
-          light_sleep: -3
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -4252,15 +3237,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -4285,17 +3261,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:  -1
-          wind:   3
-          light: -2
-          dark:   4
-        rank_status:
-          silence:      3
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -4318,11 +3283,6 @@ templates:
       combat:
         skill: axe
       jobs: [smn, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -4347,19 +3307,6 @@ templates:
       combat:
         skill: club
       jobs: [drk, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: -3
-          dark:  11
-        rank_status:
-          light_sleep: -3
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -4384,11 +3331,6 @@ templates:
       combat:
         skill: scythe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -4413,18 +3355,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -4456,18 +3386,6 @@ templates:
       combat:
         skill: sword
       jobs: [war, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -4496,11 +3414,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -4520,28 +3433,6 @@ templates:
         skill: scythe
         delay: 360
       jobs: [mnk, blm]
-      resists:
-        dmg_physical:
-          blunt: 5000
-          h2h:   2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -4566,12 +3457,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -4587,28 +3472,11 @@ templates:
 
   Siege_Turret:
     id:            3621
-    species:       orcish_warmachine
+    species:       orcish_turret
     skill_list_id: 248
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    4
-          ice:     4
-          wind:    2
-          earth:   2
-          thunder: 2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    4
-          bind:        4
-          silence:     2
-          slow:        2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -4628,27 +3496,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -3
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:  11
-          blind:        4
       render:
         look:
           type:  standard
@@ -4665,11 +3512,6 @@ templates:
     skill_list_id: 169
     attributes:
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -4707,28 +3549,13 @@ templates:
 
   Spinebeak_Neckchopper:
     id:            3730
-    species:       orc
+    species:       orc_s
     spell_list_id: 5
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [drk, blm]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4743,7 +3570,7 @@ templates:
 
   Star_Ruby_Quadav_CZBS:
     id:            6256
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 3
     skill_list_id: 202
     attributes:
@@ -4751,13 +3578,6 @@ templates:
         skill: great_sword
         delay: 265
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -4784,30 +3604,6 @@ templates:
     species:       pixie
     skill_list_id: 195
     attributes:
-      resists:
-        dmg_physical:
-          slashing: -6250
-          piercing: -6250
-          blunt:    -6250
-          h2h:      -6250
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    11
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    8
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     11
-          slow:         1
-          poison:       1
-          light_sleep:  8
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -4850,17 +3646,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -4873,7 +3658,7 @@ templates:
 
   Vajra_Quadav_CZBS:
     id:            6253
-    species:       quadav
+    species:       quadav_s
     spell_list_id: 20
     skill_list_id: 202
     attributes:
@@ -4881,13 +3666,6 @@ templates:
         skill: sword
         delay: 265
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -4935,11 +3713,6 @@ templates:
     skill_list_id: 169
     attributes:
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -4967,28 +3740,13 @@ templates:
 
   Yagudo_Chanter_past:
     id:            5493
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 6
     skill_list_id: 270
     attributes:
       combat:
         skill: axe
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -5015,28 +3773,13 @@ templates:
 
   Yagudo_Eradicator_past:
     id:            4417
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 270
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -5061,28 +3804,13 @@ templates:
 
   Yagudo_High_Priest_past:
     id:            5478
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 20
     skill_list_id: 270
     attributes:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -5115,28 +3843,13 @@ templates:
 
   Yagudo_Knight_Templar:
     id:            4430
-    species:       yagudo
+    species:       yagudo_s
     type:          [battlefield]
     skill_list_id: 270
     attributes:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -5161,28 +3874,13 @@ templates:
 
   Yagudo_Prelate_past:
     id:            4442
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 21
     skill_list_id: 270
     attributes:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -5215,28 +3913,13 @@ templates:
 
   Yagudo_Sentinel_past:
     id:            5481
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -5324,7 +4007,7 @@ templates:
 
   Zvahl_Fortalice:
     id:      6712
-    species: unclassified
+    species: fortalices
     type:    [notorious]
     attributes:
       combat:
@@ -5344,39 +4027,39 @@ templates:
 spawns:
   17342465:
     template: Icefall
-    at:       [342.000, -13.000, -24.000, 167]
+    region:   se_1
     level:    [79, 82]
   17342466:
     template: Icefall
-    at:       [331.000, -16.000, -15.000, 71]
+    region:   se_1
     level:    [79, 82]
   17342467:
     template: Demon_Warrior
-    at:       [180.000, -24.000, 80.000, 68]
+    region:   se_3
     level:    [80, 81]
   17342468:
     template: Icefall
-    at:       [298.000, -16.000, -20.000, 200]
+    region:   se_3
     level:    [79, 82]
   17342469:
     template: Icefall
-    at:       [298.000, -17.000, 15.000, 223]
+    region:   se_3
     level:    [79, 82]
   17342470:
     template: Dark_Elemental
-    at:       [107.000, -24.000, -60.000, 200]
+    region:   se_6
     level:    [79, 82]
   17342471:
     template: Ice_Elemental
-    at:       [237.000, -24.000, 58.000, 200]
+    region:   se_3
     level:    [79, 82]
   17342472:
     template: Demon_Magus
-    at:       [176.000, -24.000, 15.000, 198]
+    region:   se_8
     level:    [80, 81]
   17342473:
     template: Demon_Justiciar
-    at:       [-79.000, -24.000, 5.000, 66]
+    region:   se_8
     level:    [80, 81]
   17342474:
     template: Demons_Elemental
@@ -5384,11 +4067,11 @@ spawns:
     level:    [75, 78]
   17342475:
     template: Icefall
-    at:       [261.000, -22.000, 58.000, 155]
+    region:   se_8
     level:    [79, 82]
   17342476:
     template: Icefall
-    at:       [215.000, -24.000, 60.000, 27]
+    region:   se_8
     level:    [79, 82]
   17342477:
     template: Dark_Elemental
@@ -5400,15 +4083,15 @@ spawns:
     level:    [79, 82]
   17342479:
     template: Demon_Warrior
-    at:       [172.000, -24.000, 103.000, 42]
+    region:   s_15
     level:    [80, 81]
   17342480:
     template: Demon_Warrior
-    at:       [104.000, -24.000, 102.000, 242]
+    region:   s_15
     level:    [80, 81]
   17342481:
     template: Icefall
-    at:       [301.000, -19.000, 23.000, 158]
+    region:   s_15
     level:    [79, 82]
   17342482:
     template: Dark_Elemental
@@ -5416,15 +4099,15 @@ spawns:
     level:    [79, 82]
   17342483:
     template: Ice_Elemental
-    at:       [107.000, -24.000, -60.000, 200]
+    region:   s_15
     level:    [79, 82]
   17342484:
     template: Demon_Warrior
-    at:       [179.000, -24.000, 34.000, 67]
+    region:   s_20
     level:    [80, 81]
   17342485:
     template: Demon_Justiciar
-    at:       [-77.000, -24.000, 34.000, 218]
+    region:   s_21
     level:    [80, 81]
   17342486:
     template: Demons_Elemental
@@ -5432,11 +4115,11 @@ spawns:
     level:    [75, 78]
   17342487:
     template: Demon_Befouler
-    at:       [9.000, -20.000, 64.000, 185]
+    region:   s_23
     level:    [80, 81]
   17342488:
     template: Demon_Befouler
-    at:       [-81.000, -19.000, 53.000, 115]
+    region:   s_24
     level:    [80, 81]
   17342489:
     template: Demon_Warrior
@@ -5448,11 +4131,11 @@ spawns:
     level:    [80, 81]
   17342491:
     template: Demon_Warrior
-    at:       [79.000, -24.000, 24.000, 68]
+    region:   s_27
     level:    [80, 81]
   17342492:
     template: Demon_Magus
-    at:       [184.000, -24.000, -56.000, 103]
+    region:   s_27
     level:    [80, 81]
   17342493:
     template: Demon_Warrior
@@ -5468,7 +4151,7 @@ spawns:
     level:    [79, 82]
   17342496:
     template: Demon_Justiciar
-    at:       [72.000, -24.000, 15.000, 191]
+    region:   s_32
     level:    [80, 81]
   17342497:
     template: Demons_Elemental
@@ -5476,107 +4159,107 @@ spawns:
     level:    [75, 78]
   17342498:
     template: Dark_Elemental
-    at:       [109.000, -24.000, 100.000, 200]
+    region:   s_32
     level:    [79, 82]
   17342499:
     template: Ice_Elemental
-    at:       [158.000, -24.000, 100.000, 200]
+    region:   s_32
     level:    [79, 82]
   17342500:
     template: Errand_Imp
-    at:       [-3.000, -24.000, 20.000, 30]
+    region:   s_36
     level:    [79, 80]
   17342501:
     template: Errand_Imp
-    at:       [-37.000, -24.000, 19.000, 127]
+    region:   s_36
     level:    [79, 80]
   17342502:
     template: Errand_Imp
-    at:       [-105.000, -24.000, 19.000, 1]
+    region:   s_36
     level:    [79, 80]
   17342503:
     template: Errand_Imp
-    at:       [132.000, -24.000, 24.000, 24]
+    region:   s_39
     level:    [79, 80]
   17342504:
     template: Errand_Imp
-    at:       [144.000, -24.000, 55.000, 177]
+    region:   s_39
     level:    [79, 80]
   17342505:
     template: Errand_Imp
-    at:       [137.000, -24.000, 65.000, 73]
+    region:   s_39
     level:    [79, 80]
   17342506:
     template: Dire_Gargouille
-    at:       [18.000, -24.000, 103.000, 186]
+    region:   c_42
     level:    [80, 82]
   17342507:
     template: Dire_Gargouille
-    at:       [19.000, -24.000, 126.000, 195]
+    region:   c_42
     level:    [80, 82]
   17342508:
     template: Dire_Gargouille
-    at:       [17.000, -24.000, 143.000, 224]
+    region:   c_42
     level:    [80, 82]
   17342509:
     template: Dire_Gargouille
-    at:       [-9.000, -24.000, 141.000, 136]
+    region:   w_45
     level:    [80, 82]
   17342510:
     template: Orcish_Bowshooter_CZBS
     script:   Orcish_Bowshooter
-    at:       [-41.000, -24.000, -60.000, 119]
+    region:   sw_46
     level:    [76, 78]
   17342511:
     template: Orcish_Augur_CZBS
     script:   Orcish_Augur
-    at:       [-18.000, -20.000, -49.000, 139]
+    region:   sw_46
     level:    [76, 79]
   17342512:
     template: Orcish_Champion_CZBS
     script:   Orcish_Champion
-    at:       [21.000, -24.000, -41.000, 247]
+    region:   sw_46
     level:    [76, 79]
   17342513:
     template: Orcish_Protector_CZBS
     script:   Orcish_Protector
-    at:       [-16.000, -24.000, -33.000, 211]
+    region:   sw_46
     level:    [76, 79]
   17342514:
     template: Dire_Gargouille
-    at:       [-23.000, -24.000, 131.000, 111]
+    region:   w_50
     level:    [80, 82]
   17342515:
     template: Dire_Gargouille
-    at:       [-20.000, -24.000, 112.000, 67]
+    region:   w_50
     level:    [80, 82]
   17342516:
     template: Dire_Gargouille
-    at:       [-15.000, -24.000, 97.000, 68]
+    region:   w_50
     level:    [80, 82]
   17342517:
     template: Dire_Gargouille
-    at:       [18.000, -24.000, 75.000, 85]
+    region:   w_50
     level:    [80, 82]
   17342518:
     template: Orcish_Augur_CZBS
     script:   Orcish_Augur
-    at:       [20.000, -24.000, -58.000, 44]
+    region:   sw_54
     level:    [76, 79]
   17342519:
     template: Orcish_Dragonbrander_CZB
     script:   Orcish_Dragonbrander
-    at:       [16.000, -24.000, -26.000, 54]
+    region:   sw_54
     level:    [76, 78]
   17342520:
     template: Orcish_Champion_CZBS
     script:   Orcish_Champion
-    at:       [-17.000, -24.000, -78.000, 251]
+    region:   sw_54
     level:    [76, 79]
   17342521:
     template: Orcish_Dragonbrander_CZB
     script:   Orcish_Dragonbrander
-    at:       [-10.000, -24.000, -97.000, 151]
+    region:   sw_54
     level:    [76, 78]
   17342522:
     template: Demon_Magus
@@ -5584,11 +4267,11 @@ spawns:
     level:    [80, 81]
   17342523:
     template: Demon_Befouler
-    at:       [10.000, -20.000, -19.000, 189]
+    region:   w_59
     level:    [80, 81]
   17342524:
     template: Demon_Justiciar
-    at:       [87.000, -24.000, 15.000, 179]
+    region:   w_59
     level:    [80, 81]
   17342525:
     template: Demons_Elemental
@@ -5600,11 +4283,11 @@ spawns:
     level:    [80, 81]
   17342527:
     template: Demon_Befouler
-    at:       [-73.000, -19.000, 50.000, 253]
+    region:   sw_63
     level:    [80, 81]
   17342528:
     template: Demon_Justiciar
-    at:       [105.000, -24.000, -57.000, 8]
+    region:   sw_63
     level:    [80, 81]
   17342529:
     template: Demons_Elemental
@@ -5612,47 +4295,47 @@ spawns:
     level:    [75, 78]
   17342530:
     template: Dire_Gargouille
-    at:       [18.000, -24.000, 66.000, 59]
+    region:   w_66
     level:    [80, 82]
   17342531:
     template: Dire_Gargouille
-    at:       [-30.000, -19.000, 148.000, 110]
+    region:   w_66
     level:    [80, 82]
   17342532:
     template: Dire_Gargouille
-    at:       [-42.000, -20.000, 108.000, 139]
+    region:   w_66
     level:    [80, 82]
   17342533:
     template: Dire_Gargouille
-    at:       [-28.000, -24.000, 101.000, 83]
+    region:   w_66
     level:    [80, 82]
   17342534:
     template: Orcish_Bowshooter_CZBS
     script:   Orcish_Bowshooter
-    at:       [12.000, -24.000, -62.000, 25]
+    region:   sw_70
     level:    [76, 78]
   17342535:
     template: Orcish_Veteran_CZBS
     script:   Orcish_Veteran
-    at:       [-20.000, -23.000, -97.000, 110]
+    region:   sw_70
     level:    [76, 78]
   17342536:
     template: Orcish_Champion_CZBS
     script:   Orcish_Champion
-    at:       [-20.000, -24.000, -65.000, 238]
+    region:   sw_70
     level:    [76, 79]
   17342537:
     template: Orcish_Protector_CZBS
     script:   Orcish_Protector
-    at:       [18.000, -24.000, -56.000, 64]
+    region:   sw_70
     level:    [76, 79]
   17342538:
     template: Dire_Gargouille
-    at:       [11.000, -19.000, 59.000, 34]
+    region:   c_74
     level:    [80, 82]
   17342539:
     template: Dire_Gargouille
-    at:       [30.000, -19.000, 71.000, 77]
+    region:   c_74
     level:    [80, 82]
   17342540:
     template: Orcish_Dragonbrander_CZB
@@ -5662,7 +4345,7 @@ spawns:
   17342541:
     template: Orcish_Veteran_CZBS
     script:   Orcish_Veteran
-    at:       [-19.000, -24.000, -72.000, 188]
+    region:   s_77
     level:    [76, 78]
   17342542:
     template: Orcish_Warlord_CZBS
@@ -5672,41 +4355,41 @@ spawns:
   17342543:
     template: Orcish_Protector_CZBS
     script:   Orcish_Protector
-    at:       [13.000, -24.000, -95.000, 233]
+    region:   s_77
     level:    [76, 79]
   17342544:
     template: Demon_Befouler
-    at:       [96.000, -24.000, 59.000, 54]
+    region:   s_80
     level:    [80, 81]
   17342545:
     template: Demon_Befouler
-    at:       [103.000, -24.000, 53.000, 72]
+    region:   s_80
     level:    [80, 81]
   17342546:
     template: Errand_Imp
-    at:       [139.000, -24.000, -17.000, 57]
+    region:   sw_82
     level:    [79, 80]
   17342547:
     template: Errand_Imp
-    at:       [140.000, -25.000, -19.000, 7]
+    region:   sw_82
     level:    [79, 80]
   17342548:
     template: Dire_Gargouille
-    at:       [-41.000, -24.000, 101.000, 137]
+    region:   w_84
     level:    [80, 82]
   17342549:
     template: Dire_Gargouille
-    at:       [-51.000, -24.000, 97.000, 110]
+    region:   w_84
     level:    [80, 82]
   17342550:
     template: Orcish_Bowshooter_CZBS
     script:   Orcish_Bowshooter
-    at:       [21.000, -24.000, -89.000, 117]
+    region:   sw_86
     level:    [76, 78]
   17342551:
     template: Orcish_Veteran_CZBS
     script:   Orcish_Veteran
-    at:       [21.000, -24.000, -73.000, 238]
+    region:   sw_86
     level:    [76, 78]
   17342552:
     template: Orcish_Augur_CZBS
@@ -5721,7 +4404,7 @@ spawns:
   17342554:
     template: Adaman_Quadav_past
     script:   Adaman_Quadav
-    at:       [-72.000, -24.000, 99.000, 244]
+    region:   w_90
     level:    [77, 79]
   17342555:
     template: Gold_Quadav_CZBS
@@ -5731,7 +4414,7 @@ spawns:
   17342556:
     template: Magnes_Quadav_CZBS
     script:   Magnes_Quadav
-    at:       [-87.809, -24.527, 102.276, 8]
+    region:   w_90
     level:    [77, 79]
   17342557:
     template: Star_Ruby_Quadav_CZBS
@@ -5745,12 +4428,12 @@ spawns:
   17342559:
     template: Yagudo_Eradicator_past
     script:   Yagudo_Eradicator
-    at:       [-98.000, -19.000, -92.000, 184]
+    region:   sw_95
     level:    [77, 79]
   17342560:
     template: Yagudo_Chanter_past
     script:   Yagudo_Chanter
-    at:       [-135.000, -24.000, -57.000, 1]
+    region:   sw_95
     level:    [77, 79]
   17342561:
     template: Yagudo_Prelate_past
@@ -5760,46 +4443,46 @@ spawns:
   17342562:
     template: Adaman_Quadav_past
     script:   Adaman_Quadav
-    at:       [-130.000, -24.000, 139.000, 81]
+    region:   w_98
     level:    [77, 79]
   17342563:
     template: Iron_Quadav_CZBS
     script:   Iron_Quadav
-    at:       [-113.000, -24.000, 137.000, 19]
+    region:   w_98
     level:    [77, 79]
   17342564:
     template: Gold_Quadav_CZBS
     script:   Gold_Quadav
-    at:       [-121.000, -24.000, 96.000, 142]
+    region:   w_98
     level:    [77, 79]
   17342565:
     template: Vajra_Quadav_CZBS
     script:   Vajra_Quadav
-    at:       [-141.000, -24.000, 117.000, 60]
+    region:   w_98
     level:    [77, 79]
   17342566:
     template: Yagudo_Sentinel_past
     script:   Yagudo_Sentinel
-    at:       [-140.000, -30.000, -25.000, 57]
+    region:   sw_102
     level:    [77, 79]
   17342567:
     template: Yagudo_Knight_Templar
-    at:       [-69.000, -24.000, -57.000, 113]
+    region:   sw_102
     level:    [77, 79]
   17342568:
     template: Yagudo_Chanter_past
     script:   Yagudo_Chanter
-    at:       [-105.000, -24.000, -64.000, 67]
+    region:   sw_102
     level:    [77, 79]
   17342569:
     template: Yagudo_Prelate_past
     script:   Yagudo_Prelate
-    at:       [-67.000, -24.000, -59.000, 254]
+    region:   sw_102
     level:    [77, 79]
   17342570:
     template: Ancient_Quadav_past
     script:   Ancient_Quadav
-    at:       [-92.000, -19.000, 146.000, 156]
+    region:   sw_106
     level:    [77, 79]
   17342571:
     template: Iron_Quadav_CZBS
@@ -5814,17 +4497,17 @@ spawns:
   17342573:
     template: Vajra_Quadav_CZBS
     script:   Vajra_Quadav
-    at:       [-137.000, -24.000, 95.000, 90]
+    region:   sw_106
     level:    [77, 79]
   17342574:
     template: Yagudo_Sentinel_past
     script:   Yagudo_Sentinel
-    at:       [-140.000, -42.000, -2.000, 191]
+    region:   sw_110
     level:    [77, 79]
   17342575:
     template: Yagudo_Eradicator_past
     script:   Yagudo_Eradicator
-    at:       [-150.000, -19.000, -92.000, 184]
+    region:   sw_110
     level:    [77, 79]
   17342576:
     template: Yagudo_Chanter_past
@@ -5838,111 +4521,111 @@ spawns:
     level:    [77, 79]
   17342578:
     template: Ogler
-    at:       [-141.000, -42.000, 19.000, 145]
+    region:   sw_114
     level:    [81, 82]
   17342579:
     template: Ogler
-    at:       [-149.000, -38.000, 31.000, 211]
+    region:   sw_115
     level:    [81, 82]
   17342580:
     template: Ancient_Quadav_past
     script:   Ancient_Quadav
-    at:       [-77.000, -20.000, 89.000, 248]
+    region:   w_116
     level:    [77, 79]
   17342581:
     template: Iron_Quadav_CZBS
     script:   Iron_Quadav
-    at:       [-122.000, -24.000, 141.000, 3]
+    region:   w_116
     level:    [77, 79]
   17342582:
     template: Magnes_Quadav_CZBS
     script:   Magnes_Quadav
-    at:       [-88.000, -24.000, 99.000, 1]
+    region:   w_116
     level:    [77, 79]
   17342583:
     template: Star_Ruby_Quadav_CZBS
     script:   Star_Ruby_Quadav
-    at:       [-93.000, -19.000, 147.000, 8]
+    region:   w_116
     level:    [77, 79]
   17342584:
     template: Yagudo_Sentinel_past
     script:   Yagudo_Sentinel
-    at:       [-94.000, -20.000, -50.000, 71]
+    region:   sw_120
     level:    [77, 79]
   17342585:
     template: Yagudo_Eradicator_past
     script:   Yagudo_Eradicator
-    at:       [-142.000, -37.000, -11.000, 33]
+    region:   sw_120
     level:    [77, 79]
   17342586:
     template: Yagudo_Chanter_past
     script:   Yagudo_Chanter
-    at:       [-141.000, -35.000, -16.000, 153]
+    region:   sw_120
     level:    [77, 79]
   17342587:
     template: Yagudo_High_Priest_past
     script:   Yagudo_High_Priest
-    at:       [-122.000, -24.000, -59.000, 18]
+    region:   sw_120
     level:    [77, 79]
   17342588:
     template: Demon_Warrior
-    at:       [177.000, -24.000, -63.000, 199]
+    region:   sw_124
     level:    [80, 81]
   17342589:
     template: Demon_Warrior
-    at:       [221.000, -24.000, 17.000, 211]
+    region:   sw_124
     level:    [80, 81]
   17342590:
     template: Demon_Magus
-    at:       [-131.000, -36.000, -5.000, 194]
+    region:   sw_124
     level:    [80, 81]
   17342591:
     template: Ancient_Quadav_past
     script:   Ancient_Quadav
-    at:       [-147.000, -19.000, 151.000, 26]
+    region:   w_127
     level:    [77, 79]
   17342592:
     template: Iron_Quadav_CZBS
     script:   Iron_Quadav
-    at:       [-101.000, -19.000, 91.000, 255]
+    region:   w_127
     level:    [77, 79]
   17342593:
     template: Magnes_Quadav_CZBS
     script:   Magnes_Quadav
-    at:       [-120.000, -20.000, 150.000, 123]
+    region:   w_127
     level:    [77, 79]
   17342594:
     template: Star_Ruby_Quadav_CZBS
     script:   Star_Ruby_Quadav
-    at:       [-93.000, -20.000, 88.000, 183]
+    region:   w_127
     level:    [77, 79]
   17342595:
     template: Yagudo_Sentinel_past
     script:   Yagudo_Sentinel
-    at:       [-94.000, -20.000, -30.000, 187]
+    region:   sw_131
     level:    [77, 79]
   17342596:
     template: Yagudo_Eradicator_past
     script:   Yagudo_Eradicator
-    at:       [-90.000, -20.000, -25.000, 189]
+    region:   sw_132
     level:    [77, 79]
   17342597:
     template: Yagudo_High_Priest_past
     script:   Yagudo_High_Priest
-    at:       [-85.000, -24.000, -63.000, 82]
+    region:   sw_132
     level:    [77, 79]
   17342598:
     template: Yagudo_Prelate_past
     script:   Yagudo_Prelate
-    at:       [-88.000, -24.000, -61.000, 124]
+    region:   sw_132
     level:    [77, 79]
   17342599:
     template: Demon_Warrior
-    at:       [300.000, -18.000, 21.000, 56]
+    region:   sw_135
     level:    [80, 81]
   17342600:
     template: Demon_Justiciar
-    at:       [-120.000, 3.000, -84.000, 161]
+    region:   sw_135
     level:    [80, 81]
   17342601:
     template: Demons_Elemental
@@ -5950,39 +4633,39 @@ spawns:
     level:    [75, 78]
   17342602:
     template: Demon_Magus
-    at:       [-151.000, -19.000, 84.000, 193]
+    region:   sw_135
     level:    [80, 81]
   17342603:
     template: Ogler
-    at:       [-91.000, -19.000, 50.000, 178]
+    region:   sw_139
     level:    [81, 82]
   17342604:
     template: Ogler
-    at:       [-74.000, -24.000, 19.000, 149]
+    region:   sw_140
     level:    [81, 82]
   17342605:
     template: Ogler
-    at:       [-65.000, -19.000, 50.000, 39]
+    region:   sw_140
     level:    [81, 82]
   17342606:
     template: Demon_Magus
-    at:       [-82.000, -24.000, 43.000, 52]
+    region:   sw_142
     level:    [80, 81]
   17342607:
     template: Demon_Befouler
-    at:       [97.000, -24.000, -21.000, 214]
+    region:   sw_142
     level:    [80, 81]
   17342608:
     template: Shadowguard_Demon
-    at:       [-85.184, -24.555, 42.652, 183]
+    region:   sw_142
     level:    [80, 80]
   17342609:
     template: Demon_Magus
-    at:       [-83.000, -24.000, -5.000, 70]
+    region:   sw_145
     level:    [80, 81]
   17342610:
     template: Demon_Justiciar
-    at:       [263.000, -21.000, 57.000, 211]
+    region:   sw_145
     level:    [80, 81]
   17342611:
     template: Demons_Elemental
@@ -5990,15 +4673,15 @@ spawns:
     level:    [75, 78]
   17342612:
     template: Shadowguard_Demon
-    at:       [-83.076, -24.501, 2.127, 146]
+    region:   sw_145
     level:    [80, 80]
   17342613:
     template: Ogler
-    at:       [-70.000, -19.000, -10.000, 88]
+    region:   w_149
     level:    [81, 82]
   17342614:
     template: Ogler
-    at:       [-93.000, -19.000, -8.000, 155]
+    region:   w_149
     level:    [81, 82]
   17342615:
     template: Ogler
@@ -6010,19 +4693,19 @@ spawns:
     level:    [81, 82]
   17342617:
     template: Demon_Warrior
-    at:       [224.000, -24.000, 60.000, 13]
+    region:   w_153
     level:    [80, 81]
   17342618:
     template: Demon_Befouler
-    at:       [101.000, -24.000, 0.001, 146]
+    region:   sw_154
     level:    [80, 81]
   17342619:
     template: Demon_Magus
-    at:       [-151.000, -30.000, -17.000, 64]
+    region:   w_155
     level:    [80, 81]
   17342620:
     template: Demon_Justiciar
-    at:       [215.000, -24.000, 60.000, 231]
+    region:   sw_156
     level:    [80, 81]
   17342621:
     template: Demons_Elemental
@@ -6030,19 +4713,19 @@ spawns:
     level:    [75, 78]
   17342622:
     template: Deathwreaker_Demon
-    at:       [-35.475, -4.500, 54.841, 88]
+    region:   w_158
     level:    [85, 87]
   17342623:
     template: Demon_Corrupter
-    at:       [-3.000, 3.000, 127.000, 48]
+    region:   w_158
     level:    [82, 83]
   17342624:
     template: Demon_Entomber
-    at:       [-127.000, 4.000, 121.000, 39]
+    region:   w_158
     level:    [82, 83]
   17342625:
     template: Demon_Condemner
-    at:       [4.000, 4.000, 127.000, 21]
+    region:   w_158
     level:    [82, 83]
   17342626:
     template: Demons_Elemental
@@ -6050,19 +4733,19 @@ spawns:
     level:    [75, 78]
   17342627:
     template: Soulsearer_Demon
-    at:       [-189.000, -8.000, 173.000, 90]
+    region:   sw_163
     level:    [85, 88]
   17342628:
     template: Demon_Suppressor
-    at:       [-125.000, 4.000, 111.000, 215]
+    region:   sw_163
     level:    [82, 83]
   17342629:
     template: Demon_Corrupter
-    at:       [-12.000, 3.000, -76.000, 78]
+    region:   sw_163
     level:    [82, 83]
   17342630:
     template: Demon_Condemner
-    at:       [-117.000, 3.000, 128.000, 72]
+    region:   sw_163
     level:    [82, 83]
   17342631:
     template: Demons_Elemental
@@ -6070,19 +4753,19 @@ spawns:
     level:    [75, 78]
   17342632:
     template: Woebringer_Demon
-    at:       [-25.385, -4.500, -15.515, 127]
+    region:   w_168
     level:    [85, 88]
   17342633:
     template: Demon_Suppressor
-    at:       [-110.000, 3.000, -80.000, 105]
+    region:   w_168
     level:    [82, 83]
   17342634:
     template: Demon_Entomber
-    at:       [-97.000, 3.000, 180.000, 245]
+    region:   w_168
     level:    [82, 83]
   17342635:
     template: Demon_Condemner
-    at:       [-118.000, 3.000, -70.000, 56]
+    region:   w_168
     level:    [82, 83]
   17342636:
     template: Demons_Elemental
@@ -6090,7 +4773,7 @@ spawns:
     level:    [75, 78]
   17342637:
     template: Foredoomer_Demon
-    at:       [-81.000, -4.000, -8.000, 119]
+    region:   sw_173
     level:    [85, 88]
   17342638:
     template: Demons_Elemental
@@ -6098,23 +4781,23 @@ spawns:
     level:    [80, 83]
   17342639:
     template: Demon_Suppressor
-    at:       [6.000, 4.000, -89.000, 90]
+    region:   sw_173
     level:    [82, 83]
   17342640:
     template: Demon_Corrupter
-    at:       [-25.000, 4.000, 180.000, 138]
+    region:   sw_173
     level:    [82, 83]
   17342641:
     template: Demon_Entomber
-    at:       [7.000, 4.000, -74.000, 97]
+    region:   sw_173
     level:    [82, 83]
   17342642:
     template: Deathwreaker_Demon
-    at:       [-94.673, -4.500, 51.039, 6]
+    region:   c_178
     level:    [85, 87]
   17342643:
     template: Soulsearer_Demon
-    at:       [92.410, -8.500, 175.302, 27]
+    region:   c_178
     level:    [85, 88]
   17342644:
     template: Woebringer_Demon
@@ -6122,14 +4805,14 @@ spawns:
     level:    [85, 88]
   17342645:
     template: Deathwreaker_Demon
-    at:       [-97.000, -4.500, -0.600, 102]
+    region:   c_181
     level:    [85, 87]
   17342646:
     template: Soulsearer_Demon
     level:    [85, 88]
   17342647:
     template: Foredoomer_Demon
-    at:       [-28.860, -4.499, 46.750, 68]
+    region:   c_181
     level:    [85, 88]
   17342648:
     template: Demons_Elemental
@@ -6137,7 +4820,7 @@ spawns:
     level:    [80, 83]
   17342649:
     template: Soulsearer_Demon
-    at:       [101.077, -8.500, -132.349, 195]
+    region:   s_185
     level:    [85, 88]
   17342650:
     template: Woebringer_Demon
@@ -6145,7 +4828,7 @@ spawns:
     level:    [85, 88]
   17342651:
     template: Foredoomer_Demon
-    at:       [-27.689, -4.500, -3.916, 119]
+    region:   s_185
     level:    [85, 88]
   17342652:
     template: Demons_Elemental
@@ -6153,10 +4836,11 @@ spawns:
     level:    [80, 83]
   17342653:
     template: Soulsearer_Demon
-    at:       [73.206, -8.500, -134.769, 96]
+    region:   s_189
     level:    [85, 88]
   17342654:
     template: Deathwreaker_Demon
+    region:   s_189
     level:    [85, 87]
   17342655:
     template: Woebringer_Demon
@@ -6164,14 +4848,14 @@ spawns:
     level:    [85, 88]
   17342656:
     template: Woebringer_Demon
-    at:       [-25.151, 18.499, 1.260, 127]
+    region:   w_192
     level:    [85, 88]
   17342657:
     template: Deathwreaker_Demon
     level:    [85, 87]
   17342658:
     template: Foredoomer_Demon
-    at:       [-76.620, -4.489, 36.243, 62]
+    region:   w_192
     level:    [85, 88]
   17342659:
     template: Demons_Elemental
@@ -6179,7 +4863,7 @@ spawns:
     level:    [80, 83]
   17342660:
     template: Woebringer_Demon
-    at:       [-99.000, 19.000, 47.000, 127]
+    region:   w_196
     level:    [85, 88]
   17342661:
     template: Soulsearer_Demon
@@ -6187,7 +4871,7 @@ spawns:
     level:    [85, 88]
   17342662:
     template: Foredoomer_Demon
-    at:       [-25.390, 18.500, 50.927, 106]
+    region:   w_196
     level:    [85, 88]
   17342663:
     template: Demons_Elemental
@@ -6195,7 +4879,7 @@ spawns:
     level:    [75, 78]
   17342664:
     template: Foredoomer_Demon
-    at:       [-37.358, 18.495, -17.899, 127]
+    region:   sw_200
     level:    [85, 88]
   17342665:
     template: Demons_Elemental
@@ -6203,14 +4887,14 @@ spawns:
     level:    [80, 83]
   17342666:
     template: Deathwreaker_Demon
-    at:       [-189.855, -8.500, -104.284, 139]
+    region:   sw_200
     level:    [85, 87]
   17342667:
     template: Soulsearer_Demon
     level:    [85, 88]
   17342668:
     template: Foredoomer_Demon
-    at:       [-61.297, 22.499, 4.468, 94]
+    region:   sw_204
     level:    [85, 88]
   17342669:
     template: Demons_Elemental
@@ -6221,7 +4905,7 @@ spawns:
     level:    [85, 87]
   17342671:
     template: Woebringer_Demon
-    at:       [-72.937, 18.526, -5.843, 118]
+    region:   sw_204
     level:    [85, 88]
   17342672:
     template: Doom_Lens_CZBS
@@ -6251,12 +4935,12 @@ spawns:
   17342677:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-59.000, 0.001, -20.000, 201]
+    region:   sw_213
     level:    [84, 85]
   17342678:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-71.000, 0.001, 16.000, 31]
+    region:   sw_214
     level:    [84, 85]
   17342679:
     template: Doom_Lens_CZBS
@@ -6265,15 +4949,15 @@ spawns:
     level:    [84, 85]
   17342680:
     template: Deathwreaker_Demon
-    at:       [-36.009, -4.501, 37.103, 28]
+    region:   sw_216
     level:    [85, 87]
   17342681:
     template: Demon_Entomber
-    at:       [-4.000, 4.000, 111.000, 228]
+    region:   sw_216
     level:    [82, 83]
   17342682:
     template: Demon_Condemner
-    at:       [0.001, 3.000, -70.000, 42]
+    region:   sw_216
     level:    [82, 83]
   17342683:
     template: Demons_Elemental
@@ -6281,31 +4965,31 @@ spawns:
     level:    [75, 78]
   17342684:
     template: Soulsearer_Demon
-    at:       [-33.593, -4.500, -9.926, 102]
+    region:   sw_220
     level:    [85, 88]
   17342685:
     template: Demon_Suppressor_Large
     script:   Demon_Suppressor
-    at:       [-97.000, 3.000, -138.000, 246]
+    region:   sw_220
     level:    [82, 83]
   17342686:
     template: Demon_Corrupter_Large
     script:   Demon_Corrupter
-    at:       [-111.000, 3.000, 121.000, 137]
+    region:   sw_220
     level:    [82, 83]
   17342687:
     template: Woebringer_Demon
-    at:       [-195.000, -8.000, 145.000, 207]
+    region:   sw_223
     level:    [85, 88]
   17342688:
     template: Demon_Entomber_Large
     script:   Demon_Entomber
-    at:       [-117.000, 3.000, -89.000, 211]
+    region:   sw_223
     level:    [82, 83]
   17342689:
     template: Demon_Condemner_Large
     script:   Demon_Condemner
-    at:       [-20.000, 3.000, -121.000, 56]
+    region:   sw_223
     level:    [82, 83]
   17342690:
     template: Demons_Elemental
@@ -6337,79 +5021,79 @@ spawns:
   17342696:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-140.000, 0.001, -42.000, 195]
+    region:   sw_232
     level:    [84, 85]
   17342697:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-24.000, 0.001, -61.000, 127]
+    region:   sw_233
     level:    [84, 85]
   17342698:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-20.000, 0.001, 86.000, 191]
+    region:   sw_233
     level:    [84, 85]
   17342699:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [19.000, 0.001, 32.000, 64]
+    region:   sw_235
     level:    [84, 85]
   17342700:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-84.000, 0.001, 101.000, 130]
+    region:   sw_235
     level:    [84, 85]
   17342701:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [19.000, -4.000, -23.000, 51]
+    region:   sw_237
     level:    [84, 85]
   17342702:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [35.000, -8.000, -99.000, 64]
+    region:   sw_237
     level:    [84, 85]
   17342703:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-100.000, -4.000, -40.000, 193]
+    region:   w_239
     level:    [84, 85]
   17342704:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-146.000, -8.000, -99.000, 123]
+    region:   sw_240
     level:    [84, 85]
   17342705:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-157.000, -8.000, 140.000, 146]
+    region:   sw_241
     level:    [84, 85]
   17342706:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-139.000, -4.000, 61.000, 181]
+    region:   sw_241
     level:    [84, 85]
   17342707:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [-20.000, -4.000, 90.000, 225]
+    region:   sw_243
     level:    [84, 85]
   17342708:
     template: Doom_Lens_CZBS
     script:   Doom_Lens
-    at:       [41.000, -8.000, 139.000, 136]
+    region:   sw_243
     level:    [84, 85]
   17342709:
     template: Deathwreaker_Demon
-    at:       [-23.352, 18.500, 51.158, 87]
+    region:   sw_245
     level:    [85, 87]
   17342710:
     template: Soulsearer_Demon
-    at:       [-26.508, 18.500, 60.306, 249]
+    region:   sw_245
     level:    [85, 88]
   17342711:
     template: Foredoomer_Demon
-    at:       [-24.251, -20.500, 77.300, 100]
+    region:   sw_247
     level:    [85, 88]
   17342712:
     template: Demons_Elemental
@@ -6417,11 +5101,11 @@ spawns:
     level:    [80, 83]
   17342713:
     template: Deathwreaker_Demon
-    at:       [-36.260, 18.500, 35.977, 54]
+    region:   sw_249
     level:    [85, 87]
   17342714:
     template: Soulsearer_Demon
-    at:       [-19.107, 18.498, 1.894, 26]
+    region:   sw_250
     level:    [85, 88]
   17342715:
     template: Deathwreaker_Demon
@@ -6469,11 +5153,11 @@ spawns:
     level:    [85, 87]
   17342726:
     template: Woebringer_Demon
-    at:       [-76.904, 18.499, 4.711, 66]
+    region:   sw_262
     level:    [85, 88]
   17342727:
     template: Foredoomer_Demon
-    at:       [-74.742, -24.639, 9.747, 127]
+    region:   sw_263
     level:    [85, 88]
   17342728:
     template: Demons_Elemental
@@ -6872,184 +5556,194 @@ spawns:
     template: Plenilune_Ronin
   17342912:
     template: Shadowhorn
-    at:       [100.636, -24.543, 21.319, 49]
+    region:   s_448
     level:    [70, 70]
   17342913:
     template: Shadowhorn_Stormer
-    at:       [131.772, -24.531, 21.028, 16]
+    region:   s_448
     level:    [70, 70]
   17342914:
     template: Shadowhorn_Stormer
-    at:       [98.684, -24.589, -13.261, 80]
+    region:   s_448
     level:    [70, 70]
   17342915:
     template: Shadowhorn_Stormer
-    at:       [100.014, -24.530, -3.885, 33]
+    region:   s_448
     level:    [70, 70]
   17342916:
     template: Shadowhorn_Stormer
-    at:       [103.832, -24.544, -6.163, 224]
+    region:   s_448
     level:    [70, 70]
   17342917:
     template: Shadowhorn_Stormer
-    at:       [101.122, -24.543, 54.358, 189]
+    region:   s_448
     level:    [70, 70]
   17342918:
     template: Shadowhorn_Stormer
-    at:       [69.489, -24.551, 16.956, 125]
+    region:   s_448
     level:    [70, 70]
   17342919:
     template: Shadowhorn_Stormer
-    at:       [104.154, -24.550, -3.833, 63]
+    region:   s_448
     level:    [70, 70]
   17342920:
     template: Shadowhorn_Stormer
-    at:       [96.823, -24.553, 22.338, 88]
+    region:   s_448
     level:    [70, 70]
   17342921:
     template: Shadowhorn_Stormer
-    at:       [91.193, -24.525, 23.322, 52]
+    region:   s_448
     level:    [70, 70]
   17342922:
     template: Shadowhand
-    at:       [78.062, -24.555, 16.901, 128]
+    region:   s_448
     level:    [70, 70]
   17342923:
     template: Shadowhand_Cuirassier
-    at:       [102.562, -24.543, 35.352, 23]
+    region:   s_448
     level:    [70, 70]
   17342924:
     template: Shadowhand_Cuirassier
-    at:       [108.539, -24.522, 19.915, 153]
+    region:   s_448
     level:    [70, 70]
   17342925:
     template: Shadowhand_Cuirassier
-    at:       [99.628, -24.531, -9.634, 85]
+    region:   s_448
     level:    [70, 70]
   17342926:
     template: Shadowhand_Cuirassier
-    at:       [99.662, -24.578, 62.934, 169]
+    region:   s_448
     level:    [70, 70]
   17342927:
     template: Shadowhand_Cuirassier
-    at:       [85.127, -24.560, 18.520, 179]
+    region:   s_448
     level:    [70, 70]
   17342928:
     template: Shadowhand_Cuirassier
-    at:       [99.180, -24.561, 20.409, 91]
+    region:   s_448
     level:    [70, 70]
   17342929:
     template: Shadowhand_Cuirassier
-    at:       [76.053, -24.572, 23.432, 250]
+    region:   s_448
     level:    [70, 70]
   17342930:
     template: Shadowhand_Cuirassier
-    at:       [98.235, -24.512, 41.290, 56]
+    region:   s_448
     level:    [70, 70]
   17342931:
     template: Shadowhand_Cuirassier
-    at:       [102.654, -24.556, -13.649, 209]
+    region:   s_448
     level:    [70, 70]
   17342932:
     template: Shadowfang
-    at:       [99.896, -24.558, 52.612, 85]
+    region:   s_448
     level:    [70, 70]
   17342933:
     template: Shadowfang_Void
-    at:       [98.062, -24.529, -5.670, 39]
+    region:   s_448
     level:    [70, 70]
   17342934:
     template: Shadowfang_Void
-    at:       [96.497, -24.542, -0.122, 99]
+    region:   s_448
     level:    [70, 70]
   17342935:
     template: Shadowfang_Void
-    at:       [86.851, -24.601, 15.136, 124]
+    region:   s_448
     level:    [70, 70]
   17342936:
     template: Shadowfang_Void
-    at:       [91.523, -24.528, 21.908, 208]
+    region:   s_448
     level:    [70, 70]
   17342937:
     template: Shadowfang_Void
-    at:       [98.338, -24.538, 50.198, 249]
+    region:   s_448
     level:    [70, 70]
   17342938:
     template: Shadowfang_Void
-    at:       [137.168, -24.652, 15.522, 13]
+    region:   s_448
     level:    [70, 70]
   17342939:
     template: Shadowfang_Void
-    at:       [98.996, -24.520, 10.406, 248]
+    region:   s_448
     level:    [70, 70]
   17342940:
     template: Shadowfang_Void
-    at:       [67.092, -24.540, 18.874, 254]
+    region:   s_448
     level:    [70, 70]
   17342941:
     template: Shadowfang_Void
-    at:       [104.736, -24.553, -3.579, 63]
+    region:   s_448
     level:    [70, 70]
   17342942:
     template: Shadoweye
-    at:       [144.659, -24.594, 21.239, 48]
+    region:   s_448
     level:    [70, 70]
   17342943:
     template: Shadoweye_Gnat
-    at:       [104.956, -24.569, 50.781, 192]
+    region:   s_448
     level:    [70, 70]
   17342944:
     template: Shadoweye_Gnat
-    at:       [102.590, -24.528, 7.522, 89]
+    region:   s_448
     level:    [70, 70]
   17342945:
     template: Shadoweye_Gnat
-    at:       [104.910, -24.579, 53.441, 62]
+    region:   s_448
     level:    [70, 70]
   17342946:
     template: Shadoweye_Gnat
-    at:       [99.449, -24.522, 40.902, 6]
+    region:   s_448
     level:    [70, 70]
   17342947:
     template: Shadoweye_Gnat
-    at:       [79.554, -24.525, 21.679, 18]
+    region:   s_448
     level:    [70, 70]
   17342948:
     template: Shadoweye_Gnat
-    at:       [131.075, -24.563, 17.265, 158]
+    region:   s_448
     level:    [70, 70]
   17342949:
     template: Shadoweye_Gnat
-    at:       [102.598, -24.609, 59.642, 119]
+    region:   s_448
     level:    [70, 70]
   17342950:
     template: Shadoweye_Gnat
-    at:       [104.305, -24.570, 51.536, 194]
+    region:   s_448
     level:    [70, 70]
   17342951:
     template: Shadoweye_Gnat
-    at:       [113.776, -24.544, 17.893, 46]
+    region:   s_448
     level:    [70, 70]
   17342952:
     script: Shadowclaw
+    region: s_448
   17342953:
     script: Shadowclaw_Devastator
+    region: s_448
   17342954:
     script: Shadowclaw_Devastator
+    region: s_448
   17342955:
     script: Shadowclaw_Devastator
+    region: s_448
   17342956:
     script: Shadowclaw_Devastator
+    region: s_448
   17342957:
     script: Shadowclaw_Devastator
+    region: s_448
   17342958:
     script: Shadowclaw_Devastator
+    region: s_448
   17342959:
     script: Shadowclaw_Devastator
+    region: s_448
   17342960:
     script: Shadowclaw_Devastator
+    region: s_448
   17342961:
     script: Shadowclaw_Devastator
+    region: s_448
   17342962:
     template: Shadowhind_Machinator
     at:       [19.298, -24.974, -23.220, 192]
@@ -7128,27 +5822,27 @@ spawns:
     template: Skeleton_Escort
   17342994:
     template: Fiendish_Leechkeeper
-    at:       [64.000, -24.615, 16.000, 63]
+    region:   s_448
     level:    [60, 60]
   17342995:
     template: Fiendish_Leechkeeper
-    at:       [100.871, -24.535, 22.030, 197]
+    region:   s_448
     level:    [60, 60]
   17342996:
     template: Fiendish_Leechkeeper
-    at:       [126.002, -24.518, 20.001]
+    region:   s_448
     level:    [60, 60]
   17342997:
     template: Fiendish_Leechkeeper
-    at:       [67.970, -24.562, 24.004, 179]
+    region:   s_448
     level:    [60, 60]
   17342998:
     template: Fiendish_Leechkeeper
-    at:       [104.004, -24.617, 5.987, 236]
+    region:   s_448
     level:    [60, 60]
   17342999:
     template: Fiendish_Leechkeeper
-    at:       [113.999, -24.518, 20.000, 227]
+    region:   s_448
     level:    [60, 60]
   17343000:
     template: Fortification_NV80

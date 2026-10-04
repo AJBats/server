@@ -75,7 +75,7 @@ mission.sections =
                         return mission:messageText(chateauID.text.WHAT_TRION_WILL_SAY)
                     elseif
                         missionStatus == 4 and
-                        player:hasKeyItem(xi.ki.SHADOW_FRAGMENT)
+                        player:hasKeyItem(xi.keyItem.SHADOW_FRAGMENT)
                     then
                         return mission:progressEvent(548)
                     end
@@ -103,7 +103,7 @@ mission.sections =
 
                 [548] = function(player, csid, option, npc)
                     if mission:complete(player) then
-                        player:delKeyItem(xi.ki.SHADOW_FRAGMENT)
+                        player:delKeyItem(xi.keyItem.SHADOW_FRAGMENT)
                         mission:setVar(player, 'hallEvent', 1)
                     end
                 end,
@@ -112,6 +112,15 @@ mission.sections =
 
         [xi.zone.THRONE_ROOM] =
         {
+            onZoneIn = function(player)
+                if
+                    player:getMissionStatus(mission.areaId) == 3 and
+                    mission:getVar(player, 'PostBattle') == 1
+                then
+                    return { 7, -1, xi.cutsceneFlag.UNKNOWN_0008 }
+                end
+            end,
+
             ['_4l1'] =
             {
                 onTrigger = function(player, npc)
@@ -136,8 +145,8 @@ mission.sections =
                             player:addMission(xi.mission.log_id.ZILART, xi.mission.id.zilart.THE_NEW_FRONTIER)
                         end
 
-                        -- TODO: This is most likely a pos change and onZoneIn
-                        player:startEvent(7)
+                        mission:setVar(player, 'PostBattle', 1)
+                        player:setPos(90.425, -5.749, 0.089, 3, xi.zone.THRONE_ROOM)
                     end
                 end,
 
@@ -146,9 +155,9 @@ mission.sections =
                 end,
 
                 [7] = function(player, csid, option, npc)
-                    npcUtil.giveKeyItem(player, xi.ki.SHADOW_FRAGMENT)
                     player:setMissionStatus(mission.areaId, 4)
-                    player:setPos(378, -12, -20, 125, 161)
+                    mission:setVar(player, 'PostBattle', 0)
+                    npcUtil.giveKeyItem(player, xi.keyItem.SHADOW_FRAGMENT)
                 end,
             },
         },
@@ -163,8 +172,8 @@ mission.sections =
         [xi.zone.CHATEAU_DORAGUILLE] =
         {
             ['_6h4']     = mission:progressEvent(61),
-            ['Arsha']    = mission:progressEvent(85),
-            ['Chupaile'] = mission:progressEvent(86),
+            ['Arsha']    = mission:event(85),
+            ['Chupaile'] = mission:event(86),
             ['Halver']   = mission:messageText(chateauID.text.HIS_MAJESTY_AWAITS),
 
             onEventFinish =

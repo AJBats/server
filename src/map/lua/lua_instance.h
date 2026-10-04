@@ -19,12 +19,15 @@
 ===========================================================================
 */
 
-#ifndef _LUAINSTANCE_H
-#define _LUAINSTANCE_H
+#pragma once
 
 #include "common/cbasetypes.h"
-#include "luautils.h"
 
+#include <sol/forward.hpp>
+
+#include <string>
+
+class CBaseEntity;
 class CLuaBaseEntity;
 class CLuaZone;
 class CInstance;
@@ -63,10 +66,10 @@ public:
     auto   getLocalVar(const std::string& name) -> uint64_t;
 
     void setLevelCap(uint8 cap);
-    void setLastTimeUpdate(uint32 ms);
+    void setLastTimeUpdate(uint32 seconds);
     void setTimeLimit(uint32 seconds);
     void setProgress(uint32 progress);
-    void setWipeTime(uint32 ms);
+    void setWipeTime(uint32 seconds);
     void setStage(uint32 stage);
     void setLocalVar(const std::string& name, uint64_t value);
 
@@ -85,5 +88,3 @@ public:
 
     static void Register();
 };
-
-#endif

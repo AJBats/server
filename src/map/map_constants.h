@@ -38,16 +38,19 @@ using namespace std::chrono_literals;
 
 static constexpr auto kTimeServerTickInterval = 2400ms;
 
+// Ship and lift periods are not multiples of the time server tick, so 2400ms samples them too coarsely.
+static constexpr auto kTransportTickInterval = 400ms;
+
 // 2.5 logic updates per second
 static constexpr auto kLogicUpdateRate = 2.5f;
 
 // Tick/update every 400ms
 // NOTE: Many things are tied to and balanced around this rate, so changing it will have a significant impact on gameplay.
 //     : ie. DO NOT CHANGE!
-static constexpr auto kLogicUpdateInterval = std::chrono::milliseconds(static_cast<uint64>(1000.0f / kLogicUpdateRate));
+static constexpr auto kLogicUpdateInterval = std::chrono::milliseconds(static_cast<uint64_t>(1000.0f / kLogicUpdateRate));
 
 // Check Trigger Areas 2x as often as the server tick rate (200ms)
-static constexpr auto kTriggerAreaInterval = std::chrono::milliseconds(static_cast<uint64>(1000.0f / (kLogicUpdateRate * 2.0f)));
+static constexpr auto kTriggerAreaInterval = std::chrono::milliseconds(static_cast<uint64_t>(1000.0f / (kLogicUpdateRate * 2.0f)));
 
 // SpawnHandler tick interval (30s) and spawn window (half of interval)
 static constexpr auto kSpawnHandlerInterval = 30s;

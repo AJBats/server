@@ -23,7 +23,9 @@
 
 #include "ai/ai_container.h"
 #include "entities/mob_entity.h"
+#include "lua/lua_base_entity.h"
 #include "lua/lua_test_entity_assertions.h"
+#include "lua/luautils.h"
 #include "test_common.h"
 
 // Thin wrapper over CBaseEntity with assertions and some helpers.
@@ -95,8 +97,17 @@ void CLuaTestEntity::respawn() const
 
     despawn();
 
-    // Respawn the mob
-    mob->Spawn();
+    // a region mob rolls a fresh spawn point every life; keep it where the test left it
+    if (const auto* region = mob->roamRegion())
+    {
+        mob->setRoamRegions({});
+        mob->Spawn();
+        mob->setRoamRegions({ region });
+    }
+    else
+    {
+        mob->Spawn();
+    }
 
     if (!mob->isAlive())
     {

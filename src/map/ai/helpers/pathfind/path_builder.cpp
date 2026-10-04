@@ -34,9 +34,9 @@ NavPathBuilder::NavPathBuilder(NavMesh& navMesh)
 {
 }
 
-auto NavPathBuilder::findPath(const position_t& start, const position_t& end) const -> Maybe<PathResult>
+auto NavPathBuilder::findPath(const position_t& start, const position_t& end, const float clearance, const AvoidLinks avoidLinks) const -> Maybe<PathResult>
 {
-    auto result = navMesh_.findPath(start, end);
+    auto result = navMesh_.findPath(start, end, clearance, avoidLinks);
 
     // findPath searches 2.5f XZ per endpoint, so two fallbacks handle endpoints outside that radius.
     // An off-mesh end paths to the nearest on-mesh point via the wider 30f radius.
@@ -47,7 +47,7 @@ auto NavPathBuilder::findPath(const position_t& start, const position_t& end) co
         {
             if (!isNear(start, *closestEnd))
             {
-                result = navMesh_.findPath(start, *closestEnd);
+                result = navMesh_.findPath(start, *closestEnd, clearance, avoidLinks);
             }
         }
     }
@@ -58,7 +58,7 @@ auto NavPathBuilder::findPath(const position_t& start, const position_t& end) co
         {
             if (!isNear(*closestStart, end))
             {
-                result = navMesh_.findPath(*closestStart, end);
+                result = navMesh_.findPath(*closestStart, end, clearance, avoidLinks);
             }
         }
     }
@@ -89,9 +89,11 @@ auto NavPathBuilder::findPath(const position_t& start, const position_t& end) co
     return result;
 }
 
-auto NavPathBuilder::findRoamTurnPoints(const position_t& start, float maxRadius, uint8 maxTurns, const RoamRegion* region) const -> Maybe<std::vector<position_t>>
+auto NavPathBuilder::findRoamTurnPoints(const position_t& start, float maxRadius, uint8 minTurns, uint8 maxTurns, const RoamRegion* region) const -> Maybe<std::vector<position_t>>
 {
-    const auto desiredTurnCount = static_cast<uint8_t>(xirand::GetRandomNumber<uint32>(maxTurns) + 1);
+    const auto lowTurns         = std::max<uint8>(minTurns, 1);
+    const auto highTurns        = std::max<uint8>(maxTurns, lowTurns);
+    const auto desiredTurnCount = xirand::GetRandomNumber<uint8>(lowTurns, static_cast<uint8>(highTurns + 1));
 
     std::vector<position_t> turnPoints;
 

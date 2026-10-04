@@ -12,7 +12,7 @@ local content = BattlefieldMission:new({
     isMission             = true,
     allowTrusts           = true,
     maxPlayers            = 6,
-    levelCap              = 75,
+    levelCap              = xi.settings.main.MAX_LEVEL,
     timeLimit             = utils.minutes(30),
     index                 = 4,
     entryNpc              = 'BC_Entrance',
@@ -66,6 +66,7 @@ function content:onEventFinishBattlefield(player, csid, option, npc)
     player:setPos(unpack(playerCoords[battlefieldArea]))
     trion:setSpawn(unpack(trionCoords[battlefieldArea]))
     trion:spawn()
+    trion:setMobLevel(75)
 end
 
 content.groups =

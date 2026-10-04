@@ -15,7 +15,7 @@ local content = Battlefield:new({
     index            = 1,
     entryNpc         = 'Wind_Pillar_2',
     exitNpc          = 'Wind_Pillar_Exit',
-    requiredKeyItems = { xi.ki.ZEPHYR_FAN, message = ID.text.ZEPHYR_RIPS },
+    requiredKeyItems = { xi.keyItem.ZEPHYR_FAN, message = ID.text.ZEPHYR_RIPS },
     grantXP          = 2500,
     armouryCrates    =
     {
@@ -100,8 +100,8 @@ content.groups =
 content.loot =
 {
     {
-        { itemId = xi.item.NONE,                   weight = 9500 },
-        { itemId = xi.item.CLOUD_EVOKER,           weight =  500 },
+        { itemId = xi.item.NONE,                   weight = 9750 },
+        { itemId = xi.item.CLOUD_EVOKER,           weight =  250 },
     },
 
     {

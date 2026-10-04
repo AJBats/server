@@ -32,6 +32,7 @@
 #include "blue_spell.h"
 #include "blue_trait.h"
 #include "charutils.h"
+#include "enums/msg_basic.h"
 #include "job_points.h"
 #include "merit.h"
 #include "modifier.h"
@@ -44,6 +45,12 @@ namespace blueutils
 
 void SetBlueSpell(CCharEntity* PChar, CBlueSpell* PSpell, uint8 slotIndex, bool addingSpell)
 {
+    if (addingSpell && slotIndex >= GetTotalSlots(PChar))
+    {
+        ShowWarningFmt("SetBlueSpell: Player {} trying to set a spell in slot {} beyond their slot count", PChar->getName(), slotIndex);
+        return;
+    }
+
     // sanity check
     if (slotIndex < 20)
     {

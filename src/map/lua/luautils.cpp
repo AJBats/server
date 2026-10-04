@@ -34,7 +34,10 @@
 #include <common/vana_time.h>
 #include <common/version.h>
 
+#include <map/lua/lua_ability.h>
 #include <map/lua/lua_action.h>
+#include <map/lua/lua_attack.h>
+#include <map/lua/lua_base_entity.h>
 #include <map/lua/lua_battlefield.h>
 #include <map/lua/lua_cache.h>
 #include <map/lua/lua_instance.h>
@@ -85,6 +88,7 @@
 #include "data/datasets/zones/npcs/dataset.h"
 #include "data/enums/mob_mod.h"
 #include "data/loader.h"
+#include "enums/msg_basic.h"
 #include "fishingcontest.h"
 #include "instance.h"
 #include "ipc_client.h"
@@ -100,7 +104,7 @@
 #include "spell.h"
 #include "status_effect_container.h"
 #include "trade_container.h"
-#include "transport.h"
+#include "transports/elevator_handler.h"
 #include "weapon_skill.h"
 #include "zone.h"
 #include "zone_entities.h"
@@ -1926,8 +1930,6 @@ uint8 VanadielDayElement()
  ************************************************************************/
 uint32 GetSystemTime()
 {
-    TracyZoneScoped;
-
     return earth_time::game_timestamp(); // CARDIAN: the game clock
 }
 
@@ -2435,7 +2437,13 @@ void OnGameIn(CCharEntity* PChar, bool zoning)
 
     ShowTraceFmt("luautils::OnGameIn: {}", PChar->getName());
 
-    callGlobal<void>("xi.player.onGameIn", PChar, PChar->GetPlayTime(false) == 0s, zoning);
+    // game time of 0 is not reliable to determine if the char needs the starter fame/gear
+    // You can DC in the intro CS when logging in and your playtime is non-zero
+    // However, in charCreate, it adds NEW_ADVENTURER title. so lets check that to determine if charCreate needs to be called
+    // `xi.player.onGameIn` calls `xi.player.charCreate` when the 2nd param is true
+    bool needsFirstLogin = !charutils::hasTitle(PChar, 206); // 206 == xi.title.NEW_ADVENTURER
+
+    callGlobal<void>("xi.player.onGameIn", PChar, needsFirstLogin, zoning);
 }
 
 void OnZoneIn(CCharEntity* PChar)
@@ -5053,7 +5061,7 @@ auto OnInstanceLoadFailed(CZone* PZone) -> xi::ZoneId
     return result.get_type(0) == sol::type::number ? result.get<xi::ZoneId>(0) : xi::ZoneId::Unknown;
 }
 
-void OnInstanceTimeUpdate(CZone* PZone, CInstance* PInstance, uint32 time)
+void OnInstanceTimeUpdate(CZone* PZone, CInstance* PInstance, uint32 seconds)
 {
     TracyZoneScoped;
 
@@ -5065,7 +5073,7 @@ void OnInstanceTimeUpdate(CZone* PZone, CInstance* PInstance, uint32 time)
         return;
     }
 
-    auto result = onInstanceTimeUpdate(PInstance, time);
+    auto result = onInstanceTimeUpdate(PInstance, seconds);
     if (!result.valid())
     {
         sol::error err = result;
@@ -5197,23 +5205,21 @@ void OnInstanceComplete(CInstance* PInstance)
     }
 }
 
-void StartElevator(uint32 ElevatorID)
+void StartElevator(const xi::Elevator elevatorID)
 {
     TracyZoneScoped;
 
-    CTransportHandler::getInstance()->startElevator(ElevatorID);
+    ElevatorHandler::getInstance()->startElevator(elevatorID);
 }
 
-// Returns -1 if elevator is not found. Otherwise, returns the uint8 state.
-int16 GetElevatorState(uint8 id) // Returns -1 if elevator is not found. Otherwise, returns the uint8 state.
+// Reaches Lua as xi.elevatorState, or -1 when there is no such elevator.
+auto GetElevatorState(const xi::Elevator elevatorID) -> int16
 {
     TracyZoneScoped;
 
-    Elevator_t* elevator = CTransportHandler::getInstance()->getElevator(id);
-
-    if (elevator)
+    if (const auto state = ElevatorHandler::getInstance()->elevatorState(elevatorID))
     {
-        return elevator->state;
+        return static_cast<int16>(*state);
     }
 
     return -1;
@@ -5279,7 +5285,7 @@ void ClearCharVarFromAll(const std::string& varName)
     charutils::ClearCharVarFromAll(varName);
 }
 
-void OnTransportEvent(CCharEntity* PChar, xi::ZoneId prevZoneId, uint16 transportId)
+void OnTransportEvent(CCharEntity* PChar, xi::ZoneId prevZoneId, std::string_view transport)
 {
     TracyZoneScoped;
 
@@ -5291,7 +5297,7 @@ void OnTransportEvent(CCharEntity* PChar, xi::ZoneId prevZoneId, uint16 transpor
         return;
     }
 
-    auto result = onTransportEvent(PChar, prevZoneId, transportId);
+    auto result = onTransportEvent(PChar, prevZoneId, transport);
     if (!result.valid())
     {
         sol::error err = result;
@@ -5645,11 +5651,34 @@ void OnPlayerVolunteer(CCharEntity* PChar, const std::string& text)
     callGlobal<void>("xi.player.onPlayerVolunteer", PChar, text);
 }
 
-bool OnChocoboDig(CCharEntity* PChar)
+auto OnChocoboDig(CCharEntity* PChar) -> ChocoboDigResult
 {
     TracyZoneScoped;
 
-    return callGlobal<bool>("xi.chocoboDig.start", PChar);
+    auto func = detail::findGlobalLuaFunction("xi.chocoboDig.start");
+    if (!func.valid())
+    {
+        ShowErrorFmt("luautils::OnChocoboDig: xi.chocoboDig.start: Function not found");
+        return {};
+    }
+
+    const auto result = func(PChar);
+    if (!result.valid())
+    {
+        const auto err = result.get<sol::error>();
+        ShowErrorFmt("luautils::OnChocoboDig: {}", err.what());
+        return {};
+    }
+
+    const auto returned = [&](const int index)
+    {
+        return result.get_type(index) == sol::type::boolean && result.get<bool>(index);
+    };
+
+    return ChocoboDigResult{
+        .dug        = returned(0),
+        .keepGreens = returned(1),
+    };
 }
 
 // Loads a Lua function with a fallback hierarchy

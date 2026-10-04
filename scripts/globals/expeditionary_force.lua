@@ -21,27 +21,28 @@ local bannerState =
 
 local regionPointsEarned =
 {
-    [0] =  500, -- No standing
-    [1] =  500,
-    [2] =  750,
-    [3] = 1000,
+    [0] = 10000, -- No standing
+    [1] = 10000,
+    [2] = 15000,
+    [3] = 20000,
 }
 
+-- killWeights are taken from \src\map\conquest_data.h
 local zoneInfoTable =
 {
-    [xi.zone.BEAUCEDINE_GLACIER    ] = { levelCap = 40 },
-    [xi.zone.BUBURIMU_PENINSULA    ] = { levelCap = 30 },
-    [xi.zone.CAPE_TERIGGAN         ] = { levelCap = xi.settings.main.MAX_LEVEL },  -- Uncapped
-    [xi.zone.EASTERN_ALTEPA_DESERT ] = { levelCap = 50 },
-    [xi.zone.JUGNER_FOREST         ] = { levelCap = 30 },
-    [xi.zone.MERIPHATAUD_MOUNTAINS ] = { levelCap = 30 },
-    [xi.zone.PASHHOW_MARSHLANDS    ] = { levelCap = 30 },
-    [xi.zone.QUFIM_ISLAND          ] = { levelCap = 30 },
-    [xi.zone.THE_SANCTUARY_OF_ZITAH] = { levelCap = 40 },
-    [xi.zone.VALKURM_DUNES         ] = { levelCap = 30 },
-    [xi.zone.XARCABARD             ] = { levelCap = 50 },
-    [xi.zone.YHOATOR_JUNGLE        ] = { levelCap = 50 },
-    [xi.zone.YUHTUNGA_JUNGLE       ] = { levelCap = 40 },
+    [xi.zone.BEAUCEDINE_GLACIER    ] = { killWeight = 150, levelCap = 40 },
+    [xi.zone.BUBURIMU_PENINSULA    ] = { killWeight =  25, levelCap = 30 },
+    [xi.zone.CAPE_TERIGGAN         ] = { killWeight =  25, levelCap = xi.settings.main.MAX_LEVEL },  -- Uncapped
+    [xi.zone.EASTERN_ALTEPA_DESERT ] = { killWeight =  50, levelCap = 50 },
+    [xi.zone.JUGNER_FOREST         ] = { killWeight = 100, levelCap = 30 },
+    [xi.zone.MERIPHATAUD_MOUNTAINS ] = { killWeight = 100, levelCap = 30 },
+    [xi.zone.PASHHOW_MARSHLANDS    ] = { killWeight = 100, levelCap = 30 },
+    [xi.zone.QUFIM_ISLAND          ] = { killWeight =  50, levelCap = 30 },
+    [xi.zone.THE_SANCTUARY_OF_ZITAH] = { killWeight =  25, levelCap = 40 },
+    [xi.zone.VALKURM_DUNES         ] = { killWeight =  25, levelCap = 30 },
+    [xi.zone.XARCABARD             ] = { killWeight = 150, levelCap = 50 },
+    [xi.zone.YHOATOR_JUNGLE        ] = { killWeight =  50, levelCap = 50 },
+    [xi.zone.YUHTUNGA_JUNGLE       ] = { killWeight =  50, levelCap = 40 },
 }
 
 local bannerTable =
@@ -693,19 +694,19 @@ local bannerNMs =
 
 local regionKITable =
 {
-    [xi.region.ARAGONEU        ] = xi.ki.ARAGONEU_EF_INSIGNIA,
-    [xi.region.DERFLAND        ] = xi.ki.DERFLAND_EF_INSIGNIA,
-    [xi.region.ELSHIMO_LOWLANDS] = xi.ki.ELSHIMO_LOWLANDS_EF_INSIGNIA,
-    [xi.region.ELSHIMO_UPLANDS ] = xi.ki.ELSHIMO_UPLANDS_EF_INSIGNIA,
-    [xi.region.FAUREGANDI      ] = xi.ki.FAUREGANDI_EF_INSIGNIA,
-    [xi.region.KOLSHUSHU       ] = xi.ki.KOLSHUSHU_EF_INSIGNIA,
-    [xi.region.KUZOTZ          ] = xi.ki.KUZOTZ_EF_INSIGNIA,
-    [xi.region.LITELOR         ] = xi.ki.LITELOR_EF_INSIGNIA,
-    [xi.region.NORVALLEN       ] = xi.ki.NORVALLEN_EF_INSIGNIA,
-    [xi.region.QUFIMISLAND     ] = xi.ki.QUFIM_EF_INSIGNIA,
-    [xi.region.VALDEAUNIA      ] = xi.ki.VALDEAUNIA_EF_INSIGNIA,
-    [xi.region.VOLLBOW         ] = xi.ki.VOLLBOW_EF_INSIGNIA,
-    [xi.region.ZULKHEIM        ] = xi.ki.ZULKHEIM_EF_INSIGNIA,
+    [xi.region.ARAGONEU        ] = xi.keyItem.ARAGONEU_EF_INSIGNIA,
+    [xi.region.DERFLAND        ] = xi.keyItem.DERFLAND_EF_INSIGNIA,
+    [xi.region.ELSHIMO_LOWLANDS] = xi.keyItem.ELSHIMO_LOWLANDS_EF_INSIGNIA,
+    [xi.region.ELSHIMO_UPLANDS ] = xi.keyItem.ELSHIMO_UPLANDS_EF_INSIGNIA,
+    [xi.region.FAUREGANDI      ] = xi.keyItem.FAUREGANDI_EF_INSIGNIA,
+    [xi.region.KOLSHUSHU       ] = xi.keyItem.KOLSHUSHU_EF_INSIGNIA,
+    [xi.region.KUZOTZ          ] = xi.keyItem.KUZOTZ_EF_INSIGNIA,
+    [xi.region.LITELOR         ] = xi.keyItem.LITELOR_EF_INSIGNIA,
+    [xi.region.NORVALLEN       ] = xi.keyItem.NORVALLEN_EF_INSIGNIA,
+    [xi.region.QUFIMISLAND     ] = xi.keyItem.QUFIM_EF_INSIGNIA,
+    [xi.region.VALDEAUNIA      ] = xi.keyItem.VALDEAUNIA_EF_INSIGNIA,
+    [xi.region.VOLLBOW         ] = xi.keyItem.VOLLBOW_EF_INSIGNIA,
+    [xi.region.ZULKHEIM        ] = xi.keyItem.ZULKHEIM_EF_INSIGNIA,
 }
 
 -----------------------------------
@@ -975,6 +976,9 @@ xi.expeditionaryForce.onMobDeath = function(mob, player)
 
     -- Award Influence
     player:gainConquestInfluence(regionPointsEarned[GetNationRank(creditNation)])
+
+    -- Award mob kills for Conquest
+    player:addConquestMobKills(zoneInfoTable[zoneId].killWeight * 2)
 
     -- SEND ZONE MESSAGE
     for _, person in pairs(mob:getZone():getPlayers()) do

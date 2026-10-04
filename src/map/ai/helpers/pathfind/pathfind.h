@@ -32,6 +32,7 @@
 
 #include <array>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -58,7 +59,7 @@ public:
     ~CPathFind();
 
     // Walk to a random point around the given point, or inside the region when the owner has one.
-    auto RoamAround(const position_t& point, float maxRadius, uint8 maxTurns, xi::RoamFlag roamFlags = xi::RoamFlag::None, const RoamRegion* region = nullptr) -> bool;
+    auto RoamAround(const position_t& point, float maxRadius, uint8 minTurns, uint8 maxTurns, xi::RoamFlag roamFlags = xi::RoamFlag::None, const RoamRegion* region = nullptr) -> bool;
 
     // Find and walk to the given point.
     auto PathTo(const position_t& point, uint8 pathFlags = 0) -> bool;
@@ -77,8 +78,8 @@ public:
 
     auto ResumePatrol() -> void;
 
-    // Move the mob toward the next point.
-    auto FollowPath(timer::time_point tick) -> void;
+    // Move the mob toward the next point, walking at most stepCap this tick.
+    auto FollowPath(timer::time_point tick, float stepCap = std::numeric_limits<float>::max()) -> void;
     // CARDIAN: a fraction of a step per FollowPath, so a steered cardian steps
     // many times a logic tick at her own speed (ROADMAP C); 1 = upstream's whole step
     auto SetStepScale(float scale) -> void;
@@ -137,7 +138,10 @@ private:
     auto BuildDirectPath(const position_t& end) -> bool;
 
     // Find a random path around the given point.
-    auto FindRandomPath(const position_t& start, float maxRadius, uint8 maxTurns, xi::RoamFlag roamFlags, const RoamRegion* region) -> bool;
+    auto FindRandomPath(const position_t& start, float maxRadius, uint8 minTurns, uint8 maxTurns, xi::RoamFlag roamFlags, const RoamRegion* region) -> bool;
+
+    // Yalms to move this tick at the owner's current speed.
+    auto StepBudget() const -> float;
 
     // Core of StepTo, settling `stopShort` yalms short of `pos`.
     auto StepToInternal(const position_t& pos, bool run, float stopShort) -> void;
@@ -170,6 +174,12 @@ private:
     uint8        patrolFlags_;
     xi::RoamFlag roamFlags_;
     bool         onPoint_;
+
+    // region to clip random-roam legs to, null for all other pathing; owned by the zone
+    const RoamRegion* roamRegion_{ nullptr };
+
+    // this path may cross the region outline to get back inside
+    bool recoveringToRegion_{ false };
 
     timer::time_point timeAtPoint_;
 

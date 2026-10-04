@@ -11,22 +11,6 @@ templates:
       combat:
         skill: scythe
         delay: 320
-      resists:
-        rank_element:
-          ice:      3
-          wind:     3
-          earth:    3
-          thunder:  2
-          light:    6
-          dark:    11
-        rank_status:
-          paralyze:     3
-          bind:         3
-          silence:      3
-          slow:         3
-          light_sleep:  6
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -48,15 +32,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -1
-          water:   -1
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          poison:   -1
       render:
         look:
           type:  standard
@@ -90,20 +65,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [gravity, silence, slow, elegy]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          ice:   -3
-          wind:  11
-          earth: 11
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          silence:  11
-          slow:     11
       render:
         look:
           type:  standard
@@ -136,25 +97,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    5
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     -1
-          slow:        -1
-          poison:       5
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -177,25 +119,6 @@ templates:
       combat:
         skill: scythe
         delay: 200
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:    4
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -228,28 +151,6 @@ templates:
       combat:
         skill: club
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -2
-          ice:      5
-          wind:    -1
-          thunder: -2
-          water:   -1
-          light:   -2
-          dark:     5
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   5
-          blind:        5
       render:
         look:
           type:  standard
@@ -273,28 +174,6 @@ templates:
       combat:
         skill: club
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -2
-          ice:      5
-          wind:    -1
-          thunder: -2
-          water:   -1
-          light:   -2
-          dark:     5
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   5
-          blind:        5
       render:
         look:
           type:  standard
@@ -317,30 +196,6 @@ templates:
       combat:
         skill: polearm
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -365,30 +220,6 @@ templates:
         skill: polearm
         delay: 360
       jobs: [drg, drg]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -413,30 +244,6 @@ templates:
       combat:
         skill: polearm
       jobs: [drk, drk]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -460,30 +267,6 @@ templates:
       combat:
         skill: polearm
       jobs: [thf, thf]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -506,25 +289,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          wind:    -2
-          earth:   -2
-          thunder: -3
-          water:    6
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -548,25 +312,6 @@ templates:
         skill: club
         delay: 12
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -596,25 +341,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -644,25 +370,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -692,25 +399,6 @@ templates:
         skill: club
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -732,23 +420,6 @@ templates:
         skill: dagger
         delay: 220
       jobs: [rdm, rdm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:     6
-          thunder: -1
-          water:   -1
-          dark:    -2
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     6
-          poison:     -1
-          dark_sleep: -2
-          blind:      -2
       render:
         look:
           type:  standard
@@ -776,19 +447,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -817,27 +475,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:     2
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:      2
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -860,11 +497,6 @@ templates:
     attributes:
       combat:
         skill: sword
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -896,25 +528,6 @@ templates:
       combat:
         skill: sword
       jobs: [drk, bst]
-      resists:
-        rank_element:
-          fire:     5
-          ice:      7
-          wind:     5
-          earth:    7
-          thunder:  5
-          water:    7
-          light:    4
-          dark:    11
-        rank_status:
-          paralyze:     7
-          bind:         7
-          silence:      5
-          slow:         7
-          poison:       7
-          light_sleep:  4
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -932,21 +545,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        rank_element:
-          fire:     1
-          ice:     -1
-          wind:    -1
-          thunder: -1
-          water:   -2
-          dark:    -1
-        rank_status:
-          paralyze:   -1
-          bind:       -1
-          silence:    -1
-          poison:     -2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  standard
@@ -979,24 +577,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          ice:     -2
-          wind:    -2
-          earth:    3
-          thunder:  1
-          water:   -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:         3
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -1034,25 +614,6 @@ templates:
       combat:
         skill: scythe
         delay: 200
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1072,19 +633,6 @@ templates:
       combat:
         skill: scythe
         delay: 270
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -1115,24 +663,6 @@ templates:
       combat:
         skill: sword
         delay: 270
-      resists:
-        dmg_physical:
-          slashing:  1250
-          blunt:    -1250
-          h2h:      -1250
-        rank_element:
-          fire:  -2
-          ice:    3
-          water:  2
-          light: -2
-          dark:   8
-        rank_status:
-          paralyze:     3
-          bind:         3
-          poison:       2
-          light_sleep: -2
-          dark_sleep:   8
-          blind:        8
       render:
         look:
           type:  standard
@@ -1157,24 +687,6 @@ templates:
       combat:
         skill: sword
         delay: 270
-      resists:
-        dmg_physical:
-          slashing:  1250
-          blunt:    -1250
-          h2h:      -1250
-        rank_element:
-          fire:  -2
-          ice:    3
-          water:  2
-          light: -2
-          dark:   8
-        rank_status:
-          paralyze:     3
-          bind:         3
-          poison:       2
-          light_sleep: -2
-          dark_sleep:   8
-          blind:        8
       render:
         look:
           type:  standard
@@ -1196,25 +708,6 @@ templates:
       combat:
         skill: scythe
         delay: 270
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    6
-          light:   -2
-          dark:     3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     -1
-          slow:        -1
-          poison:       6
-          light_sleep: -2
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -1235,18 +728,6 @@ templates:
       combat:
         skill: sword
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1256,6 +737,7 @@ templates:
         hitbox:        17
       behaviors:
         aggressive: true
+      detects: [hearing, lowhp, ability]
       spawn:
         respawn: 300
         type:    [at_night]
@@ -1268,18 +750,6 @@ templates:
       combat:
         skill: axe
       jobs: [bst, bst]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1289,6 +759,7 @@ templates:
         hitbox:        17
       behaviors:
         aggressive: true
+      detects: [hearing, lowhp, ability]
       spawn:
         respawn: 300
         type:    [at_night]
@@ -1302,18 +773,6 @@ templates:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1323,6 +782,7 @@ templates:
         hitbox:        17
       behaviors:
         aggressive: true
+      detects: [hearing, lowhp, ability]
       spawn:
         respawn: 300
         type:    [at_night]
@@ -1335,18 +795,6 @@ templates:
       combat:
         skill: dagger
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  misc
@@ -1356,6 +804,7 @@ templates:
         hitbox:        17
       behaviors:
         aggressive: true
+      detects: [hearing, lowhp, ability]
       spawn:
         respawn: 300
         type:    [at_night]
@@ -1368,27 +817,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -1
-          wind:    -3
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -3
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -1412,28 +840,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        5
       render:
         look:
           type:  standard
@@ -1457,28 +863,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        5
       render:
         look:
           type:  standard
@@ -1499,22 +883,6 @@ templates:
       combat:
         skill: scythe
         delay: 320
-      resists:
-        rank_element:
-          ice:     -1
-          wind:    -1
-          earth:    2
-          thunder: -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:         2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -1524,6 +892,8 @@ templates:
         hitbox:        27
       behaviors:
         links: true
+      mob_mods:
+        exp_bonus: 10
       spawn:
         type: [lottery]
     loot:
@@ -1549,14 +919,6 @@ templates:
       jobs: [drk, drk]
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        rank_element:
-          ice:     -3
-          thunder: -1
-          water:   -1
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          poison:   -1
       render:
         look:
           type:  standard
@@ -1587,28 +949,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        5
       render:
         look:
           type:  standard
@@ -1640,25 +980,6 @@ templates:
       combat:
         skill: scythe
         delay: 270
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    6
-          light:   -2
-          dark:     3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     -1
-          slow:        -1
-          poison:       6
-          light_sleep: -2
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -1679,27 +1000,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -1
-          wind:    -3
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -3
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -1735,23 +1035,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        dmg_physical:
-          blunt: -2500
-          h2h:   -2500
-        rank_element:
-          fire:  -2
-          ice:   -2
-          water:  4
-          light: -3
-          dark:   2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          poison:       4
-          light_sleep: -3
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -1785,25 +1068,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -1828,25 +1092,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -1869,25 +1114,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -1910,25 +1136,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -1951,25 +1158,6 @@ templates:
       combat:
         skill: axe
       jobs: [cor, cor]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -1994,25 +1182,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2038,25 +1207,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2082,25 +1232,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2125,25 +1256,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2170,25 +1282,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2213,25 +1306,6 @@ templates:
       combat:
         skill: axe
       jobs: [cor, cor]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2255,25 +1329,6 @@ templates:
       combat:
         skill: axe
       jobs: [cor, cor]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -2295,22 +1350,6 @@ templates:
       combat:
         skill: scythe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:     6
-          ice:      6
-          wind:     6
-          earth:    6
-          thunder:  6
-          water:    6
-          light:   11
-        rank_status:
-          paralyze:     6
-          bind:         6
-          silence:      6
-          slow:         6
-          poison:       6
-          light_sleep: 11
       render:
         look:
           type:  standard
@@ -2332,19 +1371,6 @@ templates:
       combat:
         skill: club
       jobs: [drk, drk]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: -3
-          dark:  11
-        rank_status:
-          light_sleep: -3
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -2365,23 +1391,6 @@ templates:
         skill: dagger
         delay: 200
       jobs: [rdm, rdm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:     6
-          thunder: -1
-          water:   -1
-          dark:    -2
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     6
-          poison:     -1
-          dark_sleep: -2
-          blind:      -2
       render:
         look:
           type:  standard
@@ -2410,25 +1419,6 @@ templates:
       combat:
         skill: scythe
         delay: 200
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:    4
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2463,23 +1453,6 @@ templates:
         skill: dagger
         delay: 200
       jobs: [rdm, rdm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:     6
-          thunder: -1
-          water:   -1
-          dark:    -2
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     6
-          poison:     -1
-          dark_sleep: -2
-          blind:      -2
       render:
         look:
           type:  standard
@@ -2510,24 +1483,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          ice:     -2
-          wind:    -2
-          earth:    3
-          thunder:  1
-          water:   -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:         3
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2560,21 +1515,6 @@ templates:
         delay: 320
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        rank_element:
-          ice:     -1
-          wind:    -1
-          earth:    2
-          thunder: -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:         2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2595,7 +1535,7 @@ templates:
 
   Mamool_Ja_Blusterer:
     id:            2507
-    species:       knight_ja
+    species:       sage
     spell_list_id: 20
     skill_list_id: 177
     attributes:
@@ -2603,18 +1543,6 @@ templates:
         skill: great_axe
         delay: 280
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2625,6 +1553,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2638,7 +1568,7 @@ templates:
 
   Mamool_Ja_Infiltrator:
     id:            2522
-    species:       knight_ja
+    species:       warrior
     spell_list_id: 7
     skill_list_id: 176
     attributes:
@@ -2646,18 +1576,6 @@ templates:
         skill: great_katana
         delay: 280
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2669,6 +1587,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2682,25 +1602,13 @@ templates:
 
   Mamool_Ja_Lurker:
     id:            2523
-    species:       knight_ja
+    species:       warrior
     skill_list_id: 176
     attributes:
       combat:
         skill: katana
         delay: 280
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2711,6 +1619,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2726,7 +1636,7 @@ templates:
 
   Mamool_Ja_Mimer:
     id:            2525
-    species:       knight_ja
+    species:       warrior
     spell_list_id: 8
     skill_list_id: 176
     attributes:
@@ -2734,18 +1644,6 @@ templates:
         skill: dagger
         delay: 280
       jobs: [blu, blu]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2756,6 +1654,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2771,7 +1671,7 @@ templates:
 
   Mamool_Ja_Philosopher:
     id:            2528
-    species:       knight_ja
+    species:       sage
     spell_list_id: 21
     skill_list_id: 177
     attributes:
@@ -2779,18 +1679,6 @@ templates:
         skill: axe
         delay: 280
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2801,6 +1689,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2814,25 +1704,13 @@ templates:
 
   Mamool_Ja_Pikeman:
     id:            2529
-    species:       knight_ja
+    species:       warrior
     skill_list_id: 176
     attributes:
       combat:
         skill: polearm
         delay: 280
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2843,6 +1721,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2856,25 +1736,13 @@ templates:
 
   Mamool_Ja_Stabler:
     id:            2537
-    species:       knight_ja
+    species:       warrior
     skill_list_id: 176
     attributes:
       combat:
         skill: dagger
         delay: 280
       jobs: [bst, bst]
-      resists:
-        rank_element:
-          ice:     -2
-          wind:     2
-          thunder: -1
-          dark:    -1
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:     2
-          dark_sleep: -1
-          blind:      -1
       render:
         look:
           type:  automaton
@@ -2885,6 +1753,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 6
       spawn:
         respawn: 300
     loot:
@@ -2907,21 +1777,6 @@ templates:
         skill: scythe
         delay: 220
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2943,25 +1798,6 @@ templates:
       combat:
         skill: scythe
         delay: 200
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2983,28 +1819,14 @@ templates:
       combat:
         skill: scythe
         delay: 320
-      resists:
-        rank_element:
-          ice:     -1
-          wind:    -1
-          earth:    2
-          thunder: -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:         2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
           model: 1738
         entity_flags: 129
         hitbox:        20
+      mob_mods:
+        exp_bonus: 10
       spawn:
         respawn: 300
     loot:
@@ -3119,25 +1941,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          wind:    -2
-          earth:   -2
-          thunder: -3
-          water:    6
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3167,25 +1970,6 @@ templates:
       combat:
         skill: axe
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3210,25 +1994,6 @@ templates:
       combat:
         skill: axe
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3250,25 +2015,6 @@ templates:
       combat:
         skill: axe
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3294,25 +2040,6 @@ templates:
       combat:
         skill: axe
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3338,25 +2065,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3381,25 +2089,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3421,25 +2110,6 @@ templates:
       combat:
         skill: axe
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3463,25 +2133,6 @@ templates:
       combat:
         skill: axe
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    3
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:       3
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  automaton
@@ -3509,23 +2160,6 @@ templates:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
         dmg_physical:
           piercing: 2500
-        rank_element:
-          fire:  -1
-          ice:   -2
-          wind:  11
-          earth: -1
-          water: -1
-          light: -1
-          dark:  -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     11
-          slow:        -1
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -3553,19 +2187,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -3607,25 +2228,6 @@ templates:
         skill: club
         delay: 24
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -3650,30 +2252,6 @@ templates:
       combat:
         skill: axe
       jobs: [drk, drk]
-      resists:
-        dmg_physical:
-          slashing: 10000
-          piercing: 10000
-          blunt:    10000
-          h2h:      10000
-        rank_element:
-          fire:    -2
-          ice:      4
-          wind:    -1
-          earth:    1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -1
-          slow:         1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  automaton
@@ -3698,30 +2276,6 @@ templates:
       combat:
         skill: axe
       jobs: [drk, drk]
-      resists:
-        dmg_physical:
-          slashing: 10000
-          piercing: 10000
-          blunt:    10000
-          h2h:      10000
-        rank_element:
-          fire:    -2
-          ice:      4
-          wind:    -1
-          earth:    1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -1
-          slow:         1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  automaton
@@ -3744,30 +2298,6 @@ templates:
       combat:
         skill: katana
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: 8750
-          piercing: 8750
-          blunt:    8750
-          h2h:      8750
-        rank_element:
-          fire:    -2
-          ice:      4
-          wind:    -1
-          earth:    1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -1
-          slow:         1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  automaton
@@ -3792,30 +2322,6 @@ templates:
       combat:
         skill: katana
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: 8750
-          piercing: 8750
-          blunt:    8750
-          h2h:      8750
-        rank_element:
-          fire:    -2
-          ice:      4
-          wind:    -1
-          earth:    1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -1
-          slow:         1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  automaton
@@ -3836,23 +2342,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        dmg_physical:
-          blunt: -2500
-          h2h:   -2500
-        rank_element:
-          fire:  -2
-          ice:   -2
-          water:  4
-          light: -3
-          dark:   2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          poison:       4
-          light_sleep: -3
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -3885,23 +2374,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        dmg_physical:
-          blunt: -2500
-          h2h:   -2500
-        rank_element:
-          fire:  -2
-          ice:   -2
-          water:  4
-          light: -3
-          dark:   2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          poison:       4
-          light_sleep: -3
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -3935,23 +2407,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        dmg_physical:
-          blunt: -2500
-          h2h:   -2500
-        rank_element:
-          fire:  -2
-          ice:   -2
-          water:  4
-          light: -3
-          dark:   2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          poison:       4
-          light_sleep: -3
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -3987,25 +2442,6 @@ templates:
         skill: hand_to_hand
         delay: 380
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    -1
-          earth:   -1
-          thunder: -2
-          water:    5
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     -1
-          slow:        -1
-          poison:       5
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -4027,26 +2463,6 @@ templates:
       combat:
         skill: scythe
         delay: 200
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:  -1
-          ice:   -2
-          wind:  11
-          earth: -1
-          water: -1
-          light: -1
-          dark:  -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     11
-          slow:        -1
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -4074,26 +2490,11 @@ templates:
 
   Skoffin:
     id:            3652
-    species:       blue_wyvern
+    species:       wyvern
     skill_list_id: 266
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:     4
-          ice:      1
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -4122,19 +2523,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -4161,7 +2549,7 @@ templates:
 
   Troll_Sabreur:
     id:            4027
-    species:       troll
+    species:       light_troll
     spell_list_id: 3
     skill_list_id: 246
     attributes:
@@ -4169,19 +2557,6 @@ templates:
         skill: great_sword
         delay: 230
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          fire:   3
-          wind:  -1
-          water: -2
-          light: -1
-          dark:  -1
-        rank_status:
-          silence:     -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  automaton
@@ -4209,7 +2584,7 @@ templates:
 
   Troll_Shieldbearer:
     id:            4029
-    species:       troll
+    species:       heavy_troll
     spell_list_id: 4
     skill_list_id: 247
     attributes:
@@ -4217,19 +2592,6 @@ templates:
         skill: dagger
         delay: 280
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:   3
-          wind:  -1
-          water: -2
-          light: -1
-          dark:  -1
-        rank_status:
-          silence:     -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  automaton
@@ -4257,26 +2619,13 @@ templates:
 
   Troll_Surveillant:
     id:            4034
-    species:       troll
+    species:       light_troll
     skill_list_id: 246
     attributes:
       combat:
         skill: hand_to_hand
         delay: 380
       jobs: [pup, pup]
-      resists:
-        rank_element:
-          fire:   3
-          wind:  -1
-          water: -2
-          light: -1
-          dark:  -1
-        rank_status:
-          silence:     -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  automaton
@@ -4312,25 +2661,6 @@ templates:
         skill: club
         delay: 320
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  automaton
@@ -4350,13 +2680,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          thunder: -3
-          water:   -2
-        rank_status:
-          poison: -2
       render:
         look:
           type:  standard
@@ -4401,44 +2724,44 @@ spawns:
     level:    [71, 72]
   16990214:
     template: Aht_Urhgan_Attercop
-    at:       [380.000, -10.000, 6.000, 127]
+    region:   e_6
     level:    [64, 65]
   16990215:
     template: Aht_Urhgan_Attercop
-    at:       [374.000, -9.000, 20.000, 127]
+    region:   e_6
     level:    [64, 65]
   16990216:
     template: Lesser_Colibri
-    at:       [338.000, -10.000, 26.000, 127]
+    region:   e_8
     level:    [63, 65]
   16990217:
     template: Lesser_Colibri
-    at:       [307.000, -10.000, 23.000, 127]
+    region:   e_8
     level:    [63, 65]
   16990218:
     template: Aht_Urhgan_Attercop
-    at:       [310.000, -8.000, 34.000, 127]
+    region:   e_8
     level:    [64, 65]
   16990219:
     template: Aht_Urhgan_Attercop
-    at:       [315.000, -8.000, 41.000, 127]
+    region:   e_8
     level:    [64, 65]
   16990220:
     template: Aht_Urhgan_Attercop
-    at:       [321.000, -8.000, 36.000, 127]
+    region:   e_8
     level:    [64, 65]
   16990221:
     template: Lesser_Colibri
-    at:       [335.000, -9.000, 50.000, 127]
+    region:   e_13
     level:    [63, 65]
   16990222:
     template: Lesser_Colibri
-    at:       [319.000, -11.000, 59.000, 127]
+    region:   e_13
     level:    [63, 65]
   16990223:
     template: Fomor_Beastmaster_WW_BT
     script:   Fomor_Beastmaster
-    at:       [272.000, -8.000, 164.000, 127]
+    region:   e_13
     level:    [63, 64]
   16990224:
     template: Fomors_Bats_Bhaflau_Thickets
@@ -4448,37 +2771,37 @@ spawns:
   16990225:
     template: Fomor_Bard_WW_BT
     script:   Fomor_Bard
-    at:       [307.769, -10.280, 29.660, 55]
+    region:   e_13
     level:    [63, 64]
   16990226:
     template: Aht_Urhgan_Attercop
-    at:       [339.805, -10.444, 83.397, 184]
+    region:   region_86
     level:    [64, 65]
   16990227:
     template: Aht_Urhgan_Attercop
-    at:       [318.157, -10.675, 100.414]
+    region:   e_19
     level:    [64, 65]
   16990228:
     template: Haunt
-    at:       [324.000, -10.000, 100.000, 127]
+    region:   e_19
     level:    [63, 64]
   16990229:
     template: Lesser_Colibri
-    at:       [271.280, -11.500, 137.988, 201]
+    region:   e_21
     level:    [63, 65]
   16990230:
     template: Lesser_Colibri
-    at:       [268.051, -11.493, 148.126, 207]
+    region:   e_21
     level:    [63, 65]
   16990231:
     template: Fomor_Paladin_WW_BT
     script:   Fomor_Paladin
-    at:       [499.000, -10.000, 227.000, 127]
+    region:   e_21
     level:    [63, 64]
   16990232:
     template: Fomor_Beastmaster_WW_BT
     script:   Fomor_Beastmaster
-    at:       [306.000, -11.000, 54.000, 127]
+    region:   e_21
     level:    [63, 64]
   16990233:
     template: Fomors_Bats_Bhaflau_Thickets
@@ -4487,60 +2810,60 @@ spawns:
     level:    [58, 60]
   16990234:
     template: Ameretat
-    at:       [324.000, -8.000, 194.000, 127]
+    region:   e_26
     level:    [65, 66]
   16990235:
     template: Ameretat
-    at:       [323.000, -7.000, 231.000, 127]
+    region:   e_26
     level:    [65, 66]
   16990236:
     template: Wajaom_Tiger
-    at:       [281.000, -16.000, 241.000, 127]
+    region:   e_26
     level:    [67, 68]
   16990237:
     template: Wajaom_Tiger
-    at:       [269.000, -18.000, 259.000, 127]
+    region:   e_26
     level:    [67, 68]
   16990238:
     template: Lesser_Colibri
-    at:       [335.000, -10.000, 256.000, 127]
+    region:   ne_30
     level:    [63, 65]
   16990239:
     template: Ameretat
-    at:       [298.000, -8.000, 210.000, 127]
+    region:   ne_30
     level:    [65, 66]
   16990240:
     template: Wajaom_Tiger
-    at:       [258.000, -18.000, 251.000, 127]
+    region:   ne_32
     level:    [67, 68]
   16990241:
     template: Lesser_Colibri
-    at:       [307.000, -10.000, 184.000, 127]
+    region:   ne_33
     level:    [63, 65]
   16990242:
     template: Wajaom_Tiger
-    at:       [265.000, -18.000, 241.000, 127]
+    region:   ne_33
     level:    [67, 68]
   16990243:
     template: Wajaom_Tiger
-    at:       [217.000, -17.000, 299.000, 127]
+    region:   ne_33
     level:    [67, 68]
   16990244:
     template: Lesser_Colibri
-    at:       [279.000, -7.000, 172.000, 127]
+    region:   e_36
     level:    [63, 65]
   16990245:
     template: Wajaom_Tiger
-    at:       [206.000, -18.000, 299.000, 127]
+    region:   e_36
     level:    [67, 68]
   16990246:
     template: Fomor_Thief
-    at:       [322.000, -10.000, 24.000, 127]
+    region:   e_36
     level:    [63, 64]
   16990247:
     template: Fomor_Beastmaster_WW_BT
     script:   Fomor_Beastmaster
-    at:       [499.000, -10.000, 212.000, 127]
+    region:   e_36
     level:    [63, 64]
   16990248:
     template: Fomors_Bats_Bhaflau_Thickets
@@ -4549,168 +2872,168 @@ spawns:
     level:    [58, 60]
   16990249:
     template: Aht_Urhgan_Attercop
-    at:       [371.994, -9.766, 180.350, 155]
+    region:   e_41
     level:    [64, 65]
   16990250:
     template: Aht_Urhgan_Attercop
-    at:       [389.243, -10.044, 179.771, 2]
+    region:   e_41
     level:    [64, 65]
   16990251:
     template: Fomor_Thief
-    at:       [381.346, -9.265, 178.600, 140]
+    region:   e_41
     level:    [63, 64]
   16990252:
     template: Harvestman
-    at:       [398.130, -10.675, 179.169]
+    region:   e_41
     level:    [72, 73]
   16990253:
     template: Lesser_Colibri
-    at:       [419.992, -12.136, 208.738, 184]
+    region:   region_87
     level:    [63, 65]
   16990254:
     template: Lesser_Colibri
-    at:       [420.636, -14.116, 214.871, 64]
+    region:   region_87
     level:    [63, 65]
   16990255:
     template: Lesser_Colibri
-    at:       [363.625, -10.675, 300.946, 252]
+    region:   ne_47
     level:    [63, 65]
   16990256:
     template: Lesser_Colibri
-    at:       [376.600, -14.502, 301.388, 245]
+    region:   ne_47
     level:    [63, 65]
   16990257:
     template: Haunt
-    at:       [354.000, -10.000, 300.000, 127]
+    region:   ne_47
     level:    [63, 64]
   16990258:
     template: Aht_Urhgan_Attercop
-    at:       [427.414, -18.000, 261.489, 220]
+    region:   ne_50
     level:    [64, 65]
   16990259:
     template: Aht_Urhgan_Attercop
-    at:       [428.502, -15.946, 274.476, 181]
+    region:   ne_50
     level:    [64, 65]
   16990260:
     template: Lesser_Colibri
-    at:       [428.322, -15.750, 283.533, 191]
+    region:   ne_50
     level:    [63, 65]
   16990261:
     template: Aht_Urhgan_Attercop
-    at:       [435.139, -15.801, 286.372, 234]
+    region:   ne_53
     level:    [64, 65]
   16990262:
     template: Aht_Urhgan_Attercop
-    at:       [439.177, -16.000, 279.502, 39]
+    region:   ne_53
     level:    [64, 65]
   16990263:
     template: Lesser_Colibri
-    at:       [446.277, -17.283, 270.780, 35]
+    region:   ne_53
     level:    [63, 65]
   16990264:
     template: Lesser_Colibri
-    at:       [452.385, -15.728, 280.919, 206]
+    region:   ne_56
     level:    [63, 65]
   16990265:
     template: Lesser_Colibri
-    at:       [449.395, -15.724, 294.132, 132]
+    region:   ne_56
     level:    [63, 65]
   16990266:
     template: Ameretat
-    at:       [436.000, -16.000, 324.000, 127]
+    region:   ne_58
     level:    [65, 66]
   16990267:
     template: Ameretat
-    at:       [449.000, -15.000, 309.000, 127]
+    region:   ne_58
     level:    [65, 66]
   16990268:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [436.206, -17.021, 329.233, 171]
+    region:   ne_58
     level:    [66, 68]
   16990269:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [425.000, -18.000, 339.000, 127]
+    region:   ne_58
     level:    [66, 68]
   16990270:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [444.000, -16.000, 325.000, 127]
+    region:   ne_58
     level:    [66, 68]
   16990271:
     template: Aht_Urhgan_Attercop
-    at:       [457.000, -17.000, 375.000, 127]
+    region:   ne_63
     level:    [64, 65]
   16990272:
     template: Aht_Urhgan_Attercop
-    at:       [455.000, -20.000, 365.000, 127]
+    region:   ne_63
     level:    [64, 65]
   16990273:
     template: Aht_Urhgan_Attercop
-    at:       [491.628, -10.025, 260.410, 79]
+    region:   region_88
     level:    [64, 65]
   16990274:
     template: Aht_Urhgan_Attercop
-    at:       [499.928, -9.825, 250.201, 58]
+    region:   region_88
     level:    [64, 65]
   16990275:
     template: Aht_Urhgan_Attercop
-    at:       [500.361, -9.000, 219.362, 63]
+    region:   e_67
     level:    [64, 65]
   16990276:
     template: Fomor_Bard_WW_BT
     script:   Fomor_Bard
-    at:       [299.000, -11.000, 36.000, 127]
+    region:   e_67
     level:    [63, 64]
   16990277:
     template: Fomor_Paladin_WW_BT
     script:   Fomor_Paladin
-    at:       [501.540, -9.950, 216.294, 194]
+    region:   e_67
     level:    [63, 64]
   16990278:
     template: Aht_Urhgan_Attercop
-    at:       [424.000, -18.000, 253.000, 127]
+    region:   e_70
     level:    [64, 65]
   16990279:
     template: Aht_Urhgan_Attercop
-    at:       [543.638, -10.000, 175.377, 18]
+    region:   e_70
     level:    [64, 65]
   16990280:
     template: Lesser_Colibri
-    at:       [540.837, -11.149, 164.599, 16]
+    region:   e_72
     level:    [63, 65]
   16990281:
     template: Lesser_Colibri
-    at:       [297.000, -10.000, 149.000, 127]
+    region:   e_72
     level:    [63, 65]
   16990282:
     template: Lesser_Colibri
-    at:       [289.000, -16.000, 252.000, 127]
+    region:   e_72
     level:    [63, 65]
   16990283:
     template: Lesser_Colibri
-    at:       [584.000, -7.000, 164.000, 127]
+    region:   e_75
     level:    [63, 65]
   16990284:
     template: Aht_Urhgan_Attercop
-    at:       [603.000, -11.000, 98.000, 127]
+    region:   e_76
     level:    [64, 65]
   16990285:
     template: Aht_Urhgan_Attercop
-    at:       [611.000, -11.000, 105.000, 127]
+    region:   e_76
     level:    [64, 65]
   16990286:
     template: Aht_Urhgan_Attercop
-    at:       [621.000, -11.000, 117.000, 127]
+    region:   e_76
     level:    [64, 65]
   16990287:
     template: Wajaom_Tiger
-    at:       [315.000, -7.000, 214.000, 127]
+    region:   ne_79
     level:    [67, 68]
   16990288:
     template: Wajaom_Tiger
-    at:       [279.000, -8.000, 208.000, 127]
+    region:   ne_79
     level:    [67, 68]
   16990289:
     template: Chigoe_Small
@@ -4739,110 +3062,110 @@ spawns:
     level:    [71, 73]
   16990294:
     template: Grand_Marid
-    at:       [184.000, -18.000, 335.000, 127]
+    region:   region_90
     level:    [79, 80]
   16990295:
     template: Grand_Marid
-    at:       [137.000, -18.000, 334.000, 127]
+    region:   region_90
     level:    [79, 80]
   16990296:
     template: Marid
-    at:       [215.000, -18.000, 372.000, 127]
+    region:   region_89
     level:    [77, 78]
   16990297:
     template: Marid
-    at:       [209.000, -19.000, 341.000, 127]
+    region:   region_89
     level:    [77, 78]
   16990298:
     template: Marid
-    at:       [153.000, -15.000, 355.000, 127]
+    region:   region_90
     level:    [77, 78]
   16990299:
     template: Marid
-    at:       [149.000, -17.000, 310.000, 127]
+    region:   region_90
     level:    [77, 78]
   16990300:
     template: Colibri
-    at:       [15.000, -26.000, 122.000, 127]
+    region:   n_92
     level:    [71, 73]
   16990301:
     template: Colibri
-    at:       [166.000, -15.000, 343.000, 127]
+    region:   n_92
     level:    [71, 73]
   16990302:
     template: Colibri
-    at:       [198.000, -16.000, 352.000, 127]
+    region:   n_94
     level:    [71, 73]
   16990303:
     template: Colibri
-    at:       [147.000, -18.000, 322.000, 127]
+    region:   n_95
     level:    [71, 73]
   16990304:
     template: Marid
-    at:       [160.000, -15.000, 328.000, 127]
+    region:   region_90
     level:    [77, 78]
   16990305:
     template: Marid
-    at:       [163.000, -16.000, 312.000, 127]
+    region:   region_90
     level:    [77, 78]
   16990306:
     template: Mahishasura
-    at:       [206.510, -16.320, 357.724]
+    region:   region_89
     level:    [80, 80]
   16990307:
     template: Red_Kisser
-    at:       [185.000, -15.000, 363.000, 127]
+    region:   n_99
     level:    [68, 69]
   16990308:
     template: Red_Kisser
-    at:       [179.000, -15.000, 363.000, 127]
+    region:   n_99
     level:    [68, 69]
   16990309:
     template: Red_Kisser
-    at:       [172.000, -15.000, 366.000, 127]
+    region:   n_99
     level:    [68, 69]
   16990310:
     template: Fomor_Paladin_WW_BT
     script:   Fomor_Paladin
-    at:       [101.938, -20.328, 350.641, 19]
+    region:   region_91
     level:    [63, 64]
   16990311:
     template: Fomor_Bard_WW_BT
     script:   Fomor_Bard
-    at:       [275.000, -8.000, 153.000, 127]
+    region:   region_91
     level:    [63, 64]
   16990312:
     template: Haunt
-    at:       [340.000, -10.000, 288.000, 127]
+    region:   n_104
     level:    [63, 64]
   16990313:
     template: Fomor_Thief
-    at:       [102.924, -15.078, 379.794, 105]
+    region:   n_104
     level:    [63, 64]
   16990314:
     template: Fomor_Paladin_WW_BT
     script:   Fomor_Paladin
-    at:       [262.000, -11.000, 153.000, 127]
+    region:   n_104
     level:    [63, 64]
   16990315:
     template: Colibri
-    at:       [116.000, -18.000, 260.000, 127]
+    region:   n_107
     level:    [71, 73]
   16990316:
     template: Colibri
-    at:       [86.000, -18.000, 259.000, 127]
+    region:   region_84
     level:    [71, 73]
   16990317:
     template: Colibri
-    at:       [55.000, -17.000, 269.000, 127]
+    region:   n_109
     level:    [71, 73]
   16990318:
     template: Colibri
-    at:       [38.000, -19.000, 258.000, 127]
+    region:   n_109
     level:    [71, 73]
   16990319:
     template: Troll_Surveillant
-    at:       [17.000, -14.000, 298.000, 127]
+    region:   n_111
     level:    [72, 73]
   16990320:
     template: Trolls_Automaton
@@ -4850,288 +3173,288 @@ spawns:
     level:    [70, 71]
   16990321:
     template: Troll_Shieldbearer
-    at:       [28.000, -17.000, 298.000, 127]
+    region:   n_111
     level:    [72, 73]
   16990322:
     template: Troll_Sabreur
-    at:       [28.000, -17.000, 289.000, 127]
+    region:   n_114
     level:    [72, 73]
   16990323:
     template: Troll_Surveillant
-    at:       [40.000, -18.000, 293.000, 127]
+    region:   n_114
     level:    [72, 73]
   16990324:
     template: Trolls_Automaton
-    at:       [1.000, 1.000, 1.000]
+    region:   n_114
     level:    [70, 71]
   16990325:
     template: Date_Eruca
-    at:       [32.000, -16.000, 282.000, 127]
+    region:   n_114
     level:    [72, 73]
   16990326:
     template: Date_Eruca
-    at:       [39.000, -16.000, 277.000, 127]
+    region:   n_118
     level:    [72, 73]
   16990327:
     template: Date_Eruca
-    at:       [43.000, -16.000, 281.000, 127]
+    region:   n_118
     level:    [72, 73]
   16990328:
     template: Date_Eruca
-    at:       [43.000, -16.000, 286.000, 127]
+    region:   n_118
     level:    [72, 73]
   16990329:
     template: Date_Eruca
-    at:       [25.000, -18.000, 280.000, 127]
+    region:   n_118
     level:    [72, 73]
   16990330:
     template: Colibri
-    at:       [179.000, -19.000, 127.000, 127]
+    region:   n_122
     level:    [71, 73]
   16990331:
     template: Colibri
-    at:       [5.000, -24.000, 161.000, 127]
+    region:   c_123
     level:    [71, 73]
   16990332:
     template: Colibri
-    at:       [7.000, -23.000, 142.000, 127]
+    region:   c_123
     level:    [71, 73]
   16990333:
     template: Colibri
-    at:       [3.000, -26.000, 103.000, 127]
+    region:   c_125
     level:    [71, 72]
   16990334:
     template: Colibri
-    at:       [-20.000, -26.000, 99.000, 127]
+    region:   c_125
     level:    [71, 73]
   16990335:
     template: Colibri
-    at:       [-57.000, -27.000, 111.000, 127]
+    region:   c_125
     level:    [71, 73]
   16990336:
     template: Colibri
-    at:       [61.000, -19.000, 283.000, 127]
+    region:   c_128
     level:    [71, 73]
   16990337:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [343.000, -19.000, 390.000, 127]
+    region:   ne_129
     level:    [66, 68]
   16990338:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [320.000, -18.000, 416.000, 127]
+    region:   ne_129
     level:    [66, 68]
   16990339:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [273.000, -23.000, 462.000, 127]
+    region:   ne_129
     level:    [66, 68]
   16990340:
     template: Wajaom_Tiger
-    at:       [260.000, -17.000, 385.000, 127]
+    region:   region_92
     level:    [67, 68]
   16990341:
     template: Wajaom_Tiger
-    at:       [260.000, -19.000, 406.000, 127]
+    region:   region_92
     level:    [67, 68]
   16990342:
     template: Air_Elemental
-    at:       [324.862, -19.230, 417.638, 134]
+    region:   ne_134
     level:    [75, 75]
   16990343:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [45.000, -32.000, 552.000, 127]
+    region:   ne_135
     level:    [66, 68]
   16990344:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [81.000, -32.000, 634.000, 127]
+    region:   ne_135
     level:    [66, 68]
   16990345:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [192.000, -32.000, 517.000, 127]
+    region:   ne_137
     level:    [66, 68]
   16990346:
     template: Olden_Treant
-    at:       [239.000, -32.000, 477.000, 127]
+    region:   ne_137
     level:    [72, 74]
   16990347:
     template: Olden_Treant
-    at:       [224.000, -32.000, 500.000, 127]
+    region:   ne_139
     level:    [72, 74]
   16990348:
     template: Wajaom_Tiger
-    at:       [311.000, -19.000, 378.000, 127]
+    region:   ne_139
     level:    [67, 69]
   16990349:
     template: Wajaom_Tiger
-    at:       [298.000, -19.000, 408.000, 127]
+    region:   ne_139
     level:    [67, 69]
   16990350:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [312.000, -16.000, 398.000, 127]
+    region:   ne_142
     level:    [66, 68]
   16990351:
     template: Wajaom_Tiger
-    at:       [335.000, -19.000, 412.000, 127]
+    region:   ne_142
     level:    [67, 69]
   16990352:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [331.000, -17.000, 393.000, 127]
+    region:   ne_144
     level:    [66, 68]
   16990353:
     template: Wajaom_Tiger
-    at:       [334.000, -18.000, 380.000, 127]
+    region:   ne_144
     level:    [67, 69]
   16990354:
     template: Olden_Treant
-    at:       [323.000, -16.000, 392.000, 127]
+    region:   ne_146
     level:    [72, 74]
   16990355:
     template: Colorful_Treant
-    at:       [320.000, -17.000, 410.000, 127]
+    region:   ne_146
     level:    [74, 75]
   16990356:
     template: Olden_Treant
-    at:       [279.000, -24.000, 483.000, 127]
+    region:   n_148
     level:    [72, 74]
   16990357:
     template: Colibri
-    at:       [140.000, -34.000, 502.000, 127]
+    region:   n_149
     level:    [71, 73]
   16990358:
     template: Colibri
-    at:       [102.000, -33.000, 500.000, 127]
+    region:   n_149
     level:    [71, 73]
   16990359:
     template: Colibri
-    at:       [100.000, -34.000, 523.000, 127]
+    region:   n_151
     level:    [71, 73]
   16990360:
     template: Olden_Treant
-    at:       [-29.000, -35.000, 462.000, 127]
+    region:   n_152
     level:    [72, 74]
   16990361:
     template: Olden_Treant
-    at:       [32.000, -34.000, 543.000, 127]
+    region:   n_152
     level:    [72, 74]
   16990362:
     template: Colorful_Treant
-    at:       [44.000, -32.000, 568.000, 127]
+    region:   n_152
     level:    [74, 75]
   16990363:
     template: Colibri
-    at:       [60.000, -34.000, 544.000, 127]
+    region:   n_155
     level:    [71, 73]
   16990364:
     template: Colibri
-    at:       [56.000, -34.000, 569.000, 127]
+    region:   n_155
     level:    [71, 73]
   16990365:
     template: Colibri
-    at:       [32.000, -33.000, 568.000, 127]
+    region:   n_157
     level:    [71, 73]
   16990366:
     template: Colibri
-    at:       [22.000, -34.000, 550.000, 127]
+    region:   n_157
     level:    [71, 73]
   16990367:
     template: Incubus_Bats_BT
     script:   Incubus_Bats
-    at:       [-9.000, -33.000, 540.000, 127]
+    region:   n_159
     level:    [61, 63]
   16990368:
     template: Incubus_Bats_BT
     script:   Incubus_Bats
-    at:       [-23.000, -34.000, 501.000, 127]
+    region:   n_159
     level:    [61, 63]
   16990369:
     template: Incubus_Bats_BT
     script:   Incubus_Bats
-    at:       [-37.000, -32.000, 476.000, 127]
+    region:   region_93
     level:    [61, 63]
   16990370:
     template: Incubus_Bats_BT
     script:   Incubus_Bats
-    at:       [-20.000, -35.000, 530.000, 127]
+    region:   region_93
     level:    [61, 63]
   16990371:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [288.000, -23.000, 436.000, 127]
+    region:   n_163
     level:    [66, 68]
   16990372:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [231.000, -31.000, 487.000, 127]
+    region:   n_163
     level:    [66, 68]
   16990373:
     template: Air_Elemental
-    at:       [96.715, -35.547, 634.792, 238]
+    region:   n_163
     level:    [75, 75]
   16990374:
     template: Olden_Treant
-    at:       [86.000, -35.000, 621.000, 127]
+    region:   n_166
     level:    [72, 74]
   16990375:
     template: Colorful_Treant
-    at:       [94.000, -34.000, 637.000, 127]
+    region:   n_166
     level:    [74, 75]
   16990376:
     template: Emergent_Elm
-    at:       [71.000, -33.000, 627.000, 127]
+    region:   n_166
     level:    [77, 78]
   16990377:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [-31.000, -32.000, 483.000, 127]
+    region:   n_169
     level:    [66, 68]
   16990378:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [-17.000, -35.000, 483.000, 127]
+    region:   n_169
     level:    [66, 68]
   16990379:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [-37.000, -34.000, 494.000, 127]
+    region:   n_171
     level:    [66, 68]
   16990380:
     template: Treant_Sapling_WW_BT
     script:   Treant_Sapling
-    at:       [-19.000, -35.000, 468.000, 127]
+    region:   n_169
     level:    [66, 68]
   16990381:
     template: Olden_Treant
-    at:       [200.000, -31.000, 511.000, 127]
+    region:   n_173
     level:    [72, 74]
   16990382:
     template: Colorful_Treant
-    at:       [178.000, -35.000, 526.000, 127]
+    region:   n_173
     level:    [74, 75]
   16990383:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-135.000, -18.000, -648.000, 127]
+    region:   s_175
     level:    [77, 78]
   16990384:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-104.000, -18.000, -636.000, 127]
+    region:   s_176
     level:    [77, 78]
   16990385:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-123.000, -16.000, -638.000, 127]
+    region:   s_177
     level:    [77, 78]
   16990386:
     template: Mamool_Ja_Stabler
-    at:       [-142.000, -20.000, -640.000, 127]
+    region:   s_177
     level:    [81, 83]
   16990387:
     template: Mamool_Jas_Raptor
@@ -5139,80 +3462,80 @@ spawns:
     level:    [76, 78]
   16990388:
     template: Mamool_Ja_Infiltrator
-    at:       [-134.000, -18.000, -632.000, 127]
+    region:   s_180
     level:    [81, 83]
   16990389:
     template: Mamool_Ja_Mimer
-    at:       [-118.000, -15.000, -630.000, 127]
+    region:   s_180
     level:    [81, 83]
   16990390:
     template: Mamool_Ja_Philosopher
-    at:       [-133.000, -17.000, -622.000, 127]
+    region:   s_180
     level:    [82, 83]
   16990391:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-106.000, -16.000, -613.000, 127]
+    region:   s_180
     level:    [77, 78]
   16990392:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-109.000, -15.000, -600.000, 127]
+    region:   s_184
     level:    [77, 78]
   16990393:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-128.000, -15.000, -602.000, 127]
+    region:   s_185
     level:    [77, 78]
   16990394:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-132.000, -16.000, -612.000, 127]
+    region:   s_185
     level:    [77, 78]
   16990395:
     template: Skoffin
-    at:       [-157.000, -18.000, -611.000, 127]
+    region:   s_185
     level:    [82, 83]
   16990396:
     template: Mamool_Ja_Pikeman
-    at:       [-96.000, -18.000, -621.000, 127]
+    region:   s_185
     level:    [81, 83]
   16990397:
     template: Mamool_Jas_Wyvern
-    at:       [1.000, 1.000, 1.000]
+    region:   s_185
     level:    [76, 78]
   16990398:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-119.000, -15.000, -651.000, 127]
+    region:   s_190
     level:    [77, 78]
   16990399:
     template: Skoffin
-    at:       [-170.000, -16.000, -605.000, 127]
+    region:   s_190
     level:    [82, 83]
   16990400:
     template: Skoffin
-    at:       [-173.000, -15.000, -592.000, 127]
+    region:   s_190
     level:    [82, 83]
   16990401:
     template: Skoffin
-    at:       [-188.000, -15.000, -582.000, 127]
+    region:   s_190
     level:    [82, 83]
   16990402:
     template: Air_Elemental
-    at:       [-163.011, -18.184, -611.320, 25]
+    region:   s_190
     level:    [75, 75]
   16990403:
     template: Nis_Puk
-    at:       [-155.319, -15.959, -599.366]
+    region:   s_190
     level:    [77, 77]
   16990404:
     template: Skoffin
-    at:       [-196.000, -16.000, -599.000, 127]
+    region:   s_196
     level:    [82, 83]
   16990405:
     template: Mamool_Ja_Stabler
-    at:       [-113.000, -16.000, -643.000, 127]
+    region:   s_196
     level:    [81, 83]
   16990406:
     template: Mamool_Jas_Raptor
@@ -5220,45 +3543,45 @@ spawns:
     level:    [76, 78]
   16990407:
     template: Mamool_Ja_Lurker
-    at:       [-195.000, -15.000, -563.000, 127]
+    region:   s_199
     level:    [81, 83]
   16990408:
     template: Mamool_Ja_Infiltrator
-    at:       [-190.000, -18.000, -547.000, 127]
+    region:   s_199
     level:    [81, 83]
   16990409:
     template: Mamool_Ja_Infiltrator
-    at:       [150.000, -18.000, -496.000, 127]
+    region:   s_201
     level:    [81, 83]
   16990410:
     template: Mamool_Ja_Pikeman
-    at:       [-181.000, -19.000, -511.000, 127]
+    region:   s_201
     level:    [81, 83]
   16990411:
     template: Mamool_Jas_Wyvern
-    at:       [1.000, 1.000, 1.000]
+    region:   s_201
     level:    [76, 77]
   16990412:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-145.000, -16.000, -610.000, 127]
+    region:   s_201
     level:    [77, 78]
   16990413:
     template: Mamool_Ja_Blusterer
-    at:       [-167.000, -19.000, -498.000, 127]
+    region:   s_205
     level:    [82, 83]
   16990414:
     template: Sea_Puk_BT
     script:   Sea_Puk
-    at:       [-144.000, -18.000, -626.000, 127]
+    region:   s_205
     level:    [77, 78]
   16990415:
     template: Mamool_Ja_Blusterer
-    at:       [-187.000, -19.000, -528.000, 127]
+    region:   s_207
     level:    [82, 83]
   16990416:
     template: Mamool_Ja_Philosopher
-    at:       [-138.000, -14.000, -500.000, 127]
+    region:   s_207
     level:    [82, 83]
   16990417:
     template: Plague_Chigoe
@@ -5318,23 +3641,23 @@ spawns:
     level:    [81, 83]
   16990431:
     template: Mamool_Ja_Blusterer
-    at:       [-379.000, -10.000, -102.000, 127]
+    region:   w_223
     level:    [81, 83]
   16990432:
     template: Mamool_Ja_Mimer
-    at:       [-390.000, -14.000, -97.000, 127]
+    region:   w_223
     level:    [81, 83]
   16990433:
     template: Mamool_Ja_Blusterer
-    at:       [-401.000, -16.000, -95.000, 127]
+    region:   w_225
     level:    [81, 83]
   16990434:
     template: Mamool_Ja_Lurker
-    at:       [-418.000, -14.000, -97.000, 127]
+    region:   w_225
     level:    [81, 83]
   16990435:
     template: Mamool_Ja_Stabler
-    at:       [-434.000, -14.000, -98.000, 127]
+    region:   w_225
     level:    [81, 83]
   16990436:
     template: Mamool_Jas_Raptor
@@ -5342,7 +3665,7 @@ spawns:
     level:    [76, 78]
   16990437:
     template: Mamool_Ja_Stabler
-    at:       [-474.000, -22.000, -95.000, 127]
+    region:   w_225
     level:    [81, 83]
   16990438:
     template: Mamool_Jas_Raptor
@@ -5350,271 +3673,271 @@ spawns:
     level:    [76, 78]
   16990439:
     template: Mamool_Ja_Infiltrator
-    at:       [-455.000, -18.000, -98.000, 127]
+    region:   w_231
     level:    [81, 83]
   16990440:
     template: Mamool_Ja_Pikeman
-    at:       [-470.000, -20.000, -82.000, 127]
+    region:   w_231
     level:    [81, 83]
   16990441:
     template: Mamool_Jas_Wyvern
-    at:       [1.000, 1.000, 1.000]
+    region:   w_231
     level:    [76, 78]
   16990442:
     template: Mamool_Ja_Pikeman
-    at:       [-465.000, -21.000, -94.000, 127]
+    region:   w_231
     level:    [81, 83]
   16990443:
     template: Mamool_Jas_Wyvern
-    at:       [1.000, 1.000, 1.000]
+    region:   w_231
     level:    [76, 78]
   16990444:
     template: Locus_Colibri
-    at:       [-514.000, -11.000, -74.000, 127]
+    region:   w_236
     level:    [133, 135]
   16990445:
     template: Locus_Colibri
-    at:       [-517.000, -11.000, -51.000, 127]
+    region:   w_236
     level:    [133, 135]
   16990446:
     template: Locus_Colibri
-    at:       [-540.000, -11.000, -74.000, 127]
+    region:   w_236
     level:    [133, 135]
   16990447:
     template: Locus_Colibri
-    at:       [-529.000, -11.000, -43.000, 127]
+    region:   w_236
     level:    [133, 135]
   16990448:
     template: Locus_Colibri
-    at:       [-545.000, -11.000, -41.000, 127]
+    region:   w_236
     level:    [133, 135]
   16990449:
     template: Locus_Wivre
-    at:       [-560.000, -11.000, -66.000, 127]
+    region:   w_236
     level:    [135, 137]
   16990450:
     template: Locus_Wivre
-    at:       [-564.000, -15.000, -100.000, 127]
+    region:   w_236
     level:    [135, 137]
   16990451:
     template: Locus_Colibri
-    at:       [-533.000, -11.000, -74.000, 127]
+    region:   w_243
     level:    [133, 135]
   16990452:
     template: Locus_Colibri
-    at:       [-540.000, -12.000, -58.000, 127]
+    region:   w_243
     level:    [133, 135]
   16990453:
     template: Locus_Colibri
-    at:       [-596.000, -3.000, -16.000, 127]
+    region:   w_243
     level:    [133, 135]
   16990454:
     template: Locus_Colibri
-    at:       [-622.000, -7.000, -45.000, 127]
+    region:   w_243
     level:    [133, 135]
   16990455:
     template: Locus_Colibri
-    at:       [-606.000, -7.000, -60.000, 127]
+    region:   w_243
     level:    [133, 135]
   16990456:
     template: Locus_Colibri
-    at:       [-597.000, -3.000, -24.000, 127]
+    region:   w_248
     level:    [133, 135]
   16990457:
     template: Locus_Colibri
-    at:       [-581.000, -7.000, -49.000, 127]
+    region:   w_248
     level:    [133, 135]
   16990458:
     template: Locus_Colibri
-    at:       [-577.000, -6.000, -22.000, 127]
+    region:   w_248
     level:    [133, 135]
   16990459:
     template: Locus_Colibri
-    at:       [-598.000, -4.000, -37.000, 127]
+    region:   w_248
     level:    [133, 135]
   16990460:
     template: Locus_Colibri
-    at:       [-607.000, -4.000, -30.000, 127]
+    region:   w_248
     level:    [133, 135]
   16990461:
     template: Locus_Colibri
-    at:       [-576.000, -8.000, -1.000, 127]
+    region:   w_253
     level:    [133, 135]
   16990462:
     template: Locus_Colibri
-    at:       [-597.000, -3.000, 4.000, 127]
+    region:   w_253
     level:    [133, 135]
   16990463:
     template: Locus_Colibri
-    at:       [-572.000, -13.000, -90.000, 127]
+    region:   w_253
     level:    [133, 135]
   16990464:
     template: Locus_Colibri
-    at:       [-562.000, -12.000, -81.000, 127]
+    region:   w_253
     level:    [133, 135]
   16990465:
     template: Locus_Colibri
-    at:       [-561.000, -11.000, -49.000, 127]
+    region:   w_253
     level:    [133, 135]
   16990466:
     template: Locus_Wivre
-    at:       [-607.000, -4.000, -17.000, 127]
+    region:   w_253
     level:    [135, 137]
   16990467:
     template: Locus_Wivre
-    at:       [-587.000, -6.000, -42.000, 127]
+    region:   w_253
     level:    [135, 137]
   16990468:
     template: Locus_Colibri
-    at:       [-594.000, -7.000, -62.000, 127]
+    region:   w_260
     level:    [133, 135]
   16990469:
     template: Locus_Colibri
-    at:       [-589.000, -4.000, -25.000, 127]
+    region:   w_260
     level:    [133, 135]
   16990470:
     template: Locus_Colibri
-    at:       [-606.000, -4.000, -39.000, 127]
+    region:   w_260
     level:    [133, 135]
   16990471:
     template: Locus_Colibri
-    at:       [-597.000, -5.000, -49.000, 127]
+    region:   w_260
     level:    [133, 135]
   16990472:
     template: Locus_Colibri
-    at:       [-593.000, -4.000, -8.000, 127]
+    region:   w_260
     level:    [133, 135]
   16990473:
     template: Locus_Wivre
-    at:       [-606.000, -4.000, -39.000, 127]
+    region:   region_85
     level:    [135, 137]
   16990474:
     template: Locus_Wivre
-    at:       [-563.000, -15.000, -95.000, 70]
+    region:   region_85
     level:    [135, 137]
   16990475:
     template: Locus_Colibri
-    at:       [-591.000, -5.000, -27.000, 178]
+    region:   w_267
     level:    [133, 135]
   16990476:
     template: Locus_Colibri
-    at:       [-614.000, -6.000, -41.000, 11]
+    region:   w_267
     level:    [133, 135]
   16990477:
     template: Locus_Colibri
-    at:       [-614.000, -8.000, -56.000, 17]
+    region:   w_267
     level:    [133, 135]
   16990478:
     template: Locus_Colibri
-    at:       [-600.000, -4.000, -25.000, 82]
+    region:   w_267
     level:    [133, 135]
   16990479:
     template: Locus_Colibri
-    at:       [-597.000, -4.000, -24.000, 126]
+    region:   w_267
     level:    [133, 135]
   16990480:
     template: Locus_Wivre
-    at:       [-606.000, -4.000, -39.000, 127]
+    region:   w_267
     level:    [135, 137]
   16990481:
     template: Locus_Wivre
-    at:       [-606.000, -4.000, -39.000, 127]
+    region:   w_267
     level:    [135, 137]
   16990482:
     template: Locus_Colibri
-    at:       [-584.000, -7.000, -8.000, 48]
+    region:   w_274
     level:    [133, 135]
   16990483:
     template: Locus_Colibri
-    at:       [-586.000, -7.000, -8.000, 89]
+    region:   w_274
     level:    [133, 135]
   16990484:
     template: Locus_Colibri
-    at:       [-571.000, -9.000, -16.000, 43]
+    region:   w_274
     level:    [133, 135]
   16990485:
     template: Locus_Colibri
-    at:       [-578.000, -8.000, -6.000, 28]
+    region:   w_274
     level:    [133, 135]
   16990486:
     template: Locus_Colibri
-    at:       [-579.000, -8.000, -6.000, 191]
+    region:   w_274
     level:    [133, 135]
   16990487:
     template: Locus_Colibri
-    at:       [-539.000, -11.000, -89.000, 191]
+    region:   w_279
     level:    [133, 135]
   16990488:
     template: Locus_Colibri
-    at:       [-602.161, -4.637, -3.299, 127]
+    region:   w_279
     level:    [133, 135]
   16990489:
     template: Locus_Colibri
-    at:       [-595.038, -4.813, 3.993, 233]
+    region:   w_279
     level:    [133, 135]
   16990490:
     template: Locus_Wivre
-    at:       [-602.114, -4.580, -4.361, 160]
+    region:   w_279
     level:    [135, 137]
   16990491:
     template: Locus_Colibri
-    at:       [-593.000, -5.000, -33.000, 221]
+    region:   w_283
     level:    [133, 135]
   16990492:
     template: Locus_Colibri
-    at:       [-597.000, -4.000, -17.000, 226]
+    region:   w_283
     level:    [133, 135]
   16990493:
     template: Locus_Colibri
-    at:       [-594.000, -5.000, -13.000, 16]
+    region:   w_283
     level:    [133, 135]
   16990494:
     template: Locus_Wivre
-    at:       [-588.000, -6.000, -33.000, 80]
+    region:   w_283
     level:    [135, 137]
   16990495:
     template: Locus_Colibri
-    at:       [-613.000, -7.000, -46.000, 82]
+    region:   w_287
     level:    [133, 135]
   16990496:
     template: Locus_Colibri
-    at:       [-611.000, -8.000, -58.000, 22]
+    region:   w_287
     level:    [133, 135]
   16990497:
     template: Locus_Colibri
-    at:       [-613.000, -8.000, -57.000, 45]
+    region:   w_287
     level:    [133, 135]
   16990498:
     template: Locus_Colibri
-    at:       [-611.000, -8.000, -56.000, 71]
+    region:   w_287
     level:    [133, 135]
   16990499:
     template: Locus_Colibri
-    at:       [-591.000, -5.000, -39.000, 209]
+    region:   w_287
     level:    [133, 135]
   16990500:
     template: Locus_Wivre
-    at:       [-603.000, -6.000, -51.000, 128]
+    region:   w_287
     level:    [135, 137]
   16990501:
     template: Locus_Colibri
-    at:       [-569.000, -10.000, -19.000, 42]
+    region:   w_293
     level:    [133, 135]
   16990502:
     template: Locus_Colibri
-    at:       [-588.000, -8.000, -52.000, 97]
+    region:   w_293
     level:    [133, 135]
   16990503:
     template: Locus_Colibri
-    at:       [-589.000, -8.000, -63.000, 208]
+    region:   w_293
     level:    [133, 135]
   16990504:
     template: Locus_Colibri
-    at:       [-583.000, -7.000, -38.000, 152]
+    region:   w_293
     level:    [133, 135]
   16990505:
     template: Locus_Colibri
-    at:       [-590.000, -8.000, -62.000, 158]
+    region:   w_293
     level:    [133, 135]
   16990506:
     template: Lividroot_Amooshah

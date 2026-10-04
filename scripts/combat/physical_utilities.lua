@@ -68,6 +68,7 @@ xi.combat.physical.pDifWeaponCapTable =
     [xi.skill.ARCHERY         ] = 3.25,
     [xi.skill.MARKSMANSHIP    ] = 3.5,
     [xi.skill.THROWING        ] = 3.25,
+    [xi.skill.BLUE_MAGIC      ] = 3.0,  -- Jimmayus' blue magic sheet https://docs.google.com/spreadsheets/d/1UdAmVJwx8zCcDQ0KM4uJd-IxbUBEHBvys3jWpmDfrF0/edit?gid=2079701009#gid=2079701009&range=B21
 }
 
 local shieldSizeToBlockRateTable =
@@ -79,6 +80,24 @@ local shieldSizeToBlockRateTable =
     [5] =  50, -- Aegis and Srivatsa
     [6] = 100, -- Ochain  https://www.bg-wiki.com/ffxi/Category:Shields
 }
+
+---@param actor CBaseEntity
+---@param weaponType xi.skill
+---@param weaponSlot xi.slot
+local function getMeleeAttack(actor, weaponType, weaponSlot)
+    local actorAttack = 0
+
+    if
+        weaponType == xi.skill.BLUE_MAGIC and
+        xi.settings.main.BLUE_SKILL_IS_BLUE_ATTACK
+    then
+        actorAttack = xi.spells.blue.getBlueMagicBaseAttack(actor)
+    else
+        actorAttack = actor:getStat(xi.mod.ATT, weaponSlot)
+    end
+
+    return math.max(1, actorAttack)
+end
 
 -- WARNING: This function is used in src/map/attack.cpp "ProcessDamage" function.
 -- If you update these parameters, update them there as well.
@@ -94,14 +113,15 @@ local shieldSizeToBlockRateTable =
 xi.combat.physical.calculateAttackDamage = function(actor, target, slot, physicalAttackType, isH2H, isFirstSwing, isSneakAttack, isTrickAttack, damageRatio)
     local bonusBasePhysicalDamage = 0
     local damage                  = 0
+    local isTHF                   = actor:getMainJob() == xi.job.THF
 
     -- Sneak Attack
-    if isSneakAttack then
+    if isSneakAttack and isTHF then
         bonusBasePhysicalDamage = math.floor(bonusBasePhysicalDamage + actor:getStat(xi.mod.DEX) * (1 + actor:getMod(xi.mod.SNEAK_ATK_DEX) / 100))
     end
 
     -- Trick Attack
-    if isTrickAttack then
+    if isTrickAttack and isTHF then
         bonusBasePhysicalDamage = math.floor(bonusBasePhysicalDamage + actor:getStat(xi.mod.AGI) * (1 + actor:getMod(xi.mod.TRICK_ATK_AGI) / 100))
     end
 
@@ -420,6 +440,24 @@ xi.combat.physical.calculateRangedStatFactor = function(actor, target)
     return fSTR
 end
 
+-- Calculates alpha, used for working out WSC on legacy servers. Retail has no alpha anymore as of 2014 Weaponskill functions.
+xi.combat.physical.calculateAlpha = function(actor)
+    local alpha = 1
+
+    if not xi.settings.main.USE_ADOULIN_WEAPON_SKILL_CHANGES then
+        local level = actor:getMainLvl()
+        if level > 75 then
+            alpha = 0.85
+        elseif level > 59 then
+            alpha = 0.9 - math.floor((level - 60) / 2) / 100
+        elseif level > 5 then
+            alpha = 1 - math.floor(level / 6) / 100
+        end
+    end
+
+    return alpha
+end
+
 -- Weapon Skill Secondary Attribute Modifier: Function used to get stat addition to base damage.
 xi.combat.physical.calculateWSC = function(actor, wsSTRmod, wsDEXmod, wsVITmod, wsAGImod, wsINTmod, wsMNDmod, wsCHRmod)
     local finalWSC = 0
@@ -444,10 +482,15 @@ xi.combat.physical.calculateWSC = function(actor, wsSTRmod, wsDEXmod, wsVITmod, 
 
     finalWSC = wscSTR + wscDEX + wscVIT + wscAGI + wscINT + wscMND + wscCHR
 
+    if finalWSC > 0 then
+        finalWSC = finalWSC * xi.combat.physical.calculateAlpha(actor)
+    end
+
     return finalWSC
 end
 
 -- TP factor equation. Used to determine TP modifer across all cases of 'X varies with TP'
+-- TODO: Note - Will be depreciated/superceded by calculateTPScaling()
 xi.combat.physical.calculateTPfactor = function(actorTP, tpModifierTable)
     if not tpModifierTable then
         return 0
@@ -462,6 +505,36 @@ xi.combat.physical.calculateTPfactor = function(actorTP, tpModifierTable)
     end
 
     return tpFactor
+end
+
+xi.combat.physical.calculateTPScaling = function(actorTP, tpModifierTable)
+    if
+        not tpModifierTable or
+        #tpModifierTable == 0
+    then
+        return 0
+    end
+
+    -- At or below the first breakpoint, use the first modifier
+    if actorTP <= tpModifierTable[1].tp then
+        return tpModifierTable[1].modifier
+    end
+
+    -- Find the two TP breakpoints actorTP falls between
+    for i = 1, #tpModifierTable - 1 do
+        local lowerBreakpoint = tpModifierTable[i]
+        local upperBreakpoint = tpModifierTable[i + 1]
+
+        if actorTP <= upperBreakpoint.tp then
+            return lowerBreakpoint.modifier +
+                (actorTP - lowerBreakpoint.tp) *
+                (upperBreakpoint.modifier - lowerBreakpoint.modifier) /
+                (upperBreakpoint.tp - lowerBreakpoint.tp)
+        end
+    end
+
+    -- At or above the final breakpoint, use the final modifier
+    return tpModifierTable[#tpModifierTable].modifier
 end
 
 -- TP Multiplier calculations.
@@ -606,6 +679,43 @@ local function getSpikeRatio(isPC, wRatio)
     return 0
 end
 
+-- Signet provides some DEF based on your level against the target under some conditions below
+local function shouldApplySignetBonus(attacker, target)
+    if
+        target:hasStatusEffect(xi.effect.SIGNET) and
+        attacker:isMob() and
+        not attacker:isNM() and
+        target:isPC() and
+        target:checkDifficulty(attacker) <= xi.mobDifficulty.EVEN_MATCH and
+        target:getCurrentRegion() <= xi.region.LIMBUS
+    then
+        local playerTarget = target:getTarget() -- Fetch their auto attack target
+
+        if playerTarget and playerTarget:getID() == attacker:getID() then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function getTargetDefense(actor, target)
+    local targetDefense = math.max(1, target:getStat(xi.mod.DEF))
+
+    -- 3.125 DEF per level from 1-40
+    -- 7.5 DEF per level from 41-50+
+    -- These are added together if you are 40+
+    -- caps at +200 total
+    if shouldApplySignetBonus(actor, target) then
+        local level    = target:getMainLvl()
+        local bonusDef = math.floor(math.min(level * 3.125, 125) + utils.clamp((level - 40) * 7.5, 0, 75))
+
+        targetDefense = targetDefense + bonusDef
+    end
+
+    return targetDefense
+end
+
 -- WARNING: This function is used in src/utils/battleutils.cpp "GetDamageRatio" function.
 -- If you update this parameters, update them there aswell.
 ---@param actor CBaseEntity
@@ -626,8 +736,7 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     -- Step 1: Attack / Defense Ratio
     ----------------------------------------
     local baseRatio     = 0
-    local actorAttack   = 0
-    local targetDefense = math.max(1, target:getStat(xi.mod.DEF))
+    local targetDefense = getTargetDefense(actor, target)
     local flourishBonus = 1
 
     -- Actor Weaponskill Specific Attack modifiers.
@@ -643,7 +752,7 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
 
     -- TODO: it is unknown if ws attack mod and flourish bonus are additive or multiplicative
     -- TODO: do flourish and attack mods come before or after food?
-    actorAttack = math.max(1, math.floor(actor:getStat(xi.mod.ATT, weaponSlot) * wsAttackMod * flourishBonus))
+    local actorAttack = math.floor(getMeleeAttack(actor, weaponType, weaponSlot) * wsAttackMod * flourishBonus)
 
     -- handle attuner
     -- note: isAutomaton is checked inside xi.automaton.handleAttuner and could be removed
@@ -682,7 +791,9 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     -- TODO: There is some weirdness with needing 2 levels to start level correction in retail
     -- It is not currently implemented.
     if applyLevelCorrection then
-        levelDifFactor = (actor:getMainLvl() - target:getMainLvl()) * 3 / 64 -- 3/64 from JP model which fits better
+        -- TODO: is this +/- 38 clamp applicable only to pets?
+        -- https://www.bluegartr.com/threads/114636-Monster-Avatar-Pet-damage
+        levelDifFactor = utils.clamp(actor:getMainLvl() - target:getMainLvl(), -38, 38) * 3 / 64 -- 3/64 from JP model which fits better
     end
 
     -- Only players suffer from negative level difference.
@@ -704,7 +815,7 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     ----------------------------------------
     -- Step 3: wRatio and pDif Caps (Melee)
     ----------------------------------------
-    local wRatio             = baseRatio + (isCritical and 1 or 0)
+    local wRatio             = baseRatio + (isCritical and 1 or 0) + levelDifFactor
     local pDifUpperCap       = 0
     local pDifLowerCap       = 0
     local damageLimitPlus    = actor:getMod(xi.mod.DAMAGE_LIMIT) / 100
@@ -712,12 +823,12 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     local pDifFinalCap       = 0
 
     if actor:isPC() then
-        pDifFinalCap = (xi.combat.physical.pDifWeaponCapTable[weaponType] + damageLimitPlus) * damageLimitPercent + (isCritical and 1 or 0)
+        pDifFinalCap = (xi.combat.physical.pDifWeaponCapTable[weaponType] + damageLimitPlus) * damageLimitPercent + (isCritical and 1 or 0) + levelDifFactor
 
         local sRatio = getSpikeRatio(true, wRatio)
 
         if math.randomInt(1, 10000) / 10000 <= sRatio then
-            return 1.0
+            return 1.0 + levelDifFactor
         end
 
         pDifLowerCap, pDifUpperCap = xi.combat.physical.wRatioCapPC(wRatio, pDifFinalCap)
@@ -727,12 +838,12 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
         -- non-corrected mobs have 4.0 pdif cap, but there is some indication that ilvl may go up to 8.0
         local basePDIF  = applyLevelCorrection and 2 or 4
         local critBonus = (applyLevelCorrection and isCritical) and 1 or 0
-        pDifFinalCap    = (basePDIF + damageLimitPlus) * damageLimitPercent + critBonus
+        pDifFinalCap    = (basePDIF + damageLimitPlus) * damageLimitPercent + critBonus + levelDifFactor
 
         local sRatio = getSpikeRatio(false, wRatio)
 
         if math.randomInt(1, 10000) / 10000 <= sRatio then
-            return 1.0
+            return 1.0 + levelDifFactor
         end
 
         pDifLowerCap, pDifUpperCap = xi.combat.physical.wRatioCapOthers(wRatio, pDifFinalCap)
@@ -744,8 +855,8 @@ xi.combat.physical.calculateMeleePDIF = function(actor, target, weaponType, wsAt
     -- His model at the time and implemented spike, so the (0.0, 0.5) bounds also looks different
     -- https://www.bluegartr.com/threads/108161-pDif-and-damage?p=5007487&viewfull=1#post5007487
     local upperMax   = math.randomInt(0, 1) == 0 and 0.5 or 0
-    local upperBound = math.max(pDifUpperCap + levelDifFactor, upperMax)
-    local lowerbound = math.max(pDifLowerCap + levelDifFactor, 0)
+    local upperBound = math.max(pDifUpperCap, upperMax)
+    local lowerbound = math.max(pDifLowerCap, 0)
 
     if upperBound == 0 then
         return 0
@@ -787,7 +898,7 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
     ----------------------------------------
     local baseRatio       = 0
     local actorAttack     = 0
-    local targetDefense   = math.max(1, target:getStat(xi.mod.DEF))
+    local targetDefense   = getTargetDefense(actor, target)
     local flourishBonus   = 1
     local distancePenalty = 0
 
@@ -808,7 +919,17 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
     end
 
     -- TODO: it is unknown if ws attack mod and flourish bonus are additive or multiplicative
-    actorAttack = math.max(1, math.floor((actor:getStat(xi.mod.RATT) + bonusRangedAttack - distancePenalty) * wsAttackMod * flourishBonus))
+    -- TODO: do flourish and attack mods come before or after food?
+    if
+        weaponType == xi.skill.BLUE_MAGIC and
+        xi.settings.main.BLUE_SKILL_IS_BLUE_ATTACK
+    then
+        local baseBlueMagicAttack = xi.spells.blue.getBlueMagicBaseAttack(actor)
+
+        actorAttack = math.max(1, math.floor(baseBlueMagicAttack + bonusRangedAttack - distancePenalty) * wsAttackMod * flourishBonus)
+    else
+        actorAttack = math.max(1, math.floor((actor:getStat(xi.mod.RATT) + bonusRangedAttack - distancePenalty) * wsAttackMod * flourishBonus))
+    end
 
     -- Target Defense Modifiers.
     local ignoreDefenseFactor = 1
@@ -837,7 +958,10 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
     -- TODO: There is some weirdness with needing 2 levels to start level correction in retail
     -- It is not currently implemented.
     if applyLevelCorrection then
-        levelDifFactor = (actor:getMainLvl() - target:getMainLvl()) * (3 / 128) -- half the melee correction
+        -- TODO: is this +/- 38 clamp applicable only to pets?
+        -- TODO: should this be halved/doubled compared to melee?
+        -- https://www.bluegartr.com/threads/114636-Monster-Avatar-Pet-damage
+        levelDifFactor = utils.clamp(actor:getMainLvl() - target:getMainLvl(), -38, 38) * 3 / 128 -- half the melee correction
     end
 
     -- Only players suffer from negative level difference.
@@ -856,7 +980,7 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
         levelDifFactor = 0
     end
 
-    local cRatio = utils.clamp(baseRatio, 0, 10) -- Clamp for the lower limit, mainly.
+    local cRatio = utils.clamp(baseRatio + levelDifFactor, 0, 10) -- Clamp for the lower limit, mainly.
 
     -- TODO: Presumably, pets get a Cap here if the target checks as 'Too Weak'. More info needed.
 
@@ -870,12 +994,12 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
     local pDifFinalCap       = 0
 
     if actor:isPC() then
-        pDifFinalCap = (xi.combat.physical.pDifWeaponCapTable[weaponType] + damageLimitPlus) * damageLimitPercent -- Added damage limit bonuses
+        pDifFinalCap = (xi.combat.physical.pDifWeaponCapTable[weaponType] + damageLimitPlus) * damageLimitPercent + levelDifFactor -- Added damage limit bonuses
     else
         -- 4.0 is guessed. there is some indication that mob pdif can go to 8.0 in ilvl content
         -- 3.0 with level correction matches player ranged pdif cap for 2013 and may need verification
         local basePDIF = applyLevelCorrection and 3 or 4
-        pDifFinalCap   = (basePDIF + damageLimitPlus) * damageLimitPercent
+        pDifFinalCap   = (basePDIF + damageLimitPlus) * damageLimitPercent + levelDifFactor
     end
 
     pDif = utils.clamp(pDif, 0, pDifFinalCap)
@@ -891,10 +1015,6 @@ xi.combat.physical.calculateRangedPDIF = function(actor, target, weaponType, wsA
         pDifUpperCap = math.min(cRatio, pDifFinalCap)
         pDifLowerCap = math.min(cRatio * 20 / 19 - 3 / 19, pDifFinalCap)
     end
-
-    -- Add in level correction
-    pDifUpperCap = pDifUpperCap + levelDifFactor
-    pDifLowerCap = pDifLowerCap + levelDifFactor
 
     pDif = math.randomInt(pDifLowerCap * 1000, pDifUpperCap * 1000) / 1000
 

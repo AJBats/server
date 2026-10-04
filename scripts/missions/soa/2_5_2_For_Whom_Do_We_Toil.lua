@@ -10,7 +10,7 @@ local mission = Mission:new(xi.mission.log_id.SOA, xi.mission.id.soa.FOR_WHOM_DO
 
 mission.reward =
 {
-    keyItem     = xi.ki.NOTE_DETAILING_SEDITIOUS_PLANS,
+    keyItem     = xi.keyItem.NOTE_DETAILING_SEDITIOUS_PLANS,
     nextMission = { xi.mission.log_id.SOA, xi.mission.id.soa.AIMING_FOR_YGNAS },
 }
 
@@ -98,7 +98,7 @@ mission.sections =
 
         [xi.zone.CELENNIA_MEMORIAL_LIBRARY] =
         {
-            ['Yafafa']  = mission:event(1),
+            ['Yefafa']  = mission:event(1),
             ['History'] = mission:event(1003, 1),
 
             onEventUpdate =

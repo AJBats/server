@@ -27,6 +27,8 @@
 #include "entities/base_entity.h"
 #include "entities/battle_entity.h"
 #include "entities/char_entity.h"
+#include "entities/pet_entity.h"
+#include "lua/luautils.h"
 #include "states/ability_state.h"
 #include "states/attack_state.h"
 #include "states/death_state.h"
@@ -341,12 +343,12 @@ auto CAIContainer::Internal_RangedAttack(const EntityId& target) -> bool
     return false;
 }
 
-auto CAIContainer::Internal_Die(timer::duration deathTime) -> bool
+auto CAIContainer::Internal_Die(timer::duration deathTime, DeathParams params) -> bool
 {
     auto* entity = dynamic_cast<CBattleEntity*>(PEntity);
     if (entity)
     {
-        return ChangeState<CDeathState>(entity, deathTime);
+        return ChangeState<CDeathState>(entity, deathTime, params);
     }
     return false;
 }
@@ -430,7 +432,7 @@ auto CAIContainer::CanChangeState() const -> bool
 
 auto CAIContainer::CanFollowPath() const -> bool
 {
-    return PathFind && (!GetCurrentState() || GetCurrentState()->CanChangeState());
+    return PathFind && (!GetCurrentState() || (GetCurrentState()->CanChangeState() && GetCurrentState()->CanFollowPath()));
 }
 
 void CAIContainer::SetController(std::unique_ptr<CController> controller)
@@ -477,13 +479,12 @@ void CAIContainer::Reset()
 
 auto CAIContainer::Tick(const timer::time_point tick) -> Task<void>
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CAIContainer::Tick");
 
     m_PrevTick = m_Tick;
     m_Tick     = tick;
 
-    // TODO: timestamp in the event?
-    EventHandler.triggerListener("TICK", PEntity);
+    EventHandler.triggerListener("TICK", PEntity, std::chrono::duration_cast<std::chrono::milliseconds>(m_Tick - m_PrevTick).count());
 
     co_await PEntity->Tick(tick);
 
@@ -545,7 +546,7 @@ auto CAIContainer::Tick(const timer::time_point tick) -> Task<void>
     if (auto* battle = dynamic_cast<CBattleEntity*>(PEntity);
         battle && battle->isAlive() && !IsCurrentState<CInactiveState>() &&
         !IsCurrentState<CMagicState>() && !IsCurrentState<CMobSkillState>() &&
-        battle->StatusEffectContainer->HasPreventActionEffect())
+        battle->StatusEffectContainer->HasPreventActionEffect(true))
     {
         Inactive(0ms, false);
     }

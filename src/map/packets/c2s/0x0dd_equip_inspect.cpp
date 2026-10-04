@@ -24,8 +24,10 @@
 #include "data/enums/mob_mod.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "enums/msg_basic.h"
 #include "enums/msg_std.h"
 #include "items/item_weapon.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x009_message.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "packets/s2c/0x0c9_equip_inspect_equipment.h"
@@ -131,7 +133,7 @@ void GP_CLI_COMMAND_EQUIP_INSPECT::process(MapSession* PSession, CCharEntity* PC
                     PCharTarget->pushPacket<GP_SERV_COMMAND_MESSAGE>(PChar, 0, 0, MsgStd::Examine);
                 }
 
-                PChar->pushPacket<GP_SERV_COMMAND_INSPECT_MESSAGE>(PCharTarget);
+                PChar->pushPacket<GP_SERV_COMMAND_INSPECT_MESSAGE>(PChar, PCharTarget);
                 PChar->pushPacket<GP_SERV_COMMAND_EQUIP_INSPECT::EQUIPMENT>(PChar, PCharTarget);
                 PChar->pushPacket<GP_SERV_COMMAND_EQUIP_INSPECT::GENERAL>(PChar, PCharTarget);
             }

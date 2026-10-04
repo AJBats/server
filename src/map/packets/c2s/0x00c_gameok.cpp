@@ -21,8 +21,10 @@
 
 #include "0x00c_gameok.h"
 
+#include "data/enums/zone_misc.h"
 #include "entities/char_entity.h"
 #include "gmcall_container.h"
+#include "packets/c2s/validation.h"
 #include "packets/char_status.h"
 #include "packets/char_sync.h"
 #include "packets/s2c/0x008_enterzone.h"
@@ -44,6 +46,7 @@
 #include "utils/blacklistutils.h"
 #include "utils/charutils.h"
 #include "utils/petutils.h"
+#include "zone.h"
 
 auto GP_CLI_COMMAND_GAMEOK::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
@@ -82,11 +85,15 @@ void GP_CLI_COMMAND_GAMEOK::process(MapSession* PSession, CCharEntity* PChar) co
     PChar->pushPacket<GP_SERV_COMMAND_DUNGEON>(PChar);
     PChar->pushPacket<GP_SERV_COMMAND_COMMAND_DATA>(PChar);
     PChar->pushPacket<CCharSyncPacket>(PChar);
-    PChar->pushPacket<GP_SERV_COMMAND_INSPECT_MESSAGE>(PChar);
+    PChar->pushPacket<GP_SERV_COMMAND_INSPECT_MESSAGE>(PChar, PChar);
     PChar->pushPacket<GP_SERV_COMMAND_MERIT>(PChar);
     charutils::SendInventory(PChar);
     blacklistutils::SendBlacklist(PChar);
     PChar->gmCallContainer().sendPendingResponse(PChar);
+
+    // Retail sends the party list only AFTER GAMEOK
+    // The copy pushed during zone-in can be lost while the client loads
+    PChar->ReloadPartyInc();
 
     // TODO: While in mog house; treasure pool is not created.
     if (PChar->PTreasurePool != nullptr)

@@ -84,6 +84,17 @@ end
 function CClientEntityPairActions:acceptPartyInvite()
 end
 
+---Leave the current party
+---@return nil
+function CClientEntityPairActions:leaveParty()
+end
+
+---Level sync the party to a member (caller must be party leader)
+---@param player CBaseEntity Party member to sync to
+---@return nil
+function CClientEntityPairActions:setLevelSync(player)
+end
+
 ---@class TradeItem
 ---@field itemId xi.item Item ID
 ---@field quantity? integer Quantity (default: 1)
@@ -143,6 +154,13 @@ end
 ---@param seller CClientEntityPair
 ---@return nil
 function CClientEntityPairActions:bazaarOpen(seller)
+end
+
+---Set the player's search comment
+---@param message string
+---@param msgType? integer
+---@return nil
+function CClientEntityPairActions:setSearchMessage(message, msgType)
 end
 
 ---@param sellerInvSlot integer
@@ -251,6 +269,13 @@ end
 ---@param entries EquipSetItem[] Items to equip
 ---@return nil
 function CClientEntityPairActions:equipSet(entries)
+end
+
+---Send a job change packet (requires a mog house or a zone with the mog menu)
+---@param mainJob xi.job Main job, 0 to leave unchanged
+---@param subJob? xi.job Support job, 0 or nil to leave unchanged
+---@return nil
+function CClientEntityPairActions:changeJob(mainJob, subJob)
 end
 
 ---Start a synthesis. Inventory slots are resolved automatically.

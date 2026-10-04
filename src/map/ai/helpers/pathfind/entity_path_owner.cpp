@@ -29,6 +29,7 @@
 
 #include <map/lua/luautils.h>
 
+#include "ximesh/ximesh.h"
 #include <map/navmesh/navmesh.h>
 #include <map/zone.h>
 
@@ -123,6 +124,11 @@ auto EntityPathOwner::name() const -> const std::string&
 auto EntityPathOwner::id() const -> uint32
 {
     return entity_->id;
+}
+
+auto EntityPathOwner::hitboxRadius() const -> float
+{
+    return entity_->modelHitboxSize * 0.5f;
 }
 
 } // namespace pathfind

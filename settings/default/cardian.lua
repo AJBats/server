@@ -22,14 +22,11 @@ xi.settings.cardian =
     LINK_ENABLED = true,
     LINK_PORT    = 54250,
 
-    -- Re-engaging after a disengage. Retail once charged a short fixed
-    -- wait; when players found that a slow two-hander could swing faster
-    -- by disengaging and re-engaging than by standing and fighting, the
-    -- wait became the weapon's FULL delay, which punished every slow
-    -- weapon for the trick. Here the nerf applies only where the trick
-    -- lived -- re-engaging the very mob just fought -- while a switch to
-    -- a different mob takes this pre-nerf wait, in seconds. Cardians
-    -- drawing on their own hunt target obey the same rule.
+    -- A cardian's own draw after leaving a fight (pawn::reengageWait): the
+    -- mob she fought last waits her weapon's full delay, any other this
+    -- wait, in seconds. The player follows upstream's retail re-engage
+    -- lockout instead (CAttackState::EngageLockout, 2026-09-30): the time
+    -- left on the swing, 1.5 s at least, the weapon delay less 3 s at most.
     REENGAGE_SWITCH_DELAY = 2.0,
 
     -- An order from the command window given a little early -- she is

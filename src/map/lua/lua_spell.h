@@ -19,14 +19,23 @@
 ===========================================================================
 */
 
-#ifndef _LUASPELL_H
-#define _LUASPELL_H
+#pragma once
 
 #include "common/cbasetypes.h"
 #include "enums/action/knockback.h"
-#include "luautils.h"
 
+#include <sol/forward.hpp>
+
+enum class ActionModifier : uint32_t;
+enum class MsgBasic : uint16_t;
 class CSpell;
+
+namespace xi
+{
+
+enum class Job : uint8_t;
+
+} // namespace xi
 
 class CLuaSpell
 {
@@ -52,7 +61,9 @@ public:
     void   setCastTime(uint32 casttime);
     void   setMPCost(uint16 mpcost);
     bool   canTargetEnemy();
-    uint8  isAoE();
+    auto   getAoE() const -> uint8;
+    auto   isAoE() const -> bool;
+    auto   isConal() const -> bool;
     float  getRadius();
     bool   tookEffect();
     uint16 getTotalTargets();
@@ -77,5 +88,3 @@ public:
 
     static void Register();
 };
-
-#endif

@@ -14,9 +14,9 @@
 --        Bio): only immunity and nullification say no.
 --   xi.cardian.bank.expectedPdif(actor, defence, level, weaponType, rolls)
 --     -> the mean melee pDIF the actor lands on a target at that defence and
---        level. A stand-in target answers the three things the formula asks
---        of its target; the actor is real. If the formula ever asks for
---        more, the call errors and the bank logs it.
+--        level. A stand-in target answers what the formula asks of its
+--        target; the actor is real. If the formula ever asks for more, the
+--        call errors and the bank logs it.
 --   xi.cardian.bank.expectedCure(caster, spellId, element)
 --     -> what a Cure tier heals off this caster, before the target's missing
 --        HP caps it. No dice in this one: the server's cure helpers, with
@@ -63,20 +63,22 @@ xi.cardian.bank.landChance = function(caster, target, fed, rolls)
     return landed / rolls, landed > 0 and rateSum / landed or 0
 end
 
--- What calculateMeleePDIF asks of its target, and nothing else
+-- What calculateMeleePDIF asks of its target, and nothing else: a mob under
+-- no effect (Signet's defence bonus is a player's)
 local function standIn(defence, level)
     return
     {
-        getStat    = function(_, mod)
+        getStat         = function(_, mod)
             if mod == xi.mod.DEF then
                 return defence
             end
             return 0
         end,
-        getMainLvl = function() return level end,
-        getMod     = function() return 0 end,
-        isPC       = function() return false end,
-        isMob      = function() return true end,
+        getMainLvl      = function() return level end,
+        getMod          = function() return 0 end,
+        hasStatusEffect = function() return false end,
+        isPC            = function() return false end,
+        isMob           = function() return true end,
     }
 end
 
@@ -447,10 +449,11 @@ local function certainOnly(step, ...)
 end
 
 -- calculateMagicHitRate, a local of the resist roll's script: the hit rate
--- from an accuracy and an evasion. Found again if the script is reloaded
+-- from an accuracy and an evasion, less the level correction between the
+-- caster and the target. Found again if the script is reloaded
 local hitRate, hitRateOf
 
-local function magicHitRate(params)
+local function magicHitRate(caster, target, params)
     local roll = xi.combat.magicHitRate.calculateResistRate
     if hitRateOf ~= roll then
         hitRate, hitRateOf = nil, roll
@@ -468,7 +471,7 @@ local function magicHitRate(params)
     if hitRate == nil then
         error('calculateResistRate no longer reaches calculateMagicHitRate (scripts/combat/basic/magic_hit_rate.lua)', 0)
     end
-    return hitRate(params)
+    return hitRate(caster, target, params)
 end
 
 -- The resist roll as calculateResistRate sets it up, read instead of rolled:
@@ -506,6 +509,8 @@ local function resistOf(caster, target, fed)
     end
     return
     {
+        caster  = caster,
+        target  = target,
         macc    = seen.params.actorMagicAccuracy,
         meva    = seen.params.targetMagicEvasion,
         floored = seen.params.resistanceRank >= 10, -- the rate is held at its floor, whatever the accuracy
@@ -534,7 +539,7 @@ local function resistFor(resist, bonusMacc)
     end
     local p = resist.rate
     if not resist.floored then
-        p = magicHitRate({ actorMagicAccuracy = resist.macc + bonusMacc, targetMagicEvasion = resist.meva })
+        p = magicHitRate(resist.caster, resist.target, { actorMagicAccuracy = resist.macc + bonusMacc, targetMagicEvasion = resist.meva })
     end
     return expectedResist(p, resist.tiers)
 end
@@ -569,7 +574,6 @@ local function kindOf(caster, target, s, statUsed, alwaysApply, moved)
         xi.combat.damage.magicalElementSDT(target, s.element) *
         xi.combat.damage.ecosystemMultiplier(caster, target, 0) *
         overRoll(caster:getMod(xi.mod.MAGIC_CRITHITRATE_II), damage.calculateMagicCriticalMultiplier, caster) *
-        damage.calculateDivineSealMultiplier(caster, target, s.skillType) *
         damage.calculateDivineEmblemMultiplier(caster, s.skillType) *
         damage.calculateEnhancedElementalSealMultiplier(caster, s.skillType, s.element) *
         damage.calculateEbullienceMultiplier(caster, s.spellGroup) *

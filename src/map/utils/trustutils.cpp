@@ -42,6 +42,7 @@
 #include "mobskill.h"
 #include "status_effect_container.h"
 #include "weapon_skill.h"
+#include "zone.h"
 
 //
 // Forward declarations
@@ -174,6 +175,7 @@ auto trustutils::SpawnTrust(CCharEntity* PMaster, uint32 TrustID) -> CTrustEntit
     if (PMaster->PParty == nullptr)
     {
         PMaster->PParty = new CParty(PMaster);
+        PMaster->PParty->MarkFormedByTrusts();
     }
 
     PMaster->PTrusts.insert(PMaster->PTrusts.end(), PTrust);

@@ -25,9 +25,11 @@
 #include "enums/msg_std.h"
 #include "items/transactions/npc_trade.h"
 #include "lua/luautils.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x053_systemmes.h"
 #include "status_effect_container.h"
 #include "trade_container.h"
+#include "utils/charutils.h"
 
 #include <algorithm>
 #include <array>
@@ -87,11 +89,18 @@ void GP_CLI_COMMAND_ITEM_TRANSFER::process(MapSession* PSession, CCharEntity* PC
         const uint8_t  invSlotId = this->PropertyItemIndexTbl[slotId];
         const uint32_t quantity  = this->ItemNumTbl[slotId];
 
+        if (quantity == 0)
+        {
+            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} tried to trade NPC {} with zero quantity in slot {}!", PChar->getName(), PNpc->getName(), invSlotId);
+            return;
+        }
+
         CItem* PItem = PChar->getStorage(LOC_INVENTORY)->GetItem(invSlotId);
 
         if (!PItem)
         {
-            ShowErrorFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with an empty inventory slot {}!", PChar->getName(), PNpc->getName(), invSlotId);
+            // This is a warning because inventory desync/stale state and/or addons using a stale state can use empty slots and is rather spammy on a live server.
+            ShowWarningFmt("GP_CLI_COMMAND_ITEM_TRANSFER: {} trying to trade NPC {} with an empty inventory slot {}!", PChar->getName(), PNpc->getName(), invSlotId);
             return;
         }
 

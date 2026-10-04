@@ -24,9 +24,13 @@
 #include "common/logging.h"
 #include "common/timer.h"
 
+#include "entities/mob_entity.h"
 #include "entities/npc_entity.h"
+#include "lua/lua_base_entity.h"
 #include "lua_base_entity.h"
+#include "luautils.h"
 #include "trigger_area.h"
+#include "ximesh/ximesh.h"
 #include "zone.h"
 
 CLuaZone::CLuaZone(CZone* PZone)
@@ -95,9 +99,9 @@ void CLuaZone::resetLocalVars()
  *                                                                       *
  ************************************************************************/
 
-void CLuaZone::registerCuboidTriggerArea(uint32 triggerAreaID, float xMin, float yMin, float zMin, float xMax, float yMax, float zMax)
+void CLuaZone::registerCuboidTriggerArea(uint32 triggerAreaID, float xMin, float yMin, float zMin, float xMax, float yMax, float zMax, sol::optional<float> rotation)
 {
-    auto tArea = std::make_unique<CCuboidTriggerArea>(triggerAreaID, xMin, yMin, zMin, xMax, yMax, zMax);
+    auto tArea = std::make_unique<CCuboidTriggerArea>(triggerAreaID, xMin, yMin, zMin, xMax, yMax, zMax, rotation.value_or(0.0f));
     m_pLuaZone->InsertTriggerArea(std::move(tArea));
 }
 

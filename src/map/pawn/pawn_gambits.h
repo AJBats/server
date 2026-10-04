@@ -634,10 +634,10 @@ namespace pawn
     // tactician's melee
     auto rowLabel(const CGambits::EngageRow& row) -> std::string;
 
-    // Upstream's re-engage wait (CPlayerController::Engage, as Cardian
-    // marks it): the mob fought last waits the weapon's delay, any other
-    // the switch delay (cardian.REENGAGE_SWITCH_DELAY). Each controller
-    // counts it from its own last swing or leaving
+    // A cardian's re-engage wait, her draw's own rule: the mob fought last
+    // waits the weapon's delay, any other the switch delay
+    // (cardian.REENGAGE_SWITCH_DELAY), counted from her leaving the fight.
+    // The player follows upstream's lockout (CPlayerController::Engage)
     auto reengageWait(CCharEntity* PChar, const CBattleEntity* PFoe, uint32 lastFought) -> timer::duration;
 
     // The game would take a new action from her now: what CPlayerController

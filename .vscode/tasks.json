@@ -81,6 +81,30 @@
             }
         },
         {
+            "label": "Kill xi_profile",
+            "type": "shell",
+            "linux": {
+                "command": "killall",
+                "args": [
+                    "xi_profile",
+                    "||",
+                    "exit",
+                    "0",
+                ]
+            },
+            "windows": {
+                "command": "cmd",
+                "args": [
+                    "/C",
+                    "taskkill /F /IM xi_profile.exe || exit 0",
+                ]
+            },
+            "presentation": {
+                "reveal": "never",
+                "close": true,
+            }
+        },
+        {
             "label": "Kill xi_world",
             "type": "shell",
             "linux": {
@@ -105,42 +129,19 @@
             }
         },
         {
-            "label": "Create Build Dir",
-            "type": "shell",
-            "linux": {
-                "command": "mkdir -p ./build/"
-            },
-            "windows": {
-                "command": "cmd",
-                "args": [
-                    "/C",
-                    "if not exist .\\build mkdir .\\build",
-                ]
-            },
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "presentation": {
-                "reveal": "never",
-                "close": true,
-            }
-        },
-        {
             "type": "shell",
             "label": "CMake Configuration",
             "dependsOn": [
                 "Kill xi_connect",
                 "Kill xi_map",
                 "Kill xi_search",
-                "Kill xi_world",
-                "Create Build Dir"
+                "Kill xi_profile",
+                "Kill xi_world"
             ],
             "command": "cmake",
             "args": [
-                "-S",
-                "${workspaceFolder}",
-                "-B",
-                "${workspaceFolder}/build",
+                "--preset",
+                "default",
             ],
             "options": {
                 "cwd": "${workspaceFolder}"
@@ -155,8 +156,8 @@
             "command": "cmake",
             "args": [
                 "--build",
-                "${workspaceFolder}/build",
-                "-j8"
+                "--preset",
+                "default",
             ],
             "options": {
                 "cwd": "${workspaceFolder}"

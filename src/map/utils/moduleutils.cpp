@@ -22,6 +22,7 @@
 #include "moduleutils.h"
 
 #include "common/cbasetypes.h"
+#include "common/ipp.h"
 #include "common/utils.h"
 #include "lua/luautils.h"
 
@@ -275,8 +276,6 @@ void OnCharZoneOut(CCharEntity* PChar)
 
 void OnPushPacket(CCharEntity* PChar, const std::unique_ptr<CBasicPacket>& packet)
 {
-    TracyZoneScoped;
-
     for (auto* module : cppModules())
     {
         module->OnPushPacket(PChar, packet);

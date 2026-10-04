@@ -6,6 +6,7 @@ local zoneObject = {}
 
 zoneObject.onInitialize = function(zone)
     zone:registerCuboidTriggerArea(1, 0, 0.0, -50, 20, 0.0, -35) -- In front of boat customs
+    zone:registerCuboidTriggerArea(571, -8.9, -3.2, -122.2, 13.6, 3.5, -104.0) -- Whitegate boat boarding area
 end
 
 zoneObject.onZoneIn = function(player, prevZone)
@@ -17,7 +18,7 @@ zoneObject.onZoneIn = function(player, prevZone)
         player:getZPos() == 0
     then
         if
-            player:hasKeyItem(xi.ki.SILVER_SEA_FERRY_TICKET) and
+            player:hasKeyItem(xi.keyItem.SILVER_SEA_FERRY_TICKET) and
             prevZone == xi.zone.SILVER_SEA_ROUTE_TO_NASHMAU
         then
             cs = { 201, -1, bit.bor(xi.cutsceneFlag.RESET_CAMERA, xi.cutsceneFlag.NO_PCS) }
@@ -36,9 +37,9 @@ end
 zoneObject.onTriggerAreaLeave = function(player, triggerArea)
 end
 
-zoneObject.onTransportEvent = function(player, prevZoneId, transportId)
+zoneObject.onTransportEvent = function(player, prevZoneId, transportName)
     if prevZoneId == xi.zone.SILVER_SEA_ROUTE_TO_AL_ZAHBI then
-        if player:hasKeyItem(xi.ki.SILVER_SEA_FERRY_TICKET) then
+        if player:hasKeyItem(xi.keyItem.SILVER_SEA_FERRY_TICKET) then
             player:startEvent(200, {
                 isHidden = true,
                 flags    = bit.bor(

@@ -33,6 +33,7 @@
 
 #include "ability.h"
 #include "daily_system.h"
+#include "grades.h"
 #include "ipc_client.h"
 #include "job_points.h"
 #include "map_networking.h"
@@ -44,7 +45,8 @@
 #include "spell.h"
 #include "status_effect_container.h"
 #include "time_server.h"
-#include "transport.h"
+#include "transports/elevator_handler.h"
+#include "transports/ship_handler.h"
 #include "zone.h"
 #include "zone_entities.h"
 
@@ -196,8 +198,10 @@ auto MapEngine::init() -> Task<void>
 
     guildutils::Initialize();
     charutils::LoadExpTable();
+    charutils::LoadCharPointsQueries();
     traits::LoadTraitsList();
     effects::LoadEffectsParameters();
+    grade::LoadGrades();
     mobutils::LoadSpeciesData();
     battleutils::LoadSkillTable();
     meritNameSpace::LoadMeritsList();
@@ -220,7 +224,7 @@ auto MapEngine::init() -> Task<void>
 
     if (!config_.lazyZones)
     {
-        CTransportHandler::getInstance()->InitializeTransport(mapIPP);
+        ShipHandler::getInstance()->InitializeShips();
     }
 
     fishingutils::InitializeFishingSystem();
@@ -246,6 +250,14 @@ auto MapEngine::init() -> Task<void>
             [this]() -> Task<void>
             {
                 co_await time_server(scheduler_, config_);
+            });
+
+        transportToken_ = scheduler_.intervalOnMainThread(
+            kTransportTickInterval,
+            []()
+            {
+                ShipHandler::getInstance()->tick();
+                ElevatorHandler::getInstance()->tick();
             });
 
         persistVolatileServerVarsToken_ = scheduler_.intervalOnMainThread(kPersistVolatileServerVarsInterval, serverutils::PersistVolatileServerVars);
@@ -284,6 +296,9 @@ auto MapEngine::init() -> Task<void>
     }
 
     db::enableTimers();
+
+    // Most startup queries never run again, so stop them holding server statement slots for the process lifetime.
+    db::clearStatementCache();
 
     //
     // Set up the watchdog tasks

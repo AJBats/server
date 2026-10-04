@@ -1553,7 +1553,6 @@ INSERT INTO `mob_skill_lists` VALUES ('Iron_Giant',350,2627);
 INSERT INTO `mob_skill_lists` VALUES ('Kamlanaut (Return to Delkfutt Tower)',351,829);
 INSERT INTO `mob_skill_lists` VALUES ('Kamlanaut (Return to Delkfutt Tower)',351,830);
 INSERT INTO `mob_skill_lists` VALUES ('ArkAngel-EV',352,933);
-INSERT INTO `mob_skill_lists` VALUES ('ArkAngel-EV',352,934);
 INSERT INTO `mob_skill_lists` VALUES ('ArkAngel-EV',352,942);
 INSERT INTO `mob_skill_lists` VALUES ('ArkAngel-EV',352,943);
 INSERT INTO `mob_skill_lists` VALUES ('ArkAngel-GK',353,937);
@@ -1911,11 +1910,18 @@ INSERT INTO `mob_skill_lists` VALUES ('Dahu',419,802); -- Great Sandstorm
 INSERT INTO `mob_skill_lists` VALUES ('Huwasi',420,678); -- Crystal Rain
 INSERT INTO `mob_skill_lists` VALUES ('Rogue_Receptacle',421,520); -- Double Ray
 INSERT INTO `mob_skill_lists` VALUES ('Ullikummi',422,1035); -- Heavy Strike
--- 423 free
+INSERT INTO `mob_skill_lists` VALUES ('Imp_Bandsman_Add',423,1709); -- Abrasive Tantara
+INSERT INTO `mob_skill_lists` VALUES ('Imp_Bandsman_Add',423,1710); -- Deafening Tantara
+INSERT INTO `mob_skill_lists` VALUES ('Imp_Bandsman_Add',423,1711); -- Frenetic Rip
 INSERT INTO `mob_skill_lists` VALUES ('Geush_Urvan',424,495); -- Snort
 INSERT INTO `mob_skill_lists` VALUES ('Geush_Urvan',424,496); -- Rabid Dance
 INSERT INTO `mob_skill_lists` VALUES ('Geush_Urvan',424,497); -- Lowing
 INSERT INTO `mob_skill_lists` VALUES ('OuryuCometh',425,1405); -- Ouryu Flying Attack
+INSERT INTO `mob_skill_lists` VALUES ('Valkeng_AF',426,1940);
+INSERT INTO `mob_skill_lists` VALUES ('Valkeng_AF',426,1941);
+INSERT INTO `mob_skill_lists` VALUES ('Valkeng_AF',426,1942);
+INSERT INTO `mob_skill_lists` VALUES ('Valkeng_AF',426,1943);
+INSERT INTO `mob_skill_lists` VALUES ('Valkeng_AF',426,1944);
 INSERT INTO `mob_skill_lists` VALUES ('Bloodlapper',436,2162);
 INSERT INTO `mob_skill_lists` VALUES ('Ghillie_Dhu',437,685);
 INSERT INTO `mob_skill_lists` VALUES ('Highlander_Lizard',438,371);
@@ -4406,7 +4412,28 @@ INSERT INTO `mob_skill_lists` VALUES ('DynamisGoblin',2108,1097);
 INSERT INTO `mob_skill_lists` VALUES ('Jack_Cardian',2109,683); -- bludgeon
 INSERT INTO `mob_skill_lists` VALUES ('Jack_Cardian',2109,684); -- deal_out
 
--- Next ID : 2110
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1136); -- Blindeye
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1137); -- Eyes on Me
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1138); -- Hypnosis
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1139); -- Mind Break
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1140); -- Binding Wave
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1141); -- Airy Shield
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1143); -- Magic Shield
+INSERT INTO `mob_skill_lists` VALUES ('DynamisEye',2110,1144); -- Level 5 Petrify
+
+INSERT INTO `mob_skill_lists` VALUES ('DynamisDemon',2111,1145); -- Soul Drain
+INSERT INTO `mob_skill_lists` VALUES ('DynamisDemon',2111,1146); -- Hecatomb Wave
+INSERT INTO `mob_skill_lists` VALUES ('DynamisDemon',2111,1147); -- Demonic Howl
+INSERT INTO `mob_skill_lists` VALUES ('DynamisDemon',2111,1148); -- Condemation
+INSERT INTO `mob_skill_lists` VALUES ('DynamisDemon',2111,1150); -- Quadrastrike
+
+INSERT INTO `mob_skill_lists` VALUES ('DynamisUragnite_shell',2112,1572); -- venom_shell
+INSERT INTO `mob_skill_lists` VALUES ('DynamisUragnite',2113,1571); -- gas_shell
+INSERT INTO `mob_skill_lists` VALUES ('DynamisUragnite',2113,1573); -- palsynyxis
+INSERT INTO `mob_skill_lists` VALUES ('DynamisUragnite',2113,1574); -- painful_whip
+INSERT INTO `mob_skill_lists` VALUES ('DynamisUragnite',2113,1575); -- suctorial_tentacle
+
+-- Next ID : 2114
 -- ------------------------------------------------------------
 -- Start of Ambuscade section
 -- NOTE: The mobs are changed every update in the DATs, so using out-of-date

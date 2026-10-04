@@ -9,13 +9,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        rank_element:
-          fire: -2
-          dark: -2
-        rank_status:
-          dark_sleep: -2
-          blind:      -2
       render:
         look:
           type:  standard
@@ -130,27 +123,6 @@ templates:
     attributes:
       combat:
         skill: great_sword
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -3
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:  11
-          blind:        4
       render:
         look:
           type:  standard
@@ -251,23 +223,6 @@ templates:
     attributes:
       combat:
         skill: polearm
-      resists:
-        rank_element:
-          fire:     2
-          ice:      2
-          wind:     2
-          earth:   -2
-          thunder:  6
-          water:    2
-          dark:     4
-        rank_status:
-          paralyze:    2
-          bind:        2
-          silence:     2
-          slow:       -2
-          poison:      2
-          dark_sleep:  4
-          blind:       4
       render:
         look:
           type:  standard
@@ -313,15 +268,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -1
-          water:   -1
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          poison:   -1
       render:
         look:
           type:  standard
@@ -340,21 +286,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -3
-          ice:     -3
-          wind:    -3
-          thunder: -3
-          dark:    -3
-        rank_status:
-          paralyze:   -3
-          bind:       -3
-          silence:    -3
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -364,28 +295,12 @@ templates:
 
   Boodlix:
     id:            502
-    species:       goblin
+    species:       goblin_s
     type:          [event]
     skill_list_id: 133
     attributes:
       combat:
         skill: sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -409,21 +324,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:     4
-          ice:      1
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -441,25 +341,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:    4
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -482,17 +363,6 @@ templates:
       jobs: [drg, blm]
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:   equipped
@@ -543,21 +413,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:    4
-          light:    4
-          dark:    -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:       4
-          light_sleep:  4
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -575,25 +430,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -616,25 +452,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -682,27 +499,6 @@ templates:
       combat:
         skill: axe
       jobs: [thf, thf]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -1
-          wind:    -3
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -3
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -818,19 +614,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -841,28 +624,13 @@ templates:
 
   Dee_Xalmo_the_Grim:
     id:            953
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 360
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -904,27 +672,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -1
-          wind:    -3
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -3
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -953,28 +700,13 @@ templates:
 
   Divine_Ascetic:
     id:            1055
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 360
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -990,28 +722,13 @@ templates:
 
   Divine_Assassin:
     id:            1056
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1026,27 +743,12 @@ templates:
 
   Divine_Disseminator:
     id:            1057
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1062,27 +764,12 @@ templates:
 
   Divine_Martyr:
     id:            1061
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: great_axe
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1098,28 +785,13 @@ templates:
 
   Divine_Pilgrim:
     id:            1062
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1135,27 +807,12 @@ templates:
 
   Divine_Templar:
     id:            1064
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: great_axe
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1234,18 +891,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [stun, slow, elegy]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          wind:    -3
-          earth:   11
-          thunder: 11
-        rank_status:
-          silence: -3
-          slow:    11
       render:
         look:
           type:  standard
@@ -1280,17 +925,6 @@ templates:
       jobs: [drk, blm]
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -1342,12 +976,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, war]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1369,25 +997,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:     4
-          earth:    4
-          thunder:  4
-          water:    4
-          light:    4
-          dark:     4
-        rank_status:
-          paralyze:    4
-          bind:        4
-          silence:     4
-          slow:        4
-          poison:      4
-          light_sleep: 4
-          dark_sleep:  4
-          blind:       4
       render:
         look:
           type:  standard
@@ -1412,30 +1021,6 @@ templates:
     species:       pixie
     skill_list_id: 195
     attributes:
-      resists:
-        dmg_physical:
-          slashing: -6250
-          piercing: -6250
-          blunt:    -6250
-          h2h:      -6250
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    11
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    8
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     11
-          slow:         1
-          poison:       1
-          light_sleep:  8
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -1505,27 +1090,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [sch, rdm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:     2
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:      2
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -1547,25 +1111,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          fire:    11
-          ice:     11
-          wind:    11
-          earth:   11
-          thunder: 11
-          water:   -3
-          light:   11
-          dark:    11
-        rank_status:
-          paralyze:    11
-          bind:        11
-          silence:     11
-          slow:        11
-          poison:      -3
-          light_sleep: 11
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -1630,12 +1175,6 @@ templates:
       combat:
         skill: club
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1651,27 +1190,11 @@ templates:
 
   Goblin_Lansquenet:
     id:            1681
-    species:       goblin
+    species:       goblin_s
     skill_list_id: 133
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1721,20 +1244,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          fire: -3
-          ice:  11
-          wind: 11
-        rank_status:
-          paralyze: 11
-          bind:     11
-          silence:  11
       render:
         look:
           type:  standard
@@ -1754,27 +1263,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -1
-          wind:    -3
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -3
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -1826,25 +1314,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -2
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -1895,25 +1364,6 @@ templates:
       combat:
         skill: great_axe
         delay: 380
-      resists:
-        rank_element:
-          fire:    2
-          ice:     2
-          wind:    2
-          earth:   2
-          thunder: 2
-          water:   2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    2
-          bind:        2
-          silence:     2
-          slow:        2
-          poison:      2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -1961,28 +1411,13 @@ templates:
 
   Kazan_the_Peerless:
     id:            2198
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2007,17 +1442,6 @@ templates:
         skill: scythe
         delay: 280
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -2065,29 +1489,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing:  2500
-          blunt:    -2500
-        rank_element:
-          fire:     1
-          ice:     -3
-          wind:     4
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:      4
-          slow:         1
-          poison:       1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -2113,25 +1514,6 @@ templates:
         skill: scythe
         delay: 280
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:     4
-          ice:      4
-          wind:     1
-          earth:   11
-          thunder:  4
-          water:    4
-          light:    4
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:      1
-          slow:        11
-          poison:       4
-          light_sleep:  4
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2152,13 +1534,6 @@ templates:
     species:       tiger
     skill_list_id: 242
     attributes:
-      resists:
-        rank_element:
-          fire:    -3
-          thunder: -3
-          water:   -2
-        rank_status:
-          poison: -2
       render:
         look:
           type:  standard
@@ -2259,19 +1634,6 @@ templates:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: 11
-          dark:  -3
-        rank_status:
-          light_sleep: 11
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -2322,7 +1684,8 @@ templates:
         skill:    hand_to_hand
         delay:    480
         dmg_mult: 110
-      jobs: [mnk, none]
+      jobs:  [mnk, none]
+      speed: 60
       render:
         look:
           type:  standard
@@ -2339,23 +1702,6 @@ templates:
     attributes:
       combat:
         skill: dagger
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2369,28 +1715,13 @@ templates:
   Moo_Ouzi_the_SwiftbladeS:
     id:            1247
     display_name:  Moo_Ouzi_the_Swiftblade
-    species:       yagudo
+    species:       whitehead_yagudo_s
     type:          [notorious]
     skill_list_id: 360
     attributes:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2413,30 +1744,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        dmg_physical:
-          slashing: -5000
-          piercing: -5000
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2457,28 +1764,13 @@ templates:
 
   Muu_Buxu_the_Elusive:
     id:            2776
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2515,16 +1807,6 @@ templates:
     species:       black_wyrm
     skill_list_id: 260
     attributes:
-      resists:
-        rank_element:
-          fire:  11
-          ice:   11
-          water: -2
-          light: -2
-        rank_status:
-          poison:      -2
-          light_sleep:  6
-          dark_sleep:   6
       render:
         look:
           type:  standard
@@ -2570,20 +1852,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:     4
-          ice:     -2
-          wind:     4
-          earth:   -2
-          thunder: -2
-          water:   -3
-        rank_status:
-          paralyze: -2
-          bind:     -2
-          silence:   4
-          slow:     -2
-          poison:   -3
       render:
         look:
           type:  standard
@@ -2623,28 +1891,13 @@ templates:
 
   Plenilune_Ronin:
     id:            3158
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 360
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2666,20 +1919,6 @@ templates:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          wind:    -3
-          thunder: -3
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2696,19 +1935,6 @@ templates:
     species:       green_poroggo
     skill_list_id: 196
     attributes:
-      resists:
-        rank_element:
-          ice:      2
-          earth:    1
-          thunder: -1
-          water:    8
-          light:    6
-        rank_status:
-          paralyze:    2
-          bind:        2
-          slow:        1
-          poison:      8
-          light_sleep: 6
       render:
         look:
           type:  standard
@@ -2719,22 +1945,9 @@ templates:
 
   Poroggo_Servant:
     id:            3186
-    species:       green_poroggo
+    species:       toad
     skill_list_id: 196
     attributes:
-      resists:
-        rank_element:
-          ice:      2
-          earth:    1
-          thunder: -1
-          water:    8
-          light:    6
-        rank_status:
-          paralyze:    2
-          bind:        2
-          slow:        1
-          poison:      8
-          light_sleep: 6
       render:
         look:
           type:  standard
@@ -2752,28 +1965,6 @@ templates:
         skill: club
       resists:
         immune_status: [silence, paralyze, blind, slow]
-        dmg_physical:
-          slashing: -2500
-          piercing:  2500
-          blunt:    -2500
-        rank_element:
-          fire:     1
-          ice:     -3
-          wind:     4
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:      4
-          slow:         1
-          poison:       1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -2825,30 +2016,6 @@ templates:
         skill: club
         delay: 290
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:    2
-          thunder: -1
-          water:   -1
-          light:   -3
-          dark:     3
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:         2
-          poison:      -1
-          light_sleep: -3
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -2938,17 +2105,6 @@ templates:
       combat:
         skill: scythe
         delay: 280
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -2959,6 +2115,8 @@ templates:
       behaviors:
         aggressive: true
         links:      true
+      mob_mods:
+        exp_bonus: 5
       spawn:
         respawn: 300
     loot:
@@ -3006,15 +2164,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -3039,17 +2188,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:  -1
-          wind:   3
-          light: -2
-          dark:   4
-        rank_status:
-          silence:      3
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -3072,11 +2210,6 @@ templates:
       combat:
         skill: axe
       jobs: [smn, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -3101,19 +2234,6 @@ templates:
       combat:
         skill: club
       jobs: [drk, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: -3
-          dark:  11
-        rank_status:
-          light_sleep: -3
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -3137,18 +2257,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -3180,18 +2288,6 @@ templates:
       combat:
         skill: sword
       jobs: [war, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -3223,28 +2319,6 @@ templates:
         skill: scythe
         delay: 360
       jobs: [mnk, blm]
-      resists:
-        dmg_physical:
-          blunt: 5000
-          h2h:   2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -3269,12 +2343,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -3299,18 +2367,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [stun, poison]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          earth:   -3
-          thunder: 11
-          water:   11
-        rank_status:
-          slow:   -3
-          poison: 11
       render:
         look:
           type:  standard
@@ -3342,19 +2398,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          earth:   -3
-          thunder: 11
-          water:   11
-        rank_status:
-          slow:   -3
-          poison: 11
       render:
         look:
           type:  standard
@@ -3372,30 +2415,6 @@ templates:
     species:       pixie
     skill_list_id: 195
     attributes:
-      resists:
-        dmg_physical:
-          slashing: -6250
-          piercing: -6250
-          blunt:    -6250
-          h2h:      -6250
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    11
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    8
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     11
-          slow:         1
-          poison:       1
-          light_sleep:  8
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -3438,17 +2457,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -3461,27 +2469,12 @@ templates:
 
   Vee_Qiqa_the_Decreer:
     id:            4212
-    species:       yagudo
+    species:       manifest
     skill_list_id: 360
     attributes:
       combat:
         skill: great_sword
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3507,21 +2500,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          ice:   -3
-          wind:  11
-          earth: 11
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          silence:  11
-          slow:     11
       render:
         look:
           type:  standard
@@ -3540,28 +2518,13 @@ templates:
 
   Vee_Seju_the_Consumed:
     id:            4214
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 360
     attributes:
       combat:
         skill: great_axe
         delay: 360
       jobs: [mnk, smn]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3587,21 +2550,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          ice:   -3
-          wind:  11
-          earth: 11
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          silence:  11
-          slow:     11
       render:
         look:
           type:  standard
@@ -3625,24 +2573,6 @@ templates:
     attributes:
       combat:
         skill: dagger
-      resists:
-        rank_element:
-          fire:  -2
-          ice:   -2
-          wind:  -2
-          earth: -3
-          water: -2
-          light: -2
-          dark:  -2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3717,25 +2647,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:     4
-          earth:    4
-          thunder:  4
-          water:    4
-          light:    4
-          dark:     4
-        rank_status:
-          paralyze:    4
-          bind:        4
-          silence:     4
-          slow:        4
-          poison:      4
-          light_sleep: 4
-          dark_sleep:  4
-          blind:       4
       render:
         look:
           type:  standard
@@ -3750,28 +2661,13 @@ templates:
 
   Yagudo_Abbot_outdoor_S:
     id:            6264
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 20
     skill_list_id: 360
     attributes:
       combat:
         skill: sword
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3800,28 +2696,13 @@ templates:
 
   Yagudo_Genja:
     id:            4420
-    species:       yagudo
+    species:       whitehead_yagudo_s
     spell_list_id: 7
     skill_list_id: 270
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3838,27 +2719,14 @@ templates:
 
   Yagudo_Guard:
     id:            4421
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
+      speed:           72
+      animation_speed: 40
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3874,28 +2742,13 @@ templates:
 
   Yagudo_Lutenist_past:
     id:            5492
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 6
     skill_list_id: 270
     attributes:
       combat:
         skill: axe
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3926,28 +2779,13 @@ templates:
 
   Yagudo_Missionary:
     id:            4433
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 7
     skill_list_id: 270
     attributes:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3974,28 +2812,13 @@ templates:
 
   Yagudo_Prior_past:
     id:            5491
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 21
     skill_list_id: 270
     attributes:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4030,28 +2853,13 @@ templates:
 
   Yagudo_Pythoness:
     id:            4447
-    species:       yagudo
+    species:       yagudo_s
     spell_list_id: 30
     skill_list_id: 270
     attributes:
       combat:
         skill: great_axe
       jobs: [smn, smn]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4079,27 +2887,12 @@ templates:
 
   Yagudo_Templar_past:
     id:            5480
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4126,28 +2919,15 @@ templates:
 
   Yagudo_Transporter:
     id:            4457
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
+      speed:           72
+      animation_speed: 40
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4163,31 +2943,12 @@ templates:
 
   Yagudo_Turret:
     id:            4458
-    species:       yagudo
+    species:       yagudo_turret
     skill_list_id: 250
     attributes:
       combat:
         skill: scythe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:    2
-          ice:     1
-          wind:    4
-          earth:   4
-          thunder: 2
-          water:   2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    1
-          bind:        1
-          silence:     4
-          slow:        4
-          poison:      2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -4203,28 +2964,13 @@ templates:
 
   Yagudo_Zealot_past:
     id:            5482
-    species:       yagudo
+    species:       yagudo_s
     skill_list_id: 270
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4260,21 +3006,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          ice:   -3
-          wind:  11
-          earth: 11
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          silence:  11
-          slow:     11
       render:
         look:
           type:  standard
@@ -4319,7 +3050,7 @@ spawns:
   17448961:
     template: Dire_Bat_Garlaige Citadel_S
     script:   Dire_Bat
-    at:       [-98.555, -0.500, -53.809, 63]
+    region:   c_1
     level:    [62, 64]
   17448962:
     template: Yagudo_Zealot_past
@@ -4328,7 +3059,7 @@ spawns:
   17448963:
     template: Incubus_Bats_GCS
     script:   Incubus_Bats
-    at:       [-49.105, -0.500, -61.349, 26]
+    region:   c_3
     level:    [62, 64]
   17448964:
     template: Yagudo_Abbot_outdoor_S
@@ -4352,7 +3083,7 @@ spawns:
   17448968:
     template: Dire_Bat_Garlaige Citadel_S
     script:   Dire_Bat
-    at:       [-62.981, -0.499, 23.591, 139]
+    region:   c_8
     level:    [62, 64]
   17448969:
     template: Yagudo_Prior_past
@@ -4361,7 +3092,7 @@ spawns:
   17448970:
     template: Mousse_SSG
     script:   Mousse
-    at:       [-71.361, -0.500, -9.054, 7]
+    region:   c_10
     level:    [64, 67]
   17448971:
     template: Yagudo_Templar_past
@@ -4378,12 +3109,12 @@ spawns:
   17448974:
     template: Mousse_SSG
     script:   Mousse
-    at:       [-51.283, -0.500, -37.141, 45]
+    region:   c_14
     level:    [64, 67]
   17448975:
     template: Mousse_SSG
     script:   Mousse
-    at:       [-67.123, -0.500, -29.587, 31]
+    region:   c_15
     level:    [64, 67]
   17448976:
     template: Yagudo_Lutenist_past
@@ -4398,65 +3129,65 @@ spawns:
   17448979:
     template: Dire_Bat_Garlaige Citadel_S
     script:   Dire_Bat
-    at:       [-60.974, -0.500, 65.136, 68]
+    region:   c_19
     level:    [62, 64]
   17448980:
     template: Incubus_Bats_GCS
     script:   Incubus_Bats
-    at:       [-68.449, -0.500, 67.946, 167]
+    region:   c_19
     level:    [62, 64]
   17448981:
     template: Mousse_SSG
     script:   Mousse
-    at:       [38.733, 5.582, -98.155, 173]
+    region:   c_21
     level:    [64, 67]
   17448982:
     template: Dire_Bat_Garlaige Citadel_S
     script:   Dire_Bat
-    at:       [59.385, 6.208, -82.647, 65]
+    region:   c_22
     level:    [62, 64]
   17448983:
     template: Yagudo_Abbot_outdoor_S
     script:   Yagudo_Abbot
-    at:       [-50.069, -0.500, -147.351, 193]
+    region:   c_23
     level:    [71, 74]
   17448984:
     template: Yagudo_Prior_past
     script:   Yagudo_Prior
-    at:       [5.113, -0.500, -132.602, 135]
+    region:   c_24
     level:    [71, 74]
   17448985:
     template: Thunder_Elemental
-    at:       [16.929, -0.500, -125.529, 197]
+    region:   c_24
     level:    [75, 75]
   17448986:
     template: Explosure_past
     script:   Explosure
-    at:       [217.320, -5.996, -98.776, 57]
+    region:   e_26
     level:    [64, 65]
   17448987:
     template: Explosure_past
     script:   Explosure
-    at:       [211.123, -6.506, -98.823, 1]
+    region:   e_26
     level:    [64, 65]
   17448988:
     template: Incubus_Bats_GCS
     script:   Incubus_Bats
-    at:       [22.019, 5.578, 21.224, 56]
+    region:   c_28
     level:    [62, 64]
   17448989:
     template: Dire_Bat_Garlaige Citadel_S
     script:   Dire_Bat
-    at:       [25.066, 6.635, 62.899, 23]
+    region:   c_29
     level:    [62, 64]
   17448990:
     template: Citadel_Pipistrelles
-    at:       [11.221, 6.745, 58.851, 237]
+    region:   c_30
     level:    [77, 77]
   17448991:
     template: Incubus_Bats_GCS
     script:   Incubus_Bats
-    at:       [9.805, 0.542, 99.399]
+    region:   c_31
     level:    [62, 64]
   17448992:
     template: Mousse_SSG
@@ -4501,20 +3232,20 @@ spawns:
   17449000:
     template: Yagudo_Templar_past
     script:   Yagudo_Templar
-    at:       [4.764, -0.499, -138.768, 2]
+    region:   c_40
     level:    [71, 74]
   17449001:
     template: Yagudo_Lutenist_past
     script:   Yagudo_Lutenist
-    at:       [-66.648, 0.001, -125.053, 105]
+    region:   c_41
     level:    [71, 74]
   17449002:
     template: Yagudo_Missionary
-    at:       [-69.044, 0.000, -150.321, 161]
+    region:   c_40
     level:    [71, 74]
   17449003:
     template: Yagudo_Pythoness
-    at:       [33.240, 0.000, -124.911, 241]
+    region:   c_40
     level:    [71, 74]
   17449004:
     template: Yagudos_Elemental
@@ -4523,7 +3254,7 @@ spawns:
   17449005:
     template: Yagudo_Zealot_past
     script:   Yagudo_Zealot
-    at:       [34.217, 0.000, -154.224, 18]
+    region:   c_40
     level:    [71, 74]
   17449006:
     template: Explosure_past
@@ -4549,11 +3280,11 @@ spawns:
     level:    [68, 70]
   17449011:
     template: Scolopendrid
-    at:       [102.392, 7.625, -186.074, 81]
+    region:   s_51
     level:    [68, 70]
   17449012:
     template: Scolopendrid
-    at:       [98.908, 5.783, -200.180, 188]
+    region:   s_51
     level:    [68, 70]
   17449013:
     template: Scolopendrid
@@ -4561,19 +3292,19 @@ spawns:
     level:    [68, 70]
   17449014:
     template: Scolopendrid
-    at:       [127.318, 6.471, -119.016, 137]
+    region:   c_54
     level:    [68, 70]
   17449015:
     template: Scolopendrid
-    at:       [127.729, 6.568, -128.553, 66]
+    region:   c_54
     level:    [68, 70]
   17449016:
     template: Earth_Elemental
-    at:       [111.063, 6.583, -125.543, 175]
+    region:   c_54
     level:    [75, 75]
   17449017:
     template: Buarainech
-    at:       [114.154, 6.388, -131.777, 169]
+    region:   c_54
     level:    [80, 81]
   17449018:
     template: Scolopendrid
@@ -4581,12 +3312,12 @@ spawns:
     level:    [68, 70]
   17449019:
     template: Yagudo_Missionary
-    at:       [233.395, -0.500, -181.358, 2]
+    region:   se_59
     level:    [71, 74]
   17449020:
     template: Yagudo_Lutenist_past
     script:   Yagudo_Lutenist
-    at:       [226.570, -0.500, -181.212, 127]
+    region:   se_59
     level:    [71, 74]
   17449021:
     template: Yagudo_Zealot_past
@@ -4600,7 +3331,7 @@ spawns:
     level:    [71, 74]
   17449023:
     template: Yagudo_Pythoness
-    at:       [220.639, -6.500, -127.571, 202]
+    region:   e_63
     level:    [71, 74]
   17449024:
     template: Yagudos_Elemental
@@ -4609,22 +3340,22 @@ spawns:
   17449025:
     template: Yagudo_Abbot_outdoor_S
     script:   Yagudo_Abbot
-    at:       [255.086, -0.500, -218.509, 251]
+    region:   se_65
     level:    [71, 74]
   17449026:
     template: Yagudo_Prior_past
     script:   Yagudo_Prior
-    at:       [254.948, -0.500, -218.468, 253]
+    region:   se_65
     level:    [71, 74]
   17449027:
     template: Explosure_past
     script:   Explosure
-    at:       [218.132, -6.000, -102.384, 186]
+    region:   e_26
     level:    [64, 65]
   17449028:
     template: Explosure_past
     script:   Explosure
-    at:       [217.613, -6.000, -98.583, 184]
+    region:   e_26
     level:    [64, 65]
   17449029:
     template: Yagudo_Transporter
@@ -5009,12 +3740,13 @@ spawns:
     template: Federation_Dispenser
   17449148:
     template: Vee_Qiqa_the_Decreer
-    at:       [-19.110, -0.500, -20.149, 98]
+    region:   c_188
   17449149:
     template: Vee_Qiqas_Elemental
+    region:   c_188
   17449150:
     template: Vee_Qiqas_Elemental
-    at:       [-19.972, -0.500, -19.945, 72]
+    region:   c_188
   17449151:
     template: Vee_Qiqas_Elemental
   17449152:
@@ -5022,30 +3754,39 @@ spawns:
     at:       [-20.087, -0.500, -19.811, 68]
   17449153:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449154:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449155:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449156:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449157:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449158:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449159:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449160:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449161:
     template: Divine_Templar
+    region:   c_188
     level:    [60, 60]
   17449162:
     template: Moo_Ouzi_the_SwiftbladeS
@@ -5083,33 +3824,42 @@ spawns:
     level:    [70, 70]
   17449172:
     template: Muu_Buxu_the_Elusive
-    at:       [39.269, 6.500, 11.108, 182]
+    region:   c_212
   17449173:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449174:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449175:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449176:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449177:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449178:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449179:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449180:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449181:
     template: Divine_Assassin
+    region:   c_212
     level:    [60, 60]
   17449182:
     template: Dee_Xalmo_the_Grim
@@ -5146,64 +3896,74 @@ spawns:
     level:    [70, 70]
   17449192:
     template: Kazan_the_Peerless
+    region:   c_232
   17449193:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449194:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449195:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449196:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449197:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449198:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449199:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449200:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449201:
     template: Plenilune_Ronin
+    region:   c_232
     level:    [60, 60]
   17449202:
     template: Vee_Seju_the_Consumed
-    at:       [-83.813, -0.579, 179.658, 40]
+    region:   c_242
     level:    [70, 70]
   17449203:
     template: Vee_Sejus_Elemental
-    at:       [-18.926, -0.579, 134.009, 254]
+    region:   c_242
     level:    [70, 70]
   17449204:
     template: Vee_Sejus_Elemental
-    at:       [-18.926, -0.579, 134.009, 254]
+    region:   c_242
     level:    [70, 70]
   17449205:
     template: Divine_Martyr
-    at:       [-180.820, -1.293, 84.948, 192]
+    region:   c_242
     level:    [70, 70]
   17449206:
     template: Divine_Martyr
-    at:       [-64.698, -0.499, 172.963, 30]
+    region:   c_242
     level:    [70, 70]
   17449207:
     template: Divine_Martyr
-    at:       [-86.332, -0.500, 178.699, 1]
+    region:   c_242
     level:    [70, 70]
   17449208:
     template: Divine_Martyr
-    at:       [-180.015, -3.413, 99.237, 192]
+    region:   c_242
     level:    [70, 70]
   17449209:
     template: Divine_Martyr
-    at:       [-179.730, -3.477, 99.112, 192]
+    region:   c_242
     level:    [70, 70]
   17449210:
     template: Divine_Martyr
@@ -5215,11 +3975,11 @@ spawns:
     level:    [70, 70]
   17449212:
     template: Divine_Martyr
-    at:       [-156.775, -0.500, 138.811, 255]
+    region:   c_242
     level:    [70, 70]
   17449213:
     template: Divine_Martyr
-    at:       [-178.793, -3.135, 94.477, 191]
+    region:   c_242
     level:    [70, 70]
   17449214:
     template: Divine_Pilgrim
@@ -5325,22 +4085,27 @@ spawns:
     level:    [60, 60]
   17449246:
     template: Fiendish_Leechkeeper
+    region:   c_286
     level:    [75, 80]
   17449247:
     template: Fiendish_Leechkeeper
+    region:   c_286
     level:    [75, 80]
   17449248:
     template: Fiendish_Leechkeeper
+    region:   c_286
     level:    [75, 80]
   17449249:
     template: Fiendish_Leechkeeper
+    region:   c_286
     level:    [75, 80]
   17449250:
     template: Fiendish_Leechkeeper
+    region:   c_286
     level:    [75, 80]
   17449251:
     template: Fiendish_Leechkeeper
-    at:       [69.261, 6.465, -29.193, 50]
+    region:   c_286
     level:    [75, 80]
   17449252:
     template: Shadowhorn

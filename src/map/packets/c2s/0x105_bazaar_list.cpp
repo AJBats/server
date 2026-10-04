@@ -22,8 +22,10 @@
 #include "0x105_bazaar_list.h"
 
 #include "entities/char_entity.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x105_bazaar_list.h"
 #include "packets/s2c/0x108_bazaar_shopping.h"
+#include "zone.h"
 
 auto GP_CLI_COMMAND_BAZAAR_LIST::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
@@ -37,7 +39,7 @@ void GP_CLI_COMMAND_BAZAAR_LIST::process(MapSession* PSession, CCharEntity* PCha
 {
     CCharEntity* PTarget = this->UniqueNo != 0 ? PChar->loc.zone->GetCharByID(this->UniqueNo) : static_cast<CCharEntity*>(PChar->GetEntity(PChar->m_TargID, TYPE_PC));
 
-    if (PTarget != nullptr && PTarget->id == this->UniqueNo && PTarget->hasBazaar())
+    if (PTarget != nullptr && PTarget->id == this->UniqueNo && PTarget->hasBazaar() && PTarget->m_moghouseID == PChar->m_moghouseID)
     {
         PChar->BazaarID = EntityId(PTarget);
 
@@ -50,17 +52,15 @@ void GP_CLI_COMMAND_BAZAAR_LIST::process(MapSession* PSession, CCharEntity* PCha
 
         PTarget->BazaarCustomers.emplace_back(EntityID);
 
-        CItemContainer* PBazaar = PTarget->getStorage(LOC_INVENTORY);
-
-        for (uint8 SlotID = 1; SlotID <= PBazaar->GetSize(); ++SlotID)
-        {
-            CItem* PItem = PBazaar->GetItem(SlotID);
-
-            if ((PItem != nullptr) && (PItem->getCharPrice() != 0))
+        auto* PContainer = PTarget->getStorage(LOC_INVENTORY);
+        PContainer->ForEachItem(
+            [&](CItem* PItem)
             {
-                PChar->pushPacket<GP_SERV_COMMAND_BAZAAR_LIST>(PItem, SlotID, PChar->loc.zone->GetTax());
-            }
-        }
+                if (PItem->getCharPrice() != 0)
+                {
+                    PChar->pushPacket<GP_SERV_COMMAND_BAZAAR_LIST>(PItem, PItem->getSlotID(), PChar->loc.zone->GetTax());
+                }
+            });
 
         DebugBazaarsFmt("Bazaar Interaction [View Wares] - Buyer: {}, Seller: {}", PChar->name, PTarget->name);
     }

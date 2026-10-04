@@ -21,6 +21,8 @@
 
 #include "application.h"
 
+#include "common/database.h"
+
 #include "arguments.h"
 #include "console_service.h"
 #include "debug.h"
@@ -83,28 +85,11 @@ Application::Application(const ApplicationConfig& appConfig, int argc, char** ar
     ShowInfoFmt("=======================================================================");
     ShowInfoFmt("Begin {}-server init...", serverName_);
 
-#ifdef ENV64BIT
-    ShowInfo("64-bit environment detected");
-#else
-    ShowInfo("32-bit environment detected");
-#endif
-
-    constexpr std::string_view builtBuildType = XI_BUILD_TYPE;
-    constexpr std::string_view cmakeBuildType = XI_CMAKE_BUILD_TYPE;
-    if (cmakeBuildType.empty())
-    {
-        ShowInfoFmt("Build type: {} (multi-config generator; config selected at build time)", builtBuildType);
-    }
-    else if (cmakeBuildType == builtBuildType)
-    {
-        ShowInfoFmt("Build type: {}", builtBuildType);
-    }
-    else
-    {
-        ShowWarningFmt("Build type: {}, but configured with CMAKE_BUILD_TYPE={}; the built binaries do NOT match the configured build type!", builtBuildType, cmakeBuildType);
-    }
+    ShowInfoFmt("Build type: {}", XI_BUILD_TYPE);
 
     consoleService_ = std::make_unique<ConsoleService>(*this);
+
+    statementUsageToken_.emplace(scheduler_.intervalOnMainThread(std::chrono::hours(1), db::checkStatementUsage));
 }
 
 Application::~Application()
@@ -298,7 +283,10 @@ void Application::markLoaded()
     if (Application::isRunningInCI())
     {
         ShowInfo("CI mode enabled: exiting after successful initialization");
-        std::exit(0);
+
+        // Unwind through main() rather than std::exit() so that luautils::cleanup()
+        // is properly called.
+        requestExit();
     }
 }
 

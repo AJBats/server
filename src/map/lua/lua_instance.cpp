@@ -27,6 +27,7 @@
 #include "entities/npc_entity.h"
 #include "instance.h"
 #include "lua_base_entity.h"
+#include "lua_zone.h"
 #include "luautils.h"
 #include "utils/instanceutils.h"
 #include "utils/mobutils.h"
@@ -122,8 +123,7 @@ sol::table CLuaInstance::getPets()
 
 uint32 CLuaInstance::getTimeLimit()
 {
-    uint32 limit = std::chrono::floor<std::chrono::minutes>(m_PLuaInstance->GetTimeLimit()).count();
-    return limit;
+    return static_cast<uint32>(timer::count_seconds(m_PLuaInstance->GetTimeLimit()));
 }
 
 sol::table CLuaInstance::getEntryPos()
@@ -146,8 +146,7 @@ uint8 CLuaInstance::getLevelCap()
 
 uint32 CLuaInstance::getLastTimeUpdate()
 {
-    auto time_ms = timer::count_milliseconds(m_PLuaInstance->GetLastTimeUpdate());
-    return static_cast<uint32>(time_ms);
+    return static_cast<uint32>(timer::count_seconds(m_PLuaInstance->GetLastTimeUpdate()));
 }
 
 uint32 CLuaInstance::getProgress()
@@ -157,8 +156,7 @@ uint32 CLuaInstance::getProgress()
 
 uint32 CLuaInstance::getWipeTime()
 {
-    auto time_ms = timer::count_milliseconds(m_PLuaInstance->GetWipeTime());
-    return static_cast<uint32>(time_ms);
+    return static_cast<uint32>(timer::count_seconds(m_PLuaInstance->GetWipeTime()));
 }
 
 auto CLuaInstance::getEntity(uint16 targid, const sol::object& filterObj) -> CBaseEntity*
@@ -187,9 +185,9 @@ void CLuaInstance::setLevelCap(uint8 cap)
     m_PLuaInstance->SetLevelCap(cap);
 }
 
-void CLuaInstance::setLastTimeUpdate(uint32 ms)
+void CLuaInstance::setLastTimeUpdate(uint32 seconds)
 {
-    m_PLuaInstance->SetLastTimeUpdate(std::chrono::milliseconds(ms));
+    m_PLuaInstance->SetLastTimeUpdate(std::chrono::seconds(seconds));
 }
 
 void CLuaInstance::setTimeLimit(uint32 seconds)
@@ -202,9 +200,9 @@ void CLuaInstance::setProgress(uint32 progress)
     m_PLuaInstance->SetProgress(progress);
 }
 
-void CLuaInstance::setWipeTime(uint32 ms)
+void CLuaInstance::setWipeTime(uint32 seconds)
 {
-    m_PLuaInstance->SetWipeTime(std::chrono::milliseconds(ms));
+    m_PLuaInstance->SetWipeTime(std::chrono::seconds(seconds));
 }
 
 void CLuaInstance::setStage(uint32 stage)

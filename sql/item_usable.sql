@@ -1222,7 +1222,7 @@ INSERT INTO `item_usable` VALUES (5350,'phial_of_volant_serum',1,1,0,0,0,0,0,0);
 INSERT INTO `item_usable` VALUES (5351,'phial_of_osseous_serum',1,1,0,0,0,0,0,0);
 INSERT INTO `item_usable` VALUES (5352,'phial_of_spectral_serum',1,1,0,0,0,0,0,0);
 INSERT INTO `item_usable` VALUES (5353,'iron_bullet_pouch',1,1,55,0,0,0,0,0);
-INSERT INTO `item_usable` VALUES (5354,'flask_of_walahra_water',1,1,0,0,0,0,0,0);
+INSERT INTO `item_usable` VALUES (5354,'flask_of_walahra_water',1,1,34,0,0,0,0,0);
 INSERT INTO `item_usable` VALUES (5355,'elixir_vitae',1,1,34,0,0,0,0,0);
 INSERT INTO `item_usable` VALUES (5356,'jar_of_remedy_ointment',1,1,7,0,0,0,0,0);
 INSERT INTO `item_usable` VALUES (5357,'bottle_of_ether_drops',1,1.5,32,0,0,0,0,0);
@@ -2726,7 +2726,7 @@ INSERT INTO `item_usable` VALUES (15487,'high_breath_mantle',1,3,0,0,50,30,1800,
 INSERT INTO `item_usable` VALUES (15505,'dhalmel_whistle',1,1,0,0,25,30,900,0);
 INSERT INTO `item_usable` VALUES (15507,'purgatory_collar',1,10,0,0,20,30,900,0);
 INSERT INTO `item_usable` VALUES (15526,'regen_collar',1,3,0,0,50,30,600,0);
-INSERT INTO `item_usable` VALUES (15533,'chocobo_whistle',1,8,0,0,25,30,300,0);
+INSERT INTO `item_usable` VALUES (15533,'chocobo_whistle',1,8,55,0,25,30,300,0);
 INSERT INTO `item_usable` VALUES (15541,'homing_ring',1,8,80,0,30,30,3600,0);
 INSERT INTO `item_usable` VALUES (15542,'return_ring',1,8,80,0,10,30,3600,0);
 INSERT INTO `item_usable` VALUES (15552,'albatross_ring',1,3,0,0,30,30,72000,0);

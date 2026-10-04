@@ -22,7 +22,6 @@
 #pragma once
 
 #include "common/cbasetypes.h"
-#include "common/tracy.h"
 #include "common/utils.h"
 
 #include <cstdio>
@@ -54,22 +53,16 @@ protected:
 public:
     CBasicPacket()
     {
-        TracyZoneScoped;
-
         std::fill(buffer_.data(), buffer_.data() + PACKET_SIZE, 0);
     }
 
     explicit CBasicPacket(const CBasicPacket& other)
     {
-        TracyZoneScoped;
-
         std::memcpy(buffer_.data(), other.buffer_.data(), PACKET_SIZE);
     }
 
     explicit CBasicPacket(const std::unique_ptr<CBasicPacket>& other)
     {
-        TracyZoneScoped;
-
         std::memcpy(buffer_.data(), other->buffer_.data(), PACKET_SIZE);
     }
 

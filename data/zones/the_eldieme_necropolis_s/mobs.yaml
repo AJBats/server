@@ -9,13 +9,6 @@ templates:
     attributes:
       combat:
         skill: staff
-      resists:
-        rank_element:
-          fire: -2
-          dark: -2
-        rank_status:
-          dark_sleep: -2
-          blind:      -2
       render:
         look:
           type:  standard
@@ -132,18 +125,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, bst]
-      resists:
-        rank_element:
-          fire:  -1
-          ice:    1
-          light: -1
-          dark:   3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          light_sleep: -1
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -167,27 +148,6 @@ templates:
     attributes:
       combat:
         skill: great_sword
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -3
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:  11
-          blind:        4
       render:
         look:
           type:  standard
@@ -210,18 +170,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:  -1
-          ice:    1
-          light: -1
-          dark:   3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          light_sleep: -1
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -304,23 +252,6 @@ templates:
     attributes:
       combat:
         skill: polearm
-      resists:
-        rank_element:
-          fire:     2
-          ice:      2
-          wind:     2
-          earth:   -2
-          thunder:  6
-          water:    2
-          dark:     4
-        rank_status:
-          paralyze:    2
-          bind:        2
-          silence:     2
-          slow:       -2
-          poison:      2
-          dark_sleep:  4
-          blind:       4
       render:
         look:
           type:  standard
@@ -366,15 +297,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -1
-          water:   -1
-        rank_status:
-          paralyze: -3
-          bind:     -3
-          poison:   -1
       render:
         look:
           type:  standard
@@ -393,21 +315,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -3
-          ice:     -3
-          wind:    -3
-          thunder: -3
-          dark:    -3
-        rank_status:
-          paralyze:   -3
-          bind:       -3
-          silence:    -3
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -417,27 +324,12 @@ templates:
 
   Battlemaster_Vatgit:
     id:            366
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: dagger
         delay: 220
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -455,28 +347,12 @@ templates:
 
   Boodlix:
     id:            502
-    species:       goblin
+    species:       goblin_s
     type:          [event]
     skill_list_id: 133
     attributes:
       combat:
         skill: sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -500,21 +376,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:     4
-          ice:      1
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -532,25 +393,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:    4
-          light:   -2
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:       4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -568,21 +410,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:    4
-          light:    4
-          dark:    -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:       4
-          light_sleep:  4
-          dark_sleep:  -3
-          blind:       -3
       render:
         look:
           type:  standard
@@ -601,25 +428,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      1
-          wind:     1
-          earth:    2
-          thunder:  1
-          water:   -1
-          light:    1
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:      1
-          slow:         2
-          poison:      -1
-          light_sleep:  1
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -660,27 +468,12 @@ templates:
 
   Clan_Bear_Fighter:
     id:            735
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -696,26 +489,11 @@ templates:
 
   Clan_Longtooth_Pillager:
     id:            736
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: dagger
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -730,27 +508,12 @@ templates:
 
   Clan_Reaper_Grunt:
     id:            737
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -798,7 +561,7 @@ templates:
 
   Conqueror_Bakgodek:
     id:            777
-    species:       orc
+    species:       warchief
     spell_list_id: 4
     skill_list_id: 189
     attributes:
@@ -806,21 +569,6 @@ templates:
         skill: sword
         delay: 220
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -868,19 +616,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -891,28 +626,13 @@ templates:
 
   Deathlord_Rojgnoj:
     id:            935
-    species:       orc
+    species:       orc_s
     spell_list_id: 5
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -956,28 +676,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        5
       render:
         look:
           type:  standard
@@ -1053,18 +751,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [stun, slow, elegy]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          wind:    -3
-          earth:   11
-          thunder: 11
-        rank_status:
-          silence: -3
-          slow:    11
       render:
         look:
           type:  standard
@@ -1097,18 +783,6 @@ templates:
         skill: dagger
         delay: 360
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -1134,25 +808,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        rank_element:
-          fire:    3
-          ice:     3
-          wind:    3
-          earth:   3
-          thunder: 3
-          water:   3
-          light:   1
-          dark:    5
-        rank_status:
-          paralyze:    3
-          bind:        3
-          silence:     3
-          slow:        3
-          poison:      3
-          light_sleep: 1
-          dark_sleep:  5
-          blind:       5
       render:
         look:
           type:  standard
@@ -1173,12 +828,6 @@ templates:
       combat:
         skill: axe
       jobs: [bst, bst]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1205,17 +854,6 @@ templates:
       jobs: [blu, blm]
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -1267,12 +905,6 @@ templates:
       combat:
         skill: axe
       jobs: [rng, war]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1292,30 +924,6 @@ templates:
     species:       pixie
     skill_list_id: 195
     attributes:
-      resists:
-        dmg_physical:
-          slashing: -6250
-          piercing: -6250
-          blunt:    -6250
-          h2h:      -6250
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    11
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    8
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     11
-          slow:         1
-          poison:       1
-          light_sleep:  8
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -1420,27 +1028,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [sch, rdm]
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:     2
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:      2
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -1485,28 +1072,6 @@ templates:
         skill: staff
         delay: 280
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          blunt: -2500
-          h2h:   -2500
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -1535,12 +1100,6 @@ templates:
       combat:
         skill: club
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1561,19 +1120,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          thunder: -2
-          dark:    -3
-        rank_status:
-          paralyze:   -2
-          bind:       -2
-          silence:    -2
-          dark_sleep: -3
-          blind:      -3
       render:
         look:
           type:  standard
@@ -1597,28 +1143,7 @@ templates:
       jobs: [blm, blm]
       resists:
         dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:    2
-          thunder: -1
-          water:   -1
-          light:   -3
-          dark:     3
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:         2
-          poison:      -1
-          light_sleep: -3
-          dark_sleep:   3
-          blind:        3
+          blunt: 2500
       render:
         look:
           type:  standard
@@ -1637,29 +1162,13 @@ templates:
 
   Goblin_Blastmaster:
     id:            1638
-    species:       goblin
+    species:       goblin_s
     spell_list_id: 21
     skill_list_id: 133
     attributes:
       combat:
         skill: dagger
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1687,29 +1196,13 @@ templates:
 
   Goblin_Corpsman:
     id:            1646
-    species:       goblin
+    species:       goblin_s
     spell_list_id: 20
     skill_list_id: 133
     attributes:
       combat:
         skill: staff
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1737,27 +1230,11 @@ templates:
 
   Goblin_Freesword:
     id:            1664
-    species:       armored_goblin
+    species:       goblin_s
     skill_list_id: 133
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1785,27 +1262,11 @@ templates:
 
   Goblin_Lansquenet:
     id:            1681
-    species:       goblin
+    species:       goblin_s
     skill_list_id: 133
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1842,28 +1303,12 @@ templates:
 
   Goblin_Pioneer:
     id:            1698
-    species:       goblin
+    species:       goblin_s
     skill_list_id: 133
     attributes:
       combat:
         skill: dagger
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1919,28 +1364,13 @@ templates:
 
   Gutrender_Trooper:
     id:            1852
-    species:       orc
+    species:       orc_s
     spell_list_id: 4
     skill_list_id: 189
     attributes:
       combat:
         skill: hand_to_hand
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1960,25 +1390,6 @@ templates:
     attributes:
       combat:
         skill: sword
-      resists:
-        dmg_physical:
-          slashing: 1250
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2011,19 +1422,6 @@ templates:
       jobs: [blm, rdm]
       resists:
         immune_status: [gravity, bind, silence, paralyze]
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          fire: -3
-          ice:  11
-          wind: 11
-        rank_status:
-          paralyze: 11
-          bind:     11
-          silence:  11
       render:
         look:
           type:  standard
@@ -2053,25 +1451,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        rank_element:
-          fire:    3
-          ice:     3
-          wind:    3
-          earth:   3
-          thunder: 3
-          water:   3
-          light:   1
-          dark:    5
-        rank_status:
-          paralyze:    3
-          bind:        3
-          silence:     3
-          slow:        3
-          poison:      3
-          light_sleep: 1
-          dark_sleep:  5
-          blind:       5
       render:
         look:
           type:  standard
@@ -2109,28 +1488,13 @@ templates:
 
   Jagidbod_of_Clan_Reaper:
     id:            6677
-    species:       orc
+    species:       orc_s
     type:          [notorious, battlefield]
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2152,25 +1516,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:    4
-          dark:     4
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep:  4
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2194,25 +1539,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          fire:    -1
-          ice:      2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -2
-          light:   -1
-          dark:    -1
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:        -1
-          poison:      -2
-          light_sleep: -1
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -2263,25 +1589,6 @@ templates:
       combat:
         skill: great_axe
         delay: 380
-      resists:
-        rank_element:
-          fire:    2
-          ice:     2
-          wind:    2
-          earth:   2
-          thunder: 2
-          water:   2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    2
-          bind:        2
-          silence:     2
-          slow:        2
-          poison:      2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -2338,24 +1645,6 @@ templates:
         skill: sword
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        dmg_physical:
-          slashing: 1250
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2410,13 +1699,6 @@ templates:
     species:       tiger
     skill_list_id: 242
     attributes:
-      resists:
-        rank_element:
-          fire:    -3
-          thunder: -3
-          water:   -2
-        rank_status:
-          poison: -2
       render:
         look:
           type:  standard
@@ -2463,27 +1745,6 @@ templates:
       combat:
         skill: great_katana
       jobs: [blm, blm]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -3
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:  11
-          blind:        4
       render:
         look:
           type:  standard
@@ -2512,27 +1773,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -3
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:  11
-          blind:        4
       render:
         look:
           type:  standard
@@ -2565,7 +1805,8 @@ templates:
         skill:    hand_to_hand
         delay:    480
         dmg_mult: 110
-      jobs: [mnk, none]
+      jobs:  [mnk, none]
+      speed: 60
       render:
         look:
           type:  standard
@@ -2582,23 +1823,6 @@ templates:
     attributes:
       combat:
         skill: dagger
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2618,18 +1842,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:  -1
-          ice:    1
-          light: -1
-          dark:   3
-        rank_status:
-          paralyze:     1
-          bind:         1
-          light_sleep: -1
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -2669,18 +1881,6 @@ templates:
         skill: polearm
         delay: 360
       jobs: [drg, drg]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -2731,16 +1931,6 @@ templates:
     species:       black_wyrm
     skill_list_id: 260
     attributes:
-      resists:
-        rank_element:
-          fire:  11
-          ice:   11
-          water: -2
-          light: -2
-        rank_status:
-          poison:      -2
-          light_sleep:  6
-          dark_sleep:   6
       render:
         look:
           type:  standard
@@ -2782,7 +1972,7 @@ templates:
   One-eyed_Gwajboj_S:
     id:            6759
     display_name:  One-eyed_Gwajboj
-    species:       orc
+    species:       masked_orc_s
     type:          [notorious]
     spell_list_id: 4
     skill_list_id: 189
@@ -2790,21 +1980,6 @@ templates:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2821,28 +1996,13 @@ templates:
 
   Orcish_Brawler_past:
     id:            6272
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2869,27 +2029,12 @@ templates:
 
   Orcish_Chasseur:
     id:            3001
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2914,28 +2059,13 @@ templates:
 
   Orcish_Cursemaker:
     id:            3004
-    species:       orc
+    species:       orc_s
     spell_list_id: 21
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [blm, war]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2960,26 +2090,11 @@ templates:
 
   Orcish_Guard:
     id:            3018
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2993,28 +2108,13 @@ templates:
 
   Orcish_Strongarm:
     id:            3037
-    species:       orc
+    species:       masked_orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3031,26 +2131,11 @@ templates:
 
   Orcish_Transporter:
     id:            3038
-    species:       orc
+    species:       orc_s
     skill_list_id: 189
     attributes:
       combat:
         skill: katana
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3064,28 +2149,13 @@ templates:
 
   Orcish_Trooper_past:
     id:            6284
-    species:       orc
+    species:       orc_s
     spell_list_id: 4
     skill_list_id: 189
     attributes:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3112,29 +2182,12 @@ templates:
 
   Orcish_Turret:
     id:            3040
-    species:       orcish_warmachine
+    species:       orcish_turret
     skill_list_id: 248
     attributes:
       combat:
         skill: scythe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:    4
-          ice:     4
-          wind:    2
-          earth:   2
-          thunder: 2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    4
-          bind:        4
-          silence:     2
-          slow:        2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -3155,20 +2208,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          fire:     4
-          ice:     -2
-          wind:     4
-          earth:   -2
-          thunder: -2
-          water:   -3
-        rank_status:
-          paralyze: -2
-          bind:     -2
-          silence:   4
-          slow:     -2
-          poison:   -3
       render:
         look:
           type:  standard
@@ -3189,20 +2228,6 @@ templates:
       combat:
         skill: club
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          wind:    -3
-          thunder: -3
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3219,19 +2244,6 @@ templates:
     species:       green_poroggo
     skill_list_id: 196
     attributes:
-      resists:
-        rank_element:
-          ice:      2
-          earth:    1
-          thunder: -1
-          water:    8
-          light:    6
-        rank_status:
-          paralyze:    2
-          bind:        2
-          slow:        1
-          poison:      8
-          light_sleep: 6
       render:
         look:
           type:  standard
@@ -3242,22 +2254,9 @@ templates:
 
   Poroggo_Servant:
     id:            3186
-    species:       green_poroggo
+    species:       toad
     skill_list_id: 196
     attributes:
-      resists:
-        rank_element:
-          ice:      2
-          earth:    1
-          thunder: -1
-          water:    8
-          light:    6
-        rank_status:
-          paralyze:    2
-          bind:        2
-          slow:        1
-          poison:      8
-          light_sleep: 6
       render:
         look:
           type:  standard
@@ -3276,30 +2275,6 @@ templates:
         skill: club
         delay: 290
       jobs: [blm, rdm]
-      resists:
-        dmg_physical:
-          slashing: -1250
-          piercing: -5000
-          blunt:     2500
-          h2h:       1250
-        rank_element:
-          fire:    -2
-          ice:      2
-          wind:    -1
-          earth:    2
-          thunder: -1
-          water:   -1
-          light:   -3
-          dark:     3
-        rank_status:
-          paralyze:     2
-          bind:         2
-          silence:     -1
-          slow:         2
-          poison:      -1
-          light_sleep: -3
-          dark_sleep:   3
-          blind:        3
       render:
         look:
           type:  standard
@@ -3350,28 +2325,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        dmg_physical:
-          slashing: -2500
-          piercing: -2500
-          blunt:    -5000
-          h2h:      -5000
-        rank_element:
-          fire:    -3
-          ice:      4
-          wind:    -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     4
-        rank_status:
-          paralyze:     5
-          bind:         5
-          silence:     -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   4
-          blind:        5
       render:
         look:
           type:  standard
@@ -3601,7 +2554,7 @@ templates:
 
   SaJho_Shieldbreaker:
     id:            6135
-    species:       quadav
+    species:       quadav_s
     type:          [notorious]
     spell_list_id: 4
     skill_list_id: 202
@@ -3610,13 +2563,6 @@ templates:
         skill: axe
         delay: 265
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -3690,15 +2636,6 @@ templates:
       combat:
         skill: staff
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          light: -2
-          dark:   6
-        rank_status:
-          silence:     11
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        6
       render:
         look:
           type:  standard
@@ -3723,17 +2660,6 @@ templates:
         skill: dagger
         delay: 150
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:  -1
-          wind:   3
-          light: -2
-          dark:   4
-        rank_status:
-          silence:      3
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -3756,11 +2682,6 @@ templates:
       combat:
         skill: axe
       jobs: [smn, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -3785,19 +2706,6 @@ templates:
       combat:
         skill: club
       jobs: [drk, rdm]
-      resists:
-        dmg_physical:
-          slashing: -7500
-          piercing: -7500
-          blunt:    -7500
-          h2h:      -7500
-        rank_element:
-          light: -3
-          dark:  11
-        rank_status:
-          light_sleep: -3
-          dark_sleep:  11
-          blind:       11
       render:
         look:
           type:  standard
@@ -3821,18 +2729,6 @@ templates:
       combat:
         skill: staff
       jobs: [war, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -3864,18 +2760,6 @@ templates:
       combat:
         skill: sword
       jobs: [war, blm]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -3907,28 +2791,6 @@ templates:
         skill: scythe
         delay: 360
       jobs: [mnk, blm]
-      resists:
-        dmg_physical:
-          blunt: 5000
-          h2h:   2500
-        rank_element:
-          fire:    -1
-          ice:     -1
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:   -2
-          dark:     2
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep: -2
-          dark_sleep:   2
-          blind:        2
       render:
         look:
           type:  standard
@@ -3953,12 +2815,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -3974,28 +2830,13 @@ templates:
 
   Sharpshot_Luttdrutt:
     id:            6134
-    species:       orc
+    species:       orc_s
     type:          [notorious]
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4020,18 +2861,6 @@ templates:
         skill: sword
         delay: 360
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -4051,28 +2880,13 @@ templates:
 
   Spinebeak_Neckchopper:
     id:            3730
-    species:       orc
+    species:       orc_s
     spell_list_id: 5
     skill_list_id: 189
     attributes:
       combat:
         skill: axe
       jobs: [drk, blm]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4087,28 +2901,13 @@ templates:
 
   Steelhide_Protector:
     id:            3767
-    species:       orc
+    species:       orc_s
     spell_list_id: 4
     skill_list_id: 189
     attributes:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4161,17 +2960,6 @@ templates:
       jobs: [blm, blu]
       resists:
         immune_status: [gravity, bind, light_sleep, dark_sleep]
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  equipped
@@ -4219,30 +3007,6 @@ templates:
     species:       pixie
     skill_list_id: 195
     attributes:
-      resists:
-        dmg_physical:
-          slashing: -6250
-          piercing: -6250
-          blunt:    -6250
-          h2h:      -6250
-        rank_element:
-          fire:     1
-          ice:      1
-          wind:    11
-          earth:    1
-          thunder:  1
-          water:    1
-          light:    8
-          dark:     1
-        rank_status:
-          paralyze:     1
-          bind:         1
-          silence:     11
-          slow:         1
-          poison:       1
-          light_sleep:  8
-          dark_sleep:   1
-          blind:        1
       render:
         look:
           type:  standard
@@ -4285,17 +3049,6 @@ templates:
     attributes:
       combat:
         delay: 0
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -4334,13 +3087,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          thunder: -3
-          water:   -2
-        rank_status:
-          poison: -2
       render:
         look:
           type:  standard
@@ -4371,13 +3117,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -3
-          thunder: -3
-          water:   -2
-        rank_status:
-          poison: -2
       render:
         look:
           type:  standard
@@ -4398,18 +3137,6 @@ templates:
       combat:
         skill: great_sword
         delay: 360
-      resists:
-        rank_element:
-          fire:  -2
-          ice:    4
-          light: -2
-          dark:   4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          light_sleep: -2
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -4458,7 +3185,7 @@ templates:
 spawns:
   17494017:
     template: Hell_Hound
-    at:       [256.397, -32.500, 132.987, 20]
+    region:   e_1
     level:    [64, 66]
   17494018:
     template: Hell_Hound
@@ -4470,11 +3197,11 @@ spawns:
     level:    [64, 66]
   17494020:
     template: Hell_Hound
-    at:       [110.194, -32.500, 140.157, 223]
+    region:   c_4
     level:    [64, 66]
   17494021:
     template: Hell_Hound
-    at:       [61.704, -32.500, 92.122, 95]
+    region:   c_5
     level:    [64, 66]
   17494022:
     template: Hell_Hound
@@ -4486,11 +3213,11 @@ spawns:
     level:    [64, 66]
   17494024:
     template: Hell_Hound
-    at:       [60.843, -32.500, -49.265, 159]
+    region:   c_8
     level:    [64, 66]
   17494025:
     template: Hell_Hound
-    at:       [103.914, -32.500, -91.949, 28]
+    region:   c_9
     level:    [64, 66]
   17494026:
     template: Hell_Hound
@@ -4506,19 +3233,19 @@ spawns:
     level:    [64, 66]
   17494029:
     template: Hell_Hound
-    at:       [216.570, -32.500, 66.390, 79]
+    region:   e_13
     level:    [64, 66]
   17494030:
     template: Hell_Hound
-    at:       [175.022, -32.500, 61.215, 251]
+    region:   e_14
     level:    [64, 66]
   17494031:
     template: Hell_Hound
-    at:       [138.525, -32.500, 89.095, 192]
+    region:   c_15
     level:    [64, 66]
   17494032:
     template: Hell_Hound
-    at:       [126.664, -32.500, 59.927]
+    region:   c_16
     level:    [64, 66]
   17494033:
     template: Hell_Hound
@@ -4526,31 +3253,31 @@ spawns:
     level:    [64, 66]
   17494034:
     template: Hell_Hound
-    at:       [127.416, -32.500, -20.453]
+    region:   c_18
     level:    [64, 66]
   17494035:
     template: Hell_Hound
-    at:       [143.065, -32.500, -26.739, 216]
+    region:   c_19
     level:    [64, 66]
   17494036:
     template: Hell_Hound
-    at:       [175.141, -32.500, -21.248, 22]
+    region:   e_20
     level:    [64, 66]
   17494037:
     template: Hell_Hound
-    at:       [219.164, -32.500, -45.701, 192]
+    region:   e_21
     level:    [64, 66]
   17494038:
     template: Ignis_Djinn
-    at:       [184.224, -32.500, 89.299]
+    region:   e_22
     level:    [68, 72]
   17494039:
     template: Ignis_Djinn
-    at:       [105.961, -32.500, 14.146, 126]
+    region:   c_23
     level:    [68, 72]
   17494040:
     template: Ignis_Djinn
-    at:       [181.845, -32.500, -50.960, 132]
+    region:   e_24
     level:    [68, 72]
   17494041:
     template: Lich_ENS
@@ -4565,12 +3292,12 @@ spawns:
   17494043:
     template: Lich_ENS
     script:   Lich
-    at:       [93.624, -32.465, 103.161, 223]
+    region:   c_27
     level:    [65, 69]
   17494044:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [106.698, -32.465, 96.632, 64]
+    region:   c_27
     level:    [65, 69]
   17494045:
     template: Lich_ENS
@@ -4585,127 +3312,127 @@ spawns:
   17494047:
     template: Lich_ENS
     script:   Lich
-    at:       [93.794, -32.500, -60.171, 191]
+    region:   c_31
     level:    [65, 69]
   17494048:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [96.710, -32.500, -66.475, 255]
+    region:   c_31
     level:    [65, 69]
   17494049:
     template: Orcish_Brawler_past
     script:   Orcish_Brawler
-    at:       [341.676, -32.500, -123.896, 128]
+    region:   e_33
     level:    [67, 69]
   17494050:
     template: Orcish_Chasseur
-    at:       [332.721, -32.500, -124.124, 152]
+    region:   e_33
     level:    [67, 69]
   17494051:
     template: Orcish_Cursemaker
-    at:       [341.590, -32.500, -123.754, 134]
+    region:   e_33
     level:    [67, 69]
   17494052:
     template: Orcish_Trooper_past
     script:   Orcish_Trooper
-    at:       [344.692, -32.500, -124.216, 185]
+    region:   e_33
     level:    [67, 69]
   17494053:
     template: Orcish_Brawler_past
     script:   Orcish_Brawler
-    at:       [341.441, -32.500, -155.395, 128]
+    region:   e_37
     level:    [67, 69]
   17494054:
     template: Orcish_Chasseur
-    at:       [346.829, -32.500, -151.696, 134]
+    region:   e_37
     level:    [67, 69]
   17494055:
     template: Orcish_Cursemaker
-    at:       [344.029, -32.500, -152.172, 198]
+    region:   e_37
     level:    [67, 69]
   17494056:
     template: Orcish_Trooper_past
     script:   Orcish_Trooper
-    at:       [335.401, -32.500, -154.661, 32]
+    region:   e_37
     level:    [67, 69]
   17494057:
     template: Orcish_Brawler_past
     script:   Orcish_Brawler
-    at:       [295.917, -27.857, -138.527, 128]
+    region:   e_41
     level:    [67, 69]
   17494058:
     template: Orcish_Chasseur
-    at:       [291.345, -26.833, -138.622, 255]
+    region:   e_41
     level:    [67, 69]
   17494059:
     template: Orcish_Cursemaker
-    at:       [331.205, -32.500, -138.751]
+    region:   e_43
     level:    [67, 69]
   17494060:
     template: Orcish_Trooper_past
     script:   Orcish_Trooper
-    at:       [325.213, -32.500, -138.947, 255]
+    region:   e_43
     level:    [67, 69]
   17494061:
     template: Orcish_Brawler_past
     script:   Orcish_Brawler
-    at:       [378.728, -40.431, -119.504, 63]
+    region:   e_45
     level:    [67, 69]
   17494062:
     template: Orcish_Chasseur
-    at:       [378.625, -37.929, -131.714, 63]
+    region:   e_45
     level:    [67, 69]
   17494063:
     template: Northern_Spriggan
-    at:       [177.750, -9.500, 16.340, 89]
+    region:   e_47
     level:    [66, 69]
   17494064:
     template: Eastern_Spriggan
-    at:       [177.607, -9.500, 22.137, 182]
+    region:   e_47
     level:    [66, 69]
   17494065:
     template: Western_Spriggan
-    at:       [181.157, -9.500, 19.848, 158]
+    region:   e_49
     level:    [66, 69]
   17494066:
     template: Northern_Spriggan
-    at:       [299.590, -0.500, 67.911, 62]
+    region:   e_50
     level:    [66, 69]
   17494067:
     template: Eastern_Spriggan
-    at:       [290.738, -0.500, 59.674, 193]
+    region:   e_51
     level:    [66, 69]
   17494068:
     template: Northern_Spriggan
-    at:       [308.584, -0.500, 63.911, 60]
+    region:   e_50
     level:    [66, 69]
   17494069:
     template: Southern_Spriggan
-    at:       [300.291, -0.500, 59.601, 126]
+    region:   e_53
     level:    [66, 69]
   17494070:
     template: Western_Spriggan
-    at:       [291.028, -0.500, 55.181, 60]
+    region:   e_54
     level:    [66, 69]
   17494071:
     template: Northern_Spriggan
-    at:       [299.997, -0.500, -16.797, 62]
+    region:   e_55
     level:    [66, 69]
   17494072:
     template: Eastern_Spriggan
-    at:       [300.015, -0.500, -15.878, 63]
+    region:   e_56
     level:    [66, 69]
   17494073:
     template: Northern_Spriggan
-    at:       [305.298, -0.500, -20.272, 124]
+    region:   e_55
     level:    [66, 69]
   17494074:
     template: Southern_Spriggan
-    at:       [304.613, -0.500, -20.269]
+    region:   e_58
     level:    [66, 69]
   17494075:
     template: Western_Spriggan
-    at:       [295.125, -0.500, -24.386, 196]
+    region:   e_59
     level:    [66, 69]
   17494076:
     template: Northern_Spriggan
@@ -4717,7 +3444,7 @@ spawns:
     level:    [66, 69]
   17494078:
     template: Eastern_Spriggan
-    at:       [303.767, 0.924, 25.844, 152]
+    region:   e_62
     level:    [66, 69]
   17494079:
     template: Western_Spriggan
@@ -4729,23 +3456,23 @@ spawns:
     level:    [66, 69]
   17494081:
     template: Eastern_Spriggan
-    at:       [260.110, -1.440, 18.548, 55]
+    region:   e_65
     level:    [66, 69]
   17494082:
     template: Northern_Spriggan
-    at:       [337.461, -0.500, -12.708, 89]
+    region:   e_66
     level:    [66, 69]
   17494083:
     template: Eastern_Spriggan
-    at:       [261.242, -0.500, 1.660, 191]
+    region:   e_67
     level:    [66, 69]
   17494084:
     template: Southern_Spriggan
-    at:       [267.497, -0.500, 57.471, 95]
+    region:   e_68
     level:    [66, 69]
   17494085:
     template: Western_Spriggan
-    at:       [340.849, -0.500, 49.431, 192]
+    region:   e_69
     level:    [66, 69]
   17494086:
     template: Gazer
@@ -4757,7 +3484,7 @@ spawns:
     level:    [60, 62]
   17494088:
     template: Gazer
-    at:       [228.080, -16.466, 339.209, 109]
+    region:   ne_72
     level:    [60, 62]
   17494089:
     template: Gazer
@@ -4769,83 +3496,83 @@ spawns:
     level:    [60, 62]
   17494091:
     template: Gazer
-    at:       [144.323, -15.838, 275.198, 95]
+    region:   n_75
     level:    [60, 62]
   17494092:
     template: Gazer
-    at:       [152.131, -15.508, 274.145, 234]
+    region:   n_76
     level:    [60, 62]
   17494093:
     template: Ethniu
-    at:       [153.554, -15.375, 286.063, 221]
+    region:   n_76
     level:    [80, 80]
   17494094:
     template: Gazer
-    at:       [172.433, -16.016, 285.993, 195]
+    region:   ne_78
     level:    [60, 62]
   17494095:
     template: Gazer
-    at:       [164.515, -15.466, 271.294, 65]
+    region:   n_79
     level:    [60, 62]
   17494096:
     template: Goblin_Freesword
-    at:       [160.107, -15.500, 280.199, 231]
+    region:   n_75
     level:    [62, 64]
   17494097:
     template: Goblin_Blastmaster
-    at:       [154.101, -15.501, 281.010, 96]
+    region:   n_76
     level:    [62, 64]
   17494098:
     template: Goblin_Corpsman
-    at:       [161.561, -15.479, 285.722, 150]
+    region:   ne_78
     level:    [62, 64]
   17494099:
     template: Goblin_Freesword
-    at:       [157.279, -15.500, 277.547, 97]
+    region:   n_75
     level:    [62, 64]
   17494100:
     template: Goblin_Blastmaster
-    at:       [171.925, -16.181, 286.861, 32]
+    region:   ne_78
     level:    [62, 64]
   17494101:
     template: Goblin_Corpsman
-    at:       [164.781, -15.384, 274.082, 243]
+    region:   n_79
     level:    [62, 64]
   17494102:
     template: Goblin_Freesword
-    at:       [259.624, -24.500, 303.887, 64]
+    region:   ne_86
     level:    [62, 64]
   17494103:
     template: Goblin_Blastmaster
-    at:       [251.790, -24.500, 299.369, 63]
+    region:   ne_86
     level:    [62, 64]
   17494104:
     template: Goblin_Corpsman
-    at:       [267.758, -24.500, 298.801, 190]
+    region:   ne_88
     level:    [62, 64]
   17494105:
     template: Goblin_Freesword
-    at:       [260.074, -24.500, 294.583, 186]
+    region:   ne_88
     level:    [62, 64]
   17494106:
     template: Goblin_Blastmaster
-    at:       [259.128, -23.708, 259.871, 145]
+    region:   ne_90
     level:    [62, 64]
   17494107:
     template: Goblin_Pioneer
-    at:       [191.065, -16.465, 298.859, 130]
+    region:   ne_91
     level:    [62, 64]
   17494108:
     template: Goblin_Mine
-    at:       [220.677, -16.506, 328.835, 71]
+    region:   ne_91
     level:    [58, 58]
   17494109:
     template: War_Smilodon
-    at:       [260.822, -24.087, 237.592, 191]
+    region:   ne_93
     level:    [61, 64]
   17494110:
     template: War_Smilodon
-    at:       [303.813, -21.178, 218.781, 122]
+    region:   ne_94
     level:    [61, 64]
   17494111:
     template: War_Smilodon
@@ -4865,51 +3592,51 @@ spawns:
     level:    [61, 64]
   17494115:
     template: War_Smilodon
-    at:       [254.627, -23.928, 259.735, 225]
+    region:   ne_90
     level:    [61, 64]
   17494116:
     template: War_Smilodon
-    at:       [406.368, -0.366, 143.465, 219]
+    region:   e_100
     level:    [61, 64]
   17494117:
     template: War_Smilodon
-    at:       [421.043, -0.003, 133.088, 51]
+    region:   e_101
     level:    [61, 64]
   17494118:
     template: War_Smilodon
-    at:       [419.642, -0.349, 127.504, 6]
+    region:   e_102
     level:    [61, 64]
   17494119:
     template: War_Smilodon
-    at:       [417.224, -0.175, 111.487, 117]
+    region:   e_103
     level:    [61, 64]
   17494120:
     template: War_Smilodon
-    at:       [410.604, -0.220, 104.170, 193]
+    region:   e_104
     level:    [61, 64]
   17494121:
     template: War_Smilodon
-    at:       [404.549, -0.352, 100.995, 242]
+    region:   e_105
     level:    [61, 64]
   17494122:
     template: War_Smilodon
-    at:       [400.621, -0.449, 97.972, 61]
+    region:   e_106
     level:    [61, 64]
   17494123:
     template: War_Smilodon
-    at:       [404.788, -0.375, 136.693, 10]
+    region:   e_100
     level:    [61, 64]
   17494124:
     template: War_Smilodon
-    at:       [421.043, -0.097, 131.952, 135]
+    region:   e_102
     level:    [61, 64]
   17494125:
     template: War_Smilodon
-    at:       [410.105, -0.155, 101.863, 100]
+    region:   e_104
     level:    [61, 64]
   17494126:
     template: War_Smilodon
-    at:       [393.710, -0.305, 100.704, 19]
+    region:   e_106
     level:    [61, 64]
   17494127:
     template: War_Smilodon
@@ -4917,7 +3644,7 @@ spawns:
     level:    [61, 64]
   17494128:
     template: War_Smilodon
-    at:       [378.730, -0.302, 81.066, 64]
+    region:   e_112
     level:    [61, 64]
   17494129:
     template: War_Smilodon
@@ -4926,37 +3653,37 @@ spawns:
   17494130:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [279.926, -16.464, -216.391, 130]
+    region:   se_114
     level:    [68, 70]
   17494131:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [289.302, -16.156, -217.628, 191]
+    region:   se_115
     level:    [68, 70]
   17494132:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [302.288, -16.416, -243.313, 8]
+    region:   se_116
     level:    [68, 70]
   17494133:
     template: Hell_Hound
-    at:       [268.208, -16.497, -226.514, 13]
+    region:   se_117
     level:    [64, 66]
   17494134:
     template: Hell_Hound
-    at:       [288.459, -16.162, -221.576, 42]
+    region:   se_114
     level:    [64, 66]
   17494135:
     template: Laelaps
-    at:       [295.204, -16.004, -218.251, 148]
+    region:   se_115
     level:    [78, 78]
   17494136:
     template: Hell_Hound
-    at:       [296.256, -16.426, -239.112, 121]
+    region:   se_116
     level:    [64, 66]
   17494137:
     template: Hell_Hound
-    at:       [296.018, -16.425, -255.121, 116]
+    region:   se_121
     level:    [64, 66]
   17494138:
     template: Hell_Hound
@@ -4964,11 +3691,11 @@ spawns:
     level:    [64, 66]
   17494139:
     template: Hell_Hound
-    at:       [300.913, -15.876, -224.537, 176]
+    region:   se_115
     level:    [64, 66]
   17494140:
     template: Hell_Hound
-    at:       [303.398, -16.338, -255.760, 13]
+    region:   se_121
     level:    [64, 66]
   17494141:
     template: Hell_Hound
@@ -4984,7 +3711,7 @@ spawns:
     level:    [64, 66]
   17494144:
     template: Hell_Hound
-    at:       [239.936, -16.358, -179.290, 138]
+    region:   se_128
     level:    [64, 66]
   17494145:
     template: Hell_Hound
@@ -5016,27 +3743,27 @@ spawns:
     level:    [64, 66]
   17494152:
     template: Hell_Hound
-    at:       [354.458, -32.426, -339.358, 127]
+    region:   se_136
     level:    [64, 66]
   17494153:
     template: Hell_Hound
-    at:       [371.830, -32.836, -342.286, 33]
+    region:   se_137
     level:    [64, 66]
   17494154:
     template: Hell_Hound
-    at:       [383.928, -34.801, -305.736, 209]
+    region:   se_138
     level:    [64, 66]
   17494155:
     template: Hell_Hound
-    at:       [-97.403, -16.500, 294.472, 224]
+    region:   n_139
     level:    [64, 66]
   17494156:
     template: Hell_Hound
-    at:       [-58.789, -12.397, 267.746, 30]
+    region:   n_140
     level:    [64, 66]
   17494157:
     template: Hell_Hound
-    at:       [-26.245, -8.429, 262.443, 233]
+    region:   n_141
     level:    [64, 66]
   17494158:
     template: Hell_Hound
@@ -5053,46 +3780,46 @@ spawns:
   17494161:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [-61.503, -16.500, 294.246, 54]
+    region:   n_145
     level:    [68, 70]
   17494162:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [-67.637, -16.500, 305.934, 242]
+    region:   n_145
     level:    [68, 70]
   17494163:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [-54.940, -16.500, 300.367, 83]
+    region:   n_147
     level:    [68, 70]
   17494164:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [-52.498, -16.500, 293.707, 250]
+    region:   n_147
     level:    [68, 70]
   17494165:
     template: Lich_ENS
     script:   Lich
-    at:       [-14.092, -8.676, 223.821, 231]
+    region:   n_149
     level:    [65, 69]
   17494166:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [-22.080, -8.498, 220.142, 134]
+    region:   n_149
     level:    [65, 69]
   17494167:
     template: Lich_ENS
     script:   Lich
-    at:       [-22.478, -8.480, 214.764, 181]
+    region:   n_151
     level:    [65, 69]
   17494168:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [-26.023, -8.655, 215.237, 91]
+    region:   n_151
     level:    [65, 69]
   17494169:
     template: Northern_Spriggan
-    at:       [37.205, -15.874, 332.028, 243]
+    region:   n_153
     level:    [66, 69]
   17494170:
     template: Southern_Spriggan
@@ -5100,7 +3827,7 @@ spawns:
     level:    [66, 69]
   17494171:
     template: Western_Spriggan
-    at:       [31.567, -15.500, 319.413, 232]
+    region:   n_155
     level:    [66, 69]
   17494172:
     template: Northern_Spriggan
@@ -5108,7 +3835,7 @@ spawns:
     level:    [66, 69]
   17494173:
     template: Southern_Spriggan
-    at:       [45.826, -16.026, 331.345, 100]
+    region:   n_157
     level:    [66, 69]
   17494174:
     template: Eastern_Spriggan
@@ -5120,47 +3847,47 @@ spawns:
     level:    [66, 69]
   17494176:
     template: Western_Spriggan
-    at:       [44.359, -15.530, 307.799, 252]
+    region:   n_160
     level:    [66, 69]
   17494177:
     template: Lich_ENS
     script:   Lich
-    at:       [34.008, -15.506, 321.234, 93]
+    region:   n_153
     level:    [65, 69]
   17494178:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [29.297, -15.972, 326.580, 129]
+    region:   n_153
     level:    [65, 69]
   17494179:
     template: Lich_ENS
     script:   Lich
-    at:       [39.603, -15.492, 320.012, 219]
+    region:   n_155
     level:    [65, 69]
   17494180:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [31.750, -15.611, 319.977, 230]
+    region:   n_155
     level:    [65, 69]
   17494181:
     template: Lich_ENS
     script:   Lich
-    at:       [46.189, -16.093, 333.140, 160]
+    region:   n_157
     level:    [65, 69]
   17494182:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [50.551, -16.001, 327.836, 5]
+    region:   n_157
     level:    [65, 69]
   17494183:
     template: Lich_ENS
     script:   Lich
-    at:       [54.253, -15.874, 319.734, 195]
+    region:   n_160
     level:    [65, 69]
   17494184:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [46.967, -15.510, 313.410, 176]
+    region:   n_160
     level:    [65, 69]
   17494185:
     template: Revenant_SoZ_ENS_FY
@@ -5200,122 +3927,122 @@ spawns:
   17494192:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [180.856, -0.789, -186.706, 75]
+    region:   se_176
     level:    [68, 70]
   17494193:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [175.193, -0.492, -191.972, 155]
+    region:   se_176
     level:    [68, 70]
   17494194:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [179.712, -0.504, -180.844, 90]
+    region:   se_178
     level:    [68, 70]
   17494195:
     template: Revenant_SoZ_ENS_FY
     script:   Revenant
-    at:       [179.090, -0.206, -176.096, 190]
+    region:   se_178
     level:    [68, 70]
   17494196:
     template: Lich_ENS
     script:   Lich
-    at:       [-11.023, 0.530, 42.277, 126]
+    region:   c_180
     level:    [65, 69]
   17494197:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [-10.857, -0.241, 53.216, 167]
+    region:   c_180
     level:    [65, 69]
   17494198:
     template: Lich_ENS
     script:   Lich
-    at:       [6.599, 0.499, 51.500, 167]
+    region:   c_182
     level:    [65, 69]
   17494199:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [7.346, 0.499, 46.645, 124]
+    region:   c_182
     level:    [65, 69]
   17494200:
     template: Lich_ENS
     script:   Lich
-    at:       [-10.577, 0.516, 35.276, 162]
+    region:   c_184
     level:    [65, 69]
   17494201:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [-0.724, 0.510, 36.929, 33]
+    region:   c_184
     level:    [65, 69]
   17494202:
     template: Lich_ENS
     script:   Lich
-    at:       [11.665, -0.015, 32.398, 66]
+    region:   c_186
     level:    [65, 69]
   17494203:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [11.500, 0.509, 40.636, 233]
+    region:   c_186
     level:    [65, 69]
   17494204:
     template: Ignis_Djinn
-    at:       [25.548, -0.507, -25.117, 18]
+    region:   c_188
     level:    [68, 72]
   17494205:
     template: Ignis_Djinn
-    at:       [20.714, -0.696, -14.670, 210]
+    region:   c_189
     level:    [68, 72]
   17494206:
     template: Ignis_Djinn
-    at:       [18.719, -0.518, -20.231, 155]
+    region:   c_188
     level:    [68, 72]
   17494207:
     template: Ignis_Djinn
-    at:       [18.664, -0.739, -12.650, 147]
+    region:   c_189
     level:    [68, 72]
   17494208:
     template: Ignis_Djinn
-    at:       [26.159, -0.506, -25.077, 246]
+    region:   c_188
     level:    [68, 72]
   17494209:
     template: Ignis_Djinn
-    at:       [22.509, -0.530, -17.422, 49]
+    region:   c_189
     level:    [68, 72]
   17494210:
     template: Ignis_Djinn
-    at:       [113.345, 8.468, -78.573, 253]
+    region:   c_194
     level:    [68, 72]
   17494211:
     template: Ignis_Djinn
-    at:       [124.918, 8.500, -77.407, 35]
+    region:   c_195
     level:    [68, 72]
   17494212:
     template: Ignis_Djinn
-    at:       [125.228, 8.500, -85.724, 193]
+    region:   c_196
     level:    [68, 72]
   17494213:
     template: Tethra
-    at:       [113.621, 8.584, -81.806, 54]
+    region:   c_196
     level:    [80, 80]
   17494214:
     template: Ignis_Djinn
-    at:       [120.322, 8.499, -83.217, 132]
+    region:   c_198
     level:    [68, 72]
   17494215:
     template: Ignis_Djinn
-    at:       [113.189, 8.480, -77.800, 255]
+    region:   c_194
     level:    [68, 72]
   17494216:
     template: Ignis_Djinn
-    at:       [119.961, 8.498, -76.667, 84]
+    region:   c_195
     level:    [68, 72]
   17494217:
     template: Ignis_Djinn
-    at:       [112.934, 8.449, -78.427, 212]
+    region:   c_196
     level:    [68, 72]
   17494218:
     template: Ignis_Djinn
-    at:       [125.771, 8.500, -83.915, 42]
+    region:   c_198
     level:    [68, 72]
   17494219:
     template: Ignis_Djinn
@@ -5328,22 +4055,22 @@ spawns:
   17494221:
     template: Lich_ENS
     script:   Lich
-    at:       [60.166, 0.113, 54.480, 237]
+    region:   c_205
     level:    [65, 69]
   17494222:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [53.117, 0.211, 62.961, 151]
+    region:   c_205
     level:    [65, 69]
   17494223:
     template: Lich_ENS
     script:   Lich
-    at:       [64.198, 0.145, 57.627, 226]
+    region:   c_205
     level:    [65, 69]
   17494224:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [56.195, 0.260, 57.826, 72]
+    region:   c_205
     level:    [65, 69]
   17494225:
     template: Lich_ENS
@@ -5353,42 +4080,42 @@ spawns:
   17494226:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [57.341, -0.723, 21.413, 7]
+    region:   c_210
     level:    [65, 69]
   17494227:
     template: Lich_ENS
     script:   Lich
-    at:       [47.055, -1.943, 11.454, 69]
+    region:   c_211
     level:    [65, 69]
   17494228:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [67.695, -0.536, 24.250, 229]
+    region:   c_212
     level:    [65, 69]
   17494229:
     template: Lich_ENS
     script:   Lich
-    at:       [60.298, -0.771, 8.830, 118]
+    region:   c_212
     level:    [65, 69]
   17494230:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [47.597, -0.500, 24.746, 188]
+    region:   c_210
     level:    [65, 69]
   17494231:
     template: Lich_ENS
     script:   Lich
-    at:       [47.270, -1.480, 14.602, 69]
+    region:   c_211
     level:    [65, 69]
   17494232:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [68.554, -0.537, 23.575, 221]
+    region:   c_212
     level:    [65, 69]
   17494233:
     template: Lich_ENS
     script:   Lich
-    at:       [66.075, -0.800, 14.722, 137]
+    region:   c_212
     level:    [65, 69]
   17494234:
     template: Lost_Soul_war_ENS
@@ -5403,7 +4130,7 @@ spawns:
   17494236:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [67.803, -4.255, 136.782, 237]
+    region:   c_220
     level:    [65, 69]
   17494237:
     template: Lich_ENS
@@ -5433,7 +4160,7 @@ spawns:
   17494242:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [1.242, 0.500, 36.686, 186]
+    region:   c_186
     level:    [65, 69]
   17494243:
     template: Lich_ENS
@@ -5443,77 +4170,77 @@ spawns:
   17494244:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [102.879, -7.742, 139.064, 155]
+    region:   c_228
     level:    [65, 69]
   17494245:
     template: Lich_ENS
     script:   Lich
-    at:       [102.838, -7.750, 139.006, 160]
+    region:   c_228
     level:    [65, 69]
   17494246:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [100.429, -7.738, 140.093, 253]
+    region:   c_228
     level:    [65, 69]
   17494247:
     template: Lich_ENS
     script:   Lich
-    at:       [175.737, -0.546, 153.189, 152]
+    region:   e_231
     level:    [65, 69]
   17494248:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [173.592, -1.679, 131.032, 26]
+    region:   e_232
     level:    [65, 69]
   17494249:
     template: Lich_ENS
     script:   Lich
-    at:       [184.691, -0.780, 136.436, 194]
+    region:   e_233
     level:    [65, 69]
   17494250:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [183.309, -0.769, 138.118, 20]
+    region:   e_234
     level:    [65, 69]
   17494251:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [168.832, -0.506, 141.463, 99]
+    region:   e_231
     level:    [65, 69]
   17494252:
     template: Lich_ENS
     script:   Lich
-    at:       [173.429, -1.715, 134.104, 190]
+    region:   e_232
     level:    [65, 69]
   17494253:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [184.059, -0.780, 132.743, 131]
+    region:   e_233
     level:    [65, 69]
   17494254:
     template: Lich_ENS
     script:   Lich
-    at:       [184.690, -0.536, 148.242, 197]
+    region:   e_234
     level:    [65, 69]
   17494255:
     template: Lich_ENS
     script:   Lich
-    at:       [98.213, -15.927, 227.162, 130]
+    region:   n_239
     level:    [65, 69]
   17494256:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [99.497, -15.768, 224.607, 98]
+    region:   n_239
     level:    [65, 69]
   17494257:
     template: Lich_ENS
     script:   Lich
-    at:       [101.168, -15.957, 226.900, 215]
+    region:   n_239
     level:    [65, 69]
   17494258:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [102.003, -15.767, 219.453, 51]
+    region:   n_239
     level:    [65, 69]
   17494259:
     template: Lich_ENS
@@ -5523,7 +4250,7 @@ spawns:
   17494260:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [58.689, -16.452, 271.579, 63]
+    region:   n_244
     level:    [65, 69]
   17494261:
     template: Lich_ENS
@@ -5563,7 +4290,7 @@ spawns:
   17494268:
     template: Lost_Soul_war_ENS
     script:   Lost_Soul
-    at:       [179.979, -21.549, 229.199, 68]
+    region:   ne_252
     level:    [65, 69]
   17494269:
     template: Lich_ENS
@@ -5573,7 +4300,7 @@ spawns:
   17494270:
     template: Lich_ENS
     script:   Lich
-    at:       [140.922, -16.290, 201.814, 193]
+    region:   n_254
     level:    [65, 69]
   17494271:
     template: Lost_Soul_war_ENS
@@ -5587,11 +4314,11 @@ spawns:
     level:    [65, 69]
   17494273:
     template: Earth_Elemental
-    at:       [172.469, -32.500, 59.845, 118]
+    region:   e_14
     level:    [70, 75]
   17494274:
     template: Earth_Elemental
-    at:       [176.445, -32.500, -20.732, 22]
+    region:   e_20
     level:    [70, 75]
   17494275:
     template: Ice_Elemental
@@ -5651,34 +4378,34 @@ spawns:
     level:    [1, 1]
   17494296:
     template: Leonoyne
-    at:       [179.968, -28.000, -105.927]
+    region:   e_280
   17494297:
     template: Savage_Hound_Condottiere
-    at:       [173.177, -28.000, -91.931, 193]
+    region:   e_280
   17494298:
     template: Savage_Hound_Condottiere
-    at:       [173.215, -28.000, -94.194, 63]
+    region:   e_280
   17494299:
     template: Savage_Hound_Condottiere
-    at:       [189.624, -28.169, -88.580, 254]
+    region:   e_280
   17494300:
     template: Savage_Hound_Condottiere
-    at:       [178.703, -28.000, -106.362, 2]
+    region:   e_280
   17494301:
     template: Savage_Hound_Condottiere
-    at:       [179.534, -27.999, -106.508, 121]
+    region:   e_280
   17494302:
     template: Savage_Hound_Condottiere
-    at:       [180.400, -28.170, -112.983, 119]
+    region:   e_280
   17494303:
     template: Savage_Hound_Condottiere
-    at:       [185.654, -28.001, -107.475, 196]
+    region:   e_280
   17494304:
     template: Savage_Hound_Condottiere
-    at:       [179.921, -28.008, -107.043, 186]
+    region:   e_280
   17494305:
     template: Savage_Hound_Condottiere
-    at:       [179.920, -28.000, -106.735, 255]
+    region:   e_280
   17494306:
     template: Ashmea_B_Greinner
   17494307:
@@ -5762,25 +4489,26 @@ spawns:
     level:    [70, 70]
   17494336:
     template: Febrenard_C_Brunnaut
+    region:   e_320
   17494337:
     template: Temple_Knight
-    at:       [255.701, -32.500, -54.562, 14]
+    region:   e_321
     level:    [70, 70]
   17494338:
     template: Temple_Knight
-    at:       [266.920, -32.500, -56.435, 71]
+    region:   e_321
     level:    [70, 70]
   17494339:
     template: Temple_Knight
-    at:       [258.333, -33.750, -59.800, 50]
+    region:   e_321
     level:    [70, 70]
   17494340:
     template: Temple_Knight
-    at:       [256.704, -32.500, -53.207, 122]
+    region:   e_321
     level:    [70, 70]
   17494341:
     template: Temple_Knight
-    at:       [261.265, -33.750, -59.815, 226]
+    region:   e_321
     level:    [70, 70]
   17494342:
     template: Temple_Knight
@@ -5909,7 +4637,7 @@ spawns:
     level:    [60, 60]
   17494383:
     template: Royal_Palliator
-    at:       [260.291, -32.499, -68.939, 64]
+    region:   e_367
     level:    [60, 60]
   17494384:
     template: Royal_Provisioner

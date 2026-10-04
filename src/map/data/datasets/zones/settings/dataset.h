@@ -23,10 +23,15 @@
 
 #include "common/cbasetypes.h"
 #include "common/types/position.h"
+#include "data/enums/animation.h"
+#include "data/enums/transport_state.h"
 #include "data/enums/zone.h"
 #include "data/enums/zone_misc.h"
 #include "data/enums/zone_type.h"
 
+#include <array>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -43,6 +48,36 @@ struct ZoneLineData
     float      ScaleZ{};
 };
 
+struct TransportMoveData
+{
+    position_t Where{};
+    uint32     After{}; // seconds into the phase
+};
+
+struct TransportPhaseData
+{
+    xi::TransportState             State{};
+    xi::Animation                  Animation{};
+    uint32                         Start{}; // seconds into the cycle
+    uint32                         End{};
+    std::vector<TransportMoveData> Moves{};
+    std::optional<uint32>          Hide; // seconds into the phase after which the client stops drawing it
+};
+
+struct TransportData
+{
+    std::string                     Name;
+    uint32                          Ship{};
+    std::string                     Door; // client name, resolved once the zone's NPCs exist
+    std::optional<position_t>       Dock; // unset on a decorative ship, which keeps wherever the zone put it
+    uint16                          Boundary{};
+    std::vector<xi::ZoneId>         Crossings; // zones the riders may cross, empty when the run carries nobody
+    uint32                          Every{};   // cycle length in seconds, or 0 when the run never repeats
+    uint32                          Offset{};
+    uint32                          Disembark{}; // seconds into the cycle, or 0 when never measured
+    std::vector<TransportPhaseData> Phases{};
+};
+
 struct ZoneMusicData
 {
     uint16 Day{};
@@ -51,14 +86,34 @@ struct ZoneMusicData
     uint16 BattleParty{};
 };
 
+struct NavMeshSkipSphereData
+{
+    std::array<float, 3> Center{};
+    float                Radius{};
+};
+
+// What this zone tells the navmesh bake beyond its collision mesh.
+struct ZoneNavMeshData
+{
+    std::vector<float>                 SkipPlanes{}; // world Y of flat planes
+    std::vector<NavMeshSkipSphereData> SkipSpheres{};
+    std::optional<bool>                OffMeshLinks;
+    std::optional<float>               OffMeshMaxDrop;
+    std::optional<float>               OffMeshReach;
+    std::optional<float>               WalkableSlopeAngle;
+    std::optional<float>               AgentMaxClimb;
+};
+
 struct ZoneSettings
 {
-    xi::ZoneType              Type{};
-    xi::ZoneMisc              Misc{};
-    ZoneMusicData             Music{};
-    float                     Tax{}; // scaled by the consumer, as the SQL path did
-    uint8                     LevelRestriction{};
-    std::vector<ZoneLineData> ZoneLines{};
+    xi::ZoneType               Type{};
+    xi::ZoneMisc               Misc{};
+    ZoneMusicData              Music{};
+    float                      Tax{}; // scaled by the consumer, as the SQL path did
+    uint8                      LevelRestriction{};
+    std::vector<ZoneLineData>  ZoneLines{};
+    std::vector<TransportData> Transports{};
+    ZoneNavMeshData            NavMesh{};
 };
 
 } // namespace xi::data

@@ -563,15 +563,14 @@ void CLiveController::EngageDoor()
     // The door's pick, a cardian's own (CGambits::EngageChoice): his Attack
     // rows top down over the party's foes around him -- of those he can
     // take now. What a cardian walks to, he takes only within upstream's
-    // engage reach of where he stands; only past upstream's re-engage wait,
-    // counted from his last swing as CPlayerController::Engage counts it,
-    // so the game is never asked early and never says "wait longer"; and
-    // never the mob he left by his own hand
-    const auto lastEngaged = static_cast<uint32>(PChar->GetLocalVar("cardianLastEngaged"));
-    const auto takes       = [&](CBattleEntity* PFoe)
+    // engage reach of where he stands; only once upstream's re-engage lockout
+    // is over, as CPlayerController::Engage judges it, so the game is never
+    // asked early and never says "wait longer"; and never the mob he left by
+    // his own hand
+    const auto takes = [&](CBattleEntity* PFoe)
     {
         return PFoe->loc.zone == PChar->loc.zone && distance(PChar->loc.p, PFoe->loc.p) < kEngageReach && !LeftByHand(PFoe) &&
-               timer::now() > m_lastAttackTime + pawn::reengageWait(PChar, PFoe, lastEngaged);
+               timer::now() >= m_engageLockedUntil;
     };
     const auto pick = m_Gambits->EngageChoice(leaderOf(PChar), PChar->loc.p, takes);
     auto*      PFoe = pick.target;

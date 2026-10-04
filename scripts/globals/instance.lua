@@ -68,8 +68,8 @@ xi.instance.lookup =
     [xi.zone.PERIQIA] =
     {
         { 5600, { 143, 79, -6, 0, 99, 3, 0 }, { 143, 4 }, { 147, 3 } }, -- Shades of Vengeance (TOAU31)
-        { 5601, { 143, 31, -4, 0, 70, 0, 1 }, { 143, 4 }, { 147, 0 } }, -- Assault: Seagull Grounded
-        -- Assault: Requiem
+        -- Assault: Seagull Grounded (scripts/assaults/Periqia/seagull_grounded.lua)
+        -- Assault: Requiem (scripts/assaults/Periqia/requiem.lua)
         -- Assault: Saving Private Ryaaf
         -- Assault: Shooting Down the Baron
         -- Assault: Stop the Bloodshed
@@ -106,7 +106,7 @@ xi.instance.lookup =
 
     [xi.zone.MAMOOL_JA_TRAINING_GROUNDS] =
     {
-        { 6600, { 505, 11, -4, 0, 60, 0, 1 }, { 505, 4 }, { 511, 0 } }, -- Assault: Imperial Agent Rescue
+        -- Assault: Imperial Agent Rescue (scripts/assaults/Mamool_Ja_Training_Grounds/imperial_agent_rescue.lua)
         -- Assault: Preemptive Strike
         -- Assault: Sagelord Elimination
         -- Assault: Breaking Morale
@@ -511,8 +511,11 @@ xi.instance.onEventFinish = function(player, csid, option, npc, instanceInfo)
         local csidEntry, optionEntry = unpack(instanceInfo)
 
         if csid == csidEntry and option == optionEntry then
+            local playerZone = player:getZoneID()
             for _, v in ipairs(player:getParty()) do
-                v:setPos(0, 0, 0, 0, instance:getZone():getID())
+                if v:getZoneID() == playerZone then
+                    v:setPos(0, 0, 0, 0, instance:getZone():getID())
+                end
             end
 
             return true
@@ -553,12 +556,12 @@ end
 
 xi.instance.updateInstanceTime = function(instance, elapsed, text)
     local players            = instance:getChars()
-    local remainingTimeLimit = instance:getTimeLimit() * 60 - (elapsed / 1000)
+    local remainingTimeLimit = instance:getTimeLimit() - elapsed
     local wipeTime           = instance:getWipeTime()
 
     if
         remainingTimeLimit < 0 or
-        (wipeTime ~= 0 and (elapsed - wipeTime) / 1000 > 180
+        (wipeTime ~= 0 and elapsed - wipeTime > 180
         )
     then
         instance:fail()

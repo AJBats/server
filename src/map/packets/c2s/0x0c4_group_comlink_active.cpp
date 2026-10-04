@@ -28,6 +28,7 @@
 #include "items.h"
 #include "items/item_linkshell.h"
 #include "linkshell.h"
+#include "packets/c2s/validation.h"
 #include "packets/char_status.h"
 #include "packets/s2c/0x01d_item_same.h"
 #include "packets/s2c/0x01f_item_list.h"
@@ -97,6 +98,13 @@ const auto equipLinkshell = [](CCharEntity* PChar, CItemLinkshell* PItemLinkshel
     {
         slot         = SLOT_LINK2;
         oldLinkshell = PChar->PLinkshell2;
+    }
+
+    if (PItemLinkshell->GetLSType() == LSTYPE_BROKEN)
+    {
+        PChar->pushPacket<GP_SERV_COMMAND_MESSAGE>(MsgStd::LinkshellNoLongerExists);
+
+        return;
     }
 
     // If the linkshell has been broken, break the item
@@ -206,6 +214,11 @@ void GP_CLI_COMMAND_GROUP_COMLINK_ACTIVE::process(MapSession* PSession, CCharEnt
         {
             if (PItemLinkshell->getID() == ITEMID::NEW_LINKSHELL)
             {
+                if (PItemLinkshell->isBusy())
+                {
+                    return;
+                }
+
                 // Case 1. New Linkshell, create it.
                 createLinkshell(PChar, PItemLinkshell, *this);
             }

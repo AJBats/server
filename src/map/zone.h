@@ -45,12 +45,14 @@
 
 #include <map/navmesh/navmesh.h>
 #include <map/navmesh/navmesh_config.h>
-#include <map/ximesh/ximesh.h>
 
 #include <common/types/hash_map.h>
 #include <list>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
 
 //
 // Forward Declarations
@@ -301,7 +303,8 @@ public:
     // (teleport, setPos, a movement step, etc.).
     virtual void onEntityMoved(CBaseEntity* PEntity);
 
-    virtual void TransportDepart(uint16 boundary, xi::ZoneId prevZoneId, uint16 transportId); // Collect passengers if ship/boat is departing
+    virtual void TransportDepart(uint16 boundary, xi::ZoneId prevZoneId, std::string_view transport); // Collect passengers if ship/boat is departing
+    virtual void DisembarkAll();                                                                      // Put whoever is still riding through this zone ashore
 
     virtual void updateCharLevelRestriction(CCharEntity* PChar); // Removes the character's level restriction. If the zone has a level restriction, it is applied after it is removed.
 
@@ -365,6 +368,7 @@ protected:
 
 private:
     void LoadZoneSettings(const std::optional<xi::data::ZoneSettings>& settings);
+    void applyNavMeshOverrides(NavMeshConfig& config) const;
     void LoadZoneLines(const std::optional<xi::data::ZoneSettings>& settings);
     void LoadZoneWeather();
 
@@ -390,6 +394,8 @@ private:
     xi::ZoneMisc m_miscMask{};
 
     zoneMusic_t m_zoneMusic{};
+
+    xi::data::ZoneNavMeshData navMeshData_{};
 
     zoneLineList_t m_zoneLineList;
 
