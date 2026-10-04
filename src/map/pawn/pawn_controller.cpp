@@ -1228,6 +1228,7 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
         StandFromRest("the camp moved away");
     }
     m_Stake        = std::move(stake);
+    m_CampWaitPoint.reset(); // planned afresh for the new camp
     pawn::tactics::resetRestMemory(static_cast<CCharEntity*>(POwner));
     // A new place: her seats aim afresh, and a spot kept after a fight goes
     m_Towing = false;
@@ -2550,10 +2551,8 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
 
 auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent
 {
-    const auto  camp      = place.position();
-    const auto  me        = POwner->loc.p;
-    const float range     = CastRange();
-    const bool  preparing = !PMob->PAI->IsEngaged();
+    const auto camp      = place.position();
+    const bool preparing = !PMob->PAI->IsEngaged();
     // An unpulled mob is not yet an AoE source at its current position.
     // Prepare for the camp's landing point; use live geometry once it fights.
     position_t mob  = preparing ? nearPosition(camp, cardian::stake::kMobAhead, 0.0f) : PMob->loc.p;
@@ -2563,7 +2562,16 @@ auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, con
         const float reach = std::max(1.0f, PMob->GetMeleeRange(POwner) - 0.3f);
         tank = nearPosition(mob, reach, std::numbers::pi_v<float> / 2.0f);
     }
-    const float ring   = cardian::perimeter::ringOf(ReachOf(PMob), distance(mob, tank, true));
+    const float ring = cardian::perimeter::ringOf(ReachOf(PMob), distance(mob, tank, true));
+    m_CampRing       = ring; // what the camp's next pull is planned for (CampWaitIntent)
+    return CampSpot(place, mob, tank, ring, preparing ? "arrival" : "live");
+}
+
+auto CPawnController::CampSpot(const Place& place, const position_t& mob, const position_t& tank, const float ring, const std::string_view geometry) -> Intent
+{
+    const auto  camp   = place.position();
+    const auto  me     = POwner->loc.p;
+    const float range  = CastRange();
     const float radius = std::clamp(ring + 1.0f - cardian::stake::kMobAhead, 3.0f, std::max(3.0f, range - 2.0f - cardian::stake::kMobAhead));
     auto*       navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
     const auto clipped = [&](const position_t& point) -> std::optional<position_t>
@@ -2578,10 +2586,30 @@ auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, con
     const auto  forward   = [&](const position_t& p) { return cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, p.x, p.z); };
     const auto  rear      = clipped(nearPosition(camp, radius, std::numbers::pi_v<float>));
     const float rearDepth = rear.has_value() ? std::max(0.0f, -forward(*rear)) : radius;
+    // The mages stand together, never on one spot (#250): the spots of the
+    // attending mages before her in the party -- planned, and where each
+    // stands -- are taken, and a spot within kMageSpacing of one costs as
+    // much as the AoE would. Only the later mage gives way, so two never
+    // dance round each other
+    constexpr float         kMageSpacing = 2.0f;
+    std::vector<position_t> taken;
+    POwner->ForParty([&](CBattleEntity* PMember)
+    {
+        auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->PAI != nullptr ? dynamic_cast<CPawnController*>(PMember->PAI->GetController()) : nullptr;
+        if (PPeer != nullptr && PPeer->WaitsAtCampSpot())
+        {
+            taken.push_back(PMember->loc.p);
+            if (const auto planned = PPeer->CampWaitPoint(); planned.has_value())
+            {
+                taken.push_back(*planned);
+            }
+        }
+    });
     const auto cost = [&](const position_t& p)
     {
-        const float side = cardian::stake::forwardOf(camp.x, camp.z, static_cast<uint8>(camp.rotation + 64), p.x, p.z);
-        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range);
+        const float side   = cardian::stake::forwardOf(camp.x, camp.z, static_cast<uint8>(camp.rotation + 64), p.x, p.z);
+        const bool  crowds = std::any_of(taken.begin(), taken.end(), [&](const position_t& t) { return distance(p, t, true) < kMageSpacing; });
+        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range) + (crowds ? 12.0f : 0.0f);
     };
 
     // Small rear arc search; mesh clipping naturally compresses it against
@@ -2648,12 +2676,53 @@ auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, con
     const bool  moves   = intent.kind == Intent::Kind::Path;
     const bool  exposed = distance(me, mob, true) < ring;
     const uint8 verdict = moves ? 7 : exposed ? 8 : 9;
-    if (m_AttendVerdict != verdict)
+    if (!geometry.empty() && m_AttendVerdict != verdict)
     {
         m_AttendVerdict = verdict;
         ShowInfoFmt("pawn: {} camp backline: {}{} (mob {:.1f} y, ring {:.1f}; cure {:.1f}/{:.0f}; {} geometry)", POwner->getName(),
                     moves ? fmt::format("repositions to ({:.1f}, {:.1f})", intent.point.x, intent.point.z) : "holds her spot",
-                    !moves && exposed ? "; accepts AoE exposure" : "", distance(me, mob, true), ring, distance(me, tank, true), range, preparing ? "arrival" : "live");
+                    !moves && exposed ? "; accepts AoE exposure" : "", distance(me, mob, true), ring, distance(me, tank, true), range, geometry);
+    }
+    return intent;
+}
+
+auto CPawnController::WaitsAtCampSpot() const -> bool
+{
+    return pawn::tactics::offersSpells(POwner) && !TakesFights();
+}
+
+auto CPawnController::CampWaitIntent(const Place& place) -> Intent
+{
+    // A kneel is planned to last into the next pull, so it is taken where
+    // that pull will be attended from: she walks there, then kneels, and
+    // rises close to her place in the fight (the user, 2026-10-03)
+    m_HasSlot       = false; // a camp spot is no formation slot for the vet to re-seat
+    const auto camp = place.position();
+    if (!m_CampWaitPoint.has_value())
+    {
+        // The pull lands at the flag (kMobAhead), its tank at its 3 o'clock
+        // at an ordinary mob's melee reach; its AoE the last ring seen at a
+        // camp, else an ordinary melee mob's TP reach. A search that finds
+        // nothing better than where she stands keeps her there
+        constexpr float kOrdinaryReach = 3.0f;
+        constexpr float kOrdinaryRing  = 12.0f;
+        const auto      mob            = nearPosition(camp, cardian::stake::kMobAhead, 0.0f);
+        const auto      tank           = nearPosition(mob, kOrdinaryReach, std::numbers::pi_v<float> / 2.0f);
+        const float     ring           = m_CampRing > 0.0f ? m_CampRing : kOrdinaryRing;
+        const auto      spot           = CampSpot(place, mob, tank, ring, "");
+        m_CampWaitPoint                = spot.kind == Intent::Kind::Path ? spot.point : POwner->loc.p;
+        ShowInfoFmt("pawn: {} plans to wait for the camp's pulls at ({:.1f}, {:.1f}), {:.1f} y from the flag (ring {:.1f}{})", POwner->getName(),
+                    m_CampWaitPoint->x, m_CampWaitPoint->z, distance(*m_CampWaitPoint, camp, true), ring, m_CampRing > 0.0f ? ", the last seen at a camp" : ", an ordinary mob's");
+    }
+    Intent intent;
+    intent.kneelSpot = true;
+    if (distance(POwner->loc.p, *m_CampWaitPoint, true) > 0.75f)
+    {
+        intent.kind         = Intent::Kind::Path;
+        intent.point        = *m_CampWaitPoint;
+        intent.arrive       = 0.5f;
+        intent.tolerance    = 0.75f;
+        intent.rearBoundary = camp;
     }
     return intent;
 }
@@ -4047,6 +4116,21 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 ShowInfoFmt("pawn: {} keeps her spot at ({:.1f}, {:.1f}) after the fight ({:.1f} y from her seat)", POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, distance(POwner->loc.p, held.point, true));
                 held.point = POwner->loc.p;
             }
+            // Where she waits for the next pull (CampWaitIntent): the spot she
+            // attended from, when it lies behind the flag; one the fight
+            // pushed her into at the flag is planned afresh
+            if (place != nullptr && place->fixed())
+            {
+                const auto camp = place->position();
+                if (cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, POwner->loc.p.x, POwner->loc.p.z) <= -2.0f)
+                {
+                    m_CampWaitPoint = POwner->loc.p;
+                }
+                else
+                {
+                    m_CampWaitPoint.reset();
+                }
+            }
             Transition(IdleMode(), !spells && PAttended != nullptr && !PAttended->isDead()
                                        ? fmt::format("stops attending {} (her rows no longer offer the fight a spell)", PAttended->getName())
                                        : AttendExitReason());
@@ -4153,7 +4237,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
     else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, or her Rest row's, she stays where she kneels
     {
-        proposal = FormationIntent(*place, PPlayer, nullptr);
+        // At a camp an attending mage's seat is where she will attend the next pull from
+        proposal = place->fixed() && WaitsAtCampSpot() ? CampWaitIntent(*place) : FormationIntent(*place, PPlayer, nullptr);
     }
     else
     {
@@ -4168,7 +4253,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // RestTick first checks urgent healing, danger and orders. Only when it
     // keeps her down do we suppress the proposal; Move still vets her current
     // position for aggro/link danger and may escape it.
-    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath()))
+    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.kneelSpot))
     {
         proposal.kind = Intent::Kind::Stand;
         proposal.seat = false;
