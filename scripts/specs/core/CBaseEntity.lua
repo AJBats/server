@@ -12,8 +12,9 @@ local CBaseEntity = {}
 ---@param p3 integer?
 ---@param showName boolean?
 ---@param turn boolean?
+---@param messageType integer? Message type. Omit for the full type 0 packet. Otherwise compact unless showName is true.
 ---@return nil
-function CBaseEntity:showText(mob, messageID, p0, p1, p2, p3, showName, turn)
+function CBaseEntity:showText(mob, messageID, p0, p1, p2, p3, showName, turn, messageType)
 end
 
 ---@param PLuaBaseEntity CBaseEntity
@@ -55,8 +56,9 @@ end
 ---@param p2 integer?
 ---@param p3 integer?
 ---@param chat integer?
+---@param sender CBaseEntity? Speaker for private messages, separate from the named entity.
 ---@return nil
-function CBaseEntity:messageName(messageID, entity, p0, p1, p2, p3, chat)
+function CBaseEntity:messageName(messageID, entity, p0, p1, p2, p3, chat, sender)
 end
 
 ---@param messageID integer
@@ -579,15 +581,6 @@ end
 ---@param seconds integer?
 ---@return nil
 function CBaseEntity:closeDoor(seconds)
-end
-
----@param id integer
----@param lowerDoor integer
----@param upperDoor integer
----@param elevatorId integer
----@param reversed boolean
----@return nil
-function CBaseEntity:setElevator(id, lowerDoor, upperDoor, elevatorId, reversed)
 end
 
 ---@param id integer
@@ -1990,8 +1983,9 @@ function CBaseEntity:unseenKeyItem(keyItemID)
 end
 
 ---@param exp integer
+---@param allowLimitPoints boolean? Defaults to true. False grants EXP only without a gain message.
 ---@return nil
-function CBaseEntity:addExp(exp)
+function CBaseEntity:addExp(exp, allowLimitPoints)
 end
 
 ---@param capacity integer
@@ -2197,6 +2191,15 @@ end
 ---@param value integer
 ---@return nil
 function CBaseEntity:setHP(value)
+end
+
+---@class DeathParams
+---@field expLoss boolean? Whether the death costs experience points. Defaults to true
+---@field mijin boolean? Mijin Gakure: no weakness and half HP back on raise. Defaults to false
+
+---@param params DeathParams?
+---@return nil
+function CBaseEntity:die(params)
 end
 
 ---@param value integer
@@ -2608,6 +2611,11 @@ function CBaseEntity:getBattlefield()
 end
 
 ---@nodiscard
+---@return CBattlefield?
+function CBaseEntity:getRegisteredBattlefield()
+end
+
+---@nodiscard
 ---@return integer
 function CBaseEntity:getBattlefieldID()
 end
@@ -2963,8 +2971,8 @@ end
 ---@class StatusEffectParams
 ---@field origin CBaseEntity
 ---@field power number?
----@field duration number?
----@field tick number?
+---@field duration number? Seconds
+---@field tick number? Seconds
 ---@field icon xi.effect? Defaults to effectId if not set
 ---@field subType integer?
 ---@field subPower number?
@@ -3233,7 +3241,7 @@ function CBaseEntity:setStatDebilitation(statDebil)
 end
 
 ---@nodiscard
----@param statId integer
+---@param statId integer|xi.mod
 ---@param optSlot integer?
 ---@return integer
 function CBaseEntity:getStat(statId, optSlot)
@@ -3395,8 +3403,8 @@ end
 ---@param caster CBaseEntity
 ---@param spell CSpell
 ---@param damage integer
----@param atkType integer
----@param dmgType integer
+---@param atkType integer|xi.attackType
+---@param dmgType integer|xi.damageType
 ---@return nil
 function CBaseEntity:takeSpellDamage(caster, spell, damage, atkType, dmgType)
 end
@@ -3426,6 +3434,11 @@ end
 ---@param arg0 integer? Optional Pet ID
 ---@return nil
 function CBaseEntity:spawnPet(arg0)
+end
+
+---@param petId integer
+---@return nil
+function CBaseEntity:setPetStats(petId)
 end
 
 ---@return nil
@@ -3542,10 +3555,36 @@ end
 function CBaseEntity:setPetName(pType, value, arg2)
 end
 
----@param color xi.chocobo.color
----@param traits table
+---@param chocobo { color: xi.chocoboRaising.color?, largeBeak: boolean?, fullTail: boolean?, largeTalons: boolean?, speed: integer?, minutes: integer?, ability1: integer?, ability2: integer?, strength: integer?, endurance: integer?, discernment: integer?, receptivity: integer?, weather: integer?, silksSpeedBonus: integer? }
 ---@return nil
-function CBaseEntity:registerChocobo(color, traits)
+function CBaseEntity:registerChocobo(chocobo)
+end
+
+---@nodiscard
+---@return { color: xi.chocoboRaising.color, largeBeak: boolean, fullTail: boolean, largeTalons: boolean, speed: integer, minutes: integer, properties: integer }?
+function CBaseEntity:getFieldChocobo()
+end
+
+---@class ChocoboUserData
+---@field flags integer
+---@field chocobosRaised integer
+---@field registeredAbility1 integer
+---@field registeredAbility2 integer
+---@field registeredStrength integer
+---@field registeredEndurance integer
+---@field registeredDiscernment integer
+---@field registeredReceptivity integer
+---@field registeredWeather integer
+---@field silksSpeedBonus integer
+
+---@nodiscard
+---@return ChocoboUserData
+function CBaseEntity:getChocoboUserData()
+end
+
+---@param data { flags: integer?, chocobosRaised: integer? }
+---@return nil
+function CBaseEntity:setChocoboUserData(data)
 end
 
 ---@nodiscard

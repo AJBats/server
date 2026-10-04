@@ -22,12 +22,14 @@
 #include "0x0e0_set_usermsg.h"
 
 #include "entities/char_entity.h"
+#include "packets/c2s/validation.h"
 #include "packets/char_status.h"
 
 auto GP_CLI_COMMAND_SET_USERMSG::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
 {
     return PacketValidator(PChar)
-        .oneOf<GP_CLI_COMMAND_SET_USERMSG_MSGTYPE>(this->msgType);
+        .oneOf<GP_CLI_COMMAND_SET_USERMSG_MSGTYPE>(this->msgType)
+        .mustEqual(asStringFromUntrustedSource(this->sMessage, sizeof(this->sMessage)).size() <= 123, true, "sMessage longer than 123 bytes");
 }
 
 void GP_CLI_COMMAND_SET_USERMSG::process(MapSession* PSession, CCharEntity* PChar) const

@@ -23,12 +23,13 @@
 
 #include "ability.h"
 #include "ai/ai_container.h"
-#include "common/settings.h" // CARDIAN
 #include "entities/char_entity.h"
+#include "enums/msg_basic.h"
 #include "items/item_weapon.h"
 #include "latent_effect_container.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "packets/s2c/0x058_assist.h"
+#include "pawn/reengage.h" // CARDIAN
 #include "recast_container.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
@@ -77,20 +78,12 @@ auto CPlayerController::Engage(const EntityId& target) -> bool
     {
         if (distance(PChar->loc.p, PTarget->loc.p) < 30)
         {
-            // CARDIAN: the disengage/re-engage nerf -- the full weapon delay,
-            // which punished slow weapons for a trick only they could work --
-            // applies only to the mob just fought. A switch to a different mob
-            // takes the pre-nerf fixed wait (cardian.REENGAGE_SWITCH_DELAY).
-            const bool cardianSameTarget = PChar->GetLocalVar("cardianLastEngaged") == PTarget->id;
-            const auto cardianWait       = cardianSameTarget
-                                               ? std::chrono::milliseconds(PChar->GetWeaponDelay(false))
-                                               : std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
-
-            if (m_lastAttackTime + cardianWait < timer::now())
+            // CARDIAN: upstream's lockout for the mob of his last swing; a switch to another waits at most
+            // cardian.REENGAGE_SWITCH_DELAY after that swing (pawn/reengage.h)
+            if (timer::now() >= cardian::reengage::playerReadyAt(PChar, PTarget, m_engageLockedUntil, m_lastAttackTime))
             {
                 if (CController::Engage(target))
                 {
-                    PChar->SetLocalVar("cardianLastEngaged", PTarget->id); // CARDIAN: which mob the wait above is measured against
                     PChar->PLatentEffectContainer->CheckLatentsWeaponDraw(true);
                     PChar->pushPacket<GP_SERV_COMMAND_ASSIST>(PChar, PTarget);
                     return true;
@@ -282,6 +275,11 @@ auto CPlayerController::getLastAttackTime() -> timer::time_point
 void CPlayerController::setLastAttackTime(timer::time_point _lastAttackTime)
 {
     m_lastAttackTime = _lastAttackTime;
+}
+
+void CPlayerController::setEngageLockedUntil(const timer::time_point engageLockedUntil)
+{
+    m_engageLockedUntil = engageLockedUntil;
 }
 
 auto CPlayerController::getLastSpellFinishedTime() -> timer::time_point

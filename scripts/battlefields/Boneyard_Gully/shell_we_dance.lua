@@ -15,7 +15,7 @@ local content = Battlefield:new({
     index            = 3,
     entryNpc         = '_081',
     exitNpcs         = { '_082', '_084', '_086' },
-    requiredKeyItems = { xi.ki.MIASMA_FILTER },
+    requiredKeyItems = { xi.keyItem.MIASMA_FILTER },
     armouryCrates    =
     {
         boneyardGullyID.mob.PARATA + 8,
@@ -97,8 +97,8 @@ content.loot =
     },
 
     {
-        { itemId = xi.item.NONE,                     weight = 9500 },
-        { itemId = xi.item.CLOUD_EVOKER,             weight =  500 },
+        { itemId = xi.item.NONE,                     weight = 9750 },
+        { itemId = xi.item.CLOUD_EVOKER,             weight =  250 },
     },
 
     {

@@ -22,6 +22,12 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "common/logging.h"
+#include "common/types/maybe.h"
+
+#include <array>
+#include <string>
+#include <vector>
 
 // md5 hash + blowfish key appended by SearchHandler::encrypt()
 inline constexpr uint32 searchPacketTrailerSize = 0x10 + 0x04;
@@ -44,6 +50,9 @@ struct SearchRequest
     std::string   name;
     uint8         nameLen;
     uint8         commentType;
+    bool          friendsOnly = false;
+
+    std::vector<uint32> characterIds;
 };
 
 class SearchPacket

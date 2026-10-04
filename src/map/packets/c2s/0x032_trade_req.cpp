@@ -24,6 +24,7 @@
 #include "entities/char_entity.h"
 #include "enums/msg_std.h"
 #include "items/transactions/player_trade.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x021_item_trade_req.h"
 #include "packets/s2c/0x022_item_trade_res.h"
 #include "packets/s2c/0x053_systemmes.h"
@@ -73,7 +74,7 @@ void GP_CLI_COMMAND_TRADE_REQ::process(MapSession* PSession, CCharEntity* PChar)
         return;
     }
 
-    if (PTarget->TradePending.UniqueNo == PChar->id)
+    if (PTarget->TradePending.entity.UniqueNo == PChar->id)
     {
         ShowDebugFmt("{} has already sent a trade request to {}", PChar->getName(), PTarget->getName());
         return;
@@ -85,9 +86,9 @@ void GP_CLI_COMMAND_TRADE_REQ::process(MapSession* PSession, CCharEntity* PChar)
         return;
     }
 
-    const auto currentTime           = realtime::now(); // CARDIAN: the invite window runs on real time
-    const auto lastTargetTrade       = currentTime - PTarget->lastTradeInvite;
-    const bool targetHasRecentInvite = PTarget->TradePending.ActIndex != 0 && lastTargetTrade < 60s;
+    const auto              currentTime           = realtime::now(); // CARDIAN: the invite window runs on real time
+    const auto              lastTargetTrade       = currentTime - PTarget->TradePending.invitedAt;
+    const bool              targetHasRecentInvite = PTarget->TradePending.entity.ActIndex != 0 && lastTargetTrade < 60s;
 
     if (targetHasRecentInvite)
     {
@@ -107,10 +108,7 @@ void GP_CLI_COMMAND_TRADE_REQ::process(MapSession* PSession, CCharEntity* PChar)
         return;
     }
 
-    PChar->lastTradeInvite = currentTime;
-    PChar->TradePending    = EntityId(PTarget);
-
-    PTarget->lastTradeInvite = currentTime;
-    PTarget->TradePending    = EntityId(PChar);
+    PChar->TradePending   = { .entity = EntityId(PTarget), .invitedAt = currentTime, .initiator = true };
+    PTarget->TradePending = { .entity = EntityId(PChar), .invitedAt = currentTime, .initiator = false };
     PTarget->pushPacket<GP_SERV_COMMAND_ITEM_TRADE_REQ>(PChar);
 }

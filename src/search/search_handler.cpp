@@ -218,6 +218,8 @@ inline auto searchTypeToString(const uint8 type) -> std::string
             return "SEARCH";
         case TCP_SEARCH_ALL:
             return "SEARCH_ALL";
+        case TCP_ID_LIST:
+            return "ID_LIST";
         case TCP_SEARCH_COMMENT:
             return "SEARCH_COMMENT";
         case TCP_GROUP_LIST:
@@ -256,12 +258,17 @@ void SearchHandler::read_func(const uint16_t length)
             case TCP_SEARCH:
             case TCP_SEARCH_ALL:
             {
-                HandleSearchRequest();
+                HandleSearchRequest(length);
             }
             break;
             case TCP_SEARCH_COMMENT:
             {
                 HandleSearchComment();
+            }
+            break;
+            case TCP_ID_LIST:
+            {
+                HandleIdListRequest(length);
             }
             break;
             case TCP_GROUP_LIST:
@@ -418,10 +425,42 @@ void SearchHandler::HandleSearchComment()
     searchPackets_.emplace_back(commentPacket.GetData(), length);
 }
 
-void SearchHandler::HandleSearchRequest()
+void SearchHandler::HandleSearchRequest(const uint16_t length)
 {
-    const SearchRequest sr = _HandleSearchRequest();
+    SendPlayersList(_HandleSearchRequest(length));
+}
 
+// Friend list refreshes 20 character IDs at a time. uint16 count at 0x10, uint32 IDs from 0x12
+void SearchHandler::HandleIdListRequest(const uint16_t length)
+{
+    constexpr uint16 maxIds     = 20;
+    constexpr uint16 idsOffset  = 0x12;
+    const uint16     dataLength = length - searchPacketTrailerSize;
+    if (dataLength < idsOffset)
+    {
+        return;
+    }
+
+    SearchRequest sr{};
+    sr.nation = 255; // any
+    sr.race   = 255; // any
+
+    const auto count = std::min<uint16>({ ref<uint16>(buffer_.data(), 0x10), maxIds, static_cast<uint16>((dataLength - idsOffset) / 4) });
+    for (uint16 index = 0; index < count; ++index)
+    {
+        sr.characterIds.push_back(ref<uint32>(buffer_.data(), idsOffset + index * 4));
+    }
+
+    if (sr.characterIds.empty())
+    {
+        return;
+    }
+
+    SendPlayersList(sr);
+}
+
+void SearchHandler::SendPlayersList(const SearchRequest& sr)
+{
     const CDataLoader PDataLoader;
     int               totalCount = 0;
 
@@ -475,34 +514,24 @@ void SearchHandler::HandleAuctionHouseRequest()
     // 7 - defense
     // 8 - resistance
     // 9 - name
-    std::string OrderByString = "ORDER BY";
-    const uint8 paramCount    = ref<uint8>(buffer_.data(), 0x12);
-    for (uint8 i = 0; i < paramCount; ++i) // Item sort options
+    // A repeated key cannot change the order, so the four distinct keys fill every slot the query has.
+    auto        sortKeys   = std::array<uint8, 4>{};
+    auto        keyCount   = 0U;
+    const uint8 paramCount = ref<uint8>(buffer_.data(), 0x12);
+    for (uint8 i = 0; i < paramCount && keyCount < sortKeys.size(); ++i) // Item sort options
     {
-        uint8 param = ref<uint32>(buffer_.data(), 0x18 + 8 * i);
+        const uint8 param = ref<uint32>(buffer_.data(), 0x18 + 8 * i);
         ShowInfoFmt(" Param{}: {}", i, param);
-        switch (param)
+
+        const auto isSortKey = param == 2 || param == 5 || param == 6 || param == 9;
+        if (isSortKey && std::ranges::find(sortKeys, param) == sortKeys.end())
         {
-            case 2:
-                OrderByString.append(" item_equipment.level DESC,");
-                break;
-            case 5:
-                OrderByString.append(" item_weapon.dmg DESC,");
-                break;
-            case 6:
-                OrderByString.append(" item_weapon.delay DESC,");
-                break;
-            case 9:
-                OrderByString.append(" item_basic.sortname,");
-                break;
+            sortKeys[keyCount++] = param;
         }
     }
 
-    OrderByString.append(" item_basic.itemid");
-    const char* OrderByArray = OrderByString.data();
-
     const CDataLoader PDataLoader;
-    const auto        ItemList = PDataLoader.GetAHItemsToCategory(AHCatID, OrderByArray);
+    const auto        ItemList = PDataLoader.GetAHItemsToCategory(AHCatID, sortKeys);
 
     const std::size_t itemListSize = ItemList.size();
     const std::size_t PacketsCount = (itemListSize / 20) + (itemListSize % 20 != 0) + (itemListSize == 0);
@@ -549,7 +578,7 @@ void SearchHandler::HandleAuctionHouseHistory()
     searchPackets_.emplace_back(PAHPacket.GetData(), length);
 }
 
-auto SearchHandler::_HandleSearchRequest() -> SearchRequest
+auto SearchHandler::_HandleSearchRequest(const uint16_t length) -> SearchRequest
 {
     // This function constructs a `search_req` based on which query should be sent to the database.
     // The results from the database will eventually be sent to the client.
@@ -752,7 +781,7 @@ auto SearchHandler::_HandleSearchRequest() -> SearchRequest
             }
             case SearchType::Friend: // Friend Packet, 0 byte
             {
-                ShowInfoFmt("Friend Entry found.");
+                sr.friendsOnly = true;
                 break;
             }
             case SearchType::Flags1: // Flag Entry #1, 2 byte,
@@ -804,6 +833,23 @@ auto SearchHandler::_HandleSearchRequest() -> SearchRequest
     if (nameLen > 0)
     {
         sr.name.insert(0, name);
+    }
+
+    // Friend searches append a uint16 count and the uint32 charids of online friends after the query block
+    if (sr.friendsOnly)
+    {
+        constexpr uint16 maxFriendIds = 200;
+        const uint16     countOffset  = 0x11 + size;
+        const uint16     idsOffset    = countOffset + 2;
+        const uint16     dataLength   = length - searchPacketTrailerSize;
+        if (dataLength >= idsOffset)
+        {
+            const auto count = std::min<uint16>({ ref<uint16>(buffer_.data(), countOffset), maxFriendIds, static_cast<uint16>((dataLength - idsOffset) / 4) });
+            for (uint16 index = 0; index < count; ++index)
+            {
+                sr.characterIds.push_back(ref<uint32>(buffer_.data(), idsOffset + index * 4));
+            }
+        }
     }
 
     return sr;

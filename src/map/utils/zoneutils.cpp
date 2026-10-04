@@ -46,6 +46,8 @@
 #include "roam_region.h"
 #include "spawn_handler.h"
 #include "spawn_slot.h"
+#include "spell.h"
+#include "transports/elevator_handler.h"
 #include "zone_instance.h"
 
 #include <algorithm>
@@ -67,6 +69,8 @@ using ZoneSettingsDataset = xi::data::datasets::zones::settings::Dataset;
 using NpcsDataset         = xi::data::datasets::zones::npcs::Dataset;
 using MobsDataset         = xi::data::datasets::zones::mobs::Dataset;
 using RegionsDataset      = xi::data::datasets::zones::regions::Dataset;
+
+Synchronized<std::deque<CMobSpellList>> ownedSpellLists;
 
 // Each zone's entity files, parsed once: the id lookups and the entity inserts both read these.
 struct ZoneEntityFiles
@@ -132,12 +136,36 @@ auto buildDropList(const xi::ZoneId zoneId, const std::string& templateName, con
                                 });
 }
 
+auto buildSpellList(const xi::ZoneId zoneId, const std::string& templateName, const std::vector<std::string>& spells) -> CMobSpellList*
+{
+    CMobSpellList spellList(std::nullopt);
+
+    for (const auto& name : spells)
+    {
+        const auto spellId = spell::lookupIdByName(name);
+        if (!spellId)
+        {
+            ShowCriticalFmt("buildSpellList: template '{}' in zone {} names unknown spell '{}'", templateName, static_cast<uint32>(zoneId), name);
+            std::exit(-1);
+        }
+
+        spellList.AddSpell(*spellId, 0, 255);
+    }
+
+    return ownedSpellLists.write([&](auto& lists) -> CMobSpellList*
+                                 {
+                                     return &lists.emplace_back(std::move(spellList));
+                                 });
+}
+
 void InsertNPCs(CZone* PZone, const xi::ZoneId zoneId, const xi::data::Npcs& npcs)
 {
     if ((PZone->GetTypeMask() & xi::ZoneType::Instanced) != xi::ZoneType::Unknown)
     {
         return;
     }
+
+    std::vector<std::pair<CNpcEntity*, const xi::data::ElevatorData*>> lifts;
 
     for (const auto& entry : npcs)
     {
@@ -170,6 +198,7 @@ void InsertNPCs(CZone* PZone, const xi::ZoneId zoneId, const xi::data::Npcs& npc
         PNpc->modelSize       = entry.ModelSize;
         PNpc->modelHitboxSize = std::max<float>(0.0f, entry.ModelHitboxSize / 10.f);
         PNpc->setWidescan(entry.Widescan);
+        PNpc->setAlwaysRelevant(entry.King);
 
         if (!luautils::IsContentEnabled(entry.Content))
         {
@@ -183,6 +212,17 @@ void InsertNPCs(CZone* PZone, const xi::ZoneId zoneId, const xi::data::Npcs& npc
         }
 
         PZone->InsertNPC(PNpc);
+
+        if (entry.Elevator)
+        {
+            lifts.emplace_back(PNpc, &*entry.Elevator);
+        }
+    }
+
+    // Held back until the zone is whole, because a lift names doors that may not have been inserted yet.
+    for (const auto& [PPlatform, lift] : lifts)
+    {
+        ElevatorHandler::getInstance()->addElevator(zoneId, PPlatform, *lift);
     }
 }
 
@@ -195,11 +235,17 @@ void InsertMobs(CZone* PZone, const xi::ZoneId zoneId, const xi::data::Mobs& mob
     }
 
     HashMap<std::string, const DropList_t*> dropListByTemplate;
+    HashMap<std::string, CMobSpellList*>    spellListByTemplate;
     for (const auto& [name, mobTemplate] : mobs.Templates)
     {
         if (!mobTemplate.Loot.empty())
         {
             dropListByTemplate[name] = buildDropList(zoneId, name, mobTemplate.Loot);
+        }
+
+        if (!mobTemplate.Spells.empty())
+        {
+            spellListByTemplate[name] = buildSpellList(zoneId, name, mobTemplate.Spells);
         }
     }
 
@@ -313,7 +359,14 @@ void InsertMobs(CZone* PZone, const xi::ZoneId zoneId, const xi::data::Mobs& mob
                 PMob->setMobMod(xi::MobMod::SpawnAnimationsub, PMob->animationsub);
             }
 
-            PMob->m_SpellListContainer = mobSpellList::GetMobSpellList(mobTemplate.SpellList);
+            if (const auto spellList = spellListByTemplate.find(spawn.TemplateName); spellList != spellListByTemplate.end())
+            {
+                PMob->m_SpellListContainer = spellList->second;
+            }
+            else
+            {
+                PMob->m_SpellListContainer = mobSpellList::GetMobSpellList(mobTemplate.SpellList);
+            }
 
             PMob->m_Pool = mobTemplate.Id;
 
@@ -325,17 +378,23 @@ void InsertMobs(CZone* PZone, const xi::ZoneId zoneId, const xi::data::Mobs& mob
             PMob->m_roamFlags    = mobTemplate.RoamFlags;
             PMob->m_MobSkillList = mobTemplate.SkillList;
 
-            if (!spawn.Region.empty())
+            if (!spawn.Regions.empty())
             {
-                if (const auto* region = PZone->roamRegion(spawn.Region))
+                std::vector<const RoamRegion*> regions;
+                regions.reserve(spawn.Regions.size());
+                for (const auto& name : spawn.Regions)
                 {
-                    PMob->setRoamRegion(region);
+                    const auto* region = PZone->roamRegion(name);
+                    if (!region)
+                    {
+                        ShowCriticalFmt("InsertMobs: spawn {} names region '{}', which the zone does not declare", spawn.Id, name);
+                        std::exit(-1);
+                    }
+
+                    regions.push_back(region);
                 }
-                else
-                {
-                    ShowCriticalFmt("InsertMobs: spawn {} names region '{}', which the zone does not declare", spawn.Id, spawn.Region);
-                    std::exit(-1);
-                }
+
+                PMob->setRoamRegions(std::move(regions));
             }
 
             if (!spawn.Route.empty())
@@ -450,6 +509,20 @@ auto GetInstanceByRunId(const xi::ZoneId zoneId, const uint32 runId) -> CInstanc
     return PZoneInstance ? PZoneInstance->getInstanceByRunId(runId) : nullptr;
 }
 
+auto GetNpcByName(CZone* PZone, const std::string& name) -> CNpcEntity*
+{
+    CNpcEntity* PFound = nullptr;
+    PZone->ForEachNpc([&](CNpcEntity* PNpc)
+                      {
+                          if (!PFound && PNpc->name == name)
+                          {
+                              PFound = PNpc;
+                          }
+                      });
+
+    return PFound;
+}
+
 auto GetEntity(const uint32 id, const uint8 filter) -> CBaseEntity*
 {
     const uint16 DynamicEntityStart = 0x700;
@@ -550,22 +623,14 @@ auto GetCharToUpdate(uint32 primary, uint32 tertiary) -> CCharEntity*
 
 auto GetZonesAssignedToThisProcess(const IPP mapIPP) -> std::vector<xi::ZoneId>
 {
-    const auto ip    = mapIPP.getIP();
-    const auto ipStr = mapIPP.getIPString();
-    const auto port  = mapIPP.getPort();
-
-    // NOTE: We normally don't want to build a prepared statement with fmt::format,
-    //     : but this query is entirely internal, so it's OK.
-    const auto zonesQuery = fmt::format("SELECT zoneid "
-                                        "FROM zone_settings "
-                                        "WHERE IF({} <> 0, '{}' = zoneip AND {} = zoneport, TRUE)",
-                                        ip,
-                                        ipStr,
-                                        port);
-
     std::vector<xi::ZoneId> zonesOnThisProcess;
 
-    const auto rset = db::preparedStmt(zonesQuery);
+    const auto rset = db::preparedStmt("SELECT zoneid "
+                                       "FROM zone_settings "
+                                       "WHERE ? = 0 OR (zoneip = ? AND zoneport = ?)",
+                                       mapIPP.getIP(),
+                                       mapIPP.getIPString(),
+                                       mapIPP.getPort());
     if (rset && rset->rowsCount())
     {
         while (rset->next())
@@ -1015,9 +1080,8 @@ auto GetManagedZones() -> std::vector<std::pair<xi::ZoneId, std::string>>
     // Lazy loading enabled: fetch from database
     if (!lazyLoad.managedZones.empty())
     {
-        const auto query = fmt::format("SELECT zoneid, name FROM zone_settings WHERE zoneid IN ({})",
-                                       fmt::join(lazyLoad.managedZones, ","));
-        const auto rset  = db::preparedStmt(query);
+        const auto rset = db::preparedStmt("SELECT zoneid, name FROM zone_settings WHERE FIND_IN_SET(zoneid, ?)",
+                                           fmt::format("{}", fmt::join(lazyLoad.managedZones, ",")));
         FOR_DB_MULTIPLE_RESULTS(rset)
         {
             result.emplace_back(rset->get<xi::ZoneId>("zoneid"), rset->get<std::string>("name"));
@@ -1286,6 +1350,8 @@ auto GetCurrentRegion(const xi::ZoneId zoneId) -> REGION_TYPE
         case xi::ZoneId::HazhalmTestingGrounds:
         case xi::ZoneId::TalaccaCove:
         case xi::ZoneId::Periqia:
+        case xi::ZoneId::IlrusiAtoll:
+        case xi::ZoneId::TheAshuTalif:
             return REGION_TYPE::ARRAPAGO;
         case xi::ZoneId::NyzulIsle:
         case xi::ZoneId::ArrapagoRemnants:

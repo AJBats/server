@@ -173,7 +173,7 @@ namespace pawn
 {
     void applyStarterKit(CCharEntity* PPawn)
     {
-        const auto result = lua["xi"]["player"]["charCreate"](CLuaBaseEntity(PPawn));
+        const auto result = ::lua["xi"]["player"]["charCreate"](CLuaBaseEntity(PPawn));
         if (!result.valid())
         {
             const sol::error err = result;
@@ -265,15 +265,15 @@ class PawnModule : public CPPModule
 
         // The Cardian-only gambit vocabulary, published once from the C++
         // definitions so the brains cannot drift from the interpreter
-        lua["xi"]["pawn"]             = lua["xi"]["pawn"].get_or_create<sol::table>();
-        lua["xi"]["pawn"]["r"]        = lua.create_table_with("BEHAVIOR", static_cast<uint16>(pawn::G_REACTION_BEHAVIOR));
-        lua["xi"]["pawn"]["c"]        = lua.create_table_with("STRATEGY", static_cast<uint16>(pawn::G_CONDITION_STRATEGY));
-        lua["xi"]["pawn"]["behavior"] = lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro),
+        ::lua["xi"]["pawn"]             = ::lua["xi"]["pawn"].get_or_create<sol::table>();
+        ::lua["xi"]["pawn"]["r"]        = ::lua.create_table_with("BEHAVIOR", static_cast<uint16>(pawn::G_REACTION_BEHAVIOR));
+        ::lua["xi"]["pawn"]["c"]        = ::lua.create_table_with("STRATEGY", static_cast<uint16>(pawn::G_CONDITION_STRATEGY));
+        ::lua["xi"]["pawn"]["behavior"] = ::lua.create_table_with("AVOID_AGGRO", static_cast<uint16>(pawn::Behavior::AvoidAggro),
                                                               "AVOID_LINKS", static_cast<uint16>(pawn::Behavior::AvoidLinks),
                                                               "FORMATION", static_cast<uint16>(pawn::Behavior::Formation),
                                                               "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
                                                               "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));
-        lua["xi"]["pawn"]["slot"]     = lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
+        ::lua["xi"]["pawn"]["slot"]     = ::lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
                                                               "LEAD", static_cast<uint16>(pawn::Slot::Lead),
                                                               "FLANK_LEFT", static_cast<uint16>(pawn::Slot::FlankLeft),
                                                               "FLANK_RIGHT", static_cast<uint16>(pawn::Slot::FlankRight),
@@ -281,24 +281,24 @@ class PawnModule : public CPPModule
                                                               "REAR_RIGHT", static_cast<uint16>(pawn::Slot::RearRight),
                                                               "BEHIND", static_cast<uint16>(pawn::Slot::Behind));
 
-        lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        ::lua["CBaseEntity"]["pawnCreate"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             return pawn::create(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
         };
 
-        lua["CBaseEntity"]["pawnSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        ::lua["CBaseEntity"]["pawnSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             return pawn::spawn(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
         };
 
-        lua["CBaseEntity"]["pawnDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        ::lua["CBaseEntity"]["pawnDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             std::ignore = PLuaBaseEntity;
             return pawn::despawn(targetName);
         };
 
         // The world's adventurers (ROADMAP D0): stand, fade, ring, walk
-        lua["CBaseEntity"]["worldSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        ::lua["CBaseEntity"]["worldSpawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PChar == nullptr || PChar->loc.zone == nullptr)
@@ -308,13 +308,13 @@ class PawnModule : public CPPModule
             return pawn::world::spawnByName(name, PChar->loc.zone, PChar->loc.p, false);
         };
 
-        lua["CBaseEntity"]["worldDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> uint32
+        ::lua["CBaseEntity"]["worldDespawn"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> uint32
         {
             std::ignore = PLuaBaseEntity;
             return pawn::world::despawnByName(name);
         };
 
-        lua["CBaseEntity"]["worldRing"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 count) -> uint32
+        ::lua["CBaseEntity"]["worldRing"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 count) -> uint32
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PChar == nullptr || PChar->loc.zone == nullptr)
@@ -324,14 +324,14 @@ class PawnModule : public CPPModule
             return pawn::world::ring(PChar->loc.zone, PChar->loc.p, count, false);
         };
 
-        lua["CBaseEntity"]["worldFarm"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> uint32
+        ::lua["CBaseEntity"]["worldFarm"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> uint32
         {
             std::ignore = PLuaBaseEntity;
             return pawn::world::farm(name, on);
         };
 
         // The slot tables (ROADMAP D3): the zone's slots, a refill, a slot authored where you stand
-        lua["CBaseEntity"]["worldSlots"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        ::lua["CBaseEntity"]["worldSlots"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             auto  lines = ::lua.create_table();
@@ -345,7 +345,7 @@ class PawnModule : public CPPModule
             return lines;
         };
 
-        lua["CBaseEntity"]["worldFill"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
+        ::lua["CBaseEntity"]["worldFill"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PChar == nullptr || PChar->loc.zone == nullptr)
@@ -355,7 +355,7 @@ class PawnModule : public CPPModule
             return pawn::world::fill(PChar->loc.zone);
         };
 
-        lua["CBaseEntity"]["worldSlot"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& activity, const uint8 low, const uint8 high, const uint8 count, const float spread) -> bool
+        ::lua["CBaseEntity"]["worldSlot"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& activity, const uint8 low, const uint8 high, const uint8 count, const float spread) -> bool
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PChar == nullptr || PChar->loc.zone == nullptr)
@@ -365,7 +365,7 @@ class PawnModule : public CPPModule
             return pawn::world::addSlot(PChar->loc.zone, activity, low, high, count, spread, PChar->loc.p);
         };
 
-        lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool
+        ::lua["CBaseEntity"]["pawnGoto"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName, const uint16 zoneId) -> bool
         {
             std::ignore = PLuaBaseEntity;
             return pawn::orderTravelByName(targetName, zoneId, 0);
@@ -373,39 +373,39 @@ class PawnModule : public CPPModule
 
         // The club signs in with the player (ROADMAP H): the chat line,
         // "Jevyak (Northern San d'Oria), Zapp (Southern San d'Oria)", or ""
-        lua["CBaseEntity"]["cardianSignIn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        ::lua["CBaseEntity"]["cardianSignIn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return PChar != nullptr ? pawn::signInClub(PChar) : std::string{};
         };
 
         // Recruit and release (ROADMAP H): the debug verbs behind the real ones
-        lua["CBaseEntity"]["cardianRecruit"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        ::lua["CBaseEntity"]["cardianRecruit"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             return pawn::recruitCardian(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
         };
 
-        lua["CBaseEntity"]["cardianRelease"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        ::lua["CBaseEntity"]["cardianRelease"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             return pawn::releaseCardian(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), name);
         };
 
         // The waterfall's caps, live -- standing is server-wide, faded is
         // per zone. 0 and 0 puts the settings back
-        lua["CBaseEntity"]["worldCap"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 standing, const uint32 faded) -> std::string
+        ::lua["CBaseEntity"]["worldCap"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 standing, const uint32 faded) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             pawn::seats::setCaps(standing, faded);
             return pawn::seats::capsLine(PChar != nullptr ? static_cast<uint16>(PChar->getZone()) : 0);
         };
 
-        lua["CBaseEntity"]["worldCaps"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        ::lua["CBaseEntity"]["worldCaps"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return pawn::seats::capsLine(PChar != nullptr ? static_cast<uint16>(PChar->getZone()) : 0);
         };
 
-        lua["CBaseEntity"]["cardianFaded"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        ::lua["CBaseEntity"]["cardianFaded"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             auto  names = ::lua.create_table();
@@ -419,7 +419,7 @@ class PawnModule : public CPPModule
             return names;
         };
 
-        lua["CBaseEntity"]["pawnReloadBrain"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        ::lua["CBaseEntity"]["pawnReloadBrain"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             std::ignore = PLuaBaseEntity;
             return pawn::reloadBrainByName(targetName);
@@ -427,7 +427,7 @@ class PawnModule : public CPPModule
 
         // Gambit surface, trust vocabulary: pawn:pawnAddGambit(ai.t.PARTY,
         // { ai.c.HPP_LT, 50 }, { ai.r.MA, ai.s.HIGHEST, xi.magic.spellFamily.CURE }, retry)
-        lua["CBaseEntity"]["pawnAddGambit"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 target, const sol::table& conditions, const sol::table& actions, const sol::object& retry) -> std::string
+        ::lua["CBaseEntity"]["pawnAddGambit"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint16 target, const sol::table& conditions, const sol::table& actions, const sol::object& retry) -> std::string
         {
             auto* PGambits = gambitsOf(PLuaBaseEntity);
             if (PGambits == nullptr)
@@ -478,7 +478,7 @@ class PawnModule : public CPPModule
             return PGambits->AddGambit(std::move(gambit));
         };
 
-        lua["CBaseEntity"]["pawnRemoveGambit"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& id) -> void
+        ::lua["CBaseEntity"]["pawnRemoveGambit"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& id) -> void
         {
             if (auto* PGambits = gambitsOf(PLuaBaseEntity))
             {
@@ -486,7 +486,7 @@ class PawnModule : public CPPModule
             }
         };
 
-        lua["CBaseEntity"]["pawnClearGambits"] = [](CLuaBaseEntity* PLuaBaseEntity) -> void
+        ::lua["CBaseEntity"]["pawnClearGambits"] = [](CLuaBaseEntity* PLuaBaseEntity) -> void
         {
             if (auto* PGambits = gambitsOf(PLuaBaseEntity))
             {
@@ -494,7 +494,7 @@ class PawnModule : public CPPModule
             }
         };
 
-        lua["CBaseEntity"]["pawnGambitCount"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
+        ::lua["CBaseEntity"]["pawnGambitCount"] = [](CLuaBaseEntity* PLuaBaseEntity) -> uint32
         {
             auto* PGambits = gambitsOf(PLuaBaseEntity);
             return PGambits != nullptr ? static_cast<uint32>(PGambits->Size()) : 0;
@@ -521,7 +521,7 @@ class PawnModule : public CPPModule
             return { PChar, pawn::findCommandablePawn(PChar, name) };
         };
 
-        lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& why, sol::optional<bool> mission)
+        ::lua["CBaseEntity"]["cardianBond"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const std::string& why, sol::optional<bool> mission)
         {
             const auto* PPlayer = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PPlayer != nullptr)
@@ -530,13 +530,13 @@ class PawnModule : public CPPModule
             }
         };
         // Her contract with the given player (the cardian's own entity asks)
-        lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 playerCharID) -> std::string
+        ::lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* PLuaBaseEntity, const uint32 playerCharID) -> std::string
         {
             const auto* PMember = PLuaBaseEntity != nullptr ? PLuaBaseEntity->GetBaseEntity() : nullptr;
             return PMember != nullptr ? pawn::finder::contractWith(PMember->id, playerCharID) : "";
         };
         // The fight log as it stands (!tactics, RESEARCH §12.5)
-        lua["CBaseEntity"]["cardianTactics"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        ::lua["CBaseEntity"]["cardianTactics"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
         {
             sol::table out = ::lua.create_table();
             auto*      PChar = PLuaBaseEntity != nullptr ? dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()) : nullptr;
@@ -547,12 +547,12 @@ class PawnModule : public CPPModule
             return out;
         };
         // Hers to manage, or only to command
-        lua["CBaseEntity"]["cardianOwns"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
+        ::lua["CBaseEntity"]["cardianOwns"] = [managedPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> bool
         {
             return managedPair(PLuaBaseEntity, name).second != nullptr;
         };
 
-        lua["CBaseEntity"]["cardianHunt"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        ::lua["CBaseEntity"]["cardianHunt"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
@@ -563,7 +563,7 @@ class PawnModule : public CPPModule
             return pawn::setHunting(PPawn, on) ? "" : "no controller";
         };
 
-        lua["CBaseEntity"]["cardianAvoid"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
+        ::lua["CBaseEntity"]["cardianAvoid"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name, const bool on) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
@@ -580,7 +580,7 @@ class PawnModule : public CPPModule
 
         // Sent home alone, to the ordering player's home point (!pawnhomepoint;
         // the addon sends the Link's HOMEPOINT)
-        lua["CBaseEntity"]["cardianHomePoint"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
+        ::lua["CBaseEntity"]["cardianHomePoint"] = [commandPair](CLuaBaseEntity* PLuaBaseEntity, const std::string& name) -> std::string
         {
             const auto [PChar, PPawn] = commandPair(PLuaBaseEntity, name);
             if (PPawn == nullptr)
@@ -592,7 +592,7 @@ class PawnModule : public CPPModule
 
         // A cardian, for the Lua module that moves quest and mission
         // progress with the party (modules/cardian/lua/party_progress.lua)
-        lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
+        ::lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
         {
             const auto* PChar = dynamic_cast<const CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             return PChar != nullptr && pawn::isPawn(PChar);

@@ -24,6 +24,7 @@
 #include "engage_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
+#include "reengage.h"
 #include "rest_policy.h"
 #include "spell_bank.h"
 #include "tactics.h"
@@ -563,15 +564,14 @@ void CLiveController::EngageDoor()
     // The door's pick, a cardian's own (CGambits::EngageChoice): his Attack
     // rows top down over the party's foes around him -- of those he can
     // take now. What a cardian walks to, he takes only within upstream's
-    // engage reach of where he stands; only past upstream's re-engage wait,
-    // counted from his last swing as CPlayerController::Engage counts it,
-    // so the game is never asked early and never says "wait longer"; and
-    // never the mob he left by his own hand
-    const auto lastEngaged = static_cast<uint32>(PChar->GetLocalVar("cardianLastEngaged"));
-    const auto takes       = [&](CBattleEntity* PFoe)
+    // engage reach of where he stands; only once his re-engage wait is over,
+    // as CPlayerController::Engage judges it (reengage.h), so the game is
+    // never asked early and never says "wait longer"; and never the mob he
+    // left by his own hand
+    const auto takes = [&](CBattleEntity* PFoe)
     {
         return PFoe->loc.zone == PChar->loc.zone && distance(PChar->loc.p, PFoe->loc.p) < kEngageReach && !LeftByHand(PFoe) &&
-               timer::now() > m_lastAttackTime + pawn::reengageWait(PChar, PFoe, lastEngaged);
+               timer::now() >= cardian::reengage::playerReadyAt(PChar, PFoe, m_engageLockedUntil, m_lastAttackTime);
     };
     const auto pick = m_Gambits->EngageChoice(leaderOf(PChar), PChar->loc.p, takes);
     auto*      PFoe = pick.target;

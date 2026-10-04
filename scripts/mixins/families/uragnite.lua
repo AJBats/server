@@ -30,26 +30,44 @@ xi.mix.uragnite = xi.mix.uragnite or {}
 g_mixins = g_mixins or {}
 g_mixins.families = g_mixins.families or {}
 
+-- animationSub 4 is out of the shell, 5 is closed
+local open   = 4
+local closed = 5
+
+-- an idle rest lasts 45 to 70 s; four rests in five close the shell for 18 to 32 s and open it 2 s before the walk
+local idleRestMin     = 45
+local idleRestMax     = 70
+local idleClosedMin   = 18
+local idleClosedMax   = 32
+local idleCloseChance = 80
+local idleOpenBefore  = 2
+
 local function enterShell(mob)
-    mob:setAnimationSub(mob:getAnimationSub() + 1)
+    mob:setAnimationSub(closed)
     mob:setAutoAttackEnabled(false)
     mob:addMod(xi.mod.UDMGPHYS, -7500)
     mob:addMod(xi.mod.UDMGRANGE, -7500)
     mob:addMod(xi.mod.UDMGMAGIC, -7500)
     mob:addMod(xi.mod.UDMGBREATH, -7500)
-    mob:addMod(xi.mod.REGEN, mob:getLocalVar('[uragnite]inShellRegen'))
+    local regen = mob:getLocalVar('[uragnite]inShellRegen')
+    mob:setLocalVar('[uragnite]appliedRegen', regen)
+    mob:addMod(xi.mod.REGEN, regen)
     mob:setMobMod(xi.mobMod.SKILL_LIST, mob:getLocalVar('[uragnite]inShellSkillList'))
-    mob:setMobMod(xi.mobMod.NO_MOVE, 1)
 end
 
 local function exitShell(mob)
-    mob:setAnimationSub(mob:getAnimationSub() - 1)
+    if mob:getAnimationSub() ~= closed then
+        return
+    end
+
+    mob:setAnimationSub(open)
     mob:setAutoAttackEnabled(true)
     mob:delMod(xi.mod.UDMGPHYS, -7500)
     mob:delMod(xi.mod.UDMGRANGE, -7500)
     mob:delMod(xi.mod.UDMGMAGIC, -7500)
     mob:delMod(xi.mod.UDMGBREATH, -7500)
-    mob:delMod(xi.mod.REGEN, mob:getLocalVar('[uragnite]inShellRegen'))
+    mob:delMod(xi.mod.REGEN, mob:getLocalVar('[uragnite]appliedRegen'))
+    mob:setLocalVar('[uragnite]appliedRegen', 0)
     mob:setMobMod(xi.mobMod.SKILL_LIST, mob:getLocalVar('[uragnite]noShellSkillList'))
     mob:setMobMod(xi.mobMod.NO_MOVE, 0)
 end
@@ -91,21 +109,60 @@ g_mixins.families.uragnite = function(uragniteMob)
         mob:setLocalVar('[uragnite]timeInShellMin', 30)
         mob:setLocalVar('[uragnite]timeInShellMax', 45)
         mob:setLocalVar('[uragnite]inShellRegen', 50)
+        mob:setAnimationSub(open)
+        mob:setAutoAttackEnabled(true)
     end)
 
     uragniteMob:addListener('TAKE_DAMAGE', 'URAGNITE_TAKE_DAMAGE', function(mob, amount, attacker, attackType, damageType)
         if attackType == xi.attackType.PHYSICAL then
             if
                 math.randomInt(1, 100) <= mob:getLocalVar('[uragnite]chanceToShell') and
-                bit.band(mob:getAnimationSub(), 1) == 0
+                mob:getAnimationSub() == open
             then
                 enterShell(mob)
+                mob:setMobMod(xi.mobMod.NO_MOVE, 1)
                 local timeInShell = math.randomInt(mob:getLocalVar('[uragnite]timeInShellMin'), mob:getLocalVar('[uragnite]timeInShellMax'))
                 mob:timer(timeInShell * 1000, function(mobArg)
                     exitShell(mobArg)
                 end)
             end
         end
+    end)
+
+    uragniteMob:addListener('ROAM_TICK', 'URAGNITE_ROAM_TICK', function(mob)
+        if
+            mob:isFollowingPath() or
+            mob:getCurrentAction() == xi.action.category.SLEEP or
+            mob:getAnimationSub() ~= open
+        then
+            return
+        end
+
+        local rest = math.randomInt(idleRestMin, idleRestMax)
+        mob:wait(rest * 1000)
+        if math.randomInt(1, 100) > idleCloseChance then
+            return
+        end
+
+        local openAt        = rest - idleOpenBefore
+        local closeAt       = math.max(0, openAt - math.randomInt(idleClosedMin, idleClosedMax))
+        local closedForRest = false
+        mob:timer(closeAt * 1000, function(mobArg)
+            if mobArg:getAnimationSub() ~= open or mobArg:isEngaged() then
+                return
+            end
+
+            enterShell(mobArg)
+            closedForRest = true
+        end)
+
+        mob:timer(openAt * 1000, function(mobArg)
+            if not closedForRest then
+                return
+            end
+
+            exitShell(mobArg)
+        end)
     end)
 end
 

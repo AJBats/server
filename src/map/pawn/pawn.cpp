@@ -57,6 +57,7 @@
 #include "navmesh/navmesh.h"
 #include "login/login_helpers.h"
 #include "packets/c2s/0x074_group_solicit_res.h"
+#include "packets/c2s/validation.h"
 #include "party.h"
 #include "pause/pause.h"
 #include "enums/char_persist.h"
@@ -2799,7 +2800,7 @@ namespace pawn
             {
                 pendingInvites.erase(inviteIt);
 
-                if (PPawn->InvitePending.UniqueNo != 0)
+                if (PPawn->InvitePending.entity.UniqueNo != 0)
                 {
                     const bool                       yes = finder::accepts(PPawn.get());
                     GP_CLI_COMMAND_GROUP_SOLICIT_RES answer{};

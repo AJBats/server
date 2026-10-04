@@ -19,11 +19,13 @@
 ===========================================================================
 */
 
-#ifndef _CTREASUREPOOL_H
-#define _CTREASUREPOOL_H
+#pragma once
 
 #include "common/cbasetypes.h"
+#include "common/timer.h"
+#include "common/types/maybe.h"
 
+#include <array>
 #include <vector>
 
 // Update xi.treasurePool accordingly when making changes
@@ -56,9 +58,9 @@ struct LotInfo
 
 struct TreasurePoolItem
 {
-    uint16            ID;
-    uint8             SlotID;
-    timer::time_point TimeStamp;
+    uint16                   ID;
+    uint8                    SlotID;
+    Maybe<timer::time_point> TimeStamp; // unset is treated as infinitely old, so the next check drops the item
 
     std::vector<LotInfo> Lotters;
 
@@ -110,5 +112,3 @@ private:
     std::array<TreasurePoolItem, TREASUREPOOL_SIZE> m_PoolItems;
     std::vector<CCharEntity*>                       m_Members;
 };
-
-#endif

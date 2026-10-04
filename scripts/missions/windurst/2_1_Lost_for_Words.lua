@@ -13,7 +13,8 @@
 -- Mahogany Door     : !pos -11 0 20 192
 -- House of the Hero : !pos -26 -13 260 239
 -----------------------------------
-local mazeID = zones[xi.zone.MAZE_OF_SHAKHRAMI]
+local mazeID          = zones[xi.zone.MAZE_OF_SHAKHRAMI]
+local windurstWallsID = zones[xi.zone.WINDURST_WALLS]
 -----------------------------------
 
 local mission = Mission:new(xi.mission.log_id.WINDURST, xi.mission.id.windurst.LOST_FOR_WORDS)
@@ -39,10 +40,13 @@ local examineRock = function(player, npc)
     if rockOffset == correctRock then
         if missionStatus == 3 then
             player:setMissionStatus(mission.areaId, 4)
-            return mission:keyItem(xi.ki.LAPIS_CORAL)
+            return mission:keyItem(xi.keyItem.LAPIS_CORAL)
         elseif missionStatus == 4 then
             return mission:messageSpecial(mazeID.text.NO_NEED_INVESTIGATE)
         end
+    -- Only the first eight rocks belong to the dig.
+    elseif rockOffset > 7 then
+        return mission:messageSpecial(mazeID.text.NOTHING_FOSSIL)
     else
         -- TODO: This multiline message should be converted to messageName, however the equivalent in
         -- interaction is used for a different purpose.  Find a new method to implement in the interaction
@@ -135,7 +139,29 @@ mission.sections =
             ['Miiri-Wohri'] = mission:event(161),
             ['Rakoh_Buuma'] = mission:event(160),
             ['Sola_Jaab']   = mission:event(162),
-            ['Tih_Pikeh']   = mission:event(163),
+
+            -- Tih Pikeh alternates two lines. The toggle advances in onEventFinish.
+            ['Tih_Pikeh'] =
+            {
+                onTrigger = function(player, npc)
+                    if player:getLocalVar('TihPikehRepeatLine') == 0 then
+                        return mission:progressEvent(163)
+                    else
+                        return mission:progressEvent(164)
+                    end
+                end,
+            },
+
+            onEventFinish =
+            {
+                [163] = function(player, csid, option, npc)
+                    player:setLocalVar('TihPikehRepeatLine', 1)
+                end,
+
+                [164] = function(player, csid, option, npc)
+                    player:setLocalVar('TihPikehRepeatLine', 0)
+                end,
+            },
         },
     },
 
@@ -167,13 +193,18 @@ mission.sections =
 
         [xi.zone.WINDURST_WOODS] =
         {
-            ['Nanaa_Mihgo'] = mission:progressEvent(165, 0, xi.ki.LAPIS_CORAL, xi.ki.LAPIS_MONOCLE),
+            ['Nanaa_Mihgo'] = mission:progressEvent(165, 0, xi.keyItem.LAPIS_CORAL, xi.keyItem.LAPIS_MONOCLE),
 
             onEventFinish =
             {
                 [165] = function(player, csid, option, npc)
-                    npcUtil.giveKeyItem(player, xi.ki.LAPIS_MONOCLE)
-                    mission:setVar(player, 'Rock', math.randomInt(1, 6))
+                    -- Listening sends 1. Refusing sends 2 and grants nothing.
+                    if option ~= 1 then
+                        return
+                    end
+
+                    npcUtil.giveKeyItem(player, xi.keyItem.LAPIS_MONOCLE)
+                    mission:setVar(player, 'Rock', math.randomInt(0, 7))
                     player:setMissionStatus(mission.areaId, 3)
                 end,
             },
@@ -195,7 +226,7 @@ mission.sections =
         {
             ['Bopa_Greso']  = mission:event(167),
             ['Cha_Lebagta'] = mission:event(168),
-            ['Nanaa_Mihgo'] = mission:event(166, 0, xi.ki.LAPIS_CORAL, xi.ki.LAPIS_MONOCLE),
+            ['Nanaa_Mihgo'] = mission:event(166, 0, xi.keyItem.LAPIS_CORAL, xi.keyItem.LAPIS_MONOCLE),
         },
     },
 
@@ -229,10 +260,10 @@ mission.sections =
             onEventFinish =
             {
                 [169] = function(player, csid, option, npc)
-                    player:delKeyItem(xi.ki.LAPIS_CORAL)
-                    player:delKeyItem(xi.ki.LAPIS_MONOCLE)
+                    player:delKeyItem(xi.keyItem.LAPIS_CORAL)
+                    player:delKeyItem(xi.keyItem.LAPIS_MONOCLE)
                     mission:setVar(player, 'Rock', 0)
-                    npcUtil.giveKeyItem(player, xi.ki.HIDEOUT_KEY)
+                    npcUtil.giveKeyItem(player, xi.keyItem.HIDEOUT_KEY)
                     player:setMissionStatus(mission.areaId, 5)
                 end,
             },
@@ -259,7 +290,7 @@ mission.sections =
             onEventFinish =
             {
                 [46] = function(player, csid, option, npc)
-                    player:delKeyItem(xi.ki.HIDEOUT_KEY)
+                    player:delKeyItem(xi.keyItem.HIDEOUT_KEY)
                     player:setMissionStatus(mission.areaId, 6)
                 end,
             },
@@ -281,7 +312,14 @@ mission.sections =
 
         [xi.zone.WINDURST_WALLS] =
         {
-            ['_6n2'] = mission:progressEvent(337),
+            ['_6n2'] =
+            {
+                onTrigger = function(player, npc)
+                    player:messageText(npc, windurstWallsID.text.DOOR_UNLOCKED, false, 6)
+
+                    return mission:progressEvent(337)
+                end,
+            },
 
             onEventFinish =
             {

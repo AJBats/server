@@ -26,7 +26,6 @@ entity.onMobInitialize = function(mob)
 end
 
 entity.onMobSpawn = function(mob)
-    mob:messageText(mob, ID.text.SKY_GOD_OFFSET + 7) -- Spawn message
     GetNPCByID(ID.npc.PORTAL_OFFSET + 11):setAnimation(xi.animation.CLOSE_DOOR)
 
     mob:setMod(xi.mod.PARALYZE_RES_RANK, 4)
@@ -44,6 +43,13 @@ entity.onMobSpawn = function(mob)
     mob:setMod(xi.mod.FIRE_RES_RANK, 10)
     mob:setMod(xi.mod.ICE_RES_RANK, 10)
     mob:setMod(xi.mod.THUNDER_RES_RANK, 4)
+
+        -- Add slight delay to allow Suzaku to load in before the message is sent
+    mob:timer(300, function(mobArg)
+        if mobArg then
+            mobArg:messageText(mobArg, ID.text.SKY_GOD_OFFSET + 7)
+        end
+    end)
 
     -- Sky gods wait 5-10 seconds after spawning to start casting
     mob:setMagicCastingEnabled(false)
@@ -68,7 +74,9 @@ entity.onAdditionalEffect = function(mob, target, damage)
 end
 
 entity.onMobDeath = function(mob, player, optParams)
-    player:showText(mob, ID.text.SKY_GOD_OFFSET + 8)
+    if player then
+        player:showText(mob, ID.text.SKY_GOD_OFFSET + 8)
+    end
 end
 
 entity.onMobDespawn = function(mob)

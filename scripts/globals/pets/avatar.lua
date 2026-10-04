@@ -217,7 +217,7 @@ xi.pets.avatar.onMobSpawn = function(pet)
     -- Set up avatar's base damage.
     xi.pets.avatar.calculateAvatarWeaponDamage(pet)
 
-    local petType       = pet:getPetID()
+    local petType = pet:getPetID()
 
     -- Only Spirits cast Magic.
     if
@@ -225,8 +225,6 @@ xi.pets.avatar.onMobSpawn = function(pet)
         petType <= xi.petId.DARK_SPIRIT
     then
         local spellCooldown = getMagicCastCooldown(pet)
-        -- Freshly summoned spirits may not cast until their spell cooldown is up.
-        pet:setMobMod(xi.mobMod.MAGIC_DELAY, 0)
         pet:setMagicCastingEnabled(false)
 
         pet:timer(spellCooldown * 1000, function(petArg)

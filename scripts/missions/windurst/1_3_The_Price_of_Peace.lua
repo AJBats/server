@@ -34,13 +34,13 @@ end
 local offeringsTurnedIn = function(player, csid, option, npc)
     local offeringsVar = mission:getVar(player, 'OfferingsTurnedIn')
 
-    if csid == 45 and player:hasKeyItem(xi.ki.FOOD_OFFERING) then
-        player:delKeyItem(xi.ki.FOOD_OFFERING)
-        player:messageSpecial(giddeusID.text.OFFERED_UP_KEY_ITEM, xi.ki.FOOD_OFFERING)
+    if csid == 45 and player:hasKeyItem(xi.keyItem.FOOD_OFFERING) then
+        player:delKeyItem(xi.keyItem.FOOD_OFFERING)
+        player:messageSpecial(giddeusID.text.OFFERED_UP_KEY_ITEM, xi.keyItem.FOOD_OFFERING)
         offeringsVar = offeringsVar + 1
-    elseif csid == 49 and player:hasKeyItem(xi.ki.DRINK_OFFERING) then
-        player:delKeyItem(xi.ki.DRINK_OFFERING)
-        player:messageSpecial(giddeusID.text.OFFERED_UP_KEY_ITEM, xi.ki.DRINK_OFFERING)
+    elseif csid == 49 and player:hasKeyItem(xi.keyItem.DRINK_OFFERING) then
+        player:delKeyItem(xi.keyItem.DRINK_OFFERING)
+        player:messageSpecial(giddeusID.text.OFFERED_UP_KEY_ITEM, xi.keyItem.DRINK_OFFERING)
         offeringsVar = offeringsVar + 1
     end
 
@@ -153,8 +153,8 @@ mission.sections =
             {
                 [140] = function(player, csid, option, npc)
                     npcUtil.giveKeyItem(player, {
-                        xi.ki.FOOD_OFFERING,
-                        xi.ki.DRINK_OFFERING
+                        xi.keyItem.FOOD_OFFERING,
+                        xi.keyItem.DRINK_OFFERING
                     })
                     player:setMissionStatus(mission.areaId, 2)
                 end,
@@ -278,10 +278,11 @@ mission.sections =
 
     -- All of the optional post-mission dialogue
     {
-        check = function(player)
-            return player:getNation() == mission.areaId and
+        check = function(player, currentMission)
+            return currentMission == xi.mission.id.nation.NONE and
+                player:getNation() == mission.areaId and
                 player:hasCompletedMission(mission.areaId, mission.missionId) and
-                not player:hasCompletedMission(xi.mission.log_id.WINDURST, xi.mission.id.windurst.LOST_FOR_WODS)
+                not player:hasCompletedMission(xi.mission.log_id.WINDURST, xi.mission.id.windurst.LOST_FOR_WORDS)
         end,
 
         [xi.zone.PORT_WINDURST] =

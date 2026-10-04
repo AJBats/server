@@ -100,6 +100,7 @@ namespace
         auto onPathComplete() -> void override {}
         auto name() const -> const std::string& override { return label; }
         auto id() const -> uint32 override { return 0; }
+        auto hitboxRadius() const -> float override { return 0.0f; } // a point: the tests' floors are drawn without wall clearance
     };
 
     struct Fixture
@@ -128,7 +129,7 @@ TEST_CASE("A final sub-yalm spell approach uses the real navmesh and enters rang
     CHECK(distance(f.walker->pos, *goal) == Catch::Approx(0.7f));
     // Detour itself has always supported this; the pathfinder's early
     // one-yalm cutoff rejects it unless the pawn walker opts in.
-    REQUIRE(f.mesh.findPath(f.walker->pos, *goal).has_value());
+    REQUIRE(f.mesh.findPath(f.walker->pos, *goal, f.walker->hitboxRadius(), AvoidLinks{ false }).has_value());
     REQUIRE(f.path.PathAround(*goal, cardian::casting::kArrival, PATHFLAG_RUN | PATHFLAG_CARDIAN));
     f.path.FollowPath(timer::now());
     CHECK(f.walker->pos.x == Catch::Approx(2.5f)); // successful precise request still moves only 0.5 y
@@ -286,7 +287,7 @@ TEST_CASE("A short Cardian request still rejects an unusable one-point mesh rout
     const auto projected = f.mesh.findClosestValidPoint(goal);
     REQUIRE(projected.has_value());
     REQUIRE(distance(before, *projected) < 0.0001f);
-    REQUIRE_FALSE(f.mesh.findPath(before, goal).has_value());
+    REQUIRE_FALSE(f.mesh.findPath(before, goal, f.walker->hitboxRadius(), AvoidLinks{ false }).has_value());
 
     // A rejected replacement must also drop the old route, not continue
     // walking along an unrelated path or step directly into missing mesh.
@@ -312,7 +313,7 @@ TEST_CASE("PathTo the spell target recovers a short waypoint collapsed onto the 
     const auto projected = f.mesh.findClosestValidPoint(*goal);
     REQUIRE(projected.has_value());
     REQUIRE(distance(initial, *projected) < 0.0001f);
-    REQUIRE_FALSE(f.mesh.findPath(initial, *goal).has_value());
+    REQUIRE_FALSE(f.mesh.findPath(initial, *goal, f.walker->hitboxRadius(), AvoidLinks{ false }).has_value());
 
     constexpr uint8 flags = PATHFLAG_RUN | PATHFLAG_CARDIAN;
     REQUIRE_FALSE(f.path.PathAround(*goal, cardian::casting::kArrival, flags));
@@ -416,7 +417,7 @@ TEST_CASE("A projected spell route that cannot advance triggers PathTo the targe
         const auto initial = f.walker->pos;
         const auto goal = cardian::casting::approach(initial, target, 20, true);
         REQUIRE(goal.has_value());
-        const auto raw = f.mesh.findPath(initial, *goal);
+        const auto raw = f.mesh.findPath(initial, *goal, f.walker->hitboxRadius(), AvoidLinks{ false });
         REQUIRE(raw.has_value());
         REQUIRE(raw->points.size() == 1);
         CHECK(distance(initial, raw->points.back().position) <= cardian::casting::kArrival);
@@ -493,7 +494,7 @@ TEST_CASE("A close final point retains a necessary Cardian corner detour", "[car
     const auto initial = f.walker->pos;
     const position_t goal{5.12f, 0, -4.99f, 0, 0};
     REQUIRE(distance(initial, goal) < 0.2f);
-    const auto raw = f.mesh.findPath(initial, goal);
+    const auto raw = f.mesh.findPath(initial, goal, f.walker->hitboxRadius(), AvoidLinks{ false });
     REQUIRE(raw.has_value());
     REQUIRE(raw->points.size() > 1);
     REQUIRE(distance(initial, raw->points.front().position) > 0.1f);
@@ -554,7 +555,7 @@ TEST_CASE("A spell route whose final step rounds to unchanged XYZ reaches the fa
     f.walker->pos = stalled;
     const auto goal = cardian::casting::approach(stalled, target, 20, true);
     REQUIRE(goal.has_value());
-    const auto raw = f.mesh.findPath(stalled, *goal);
+    const auto raw = f.mesh.findPath(stalled, *goal, f.walker->hitboxRadius(), AvoidLinks{ false });
     REQUIRE(raw.has_value());
     REQUIRE(raw->points.size() == 1);
     const auto& end = raw->points.back().position;
@@ -632,7 +633,7 @@ TEST_CASE("A blocked spell inside the old arrival tolerance still walks its corn
     const auto initial = f.walker->pos;
     const position_t target{5.12f, 0, -4.99f, 0, 0};
     REQUIRE(distance(initial, target) < 0.3f);
-    REQUIRE(f.mesh.findPath(initial, target).has_value());
+    REQUIRE(f.mesh.findPath(initial, target, f.walker->hitboxRadius(), AvoidLinks{ false }).has_value());
     bool ready = false;
     for (int tick = 0; tick < 10; ++tick)
     {

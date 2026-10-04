@@ -26,6 +26,7 @@
 #include "entities/battle_entity.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "map_constants.h"
 #include "notoriety_container.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
@@ -116,7 +117,7 @@ void CEnmityContainer::AddBaseEnmity(CBattleEntity* PChar)
 {
     TracyZoneScoped;
 
-    if (PChar->getZone() != m_EnmityHolder->getZone())
+    if (PChar->getZone() != m_EnmityHolder->getZone() || IgnorePets(PChar))
     {
         return;
     }
@@ -163,6 +164,16 @@ void CEnmityContainer::UpdateEnmity(CBattleEntity* PEntity, int32 CE, int32 VE, 
 
     if (m_EnmityHolder->objtype != ENTITYTYPE::TYPE_MOB) // pets and trusts dont have enmity.
     {
+        return;
+    }
+
+    // If the entity ignores pets, fetch the master and add base enmity to them.
+    if (IgnorePets(PEntity))
+    {
+        if (withMaster && PEntity->PMaster != nullptr && CE >= 0 && VE >= 0)
+        {
+            AddBaseEnmity(PEntity->PMaster);
+        }
         return;
     }
 
@@ -283,7 +294,7 @@ void CEnmityContainer::UpdateEnmityFromCure(CBattleEntity* PEntity, uint8 level,
 {
     TracyZoneScoped;
 
-    if (!IsWithinEnmityRange(PEntity))
+    if (!IsWithinEnmityRange(PEntity) || IgnorePets(PEntity))
     {
         return;
     }
@@ -463,8 +474,6 @@ void CEnmityContainer::UpdateEnmityFromAttack(CBattleEntity* PEntity, int32 Dama
 
 CBattleEntity* CEnmityContainer::GetHighestEnmity()
 {
-    TracyZoneScoped;
-
     if (m_EnmityList.empty())
     {
         return nullptr;
@@ -541,6 +550,21 @@ bool CEnmityContainer::IsWithinEnmityRange(CBattleEntity* PEntity) const
 EnmityList_t* CEnmityContainer::GetEnmityList()
 {
     return &m_EnmityList;
+}
+
+bool CEnmityContainer::IgnorePets(CBattleEntity* PEntity) const
+{
+    if (m_EnmityHolder->getMobMod(xi::MobMod::IgnorePets) == 0)
+    {
+        return false;
+    }
+
+    if (PEntity->objtype == TYPE_PET)
+    {
+        return true;
+    }
+
+    return PEntity->objtype == TYPE_MOB && PEntity->PMaster != nullptr && PEntity->PMaster->objtype == TYPE_PC;
 }
 
 bool CEnmityContainer::IsTameable() const

@@ -15,6 +15,7 @@
 build/
 build*/
 .cpm-cache/
+.cache/
 lbuild/
 build_mariadb_32/
 build_mariadb_64/
@@ -137,6 +138,7 @@ UpgradeLog*.XML
 /xi_connect*
 /xi_map*
 /xi_search*
+/xi_profile*
 /xi_test*
 /xi_world*
 
@@ -192,7 +194,6 @@ Makefile
 **/CMakeFiles
 cmake_install.cmake
 /cmake-**/**
-.cpm-cache/
 
 # ignore servers
 *-server
@@ -232,9 +233,6 @@ memcheck.out.*
 # Memory dumps
 *.dmp
 
-# Auto-generated files
-/src/common/version.cpp
-
 # Module init file
 modules/init.txt
 
@@ -249,6 +247,7 @@ doxygen/
 xi_map.dSYM
 xi_connect.dSYM
 xi_search.dSYM
+xi_profile.dSYM
 
 # Keys and Certs
 **/*.key
@@ -276,3 +275,4 @@ clang_tidy_summary.md
 *.codegen.lua
 /data/schemas/*.schema.json
 !/data/schemas/_*.schema.json
+xi_data_schema

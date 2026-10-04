@@ -21,14 +21,15 @@
 
 #include "auth_session.h"
 
+#include "common/database.h"
 #include "common/ipc.h"
-#include "common/md52.h"
+#include "common/ipp.h"
 #include "common/utils.h"
 #include "otp_helpers.h"
 
 #include <bcrypt/BCrypt.hpp>
 
-#include <atomic>
+#include <openssl/rand.h>
 
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -161,7 +162,7 @@ void auth_session::read_func()
     // Check major.minor but ignore trivial
     if (version[0] != SupportedXiloaderVersion[0] || version[1] != SupportedXiloaderVersion[1])
     {
-        std::string errorMessage = fmt::format("Your xiloader is too old.\nPlease update to version '{}.{}.x'.\nYour client reported '{}.{}.{}'.", SupportedXiloaderVersion[0], SupportedXiloaderVersion[1], version[0], version[1], version[2]);
+        std::string errorMessage = fmt::format("Unsupported xiloader version {}.{}.{}.\nThis server requires version {}.{}.x.", version[0], version[1], version[2], SupportedXiloaderVersion[0], SupportedXiloaderVersion[1]);
         sendJsonOnlyErrorMessage(errorMessage);
         return;
     }
@@ -192,10 +193,17 @@ void auth_session::read_func()
         {
             DebugSockets(fmt::format("LOGIN_ATTEMPT from {}", ipAddress));
 
+            if (loginHelpers::isLoginLockedOut(ipAddress))
+            {
+                sendLoginResult(login_result::LOGIN_ERROR);
+                return;
+            }
+
             // Look up and validate account password
             auto accountInfo = validatePassword(username, password);
             if (!accountInfo)
             {
+                loginHelpers::recordLoginFailure(ipAddress);
                 sendLoginResult(login_result::LOGIN_ERROR);
                 return;
             }
@@ -236,7 +244,7 @@ void auth_session::read_func()
                         return;
                     }
 
-                    if (!otpHelpers::validateTOTP(otp, otpHelpers::getAccountSecret(username, "TOTP")))
+                    if (!otpHelpers::validateTOTP(accountID, otp, otpHelpers::getAccountSecret(username, "TOTP")))
                     {
                         sendLoginResult(login_result::LOGIN_ERROR);
                         return;
@@ -289,16 +297,46 @@ void auth_session::read_func()
             }
             */
 
-            // Success
-            static std::atomic<uint32> authSeq{ 0 };
-
-            uint32 hashData[] = {
-                earth_time::timestamp() ^ static_cast<uint32>(getpid()),
-                authSeq.fetch_add(1, std::memory_order_relaxed),
-            };
-
+            // the session hash is also the profile server credential, so it must be unguessable
             unsigned char hash[16];
-            md5(reinterpret_cast<uint8*>(hashData), hash, sizeof(hashData));
+            if (RAND_bytes(hash, sizeof(hash)) != 1)
+            {
+                ShowError("Failed to generate a session hash");
+                sendLoginResult(login_result::LOGIN_ERROR);
+                return;
+            }
+
+            // clients behind the same address get different game udp ports, see profileAvailableNotice
+            uint16     udpPortSlot = 1;
+            const auto slots       = db::preparedStmt("SELECT udp_port_slot FROM accounts_profile "
+                                                      "WHERE client_addr = ? AND accid != ? AND refreshed > NOW() - INTERVAL 2 HOUR "
+                                                      "ORDER BY udp_port_slot",
+                                                      ipAddress,
+                                                      accountID);
+
+            FOR_DB_MULTIPLE_RESULTS(slots)
+            {
+                const auto taken = slots->get<uint16>("udp_port_slot");
+                if (taken > udpPortSlot)
+                {
+                    break;
+                }
+
+                udpPortSlot = taken + 1;
+            }
+
+            // keeps the account's last open status
+            if (!db::preparedStmt("INSERT INTO accounts_profile(accid, session_hash, client_addr, udp_port_slot) VALUES(?, ?, ?, ?) "
+                                  "ON DUPLICATE KEY UPDATE session_hash = VALUES(session_hash), client_addr = VALUES(client_addr), udp_port_slot = VALUES(udp_port_slot), refreshed = NOW()",
+                                  accountID,
+                                  hash,
+                                  ipAddress,
+                                  udpPortSlot))
+            {
+                ShowErrorFmt("Failed to store the profile credential of account {}", accountID);
+                sendLoginResult(login_result::LOGIN_ERROR);
+                return;
+            }
 
             json loginSuccessReply;
             loginSuccessReply["result"]       = static_cast<uint8>(login_result::LOGIN_SUCCESS);
@@ -320,6 +358,8 @@ void auth_session::read_func()
             }
 
             sendJsonAsBuffer(loginSuccessReply);
+
+            loginHelpers::clearLoginFailures(ipAddress);
 
             auto& session          = loginHelpers::get_authenticated_session(ipAddress, asStringFromUntrustedSource(hash, sizeof(hash)));
             session.accountID      = accountID;
@@ -411,7 +451,7 @@ void auth_session::read_func()
 
             if (otpHelpers::doesAccountNeedOTP(username, "TOTP"))
             {
-                if (!otpHelpers::validateTOTP(otp, otpHelpers::getAccountSecret(username, "TOTP")))
+                if (!otpHelpers::validateTOTP(accid, otp, otpHelpers::getAccountSecret(username, "TOTP")))
                 {
                     sendLoginResult(login_result::LOGIN_ERROR_CHANGE_PASSWORD);
                     return;
@@ -494,22 +534,23 @@ void auth_session::read_func()
         case login_cmd::LOGIN_REMOVE_TOTP:
         {
             // Look up and validate account password
-            if (!validatePassword(username, password))
+            const auto accountInfo = validatePassword(username, password);
+            if (!accountInfo)
             {
                 sendJsonOnlyErrorMessage("Failed to validate credentials");
                 return;
             }
 
+            const auto accid        = accountInfo->first;
             const auto secret       = otpHelpers::getAccountSecret(username, "TOTP");
             const auto recoveryCode = otpHelpers::getAccountRecoveryCode(username, "TOTP");
 
             // Perform case-insensitive comparison on the recovery code vs input otp
             // use c_str() because that guarantees both have a null terminator (and thus are the same length)
-            if (otpHelpers::validateTOTP(otp, secret) || strcmpi(otp.c_str(), recoveryCode.c_str()) == 0)
+            if (otpHelpers::validateTOTP(accid, otp, secret) || strcmpi(otp.c_str(), recoveryCode.c_str()) == 0)
             {
                 // validated
-                uint32     accid = loginHelpers::getAccountId(username);
-                const auto rset  = db::preparedStmt("DELETE FROM accounts_totp WHERE accounts_totp.accid = ? LIMIT 1", accid);
+                const auto rset = db::preparedStmt("DELETE FROM accounts_totp WHERE accounts_totp.accid = ? LIMIT 1", accid);
 
                 otpHelpers::removeAllTrustTokens(accid);
 
@@ -527,18 +568,20 @@ void auth_session::read_func()
         case login_cmd::LOGIN_REGENERATE_RECOVERY:
         {
             // Look up and validate account password
-            if (!validatePassword(username, password))
+            const auto accountInfo = validatePassword(username, password);
+            if (!accountInfo)
             {
                 sendJsonOnlyErrorMessage("Failed to validate credentials");
                 return;
             }
 
+            const auto accid        = accountInfo->first;
             const auto secret       = otpHelpers::getAccountSecret(username, "TOTP");
             const auto recoveryCode = otpHelpers::getAccountRecoveryCode(username, "TOTP");
 
             // Perform case-insensitive comparison on the recovery code vs input otp
             // use c_str() because that guarantees both have a null terminator (and thus are the same length)
-            if (otpHelpers::validateTOTP(otp, secret) || strcmpi(otp.c_str(), recoveryCode.c_str()) == 0)
+            if (otpHelpers::validateTOTP(accid, otp, secret) || strcmpi(otp.c_str(), recoveryCode.c_str()) == 0)
             {
                 const auto newRecoveryCode = otpHelpers::regenerateAccountRecoveryCode(username, "TOTP");
 
@@ -557,18 +600,20 @@ void auth_session::read_func()
         case login_cmd::LOGIN_VERIFY_TOTP:
         {
             // Look up and validate account password
-            if (!validatePassword(username, password))
+            const auto accountInfo = validatePassword(username, password);
+            if (!accountInfo)
             {
                 sendJsonOnlyErrorMessage("Failed to validate credentials");
                 return;
             }
 
+            const auto accid  = accountInfo->first;
             const auto secret = otpHelpers::getAccountSecret(username, "TOTP");
 
-            if (otpHelpers::validateTOTP(otp, secret))
+            if (otpHelpers::validateTOTP(accid, otp, secret))
             {
                 // validated
-                const auto rset = db::preparedStmt("UPDATE accounts_totp SET validated = TRUE WHERE accid = ? LIMIT 1", loginHelpers::getAccountId(username));
+                const auto rset = db::preparedStmt("UPDATE accounts_totp SET validated = TRUE WHERE accid = ? LIMIT 1", accid);
 
                 json sendTOTP;
                 sendTOTP["result"]        = login_result::LOGIN_SUCCESS_VERIFY_TOTP;

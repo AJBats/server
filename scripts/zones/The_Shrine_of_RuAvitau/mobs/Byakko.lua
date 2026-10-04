@@ -9,7 +9,8 @@ local entity = {}
 
 entity.onMobSpawn = function(mob)
     mob:setMobMod(xi.mobMod.ADD_EFFECT, 1)
-    mob:setMod(xi.mod.DOUBLE_ATTACK, 10)
+    mob:setMod(xi.mod.DOUBLE_ATTACK, 5)
+    mob:setMod(xi.mod.TRIPLE_ATTACK, 45)
 end
 
 entity.onAdditionalEffect = function(mob, target, damage)

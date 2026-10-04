@@ -12,7 +12,7 @@ local content = BattlefieldMission:new({
     isMission             = true,
     allowTrusts           = true,
     maxPlayers            = 6,
-    levelCap              = 99,
+    levelCap              = xi.settings.main.MAX_LEVEL,
     timeLimit             = utils.minutes(30),
     index                 = 4,
     allowedAreas          = set{ 1 },
@@ -40,6 +40,7 @@ function content:setupBattlefield(battlefield)
     local karababa = battlefield:insertEntity(8, true, true)
     karababa:setSpawn(unpack(karababaCoords[battlefield:getArea()]))
     karababa:spawn()
+    karababa:setMobLevel(75)
 end
 
 content.groups =

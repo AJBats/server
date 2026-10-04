@@ -16,7 +16,6 @@ CPMAddPackage(
 resume_clang_tidy()
 
 set(SOURCES
-    ${COMMON_SOURCES}
     ${LUA_SOURCES}
     ${REPORTERS_SOURCES}
     enums/test_status.h
@@ -53,16 +52,10 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND NOT CMAKE_CXX_COMPILER_ID MATCHES "
     )
 endif()
 
-if(UNIX)
-    set(resource "")
-else()
-    set(resource "${CMAKE_SOURCE_DIR}/res/testserver.rc")
-endif()
-
 # Catch2 test TUs must live in the executable, not xi_test_lib: their tests are
 # registered by static initializers, which the linker drops for unreferenced
 # object files in a static library.
-add_executable(xi_test
+xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/bitset_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/data_binding_tests.cpp
@@ -75,6 +68,7 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/entity_list_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/item_container_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/rng_runtime_tests.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/pathfind_region_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/roam_region_tests.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_formation_tests.cpp # CARDIAN: formation arithmetic behind the link's position stream
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_danger_tests.cpp # CARDIAN: the danger map's radius rule
@@ -102,54 +96,22 @@ add_executable(xi_test
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_party_roles_tests.cpp # CARDIAN: the party's roles and the join rule (RESEARCH §17.6)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_tank_calls_tests.cpp # CARDIAN: the tank tactician's Provoke pacing
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
-    ${resource})
+)
 add_dependencies(xi_test data_schema_generate)
 
-set(TEST_LIB_SOURCES ${SOURCES})
-add_library(xi_test_lib
-    STATIC
-        ${TEST_LIB_SOURCES})
-
-if(WIN32)
-    set_target_properties(xi_test PROPERTIES OUTPUT_NAME xi_test)
-endif()
-
-if (APPLE)
-    disable_lto(xi_test)
-endif()
-
+xi_add_library(xi_test_lib ${SOURCES})
+target_include_directories(xi_test_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(xi_test_lib
     PUBLIC
         xi_connect_lib
-        xi_map_lib
+        xi_map_core
         xi_world_lib
-        ${SHARED_EXTERNAL_LIBS}
         ${TEST_ONLY_EXTERNAL_LIBS}
-        project_options
-    PRIVATE
-        project_warnings
 )
 
-target_include_directories(xi_test_lib
-    PUBLIC
-        ${CMAKE_SOURCE_DIR}
-        ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_CURRENT_SOURCE_DIR}
-        ${CMAKE_CURRENT_SOURCE_DIR}/../map
-        ${CMAKE_CURRENT_SOURCE_DIR}/../world
-)
-
-target_link_libraries(xi_test
-    PUBLIC
-        xi_test_lib
-        Catch2::Catch2)
-
-set_target_output_directory(xi_test)
+target_link_libraries(xi_test PRIVATE xi_test_lib Catch2::Catch2)
+xi_precompile_headers(xi_test)
 
 if(TRACY_ENABLE)
-    target_link_libraries(xi_test_lib PUBLIC TracyClient)
     set_target_properties(xi_test PROPERTIES OUTPUT_NAME xi_test_tracy)
-    target_compile_definitions(xi_test_lib PUBLIC TRACY_ENABLE)
-    target_compile_definitions(xi_test_lib PUBLIC TRACY_NO_EXIT=1)
-    message(STATUS "TRACY_ENABLE: xi_test will be output as xi_test_tracy")
-endif(TRACY_ENABLE)
+endif()

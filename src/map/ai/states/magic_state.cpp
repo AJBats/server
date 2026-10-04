@@ -30,7 +30,10 @@
 #include "data/enums/mob_mod.h"
 #include "enmity_container.h"
 #include "entities/battle_entity.h"
+#include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "entities/pet_entity.h"
+#include "enums/msg_basic.h"
 #include "job_points.h"
 #include "lua/luautils.h"
 #include "packets/s2c/0x028_battle2.h"
@@ -151,6 +154,9 @@ auto CMagicState::Update(timer::time_point tick) -> bool
     auto*      PTarget = m_PEntity->IsValidTarget(target(), m_PSpell->getValidTarget(), m_errorMsg);
     const auto msg     = MsgBasic::IsInterrupted;
 
+    // mobs, pets and trusts only print the interrupted message when a hit or status interrupted them
+    const bool quiet = m_PEntity->objtype != TYPE_PC;
+
     auto isTargetValid = [&]()
     {
         // m_PEntity->IsValidTarget checks if the target is dead and returns nullptr if so, so we don't need to duplicate it here.
@@ -179,7 +185,7 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         if (!isTargetValid())
         {
             // guessed, but cancels correctly.
-            m_PEntity->OnCastInterrupted(*this, action, msg, false);
+            m_PEntity->OnCastInterrupted(*this, action, msg, quiet);
             m_PEntity->loc.zone->PushPacket(m_PEntity, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_BATTLE2>(action));
 
             Complete();
@@ -200,7 +206,7 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         // CanCastSpell also does a range check which we don't want to check during midcast - mobs don't cancel spells during casting for being out of range
         if (!isTargetValid() || !CanCastSpell(PTarget, true) || HasMoved())
         {
-            m_PEntity->OnCastInterrupted(*this, action, msg, false);
+            m_PEntity->OnCastInterrupted(*this, action, msg, quiet);
 
             Complete();
             return false;
@@ -264,6 +270,13 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         if (battleutils::IsParalyzed(m_PEntity))
         {
             ActionInterrupts::MagicParalyzed(m_PEntity, m_PSpell.get(), PTarget);
+
+            // If Paralyzed entity is a mob, reset their magic cooldown.
+            if (auto* mobController = dynamic_cast<CMobController*>(m_PEntity->PAI->GetController()))
+            {
+                mobController->OnCastStopped(*this, action);
+            }
+
             Complete();
             return false;
         }
@@ -271,6 +284,13 @@ auto CMagicState::Update(timer::time_point tick) -> bool
         if (battleutils::IsIntimidated(m_PEntity, PTarget))
         {
             ActionInterrupts::MagicIntimidated(m_PEntity, m_PSpell.get(), PTarget);
+
+            // If Intimidated entity is a mob, reset their magic cooldown.
+            if (auto* mobController = dynamic_cast<CMobController*>(m_PEntity->PAI->GetController()))
+            {
+                mobController->OnCastStopped(*this, action);
+            }
+
             Complete();
             return false;
         }
@@ -331,8 +351,9 @@ void CMagicState::Cleanup(timer::time_point tick)
 {
     if (!IsCompleted())
     {
-        action_t action{};
-        m_PEntity->OnCastInterrupted(*this, action, MsgBasic::IsInterrupted, false);
+        action_t   action{};
+        const bool quiet = m_PEntity->objtype != TYPE_PC;
+        m_PEntity->OnCastInterrupted(*this, action, MsgBasic::IsInterrupted, quiet);
     }
 }
 

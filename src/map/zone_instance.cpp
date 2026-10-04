@@ -148,13 +148,23 @@ void CZoneInstance::FindPartyForMob(CBaseEntity* PEntity)
     }
 }
 
-void CZoneInstance::TransportDepart(uint16 boundary, xi::ZoneId prevZoneId, uint16 transportId)
+void CZoneInstance::TransportDepart(uint16 boundary, xi::ZoneId prevZoneId, std::string_view transport)
 {
     TracyZoneScoped;
 
     for (const auto& PInstance : m_InstanceList)
     {
-        PInstance->TransportDepart(boundary, prevZoneId, transportId);
+        PInstance->TransportDepart(boundary, prevZoneId, transport);
+    }
+}
+
+void CZoneInstance::DisembarkAll()
+{
+    TracyZoneScoped;
+
+    for (const auto& PInstance : m_InstanceList)
+    {
+        PInstance->DisembarkAll();
     }
 }
 
@@ -395,7 +405,7 @@ void CZoneInstance::WideScan(CCharEntity* PChar, uint16 radius)
 
 auto CZoneInstance::ZoneServer(timer::time_point tick) -> Task<void>
 {
-    TracyZoneScoped;
+    TracyZoneScopedN("CZoneInstance::ZoneServer");
 
     std::vector<CInstance*> instancesToRemove;
     for (const auto& PInstance : m_InstanceList)

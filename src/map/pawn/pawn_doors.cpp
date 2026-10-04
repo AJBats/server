@@ -30,8 +30,10 @@
 #include "ai/ai_container.h"
 #include "ai/helpers/action_queue.h"
 #include "entities/char_entity.h"
+#include "data/datasets/zones/npcs/dataset.h"
+#include "data/datasets/zones/settings/dataset.h"
+#include "data/loader.h"
 #include "entities/npc_entity.h"
-#include "transport.h"
 #include "zone.h"
 #include "zone_entities.h"
 
@@ -57,49 +59,42 @@ namespace
     constexpr auto kDoorOpenTime = 7s;
 
     // A ferry dock gate or an elevator door follows its timetable, not a
-    // passer-by: the transport table names the gates, the elevators hold
-    // their doors. A 7-second close on one of those would shut a gate the
-    // ship had just opened.
+    // passer-by. A 7-second close on one of those would shut a gate the
+    // ship had just opened. The zone's own data names them, by the client
+    // name the door carries, as the ship and elevator handlers resolve
+    // them: each transport's door in the zone settings, each elevator's
+    // two doors on its platform NPC. Read once per zone
     auto isScheduledDoor(const CNpcEntity* PNpc) -> bool
     {
-        static std::unordered_set<uint32> gates;
-        static bool                       gatesLoaded = false;
+        static std::unordered_map<xi::ZoneId, std::unordered_set<std::string>> doorsByZone;
 
-        if (!gatesLoaded)
+        const auto zoneId        = PNpc->getZone();
+        auto [doors, firstVisit] = doorsByZone.try_emplace(zoneId);
+        if (firstVisit)
         {
-            gatesLoaded = true;
-            if (const auto rset = db::preparedStmt("SELECT door FROM transport WHERE door > 0"))
+            if (const auto settings = xi::data::loadZoneFile<xi::data::datasets::zones::settings::Dataset>(zoneId))
             {
-                while (rset->next())
+                for (const auto& transport : settings->Transports)
                 {
-                    gates.insert(rset->get<uint32>("door"));
+                    if (!transport.Door.empty())
+                    {
+                        doors->second.insert(transport.Door);
+                    }
+                }
+            }
+            if (const auto npcs = xi::data::loadZoneFile<xi::data::datasets::zones::npcs::Dataset>(zoneId))
+            {
+                for (const auto& npc : *npcs)
+                {
+                    if (npc.Elevator.has_value())
+                    {
+                        doors->second.insert(npc.Elevator->LowerDoor);
+                        doors->second.insert(npc.Elevator->UpperDoor);
+                    }
                 }
             }
         }
-
-        if (gates.contains(PNpc->id))
-        {
-            return true;
-        }
-
-        // Elevators are registered by their zone scripts; asked each time so
-        // a late registration is never missed (this runs only at a closed
-        // door on her way)
-        auto* transport = CTransportHandler::getInstance();
-        for (int id = 0; id < 256; ++id)
-        {
-            const auto* elevator = transport->getElevator(static_cast<uint8>(id));
-            if (elevator == nullptr)
-            {
-                continue;
-            }
-            if ((elevator->LowerDoor != nullptr && elevator->LowerDoor->id == PNpc->id) ||
-                (elevator->UpperDoor != nullptr && elevator->UpperDoor->id == PNpc->id))
-            {
-                return true;
-            }
-        }
-        return false;
+        return doors->second.contains(PNpc->name);
     }
 
     // A door with rules of its own -- a key, a quest, a cutscene -- has a

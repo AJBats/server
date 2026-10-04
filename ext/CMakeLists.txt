@@ -1,15 +1,24 @@
-# add_subdirectory(lua) # Handled globally
-# add_subdirectory(mariadb) # Handled globally
-# add_subdirectory(zmq) # Handled globally
-# add_subdirectory(openssl) # Handled globally
+# luajit, mariadb, zmq and openssl are prebuilt; cmake/Find*.cmake turns them into targets.
 add_subdirectory(concurrentqueue)
 add_subdirectory(SPSCQueue)
 add_subdirectory(sol)
 
-# CPM Modules
+CPMAddPackage(
+    NAME ZLIB
+    GITHUB_REPOSITORY madler/zlib
+    GIT_TAG v1.3.1
+    OPTIONS "ZLIB_BUILD_EXAMPLES OFF"
+) # defines: zlibstatic, for the compressed ximesh files
+
+CPMAddPackage(
+    NAME utfcpp
+    GITHUB_REPOSITORY nemtrif/utfcpp
+    GIT_TAG v4.0.8
+) # defines: utf8cpp
+
 if(TRACY_ENABLE)
     # Tracy version tag, without the leading 'v'
-    set(TRACY_VERSION 0.14.0)
+    set(TRACY_VERSION 0.14.1)
 
     # Download client library
     CPMAddPackage(
@@ -22,7 +31,7 @@ if(TRACY_ENABLE)
             "TRACY_ON_DEMAND ON"
             "TRACY_NO_BROADCAST ON"
             "TRACY_NO_CONTEXT_SWITCH ON"
-            "TRACY_NO_EXIT ON"
+            "TRACY_NO_EXIT OFF"
             "TRACY_NO_VSYNC_CAPTURE ON"
             "TRACY_NO_FRAME_IMAGE ON"
             # "TRACY_NO_SYSTEM_TRACING ON" # This is incredibly heavy, add this line back if you need to speed up profiling
@@ -129,11 +138,11 @@ if(earcut_hpp_ADDED) # header-only
     target_include_directories(earcut_hpp SYSTEM INTERFACE ${earcut_hpp_SOURCE_DIR}/include/)
 endif()
 
-# The pinned Glaze fix requires CMake 3.31, so expose its headers without adding its CMake project.
+# Glaze's own CMake project wants CMake 3.31, so expose its headers without adding it.
 CPMAddPackage(
     NAME glaze
     GITHUB_REPOSITORY stephenberry/glaze
-    GIT_TAG 2f6f5dcfe1a689bf79b443d83434fab264ce0a21
+    GIT_TAG v9.0.0
     DOWNLOAD_ONLY ON
 )
 if(glaze_ADDED)
@@ -179,6 +188,7 @@ CPMAddPackage(
     OPTIONS
         "HTTPLIB_REQUIRE_ZLIB OFF"
         "HTTPLIB_USE_ZLIB_IF_AVAILABLE OFF"
+        "HTTPLIB_USE_OPENSSL_IF_AVAILABLE OFF"
 ) # defines: httplib::httplib
 
 CPMAddPackage(
@@ -221,36 +231,8 @@ if(asio_ADDED)
     target_link_libraries(asio INTERFACE Threads::Threads)
 
     if(WIN32)
-        # macro see @ https://stackoverflow.com/a/40217291/1746503
-        macro(get_win32_winnt version)
-            if(CMAKE_SYSTEM_VERSION)
-                set(ver ${CMAKE_SYSTEM_VERSION})
-                string(REGEX MATCH "^([0-9]+).([0-9])" ver ${ver})
-                string(REGEX MATCH "^([0-9]+)" verMajor ${ver})
-
-                # Check for Windows 10, b/c we'll need to convert to hex 'A'.
-                if("${verMajor}" MATCHES "10")
-                    set(verMajor "A")
-                    string(REGEX REPLACE "^([0-9]+)" ${verMajor} ver ${ver})
-                endif("${verMajor}" MATCHES "10")
-
-                # Remove all remaining '.' characters.
-                string(REPLACE "." "" ver ${ver})
-
-                # Prepend each digit with a zero.
-                string(REGEX REPLACE "([0-9A-Z])" "0\\1" ver ${ver})
-                set(${version} "0x${ver}")
-            endif()
-        endmacro()
-
-        if(NOT DEFINED _WIN32_WINNT)
-            get_win32_winnt(ver)
-            set(_WIN32_WINNT ${ver})
-        endif()
-
-        message(STATUS "Set _WIN32_WINNET=${_WIN32_WINNT}")
-
-        target_compile_definitions(asio INTERFACE _WIN32_WINNT=${_WIN32_WINNT})
+        # Without this asio targets Windows XP. Windows 10 is the oldest we run on.
+        target_compile_definitions(asio INTERFACE _WIN32_WINNT=0x0A00)
     endif()
 endif()
 
@@ -267,7 +249,6 @@ if(bcrypt_ADDED) # bcrypt's cmake isn't suitable for us
             ${bcrypt_SOURCE_DIR}/src/crypt_blowfish.c
             ${bcrypt_SOURCE_DIR}/src/crypt_gensalt.c
             ${bcrypt_SOURCE_DIR}/src/wrapper.c
-            ${bcrypt_SOURCE_DIR}/src/x86.S
     )
     target_include_directories(bcrypt
         SYSTEM INTERFACE
@@ -275,13 +256,6 @@ if(bcrypt_ADDED) # bcrypt's cmake isn't suitable for us
             $<$<PLATFORM_ID:Linux>:${bcrypt_SOURCE_DIR}/include/bcrypt/>
     )
 endif()
-
-CPMAddPackage(
-    NAME alpaca
-    GITHUB_REPOSITORY p-ranav/alpaca
-    GIT_TAG 83a592f0c3807500f1aaf3b07fd48105a01e2780
-    SYSTEM ON
-) # defines: alpaca
 
 CPMAddPackage(
     NAME magic_enum
@@ -317,7 +291,7 @@ CPMAddPackage(
 set(CPPTRACE_SYMBOL_OPTIONS "")
 if(APPLE)
     # macOS binaries carry a "debug map" pointing at the .o files rather than embedded DWARF;
-    # atos resolves against the staged .dSYM (see set_target_output_directory) and is fast.
+    # atos resolves against the staged .dSYM (see xi_stage_in_repo_root) and is fast.
     list(APPEND CPPTRACE_SYMBOL_OPTIONS
         "CPPTRACE_GET_SYMBOLS_WITH_LIBDWARF OFF"
         "CPPTRACE_GET_SYMBOLS_WITH_ADDR2LINE ON"
@@ -339,6 +313,9 @@ CPMAddPackage(
     SYSTEM ON
     OPTIONS
         ${CPPTRACE_SYMBOL_OPTIONS}
+        # We link cpptrace::cpptrace, never its module target, and that target is the
+        # only thing in the build requiring Ninja 1.11+ or barring Unix Makefiles.
+        "CPPTRACE_DISABLE_CXX_20_MODULES ON"
 ) # defines: cpptrace::cpptrace
 
 set(SHARED_EXTERNAL_LIBS
@@ -347,13 +324,17 @@ set(SHARED_EXTERNAL_LIBS
     concurrentqueue
     spscqueue
     mariadbclient
+    zeromq
+    luajit
+    libcrypto
+    libssl
     sol2_single
     argparse
     efsw
     expected-lite
     pcg-cpp
     asio
-    alpaca
+    glaze::glaze
     magic_enum
     utf8cpp
     unordered_dense::unordered_dense
@@ -400,36 +381,7 @@ set(TEST_ONLY_EXTERNAL_LIBS
     nlohmann_json::nlohmann_json
 )
 
-#
 # copy external lib lists to parent scope
-#
-
-set(SHARED_EXTERNAL_LIBS
-    ${SHARED_EXTERNAL_LIBS}
-    PARENT_SCOPE
-)
-
-set(CONNECT_ONLY_EXTERNAL_LIBS
-    ${CONNECT_ONLY_EXTERNAL_LIBS}
-    PARENT_SCOPE
-)
-
-set(MAP_ONLY_EXTERNAL_LIBS
-    ${MAP_ONLY_EXTERNAL_LIBS}
-    PARENT_SCOPE
-)
-
-set(SEARCH_ONLY_EXTERNAL_LIBS
-    ${SEARCH_ONLY_EXTERNAL_LIBS}
-    PARENT_SCOPE
-)
-
-set(WORLD_ONLY_EXTERNAL_LIBS
-    ${WORLD_ONLY_EXTERNAL_LIBS}
-    PARENT_SCOPE
-)
-
-set(TEST_ONLY_EXTERNAL_LIBS
-    ${TEST_ONLY_EXTERNAL_LIBS}
-    PARENT_SCOPE
-)
+foreach(list SHARED CONNECT_ONLY MAP_ONLY SEARCH_ONLY WORLD_ONLY TEST_ONLY)
+    set(${list}_EXTERNAL_LIBS ${${list}_EXTERNAL_LIBS} PARENT_SCOPE)
+endforeach()

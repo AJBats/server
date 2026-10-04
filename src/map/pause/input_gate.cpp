@@ -34,6 +34,7 @@
 #include "packets/c2s/0x037_item_use.h"
 #include "packets/c2s/0x0e7_reqlogout.h"
 #include "packets/c2s/0x0e8_camp.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x017_chat_std.h"
 #include "packets/s2c/0x052_eventucoff.h"
 #include "pawn/cardian_link.h"

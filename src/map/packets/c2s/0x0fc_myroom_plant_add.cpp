@@ -26,6 +26,7 @@
 #include "items.h"
 #include "items/item_flowerpot.h"
 #include "items/transactions/item_claim.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x01d_item_same.h"
 #include "packets/s2c/0x020_item_attr.h"
 #include "packets/s2c/0x0fa_myroom_operation.h"
@@ -43,6 +44,7 @@ auto GP_CLI_COMMAND_MYROOM_PLANT_ADD::validate(MapSession* PSession, const CChar
 {
     return PacketValidator(PChar)
         .blockedBy({ BlockedState::InEvent })
+        .isInMogHouse()
         .mustNotEqual(this->MyroomPlantItemNo, 0, "MyroomPlantItemNo must not be 0")
         .mustNotEqual(this->MyroomAddItemNo, 0, "MyroomAddItemNo must not be 0")
         .oneOf("MyroomPlantCategory", this->MyroomPlantCategory, validPlantCategories)

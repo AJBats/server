@@ -24,8 +24,8 @@
 #include "data/enums/zone.h"
 
 #include "common/cbasetypes.h"
-#include "enums/key_items.h"
-#include "items/item_fish.h"
+#include "data/enums/key_item.h"
+#include "items/item.h"
 
 #include <map>
 
@@ -156,7 +156,7 @@ struct fish_t
     uint8                maxhook;         // maximum that can be hooked (with sabiki rig)
     uint16               rarity;          // [0-1000] : 0 = not rare, 1 = rarest, 1000 = most common
     uint16               baitPower;       // how strong players current lure attracts fish
-    KeyItem              reqKeyItem;      // required key item
+    xi::KeyItem          reqKeyItem;      // required key item
     std::vector<uint16>* reqFish;         // list of required catches
     bool                 quest_only;      // is fish/item quest override only
     bool                 contest;         // is a fish ranking contest fish
@@ -185,7 +185,7 @@ struct fish_t
     , maxhook(0)
     , rarity(0)
     , baitPower(0)
-    , reqKeyItem(KeyItem::NONE)
+    , reqKeyItem(xi::KeyItem::None)
     , reqFish(nullptr)
     , quest_only(false)
     , contest(false)
@@ -989,7 +989,7 @@ uint8            UnhookMob(CCharEntity* PChar, Lost lost);
 fishresponse_t*  FishingCheck(CCharEntity* PChar, uint8 fishingSkill, rod_t* rod, bait_t* bait, fishingarea_t* area);
 catchresponse_t* ReelCheck(CCharEntity* PChar, fishresponse_t* response, rod_t* rod);
 void             FishingAction(CCharEntity* PChar, GP_CLI_COMMAND_FISHING_2_MODE mode, uint32 para, uint32 para2);
-auto             GetFish(uint16 itemid) -> std::unique_ptr<CItemFish>;
+auto             GetFish(uint16 itemid) -> std::unique_ptr<CItem>;
 
 // Initialization
 void LoadFishingMessages();

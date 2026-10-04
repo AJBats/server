@@ -19,11 +19,18 @@
 ===========================================================================
 */
 
-#ifndef _LUABATTLEFIELD_H
-#define _LUABATTLEFIELD_H
+#pragma once
 
 #include "common/cbasetypes.h"
+#include "data/enums/zone.h"
 
+#include <sol/forward.hpp>
+
+#include <string>
+#include <tuple>
+#include <utility>
+
+class CBaseEntity;
 class CBattlefield;
 
 class CLuaBattlefield
@@ -46,9 +53,7 @@ public:
     uint32   getTimeLimit();
     uint32   getTimeInside();
     uint32   getRemainingTime();
-    uint32   getFightTick();
     uint32   getWipeTime();
-    uint32   getFightTime();
     uint32   getMaxParticipants();
     uint32   getPlayerCount();
     auto     getPlayers() -> sol::table;
@@ -82,5 +87,3 @@ public:
 
     static void Register();
 };
-
-#endif

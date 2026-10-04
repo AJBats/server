@@ -22,9 +22,12 @@
 #include "item_weapon.h"
 
 #include "entities/battle_entity.h"
+#include "items/exdata.h"
 #include "utils/battleutils.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
+
+#include <algorithm>
 
 /************************************************************************
  *                                                                       *
@@ -322,7 +325,7 @@ uint16 CItemWeapon::getILvlMacc() const
 // set delay used for milliseconds calculations (such as auto attack delay)
 void CItemWeapon::setDelay(uint16 delay)
 {
-    m_delay = uint16(delay * 1000.0f / 60.0f);
+    m_delay = static_cast<uint16>(std::min(delay * 1000.0f / 60.0f, 65535.0f));
 }
 
 // get delay used for milliseconds calculations (such as auto attack delay)

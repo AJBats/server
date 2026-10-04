@@ -3,6 +3,10 @@
 -- The Shrouded Maw avatar battlefield
 -- !addkeyitem VIAL_OF_DREAM_INCENSE
 -----------------------------------
+-- The eighth entry update slot and the eighth win param pick Diabolos's lines.
+-- 0 is silent for players still in the missions. 4 is a first clear with CoP done. 5 is a rematch.
+-- The DAT also has 1 to 3 for other mission states.
+-----------------------------------
 local shroudedMawID = zones[xi.zone.THE_SHROUDED_MAW]
 -----------------------------------
 
@@ -15,8 +19,7 @@ local content = BattlefieldQuest:new({
     index            = 2,
     entryNpc         = 'MC_Entrance',
     exitNpc          = 'Memento_Circle',
-    requiredKeyItems = { xi.ki.VIAL_OF_DREAM_INCENSE, keep = true },
-    csParam8         = 5,
+    requiredKeyItems = { xi.keyItem.VIAL_OF_DREAM_INCENSE, keep = true },
 
     questArea = xi.questLog.WINDURST,
     quest     = xi.quest.id.windurst.WAKING_DREAMS,
@@ -30,9 +33,43 @@ function content:setupBattlefield(battlefield)
     end
 end
 
+-- Retail never offers to skip either cutscene, even on a rematch.
+function content:checkSkipCutscene(player)
+    return false
+end
+
+function content:onEntryEventUpdate(player, csid, option, npc)
+    if player:hasCompletedQuest(xi.questLog.WINDURST, xi.quest.id.windurst.WAKING_DREAMS) then
+        self.csParam8 = 5
+    elseif player:hasCompletedMission(xi.mission.log_id.COP, xi.mission.id.cop.DAWN) then
+        self.csParam8 = 4
+    else
+        self.csParam8 = 0
+    end
+
+    return Battlefield.onEntryEventUpdate(self, player, csid, option, npc)
+end
+
+function content:onBattlefieldWin(player, battlefield)
+    if player:getQuestStatus(self.questArea, self.quest) == xi.questStatus.QUEST_ACCEPTED then
+        player:setLocalVar('battlefieldWin', battlefield:getID())
+    end
+
+    local _, clearTime, partySize = battlefield:getRecord()
+    local speech = 0
+
+    if player:hasCompletedQuest(xi.questLog.WINDURST, xi.quest.id.windurst.WAKING_DREAMS) then
+        speech = 5
+    elseif player:hasCompletedMission(xi.mission.log_id.COP, xi.mission.id.cop.DAWN) then
+        speech = 4
+    end
+
+    player:startEvent(32001, battlefield:getArea(), clearTime, partySize, battlefield:getTimeInside(), player:getZoneID(), self.index, 0, speech)
+end
+
 function content:onEventFinishWin(player, csid, option, npc)
-    player:delKeyItem(xi.ki.VIAL_OF_DREAM_INCENSE)
-    npcUtil.giveKeyItem(player, xi.ki.WHISPER_OF_DREAMS)
+    player:delKeyItem(xi.keyItem.VIAL_OF_DREAM_INCENSE)
+    npcUtil.giveKeyItem(player, xi.keyItem.WHISPER_OF_DREAMS)
     player:addTitle(xi.title.HEIR_TO_THE_REALM_OF_DREAMS)
 end
 

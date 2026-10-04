@@ -49,6 +49,7 @@
 #include "enums/item_state.h"
 #include "item_container.h"
 #include "items/item.h"
+#include "items/item_equipment.h"
 #include "navmesh/navmesh.h"
 #include "packets/s2c/0x01d_item_same.h"
 #include "packets/s2c/0x020_item_attr.h"

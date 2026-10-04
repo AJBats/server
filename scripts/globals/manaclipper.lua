@@ -1,9 +1,6 @@
 -----------------------------------
 -- Manaclipper
 -- https://www.bg-wiki.com/ffxi/Manaclipper
--- TODO timed npc messages:
---      - When a barge arrives (not onTransportEvent, earlier than that)
---      - various chats while the barge goes up/down the river
 -----------------------------------
 xi = xi or {}
 xi.manaclipper = xi.manaclipper or {}
@@ -166,36 +163,38 @@ xi.manaclipper.onZoneIn = function(player, prevZone)
     return -1
 end
 
-xi.manaclipper.onTransportEvent = function(player, prevZoneId, transportId)
+xi.manaclipper.onTransportEvent = function(player, prevZoneId, transportName)
     local ID = zones[player:getZoneID()]
     local aboard = player:getLocalVar('[manaclipper]aboard')
 
     -- leaving Sunset Docks. must be standing in trigger area 1. must have a ticket.
     if aboard == 1 then
-        if player:hasKeyItem(xi.ki.MANACLIPPER_TICKET) then
-            player:delKeyItem(xi.ki.MANACLIPPER_TICKET)
+        if player:hasKeyItem(xi.keyItem.MANACLIPPER_TICKET) then
+            player:delKeyItem(xi.keyItem.MANACLIPPER_TICKET)
             player:startEvent(14, {
-                flags = bit.bor(
+                isHidden = true,
+                flags    = bit.bor(
                     xi.cutsceneFlag.RESET_CAMERA,
                     xi.cutsceneFlag.NO_PCS,
                     xi.cutsceneFlag.UNKNOWN_0008,
                     xi.cutsceneFlag.NO_IDLE_WAIT
                 ),
             })
-        elseif player:hasKeyItem(xi.ki.MANACLIPPER_MULTI_TICKET) then
+        elseif player:hasKeyItem(xi.keyItem.MANACLIPPER_MULTI_TICKET) then
             local uses = player:getCharVar('Manaclipper_Ticket') - 1
 
             if uses <= 0 then
                 uses = 0
-                player:messageSpecial(ID.text.END_BILLET, 0, xi.ki.MANACLIPPER_MULTI_TICKET)
-                player:delKeyItem(xi.ki.MANACLIPPER_MULTI_TICKET)
+                player:messageSpecial(ID.text.END_BILLET, 0, xi.keyItem.MANACLIPPER_MULTI_TICKET)
+                player:delKeyItem(xi.keyItem.MANACLIPPER_MULTI_TICKET)
             else
-                player:messageSpecial(ID.text.LEFT_BILLET, 0, xi.ki.MANACLIPPER_MULTI_TICKET, uses)
+                player:messageSpecial(ID.text.LEFT_BILLET, 0, xi.keyItem.MANACLIPPER_MULTI_TICKET, uses)
             end
 
             player:setCharVar('Manaclipper_Ticket', uses)
             player:startEvent(14, {
-                flags = bit.bor(
+                isHidden = true,
+                flags    = bit.bor(
                     xi.cutsceneFlag.RESET_CAMERA,
                     xi.cutsceneFlag.NO_PCS,
                     xi.cutsceneFlag.UNKNOWN_0008,
@@ -203,14 +202,15 @@ xi.manaclipper.onTransportEvent = function(player, prevZoneId, transportId)
                 ),
             })
         else
-            player:messageSpecial(ID.text.NO_BILLET, xi.ki.MANACLIPPER_TICKET)
+            player:messageSpecial(ID.text.NO_BILLET, xi.keyItem.MANACLIPPER_TICKET)
             player:setPos(489, -3, 713, 200) -- kicked off Manaclipper, returned to Sunset Docks
         end
 
     -- leaving Purgonorgo Isle. must be standing in trigger area 2. no ticket required.
     elseif aboard == 2 then
         player:startEvent(16, {
-            flags = bit.bor(
+            isHidden = true,
+            flags    = bit.bor(
                 xi.cutsceneFlag.RESET_CAMERA,
                 xi.cutsceneFlag.NO_PCS,
                 xi.cutsceneFlag.NO_IDLE_WAIT

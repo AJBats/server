@@ -168,7 +168,7 @@ class PossessModule : public CPPModule
 {
     void OnInit() override
     {
-        lua["CBaseEntity"]["possess"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
+        ::lua["CBaseEntity"]["possess"] = [](CLuaBaseEntity* PLuaBaseEntity, const std::string& targetName) -> bool
         {
             return possess::start(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()), targetName);
         };

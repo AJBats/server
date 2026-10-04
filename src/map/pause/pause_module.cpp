@@ -72,7 +72,7 @@ class CardianPauseModule : public CPPModule
                                             reply.finish(ask, cardian::pause::toggle(PChar));
                                         });
 
-        lua["CBaseEntity"]["cardianPause"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
+        ::lua["CBaseEntity"]["cardianPause"] = [](CLuaBaseEntity* PLuaBaseEntity) -> std::string
         {
             auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
             if (PChar == nullptr)
@@ -85,7 +85,7 @@ class CardianPauseModule : public CPPModule
         // The player's own queued command as his queue line names it -- { kind, mode,
         // id, target }, the Link's cl_action and target index; nil with none -- and him
         // taking it back
-        lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
+        ::lua["CBaseEntity"]["cardianQueuedOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::object
         {
             const auto line = cardian::pause::input::queueLine(PLuaBaseEntity->GetBaseEntity()->id);
             if (line.action.kind == CL_AK_NONE)
@@ -99,7 +99,7 @@ class CardianPauseModule : public CPPModule
             fields["target"] = line.target;
             return fields;
         };
-        lua["CBaseEntity"]["cardianCancelOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
+        ::lua["CBaseEntity"]["cardianCancelOwn"] = [](CLuaBaseEntity* PLuaBaseEntity) -> bool
         {
             return cardian::pause::input::cancel(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()));
         };

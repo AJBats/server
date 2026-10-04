@@ -23,6 +23,7 @@
 
 #include "entities/char_entity.h"
 #include "items/transactions/player_trade.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x022_item_trade_res.h"
 
 auto GP_CLI_COMMAND_TRADE_RES::validate(MapSession* PSession, const CCharEntity* PChar) const -> PacketValidationResult
@@ -30,7 +31,7 @@ auto GP_CLI_COMMAND_TRADE_RES::validate(MapSession* PSession, const CCharEntity*
     return PacketValidator(PChar)
         .blockedBy({ BlockedState::InEvent, BlockedState::Monstrosity })
         .oneOf<GP_CLI_COMMAND_TRADE_RES_KIND>(this->Kind)
-        .mustNotEqual(PChar->TradePending.ActIndex, 0, "No pending trade target");
+        .mustNotEqual(PChar->TradePending.entity.ActIndex, 0, "No pending trade target");
 }
 
 void GP_CLI_COMMAND_TRADE_RES::process(MapSession* PSession, CCharEntity* PChar) const
@@ -49,6 +50,11 @@ void GP_CLI_COMMAND_TRADE_RES::process(MapSession* PSession, CCharEntity* PChar)
             if (PChar->activePlayerTradeTransaction())
             {
                 // Trade is already active
+                return;
+            }
+
+            if (PChar->TradePending.initiator)
+            {
                 return;
             }
 

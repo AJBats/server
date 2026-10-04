@@ -19,8 +19,7 @@
 ===========================================================================
 */
 
-#ifndef _CENMITYCONTAINER_H
-#define _CENMITYCONTAINER_H
+#pragma once
 
 #include "common/cbasetypes.h"
 
@@ -71,9 +70,9 @@ public:
     void          UpdateEnmityFromCover(CBattleEntity* PCoverAbilityTarget, CBattleEntity* PCoverAbilityUser);
 
 private:
+    bool IgnorePets(CBattleEntity* PEntity) const;
+
     EnmityList_t m_EnmityList;
     bool         m_tameable{ true };
     CMobEntity*  m_EnmityHolder; // usually a monster
 };
-
-#endif

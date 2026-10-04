@@ -26,6 +26,7 @@
 #include "pawn_controller.h"
 #include "party_roster.h"
 #include "pawn_danger.h"
+#include "reengage.h"
 #include "role_bundles.h"
 #include "tactics.h"
 #include "spell_bank.h"
@@ -76,6 +77,15 @@ struct magic_enum::customize::enum_range<SPELLFAMILY>
     static constexpr int min = 0;
     static constexpr int max = 255;
 };
+
+// Cardian's own conditions and selectors run past the end of upstream's
+// enums (gambit_ids.h: G_CONDITION_STRATEGY, G_SELECT_ENFEEBLE...), and the
+// switches here take them as cases on purpose: MSVC's "not a valid value for
+// switch of enum" warning, an error under the map's warnings-as-errors, is
+// off for this file alone
+#ifdef _MSC_VER
+#pragma warning(disable : 4063)
+#endif
 
 using namespace gambits;
 
@@ -2260,7 +2270,7 @@ namespace pawn
         {
             return std::chrono::milliseconds(PChar->GetWeaponDelay(false));
         }
-        return std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
+        return cardian::reengage::switchDelay();
     }
 
     auto readyToAct(CCharEntity* PChar) -> bool

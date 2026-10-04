@@ -32,8 +32,11 @@
 #include <common/utils.h>
 
 #include <map/entities/mob_entity.h> // xi::RoamFlag::Worm
+#include <map/map_constants.h>
+#include <map/roam_region.h>
 
 #include <algorithm>
+#include <chrono>
 #include <memory>
 
 namespace
@@ -41,6 +44,12 @@ namespace
 
 // Cap for AddPoints; patrol paths may exceed it, other callers are truncated with a warning.
 constexpr size_t kMaxPathPoints = 50;
+
+// region points tried for a recovery walk before settling for a far one
+constexpr int kRecoveryPointAttempts = 8;
+
+// entity speed to yalms per second
+constexpr float kYalmsPerSecondPerSpeed = 1.0f / 17.0f;
 
 } // namespace
 
@@ -89,16 +98,16 @@ auto CPathFind::PathToImpl(const position_t& point, uint8 pathFlags) -> bool
     return found;
 }
 
-auto CPathFind::RoamAround(const position_t& point, float maxRadius, uint8 maxTurns, xi::RoamFlag roamFlags, const RoamRegion* region) -> bool
+auto CPathFind::RoamAround(const position_t& point, float maxRadius, uint8 minTurns, uint8 maxTurns, xi::RoamFlag roamFlags, const RoamRegion* region) -> bool
 {
     TracyZoneScoped;
     TracyZoneString(owner_->name());
 
     Clear();
 
-    roamFlags_ = roamFlags;
-
-    if (FindRandomPath(point, maxRadius, maxTurns, roamFlags, region))
+    roamFlags_  = roamFlags;
+    roamRegion_ = region;
+    if (FindRandomPath(point, maxRadius, minTurns, maxTurns, roamFlags, region))
     {
         return true;
     }
@@ -241,7 +250,7 @@ auto CPathFind::LimitDistance(float maxLength) -> void
     maxDistance_ = maxLength;
 }
 
-auto CPathFind::FollowPath(timer::time_point tick) -> void
+auto CPathFind::FollowPath(const timer::time_point tick, const float stepCap) -> void
 {
     TracyZoneScoped;
     TracyZoneString(owner_->name());
@@ -291,46 +300,94 @@ auto CPathFind::FollowPath(timer::time_point tick) -> void
         return;
     }
 
-    // Walk through waypoints already arrived at, stopping at the first one still to step toward.
-    pathpoint_t targetPoint{};
+    // Update speed before taking the budget.
+    const bool speedChange = owner_->baseSpeed() != owner_->updateSpeed((pathFlags_ & PATHFLAG_RUN) != 0);
+
+    float       budget   = std::min(StepBudget(), stepCap);
+    position_t& ownerPos = owner_->position();
+
+    // A stop-short path ends once within range of the destination and never steps inside it.
+    const bool cardianPrecise = (pathFlags_ & PATHFLAG_CARDIAN) != 0; // CARDIAN: a precise request judges it on its last leg, without slack
+    if (distanceFromPoint_ > 0.0f && (!cardianPrecise || path_.atOrPastLastIndex())) // CARDIAN
+    {
+        const float toDestination = distance(ownerPos, cardianPrecise ? path_.destination() : GetDestination()); // CARDIAN: her route's own end, not the point asked for
+        if (toDestination <= distanceFromPoint_ + (cardianPrecise ? 0.0f : 0.2f))                            // CARDIAN
+        {
+            path_.finish();
+        }
+
+        budget = std::min(budget, std::max(0.0f, toDestination - distanceFromPoint_));
+    }
+
+    // Use the whole tick's movement, even past several waypoints.
     while (!path_.consumed())
     {
-        targetPoint = path_.current();
+        const pathpoint_t targetPoint  = path_.current();
+        const bool        isFinalPoint = path_.atLastIndex();
 
-        // Only the final waypoint stops short; corners must be hit precisely or we clip the wall the navmesh inset us from.
-        const bool isFinalPoint = path_.atLastIndex();
-        if (!AtPoint(targetPoint.position, isFinalPoint))
+        // Arrived at the waypoint.
+        if (AtPoint(targetPoint.position, isFinalPoint))
+        {
+            onPoint_ = true;
+
+            if (targetPoint.setRotation)
+            {
+                ownerPos.rotation = targetPoint.position.rotation;
+                owner_->markPositionDirty();
+            }
+
+            if (targetPoint.wait != 0s)
+            {
+                // Stop here until the wait elapses; the next FollowPath() resumes.
+                timeAtPoint_ = tick + targetPoint.wait;
+                break;
+            }
+
+            owner_->onPathPoint();
+            path_.advance();
+            continue;
+        }
+
+        // Out of movement for this tick.
+        if (budget <= 0.0f)
         {
             break;
         }
 
-        onPoint_ = true;
-
-        if (targetPoint.setRotation)
+        // Stop short only for the last waypoint so corners are hit precisely.
+        const float stopShort = [&]() -> float
         {
-            owner_->position().rotation = targetPoint.position.rotation;
-            owner_->markPositionDirty();
-        }
+            if (path_.atOrPastLastIndex())
+            {
+                return distanceFromPoint_;
+            }
 
-        if (targetPoint.wait != 0s)
-        {
-            // Stop here until the wait elapses; the next FollowPath() resumes.
-            timeAtPoint_ = tick + targetPoint.wait;
-            return;
-        }
+            return 0.0f;
+        }();
 
-        owner_->onPathPoint();
-        path_.advance();
+        const float moved = pathfind::stepTowards(ownerPos, targetPoint.position, budget, stopShort);
+        distanceMoved_ += moved;
+        budget -= moved;
     }
 
-    // Stop short only for the last waypoint so corners are rounded precisely.
-    const bool  steppingToFinal = path_.atOrPastLastIndex();
-    const float stopShort       = steppingToFinal ? distanceFromPoint_ : 0.0f;
-    // CARDIAN: hold position once the final stopping distance is reached.
-    if (!(pathFlags_ & PATHFLAG_CARDIAN) || !steppingToFinal || !isWithinDistance(owner_->position(), targetPoint.position, stopShort))
+    // CARDIAN: a precise request still takes the last small step to a final point reached within its slack, never inside the stop distance
+    if (cardianPrecise && path_.consumed() && budget > 0.0f && !path_.empty())
     {
-        StepToInternal(targetPoint.position, pathFlags_ & PATHFLAG_RUN, stopShort);
+        distanceMoved_ += pathfind::stepTowards(ownerPos, path_.destination(), budget, distanceFromPoint_); // CARDIAN
     }
+
+    // Movement counter for the client's animation.
+    if (speedChange)
+    {
+        ownerPos.moving += static_cast<uint16>(0x28 * stepScale_); // CARDIAN: a scaled step counts its share
+    }
+    else
+    {
+        ownerPos.moving += static_cast<uint16>(0x35 * stepScale_); // CARDIAN: a scaled step counts its share
+    }
+
+    ownerPos.moving %= 0x2000;
+    owner_->markPositionDirty();
 
     if (path_.consumed())
     {
@@ -351,13 +408,8 @@ auto CPathFind::SetStepScale(const float scale) -> void // CARDIAN
     stepScale_ = scale;
 }
 
-auto CPathFind::StepToInternal(const position_t& pos, bool run, float stopShort) -> void
+auto CPathFind::StepBudget() const -> float
 {
-    TracyZoneScoped;
-    TracyZoneString(owner_->name());
-
-    const bool speedChange = owner_->baseSpeed() != owner_->updateSpeed(run);
-
     // Worms underground get a synthetic speed (their normal speed is 0).
     const float speed = [&]() -> float
     {
@@ -370,7 +422,16 @@ auto CPathFind::StepToInternal(const position_t& pos, bool run, float stopShort)
         return static_cast<float>(baseSpeed);
     }();
 
-    const float stepDistance = speed / (run ? 50.0f : 40.0f) * stepScale_; // CARDIAN
+    return speed * kYalmsPerSecondPerSpeed * std::chrono::duration<float>(kLogicUpdateInterval).count() * stepScale_; // CARDIAN: a steered cardian's fraction
+}
+
+auto CPathFind::StepToInternal(const position_t& pos, bool run, float stopShort) -> void
+{
+    TracyZoneScoped;
+    TracyZoneString(owner_->name());
+
+    const bool  speedChange  = owner_->baseSpeed() != owner_->updateSpeed(run);
+    const float stepDistance = StepBudget();
 
     // Kinematics live in pathfind_step so tests can exercise the exact math; stepTowards() also faces the owner.
     position_t& ownerPos = owner_->position();
@@ -397,8 +458,11 @@ auto CPathFind::FindPathInternal(const position_t& start, const position_t& end)
         return false;
     }
 
+    // links are for chasing only
+    const auto avoidLinks = AvoidLinks{ roamRegion_ != nullptr && !recoveringToRegion_ };
+
     const pathfind::NavPathBuilder builder{ navMesh() };
-    auto                           built = builder.findPath(start, end);
+    auto                           built = builder.findPath(start, end, owner_->hitboxRadius(), avoidLinks);
 
     if (!built)
     {
@@ -433,6 +497,33 @@ auto CPathFind::FindPathInternal(const position_t& start, const position_t& end)
         }
     }
 
+    // cut the path where it first leaves the region, unless this walk brings the mob back onto it
+    if (roamRegion_ && !recoveringToRegion_)
+    {
+        auto from = start;
+        for (std::size_t i = 0; i < built->points.size(); ++i)
+        {
+            const auto& to     = built->points[i].position;
+            const float length = distance(from, to, true);
+            if (length > 0.0f)
+            {
+                const Vector3 direction{ .x = (to.x - from.x) / length, .y = 0.0f, .z = (to.z - from.z) / length };
+                const float   allowed = roamRegion_->clampToRegion(from, direction, length);
+                if (allowed < length)
+                {
+                    const position_t edge{ from.x + direction.x * allowed, from.y + (to.y - from.y) * allowed / length, from.z + direction.z * allowed, 0, 0 };
+
+                    built->points.resize(i);
+                    built->points.emplace_back(pathpoint_t{ edge, 0s, false });
+                    built->isPartial = true;
+                    break;
+                }
+            }
+
+            from = to;
+        }
+    }
+
     path_.assign(std::move(built->points), built->isPartial);
     return !path_.empty();
 }
@@ -447,20 +538,46 @@ auto CPathFind::BuildDirectPath(const position_t& end) -> bool
     return true;
 }
 
-auto CPathFind::FindRandomPath(const position_t& start, float maxRadius, uint8 maxTurns, xi::RoamFlag roamFlags, const RoamRegion* region) -> bool
+auto CPathFind::FindRandomPath(const position_t& start, float maxRadius, uint8 minTurns, uint8 maxTurns, xi::RoamFlag roamFlags, const RoamRegion* region) -> bool
 {
     TracyZoneScoped;
     TracyZoneString(owner_->name());
 
     const pathfind::NavPathBuilder builder{ navMesh() };
 
-    auto turnPoints = builder.findRoamTurnPoints(start, maxRadius, maxTurns, region);
+    auto turnPoints = builder.findRoamTurnPoints(start, maxRadius, minTurns, maxTurns, region);
     if (!turnPoints)
     {
         // Hard navmesh failure - bail rather than partially populate the turn list.
         return false;
     }
     turnPoints_ = std::move(*turnPoints);
+
+    // nothing to walk to from here: path to a nearby point of the region with the full navmesh
+    if (turnPoints_.empty() && region)
+    {
+        Maybe<position_t> target;
+        for (int attempt = 0; attempt < kRecoveryPointAttempts; ++attempt)
+        {
+            const auto candidate = region->randomPoint(&navMesh());
+            if (!candidate)
+            {
+                break;
+            }
+
+            target = candidate;
+            if (isWithinDistance(owner_->position(), *candidate, maxRadius * 2.0f, true))
+            {
+                break;
+            }
+        }
+
+        if (target)
+        {
+            turnPoints_.push_back(*target);
+            recoveringToRegion_ = true;
+        }
+    }
 
     // Path to the first turn only; later turns chain in FinishedPath().
     // Turns are sampled around the anchor, but the walk starts from wherever the owner is.
@@ -507,7 +624,8 @@ auto CPathFind::IsPatrolling() const -> bool
 auto CPathFind::AtPoint(const position_t& pos, bool isFinalPoint) const -> bool
 {
     // Corners are reached precisely (0.1y); only the final point uses the requested stop-short plus slack.
-    const float threshold = (isFinalPoint && distanceFromPoint_ != 0) ? distanceFromPoint_ + 0.2f : 0.1f;
+    const float corner    = (pathFlags_ & PATHFLAG_CARDIAN) ? 0.001f : 0.1f; // CARDIAN: a precise request steps onto every corner
+    const float threshold = (isFinalPoint && distanceFromPoint_ != 0) ? distanceFromPoint_ + 0.2f : corner;    // CARDIAN
     return isWithinDistance(owner_->position(), pos, threshold);
 }
 
@@ -547,6 +665,7 @@ auto CPathFind::Clear() -> void
     distanceFromPoint_ = 0;
     pathFlags_         = 0;
     roamFlags_         = xi::RoamFlag::None;
+    roamRegion_        = nullptr;
 
     path_.clear();
 
@@ -560,6 +679,7 @@ auto CPathFind::Clear() -> void
 
     currentTurn_ = 0;
     turnPoints_.clear();
+    recoveringToRegion_ = false;
 
     // Drop any in-flight chunked sequence; the next PathTo / PathInRange starts fresh.
     chunked_.clear();
@@ -636,6 +756,8 @@ auto CPathFind::FinishedPath() -> void
         }
         return;
     }
+
+    recoveringToRegion_ = false;
 
     // Patrol paths loop forever while still roaming.
     if (IsPatrolling() && owner_->isRoaming())

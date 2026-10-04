@@ -3,7 +3,7 @@
 -- Aht Uhrgan Mission 31
 -----------------------------------
 -- !addmission 4 30
--- Nashib : !pos -274.334 -9.287 -64.255 79
+-- Nahshib : !pos -274.334 -9.287 -64.255 79
 -----------------------------------
 
 local mission = Mission:new(xi.mission.log_id.TOAU, xi.mission.id.toau.SHADES_OF_VENGEANCE)
@@ -33,11 +33,11 @@ mission.sections =
 
         [xi.zone.CAEDARVA_MIRE] =
         {
-            ['Nashib'] =
+            ['Nahshib'] =
             {
                 onTrigger = function(player, npc)
                     if
-                        not player:hasKeyItem(xi.ki.PERIQIA_ASSAULT_AREA_ENTRY_PERMIT) and
+                        not player:hasKeyItem(xi.keyItem.PERIQIA_ASSAULT_AREA_ENTRY_PERMIT) and
                         VanadielUniqueDay() >= mission:getVar(player, 'Timer')
                     then
                         return mission:progressEvent(22)
@@ -58,7 +58,7 @@ mission.sections =
                 end,
 
                 [22] = function(player, csid, option, npc)
-                    npcUtil.giveKeyItem(player, xi.ki.PERIQIA_ASSAULT_AREA_ENTRY_PERMIT)
+                    npcUtil.giveKeyItem(player, xi.keyItem.PERIQIA_ASSAULT_AREA_ENTRY_PERMIT)
                 end,
             },
         },

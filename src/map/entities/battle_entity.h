@@ -19,19 +19,18 @@
 ===========================================================================
 */
 
-#ifndef _BATTLEENTITY_H
-#define _BATTLEENTITY_H
+#pragma once
 
 #include "common/types/hash_map.h"
 #include "common/types/maybe.h"
 
+#include <memory>
 #include <set>
 #include <type_traits>
 #include <vector>
 
 #include "alliance.h"
 #include "base_entity.h"
-#include "enums/msg_basic.h"
 #include "modifier.h"
 
 #include "data/enums/attack_type.h"
@@ -166,6 +165,7 @@ class CRangeState;
 class CRecastContainer;
 class CNotorietyContainer;
 struct action_t;
+enum class MsgBasic : uint16_t;
 
 class CBattleEntity : public CBaseEntity
 {
@@ -252,10 +252,10 @@ public:
     void setModifier(xi::Mod type, int16 amount);
     void delModifier(xi::Mod type, int16 amount);
     void addModifiers(std::vector<CModifier>* modList);
-    void addEquipModifiers(std::vector<CModifier>* modList, uint8 itemLevel, uint8 slotid);
+    void addEquipModifiers(CItemEquipment* PItem);
     void setModifiers(std::vector<CModifier>* modList);
     void delModifiers(std::vector<CModifier>* modList);
-    void delEquipModifiers(std::vector<CModifier>* modList, uint8 itemLevel, uint8 slotid);
+    void delEquipModifiers(CItemEquipment* PItem, bool isDelevel = false);
     void saveModifiers();    // save current state of modifiers
     void restoreModifiers(); // restore to saved state
     void savePetModifiers(); // saves dynamic pet modifiers
@@ -425,5 +425,3 @@ private:
     static_assert(std::is_same_v<decltype(m_modStatSave), HashMap<xi::Mod, int16, EnumClassHash>>);
     static_assert(std::is_same_v<decltype(m_petMod), HashMap<PetModType, HashMap<xi::Mod, int16, EnumClassHash>, EnumClassHash>>);
 };
-
-#endif

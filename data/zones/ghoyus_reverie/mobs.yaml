@@ -50,7 +50,7 @@ templates:
 
   Anapos:
     id:      7707
-    species: unclassified
+    species: water_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -88,7 +88,7 @@ templates:
 
   Aphotic_Crab:
     id:      7709
-    species: unclassified
+    species: crab
     type:    [battlefield]
     attributes:
       combat:
@@ -140,11 +140,6 @@ templates:
       combat:
         skill: scythe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -160,7 +155,7 @@ templates:
 
   Atlas_Beetle:
     id:      7710
-    species: unclassified
+    species: beetle
     type:    [battlefield]
     attributes:
       combat:
@@ -179,7 +174,7 @@ templates:
 
   Babalu_Aye:
     id:      7711
-    species: unclassified
+    species: diremite
     type:    [battlefield]
     attributes:
       combat:
@@ -198,7 +193,7 @@ templates:
 
   Befouled_Slime:
     id:      7712
-    species: unclassified
+    species: slime
     type:    [battlefield]
     attributes:
       combat:
@@ -217,7 +212,7 @@ templates:
 
   Befuddled_Meeble:
     id:      7713
-    species: unclassified
+    species: meeble
     type:    [battlefield]
     attributes:
       combat:
@@ -236,7 +231,7 @@ templates:
 
   Bellicose_Tarichuk:
     id:      7714
-    species: unclassified
+    species: tarichuk
     type:    [battlefield]
     attributes:
       combat:
@@ -261,21 +256,6 @@ templates:
       combat:
         skill: dagger
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -296,21 +276,6 @@ templates:
       combat:
         skill: dagger
       jobs: [sam, war]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -332,13 +297,6 @@ templates:
       combat:
         skill: dagger
         delay: 265
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -416,7 +374,7 @@ templates:
 
   Centycore:
     id:      7717
-    species: unclassified
+    species: wyvern
     type:    [battlefield]
     attributes:
       combat:
@@ -435,7 +393,7 @@ templates:
 
   Chichevache:
     id:      7718
-    species: unclassified
+    species: buffalo
     type:    [battlefield]
     attributes:
       combat:
@@ -454,7 +412,7 @@ templates:
 
   Chuhaister:
     id:      7719
-    species: unclassified
+    species: goobbue
     type:    [battlefield]
     attributes:
       combat:
@@ -473,7 +431,7 @@ templates:
 
   Clay_Krater:
     id:      7720
-    species: unclassified
+    species: magic_pot
     type:    [battlefield]
     attributes:
       combat:
@@ -492,7 +450,7 @@ templates:
 
   Cluster_Fly:
     id:      7721
-    species: unclassified
+    species: fly
     type:    [battlefield]
     attributes:
       combat:
@@ -511,7 +469,7 @@ templates:
 
   Cluster_Scorpion:
     id:      7722
-    species: unclassified
+    species: scorpion
     type:    [battlefield]
     attributes:
       combat:
@@ -530,7 +488,7 @@ templates:
 
   Cluster_Spider:
     id:      7723
-    species: unclassified
+    species: spider
     type:    [battlefield]
     attributes:
       combat:
@@ -789,7 +747,7 @@ templates:
 
   Colony_Bat:
     id:      7724
-    species: unclassified
+    species: bat
     type:    [battlefield]
     attributes:
       combat:
@@ -833,11 +791,6 @@ templates:
       combat:
         skill: axe
       jobs: [drk, drk]
-      resists:
-        rank_element:
-          light: -2
-        rank_status:
-          light_sleep: -2
       render:
         look:
           type:  standard
@@ -893,7 +846,7 @@ templates:
 
   Crusted_Pincer:
     id:      7727
-    species: unclassified
+    species: crab
     type:    [battlefield]
     attributes:
       combat:
@@ -950,7 +903,7 @@ templates:
 
   Dzoavits:
     id:      7730
-    species: unclassified
+    species: goobbue
     type:    [battlefield]
     attributes:
       combat:
@@ -986,7 +939,7 @@ templates:
 
   Egungun:
     id:      7731
-    species: unclassified
+    species: slug
     type:    [battlefield]
     attributes:
       combat:
@@ -1013,13 +966,6 @@ templates:
         skill: great_sword
         delay: 265
       jobs: [rdm, rdm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -1096,7 +1042,7 @@ templates:
 
   Falxfang_Tiger:
     id:      7734
-    species: unclassified
+    species: tiger
     type:    [battlefield]
     attributes:
       combat:
@@ -1152,7 +1098,7 @@ templates:
 
   Feeble_Eft:
     id:      7735
-    species: unclassified
+    species: eft
     type:    [battlefield]
     attributes:
       combat:
@@ -1171,7 +1117,7 @@ templates:
 
   Fetid_Slime:
     id:      7736
-    species: unclassified
+    species: slime
     type:    [battlefield]
     attributes:
       combat:
@@ -1190,7 +1136,7 @@ templates:
 
   Fiendish_Weapon:
     id:      7737
-    species: unclassified
+    species: evil_weapon
     type:    [battlefield]
     attributes:
       combat:
@@ -1209,7 +1155,7 @@ templates:
 
   Flamma:
     id:      7738
-    species: unclassified
+    species: fire_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -1228,7 +1174,7 @@ templates:
 
   Flytrap:
     id:      7739
-    species: unclassified
+    species: flytrap
     type:    [battlefield]
     attributes:
       combat:
@@ -1247,7 +1193,7 @@ templates:
 
   Fulmen:
     id:      7740
-    species: unclassified
+    species: thunder_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -1266,7 +1212,7 @@ templates:
 
   Fungic_Koti:
     id:      7741
-    species: unclassified
+    species: funguar
     type:    [battlefield]
     attributes:
       combat:
@@ -1291,25 +1237,6 @@ templates:
       combat:
         skill: staff
         delay: 300
-      resists:
-        rank_element:
-          fire:     2
-          ice:     -2
-          wind:    -1
-          earth:   -1
-          thunder: -1
-          water:   -1
-          light:    2
-          dark:    -1
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -1
-          slow:        -1
-          poison:      -1
-          light_sleep:  2
-          dark_sleep:  -1
-          blind:       -1
       render:
         look:
           type:  standard
@@ -1327,12 +1254,6 @@ templates:
     attributes:
       combat:
         skill: axe
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1352,12 +1273,6 @@ templates:
       combat:
         skill: club
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          earth:   -2
-          thunder:  4
-        rank_status:
-          slow: -2
       render:
         look:
           type:  standard
@@ -1371,7 +1286,7 @@ templates:
 
   Glacies:
     id:      7742
-    species: unclassified
+    species: ice_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -1390,7 +1305,7 @@ templates:
 
   Gnat:
     id:      7743
-    species: unclassified
+    species: gnat
     type:    [battlefield]
     attributes:
       combat:
@@ -1428,7 +1343,7 @@ templates:
 
   Gnyan:
     id:      7745
-    species: unclassified
+    species: diremite
     type:    [battlefield]
     attributes:
       combat:
@@ -1453,22 +1368,6 @@ templates:
       combat:
         skill: dagger
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -2
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -2
-          bind:        -2
-          silence:     -2
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -1482,7 +1381,7 @@ templates:
 
   Goblin_Scrounger:
     id:      7746
-    species: unclassified
+    species: goblin
     type:    [battlefield]
     attributes:
       combat:
@@ -1501,7 +1400,7 @@ templates:
 
   Goldwing:
     id:      7747
-    species: unclassified
+    species: ladybug
     type:    [battlefield]
     attributes:
       combat:
@@ -1520,7 +1419,7 @@ templates:
 
   Gorib:
     id:      7748
-    species: unclassified
+    species: coeurl
     type:    [battlefield]
     attributes:
       combat:
@@ -1539,7 +1438,7 @@ templates:
 
   Gumdrop:
     id:      7749
-    species: unclassified
+    species: flan
     type:    [battlefield]
     attributes:
       combat:
@@ -1558,7 +1457,7 @@ templates:
 
   Haferbocks:
     id:      7750
-    species: unclassified
+    species: sheep
     type:    [battlefield]
     attributes:
       combat:
@@ -1577,7 +1476,7 @@ templates:
 
   Hippalectryon:
     id:      7751
-    species: unclassified
+    species: hippogryph
     type:    [battlefield]
     attributes:
       combat:
@@ -1596,7 +1495,7 @@ templates:
 
   Incited_Meeble:
     id:      7752
-    species: unclassified
+    species: meeble
     type:    [battlefield]
     attributes:
       combat:
@@ -1615,7 +1514,7 @@ templates:
 
   Iyamoopo:
     id:      7753
-    species: unclassified
+    species: crawler
     type:    [battlefield]
     attributes:
       combat:
@@ -1634,7 +1533,7 @@ templates:
 
   Kendi:
     id:      7754
-    species: unclassified
+    species: unclassified  # need captures
     type:    [battlefield]
     attributes:
       combat:
@@ -1653,7 +1552,7 @@ templates:
 
   Kerwan:
     id:      7755
-    species: unclassified
+    species: sapling
     type:    [battlefield]
     attributes:
       combat:
@@ -1672,7 +1571,7 @@ templates:
 
   Kimmerios:
     id:      7756
-    species: unclassified
+    species: dark_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -1696,21 +1595,6 @@ templates:
     attributes:
       combat:
         skill: great_sword
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1725,7 +1609,7 @@ templates:
 
   Kraken:
     id:      7757
-    species: unclassified
+    species: sea_monk
     type:    [battlefield]
     attributes:
       combat:
@@ -1744,7 +1628,7 @@ templates:
 
   Kuperan:
     id:      7758
-    species: unclassified
+    species: golem
     type:    [battlefield]
     attributes:
       combat:
@@ -1770,21 +1654,6 @@ templates:
       combat:
         skill: sword
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -1800,7 +1669,7 @@ templates:
 
   Ladybug:
     id:      7759
-    species: unclassified
+    species: ladybug
     type:    [battlefield]
     attributes:
       combat:
@@ -1819,7 +1688,7 @@ templates:
 
   Lair_Lizard:
     id:      7760
-    species: unclassified
+    species: unclassified  # need captures
     type:    [battlefield]
     attributes:
       combat:
@@ -1843,25 +1712,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:     4
-          ice:      4
-          wind:     1
-          earth:   11
-          thunder:  4
-          water:    4
-          light:    4
-          dark:     4
-        rank_status:
-          paralyze:     4
-          bind:         4
-          silence:      1
-          slow:        11
-          poison:       4
-          light_sleep:  4
-          dark_sleep:   4
-          blind:        4
       render:
         look:
           type:  standard
@@ -1889,7 +1739,7 @@ templates:
 
   Leech:
     id:      7761
-    species: unclassified
+    species: leech
     type:    [battlefield]
     attributes:
       combat:
@@ -1934,7 +1784,7 @@ templates:
 
   Lizard:
     id:      7762
-    species: unclassified
+    species: adamantoise
     type:    [battlefield]
     attributes:
       combat:
@@ -1972,7 +1822,7 @@ templates:
 
   Luminare:
     id:      7764
-    species: unclassified
+    species: light_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -2029,7 +1879,7 @@ templates:
 
   Meeble_Augur:
     id:      7767
-    species: unclassified
+    species: meeble
     type:    [battlefield]
     attributes:
       combat:
@@ -2048,7 +1898,7 @@ templates:
 
   Meeble_Scribe:
     id:      7768
-    species: unclassified
+    species: meeble
     type:    [battlefield]
     attributes:
       combat:
@@ -2067,7 +1917,7 @@ templates:
 
   Metshaldjas:
     id:      7769
-    species: unclassified
+    species: flytrap
     type:    [battlefield]
     attributes:
       combat:
@@ -2086,7 +1936,7 @@ templates:
 
   Metsik:
     id:      7770
-    species: unclassified
+    species: diremite
     type:    [battlefield]
     attributes:
       combat:
@@ -2105,7 +1955,7 @@ templates:
 
   Moblin_Arcanist:
     id:      7771
-    species: unclassified
+    species: moblin
     type:    [battlefield]
     attributes:
       combat:
@@ -2124,7 +1974,7 @@ templates:
 
   Moblin_Militant:
     id:      7772
-    species: unclassified
+    species: moblin
     type:    [battlefield]
     attributes:
       combat:
@@ -2143,7 +1993,7 @@ templates:
 
   Moblin_Miscreant:
     id:      7773
-    species: unclassified
+    species: moblin
     type:    [battlefield]
     attributes:
       combat:
@@ -2162,7 +2012,7 @@ templates:
 
   Mucid_Slime:
     id:      7774
-    species: unclassified
+    species: slime
     type:    [battlefield]
     attributes:
       combat:
@@ -2208,13 +2058,6 @@ templates:
         skill: sword
         delay: 265
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -2230,7 +2073,7 @@ templates:
 
   Nimble_Nelson:
     id:      7776
-    species: unclassified
+    species: rabbit
     type:    [battlefield]
     attributes:
       combat:
@@ -2249,7 +2092,7 @@ templates:
 
   Niveus_Tages:
     id:      7777
-    species: unclassified
+    species: mandragora
     type:    [battlefield]
     attributes:
       combat:
@@ -2268,7 +2111,7 @@ templates:
 
   Noxious_Nellie:
     id:      7778
-    species: unclassified
+    species: spider
     type:    [battlefield]
     attributes:
       combat:
@@ -2306,7 +2149,7 @@ templates:
 
   Odious_Obdella:
     id:      7780
-    species: unclassified
+    species: obdella
     type:    [battlefield]
     attributes:
       combat:
@@ -2331,13 +2174,6 @@ templates:
       combat:
         skill: dagger
         delay: 265
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -2393,21 +2229,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2428,21 +2249,6 @@ templates:
     attributes:
       combat:
         skill: dagger
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2465,21 +2271,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2501,21 +2292,6 @@ templates:
       combat:
         skill: polearm
       jobs: [drg, war]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2531,7 +2307,7 @@ templates:
 
   Orcish_Mangler:
     id:      7782
-    species: unclassified
+    species: orc
     type:    [battlefield]
     attributes:
       combat:
@@ -2550,7 +2326,7 @@ templates:
 
   Orcish_Muscle:
     id:      7783
-    species: unclassified
+    species: orc
     type:    [battlefield]
     attributes:
       combat:
@@ -2576,21 +2352,6 @@ templates:
       combat:
         skill: sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          wind:    -2
-          earth:   -2
-          thunder: -2
-          water:   -3
-          light:   -2
-          dark:    -2
-        rank_status:
-          silence:     -2
-          slow:        -2
-          poison:      -3
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -2606,29 +2367,12 @@ templates:
 
   Orcish_Turret:
     id:            3040
-    species:       orcish_warmachine
+    species:       orcish_turret
     skill_list_id: 248
     attributes:
       combat:
         skill: scythe
       jobs: [rng, rng]
-      resists:
-        rank_element:
-          fire:    4
-          ice:     4
-          wind:    2
-          earth:   2
-          thunder: 2
-          light:   2
-          dark:    2
-        rank_status:
-          paralyze:    4
-          bind:        4
-          silence:     2
-          slow:        2
-          light_sleep: 2
-          dark_sleep:  2
-          blind:       2
       render:
         look:
           type:  standard
@@ -2644,7 +2388,7 @@ templates:
 
   Ore_Cruncher:
     id:      7784
-    species: unclassified
+    species: worm
     type:    [battlefield]
     attributes:
       combat:
@@ -2663,7 +2407,7 @@ templates:
 
   Ore_Devourer:
     id:      7785
-    species: unclassified
+    species: worm
     type:    [battlefield]
     attributes:
       combat:
@@ -2682,7 +2426,7 @@ templates:
 
   Osteoguard:
     id:      7786
-    species: unclassified
+    species: skeleton
     type:    [battlefield]
     attributes:
       combat:
@@ -2701,7 +2445,7 @@ templates:
 
   Peckish_Cockatrice:
     id:      7787
-    species: unclassified
+    species: cockatrice
     type:    [battlefield]
     attributes:
       combat:
@@ -2720,7 +2464,7 @@ templates:
 
   Peiste:
     id:      7788
-    species: unclassified
+    species: peiste
     type:    [battlefield]
     attributes:
       combat:
@@ -2758,7 +2502,7 @@ templates:
 
   Piceous_Mimic:
     id:      7790
-    species: unclassified
+    species: mimic
     type:    [battlefield]
     attributes:
       combat:
@@ -2777,7 +2521,7 @@ templates:
 
   Pugnacious_Eft:
     id:      7791
-    species: unclassified
+    species: eft
     type:    [battlefield]
     attributes:
       combat:
@@ -2796,7 +2540,7 @@ templates:
 
   Purushamriga:
     id:      7792
-    species: unclassified
+    species: dhalmel
     type:    [battlefield]
     attributes:
       combat:
@@ -2842,7 +2586,7 @@ templates:
 
   Rafflesia:
     id:      7793
-    species: unclassified
+    species: rafflesia
     type:    [battlefield]
     attributes:
       combat:
@@ -2861,7 +2605,7 @@ templates:
 
   Rahu:
     id:      7794
-    species: unclassified
+    species: dragon
     type:    [battlefield]
     attributes:
       combat:
@@ -2880,7 +2624,7 @@ templates:
 
   Rambunctious_Meeble:
     id:      7795
-    species: unclassified
+    species: meeble
     type:    [battlefield]
     attributes:
       combat:
@@ -2899,7 +2643,7 @@ templates:
 
   Red_Pillywiggin:
     id:      7796
-    species: unclassified
+    species: red_bee
     type:    [battlefield]
     attributes:
       combat:
@@ -2953,13 +2697,6 @@ templates:
         skill: sword
         delay: 265
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -3001,7 +2738,7 @@ templates:
 
   Scultone:
     id:      7797
-    species: unclassified
+    species: dragon
     type:    [battlefield]
     attributes:
       combat:
@@ -3030,15 +2767,6 @@ templates:
         delay:    270
         dmg_mult: 125
       jobs: [war, rdm]
-      resists:
-        rank_element:
-          ice:     -2
-          thunder: -2
-          water:    4
-        rank_status:
-          paralyze: -2
-          bind:     -2
-          poison:    4
       render:
         look:
           type:  standard
@@ -3072,7 +2800,7 @@ templates:
 
   Seua_Peek:
     id:      7798
-    species: unclassified
+    species: tiger
     type:    [battlefield]
     attributes:
       combat:
@@ -3091,7 +2819,7 @@ templates:
 
   Shadhavar:
     id:      7799
-    species: unclassified
+    species: monoceros
     type:    [battlefield]
     attributes:
       combat:
@@ -3129,7 +2857,7 @@ templates:
 
   Silagilith:
     id:      7801
-    species: unclassified
+    species: mirulith
     type:    [battlefield]
     attributes:
       combat:
@@ -3148,7 +2876,7 @@ templates:
 
   Siltim:
     id:      7802
-    species: unclassified
+    species: rafflesia
     type:    [battlefield]
     attributes:
       combat:
@@ -3174,13 +2902,6 @@ templates:
         skill: dagger
         delay: 265
       jobs: [thf, thf]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard
@@ -3215,7 +2936,7 @@ templates:
 
   Skoll:
     id:      7804
-    species: unclassified
+    species: gnole
     type:    [battlefield]
     attributes:
       combat:
@@ -3234,7 +2955,7 @@ templates:
 
   Slug:
     id:      7805
-    species: unclassified
+    species: slug
     type:    [battlefield]
     attributes:
       combat:
@@ -3253,7 +2974,7 @@ templates:
 
   Snarling_Meeble:
     id:      7806
-    species: unclassified
+    species: meeble
     type:    [battlefield]
     attributes:
       combat:
@@ -3272,7 +2993,7 @@ templates:
 
   Sparky_Sam:
     id:      7807
-    species: unclassified
+    species: rabbit
     type:    [battlefield]
     attributes:
       combat:
@@ -3310,7 +3031,7 @@ templates:
 
   Stoic_Marolith:
     id:      7809
-    species: unclassified
+    species: marolith
     type:    [battlefield]
     attributes:
       combat:
@@ -3386,7 +3107,7 @@ templates:
 
   Subterranean_Safepoint:
     id:      7813
-    species: unclassified
+    species: fortifications
     type:    [battlefield]
     attributes:
       combat:
@@ -3405,7 +3126,7 @@ templates:
 
   Sulphurous_Bomb:
     id:      7814
-    species: unclassified
+    species: bomb
     type:    [battlefield]
     attributes:
       combat:
@@ -3424,7 +3145,7 @@ templates:
 
   Sulphurous_Djinn:
     id:      7815
-    species: unclassified
+    species: djinn
     type:    [battlefield]
     attributes:
       combat:
@@ -3443,7 +3164,7 @@ templates:
 
   Surtr:
     id:      7816
-    species: unclassified
+    species: red_golems
     type:    [battlefield]
     attributes:
       combat:
@@ -3462,7 +3183,7 @@ templates:
 
   Svaha:
     id:      7817
-    species: unclassified
+    species: grimoire
     type:    [battlefield]
     attributes:
       combat:
@@ -3500,7 +3221,7 @@ templates:
 
   Tanihwa:
     id:      7819
-    species: unclassified
+    species: bugard
     type:    [battlefield]
     attributes:
       combat:
@@ -3519,7 +3240,7 @@ templates:
 
   Tatzelwurm:
     id:      7820
-    species: unclassified
+    species: eft
     type:    [battlefield]
     attributes:
       combat:
@@ -3538,7 +3259,7 @@ templates:
 
   Tectochuk:
     id:      7821
-    species: unclassified
+    species: eft
     type:    [battlefield]
     attributes:
       combat:
@@ -3557,7 +3278,7 @@ templates:
 
   Tellus:
     id:      7822
-    species: unclassified
+    species: earth_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -3576,7 +3297,7 @@ templates:
 
   Tenebrous_Bat:
     id:      7823
-    species: unclassified
+    species: bat
     type:    [battlefield]
     attributes:
       combat:
@@ -3595,7 +3316,7 @@ templates:
 
   Terror_Fly:
     id:      7824
-    species: unclassified
+    species: fly
     type:    [battlefield]
     attributes:
       combat:
@@ -3619,27 +3340,6 @@ templates:
     attributes:
       combat:
         skill: club
-      resists:
-        dmg_physical:
-          piercing: 2500
-        rank_element:
-          fire:    -2
-          ice:     -1
-          wind:    -3
-          earth:   -2
-          thunder: -2
-          water:   -2
-          light:   -3
-          dark:     6
-        rank_status:
-          paralyze:    -1
-          bind:        -1
-          silence:     -3
-          slow:        -2
-          poison:      -2
-          light_sleep: -3
-          dark_sleep:   6
-          blind:        6
       render:
         look:
           type:  standard
@@ -3655,25 +3355,6 @@ templates:
       combat:
         skill: great_sword
       jobs: [pld, pld]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          wind:    -2
-          earth:   -2
-          thunder: -3
-          water:    2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          silence:     -2
-          slow:        -2
-          poison:       2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3689,17 +3370,6 @@ templates:
       combat:
         skill: scythe
         delay: 280
-      resists:
-        rank_element:
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -3
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -3
       render:
         look:
           type:  standard
@@ -3711,7 +3381,7 @@ templates:
 
   Tumultuous_Worm:
     id:      7825
-    species: unclassified
+    species: worm
     type:    [battlefield]
     attributes:
       combat:
@@ -3730,7 +3400,7 @@ templates:
 
   Tupilaq:
     id:      7826
-    species: unclassified
+    species: corse
     type:    [battlefield]
     attributes:
       combat:
@@ -3749,7 +3419,7 @@ templates:
 
   Umagrhk:
     id:      7827
-    species: unclassified
+    species: yztarg
     type:    [battlefield]
     attributes:
       combat:
@@ -3768,7 +3438,7 @@ templates:
 
   Varaneft:
     id:      7828
-    species: unclassified
+    species: eft
     type:    [battlefield]
     attributes:
       combat:
@@ -3787,7 +3457,7 @@ templates:
 
   Ventus:
     id:      7829
-    species: unclassified
+    species: air_elemental
     type:    [battlefield]
     attributes:
       combat:
@@ -3823,7 +3493,7 @@ templates:
 
   Wicked_Weapon:
     id:      7830
-    species: unclassified
+    species: evil_weapon
     type:    [battlefield]
     attributes:
       combat:
@@ -3913,21 +3583,6 @@ templates:
       combat:
         skill: hand_to_hand
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3945,21 +3600,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -3980,21 +3620,6 @@ templates:
       combat:
         skill: axe
       jobs: [brd, brd]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4016,21 +3641,6 @@ templates:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4051,21 +3661,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4085,21 +3680,6 @@ templates:
       combat:
         skill: dagger
       jobs: [nin, nin]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4121,21 +3701,6 @@ templates:
       combat:
         skill: great_katana
       jobs: [sam, sam]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4151,7 +3716,7 @@ templates:
 
   Yagudo_Kamari:
     id:      7833
-    species: unclassified
+    species: yagudo
     type:    [battlefield]
     attributes:
       combat:
@@ -4175,21 +3740,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4209,21 +3759,6 @@ templates:
       combat:
         skill: sword
       jobs: [whm, whm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4246,21 +3781,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4281,21 +3801,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4313,21 +3818,6 @@ templates:
     attributes:
       combat:
         skill: scythe
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4347,21 +3837,6 @@ templates:
       combat:
         skill: axe
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4384,21 +3859,6 @@ templates:
         skill: hand_to_hand
         delay: 480
       jobs: [mnk, mnk]
-      resists:
-        rank_element:
-          fire:    -2
-          ice:     -3
-          thunder: -2
-          water:   -2
-          light:   -2
-          dark:    -2
-        rank_status:
-          paralyze:    -3
-          bind:        -3
-          poison:      -2
-          light_sleep: -2
-          dark_sleep:  -2
-          blind:       -2
       render:
         look:
           type:  standard
@@ -4414,7 +3874,7 @@ templates:
 
   Yellow_Pillywiggin:
     id:      7834
-    species: unclassified
+    species: yellow_bee
     type:    [battlefield]
     attributes:
       combat:
@@ -4441,13 +3901,6 @@ templates:
         skill: axe
         delay: 265
       jobs: [blm, blm]
-      resists:
-        rank_element:
-          fire:     2
-          thunder: -1
-          water:    2
-        rank_status:
-          poison: 2
       render:
         look:
           type:  standard

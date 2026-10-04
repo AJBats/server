@@ -188,7 +188,13 @@ end
 
 -- Calculate potency.
 xi.spells.enfeebling.calculatePotency = function(caster, target, spellId, spellEffect, skillType, statUsed)
-    local potency    = pTable[spellId][column.BASE_POTENCY]
+    local potency = pTable[spellId][column.BASE_POTENCY]
+
+    -- Ninjutsu debuffs have fixed potency per tier and are not affected by dINT or enfeebling potency gear.
+    if skillType == xi.skill.NINJUTSU then
+        return potency
+    end
+
     local statDiff   = caster:getStat(statUsed) - target:getStat(statUsed)
     local skillLevel = caster:getSkillLevel(skillType)
 
@@ -322,6 +328,11 @@ xi.spells.enfeebling.calculateDuration = function(caster, target, spellId, spell
 
     if spellEffect == xi.effect.BIND then
         duration = math.randomInt(13, 60)
+    end
+
+    -- Seems to be anywhere from 2 - 8 seconds with float precision.
+    if spellEffect == xi.effect.STUN then
+        duration = math.randomFloat(2, 8)
     end
 
     -- Additions to base duration.

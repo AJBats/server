@@ -27,13 +27,13 @@ quest.sections =
             {
                 onTrigger = function(player, npc)
                     if
-                        quest:getMustZone(player) or
+                        player:needToZone() or
                         quest:getVar(player, 'Stage') > GetSystemTime()
                     then
-                        return quest:progressEvent(52)
-                    else
-                        return quest:progressEvent(42) -- Starts Quest
+                        return quest:event(52)
                     end
+
+                    return quest:progressEvent(42) -- Starts Quest
                 end,
             },
 
@@ -41,17 +41,17 @@ quest.sections =
             {
                 onTrigger = function(player, npc)
                     if player:needToZone() or quest:getVar(player, 'Stage') > GetSystemTime() then
-                        return quest:progressEvent(53)
-                    else
-                        return quest:progressEvent(42) -- Starts Quest
+                        return quest:event(53)
                     end
+
+                    return quest:progressEvent(42) -- Starts Quest
                 end,
             },
 
             ['Fochacha'] =
             {
                 onTrigger = function(player, npc)
-                    return quest:progressEvent(47)
+                    return quest:event(47)
                 end
             },
 
@@ -78,21 +78,25 @@ quest.sections =
             ['Fochacha'] =
             {
                 onTrigger = function(player, npc)
-                    if quest:getVar(player, 'Prog') == 0 then
+                    local progress = quest:getVar(player, 'Prog')
+
+                    if progress == 0 then
                         return quest:progressEvent(43)
-                    else
-                        return quest:progressEvent(49)
+                    elseif progress == 1 then
+                        return quest:event(48)
                     end
+
+                    return quest:event(49)
                 end,
             },
 
             ['Ulamaal'] =
             {
                 onTrigger = function(player, npc)
-                    if player:hasKeyItem(xi.ki.RAINBOW_BERRY) then
+                    if player:hasKeyItem(xi.keyItem.RAINBOW_BERRY) then
                         return quest:progressEvent(45)
                     else
-                        return quest:progressEvent(54)
+                        return quest:event(54)
                     end
                 end,
             },
@@ -100,10 +104,10 @@ quest.sections =
             ['Qutiba'] =
             {
                 onTrigger = function(player, npc)
-                    if player:hasKeyItem(xi.ki.RAINBOW_BERRY) then
+                    if player:hasKeyItem(xi.keyItem.RAINBOW_BERRY) then
                         return quest:progressEvent(45)
                     else
-                        return quest:progressEvent(54)
+                        return quest:event(54)
                     end
                 end,
             },
@@ -131,9 +135,8 @@ quest.sections =
                 [45] = function(player, csid, option, npc)
                     if quest:complete(player) then
                         player:needToZone(true)
-                        player:delKeyItem(xi.ki.RAINBOW_BERRY)
-                        -- Set variable for 'A taste of Honey' ToAU quest.
-                        player:setVar('Quest[6][12]Stage', JstMidnight())
+                        player:delKeyItem(xi.keyItem.RAINBOW_BERRY)
+                        xi.quest.setVar(player, xi.questLog.AHT_URHGAN, xi.quest.id.ahtUrhgan.A_TASTE_OF_HONEY, 'Stage', GetSystemTime() + 60) -- 1 minute wait time
                     end
                 end,
             },
@@ -145,9 +148,9 @@ quest.sections =
             {
                 onTrade = function(player, npc, trade)
                     if
-                        npcUtil.tradeHasExactly(trade, xi.item.SICKLE) and
+                        npcUtil.tradeMatches(trade, { { xi.item.SICKLE, 1 } }) and
                         quest:getVar(player, 'Prog') == 2 and
-                        not player:hasKeyItem(xi.ki.RAINBOW_BERRY)
+                        not player:hasKeyItem(xi.keyItem.RAINBOW_BERRY)
                     then
                         player:setLocalVar('questItem', 1)
                         return quest:progressEvent(507, { [0] = 4294966520 })
@@ -159,7 +162,7 @@ quest.sections =
             {
                 [507] = function(player, csid, option, npc)
                     if player:getLocalVar('questItem') == 1 then
-                        npcUtil.giveKeyItem(player, xi.ki.RAINBOW_BERRY)
+                        npcUtil.giveKeyItem(player, xi.keyItem.RAINBOW_BERRY)
                         player:setLocalVar('questItem', 0)
                     end
                 end,

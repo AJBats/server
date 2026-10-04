@@ -132,7 +132,7 @@ mission.sections =
                         (missionStatus == 4 or missionStatus == 5) and
                         npcUtil.tradeMatches(trade, { { xi.item.CLUMP_OF_GOOBBUE_HUMUS, 1 } })
                     then
-                        return mission:progressEvent(13)
+                        return mission:progressCutscene(13)
                     end
                 end,
 
@@ -151,7 +151,7 @@ mission.sections =
                 [13] = function(player, csid, option, npc)
                     player:tradeComplete()
                     player:setMissionStatus(mission.areaId, 6)
-                    npcUtil.giveKeyItem(player, xi.ki.LETTER_FROM_ZONPA_ZIPPA)
+                    npcUtil.giveKeyItem(player, xi.keyItem.LETTER_FROM_ZONPA_ZIPPA)
                 end,
             },
         },
@@ -204,7 +204,7 @@ mission.sections =
 
                 [621] = function(player, csid, option, npc)
                     player:setMissionStatus(mission.areaId, 7)
-                    player:delKeyItem(xi.ki.LETTER_FROM_ZONPA_ZIPPA)
+                    player:delKeyItem(xi.keyItem.LETTER_FROM_ZONPA_ZIPPA)
                 end,
             },
         },

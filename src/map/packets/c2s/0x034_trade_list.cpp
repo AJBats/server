@@ -26,6 +26,7 @@
 #include "items.h"
 #include "items/item_linkshell.h"
 #include "items/transactions/player_trade.h"
+#include "packets/c2s/validation.h"
 
 namespace
 {
@@ -61,7 +62,7 @@ auto GP_CLI_COMMAND_TRADE_LIST::validate(MapSession* PSession, const CCharEntity
 {
     return PacketValidator(PChar)
         .blockedBy({ BlockedState::InEvent, BlockedState::Monstrosity })
-        .mustNotEqual(PChar->TradePending.UniqueNo, 0, "No trade target")
+        .mustNotEqual(PChar->TradePending.entity.UniqueNo, 0, "No trade target")
         .range("TradeIndex", this->TradeIndex, 0, 8)
         .custom([&](PacketValidator& v)
                 {

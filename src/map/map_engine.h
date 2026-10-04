@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include "pch.h"
-
 #include <common/application.h>
 #include <common/ipp.h>
 #include <common/timer.h>
@@ -97,6 +95,7 @@ private:
     Maybe<Scheduler::Token> mapCleanupToken_;
     Maybe<Scheduler::Token> mapGarbageCollectToken_;
     Maybe<Scheduler::Token> timeServerToken_;
+    Maybe<Scheduler::Token> transportToken_;
     Maybe<Scheduler::Token> persistVolatileServerVarsToken_;
     Maybe<Scheduler::Token> pumpIPCToken_;
     Maybe<Scheduler::Token> flushStatisticsToken_;

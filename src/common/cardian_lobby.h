@@ -147,9 +147,19 @@ namespace cardian::lobby
         return std::nullopt;
     }
 
-    // The lobby's verdict on a typed name, and the hold when it passes
-    inline auto thenHold(Maybe<std::string> refused, const std::string& name, const uint32 accid) -> Maybe<std::string>
+    // The lobby's verdict on a typed name (its error code for the client), and the hold when it
+    // passes: a name that cannot be held is refused with the code given for an unavailable name
+    inline auto thenHold(Maybe<uint16> error, const std::string& name, const uint32 accid, const uint16 unavailable) -> Maybe<uint16>
     {
-        return refused.has_value() ? std::move(refused) : holdName(name, accid);
+        if (error.has_value())
+        {
+            return error;
+        }
+        if (const auto refused = holdName(name, accid); refused.has_value())
+        {
+            ShowWarning(fmt::format("new character name error <{}>: {}", name, *refused));
+            return unavailable;
+        }
+        return std::nullopt;
     }
 } // namespace cardian::lobby

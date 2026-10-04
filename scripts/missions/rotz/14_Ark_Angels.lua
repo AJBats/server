@@ -19,11 +19,11 @@ local mission = Mission:new(xi.mission.log_id.ZILART, xi.mission.id.zilart.ARK_A
 -- from the keyItem table
 local keyItemOffset =
 {
-    [0] = xi.ki.SHARD_OF_APATHY,
-    [1] = xi.ki.SHARD_OF_COWARDICE,
-    [2] = xi.ki.SHARD_OF_ENVY,
-    [3] = xi.ki.SHARD_OF_ARROGANCE,
-    [4] = xi.ki.SHARD_OF_RAGE,
+    [0] = xi.keyItem.SHARD_OF_APATHY,
+    [1] = xi.keyItem.SHARD_OF_COWARDICE,
+    [2] = xi.keyItem.SHARD_OF_ENVY,
+    [3] = xi.keyItem.SHARD_OF_ARROGANCE,
+    [4] = xi.keyItem.SHARD_OF_RAGE,
 }
 
 mission.reward =
@@ -51,7 +51,7 @@ mission.sections =
 
         [xi.zone.THE_SHRINE_OF_RUAVITAU] =
         {
-            ['blank_divine_might'] = mission:progressEvent(53, 917, 1408, 1550),
+            ['blank_divine_might'] = mission:progressCutscene(53, 917, 1408, 1550),
 
             onEventFinish =
             {
@@ -81,7 +81,7 @@ mission.sections =
 
                     -- Divine Might
                     elseif keyItemIndex == 5 then
-                        for keyItemId = xi.ki.SHARD_OF_APATHY, xi.ki.SHARD_OF_RAGE do
+                        for keyItemId = xi.keyItem.SHARD_OF_APATHY, xi.keyItem.SHARD_OF_RAGE do
                             npcUtil.giveKeyItem(player, keyItemId)
                         end
 
@@ -91,11 +91,11 @@ mission.sections =
                     end
 
                     if
-                        player:hasKeyItem(xi.ki.SHARD_OF_APATHY) and
-                        player:hasKeyItem(xi.ki.SHARD_OF_ARROGANCE) and
-                        player:hasKeyItem(xi.ki.SHARD_OF_COWARDICE) and
-                        player:hasKeyItem(xi.ki.SHARD_OF_ENVY) and
-                        player:hasKeyItem(xi.ki.SHARD_OF_RAGE)
+                        player:hasKeyItem(xi.keyItem.SHARD_OF_APATHY) and
+                        player:hasKeyItem(xi.keyItem.SHARD_OF_ARROGANCE) and
+                        player:hasKeyItem(xi.keyItem.SHARD_OF_COWARDICE) and
+                        player:hasKeyItem(xi.keyItem.SHARD_OF_ENVY) and
+                        player:hasKeyItem(xi.keyItem.SHARD_OF_RAGE)
                     then
                         mission:complete(player)
                     end
