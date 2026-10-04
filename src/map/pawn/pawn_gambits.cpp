@@ -25,6 +25,7 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "party_roster.h"
+#include "pawn_danger.h"
 #include "role_bundles.h"
 #include "tactics.h"
 #include "spell_bank.h"
@@ -507,10 +508,8 @@ namespace pawn
         }
         // Her party role's rows run with a player and never in the wild. Her
         // sub job as she has set it, a zone's restriction of it aside: the
-        // rows stay put, and a restricted tool is never usable anyway. A
-        // played character's seat lends him nothing yet: a bundle is marked
-        // rows, and no tactician runs for him
-        const auto role = wild || m_host->OwnClient() ? cardian::party::Role::None : pawn::roster::roleOf(POwner);
+        // rows stay put, and a restricted tool is never usable anyway
+        const auto role = wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner);
         const RoleKey key{ role, POwner->GetMJob(), POwner->GetSJob(true) };
         if (!m_roleKey.has_value() || *m_roleKey != key)
         {
@@ -595,11 +594,11 @@ namespace pawn
             m_nukeHold.clear();
         }
 
-        // The pacer (CPawnController::ReadyToAct): her think waits until the
+        // The pacer (readyToAct): her think waits until the
         // server would take a new action from her, and thinks the first tick
         // it would -- an ability's animation does not hold her once it has
         // landed; a spell, a weapon skill, a shot, an item, a stun do
-        if (!m_host->ReadyToAct())
+        if (!readyToAct(POwner))
         {
             return;
         }
@@ -630,13 +629,12 @@ namespace pawn
         // watches, spell rows feed it and it says who casts; where none
         // does, rows cast as they always have. With her gambits on, a
         // marked row under a conveyor is her tactician running
-        // (CPawnController::TacticianRuns); the tank tactician is the Tank
-        // seat's (RESEARCH §17.13: the seat is what she is for). A played
-        // character's spell rows feed it as hers do; his marked rows are
-        // not yet a tactician of his, so no seat calls for him
+        // (TacticianRuns); the tank tactician is the Tank seat's (RESEARCH
+        // §17.13: the seat is what she is for). A played character's rows
+        // feed it and his seat calls for him as hers do
         const bool conveyor = Conveyed();
         const bool spells   = conveyor && pawn::tactics::offersSpells(POwner);
-        const bool tank     = conveyor && !m_host->OwnClient() && pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
+        const bool tank     = conveyor && pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
         if (tank != m_tankOnDuty)
         {
             m_tankOnDuty = tank;
@@ -668,7 +666,7 @@ namespace pawn
         // for nobody. Asked only while she can act at all (the emergency
         // cure's own gate): a call the server would refuse -- mid-item,
         // stunned, asleep -- is not made, so nothing is pushed at her
-        if (tank && m_host->RestAllowsAction() && m_host->ReadyToAct())
+        if (tank && m_host->RestAllowsAction() && readyToAct(POwner))
         {
             if (const auto call = pawn::tactics::tankCall(POwner, engaged); call.has_value())
             {
@@ -843,7 +841,7 @@ namespace pawn
             return false;
         }
         const auto state = found.value_or(cardian::tactician::State::Order);
-        if (!cardian::tactician::actsAlone(state, row->gambit, m_host->TacticianRuns()))
+        if (!cardian::tactician::actsAlone(state, row->gambit, TacticianRuns()))
         {
             return false;
         }
@@ -1016,7 +1014,7 @@ namespace pawn
                 // special; PARTY_MULTI is unimplemented upstream too
                 if (const auto finder = cardian::engage::finderOf(selector); finder.has_value())
                 {
-                    if (auto* PMob = FightTarget(); m_host->FoeOfKind(*finder, PMob))
+                    if (auto* PMob = FightTarget(); FoeOfKind(*finder, PMob))
                     {
                         out.push_back(PMob);
                     }
@@ -1061,7 +1059,7 @@ namespace pawn
             {
                 // A finder names a mob of its kind (FoeOfKind reads, never writes)
                 const auto finder = cardian::engage::finderOf(selector);
-                return finder.has_value() && m_host->FoeOfKind(*finder, const_cast<CBattleEntity*>(PTarget));
+                return finder.has_value() && FoeOfKind(*finder, const_cast<CBattleEntity*>(PTarget));
             }
         }
     }
@@ -1674,12 +1672,11 @@ namespace pawn
         {
             out.push_back(cardian::tactician::stateOf(row.gambit, rowFits(row.gambit)));
         }
-        // A played character's plain rows are orders; his marked rows, with no
-        // tactician for him yet, and the ones only a cardian runs are struck out
+        // A played character's rows as a cardian's, but for the behaviour rows
+        // only a cardian runs, struck out (RowState)
         for (const auto& p : layers.rows)
         {
-            out.push_back(m_host->OwnClient() ? cardian::tactician::ownClientStateOf(p.row->gambit, rowFits(p.row->gambit))
-                                              : cardian::tactician::stateOf(p.row->gambit, rowFits(p.row->gambit)));
+            out.push_back(RowState(p.row->gambit));
         }
         return out;
     }
@@ -1713,21 +1710,20 @@ namespace pawn
                                    });
     }
 
+    auto CGambits::RowState(const Gambit_t& g) const -> cardian::tactician::State
+    {
+        return m_host->OwnClient() ? cardian::tactician::ownClientStateOf(g, rowFits(g)) : cardian::tactician::stateOf(g, rowFits(g));
+    }
+
     auto CGambits::OffersAny(const std::function<bool(cardian::tactician::Allowance)>& wanted) const -> bool
     {
         // Her own and the lent rows as fitted: a marked row that runs and
-        // names a tool the tactician has a judgement for, of the kind asked.
-        // A played character's marked rows offer nothing yet: no tactician
-        // runs for him (ownClientStateOf strikes them)
-        if (m_host->OwnClient())
-        {
-            return false;
-        }
+        // names a tool the tactician has a judgement for, of the kind asked
         const auto rows = Fitted();
         return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        const auto& g = p.row->gambit;
-                                       return p.on && cardian::tactician::stateOf(g, rowFits(g)) == cardian::tactician::State::Tool && wanted(cardian::tactician::allowanceOf(g));
+                                       return p.on && RowState(g) == cardian::tactician::State::Tool && wanted(cardian::tactician::allowanceOf(g));
                                    });
     }
 
@@ -1811,7 +1807,7 @@ namespace pawn
         return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        const auto& g = p.row->gambit;
-                                       if (!p.on || cardian::tactician::stateOf(g, rowFits(g)) != cardian::tactician::State::Tool || cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Rest)
+                                       if (!p.on || RowState(g) != cardian::tactician::State::Tool || cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Rest)
                                        {
                                            return false;
                                        }
@@ -1912,14 +1908,14 @@ namespace pawn
         if (cardian::tactician::isStanceAbility(ability))
         {
             const uint16 other = cardian::tactician::otherStance(static_cast<uint16>(ability));
-            if (m_host->PlayersBuff(other, *buffEffect(other)))
+            if (PlayersBuff(other, *buffEffect(other)))
             {
                 return false;
             }
         }
-        // The pacer lets her act now (CPawnController::ReadyToAct), and
+        // The pacer lets her act now (readyToAct), and
         // nothing on her shuts her job abilities out
-        if (!m_host->RestAllowsAction() || !m_host->ReadyToAct() || m_host->AbilitiesShutOut())
+        if (!m_host->RestAllowsAction() || !readyToAct(POwner) || abilitiesShutOut(POwner))
         {
             return false;
         }
@@ -1934,7 +1930,7 @@ namespace pawn
         // her in the stance her seat calls for (tactician_line.h
         // wrongStance): the other buff, up, is taken off -- both up, their
         // numbers cancel. Never the player's own, his order's or a plain row
-        // of his (CPawnController::PlayersBuff): his wins while it lasts
+        // of his (PlayersBuff): his wins while it lasts
         if (cardian::tactician::allowanceOf(g) != cardian::tactician::Allowance::Buff || !cardian::tactician::isStanceAbility(g.actions.front().select_arg))
         {
             return;
@@ -1949,7 +1945,7 @@ namespace pawn
         const bool   tank   = pawn::roster::roleOf(POwner) == cardian::party::Role::Tank;
         const uint16 wrong  = cardian::tactician::wrongStance(tank);
         const auto   effect = *buffEffect(wrong);
-        if (!POwner->StatusEffectContainer->HasStatusEffect(effect) || m_host->PlayersBuff(wrong, effect))
+        if (!POwner->StatusEffectContainer->HasStatusEffect(effect) || PlayersBuff(wrong, effect))
         {
             return;
         }
@@ -2214,16 +2210,11 @@ namespace pawn
 
     auto CGambits::AllowsSpell(const uint16 spell) const -> bool
     {
-        // A played character's marked rows offer no tactician anything yet
-        if (m_host->OwnClient())
-        {
-            return false;
-        }
         const auto rows = Fitted();
         return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
                                    {
                                        const auto& g = p.row->gambit;
-                                       return p.on && cardian::tactician::stateOf(g, rowFits(g)) == cardian::tactician::State::Tool && cardian::tactician::allowsSpell(g, spell);
+                                       return p.on && RowState(g) == cardian::tactician::State::Tool && cardian::tactician::allowsSpell(g, spell);
                                    });
     }
 
@@ -2243,6 +2234,318 @@ namespace pawn
             }
         }
         return true;
+    }
+
+    namespace
+    {
+        // Her engage rows as the pure door reads them (engage_math.h Row), in
+        // the accessor's order. Each is numbered by its 1-based position in
+        // `rows`, so the row a pick or a claim names is rows[row - 1]. A
+        // marked row reads as unchecked unless `melee`
+        auto doorRows(const std::vector<CGambits::EngageRow>& rows, const bool melee) -> std::vector<cardian::engage::Row>
+        {
+            std::vector<cardian::engage::Row> view;
+            view.reserve(rows.size());
+            for (std::size_t i = 0; i < rows.size(); ++i)
+            {
+                view.push_back({ i + 1, rows[i].gambit->target_selector, !rows[i].below || melee });
+            }
+            return view;
+        }
+    } // namespace
+
+    auto reengageWait(CCharEntity* PChar, const CBattleEntity* PFoe, const uint32 lastFought) -> timer::duration
+    {
+        if (PFoe != nullptr && PFoe->id == lastFought)
+        {
+            return std::chrono::milliseconds(PChar->GetWeaponDelay(false));
+        }
+        return std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
+    }
+
+    auto readyToAct(CCharEntity* PChar) -> bool
+    {
+        auto* PController = dynamic_cast<CPlayerController*>(PChar->PAI->GetController());
+        return PController != nullptr && PController->canAct() && PChar->PAI->CanChangeState();
+    }
+
+    auto abilitiesShutOut(const CBattleEntity* PChar) -> bool
+    {
+        const auto* PImpairment = PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment);
+        return PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia) ||
+               (PImpairment != nullptr && (PImpairment->GetPower() == 0x01 || PImpairment->GetPower() == 0x03));
+    }
+
+    void CGambits::NoteOrderedStance(const uint16 ability)
+    {
+        m_orderedBuffs[ability] = timer::now();
+    }
+
+    auto CGambits::PlayersBuff(const uint16 ability, const xi::StatusEffect effect) const -> bool
+    {
+        const auto it = m_orderedBuffs.find(ability);
+        if (it == m_orderedBuffs.end())
+        {
+            return false;
+        }
+        const auto* PEffect = POwner->StatusEffectContainer->GetStatusEffect(effect);
+        if (PEffect != nullptr && cardian::tactician::isOrderedUse(PEffect->GetStartTime() - it->second))
+        {
+            return true;
+        }
+        // His order has had the time to land: the use it put up is over, or it
+        // never landed, and a later one of the same buff is not his
+        if (timer::now() - it->second > cardian::tactician::kOrderLands)
+        {
+            m_orderedBuffs.erase(it);
+        }
+        return false;
+    }
+
+    auto rowLabel(const CGambits::EngageRow& row) -> std::string
+    {
+        return fmt::format("{}row {}{}", row.world ? "world " : row.lent ? "lent " : "", row.index, row.below ? ", her tactician's melee" : "");
+    }
+
+    // The allies a finder reads are any of her party in her zone but herself,
+    // the player as much as a cardian (pawn::allyOn)
+    auto CGambits::FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe
+    {
+        return pawn::foeFacts(POwner, PFoe, PLeader, PFoe != nullptr && m_host->HoldingOff(PFoe));
+    }
+
+    auto CGambits::FoeOfKind(const cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool
+    {
+        return PFoe != nullptr && PFoe->objtype == TYPE_MOB && cardian::engage::accepts(finder, FoeFacts(PFoe, m_host->Anchor()));
+    }
+
+    auto CGambits::FoeWhy(const cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string
+    {
+        switch (finder)
+        {
+            case cardian::engage::Finder::Any:
+            {
+                // `Foe: any` and the foe conditions: in the words of the finder
+                // that would have found it
+                const auto kind = cardian::engage::finderFor(FoeFacts(PFoe, PLeader));
+                return kind != cardian::engage::Finder::Any ? FoeWhy(kind, PFoe, PLeader) : std::string("a foe of the party");
+            }
+            case cardian::engage::Finder::LeadersTarget:
+                return fmt::format("{}'s target", PLeader != nullptr ? PLeader->getName() : std::string("the leader"));
+            case cardian::engage::Finder::AllysFight:
+            {
+                const auto* PChar = pawn::allyOn(POwner, PFoe);
+                return fmt::format("with {}", PChar != nullptr ? PChar->getName() : std::string("an ally"));
+            }
+            case cardian::engage::Finder::OnAlly:
+            case cardian::engage::Finder::OnSelf:
+            {
+                const auto* PVictim = PFoe->GetBattleTarget();
+                return fmt::format("answering it on {}", PVictim != nullptr ? PVictim->getName() : std::string("one of us"));
+            }
+        }
+        return "";
+    }
+
+    auto CGambits::FoesAround(CCharEntity* PLeader, const position_t& from) -> std::vector<CBattleEntity*>
+    {
+        const auto   now    = POwner->PAI->getTick(); // one gathering a tick, however many ask
+        const uint32 leader = PLeader != nullptr ? PLeader->id : 0;
+        const bool   fresh  = m_foesMemo.tick == now && m_foesMemo.leader == leader && m_foesMemo.from.x == from.x && m_foesMemo.from.y == from.y &&
+                           m_foesMemo.from.z == from.z;
+        if (!fresh)
+        {
+            m_foesMemo.tick   = now;
+            m_foesMemo.leader = leader;
+            m_foesMemo.from   = from;
+            m_foesMemo.foes.clear();
+
+            // The leash: nothing farther than this from the party's place is the
+            // party's fight yet -- a pull is dragged inside first
+            const float leash = settings::get<float>("pawn.HUNT_LEASH");
+            const auto  add   = [&](CBattleEntity* PFoe)
+            {
+                if (PFoe != nullptr && !PFoe->isDead() && isWithinDistance(from, PFoe->loc.p, leash) &&
+                    std::ranges::none_of(m_foesMemo.foes, [PFoe](const EntityId& id)
+                                         {
+                                             return id == PFoe;
+                                         }))
+                {
+                    m_foesMemo.foes.emplace_back(PFoe);
+                }
+            };
+
+            // In the finders' order. The leader's engagement first: a weapon
+            // drawn on a mob commits the party. The cardians draw too, and hold
+            // their ground until he has struck or the mob comes to them
+            if (PLeader != nullptr && PLeader->PAI->IsEngaged())
+            {
+                add(dynamic_cast<CMobEntity*>(PLeader->GetBattleTarget()));
+            }
+
+            // An ally already fighting pulls the rest of the party in -- how a
+            // hunter's pull propagates without the player tagging anything, and
+            // how a second player's draw does in co-op (allyOn reads the same
+            // allies: any of her party but herself)
+            if (const auto* PParty = POwner->PParty; PParty != nullptr)
+            {
+                for (auto* PMember : PParty->members)
+                {
+                    auto* PChar = dynamic_cast<CCharEntity*>(PMember);
+                    if (PChar != nullptr && PChar != POwner && PChar->loc.zone == POwner->loc.zone && PChar->PAI->IsEngaged())
+                    {
+                        add(PChar->GetBattleTarget());
+                    }
+                }
+            }
+
+            // Self-defence: a mob that has chosen her, or a member of her party,
+            // whether or not anyone has swung yet -- aggro on a cardian, or on
+            // the player. Out of a party she is a party of one
+            pawn::forEachMobNear(pawn::entitiesAround(POwner), from, leash, [&](CMobEntity* PMob)
+                                 {
+                                     if (PMob->PAI->IsEngaged() && !PMob->isDead() && FoeFacts(PMob, PLeader).onParty)
+                                     {
+                                         add(PMob);
+                                     }
+                                 });
+        }
+
+        std::vector<CBattleEntity*> foes;
+        foes.reserve(m_foesMemo.foes.size());
+        for (const auto& id : m_foesMemo.foes)
+        {
+            if (auto* PFoe = id.resolve<CBattleEntity>(); PFoe != nullptr && !PFoe->isDead())
+            {
+                foes.push_back(PFoe);
+            }
+        }
+        return foes;
+    }
+
+    auto CGambits::PartyFightScan(CCharEntity* PLeader, const position_t& from) -> FightPick
+    {
+        // Retreat: the party's fight is nobody's, whoever swings or aggroes
+        const bool retreating = m_host->IsRetreating();
+        if (retreating)
+        {
+            return {};
+        }
+        const auto                        foes = FoesAround(PLeader, from);
+        std::vector<cardian::engage::Foe> facts;
+        facts.reserve(foes.size());
+        for (auto* PFoe : foes)
+        {
+            facts.push_back(FoeFacts(PFoe, PLeader));
+        }
+        const auto pick = cardian::engage::partyFight(retreating, facts);
+        if (!pick.has_value())
+        {
+            return {};
+        }
+        return { foes[pick->foe], FoeWhy(pick->finder, foes[pick->foe], PLeader) };
+    }
+
+    auto CGambits::EngageChoice(CCharEntity* PLeader, const position_t& from, const std::function<bool(CBattleEntity*)>& takes) -> FightPick
+    {
+        // No row to read -- none enabled, or her gambits off -- or the retreat:
+        // no fight of her own
+        const auto rows       = EngageRows();
+        const bool retreating = m_host->IsRetreating();
+        if (rows.empty() || retreating)
+        {
+            return {};
+        }
+        auto foes = FoesAround(PLeader, from);
+        if (takes)
+        {
+            std::erase_if(foes, [&](CBattleEntity* PFoe)
+                          {
+                              return !takes(PFoe);
+                          });
+        }
+        std::vector<cardian::engage::Foe> facts;
+        facts.reserve(foes.size());
+        for (auto* PFoe : foes)
+        {
+            facts.push_back(FoeFacts(PFoe, PLeader));
+        }
+        const auto view = doorRows(rows, TacticianMelee());
+        const auto pick = cardian::engage::chooseRow(m_masterOn, retreating, view, facts, [&](const std::size_t row, const std::size_t foe)
+                                                     {
+                                                         return EngageConditionsHold(*rows[row].gambit, foes[foe]);
+                                                     });
+        if (!pick.has_value())
+        {
+            return {};
+        }
+        auto*       PFoe  = foes[pick->foe];
+        const auto& taken = rows[pick->row - 1];
+        return { PFoe, fmt::format("{}, {}", FoeWhy(pick->finder, PFoe, PLeader), rowLabel(taken)), taken.index };
+    }
+
+    auto CGambits::ClaimingRow(CBattleEntity* PTarget) -> std::optional<RowClaim>
+    {
+        return ClaimingRowAs(PTarget, TacticianMelee());
+    }
+
+    auto CGambits::ClaimingRowAs(CBattleEntity* PTarget, const bool melee) -> std::optional<RowClaim>
+    {
+        if (PTarget == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto rows = EngageRows();
+        if (rows.empty())
+        {
+            return std::nullopt;
+        }
+        const auto view  = doorRows(rows, melee);
+        const auto claim = cardian::engage::claimingRow(m_masterOn, view, FoeFacts(PTarget, m_host->Anchor()), [&](const std::size_t row)
+                                                        {
+                                                            return EngageConditionsHold(*rows[row].gambit, PTarget);
+                                                        });
+        if (!claim.has_value())
+        {
+            return std::nullopt;
+        }
+        return RowClaim{ claim->finder, rows[claim->row - 1] };
+    }
+
+    auto CGambits::TakesFights() -> bool
+    {
+        const bool melee = TacticianMelee();
+        return std::ranges::any_of(EngageRows(), [melee](const EngageRow& row)
+                                   {
+                                       return !row.below || melee;
+                                   });
+    }
+
+    auto CGambits::TacticianRuns() const -> bool
+    {
+        // With every marked row unchecked, or her master switch off, it has
+        // nothing of hers to judge
+        return m_masterOn && OffersTools() && pawn::tactics::has(POwner);
+    }
+
+    auto CGambits::RecoveryDue() -> bool
+    {
+        return TacticianRuns() && OffersRest() && pawn::roster::roleOf(POwner) != cardian::party::Role::Tank && pawn::tactics::recoveryDue(POwner);
+    }
+
+    auto CGambits::TacticianMelee() -> bool
+    {
+        return cardian::tactician::meleeAllowed(TacticianRuns(), RecoveryDue(), POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+    }
+
+    auto CGambits::AttendsFight(CBattleEntity* PTarget) -> bool
+    {
+        if (m_host->OrderedOnto(PTarget))
+        {
+            return false;
+        }
+        const bool spells = pawn::tactics::offersSpells(POwner);
+        return cardian::engage::attendsFight(spells, spells && ClaimingRow(PTarget).has_value());
     }
 
     auto CGambits::IsBehavior(const Gambit_t& gambit) const -> bool
@@ -2871,7 +3174,7 @@ namespace pawn
                     if (executed && action.select == G_SELECT::SPECIFIC && !cardian::tactician::isMarked(gambit) &&
                         cardian::tactician::isStanceAbility(action.select_arg))
                     {
-                        m_host->NoteOrderedStance(static_cast<uint16>(action.select_arg));
+                        NoteOrderedStance(static_cast<uint16>(action.select_arg));
                     }
                     break;
                 }
@@ -3308,12 +3611,6 @@ namespace pawn
         });
         for (const auto& c : clauses)
         {
-            // Tactician's choice leaves the when to a tactician, and a
-            // played character has none
-            if (ownClient && c.condition == pawn::G_CONDITION_TACTICIANS_CHOICE)
-            {
-                continue;
-            }
             const auto target = static_cast<std::size_t>(c.target);
             const auto value  = c.takes == Takes::Number ? std::string("*") : std::string();
             const auto words  = c.condition == G_CONDITION::ALWAYS ? std::string() : conditionWords(c.condition, value, onFoe(target));
@@ -3338,8 +3635,8 @@ namespace pawn
         v.actions = {
             { G_REACTION::ATTACK, G_SELECT::HIGHEST, 0, "Attack", ActionGroup::Fight, TARGET_ENEMY },
         };
-        // The behaviours move a cardian or speak to her tactician: a played
-        // character's client moves him, and he has no tactician
+        // The behaviours move a cardian or speak to her tactician about
+        // moving: a played character's client moves him
         if (!ownClient)
         {
             v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::AvoidAggro), 1, "Avoid aggro", ActionGroup::Behaviours });

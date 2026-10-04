@@ -675,6 +675,13 @@ class PawnModule : public CPPModule
             {
                 PLive->LeavingByHand();
             }
+            // His own Berserk or Defender is his order: his tactician's
+            // stance never takes it off (CGambits::PlayersBuff)
+            if (const auto ability = packet.as<GP_CLI_COMMAND_ACTION>()->JobAbility.SkillId;
+                PLive != nullptr && action == GP_CLI_COMMAND_ACTION_ACTIONID::JobAbility && cardian::tactician::isStanceAbility(ability))
+            {
+                PLive->Gambits().NoteOrderedStance(static_cast<uint16>(ability));
+            }
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_SOLICIT_REQ))
         {

@@ -81,6 +81,13 @@ namespace pawn::tactics
             return life;
         }
 
+        // pawn.TACTICS_FIRST_AID_FLOOR, as a fraction of max HP
+        auto firstAidFloor() -> double
+        {
+            static const double floor = settings::get<float>("pawn.TACTICS_FIRST_AID_FLOOR") / 100.0;
+            return floor;
+        }
+
         // Her scope as the game holds it this instant: the alliance's
         // characters, and which of them offer the party spells. Built fresh
         // for every call; nothing keeps an entity pointer across ticks
@@ -239,8 +246,9 @@ namespace pawn::tactics
 
             // First aid (cure_math.h choose): the cures each mage could
             // land and those in flight, against each member's danger while
-            // a fight is under way; the last choice keeps an emergency
-            // through its approach
+            // a fight is under way -- never less than the floor
+            // (withFloor) -- the last choice keeping an emergency through
+            // its approach
             auto chooseFirstAid(const Conveyor::Scope& scope, const double at) -> std::vector<cardian::cure::Choice>
             {
                 const auto measured = measureCures(scope, at);
@@ -251,8 +259,8 @@ namespace pawn::tactics
                     {
                         if (member == nullptr || member->isDead()) continue;
                         const auto threat = role::threat(m_log, member, at);
-                        targets.push_back({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
-                            threat.biggestHit, threat.takenPerSecond});
+                        targets.push_back(cardian::cure::withFloor({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
+                            threat.biggestHit, threat.takenPerSecond}, firstAidFloor()));
                     }
                 }
                 return cardian::cure::choose(measured, targets, m_conveyor.emergencies());
@@ -417,11 +425,12 @@ namespace pawn::tactics
             return it != state.tacticians.end() && it->second->scopeId() == id ? it->second.get() : nullptr;
         }
 
-        // A world camp with no real player in it is watched only when asked
+        // A world camp with no real player in it is watched only when asked;
+        // a played character's party, his alone included, always is
         auto watched(CCharEntity* PPawn) -> bool
         {
             static const bool world = settings::get<bool>("pawn.TACTICS_WORLD");
-            return world || pawn::partyPlayer(PPawn) != nullptr || pawn::summonerOf(PPawn->id) != 0;
+            return world || PPawn->PSession != nullptr || pawn::partyPlayer(PPawn) != nullptr || pawn::summonerOf(PPawn->id) != 0;
         }
 
         // --- the dispatcher: route by id, or drop ---------------------------
@@ -756,60 +765,42 @@ namespace pawn::tactics
         return PPawn != nullptr ? Conveyor::resolve(scopeOf(PPawn), id) : nullptr;
     }
 
+    // Each member's answer is her gambit engine's, whoever drives her
+    // (pawn::gambitsOf): a cardian's and a played character's alike
     auto offersSpells(CBattleEntity* PMember) -> bool
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return false;
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersSpells();
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->MasterOn() && PGambits->OffersSpells();
     }
 
     auto offersRest(CBattleEntity* PMember) -> bool
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return false;
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersRest();
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->MasterOn() && PGambits->OffersRest();
     }
 
     auto nukesOf(CBattleEntity* PMember) -> std::vector<SpellID>
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return {};
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        if (PController == nullptr || !PController->Gambits().MasterOn())
-        {
-            return {};
-        }
-        return PController->Gambits().OfferedNukes();
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->MasterOn() ? PGambits->OfferedNukes() : std::vector<SpellID>{};
     }
 
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return false;
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->AttendsFight(PMob);
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->AttendsFight(PMob);
     }
 
     auto admittedBy(CBattleEntity* PHolder, const SpellID spell, CBattleEntity* PTarget) -> std::optional<std::string>
     {
-        auto* PController = PHolder != nullptr && PHolder->objtype == TYPE_PC && PHolder->PAI != nullptr ? dynamic_cast<CPawnController*>(PHolder->PAI->GetController()) : nullptr;
-        return PController != nullptr ? PController->Gambits().Admits(static_cast<uint16>(spell), PTarget) : std::nullopt;
+        auto* PGambits = pawn::gambitsOf(PHolder);
+        return PGambits != nullptr ? PGambits->Admits(static_cast<uint16>(spell), PTarget) : std::nullopt;
     }
 
     auto allows(CBattleEntity* PHolder, const SpellID spell) -> bool
     {
-        auto* PController = PHolder != nullptr && PHolder->objtype == TYPE_PC && PHolder->PAI != nullptr ? dynamic_cast<CPawnController*>(PHolder->PAI->GetController()) : nullptr;
-        return PController != nullptr && PController->Gambits().AllowsSpell(static_cast<uint16>(spell));
+        auto* PGambits = pawn::gambitsOf(PHolder);
+        return PGambits != nullptr && PGambits->AllowsSpell(static_cast<uint16>(spell));
     }
 
     auto has(const CCharEntity* PPawn) -> bool

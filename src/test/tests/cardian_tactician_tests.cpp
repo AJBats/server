@@ -579,7 +579,7 @@ TEST_CASE("tactician: a weapon skill row takes Sneak Attack only when it would f
     CHECK_FALSE(wsRowTakesSneak(row(kRest), State::Order, true, takesIfHers));
 }
 
-TEST_CASE("tactician: a played character's plain rows are orders; his marked and behaviour rows are struck out", "[cardian][gambits][tactician]")
+TEST_CASE("tactician: a played character's rows read as a cardian's; his behaviour rows are struck out", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::ownClientStateOf;
     // What his hands do is an order wherever it sits
@@ -593,9 +593,12 @@ TEST_CASE("tactician: a played character's plain rows are orders; his marked and
     CHECK(ownClientStateOf(row("0|0:0|100:1:1|0")) == State::Client); // Avoid aggro
     CHECK(cardian::tactician::struck(State::Client));
 
-    // No tactician runs for him yet: a marked row has nothing to judge it;
+    // A marked row is his tactician's tool, exactly as a cardian's is (the
+    // user, 2026-10-03); a mark it has no judgement for is struck the same;
     // a misfit is one in his list too
-    CHECK(ownClientStateOf(row(kCureBest)) == State::NoJudgement);
-    CHECK(ownClientStateOf(row(kPull)) == State::NoJudgement);
+    CHECK(ownClientStateOf(row(kCureBest)) == State::Tool);
+    CHECK(ownClientStateOf(row(kCureBest)) == stateOf(kCureBest));
+    CHECK(ownClientStateOf(row(kPull)) == stateOf(kPull));
+    CHECK(ownClientStateOf(row("2|101:0|3:2:16|0")) == State::NoJudgement); // * Foe -> Mighty Strikes
     CHECK(ownClientStateOf(row("0|0:0|2:2:2|0"), false) == State::Misfit);
 }

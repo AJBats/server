@@ -43,8 +43,8 @@ namespace pawn::tactics
     // alliance when there is one, found by the pointers the game already
     // holds. It owns the fight log; the MP bank, the conveyor and the rest
     // policy come in their slices. Pull-ticked: every cardian's controller
-    // asks each tick, KO'd or not, and the first to ask advances the
-    // party's picture.
+    // and every played character's asks each tick, KO'd or not, and the
+    // first to ask advances the party's picture.
     //
     // Slice 1 watches only. A scope with no real player in it (a world camp
     // of its own) is watched under pawn.TACTICS_WORLD alone.
