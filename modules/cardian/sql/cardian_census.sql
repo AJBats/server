@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
   `sub`       tinyint(3) unsigned NOT NULL DEFAULT '0',     -- support job id, 0 for none
   `sublevel`  tinyint(3) unsigned NOT NULL DEFAULT '0',
   `anchor`    varchar(16)         NOT NULL DEFAULT 'bank',  -- newbie, peer, rival, veteran, settled, bank
-  `cohort`    int(10) unsigned    NOT NULL DEFAULT '0',     -- the charid a relative anchor follows; 0 = none
+  `cohort`    int(10) unsigned    NOT NULL DEFAULT '0',     -- a peer or rival's cohort: the job she follows, as charid * 100 + job; 0 = none
   `seed`      int(10) unsigned    NOT NULL DEFAULT '0',     -- her private variance
   `wealth`    tinyint(3) unsigned NOT NULL DEFAULT '1',     -- 0 poor, 1 middling, 2 rich
   `trade`     varchar(16)         NOT NULL DEFAULT '',      -- the settled: craft, gathering kind, hunt, merchant

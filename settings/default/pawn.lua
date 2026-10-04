@@ -407,6 +407,22 @@ xi.settings.pawn =
     WORLD_STANDING_CAP = 100,
     WORLD_FADED_CAP    = 700,
 
+    -- The world fills itself slowly, nearest the players first (RESEARCH
+    -- §18.4): a burst is what stalls the map, never the total. Seats are
+    -- placed at WORLD_PLACE_RATE a second for the whole world (a presence:
+    -- a session row and a position, so search sees her), and the ladder
+    -- stands at most WORLD_STANDS_PER_RUN bodies a run, every half second
+    -- (a character load each). The census tool mints WORLD_MINT_RATE
+    -- bodies a second while a map runs (it reads this file), and paces
+    -- its catch-up the same way. The rates are tools/world/fillbench.py's
+    -- measurements (RESEARCH §18.4): seating is what costs the map, minting
+    -- barely shows. The placement budget holds a quarter second's worth, so
+    -- while one zone places alone (the player's own, as it fills) it seats
+    -- a quarter of WORLD_PLACE_RATE a zone tick: 12.5 a second at 20.
+    WORLD_MINT_RATE      = 40,
+    WORLD_PLACE_RATE     = 20,
+    WORLD_STANDS_PER_RUN = 3,
+
     -- The load line, always on: every WORLD_LOAD_REPORT seconds the map
     -- log says how many bodies stand in how many zones, what a body's
     -- tick costs, and the process's CPU and memory. 0 turns it off.
