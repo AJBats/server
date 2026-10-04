@@ -28,6 +28,7 @@
 #include "gambit_wire.h"
 #include "gate_guards.h"
 #include "live_controller.h"
+#include "mog_house.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_gambits.h"
@@ -121,16 +122,18 @@ namespace pawn::linkapi
         }
 
         // What the player himself stands by, worked out once for all the lines
-        // that tell it: the auction counter and the gate guard within his reach
+        // that tell it: the auction counter and the gate guard within his
+        // reach, and his Mog House or a Nomad Moogle
         struct PlayerReach
         {
-            const CBaseEntity* counter = nullptr;
-            bool               byGuard = false;
+            const CBaseEntity*     counter  = nullptr;
+            bool                   byGuard  = false;
+            pawn::moghouse::Place  mogHouse = {};
         };
 
         auto reachOf(CCharEntity* PPlayer) -> PlayerReach
         {
-            return PlayerReach{ pawn::auction::counterNear(PPlayer), pawn::guards::guardNear(PPlayer) != nullptr };
+            return PlayerReach{ pawn::auction::counterNear(PPlayer), pawn::guards::guardNear(PPlayer) != nullptr, pawn::moghouse::placeOf(PPlayer) };
         }
 
         // One cardian as his roster shows her; managed: she is his to manage
@@ -172,6 +175,10 @@ namespace pawn::linkapi
             if (reach.byGuard)
             {
                 flags |= CL_MEMBER_BY_GUARD;
+            }
+            if (pawn::moghouse::reaches(reach.mogHouse, PPlayer, PPawn) == CL_S_OK)
+            {
+                flags |= CL_MEMBER_BY_MOG_HOUSE;
             }
             member.flags = flags;
             return member;
@@ -1477,7 +1484,7 @@ namespace pawn::linkapi
             ordersChanged(PChar, ask, reply, status);
         }
 
-        // Every cardian of his in his zone fights his target
+        // Every cardian in his party and his zone fights his target
         void engage(CCharEntity* PChar, const cl_engage& ask, Reply& reply)
         {
             reply.finish(ask, pawn::partyEngage(PChar, ask.target));
@@ -2055,7 +2062,7 @@ namespace pawn::linkapi
             reply.finish(answer, CL_S_OK);
         }
 
-        // Her level in every job
+        // Her level in every job, and the jobs she has unlocked
         void jobs(CCharEntity* PChar, const cl_jobs& ask, Reply& reply)
         {
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
@@ -2069,7 +2076,37 @@ namespace pawn::linkapi
             {
                 answer.levels[job] = PPawn->jobs.job[job];
             }
+            answer.unlocked = PPawn->jobs.unlocked;
             reply.finish(answer, CL_S_OK);
+        }
+
+        // Her jobs changed at the Mog House: a cardian of his to manage, while
+        // he stands in his own or by a Nomad Moogle and she is nearby
+        // (pawn/mog_house.h)
+        void jobChange(CCharEntity* PChar, const cl_job_change& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (const auto where = pawn::moghouse::reaches(pawn::moghouse::placeOf(PChar), PChar, PPawn); where != CL_S_OK)
+            {
+                reply.finish(ask, where);
+                return;
+            }
+            if (PChar->isInEvent())
+            {
+                reply.finish(ask, CL_S_IN_EVENT);
+                return;
+            }
+            const auto status = pawn::moghouse::changeJobs(PPawn, ask.mainJob, ask.subJob);
+            if (status == CL_S_OK)
+            {
+                reply.more(memberOf(PChar, PPawn, reachOf(PChar), true));
+            }
+            reply.finish(ask, status);
         }
 
         // The combat or the magic skills her jobs can raise, each at its level
@@ -2194,5 +2231,6 @@ namespace pawn::linkapi
         handle<cl_profile>(profile);
         handle<cl_jobs>(jobs);
         handle<cl_skills>(skills);
+        handle<cl_job_change>(jobChange);
     }
 } // namespace pawn::linkapi

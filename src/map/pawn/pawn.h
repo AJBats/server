@@ -215,14 +215,14 @@ namespace pawn
     auto partyStrategy(const CCharEntity* PPawn) -> uint16;
 
     // The party strategy channel (M3.9): one set of orders per player, read
-    // by every cardian of theirs and every wild cardian in their party.
-    // Strategy 0 = Hold, 1 = Pull (the hunters pull). Retreat is the "on me"
-    // switch over it: nobody engages, nobody avoids aggro, hunting pauses,
-    // until it clears. Orders live in memory; a map restart starts everyone
-    // at Hold.
+    // by every cardian in their party, theirs and wild alike. Strategy 0 =
+    // Hold, 1 = Pull (the hunters pull). Retreat is the "on me" switch over
+    // it: nobody engages, nobody avoids aggro, hunting pauses, until it
+    // clears. Orders live in memory; a map restart starts everyone at Hold.
     constexpr uint16 kStrategyCount = 2;
-    // Whose orders she follows: her summoner, or for a wild cardian the real
-    // player in her party; 0 for nobody's
+    // Whose orders she follows: the real player in her party, or the one she
+    // was with while he crosses a zone line; 0 for nobody's. Out of his party
+    // she takes none of his party's orders, his own alt included
     auto ordersOwnerOf(const CCharEntity* PPawn) -> uint32;
     // Her retreat and hunt flags from the orders she follows, as she joins
     void applyOrdersTo(CCharEntity* PPawn);
@@ -249,8 +249,8 @@ namespace pawn
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 
-    // Every cardian of the owner's in the zone fights the entity with this
-    // targid. CL_S_OK when they go; otherwise why not.
+    // Every cardian in the owner's party and his zone fights the entity with
+    // this targid. CL_S_OK when they go; otherwise why not.
     auto partyEngage(CCharEntity* POwner, uint16 targid) -> uint16;
 
     // A mob nobody can hit right now: a worm underground (the game's own

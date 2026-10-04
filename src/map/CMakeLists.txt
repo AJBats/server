@@ -68,6 +68,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/gambit_host.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/live_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/live_controller.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/mog_house.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/mog_house.h
 )
 
 set(MAP_CORE_SOURCES

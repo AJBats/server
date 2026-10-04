@@ -465,7 +465,7 @@ namespace
     }
 
     // The player she is with: the one whose orders she follows
-    // (pawn::ordersOwnerOf -- the real player in her party, else her summoner)
+    // (pawn::ordersOwnerOf -- the real player in her party)
     auto invitingPlayer(const CCharEntity* PPawn) -> CCharEntity*
     {
         return zoneutils::GetChar(pawn::ordersOwnerOf(PPawn));
@@ -1262,19 +1262,23 @@ namespace pawn
             {
                 finder::noteLeft(charid);
             }
-            // A wild body's orders end with the party: nobody can reach her
-            // to lift a wait, a hunt or a retreat once she is out of it, or
-            // once no real player is left in it
+            // The party's orders -- a hunt, a retreat, a camp -- end with the
+            // party, his own alt's as a wild body's: out of it, or with no
+            // real player left in it, she follows nobody's (ordersOwnerOf).
+            // A wild body's wait ends too: nobody can reach her to lift it
             const bool nobodyReal = playerLeft && partyPlayer(PPawn.get()) == nullptr;
-            if (wild && (herself || nobodyReal) && !withHim)
+            if ((herself || nobodyReal) && !withHim && PController != nullptr)
             {
-                if (PController != nullptr)
+                if (wild)
                 {
                     PController->SetWaiting(false, false, "out of the party");
-                    PController->SetHunting(false);
-                    PController->SetRetreat(false);
-                    PController->SetStake(std::nullopt);
                 }
+                PController->SetHunting(false);
+                PController->SetRetreat(false);
+                PController->SetStake(std::nullopt);
+            }
+            if (wild && (herself || nobodyReal) && !withHim)
+            {
                 // A wild cardian's saved gambits are only ever a guest's --
                 // the player's edits while she was in the party (the user,
                 // 2026-09-14) -- so they end with it: her census job's
@@ -1407,7 +1411,10 @@ namespace pawn
         {
             return PPlayer->id;
         }
-        return summonerOf(PPawn->id);
+        // His body is out of the party for seconds at a zone line; the party
+        // is still his (playerByPawn ends with it, leftParty)
+        const auto it = playerByPawn.find(PPawn->id);
+        return it != playerByPawn.end() ? it->second : 0;
     }
 
     auto strategyName(const uint16 strategy) -> std::string_view
