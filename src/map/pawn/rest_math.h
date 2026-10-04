@@ -149,6 +149,23 @@ namespace cardian::rest
         return tick < 2 ? 0.0 : std::max(0, 12 + (tick - 2) * (1 + clearMind) + mpHeal);
     }
 
+    // Short of MP by a tick's worth at least -- her first paying tick, half
+    // her pool at most for a mage too young to hold a whole one. Less than
+    // that a kneel cannot pay for: she neither kneels for it nor stays down
+    // for the last few points (the user, 2026-10-04: no resting at full MP)
+    inline auto shortOfMp(const double mp, const double maximum, const double tickMp) -> bool
+    {
+        return maximum - mp >= std::max(1.0, std::min(tickMp, 0.5 * maximum));
+    }
+
+    // What asks a standing support mage to kneel: short of MP, and her pace
+    // behind or a camp quiet between pulls. A patient at risk before her
+    // first tick still keeps her up (the caller asks kneelRisk after this)
+    inline auto asksToKneel(const bool shortMp, const bool behindPace, const bool campQuiet) -> bool
+    {
+        return shortMp && (behindPace || campQuiet);
+    }
+
     inline auto timeToReady(const double missing, const int ticks, const double nextTick,
                             const double interval, const int clearMind, const int mpHeal) -> double
     {

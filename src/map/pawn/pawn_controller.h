@@ -661,6 +661,9 @@ private:
     auto CampWaitIntent(const Place& place) -> Intent;
     auto WaitsAtCampSpot() const -> bool; // she attends the camp's fights: a mage whose rows take none
     std::optional<position_t> m_CampWaitPoint; // her planned spot at this camp; reset when the camp is set again
+    std::optional<position_t> m_CampCrowdedBy; // the lower-id mage's spot hers last made way for
+    float                     m_CampWaitBest = 0.0f; // her nearest to the spot so far, and when: a walk that gains nothing ends
+    timer::time_point         m_CampWaitBestAt{};
     float                     m_CampRing   = 0.0f; // the ring of the last mob she attended at a camp; 0: none yet
     float                     m_AttendRing = 0.0f; // the ring of the mob she attends, as her mover last measured it
 
@@ -1147,6 +1150,22 @@ private:
     double m_RestChatAt = 0.0;
     uint32 m_KneelHeldFor = 0;   // the member a kneel would put at risk, as last said; 0: none
     uint32 m_SaidMpShortFor = 0; // the fight's mob whose "My MP won't last" she has said
+    // Magic aggro (#77): a cast of hers that costs MP is held where an
+    // aggressive mob's magic detection would hear it, and while the hold
+    // lasts her danger map counts the magic circles, so she steps clear
+    // before she casts (MagicHearer, HoldForMagic, RefreshDangers)
+    auto MagicHearer(const CBattleEntity* PFight) -> CMobEntity*;
+    void HoldForMagic(CMobEntity* PHears, std::string_view spell);
+    // The moment a mob turns on her, said once (NoteAggro): the mobs on her as of last tick
+    void                NoteAggro();
+    std::vector<uint32> m_MobsOnHer;
+    // A gaze readied at her: her back to the mob until it fires (AvertGaze)
+    auto   AvertGaze() -> bool;
+    uint32 m_AvertedFrom = 0; // the mob whose gaze she turned from, as last said
+    EntityId          m_MagicHold;           // the mob that would hear her casting
+    timer::time_point m_MagicHoldUntil{};    // her danger map counts the magic circles until then
+    timer::time_point m_MagicHoldSince{};    // since when she has held her spells for it
+    timer::time_point m_MagicSaidAt{};       // when she last told the party
     // Sneak Attack or Boost before weapon skills: the weapon skill held one
     // tick while the opener goes out first
     struct HeldWs
@@ -1177,6 +1196,7 @@ private:
         bool              landed = false;
     };
     std::optional<SneakHold>         m_SneakHold;
+    uint32                           m_SneakGaveUpOn = 0; // the mob whose back she gave up on with Sneak Attack still on her
     // A walk to the mob's back given up, or Sneak Attack refused: she leaves
     // it alone a while, unless the mob turns to someone else first, so a
     // back she cannot reach is not walked at every tick
@@ -1200,6 +1220,8 @@ private:
     // Behind the mob as the server judges Sneak Attack: in the cone at its
     // back, by its own facing (utils.h behind, the same 64 the hit asks)
     auto                  BehindFor(const CBattleEntity* PTarget) const -> bool;
+    auto                  KeepsSneakForBack(const CBattleEntity* PTarget) const -> bool; // Sneak Attack on her, the back not yet hers: no turn to swing
+    auto                  FireWeaponSkill(EntityId target, uint16 wsid) -> bool;           // the weapon skill itself, said as it goes out
     // The spot straight behind the mob by its own facing, at her fight
     // radius: where the walk for Sneak Attack heads
     auto                  SneakPoint(const CBattleEntity* PTarget) const -> position_t;

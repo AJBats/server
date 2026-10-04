@@ -754,6 +754,11 @@ namespace pawn::tactics
         {
             m.wsDamage += landed;
             ++m.wsCount;
+            // Every weapon skill of the party's, as it lands: what the fight
+            // log's totals are made of, seen one by one (the user, 2026-10-04)
+            const auto* state = PAttacker->PAI->GetCurrentState();
+            auto*       ws    = static_cast<const CWeaponSkillState*>(state)->GetSkill();
+            ShowInfoFmt("tactics: {}'s {} lands on {} for {}", m.name, ws != nullptr ? ws->getName() : "weapon skill", r.mobName, landed);
         }
         if (attackType == xi::AttackType::Physical && !weaponSkill)
         {

@@ -56,6 +56,7 @@
 #include <iterator>
 #include <limits>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -69,6 +70,8 @@
 #include "ai/states/ability_state.h"
 #include "ai/states/range_state.h"
 #include "ai/states/item_state.h"
+#include "ai/states/mobskill_state.h"
+#include "data/enums/detects.h"
 #include "enmity_container.h"
 #include "entities/char_entity.h"
 #include "status_effect_container.h"
@@ -1227,6 +1230,7 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
     }
     m_Stake        = std::move(stake);
     m_CampWaitPoint.reset(); // planned afresh for the new camp
+    m_CampCrowdedBy.reset();
     pawn::tactics::resetRestMemory(static_cast<CCharEntity*>(POwner));
     // A new place: her seats aim afresh, and a spot kept after a fight goes
     m_Towing = false;
@@ -2367,8 +2371,70 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // pulled aggressive mob is not fighting anyone yet, and its circle
     // would hold her at the rim of the very mob she is meant to hit, or
     // walk up to
-    auto* PPawn = static_cast<CCharEntity*>(POwner);
-    m_Dangers   = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks()), PIgnore);
+    auto* PPawn   = static_cast<CCharEntity*>(POwner);
+    auto  profile = pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks());
+    // A spell held for magic aggro (#77): the circles count as though she
+    // were casting, so the walk takes her clear of them before she does
+    profile.casting = profile.casting || m_Tick < m_MagicHoldUntil;
+    m_Dangers       = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, PIgnore);
+}
+
+auto CPawnController::MagicHearer(const CBattleEntity* PFight) -> CMobEntity*
+{
+    // The mob whose circle holds her only because she would be casting:
+    // its magic detection, not its eyes or ears, would bring it. Nothing
+    // when she does not avoid aggro; the fight's own mob is no danger
+    if (!IsAvoidingAggro())
+    {
+        return nullptr;
+    }
+    auto* PPawn    = static_cast<CCharEntity*>(POwner);
+    auto  quiet    = pawn::danger::Profile::of(PPawn, true, false);
+    quiet.casting  = false;
+    auto loud      = quiet;
+    loud.casting   = true;
+    const auto  me = POwner->loc.p;
+    const float scan     = settings::get<float>("pawn.AVOID_SCAN");
+    auto*       entities = pawn::entitiesAround(POwner);
+    const auto  heard    = pawn::danger::around(entities, me, scan, loud, PFight);
+    const auto  seen     = pawn::danger::around(entities, me, scan, quiet, PFight);
+    for (const auto& d : heard)
+    {
+        const bool inside = cardian::formation::depthInside(d, me.x, me.z) > 0.0f;
+        const bool anyway = std::any_of(seen.begin(), seen.end(), [&](const auto& q) { return q.mob == d.mob && cardian::formation::depthInside(q, me.x, me.z) > 0.0f; });
+        if (inside && !anyway)
+        {
+            return d.mob;
+        }
+    }
+    return nullptr;
+}
+
+void CPawnController::HoldForMagic(CMobEntity* PHears, const std::string_view spell)
+{
+    // Held: her danger map counts the magic circles for a while after each
+    // held cast, so she steps clear and does not walk straight back in for
+    // range once a cast has gone through; only a cast actually held renews
+    // it. Held again and again for this long, nowhere clear and in range can
+    // be had, and the party is told once a minute (the user, 2026-10-04)
+    constexpr auto kHold   = std::chrono::seconds(10);
+    constexpr auto kStuck  = std::chrono::seconds(8);
+    const bool     stretch = m_MagicHold.resolve<CMobEntity>() == PHears && m_Tick < m_MagicHoldUntil;
+    if (!stretch)
+    {
+        m_MagicHoldSince = m_Tick;
+        ShowInfoFmt("pawn: {} holds {}: {} would hear her casting here (magic detection {} y); she steps clear first", POwner->getName(), spell,
+                    PHears->getName(), PHears->getMobMod(xi::MobMod::MagicRange));
+    }
+    m_MagicHold      = EntityId(PHears);
+    m_MagicHoldUntil = m_Tick + kHold;
+    if (stretch && m_Tick - m_MagicHoldSince >= kStuck && (m_MagicSaidAt == timer::time_point{} || m_Tick - m_MagicSaidAt >= std::chrono::seconds(60)))
+    {
+        m_MagicSaidAt = m_Tick;
+        std::string name(PHears->getName());
+        std::replace(name.begin(), name.end(), '_', ' ');
+        pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), fmt::format("The {} would hear my spells here, so I'm holding them until I can step clear.", name));
+    }
 }
 
 auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
@@ -2609,14 +2675,16 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
     const auto  rear      = clipped(nearPosition(camp, radius, std::numbers::pi_v<float>));
     const float rearDepth = rear.has_value() ? std::max(0.0f, -forward(*rear)) : radius;
     // The mages stand together, never on one spot (#250): the spots of the
-    // attending mages before her in the party -- planned, and where each
-    // stands -- are taken, and a spot within kMageSpacing of one costs as
-    // much as the AoE would. Only the later mage gives way, so two never
-    // dance round each other
+    // attending mages of her party in her zone with a lower character id --
+    // planned, and where each stands -- are taken, and a spot within
+    // kMageSpacing of one costs as much as the AoE would. Only the mage with
+    // the higher id gives way, so two never dance round each other
     std::vector<position_t> taken;
     POwner->ForParty([&](CBattleEntity* PMember)
     {
-        auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->PAI != nullptr ? dynamic_cast<CPawnController*>(PMember->PAI->GetController()) : nullptr;
+        auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->loc.zone == POwner->loc.zone && PMember->PAI != nullptr
+                          ? dynamic_cast<CPawnController*>(PMember->PAI->GetController())
+                          : nullptr;
         if (PPeer != nullptr && PPeer->WaitsAtCampSpot())
         {
             taken.push_back(PMember->loc.p);
@@ -2718,21 +2786,29 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
     // that pull will be attended from: she walks there, then kneels, and
     // rises close to her place in the fight (the user, 2026-10-03)
     m_HasSlot       = false; // a camp spot is no formation slot for the vet to re-seat
+    RestoreNormalSpeed();    // no catch-up sprint carried onto her walk to it
     const auto camp = place.position();
-    // Planned in the same tick as an earlier mage of the party, hers may sit
-    // on that one's spot, which was not yet planned to keep clear of: the
-    // later mage plans again (CampSpot gives way to the earlier, #250)
+    // Planned in the same tick as a mage with a lower character id, hers may
+    // sit on that one's spot, which was not yet planned to keep clear of:
+    // she plans again -- once for each new spot of that mage's, so a tight
+    // camp that has nothing better does not plan every tick (#250)
     if (m_CampWaitPoint.has_value())
     {
-        bool crowded = false;
+        std::optional<position_t> crowding;
         POwner->ForParty([&](CBattleEntity* PMember)
         {
-            auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->PAI != nullptr ? dynamic_cast<CPawnController*>(PMember->PAI->GetController()) : nullptr;
+            auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->loc.zone == POwner->loc.zone && PMember->PAI != nullptr
+                              ? dynamic_cast<CPawnController*>(PMember->PAI->GetController())
+                              : nullptr;
             const auto planned = PPeer != nullptr && PPeer->WaitsAtCampSpot() ? PPeer->CampWaitPoint() : std::nullopt;
-            crowded |= planned.has_value() && distance(*planned, *m_CampWaitPoint, true) < kMageSpacing;
+            if (planned.has_value() && distance(*planned, *m_CampWaitPoint, true) < kMageSpacing)
+            {
+                crowding = planned;
+            }
         });
-        if (crowded)
+        if (crowding.has_value() && !(m_CampCrowdedBy.has_value() && distance(*m_CampCrowdedBy, *crowding, true) < 0.1f))
         {
+            m_CampCrowdedBy = crowding;
             m_CampWaitPoint.reset();
         }
     }
@@ -2749,6 +2825,8 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
         const float     ring           = m_CampRing > 0.0f ? m_CampRing : kOrdinaryRing;
         const auto      spot           = CampSpot(place, mob, tank, ring, "");
         m_CampWaitPoint                = spot.kind == Intent::Kind::Path ? spot.point : POwner->loc.p;
+        m_CampWaitBest                 = std::numeric_limits<float>::max();
+        m_CampWaitBestAt               = m_Tick;
         ShowInfoFmt("pawn: {} plans to wait for the camp's pulls at ({:.1f}, {:.1f}), {:.1f} y from the flag (ring {:.1f}{})", POwner->getName(),
                     m_CampWaitPoint->x, m_CampWaitPoint->z, distance(*m_CampWaitPoint, camp, true), ring, m_CampRing > 0.0f ? ", the last seen at a camp" : ", an ordinary mob's");
     }
@@ -2756,8 +2834,23 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
     // was set, she rests on where she is and walks over once topped up
     // (the walk is a routine step her rest puts off)
     Intent intent;
-    if (distance(POwner->loc.p, *m_CampWaitPoint, true) > 0.75f)
+    const float away = distance(POwner->loc.p, *m_CampWaitPoint, true);
+    if (away > 0.75f)
     {
+        // Best effort, no cooldown: a walk that gains nothing for a few
+        // seconds -- no route from where she stands -- ends where she is,
+        // which becomes her spot. A kneel puts the walk off, and is no stall
+        if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) || away < m_CampWaitBest - 0.5f)
+        {
+            m_CampWaitBest   = std::min(m_CampWaitBest, away);
+            m_CampWaitBestAt = m_Tick;
+        }
+        else if (m_Tick - m_CampWaitBestAt > 3s)
+        {
+            ShowInfoFmt("pawn: {} cannot get to her camp spot ({:.1f} y off): she waits where she stands", POwner->getName(), away);
+            m_CampWaitPoint = POwner->loc.p;
+            return intent;
+        }
         intent.kind         = Intent::Kind::Path;
         intent.point        = *m_CampWaitPoint;
         intent.arrive       = 0.5f;
@@ -2858,7 +2951,8 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
     if (!m_Retreat && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
     {
         const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
-        if (const auto cast = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged); cast.has_value() && cast->approach)
+        const auto cast    = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged);
+        if (cast.has_value() && cast->approach)
         {
             auto* target = pawn::tactics::entity(static_cast<CCharEntity*>(POwner), cast->target);
             auto* PSpell = spell::GetSpell(cast->spell);
@@ -3036,11 +3130,30 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     // a tight spot beside the mob -- never swings. (The client draws other
     // characters facing their heading; the strafe itself is not animated
     // for them, a quirk of the protocol. The swings are real.)
-    if (intent.target != nullptr && distance(POwner->loc.p, intent.target->loc.p) <= POwner->GetMeleeRange(intent.target) + LockOnSlack)
+    if (intent.target != nullptr && distance(POwner->loc.p, intent.target->loc.p) <= POwner->GetMeleeRange(intent.target) + LockOnSlack &&
+        !KeepsSneakForBack(intent.target))
     {
         PPathFind->LookAt(intent.target->loc.p);
     }
     return action;
+}
+
+auto CPawnController::KeepsSneakForBack(const CBattleEntity* PTarget) const -> bool
+{
+    // Sneak Attack is spent by her next swing and counts only from the
+    // mob's back, and a swing asks that she face the mob: with it on her and
+    // bound for this mob's back she does not turn to the mob -- held for her
+    // swing (m_SneakHold), until she is there; for a weapon skill (a sneak
+    // step with one), until the weapon skill turns her and goes out in one
+    // tick (SneakThenWs). The hold's or the step's end -- the mob on her, its
+    // back out of reach for too long -- lets her swing as she would
+    if (PTarget == nullptr || !POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack) || PTarget->GetBattleTarget() == POwner)
+    {
+        return false;
+    }
+    const bool forWs   = m_SneakStep.has_value() && m_SneakStep->wsid != 0 && m_SneakStep->target.resolve<CBattleEntity>() == PTarget;
+    const bool forSwing = m_SneakHold.has_value() && m_SneakHold->target.resolve<CBattleEntity>() == PTarget && !BehindFor(PTarget);
+    return forWs || forSwing;
 }
 
 void CPawnController::WalkToward(CBattleEntity* PTarget)
@@ -3289,6 +3402,20 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // A debugging line for the player's own party: the world's bodies fight
+    // all day, and their aggro would bury his
+    if (!POwner->isDead() && GetLivePlayer() != nullptr)
+    {
+        NoteAggro();
+    }
+
+    // A gaze readied with her before it: her back to it, and nothing else
+    // this tick, every action being a turn back to her target
+    if (!POwner->isDead() && AvertGaze())
+    {
+        co_return;
+    }
+
     if (engaged)
     {
         co_await DoCombatTick(tick);
@@ -3299,6 +3426,125 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     }
 
     co_return;
+}
+
+namespace
+{
+    // A gaze move: its script lands only on one who faces the mob --
+    // xi.mobskills.mobGazeMove, or its own isFacing test (belly_dance,
+    // frigid_shuffle). Read from its script once per skill
+    auto isGaze(CMobSkill* PSkill) -> bool
+    {
+        static auto& known = *new std::unordered_map<uint16, bool>();
+        if (const auto it = known.find(PSkill->getID()); it != known.end())
+        {
+            return it->second;
+        }
+        std::ifstream     file(fmt::format("./scripts/actions/mobskills/{}.lua", PSkill->getName()));
+        std::stringstream text;
+        text << file.rdbuf();
+        const auto script = text.str();
+        const bool gaze   = script.find("mobGazeMove") != std::string::npos || script.find("isFacing(") != std::string::npos;
+        known.emplace(PSkill->getID(), gaze);
+        return gaze;
+    }
+} // namespace
+
+auto CPawnController::AvertGaze() -> bool
+{
+    // A gaze lands only on one who faces the mob (xi.mobskills.mobGazeMove:
+    // target:isFacing(mob) and mob:isInfront(target), which the engine's
+    // infront(A, B) -- "A before B" -- makes the same test), whichever way
+    // the mob faces. So while a mob readies one that could take her she
+    // turns her back on it and holds still; when it has fired she turns back
+    // to her target as her tick does (the user, 2026-10-04: Baleful Gaze,
+    // and every gaze dodged by looking away). Per fight, every cardian the
+    // world's included: a single-target gaze only when she is its target,
+    // an area one only from a mob on her party and with her in its reach --
+    // never another party's mob
+    CMobEntity* PGazer = nullptr;
+    CMobSkill*  PSkill = nullptr;
+    pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 30.0f, [&](CMobEntity* PMob)
+    {
+        const auto* state = PGazer == nullptr && !PMob->isDead() ? dynamic_cast<CMobSkillState*>(PMob->PAI->GetCurrentState()) : nullptr;
+        auto*       skill = state != nullptr ? state->GetSkill() : nullptr;
+        if (skill == nullptr || !isGaze(skill))
+        {
+            return;
+        }
+        const auto* POn     = PMob->GetBattleTarget();
+        const bool  atHer   = POn == POwner;
+        const bool  onParty = atHer || (POn != nullptr && POwner->PParty != nullptr && POn->PParty == POwner->PParty);
+        const float reach   = std::max(skill->getDistance(), skill->getRadius()) + 2.0f;
+        if (skill->isAoE() ? onParty && distance(PMob->loc.p, POwner->loc.p) <= reach : atHer)
+        {
+            PGazer = PMob;
+            PSkill = skill;
+        }
+    });
+    if (PGazer == nullptr)
+    {
+        m_AvertedFrom = 0;
+        return false;
+    }
+    const uint8 away = worldAngle(PGazer->loc.p, POwner->loc.p);
+    if (POwner->loc.p.rotation != away)
+    {
+        POwner->loc.p.rotation = away;
+        POwner->updatemask |= UPDATE_POS;
+    }
+    HeadLook(nullptr);
+    if (POwner->PAI->PathFind != nullptr && POwner->PAI->PathFind->IsFollowingPath())
+    {
+        POwner->PAI->PathFind->Clear(); // a step would turn her back round
+    }
+    if (m_AvertedFrom != PGazer->id)
+    {
+        m_AvertedFrom = PGazer->id;
+        ShowInfoFmt("pawn: {} turns her back on {}'s {}", POwner->getName(), PGazer->getName(), PSkill->getName());
+    }
+    return true;
+}
+
+void CPawnController::NoteAggro()
+{
+    // The moment a mob turns on her, said once with what the log otherwise
+    // never holds (the user, 2026-10-04, a goblin on a mage who avoided
+    // aggro): how far off it was, whether it was walking, whether she was
+    // casting -- rooted, her avoidance cannot step -- what it detects by,
+    // and whether her danger map counted it
+    std::vector<uint32> onHer;
+    pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 50.0f, [&](CMobEntity* PMob)
+    {
+        if (PMob->isDead() || PMob->GetBattleTarget() != POwner)
+        {
+            return;
+        }
+        onHer.push_back(PMob->id);
+        if (std::find(m_MobsOnHer.begin(), m_MobsOnHer.end(), PMob->id) != m_MobsOnHer.end())
+        {
+            return;
+        }
+        const auto  detects = static_cast<xi::Detects>(PMob->getMobMod(xi::MobMod::Detection));
+        std::string by;
+        const auto  add = [&](const xi::Detects flag, const std::string_view word)
+        {
+            if ((detects & flag) != xi::Detects::None)
+            {
+                by += fmt::format("{}{}", by.empty() ? "" : ", ", word);
+            }
+        };
+        add(xi::Detects::Sight, "sight");
+        add(xi::Detects::Hearing, "hearing");
+        add(xi::Detects::Magic, "magic");
+        add(xi::Detects::Lowhp, "low HP");
+        const bool counted = std::any_of(m_Dangers.begin(), m_Dangers.end(), [&](const auto& d) { return d.mob == PMob; });
+        ShowInfoFmt("pawn: {}: {} comes for her, {:.1f} y off ({}; she {}; it detects by {}; {})", POwner->getName(), PMob->getName(),
+                    distance(POwner->loc.p, PMob->loc.p), PMob->PAI->PathFind != nullptr && PMob->PAI->PathFind->IsFollowingPath() ? "it was walking" : "it was standing",
+                    POwner->PAI->IsCurrentState<CMagicState>() ? "was casting, rooted" : "was free to move", by.empty() ? "nothing" : by,
+                    !IsAvoidingAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it");
+    });
+    m_MobsOnHer = std::move(onHer);
 }
 
 void CPawnController::WatchPlayerHomePoint()
@@ -3529,6 +3775,24 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         }
     }
 
+    // A Sneak Attack still on her -- primed for a mob that died before her
+    // swing -- is the next mob's: she takes its back before her first
+    // swing, and turns to swing only there (KeepsSneakForBack; the user,
+    // 2026-10-04: one primed on a goblin was spent on a lizard's flank).
+    // Not while a weapon skill waits behind a Sneak Attack just used, and
+    // not on a mob whose back she has given up on already
+    const bool sneakUp = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack);
+    if (!sneakUp)
+    {
+        m_SneakGaveUpOn = 0;
+    }
+    if (sneakUp && !m_SneakStep.has_value() && !m_SneakHold.has_value() && !m_HeldWs.has_value() && PTarget->GetBattleTarget() != POwner &&
+        PTarget->id != m_SneakGaveUpOn)
+    {
+        m_SneakHold = SneakHold{ .target = EntityId(PTarget), .until = m_Tick + 15s, .landed = true };
+        ShowInfoFmt("tactics: {} takes {}'s back for the Sneak Attack still on her", POwner->getName(), PTarget->getName());
+    }
+
     // After a naked Sneak Attack she keeps the mob's back until her swing
     // has spent it (the effect seen on her, then gone), the mob turns on
     // her, or a few seconds pass
@@ -3539,6 +3803,13 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         m_SneakHold->landed = m_SneakHold->landed || up;
         if (PHeld == nullptr || PHeld != PTarget || PHeld->GetBattleTarget() == POwner || m_Tick > m_SneakHold->until || (m_SneakHold->landed && !up))
         {
+            // Its back out of reach this long with Sneak Attack still on her:
+            // she swings as she would, and takes no new hold on that mob
+            if (PHeld != nullptr && m_Tick > m_SneakHold->until && up)
+            {
+                m_SneakGaveUpOn = PHeld->id;
+                ShowInfoFmt("tactics: {} gives up on {}'s back; the Sneak Attack on her goes on her next swing", POwner->getName(), PHeld->getName());
+            }
             m_SneakHold.reset();
         }
     }
@@ -3623,7 +3894,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     std::optional<AvoidAction> moved;
     if (POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
     {
-        if (!facing(POwner->loc.p, PTarget->loc.p, 64))
+        if (!facing(POwner->loc.p, PTarget->loc.p, 64) && !KeepsSneakForBack(PTarget))
         {
             POwner->PAI->PathFind->LookAt(PTarget->loc.p);
         }
@@ -4170,12 +4441,15 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
                 held.point = POwner->loc.p;
             }
             // Where she waits for the next pull (CampWaitIntent): the spot she
-            // attended from, when it lies behind the flag; one the fight
-            // pushed her into at the flag is planned afresh
+            // attended from, when it lies behind the flag and within her cure
+            // range of where the next pull lands; one the fight pushed her
+            // into at the flag, or dragged far off, is planned afresh
             if (place != nullptr && place->fixed())
             {
-                const auto camp = place->position();
-                if (cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, POwner->loc.p.x, POwner->loc.p.z) <= -2.0f)
+                const auto camp    = place->position();
+                const auto landing = nearPosition(camp, cardian::stake::kMobAhead, 0.0f);
+                if (cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, POwner->loc.p.x, POwner->loc.p.z) <= -2.0f &&
+                    distance(POwner->loc.p, landing, true) <= CastRange())
                 {
                     m_CampWaitPoint = POwner->loc.p;
                 }
@@ -4312,7 +4586,13 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // RestTick first checks urgent healing, danger and orders. Only when it
     // keeps her down do we suppress the proposal; Move still vets her current
     // position for aggro/link danger and may escape it.
-    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.comesIn))
+    // A kneeling mage puts a routine step off only while the party's place
+    // -- the player, or the stake -- is within her cure range: from there
+    // she still heals everyone as she rests. Farther, the party has moved
+    // on, and she gets up to follow (the user, 2026-10-04: Gabriol rested
+    // on 200 yalms behind after a new stake)
+    const bool nearPlace = place == nullptr || distance(POwner->loc.p, place->position(), true) <= std::max(CastRange(), 10.0f);
+    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.comesIn && nearPlace))
     {
         proposal.kind = Intent::Kind::Stand;
         proposal.seat = false;
@@ -4582,12 +4862,12 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy, uint32* other) -> uint16
         return CL_S_ONE_MANEUVER;
     }
 
-    // Kneeling, she stays down: the wheel taken is no reason to rise. The
-    // ring's first step stands her (WalkOrderTick), an action his order
-    // fires stands her as any does, and a maneuver that rests her keeps
-    // her ticks (the user, 2026-10-03: Zapp stood to take "Rest until
-    // 100%" and lost his)
-    EndRestOrder("a maneuver");
+    // Kneeling, she stays down, and a rest he ordered goes on: the wheel
+    // taken is no reason to rise. The ring's first step stands her
+    // (WalkOrderTick), an order he composes replaces the rest
+    // (SetQueuedOrder), an action it fires stands her as any does, and a
+    // maneuver that rests her keeps her ticks (the user, 2026-10-03: Zapp
+    // stood to take "Rest until 100%" and lost his)
     m_ManeuverBy          = PBy->id;
     m_ManeuverComposed    = false;
     m_ManeuverResting     = false;
@@ -5196,6 +5476,19 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
 
 auto CPawnController::CastAndStop(const EntityId target, const SpellID spellid) -> bool
 {
+    // A cast of hers that costs MP is held where an aggressive mob's magic
+    // detection would hear it (#77): she steps clear first and casts from
+    // there. Her rows and her tactician come through here, first aid too;
+    // the player's own order does not, his call to make
+    if (auto* PSpell = spell::GetSpell(spellid); PSpell != nullptr && PSpell->getMPCost() > 0)
+    {
+        const auto* PFight = AttendedTarget() != nullptr ? AttendedTarget() : POwner->GetBattleTarget();
+        if (auto* PHears = MagicHearer(PFight); PHears != nullptr)
+        {
+            HoldForMagic(PHears, PSpell->getName());
+            return false;
+        }
+    }
     // A cast she wants stops whatever walk she is on: the path is dropped
     // as the cast begins, or the pathfinder's next step would interrupt it
     if (!PrepareRestAction())
@@ -5350,8 +5643,6 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     {
         return false;
     }
-    FaceTarget(target);
-    HeadLook(target.resolve<CBattleEntity>());
     auto* PTarget = target.resolve<CBattleEntity>();
 
     // Sneak Attack first, from the mob's back (her Sneak Attack row), when
@@ -5365,8 +5656,22 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     // OrderedWeaponSkill
     if (m_SneakStep.has_value() && m_SneakStep->wsid != 0 && PTarget != nullptr && m_SneakStep->target == PTarget)
     {
-        return true; // on her way already
+        return true; // on her way already, not turned to the mob (KeepsSneakForBack)
     }
+    // A Sneak Attack already on her -- primed for a mob that died before her
+    // swing -- and the back not hers yet: the weapon skill waits for the
+    // back and goes out the tick she reaches it, before her first swing can
+    // spend it (the user, 2026-10-04: position, engage, slam the macro)
+    if (PTarget != nullptr && PTarget == POwner->GetBattleTarget() && TakesSneakAttack(wsid) &&
+        POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack) && PTarget->GetBattleTarget() != POwner && !BehindFor(PTarget) &&
+        PTarget->id != m_SneakGaveUpOn && !m_Waiting && POwner->PAI->PathFind->ValidPosition(SneakPoint(PTarget)))
+    {
+        m_SneakStep = SneakStep{ .target = target, .wsid = wsid, .since = m_Tick };
+        ShowInfoFmt("tactics: {} steps round to {}'s back for the Sneak Attack still on her; weapon skill {} waits", POwner->getName(), PTarget->getName(), wsid);
+        return true;
+    }
+    FaceTarget(target);
+    HeadLook(PTarget);
     if (PTarget != nullptr && PTarget == POwner->GetBattleTarget() && TakesSneakAttack(wsid) && SneakAttackNow(PTarget))
     {
         if (distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget) && BehindFor(PTarget))
@@ -5404,6 +5709,13 @@ auto CPawnController::OrderedWeaponSkill(const EntityId target, const uint16 wsi
 auto CPawnController::SneakThenWs(const EntityId target, const uint16 wsid) -> bool
 {
     auto* PTarget = target.resolve<CBattleEntity>();
+    // Sneak Attack already on her: no second one, and no Boost's beat -- she
+    // turns to the mob and the weapon skill goes this tick, before a swing
+    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack))
+    {
+        FaceTarget(target);
+        return FireWeaponSkill(target, wsid);
+    }
     if (!CPlayerController::Ability(POwner->entityId(), cardian::tactician::kSneakAttack))
     {
         RestSneak(PTarget);
@@ -5444,7 +5756,30 @@ auto CPawnController::BoostOrWeaponSkill(const EntityId target, const uint16 wsi
         ShowInfoFmt("tactics: {} boosts (her Boost row); weapon skill {} follows as it lands", POwner->getName(), wsid);
         return true;
     }
-    return CPlayerController::WeaponSkill(target, wsid);
+    return FireWeaponSkill(target, wsid);
+}
+
+auto CPawnController::FireWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
+    auto* PTarget = target.resolve<CBattleEntity>();
+    if (PTarget != nullptr && PTarget != POwner && distance(POwner->loc.p, PTarget->loc.p) > weaponSkillReach(POwner, wsid, PTarget))
+    {
+        return false;
+    }
+    const int16 tp = POwner->health.tp;
+    if (!CPlayerController::WeaponSkill(target, wsid))
+    {
+        return false;
+    }
+    // Said as it goes out (the user, 2026-10-04: a weapon skill is seen as
+    // it lands, never as it starts): her TP, and Sneak Attack with whether
+    // she stands behind the mob, the one place it counts (weaponskills.lua)
+    const bool sneak = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::SneakAttack);
+    auto*       PWs  = battleutils::GetWeaponSkill(wsid);
+    ShowInfoFmt("tactics: {} uses {} on {} at {} TP{}", POwner->getName(), PWs != nullptr ? PWs->getName() : fmt::format("weapon skill {}", wsid),
+                PTarget != nullptr ? PTarget->getName() : "?", tp,
+                !sneak ? "" : PTarget != nullptr && behind(POwner->loc.p, PTarget->loc.p, 64) ? ", Sneak Attack on, from its back" : ", Sneak Attack on but NOT from its back (wasted)");
+    return true;
 }
 
 auto CPawnController::Ability(const EntityId target, const uint16 abilityid) -> bool

@@ -102,7 +102,13 @@ TEST_CASE("A kneel asks whether a patient would be at risk before its first tick
     // second, a 54-point Big Scissors on record. Safe for one cure's few
     // seconds -- first aid stays quiet -- but not for a kneel's 21
     const Target tank{7, 112, 193, 54, 5.9};
-    CHECK(plan({cure(1, 3)}, tank).empty());
+    auto         onTank = cure(1, 3);
+    onTank.target       = 7;
+    CHECK(plan({onTank}, tank).empty());
+    // The same cure would be first aid's at 70 HP: the option is weighed
+    auto low = tank;
+    low.hp   = 70;
+    CHECK_FALSE(plan({onTank}, low).empty());
     const auto snipper = atRisk(std::vector<Target>{tank}, 21.0, std::vector<Option>{});
     REQUIRE(snipper.has_value());
     CHECK(snipper->id == 7);

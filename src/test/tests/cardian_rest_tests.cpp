@@ -212,6 +212,31 @@ TEST_CASE("Emergency Cure prediction uses actual recast and recovery timing", "[
     CHECK(cureBeforeRecovery(30, 2, 40));
 }
 
+TEST_CASE("Short of MP means a tick's worth, half the pool at most", "[cardian][rest]")
+{
+    const double tick = mpAtTick(2, 0, 0); // 12
+    CHECK_FALSE(shortOfMp(78, 85, tick));  // 7 short: no tick's worth (Zapp at 92%)
+    CHECK(shortOfMp(73, 85, tick));        // 12 short: one tick fills it
+    CHECK(shortOfMp(73, 85, mpAtTick(2, 0, 3)) == false); // an MPHEAL food makes the tick 15
+    // A pool of 20 holds no whole tick: half of it is the line
+    CHECK_FALSE(shortOfMp(11, 20, tick));
+    CHECK(shortOfMp(10, 20, tick));
+    // Full, or nearly, is never short; a pool of nothing never is
+    CHECK_FALSE(shortOfMp(85, 85, tick));
+    CHECK_FALSE(shortOfMp(0, 0, tick));
+}
+
+TEST_CASE("A standing support mage kneels only short of MP, for her pace or a quiet camp", "[cardian][rest]")
+{
+    // The small-pool loop: her pace asks to recover with less than a tick
+    // missing, which the tick rule would stand her straight from
+    CHECK_FALSE(asksToKneel(false, true, false));
+    CHECK_FALSE(asksToKneel(false, false, true));
+    CHECK(asksToKneel(true, true, false));  // behind her pace
+    CHECK(asksToKneel(true, false, true));  // a quiet camp between pulls
+    CHECK_FALSE(asksToKneel(true, false, false)); // following him, pace met: she keeps her feet
+}
+
 TEST_CASE("Rest recovery follows Healing's empty first tick and Clear Mind ramp", "[cardian][rest]")
 {
     REQUIRE(mpAtTick(1, 0, 0) == 0);
