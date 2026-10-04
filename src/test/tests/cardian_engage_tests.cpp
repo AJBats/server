@@ -32,6 +32,7 @@
 #include "map/pawn/engage_math.h"
 #include "map/pawn/gambit_ids.h"
 #include "map/pawn/gambit_text.h"
+#include "map/pawn/reengage.h"
 
 #include <cstddef>
 #include <optional>
@@ -479,4 +480,21 @@ TEST_CASE("engage door: with only targeted by ally on, a hold follows once anoth
     pick               = chooseRow(true, false, rows, foes, always);
     REQUIRE(pick.has_value());
     CHECK(holdStep(true, pick->foe == 1, true) == HoldStep::Follow);
+}
+
+TEST_CASE("player re-engage: the lockout holds him off the mob he fought; a switch waits at most the switch delay", "[cardian][engage]")
+{
+    using namespace std::chrono_literals;
+    const timer::time_point swung{ 100s };
+    const auto              delay = 2s;
+
+    // The mob he fought: upstream's lockout, however long it runs
+    CHECK(cardian::reengage::readyAt(true, swung + 5s, swung, delay) == swung + 5s);
+    CHECK(cardian::reengage::readyAt(true, swung + 1s, swung, delay) == swung + 1s);
+
+    // Another mob: the switch delay after his last swing cuts a longer lockout short
+    CHECK(cardian::reengage::readyAt(false, swung + 5s, swung, delay) == swung + 2s);
+
+    // ...and never stretches a shorter one
+    CHECK(cardian::reengage::readyAt(false, swung + 1500ms, swung, delay) == swung + 1500ms);
 }

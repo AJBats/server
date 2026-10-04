@@ -26,6 +26,7 @@
 #include "pawn_controller.h"
 #include "party_roster.h"
 #include "pawn_danger.h"
+#include "reengage.h"
 #include "role_bundles.h"
 #include "tactics.h"
 #include "spell_bank.h"
@@ -2269,7 +2270,7 @@ namespace pawn
         {
             return std::chrono::milliseconds(PChar->GetWeaponDelay(false));
         }
-        return std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
+        return cardian::reengage::switchDelay();
     }
 
     auto readyToAct(CCharEntity* PChar) -> bool

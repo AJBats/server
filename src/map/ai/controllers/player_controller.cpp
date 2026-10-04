@@ -29,6 +29,7 @@
 #include "latent_effect_container.h"
 #include "packets/s2c/0x029_battle_message.h"
 #include "packets/s2c/0x058_assist.h"
+#include "pawn/reengage.h" // CARDIAN
 #include "recast_container.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
@@ -77,7 +78,9 @@ auto CPlayerController::Engage(const EntityId& target) -> bool
     {
         if (distance(PChar->loc.p, PTarget->loc.p) < 30)
         {
-            if (timer::now() >= m_engageLockedUntil)
+            // CARDIAN: upstream's lockout for the mob of his last swing; a switch to another waits at most
+            // cardian.REENGAGE_SWITCH_DELAY after that swing (pawn/reengage.h)
+            if (timer::now() >= cardian::reengage::playerReadyAt(PChar, PTarget, m_engageLockedUntil, m_lastAttackTime))
             {
                 if (CController::Engage(target))
                 {

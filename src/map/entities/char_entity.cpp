@@ -53,6 +53,7 @@
 #include "packets/s2c/0x0df_group_attr.h"
 
 #include "ai/ai_container.h"
+#include "pawn/reengage.h" // CARDIAN
 #include "pawn/view.h" // CARDIAN
 #include "ai/controllers/player_controller.h"
 #include "ai/helpers/targetfind.h"
@@ -1467,6 +1468,7 @@ bool CCharEntity::OnAttack(CAttackState& state, action_t& action)
 
     auto* controller{ static_cast<CPlayerController*>(PAI->GetController()) };
     controller->setLastAttackTime(timer::now());
+    cardian::reengage::markSwing(this, GetBattleTarget()); // CARDIAN: the mob the re-engage rule measures against
     auto ret = CBattleEntity::OnAttack(state, action);
 
     return ret;

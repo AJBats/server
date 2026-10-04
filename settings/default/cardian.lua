@@ -22,11 +22,11 @@ xi.settings.cardian =
     LINK_ENABLED = true,
     LINK_PORT    = 54250,
 
-    -- A cardian's own draw after leaving a fight (pawn::reengageWait): the
-    -- mob she fought last waits her weapon's full delay, any other this
-    -- wait, in seconds. The player follows upstream's retail re-engage
-    -- lockout instead (CAttackState::EngageLockout, 2026-09-30): the time
-    -- left on the swing, 1.5 s at least, the weapon delay less 3 s at most.
+    -- The wait before engaging a different mob than the one fought last, in
+    -- seconds. A cardian counts it from leaving the fight (pawn::reengageWait;
+    -- the mob she fought last waits her weapon's full delay). The player counts
+    -- it from his last swing and waits no longer than upstream's retail
+    -- lockout, which alone holds him off the mob of that swing (pawn/reengage.h).
     REENGAGE_SWITCH_DELAY = 2.0,
 
     -- An order from the command window given a little early -- she is

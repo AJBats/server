@@ -34,7 +34,8 @@
 namespace
 {
 
-constexpr timer::duration kEngageDelay    = 3s;     // time from engaging to the first swing
+// CARDIAN: the first swing two seconds after engaging, not retail's three; the lockout below reads it too
+constexpr timer::duration kEngageDelay    = 2s;     // time from engaging to the first swing
 constexpr timer::duration kEngageCooldown = 1500ms; // shortest wait before engaging again after a fight ends
 
 } // namespace
