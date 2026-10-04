@@ -2050,6 +2050,24 @@ namespace pawn
         }
     }
 
+    auto gambitsOf(CBattleEntity* PMember) -> CGambits*
+    {
+        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
+        {
+            return nullptr;
+        }
+        auto* PController = PMember->PAI->GetController();
+        if (auto* PPawn = dynamic_cast<CPawnController*>(PController); PPawn != nullptr)
+        {
+            return &PPawn->Gambits();
+        }
+        if (auto* PLive = dynamic_cast<CLiveController*>(PController); PLive != nullptr)
+        {
+            return &PLive->Gambits();
+        }
+        return nullptr;
+    }
+
     bool loadSavedGambits(CCharEntity* PPawn)
     {
         auto* PController = controllerOf(PPawn);

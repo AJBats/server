@@ -5,12 +5,39 @@
 #include "rest_math.h"
 #include "tactics.h"
 #include "cure_math.h"
+#include "common/timer.h"
 
+#include <string_view>
 #include <unordered_map>
+
+class CBattleEntity;
+class CStatusEffect;
 
 namespace pawn::tactics
 {
     class FightLog;
+
+    // A character's kneel as the rest lifecycle reads it (rest_math.h
+    // State), the same body rules for a cardian and a played character:
+    // the rest clock's seconds; Healing's ticks so far and the seconds to
+    // the next and between them (zero while standing); and what standing
+    // now costs (the tick about to land, lost)
+    auto restSeconds(timer::time_point time) -> double;
+    struct KneelClock
+    {
+        bool   down     = false;
+        int    ticks    = 0;
+        double next     = 0.0;
+        double interval = 0.0;
+    };
+    auto kneelClock(const CStatusEffect* healing, double now) -> KneelClock;
+    auto restInterruptionCost(CBattleEntity* PBody) -> double;
+    // Her kneel's say over an action and a rise, on her rest lifecycle: an
+    // action may go, the seconds until she could act, and standing her up
+    // now -- false while she is not down, or must finish kneeling first
+    auto kneelAllowsAction(const cardian::rest::State& state, const CBattleEntity* PBody) -> bool;
+    auto kneelReadyIn(const cardian::rest::State& state, const CBattleEntity* PBody, double now) -> double;
+    auto standFromKneel(cardian::rest::State& state, CBattleEntity* PBody, std::string_view why) -> bool;
 
     class RestPlanner
     {

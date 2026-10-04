@@ -30,6 +30,7 @@
 
 class CBattleEntity;
 class CCharEntity;
+class CSpell;
 enum class SpellID : uint16;
 
 namespace pawn
@@ -47,13 +48,19 @@ namespace pawn
         virtual ~GambitHost() = default;
 
         // Whose the rows are: a character his own client drives. His rows
-        // are orders alone -- no tactician line, no party role's rows, no
-        // behaviour -- and his casts are his own, never the conveyor's
+        // run as a cardian's, but for the behaviour rows, and his feet are
+        // his client's: nothing walks him into range
         virtual auto OwnClient() const -> bool = 0;
 
         virtual auto Cast(EntityId target, SpellID spell) -> bool = 0;
-        // A cast her tactician's conveyor assigned (a cardian's alone)
+        // A cast her tactician's conveyor assigned: the conveyor has already
+        // weighed the party's other casts
         virtual auto CastAssigned(EntityId target, SpellID spell) -> bool = 0;
+        // She could take this cast from the conveyor now: nothing keeps her
+        // from acting and nothing of the player's waits ahead of it. A
+        // cardian walks into range herself; a character his own client
+        // drives must already stand where the cast would start
+        virtual auto FreeToCast(CSpell* PSpell, CBattleEntity* PTarget) -> bool = 0;
         virtual auto Ability(EntityId target, uint16 ability) -> bool = 0;
         virtual auto WeaponSkill(EntityId target, uint16 skill) -> bool = 0;
         virtual auto RangedAttack(EntityId target) -> bool = 0;
@@ -62,39 +69,44 @@ namespace pawn
         virtual void ClearGambitBehaviors()                         = 0;
         virtual void SetGambitBehavior(uint16 behavior, uint16 arg) = 0;
 
-        // The pacer: the server would take a new action from her now
-        virtual auto ReadyToAct() -> bool = 0;
-        // Something on her refuses every job ability (Amnesia, Impairment)
-        virtual auto AbilitiesShutOut() const -> bool = 0;
-        // The stance buff on her now is the one the player's own order fired
-        // (her tactician's stance never takes that one off), and the note of
-        // one he just fired
-        virtual auto PlayersBuff(uint16 ability, xi::StatusEffect effect) -> bool = 0;
-        virtual void NoteOrderedStance(uint16 ability)                          = 0;
         // Her tactician's Sneak Attack can go before her weapon skill now
         virtual auto SneakAttackNow(const CBattleEntity* PTarget) -> bool = 0;
 
         // The player's order from her command window waits as her next action
         virtual auto HasQueuedOrder() const -> bool = 0;
         virtual auto IsRetreating() const -> bool   = 0;
-        // Her rest lets an action through (a cardian kneels by policy)
+        // Her rest lets an action through (a cardian kneels by policy), and
+        // as first aid weighs a kneeling caster: the seconds until she could
+        // act, and what standing now costs her rest (rest_policy.h)
         virtual auto RestAllowsAction() const -> bool = 0;
+        virtual auto RestReadyIn(double now) const -> double = 0;
+        virtual auto RestInterruptionCost() const -> double = 0;
+        // A cast could start from her body now, her rest aside (RestReadyIn
+        // weighs that): a cardian stops to cast whenever she casts; a played
+        // character once he has stood still and nothing else holds his rows
+        // (an event, a mount, his logout, the quiet after a refusal)
+        virtual auto StandsToCast() const -> bool = 0;
         // Mid-action: casting, readying, shooting, using an item
         virtual auto Acting() const -> bool = 0;
         // Not stunned, asleep or otherwise kept from acting
         virtual auto CanAct() -> bool = 0;
         // Her place among her party's cardians, which staggers their thinks
         virtual auto PartyPosition() const -> uint8 = 0;
-        // Her tactician runs (tactician_line.h): her line row speaks
-        virtual auto TacticianRuns() const -> bool = 0;
         // One of the world's adventurers (pawn::world)
         virtual auto IsWorld() const -> bool = 0;
         // The live player her party has in her zone: `Ally: the player`
         virtual auto GetLivePlayer() const -> CCharEntity* = 0;
+        // The one she is with, whose fights are the party's (the engage
+        // door's leader): the player, a world camp's leader, or nobody; the
+        // played character himself
+        virtual auto Anchor() const -> CCharEntity* = 0;
+        // A foe she holds off for now: her door passes it by
+        virtual auto HoldingOff(const CBattleEntity* PFoe) const -> bool = 0;
+        // The player sent her onto this mob himself: hers to fight, never to
+        // attend
+        virtual auto OrderedOnto(const CBattleEntity* PTarget) const -> bool = 0;
         // Whoever her fight's mob hates most
         virtual auto GetTopEnmity() const -> CBattleEntity* = 0;
-        // Whether a foe is of a finder's kind, as her engage door reads it
-        virtual auto FoeOfKind(cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool = 0;
         // Her rows' "mob" while she has no battle target: the fight she
         // attends or walks in on
         virtual auto PartyFightTarget() const -> CBattleEntity* = 0;

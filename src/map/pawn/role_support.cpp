@@ -164,7 +164,9 @@ namespace pawn::tactics::role
 
     void sayParty(CCharEntity* PChar, const std::string& text)
     {
-        if (PChar->PParty == nullptr)
+        // A played character's party chat is his own: the tactician never
+        // speaks in his name
+        if (PChar->PParty == nullptr || PChar->PSession != nullptr)
         {
             return;
         }

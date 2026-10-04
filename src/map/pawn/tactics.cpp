@@ -72,12 +72,20 @@ namespace pawn::tactics
 
         constexpr std::size_t kChatWidth = 110; // what one chat line holds before the client cuts it
         constexpr auto        kGrace     = 30s; // a member missing from the party list this long is gone (zoning pops her for a moment)
+        constexpr auto        kLive      = 2s;  // a tactician not ticked this long is no conveyor: nothing would clear its locks
 
         // pawn.TACTICS_REQUEST_LIFE: a request not re-fed this long is withdrawn
         auto requestLife() -> double
         {
             static const double life = settings::get<float>("pawn.TACTICS_REQUEST_LIFE");
             return life;
+        }
+
+        // pawn.TACTICS_FIRST_AID_FLOOR, as a fraction of max HP
+        auto firstAidFloor() -> double
+        {
+            static const double floor = settings::get<float>("pawn.TACTICS_FIRST_AID_FLOOR") / 100.0;
+            return floor;
         }
 
         // Her scope as the game holds it this instant: the alliance's
@@ -186,23 +194,30 @@ namespace pawn::tactics
                 refreshScope(now, PAsker);
                 m_log.tick(now, state.scratch);
                 const auto scope = scopeOf(PAsker);
-                const auto measured = measureCures(scope, seconds(now));
-                std::vector<cardian::cure::Target> targets;
-                if (std::any_of(m_log.open().begin(), m_log.open().end(), [](const auto& r) { return !r.settling(); }))
-                {
-                    for (auto* member : scope.members)
-                    {
-                        if (member == nullptr || member->isDead()) continue;
-                        const auto threat = role::threat(m_log, member, seconds(now));
-                        targets.push_back({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
-                            threat.biggestHit, threat.takenPerSecond});
-                    }
-                }
-                auto emergency = cardian::cure::choose(measured, targets, m_conveyor.emergencies());
+                auto emergency = chooseFirstAid(scope, seconds(now));
+                m_cureStarted  = false;
                 m_rest.tick(m_log, scope, seconds(now), emergency);
                 m_conveyor.emergency(std::move(emergency));
                 m_conveyor.tick(seconds(now), requestLife(), scope);
                 pace(scope);
+            }
+
+            // A cure started since first aid was last chosen (MAGIC_START,
+            // before its magic state is current): the choice is made again
+            // before anyone reads it, with that cure in flight, so no mage
+            // casts first aid it has already met
+            void cureStarted()
+            {
+                m_cureStarted = true;
+            }
+            void freshFirstAid(CCharEntity* PAsker)
+            {
+                if (!m_cureStarted)
+                {
+                    return;
+                }
+                m_cureStarted = false;
+                m_conveyor.emergency(chooseFirstAid(scopeOf(PAsker), seconds(timer::now())));
             }
 
             // Out of the scope now: her route and her place on the roster
@@ -227,6 +242,28 @@ namespace pawn::tactics
             static auto now() -> timer::time_point
             {
                 return timer::now();
+            }
+
+            // First aid (cure_math.h choose): the cures each mage could
+            // land and those in flight, against each member's danger while
+            // a fight is under way -- never less than the floor
+            // (withFloor) -- the last choice keeping an emergency through
+            // its approach
+            auto chooseFirstAid(const Conveyor::Scope& scope, const double at) -> std::vector<cardian::cure::Choice>
+            {
+                const auto measured = measureCures(scope, at);
+                std::vector<cardian::cure::Target> targets;
+                if (std::any_of(m_log.open().begin(), m_log.open().end(), [](const auto& r) { return !r.settling(); }))
+                {
+                    for (auto* member : scope.members)
+                    {
+                        if (member == nullptr || member->isDead()) continue;
+                        const auto threat = role::threat(m_log, member, at);
+                        targets.push_back(cardian::cure::withFloor({member->id, static_cast<double>(member->health.hp), static_cast<double>(member->GetMaxHP()),
+                            threat.biggestHit, threat.takenPerSecond}, firstAidFloor()));
+                    }
+                }
+                return cardian::cure::choose(measured, targets, m_conveyor.emergencies());
             }
 
             void changed(const timer::time_point)
@@ -364,6 +401,7 @@ namespace pawn::tactics
             std::unordered_map<uint32, int32>                  m_cycleSpent; // by member, over the cycle under way
             bool                                    m_cycleOpen  = false;
             uint32                                  m_closedSeen = 0;
+            bool                                    m_cureStarted = false; // first aid to choose again before it is read
         };
 
         // Her scope: the alliance, else the party, else herself
@@ -387,11 +425,12 @@ namespace pawn::tactics
             return it != state.tacticians.end() && it->second->scopeId() == id ? it->second.get() : nullptr;
         }
 
-        // A world camp with no real player in it is watched only when asked
+        // A world camp with no real player in it is watched only when asked;
+        // a played character's party, his alone included, always is
         auto watched(CCharEntity* PPawn) -> bool
         {
             static const bool world = settings::get<bool>("pawn.TACTICS_WORLD");
-            return world || pawn::partyPlayer(PPawn) != nullptr || pawn::summonerOf(PPawn->id) != 0;
+            return world || PPawn->PSession != nullptr || pawn::partyPlayer(PPawn) != nullptr || pawn::summonerOf(PPawn->id) != 0;
         }
 
         // --- the dispatcher: route by id, or drop ---------------------------
@@ -467,7 +506,12 @@ namespace pawn::tactics
                 PTactician->log().onMagicStart(PCaster, PTarget, PSpell);
                 if (PCaster->objtype == TYPE_PC)
                 {
-                    PTactician->conveyor().castStarted(static_cast<CCharEntity*>(PCaster), PSpell, PTarget != nullptr ? PTarget->id : 0);
+                    auto* PChar = static_cast<CCharEntity*>(PCaster);
+                    PTactician->conveyor().castStarted(PChar, PSpell, PTarget != nullptr ? PTarget->id : 0, scopeOf(PChar));
+                    if (PSpell != nullptr && PSpell->getSpellFamily() == SPELLFAMILY_CURE)
+                    {
+                        PTactician->cureStarted();
+                    }
                 }
             }
         }
@@ -721,65 +765,48 @@ namespace pawn::tactics
         return PPawn != nullptr ? Conveyor::resolve(scopeOf(PPawn), id) : nullptr;
     }
 
+    // Each member's answer is her gambit engine's, whoever drives her
+    // (pawn::gambitsOf): a cardian's and a played character's alike
     auto offersSpells(CBattleEntity* PMember) -> bool
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return false;
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersSpells();
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->MasterOn() && PGambits->OffersSpells();
     }
 
     auto offersRest(CBattleEntity* PMember) -> bool
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return false;
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->Gambits().MasterOn() && PController->Gambits().OffersRest();
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->MasterOn() && PGambits->OffersRest();
     }
 
     auto nukesOf(CBattleEntity* PMember) -> std::vector<SpellID>
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return {};
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        if (PController == nullptr || !PController->Gambits().MasterOn())
-        {
-            return {};
-        }
-        return PController->Gambits().OfferedNukes();
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->MasterOn() ? PGambits->OfferedNukes() : std::vector<SpellID>{};
     }
 
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool
     {
-        if (PMember == nullptr || PMember->objtype != TYPE_PC || PMember->PAI == nullptr)
-        {
-            return false;
-        }
-        auto* PController = dynamic_cast<CPawnController*>(PMember->PAI->GetController());
-        return PController != nullptr && PController->AttendsFight(PMob);
+        auto* PGambits = pawn::gambitsOf(PMember);
+        return PGambits != nullptr && PGambits->AttendsFight(PMob);
     }
 
     auto admittedBy(CBattleEntity* PHolder, const SpellID spell, CBattleEntity* PTarget) -> std::optional<std::string>
     {
-        auto* PController = PHolder != nullptr && PHolder->objtype == TYPE_PC && PHolder->PAI != nullptr ? dynamic_cast<CPawnController*>(PHolder->PAI->GetController()) : nullptr;
-        return PController != nullptr ? PController->Gambits().Admits(static_cast<uint16>(spell), PTarget) : std::nullopt;
+        auto* PGambits = pawn::gambitsOf(PHolder);
+        return PGambits != nullptr ? PGambits->Admits(static_cast<uint16>(spell), PTarget) : std::nullopt;
     }
 
     auto allows(CBattleEntity* PHolder, const SpellID spell) -> bool
     {
-        auto* PController = PHolder != nullptr && PHolder->objtype == TYPE_PC && PHolder->PAI != nullptr ? dynamic_cast<CPawnController*>(PHolder->PAI->GetController()) : nullptr;
-        return PController != nullptr && PController->Gambits().AllowsSpell(static_cast<uint16>(spell));
+        auto* PGambits = pawn::gambitsOf(PHolder);
+        return PGambits != nullptr && PGambits->AllowsSpell(static_cast<uint16>(spell));
     }
 
     auto has(const CCharEntity* PPawn) -> bool
     {
-        return PPawn != nullptr && find(PPawn) != nullptr;
+        const auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return PTactician != nullptr && timer::now() - PTactician->lastTick() <= kLive;
     }
 
     auto feed(CCharEntity* PPawn, CSpell* PSpell, CBattleEntity* PTarget, const uint32 row, const std::string& rowId) -> std::optional<Fed>
@@ -812,6 +839,7 @@ namespace pawn::tactics
             }
             return std::nullopt;
         }
+        PTactician->freshFirstAid(PPawn);
         const auto& n = PTactician->conveyor().feed(Conveyor::keyFor(PSpell, PTarget->id, PPawn->id),
                                                     Request{ .source = Source::Row,
                                                              .caster = PPawn->id,
@@ -852,6 +880,7 @@ namespace pawn::tactics
         {
             return std::nullopt;
         }
+        PTactician->freshFirstAid(PPawn);
         const auto a = PTactician->conveyor().assignment(PPawn->id, engaged, scopeOf(PPawn));
         if (!a.has_value())
         {
@@ -864,6 +893,7 @@ namespace pawn::tactics
     {
         if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
         {
+            PTactician->freshFirstAid(PPawn);
             role::think(PPawn, PTactician->log(), PTactician->conveyor(), scopeOf(PPawn), engaged, seconds(timer::now()));
         }
     }

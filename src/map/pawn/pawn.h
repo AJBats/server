@@ -363,6 +363,12 @@ namespace pawn
     // One set by charid and set id, into the engine: its rows replace what
     // the engine held. The saved master switch, or nothing with no set saved
     auto loadGambitSet(CCharEntity* PChar, uint8 setId, CGambits& gambits) -> std::optional<bool>;
+
+    // A character's gambit engine, whoever drives her: a cardian's
+    // (CPawnController) or a played character's own (CLiveController);
+    // nothing for anyone else. The engine answers for its host
+    // (CGambits::Host), so the tactician reads both alike
+    auto gambitsOf(CBattleEntity* PMember) -> CGambits*;
     void forgetGambits(CCharEntity* PPawn);
     bool reloadBrainByName(const std::string& targetName);
     bool reloadBrain(CCharEntity* PPawn);

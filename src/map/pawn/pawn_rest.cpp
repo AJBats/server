@@ -1,6 +1,7 @@
 // Cardian: one lifecycle for the tactician's MP pacing (her marked Rest row), a plain Rest row, Rest With Player, town kneeling and the player's rest order.
 #include "pawn_controller.h"
 #include "pawn.h"
+#include "rest_policy.h"
 #include "role_support.h"
 #include "tactics.h"
 
@@ -17,19 +18,7 @@
 
 namespace
 {
-    auto restSeconds(const timer::time_point time) -> double
-    {
-        return std::chrono::duration<double>(time.time_since_epoch()).count();
-    }
-
-    // Healing's own clock: ticks so far, seconds to the next, seconds between
-    auto healingClock(const CStatusEffect* healing, const double now) -> CPawnController::RestClock
-    {
-        const double interval = std::chrono::duration<double>(healing->GetTickTime()).count();
-        const int ticks = healing->GetElapsedTickCount();
-        return {.down = true, .ticks = ticks,
-                .next = restSeconds(healing->GetStartTime()) + (ticks + 1) * interval - now, .interval = interval};
-    }
+    using pawn::tactics::restSeconds;
 }
 
 void CPawnController::SetRestOrder(const int percent, const std::string_view why, const bool byRow)
@@ -52,40 +41,26 @@ void CPawnController::EndRestOrder(const std::string_view why)
 
 auto CPawnController::RestAllowsAction() const -> bool
 {
-    return m_Rest.canAct(restSeconds(timer::now()), POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+    return pawn::tactics::kneelAllowsAction(m_Rest, POwner);
 }
 
 auto CPawnController::RestInterruptionCost() const -> double
 {
-    const auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
-    if (healing == nullptr)
-    {
-        return 0.0;
-    }
-    const auto clock = healingClock(healing, restSeconds(timer::now()));
-    return cardian::rest::interruptionCost(clock.ticks, clock.next, clock.interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
+    return pawn::tactics::restInterruptionCost(POwner);
 }
 
 auto CPawnController::RestReadyIn(const double now) const -> double
 {
-    return m_Rest.readyIn(now, POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+    return pawn::tactics::kneelReadyIn(m_Rest, POwner, now);
 }
 
 void CPawnController::StandFromRest(const std::string_view why)
 {
     m_RestDeferredPosition = false;
     m_Rest.wantsDown = false;
-    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    if (pawn::tactics::standFromKneel(m_Rest, POwner, why))
     {
-        const double now = restSeconds(timer::now());
-        if (!m_Rest.requestStand(now))
-        {
-            return;
-        }
-        POwner->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
-        m_Rest.stood(now);
         m_RestTicks = 0;
-        ShowInfoFmt("rest: {} stands ({})", POwner->getName(), why);
     }
 }
 
@@ -257,7 +232,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         m_RestChatAt = now + 60.0;
         if (advice->knownCost && POwner->health.mp < advice->readyMp)
         {
-            const auto clock = healingClock(POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing), now);
+            const auto clock = pawn::tactics::kneelClock(POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing), now);
             const double wait = cardian::rest::timeToReady(advice->readyMp - POwner->health.mp, clock.ticks, clock.next,
                                                          clock.interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
             const auto line = advice->readyMp > POwner->GetMaxMP() ? std::string("A fight and link reserve here need more MP than I can hold.") :

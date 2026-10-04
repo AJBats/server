@@ -24,7 +24,10 @@
 #include "engage_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
+#include "rest_policy.h"
 #include "spell_bank.h"
+#include "tactics.h"
+#include "pause/input_gate.h"
 
 #include "common/logging.h"
 #include "common/settings.h"
@@ -82,7 +85,7 @@ namespace
     }
 
     // A character his own client drives, as his gambit engine sees him
-    // (gambit_host.h): his rows are orders, his hands act through the doors
+    // (gambit_host.h): his rows run as a cardian's, his hands act through the doors
     // his client's packets reach, and an action is tried only when the game
     // would take it -- in reach, off its recast, nothing keeping him from it
     // -- so a row that cannot act now passes to the next without a word to
@@ -102,26 +105,26 @@ namespace
             return true;
         }
 
+        // A row's own cast, where no tactician watches his party: another
+        // member's cast of it already under way passes it by
         auto Cast(const EntityId target, const SpellID spell) -> bool override
         {
-            auto* PSpell = spell::GetSpell(spell);
-            if (PSpell == nullptr)
-            {
-                return false;
-            }
-            const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(m_PChar) : target;
-            auto*          PTarget    = castTarget.resolve<CBattleEntity>();
-            if (PTarget == nullptr || PTarget->loc.zone != m_PChar->loc.zone || !m_controller.StandingStill() ||
-                !CastWouldTake(PSpell, castTarget, PTarget) || pawn::partyAlreadyCasting(m_PChar, PSpell, PTarget))
-            {
-                return false;
-            }
-            return Started(m_PChar->PAI->Cast(castTarget, spell), "casts", PSpell->getName(), PTarget);
+            return CastIfTaken(target, spell, true);
         }
 
-        auto CastAssigned(const EntityId /*target*/, const SpellID /*spell*/) -> bool override
+        auto CastAssigned(const EntityId target, const SpellID spell) -> bool override
         {
-            return false; // the conveyor assigns a cardian's casts, never his
+            return CastIfTaken(target, spell, false);
+        }
+
+        auto FreeToCast(CSpell* PSpell, CBattleEntity* PTarget) -> bool override
+        {
+            if (PSpell == nullptr || PTarget == nullptr)
+            {
+                return false;
+            }
+            auto* PCastTarget = PSpell->getValidTarget() == TARGET_SELF ? m_PChar : PTarget;
+            return m_controller.Ready() && m_controller.StandingStill() && CastWouldTake(PSpell, EntityId(PCastTarget), PCastTarget);
         }
 
         auto Ability(const EntityId target, const uint16 ability) -> bool override
@@ -178,44 +181,39 @@ namespace
         void SetGambitBehavior(const uint16 /*behavior*/, const uint16 /*arg*/) override
         {
         }
-        // The game would take a new action from him now (the controller's
-        // own tick waits for it too, CLiveController::Ready)
-        auto ReadyToAct() -> bool override
-        {
-            return m_PChar->PAI->CanChangeState() && m_controller.canAct();
-        }
-        auto AbilitiesShutOut() const -> bool override
-        {
-            const auto* PImpairment = m_PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Impairment);
-            return Amnesic() || (PImpairment != nullptr && (PImpairment->GetPower() == 0x01 || PImpairment->GetPower() == 0x03));
-        }
-        // Every buff on him is his own doing; his tactician's stances and
-        // Sneak Attack are marked rows, which run for him in a later step
-        auto PlayersBuff(const uint16 /*ability*/, const xi::StatusEffect /*effect*/) -> bool override
-        {
-            return true;
-        }
-        void NoteOrderedStance(const uint16 /*ability*/) override
-        {
-        }
+        // Sneak Attack and Boost before a weapon skill are a cardian
+        // controller's own sequence (the opener, then the weapon skill held
+        // until it lands): not his yet
         auto SneakAttackNow(const CBattleEntity* /*PTarget*/) -> bool override
         {
             return false;
         }
-        // His own commands wait in his client, or in the pause's gate while
-        // held, when his rows do not run
+        // His own command waiting in the pause's gate: it goes first at the
+        // release
         auto HasQueuedOrder() const -> bool override
         {
-            return false;
+            return cardian::pause::input::queued(m_PChar->id).has_value();
         }
         auto IsRetreating() const -> bool override
         {
             return false;
         }
-        // His rest is his: the controller runs nothing while he kneels
+        // His kneel, on a cardian's rest lifecycle (CLiveController::RestAllowsAction)
         auto RestAllowsAction() const -> bool override
         {
-            return !m_PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+            return m_controller.RestAllowsAction();
+        }
+        auto RestReadyIn(const double now) const -> double override
+        {
+            return m_controller.RestReadyIn(now);
+        }
+        auto RestInterruptionCost() const -> double override
+        {
+            return pawn::tactics::restInterruptionCost(m_PChar);
+        }
+        auto StandsToCast() const -> bool override
+        {
+            return m_controller.StandingStill() && m_controller.RowsMayAct();
         }
         auto Acting() const -> bool override
         {
@@ -227,13 +225,22 @@ namespace
         {
             return m_controller.canAct();
         }
+        // His think's place after his party's cardians', so none thinks in
+        // step with him
         auto PartyPosition() const -> uint8 override
         {
-            return 0;
-        }
-        auto TacticianRuns() const -> bool override
-        {
-            return false;
+            uint8 cardians = 0;
+            if (m_PChar->PParty != nullptr)
+            {
+                for (const auto* PMember : m_PChar->PParty->members)
+                {
+                    if (const auto* PChar = dynamic_cast<const CCharEntity*>(PMember); PChar != nullptr && pawn::isPawn(PChar))
+                    {
+                        ++cardians;
+                    }
+                }
+            }
+            return cardians;
         }
         auto IsWorld() const -> bool override
         {
@@ -248,20 +255,52 @@ namespace
         {
             return pawn::topEnmityOf(m_PChar);
         }
-        auto FoeOfKind(const cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool override
+        // The one whose fights are the party's: his party's leader
+        auto Anchor() const -> CCharEntity* override
         {
-            return PFoe != nullptr && PFoe->objtype == TYPE_MOB && cardian::engage::accepts(finder, pawn::foeFacts(m_PChar, PFoe, leaderOf(m_PChar)));
+            return leaderOf(m_PChar);
         }
-        // His battle target is his fight: there is no other he attends
+        // A cardian's door holds off a target it was refused; his door's
+        // refusals quiet his rows instead (Refused), and the mob he left by
+        // hand is passed by his door alone (EngageDoor): he may still
+        // attend it, a mage's spells on it
+        auto HoldingOff(const CBattleEntity* /*PFoe*/) const -> bool override
+        {
+            return false;
+        }
+        // His own command engaged him on it
+        auto OrderedOnto(const CBattleEntity* PTarget) const -> bool override
+        {
+            return PTarget != nullptr && m_PChar->PAI->IsEngaged() && m_PChar->GetBattleTarget() == PTarget;
+        }
         auto PartyFightTarget() const -> CBattleEntity* override
         {
-            return nullptr;
+            return m_controller.AttendedFight();
         }
 
     private:
         auto Amnesic() const -> bool
         {
             return m_PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Amnesia);
+        }
+
+        // A cast started only where the game would take it from where he
+        // stands; `party` also passes it by while another member casts it
+        auto CastIfTaken(const EntityId target, const SpellID spell, const bool party) -> bool
+        {
+            auto* PSpell = spell::GetSpell(spell);
+            if (PSpell == nullptr)
+            {
+                return false;
+            }
+            const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(m_PChar) : target;
+            auto*          PTarget    = castTarget.resolve<CBattleEntity>();
+            if (PTarget == nullptr || PTarget->loc.zone != m_PChar->loc.zone || !m_controller.StandingStill() ||
+                !CastWouldTake(PSpell, castTarget, PTarget) || (party && pawn::partyAlreadyCasting(m_PChar, PSpell, PTarget)))
+            {
+                return false;
+            }
+            return Started(m_PChar->PAI->Cast(castTarget, spell), "casts", PSpell->getName(), PTarget);
         }
 
         // The game would take this cast now: the checks the magic state
@@ -305,7 +344,7 @@ namespace
         // check runs on a copy, as the state's does
         auto AbilityWouldTake(CAbility* PAbility, CBattleEntity* PTarget) -> bool
         {
-            if (m_PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()) || AbilitiesShutOut() ||
+            if (m_PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()) || pawn::abilitiesShutOut(m_PChar) ||
                 !charutils::hasAbility(m_PChar, PAbility->getID()))
             {
                 return false;
@@ -395,20 +434,34 @@ void CLiveController::InstallOn(CCharEntity* PChar)
     }
 }
 
+auto CLiveController::RowsMayAct() const -> bool
+{
+    const auto* PChar = static_cast<const CCharEntity*>(POwner);
+    return PChar->PSession != nullptr && !PChar->isDead() && !PChar->isInEvent() && PChar->status == xi::Status::Normal && !PChar->isMounted() &&
+           !PChar->inMogHouse() && !PChar->requestedZoneChange && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Leavegame) &&
+           timer::now() >= m_QuietUntil;
+}
+
 // He can act as the game judges it: not asleep, stunned or otherwise held
 // (an inactive state), and past the wait after his last cast, which the game
 // refuses every action through
 auto CLiveController::Ready() -> bool
 {
-    const auto* PChar = static_cast<const CCharEntity*>(POwner);
-    return PChar->PSession != nullptr && !PChar->isDead() && !PChar->isInEvent() && PChar->status == xi::Status::Normal && !PChar->isMounted() &&
-           !PChar->inMogHouse() && !PChar->requestedZoneChange && !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) &&
-           PChar->PAI->CanChangeState() && canAct() && timer::now() >= m_QuietUntil;
+    return RowsMayAct() && !POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) && POwner->PAI->CanChangeState() && canAct();
 }
 
 auto CLiveController::Tick(const timer::time_point tick) -> Task<void>
 {
     co_await CPlayerController::Tick(tick);
+
+    // His party's tactician, advanced once a tick by whoever asks first, as
+    // every cardian's tick asks: with no cardian beside him it is his alone
+    pawn::tactics::tick(static_cast<CCharEntity*>(POwner), tick);
+
+    // His kneel, every tick, as the rest lifecycle reads it; and first aid's
+    // call to stand
+    m_Rest.observe(POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing), pawn::tactics::restSeconds(timer::now()));
+    WakeForFirstAid();
 
     // His stillness, every tick, off the position his client last reported
     const auto& at = POwner->loc.p;
@@ -421,10 +474,25 @@ auto CLiveController::Tick(const timer::time_point tick) -> Task<void>
 
     if (!m_Gambits->MasterOn() || !Ready())
     {
+        m_Attended.clean();
         co_return;
     }
 
-    m_Gambits->Tick(tick, POwner->PAI->IsEngaged());
+    // Out of a fight himself, the party's fight around him is one he
+    // attends as a cardian mage does (CGambits::AttendsFight): his rows read
+    // it as "the mob", and are in the fight once it is engaged
+    const bool engaged = POwner->PAI->IsEngaged();
+    m_Attended.clean();
+    if (!engaged)
+    {
+        auto* PChar = static_cast<CCharEntity*>(POwner);
+        if (auto* PFight = m_Gambits->PartyFightScan(leaderOf(PChar), PChar->loc.p).target; PFight != nullptr && m_Gambits->AttendsFight(PFight))
+        {
+            m_Attended = PFight->entityId();
+        }
+    }
+    const auto* PAttended = AttendedFight();
+    m_Gambits->Tick(tick, engaged || (PAttended != nullptr && PAttended->PAI->IsEngaged()));
 
     if (tick >= m_NextDoor)
     {
@@ -432,6 +500,44 @@ auto CLiveController::Tick(const timer::time_point tick) -> Task<void>
         EngageDoor();
     }
     co_return;
+}
+
+auto CLiveController::RestAllowsAction() const -> bool
+{
+    return pawn::tactics::kneelAllowsAction(m_Rest, POwner);
+}
+
+auto CLiveController::RestReadyIn(const double now) const -> double
+{
+    return pawn::tactics::kneelReadyIn(m_Rest, POwner, now);
+}
+
+void CLiveController::WakeForFirstAid()
+{
+    // The emergency cure stands any kneeling caster the party picks for it,
+    // as it stands a cardian (the user, 2026-10-03): the wake is about the
+    // cure, not his rest. Never through his logout: its countdown kneels
+    // him too, and standing would call it off
+    auto* PChar = static_cast<CCharEntity*>(POwner);
+    if (!m_Gambits->MasterOn() || PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Leavegame))
+    {
+        return;
+    }
+    if (const auto advice = pawn::tactics::restAdvice(PChar); advice.has_value() && advice->wake)
+    {
+        pawn::tactics::standFromKneel(m_Rest, PChar, advice->why);
+    }
+}
+
+auto CLiveController::LeftByHand(const CBattleEntity* PFoe) const -> bool
+{
+    return PFoe != nullptr && m_LeftAlive == PFoe;
+}
+
+auto CLiveController::AttendedFight() const -> CBattleEntity*
+{
+    auto* PFight = m_Attended.isSet() ? m_Attended.resolve<CBattleEntity>() : nullptr;
+    return PFight != nullptr && !PFight->isDead() ? PFight : nullptr;
 }
 
 void CLiveController::WatchLeftAlive()
@@ -454,89 +560,29 @@ void CLiveController::EngageDoor()
     {
         return;
     }
-    // Upstream's re-engage wait, as CPlayerController::Engage judges it:
-    // the mob he last engaged waits his weapon's delay, any other the
-    // switch delay. A foe still inside its wait is left for a later look,
-    // so the game is never asked early and never says "wait longer"
+    // The door's pick, a cardian's own (CGambits::EngageChoice): his Attack
+    // rows top down over the party's foes around him -- of those he can
+    // take now. What a cardian walks to, he takes only within upstream's
+    // engage reach of where he stands; only past upstream's re-engage wait,
+    // counted from his last swing as CPlayerController::Engage counts it,
+    // so the game is never asked early and never says "wait longer"; and
+    // never the mob he left by his own hand
     const auto lastEngaged = static_cast<uint32>(PChar->GetLocalVar("cardianLastEngaged"));
-    const auto switchWait  = std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.REENGAGE_SWITCH_DELAY") * 1000.0f));
-    const auto waited      = [&](const CBattleEntity* PFoe)
+    const auto takes       = [&](CBattleEntity* PFoe)
     {
-        const auto wait = PFoe->id == lastEngaged ? std::chrono::milliseconds(PChar->GetWeaponDelay(false)) : switchWait;
-        return m_lastAttackTime + wait < timer::now();
+        return PFoe->loc.zone == PChar->loc.zone && distance(PChar->loc.p, PFoe->loc.p) < kEngageReach && !LeftByHand(PFoe) &&
+               timer::now() > m_lastAttackTime + pawn::reengageWait(PChar, PFoe, lastEngaged);
     };
-    const auto rows = m_Gambits->EngageRows();
-    if (rows.empty())
+    const auto pick = m_Gambits->EngageChoice(leaderOf(PChar), PChar->loc.p, takes);
+    auto*      PFoe = pick.target;
+    if (PFoe == nullptr)
     {
         return;
     }
-
-    // The foes around him, each within his engage reach: his leader's
-    // engaged target, his allies' fights, and a mob that has come for him or
-    // one of his party. The mob he left by his own hand is his to leave: a
-    // disengage of his own is not undone by his rows
-    auto*                       PLeader = leaderOf(PChar);
-    std::vector<CBattleEntity*> foes;
-    const auto                  add = [&](CBattleEntity* PFoe)
-    {
-        if (PFoe != nullptr && PFoe->objtype == TYPE_MOB && !PFoe->isDead() && PFoe->loc.zone == PChar->loc.zone && !(m_LeftAlive == PFoe) &&
-            distance(PChar->loc.p, PFoe->loc.p) < kEngageReach && waited(PFoe) && std::ranges::find(foes, PFoe) == foes.end())
-        {
-            foes.push_back(PFoe);
-        }
-    };
-    if (PLeader != nullptr && PLeader->PAI->IsEngaged())
-    {
-        add(PLeader->GetBattleTarget());
-    }
-    if (PChar->PParty != nullptr)
-    {
-        for (auto* PMember : PChar->PParty->members)
-        {
-            auto* PAlly = dynamic_cast<CCharEntity*>(PMember);
-            if (PAlly != nullptr && PAlly != PChar && PAlly->loc.zone == PChar->loc.zone && PAlly->PAI->IsEngaged())
-            {
-                add(PAlly->GetBattleTarget());
-            }
-        }
-    }
-    pawn::forEachMobNear(pawn::entitiesAround(PChar), PChar->loc.p, kEngageReach, [&](CMobEntity* PMob)
-                         {
-                             if (PMob->PAI->IsEngaged() && pawn::foeFacts(PChar, PMob, PLeader).onParty)
-                             {
-                                 add(PMob);
-                             }
-                         });
-    if (foes.empty())
-    {
-        return;
-    }
-
-    std::vector<cardian::engage::Foe> facts;
-    facts.reserve(foes.size());
-    for (auto* PFoe : foes)
-    {
-        facts.push_back(pawn::foeFacts(PChar, PFoe, PLeader));
-    }
-    std::vector<cardian::engage::Row> view;
-    view.reserve(rows.size());
-    for (std::size_t i = 0; i < rows.size(); ++i)
-    {
-        view.push_back({ i + 1, rows[i].gambit->target_selector, true });
-    }
-    const auto pick = cardian::engage::chooseRow(m_Gambits->MasterOn(), false, view, facts, [&](const std::size_t row, const std::size_t foe)
-                                                 {
-                                                     return m_Gambits->EngageConditionsHold(*rows[row].gambit, foes[foe]);
-                                                 });
-    if (!pick.has_value())
-    {
-        return;
-    }
-    auto* PFoe = foes[pick->foe];
     if (!PChar->PAI->Engage(PFoe->entityId()))
     {
         Refused("engage");
         return;
     }
-    ShowInfoFmt("own gambits: {} engages {} (his row {})", PChar->getName(), PFoe->getName(), rows[pick->row - 1].index);
+    ShowInfoFmt("own gambits: {} engages {} ({})", PChar->getName(), PFoe->getName(), pick.why);
 }

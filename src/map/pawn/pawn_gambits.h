@@ -36,11 +36,13 @@
 #include "common/cbasetypes.h"
 #include "common/timer.h"
 #include "common/types/hash_map.h"
+#include "common/types/position.h"
 
 #include "ai/helpers/gambits_container.h"
 
 #include <functional>
 #include <optional>
+#include <unordered_map>
 
 #include <array>
 #include <cstddef>
@@ -212,10 +214,10 @@ namespace pawn
     // orders.
     //
     // It runs for whoever hosts it (gambit_host.h): a cardian's controller,
-    // or the controller of a character his own client drives. His rows are
-    // his own alone -- no world layer, no party role's -- and his plain rows
-    // run as orders: what his hands do. No tactician runs for him yet, so a
-    // marked row of his, and a behaviour row, is struck out
+    // or the controller of a character his own client drives. His rows run
+    // as hers do -- his own and his seat's, plain rows as orders, marked
+    // rows as his tactician's tools -- with his hands alone: never a world
+    // layer, and a behaviour row, which moves a body, is struck out
     // (tactician_line.h ownClientStateOf).
     class CGambits
     {
@@ -363,9 +365,101 @@ namespace pawn
         // foe the row names
         auto EngageConditionsHold(const gambits::Gambit_t& gambit, CBattleEntity* PFoe) -> bool;
 
+        // The engage door (ROADMAP K3; the rules are engage_math.h), one
+        // for every character whose rows engage. The foes around the party
+        // are the leader's engaged target, the fights of the party's other
+        // members, and the engaged mobs on her or on a member of her party,
+        // each within the leash (pawn.HUNT_LEASH) of `from`, the party's
+        // place: a pull is not the party's fight until it is dragged
+        // inside. PLeader is the one she is with (GambitHost::Anchor); with
+        // none, the party's own fights alone. A foe below ground with no
+        // fight on, or one she holds off (GambitHost::HoldingOff), is
+        // absent, and the next one gets its turn. Nothing while she
+        // retreats.
+        //  - PartyFightScan: the party's fight whatever her rows say -- the
+        //    leader's target, else another member's fight (how a hunter's
+        //    pull propagates), else a mob on one of us. What a mage with
+        //    spells to offer attends, what her rest watches for, and what a
+        //    camp leader joins.
+        //  - EngageChoice: the fight her rows take -- her enabled Attack
+        //    rows top down (none with her gambits off), each row's foe the
+        //    first of its kind whose conditions hold on it. `row` numbers
+        //    the row, and the why line names it with its layer. A marked row
+        //    counts only while her tactician lets her melee (TacticianMelee).
+        struct FightPick
+        {
+            CBattleEntity* target = nullptr;
+            std::string    why;
+            // The Attack row that took it, numbered within its layer (the
+            // editor's number for one of her own); 0 for the party's fight
+            std::size_t row = 0;
+        };
+        auto PartyFightScan(CCharEntity* PLeader, const position_t& from) -> FightPick;
+        // `takes`, when given, is the body's say over the foes it can take
+        // now (a played character's: in his reach of where he stands, past
+        // his re-engage wait, not one he left by hand); the rows choose
+        // among those. A cardian walks to any, and gives none
+        auto EngageChoice(CCharEntity* PLeader, const position_t& from, const std::function<bool(CBattleEntity*)>& takes = {}) -> FightPick;
+        // The first of her Attack rows that claims this mob, wherever it
+        // stands (engage_math.h claimingRow), and its finder: nothing when
+        // none does; and the same with the marked rows counted or not
+        struct RowClaim
+        {
+            cardian::engage::Finder finder = cardian::engage::Finder::LeadersTarget;
+            EngageRow               row;
+        };
+        auto ClaimingRow(CBattleEntity* PTarget) -> std::optional<RowClaim>;
+        auto ClaimingRowAs(CBattleEntity* PTarget, bool melee) -> std::optional<RowClaim>;
+        // Whether any of her Attack rows takes fights now: an order, or a
+        // marked one while her tactician lets her melee
+        auto TakesFights() -> bool;
+        // Her tactician (tactician_line.h) runs: her rows offer it a tool (a
+        // marked row that is on), her gambits are on, and a tactician
+        // watches her scope (RESEARCH §17.13)
+        auto TacticianRuns() const -> bool;
+        // Her tactician's recovery is due: a casting mage's MP, as her rest
+        // policy says, while her marked Rest row runs. The party's Tank's
+        // never is: the seat is what she is for, and a tank leaves no fight
+        // to rest (§17.11)
+        auto RecoveryDue() -> bool;
+        // Her tactician lets her melee a fight a marked row claims while it
+        // runs, her recovery is not due and she is not down resting
+        // (RESEARCH §14.12 decision 19)
+        auto TacticianMelee() -> bool;
+        // The perimeter (RESEARCH §12.15): she attends the fight on this mob
+        // instead of drawing on it when her rows offer the party spells and
+        // no Attack row of hers claims the mob (engage_math.h attendsFight).
+        // A mob the player sent her onto is hers to fight
+        // (GambitHost::OrderedOnto)
+        auto AttendsFight(CBattleEntity* PTarget) -> bool;
+        // The foes around the party this tick (as above), gathered once a
+        // tick for the place asked about, in the finders' order; what a foe
+        // is to the party (the finders' facts, engage_math.h Foe); the words
+        // for how a finder found it; and whether a foe is of a finder's kind
+        // against the one she is with -- how a Foe row with another action
+        // than Attack names her fight
+        auto FoesAround(CCharEntity* PLeader, const position_t& from) -> std::vector<CBattleEntity*>;
+        auto FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe;
+        auto FoeWhy(cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string;
+        auto FoeOfKind(cardian::engage::Finder finder, CBattleEntity* PFoe) const -> bool;
+
         auto SpellBook() -> CSpellBook&
         {
             return m_spellBook;
+        }
+
+        // The stance buffs the player's own order fired: her tactician's
+        // stance never takes one off (tactician_line.h isOrderedUse). Noted
+        // as his order fires -- a cardian's from her command window, a played
+        // character's from his own client -- and asked of the effect on her
+        void NoteOrderedStance(uint16 ability);
+        auto PlayersBuff(uint16 ability, xi::StatusEffect effect) const -> bool;
+
+        // Whoever she runs for (gambit_host.h): what the tactician asks of a
+        // caster -- free to cast, resting, a queued order -- it asks here
+        auto Host() -> GambitHost&
+        {
+            return *m_host;
         }
 
     private:
@@ -404,6 +498,10 @@ namespace pawn
         // The states of the running layers' rows, in forEachRow's order:
         // the world's first, then her own and the lent rows as fitted
         auto RunningStates(const cardian::layers::Layers<GambitRow>& layers) const -> std::vector<cardian::tactician::State>;
+        // A row's state where it sits in the running order
+        // (tactician_line.h), for whoever she is: a played character's
+        // behaviour rows struck, every other row as a cardian's
+        auto RowState(const gambits::Gambit_t& g) const -> cardian::tactician::State;
         // Whether a marked row that runs names a tool of the kind wanted
         auto OffersAny(const std::function<bool(cardian::tactician::Allowance)>& wanted) const -> bool;
         // The answers that move only with her rows, kept per generation of
@@ -468,12 +566,27 @@ namespace pawn
         auto PartyHasTank() const -> bool;
         auto IsOffensive(const gambits::Gambit_t& gambit) const -> bool;
         void Debug(std::string_view what, uint32 id, const CBattleEntity* PTarget) const;
-        // Her spell rows feed her scope's conveyor: a tactician watches it,
-        // and she is a cardian (a played character's casts are his own)
+        // Her spell rows feed her scope's conveyor: a live tactician watches
+        // it. A played character's too, so the party's casts are weighed
+        // together: his rows hold back while a cure is in flight and top
+        // up where theirs lands whole
         auto Conveyed() const -> bool;
+
+        // FoesAround's gathering, kept for the tick and the place it was
+        // made for: the door, her rest and her follow all ask, and the mob
+        // scan is the dear part. Only the entities are kept
+        struct FoesMemo
+        {
+            timer::time_point     tick{ timer::time_point::min() };
+            uint32                leader = 0;
+            position_t            from{};
+            std::vector<EntityId> foes;
+        };
 
         CCharEntity*      POwner;
         GambitHost*       m_host;
+        FoesMemo          m_foesMemo;
+        mutable std::unordered_map<uint16, timer::time_point> m_orderedBuffs; // NoteOrderedStance: ability -> when his order fired; PlayersBuff forgets an order whose time has gone
         CSpellBook        m_spellBook;
         timer::time_point m_lastAction;
         uint32            m_nextId = 0;
@@ -514,4 +627,27 @@ namespace pawn
         // NakedSneak's answer, as of her last think (NakedSneakNow)
         bool                                    m_nakedSneak = false;
     };
+
+    // An engage row as the why lines name it: "row N" for one of her own,
+    // the number the editor shows it under; "world row N" for the world's;
+    // "lent row N" for her seat's; and a marked row said to be her
+    // tactician's melee
+    auto rowLabel(const CGambits::EngageRow& row) -> std::string;
+
+    // Upstream's re-engage wait (CPlayerController::Engage, as Cardian
+    // marks it): the mob fought last waits the weapon's delay, any other
+    // the switch delay (cardian.REENGAGE_SWITCH_DELAY). Each controller
+    // counts it from its own last swing or leaving
+    auto reengageWait(CCharEntity* PChar, const CBattleEntity* PFoe, uint32 lastFought) -> timer::duration;
+
+    // The game would take a new action from her now: what CPlayerController
+    // asks before every action it takes -- able to act, and her state lets
+    // go. The controller ticks before the states update, so an ability
+    // begun in one tick lands in the next and lets go of her in the one
+    // after: asked first, the next action goes out then, with no refusal
+    auto readyToAct(CCharEntity* PChar) -> bool;
+
+    // What the ability state refuses a job ability for as it starts:
+    // Amnesia, or Impairment of abilities (power 1, or 3 with weapon skills)
+    auto abilitiesShutOut(const CBattleEntity* PChar) -> bool;
 } // namespace pawn

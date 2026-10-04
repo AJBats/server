@@ -23,6 +23,7 @@
 
 #include "gambit_host.h"
 #include "pawn_gambits.h"
+#include "rest_math.h"
 
 #include "ai/controllers/player_controller.h"
 #include "common/timer.h"
@@ -62,6 +63,12 @@ public:
 
     auto Gambits() -> pawn::CGambits&;
 
+    // Whether his rows may start anything now; and the same, his rest and
+    // his state's readiness aside -- in the world, not in an event, a
+    // mount, the Mog House, a zoning or his logout, and past the quiet after
+    // a refusal -- which first aid weighs with his rest
+    auto Ready() -> bool;
+    auto RowsMayAct() const -> bool;
     // He has stood where he is for long enough that a cast would not be
     // interrupted by his next step (kStillFor)
     auto StandingStill() const -> bool;
@@ -74,14 +81,25 @@ public:
     // module's packet hook ahead of upstream's handler
     void LeavingByHand();
 
+    // His kneel on the rest lifecycle a cardian's runs on (rest_math.h
+    // State): an action waits until he has risen, and first aid weighs him
+    // kneeling as it weighs her
+    auto RestAllowsAction() const -> bool;
+    auto RestReadyIn(double now) const -> double;
+
+    // The mob he left by his own hand, while it lives (LeavingByHand): his
+    // door passes it by
+    auto LeftByHand(const CBattleEntity* PFoe) const -> bool;
+    // The party's fight he attends as a mage out of it, as of his last tick
+    // (CGambits::AttendsFight): what his rows call "the mob"
+    auto AttendedFight() const -> CBattleEntity*;
+
     // Puts this controller on a played character still on upstream's own
     // controller: at every zone-in, and after upstream swapped it back
     // mid-session (a charm ending, a jail)
     static void InstallOn(CCharEntity* PChar);
 
 private:
-    // Whether his rows may start anything now
-    auto Ready() -> bool;
     // His Attack rows' door: a fight for him while he is out of one
     void EngageDoor();
 
@@ -90,10 +108,15 @@ private:
 
     // The mob he left by his own hand, forgotten once it dies or is gone
     void WatchLeftAlive();
+    // First aid picked him while he kneels: he stands for it, as a cardian
+    // does
+    void WakeForFirstAid();
 
     position_t        m_LastPos{};
     timer::time_point m_StillSince{};
     timer::time_point m_QuietUntil{};
     timer::time_point m_NextDoor{};
     EntityId          m_LeftAlive{};
+    EntityId          m_Attended{};
+    cardian::rest::State m_Rest;
 };

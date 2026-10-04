@@ -431,9 +431,9 @@ namespace cardian::tactician
     }
 
     // A row's state in the list of a character his own client drives
-    // (gambit_host.h OwnClient). No tactician runs for him yet, so his plain
-    // rows are orders and a marked row has nothing to judge it; a behaviour
-    // row moves a cardian or speaks to her tactician, and does nothing for him
+    // (gambit_host.h OwnClient): a cardian's (stateOf), but for a behaviour
+    // row, which moves a body or speaks to her tactician about moving, and
+    // does nothing for him
     inline auto ownClientStateOf(const gambits::Gambit_t& g, const bool fits = true) -> State
     {
         if (!fits)
@@ -448,7 +448,7 @@ namespace cardian::tactician
         {
             return State::Client;
         }
-        return isMarked(g) ? State::NoJudgement : State::Order;
+        return stateOf(g, fits);
     }
 
     // Whether a marked row lets her tactician cast this spell: Cure (best)

@@ -2,7 +2,9 @@
 #include "rest_policy.h"
 
 #include "fight_log.h"
+#include "pawn.h"
 #include "pawn_controller.h"
+#include "pawn_gambits.h"
 #include "rest_math.h"
 #include "role_support.h"
 #include "spell_bank.h"
@@ -24,13 +26,54 @@
 
 namespace pawn::tactics
 {
-    namespace
+    auto restSeconds(const timer::time_point time) -> double
     {
-        auto controller(CBattleEntity* p) -> CPawnController*
-        {
-            return p != nullptr && p->PAI != nullptr ? dynamic_cast<CPawnController*>(p->PAI->GetController()) : nullptr;
-        }
+        return std::chrono::duration<double>(time.time_since_epoch()).count();
+    }
 
+    auto kneelClock(const CStatusEffect* healing, const double now) -> KneelClock
+    {
+        const double interval = std::chrono::duration<double>(healing->GetTickTime()).count();
+        const int    ticks    = healing->GetElapsedTickCount();
+        return { .down = true, .ticks = ticks, .next = restSeconds(healing->GetStartTime()) + (ticks + 1) * interval - now, .interval = interval };
+    }
+
+    auto restInterruptionCost(CBattleEntity* PBody) -> double
+    {
+        const auto* healing = PBody->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
+        if (healing == nullptr)
+        {
+            return 0.0;
+        }
+        const auto clock = kneelClock(healing, restSeconds(timer::now()));
+        return cardian::rest::interruptionCost(clock.ticks, clock.next, clock.interval, PBody->getMod(xi::Mod::CLEAR_MIND), PBody->getMod(xi::Mod::MPHEAL));
+    }
+
+    auto kneelAllowsAction(const cardian::rest::State& state, const CBattleEntity* PBody) -> bool
+    {
+        return state.canAct(restSeconds(timer::now()), PBody->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+    }
+
+    auto kneelReadyIn(const cardian::rest::State& state, const CBattleEntity* PBody, const double now) -> double
+    {
+        return state.readyIn(now, PBody->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing));
+    }
+
+    auto standFromKneel(cardian::rest::State& state, CBattleEntity* PBody, const std::string_view why) -> bool
+    {
+        if (!PBody->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+        {
+            return false;
+        }
+        const double now = restSeconds(timer::now());
+        if (!state.requestStand(now))
+        {
+            return false;
+        }
+        PBody->StatusEffectContainer->DelStatusEffectSilent(xi::StatusEffect::Healing);
+        state.stood(now);
+        ShowInfoFmt("rest: {} stands ({})", PBody->getName(), why);
+        return true;
     }
 
     void RestPlanner::reset(const uint32 closedCount)
@@ -90,8 +133,8 @@ namespace pawn::tactics
         const auto count = std::min<std::size_t>(log.closedCount() - std::min(m_since, log.closedCount()), log.recent().size());
         for (auto* member : scope.members)
         {
-            auto* control = controller(member);
-            if (control == nullptr || member->isDead() || !scope.holders.contains(member->id) || !control->Gambits().MasterOn())
+            auto* gambits = pawn::gambitsOf(member);
+            if (gambits == nullptr || member->isDead() || !scope.holders.contains(member->id) || !gambits->MasterOn())
             {
                 continue;
             }

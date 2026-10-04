@@ -130,6 +130,9 @@ public:
     // order to her and sets nothing here (RESEARCH §14.12 decision 16)
     auto PlayersOrderOn(const CBattleEntity* PTarget) const -> bool;
     auto HasPlayersOrder() const -> bool;
+    // A target refused at the door is left alone for a while (HoldOff), so
+    // a standing refusal (claimed, unclean) is not tried every beat
+    auto HoldingOff(const CBattleEntity* PTarget) const -> bool;
     // The beat before she takes a fight: the reaction beat for a draw or a
     // walk in, none for a fight she attends, since she is not walking in
     auto JoinBeat(CBattleEntity* PTarget) const -> timer::duration;
@@ -168,15 +171,6 @@ public:
     void SetRestOrder(int percent, std::string_view why, bool byRow = false);
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
-    // Her kneel: Healing's ticks so far, and seconds to the next and between
-    // ticks (zero while standing)
-    struct RestClock
-    {
-        bool   down     = false;
-        int    ticks    = 0;
-        double next     = 0.0;
-        double interval = 0.0;
-    };
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override; // her rows' weapon skill; never tried beyond its reach (BoostOrWeaponSkill)
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
@@ -761,70 +755,21 @@ private:
     // cast redundant (same buff family, a cure on the same healthy target...)
     auto PartyAlreadyCasting(CSpell* PSpell, const CBattleEntity* PTarget) const -> bool;
 
-    // The engage door (ROADMAP K3; the rules are engage_math.h). The foes
-    // around the party are the leader's engaged target, the fights of the
-    // party's other cardians, and the engaged mobs on her or on a member of
-    // her party, each within the leash (pawn.HUNT_LEASH) of `from`, the
-    // party's place: a pull is not the party's fight until it is dragged
-    // inside. PLeader is the one she follows (GetAnchor: the player, or her
-    // camp's leader); with none, the party's own fights alone. A foe below
-    // ground with no fight on, or one her door holds off, is absent, and
-    // the next one gets its turn. Nothing while she retreats.
-    //  - PartyFightScan: the party's fight whatever her rows say -- the
-    //    leader's target, else another cardian's fight (how a hunter's
-    //    pull propagates), else a mob on one of us. What a mage with spells
-    //    to offer attends, what her rest watches for, and what a camp
-    //    leader joins.
-    //  - EngageChoice: the fight her rows take -- her enabled Attack rows
-    //    top down (none with her gambits off), each row's foe the first of
-    //    its kind whose conditions hold on it. `row` numbers the row, and
-    //    the why line names it with its layer. A marked row counts only
-    //    while her tactician lets her melee (TacticianMelee).
-    struct FightPick
-    {
-        CBattleEntity* target = nullptr;
-        std::string    why;
-        // The Attack row that took it, numbered within its layer (the
-        // editor's number for one of her own); 0 for the party's fight
-        std::size_t row = 0;
-    };
+    // The engage door (ROADMAP K3), her engine's (CGambits PartyFightScan,
+    // EngageChoice and the rest), the same for every character whose rows
+    // run: these forward to it. PLeader is the one she follows (GetAnchor:
+    // the player, or her camp's leader)
+    using FightPick = pawn::CGambits::FightPick;
+    using RowClaim  = pawn::CGambits::RowClaim;
     auto PartyFightScan(CCharEntity* PLeader, const position_t& from) const -> FightPick;
     auto EngageChoice(CCharEntity* PLeader, const position_t& from) const -> FightPick;
-    // The first of her Attack rows that claims this mob, wherever it
-    // stands (engage_math.h claimingRow), and its finder: nothing when none
-    // does
-    struct RowClaim
-    {
-        cardian::engage::Finder   finder = cardian::engage::Finder::LeadersTarget;
-        pawn::CGambits::EngageRow row;
-    };
     auto ClaimingRow(CBattleEntity* PTarget) const -> std::optional<RowClaim>;
-    // The same, with the rows below her tactician line counted or not
     auto ClaimingRowAs(CBattleEntity* PTarget, bool melee) const -> std::optional<RowClaim>;
-    // Whether any of her Attack rows takes fights now: an order, or a
-    // marked one while her tactician lets her melee
     auto TakesFights() const -> bool;
-
-    // Her tactician lets her melee a fight a marked row claims while it
-    // runs (TacticianRuns), her recovery is not due and she is not down
-    // resting (RESEARCH §14.12 decision 19)
     auto TacticianMelee() const -> bool;
-
-    // The foes around the party this tick (as above), gathered once a tick
-    // for the place asked about, in the finders' order; and what a foe is
-    // to the party (the finders' facts, engage_math.h Foe) and the words
-    // for how a finder found it
     auto FoesAround(CCharEntity* PLeader, const position_t& from) const -> std::vector<CBattleEntity*>;
     auto FoeFacts(CBattleEntity* PFoe, const CCharEntity* PLeader) const -> cardian::engage::Foe;
     auto FoeWhy(cardian::engage::Finder finder, CBattleEntity* PFoe, const CCharEntity* PLeader) const -> std::string;
-    struct FoesMemo
-    {
-        timer::time_point     tick{ timer::time_point::min() };
-        uint32                leader = 0;
-        position_t            from{};
-        std::vector<EntityId> foes;
-    };
-    mutable FoesMemo m_FoesMemo;
 
     // A world body's idle tick (ROADMAP D1): rest when low, answer a mob on
     // her, and farming, pick a mob in her band within reach or head toward
@@ -1110,7 +1055,6 @@ private:
     uint32            m_HoldOffTarget = 0;
     timer::time_point m_HoldOffUntil{ timer::time_point::min() };
     void              HoldOff(const CBattleEntity* PTarget);
-    auto              HoldingOff(const CBattleEntity* PTarget) const -> bool;
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
@@ -1211,9 +1155,6 @@ private:
     std::optional<SneakRest>         m_SneakRest;
     void                             RestSneak(const CBattleEntity* PTarget);
     std::optional<timer::time_point> m_SneakReadySince; // Sneak Attack ready in this fight, since: what holding it for her weapon skill costs
-    // The stance buffs the player's own fired (Berserk, Defender), by ability
-    // id: when it fired (NoteOrderedStance, PlayersBuff)
-    std::unordered_map<uint16, timer::time_point> m_OrderedBuffs;
     auto                  BoostReady() const -> bool;
     auto                  SneakAttackUsable() const -> bool;
     // A naked Sneak Attack is due (RESEARCH §17.13 item 5): no weapon skill
