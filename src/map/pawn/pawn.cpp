@@ -36,6 +36,7 @@
 #include "pawn_gambits.h"
 #include "gambit_text.h"
 
+#include "common/cardian_lobby.h"
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/settings.h"
@@ -592,9 +593,17 @@ namespace pawn
             return 0;
         }
 
+        // One character creation at a time with the lobby and the census, and never a name a player
+        // is creating a character with (common/cardian_lobby.h)
+        const cardian::lobby::CreateTurn turn;
         if (const auto invalidReason = loginHelpers::validateCharacterName(spec.name); invalidReason.has_value())
         {
             ShowWarningFmt("pawn: cannot create {}: {}", spec.name, *invalidReason);
+            return 0;
+        }
+        if (cardian::lobby::heldByAnother(spec.name, 0))
+        {
+            ShowWarningFmt("pawn: cannot create {}: a player is creating a character with that name", spec.name);
             return 0;
         }
 

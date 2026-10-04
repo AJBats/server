@@ -23,6 +23,7 @@
 
 #include "data_session.h"
 
+#include <common/cardian_lobby.h> // CARDIAN
 #include <common/lua.h>
 #include <common/md52.h>
 #include <common/settings.h>
@@ -214,7 +215,7 @@ void view_session::read_func()
                 std::memcpy(CharName, buffer_.data() + 32, PacketNameLength - 1);
 
                 const std::string nameStr           = CharName;
-                const auto        invalidNameReason = loginHelpers::validateCharacterName(nameStr);
+                const auto        invalidNameReason = cardian::lobby::thenHold(loginHelpers::validateCharacterName(nameStr), nameStr, session.accountID); // CARDIAN: held for this account, so the census never mints it
 
                 if (invalidNameReason.has_value())
                 {

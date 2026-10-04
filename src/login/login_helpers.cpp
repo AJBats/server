@@ -21,6 +21,7 @@
 
 #include "login_helpers.h"
 
+#include "common/cardian_lobby.h" // CARDIAN
 #include "common/md52.h"
 #include <common/lua.h>
 
@@ -628,6 +629,13 @@ int32 createCharacter(session_t& session, uint8* buf, lpkt_chr_info_sub2& charIn
             createchar.m_zone = sandoriaStartingZones[xirand::GetRandomNumber(3)];
             break;
         }
+    }
+
+    // CARDIAN: one creation at a time with the census's mint; the name's hold ends with it
+    const cardian::lobby::CreateTurn turn(charName);
+    if (!turn.nameFree()) // CARDIAN
+    {
+        return -1;
     }
 
     const auto rset = db::preparedStmt("SELECT COALESCE(MAX(charid), 0) AS max_id FROM chars");
