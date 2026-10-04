@@ -41,6 +41,8 @@
 #include "navmesh/navmesh.h"
 #include "party.h"
 #include "status_effect_container.h"
+#include "map_constants.h"
+#include "pawn_travel.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -126,6 +128,7 @@ namespace
         std::optional<position_t>        face;
         std::optional<position_t>        exitAt;
         std::array<uint32, 2>            dwell{};
+        bool                             seasoned = false; // her first stay began before she was seen (stayFor)
         std::optional<timer::time_point> leaveAt;
         std::string                      pose;
         int32                            seat    = -1; // her laid-out seat in a clustered slot
@@ -269,9 +272,121 @@ namespace
         std::string               pose;
         int32                     seat = -1;
         std::vector<position_t>   via;
+        bool                      seasoned = false; // dealt as the zone filled every seat at once: her stay began a while ago (stayFor)
     };
     std::vector<Pending> pending;
     constexpr uint32     kStandPerTick = 2;
+
+    // The whole world's placements share one budget: a presence is a few queries, and every zone placing
+    // its own in the same tick would be a burst the map stalls on. pawn.WORLD_PLACE_RATE a second, as a
+    // bucket holding a quarter second's worth -- less than one zone tick's, so one zone placing alone
+    // places at most that quarter second's worth a tick (RESEARCH §18.4)
+    double               placeTokens = 0.0;
+    realtime::time_point placeRefilledAt{};
+
+    auto placeBudget() -> bool
+    {
+        const double rate = std::max(1.0, static_cast<double>(settings::get<uint32>("pawn.WORLD_PLACE_RATE")));
+        const auto   now  = realtime::now();
+        if (placeRefilledAt != realtime::time_point{})
+        {
+            placeTokens += rate * std::chrono::duration<double>(now - placeRefilledAt).count();
+        }
+        placeRefilledAt = now;
+        placeTokens     = std::min(placeTokens, std::max(1.0, rate / 4.0));
+        if (placeTokens < 1.0)
+        {
+            return false;
+        }
+        placeTokens -= 1.0;
+        return true;
+    }
+
+    // The lag meter: how late each zone's tick came against the logic interval. A zone tick held up is
+    // the main thread held up -- a slow query, a burst of work -- so the worst lag in a load window is
+    // the worst stall a player would have felt there; the load line reports it, and the fill rates
+    // were benchmarked by it (RESEARCH §18.4). A gap counts the lesser of real and simulation time:
+    // a combat pause stops this tick and the simulation clock with it, and is no stall.
+    // lagsOver100 counts late zone ticks, so one stall counts once for every zone it held up
+    struct ZoneTickAt
+    {
+        realtime::time_point real{};
+        timer::time_point    sim{};
+    };
+    std::unordered_map<uint16, ZoneTickAt> zoneTickAt;
+    realtime::duration                     worstLag{};
+    uint32                                 lagsOver100 = 0;
+
+    void noteZoneTick(const uint16 zoneId, const realtime::time_point real, const timer::time_point sim)
+    {
+        auto& last = zoneTickAt[zoneId];
+        if (last.real != realtime::time_point{})
+        {
+            const auto lag = std::min<realtime::duration>(real - last.real, sim - last.sim) - kLogicUpdateInterval;
+            worstLag       = std::max(worstLag, lag);
+            lagsOver100 += lag > std::chrono::milliseconds(100) ? 1 : 0;
+        }
+        last = ZoneTickAt{ .real = real, .sim = sim };
+    }
+
+    // The front (RESEARCH §18.4): the world fills itself nearest the players first, counted in zone
+    // lines from every real player online -- or, with nobody online, from where each real character
+    // logged out, so a player logging in finds his corner full. Recomputed every kFrontEvery
+    std::unordered_map<uint16, uint32> frontHops;
+    realtime::time_point               frontAt{};
+    std::vector<xi::ZoneId>            loggedOutIn;
+    realtime::time_point               loggedOutAt{};
+    constexpr auto                     kFrontEvery     = std::chrono::seconds(2);
+    constexpr auto                     kLoggedOutEvery = std::chrono::seconds(30);
+    constexpr uint32                   kFar            = 9999;
+
+    auto realPlayersIn(CZone* PZone) -> uint32;
+
+    void refreshFront()
+    {
+        const auto now = realtime::now();
+        if (frontAt != realtime::time_point{} && now - frontAt < kFrontEvery)
+        {
+            return;
+        }
+        frontAt = now;
+        std::vector<xi::ZoneId> from;
+        zoneutils::ForEachZone([&](CZone* PZone)
+        {
+            if (realPlayersIn(PZone) > 0)
+            {
+                from.push_back(PZone->GetID());
+            }
+        });
+        if (from.empty())
+        {
+            if (loggedOutAt == realtime::time_point{} || now - loggedOutAt >= kLoggedOutEvery)
+            {
+                loggedOutAt = now;
+                loggedOutIn.clear();
+                // a real character: not a cardian, and not on an account the census made for one (a
+                // body whose name is claimed but not yet finished has no cardian_pawns row)
+                if (const auto rset = db::preparedStmt("SELECT DISTINCT c.pos_zone FROM chars c JOIN accounts a ON a.id = c.accid "
+                                                       "WHERE a.login NOT LIKE 'pawn%' AND c.charid NOT IN (SELECT pawn_charid FROM cardian_pawns)");
+                    rset)
+                {
+                    while (rset->next())
+                    {
+                        loggedOutIn.push_back(static_cast<xi::ZoneId>(rset->get<uint16>("pos_zone")));
+                    }
+                }
+            }
+            from = loggedOutIn;
+        }
+        frontHops = pawn::travel::hops(from);
+    }
+
+    auto hopsOf(const uint16 zoneId) -> uint32
+    {
+        refreshFront();
+        const auto it = frontHops.find(zoneId);
+        return it != frontHops.end() ? it->second : kFar;
+    }
 
     auto laneOf(const std::string& name) -> float;
 
@@ -292,12 +407,14 @@ namespace
         uint8  target = 1; // what her ladder says she should be now (D6): her cap while the player is online
         uint32 seed   = 0;
         bool   finished = false; // the census tool wrote her kit, skills, gear and spells (cardian_pawns.kitted)
+        bool   claimed  = false; // recruited, or held for a player by an open contract: no world seat deals her
     };
 
     auto readCensus(const std::string& name) -> std::optional<CensusRow>
     {
         const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, c.target, c.seed, "
-                                           "COALESCE(p.kitted, 0) AS finished "
+                                           "COALESCE(p.kitted, 0) AS finished, (c.recruited <> 0 OR EXISTS (SELECT 1 FROM cardian_party_memory h "
+                                           "WHERE h.pawn_charid = c.charid AND h.contract <> '')) AS claimed "
                                            "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid "
                                            "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.name = ?",
                                            name);
@@ -316,6 +433,7 @@ namespace
             .target = rset->get<uint8>("target"),
             .seed   = rset->get<uint32>("seed"),
             .finished = rset->get<uint8>("finished") != 0,
+            .claimed  = rset->get<uint8>("claimed") != 0,
         };
     }
 
@@ -1497,12 +1615,63 @@ namespace
         return *best;
     }
     std::unordered_set<uint16>            filledAtBoot;
+
+    // The first fills, one zone at a time and nearest the players first (the front, above): at boot
+    // every zone ticks its first tick together, and dealing every zone's seats in that one tick would
+    // be the whole world's work at once; the zone a player stands in fills before the far field
+    realtime::time_point                lastFirstFill{};
+    constexpr auto                      kFirstFillGap = std::chrono::milliseconds(200);
+    std::optional<std::vector<uint16>> zonesWithTables;
     std::unordered_map<uint16, uint32>    slotPoll;
     constexpr uint32                      kSlotPollTicks = 25; // ~10 s of zone ticks between looks at the file
 
     auto slotPath(CZone* PZone) -> std::filesystem::path
     {
         return std::filesystem::path("modules/cardian/world") / fmt::format("{}.yaml", PZone->getName());
+    }
+
+    auto hasTable(CZone* PZone) -> bool
+    {
+        std::error_code ec;
+        return std::filesystem::exists(slotPath(PZone), ec);
+    }
+
+    // Whether this zone may take its first fill now: the gap has passed, and no zone with a table and
+    // fewer zone lines from the players is still waiting for its own. A zone with no table has nothing
+    // to deal: its turn is at once and takes no gap
+    auto firstFillTurn(CZone* PZone) -> bool
+    {
+        if (!zonesWithTables.has_value())
+        {
+            zonesWithTables.emplace();
+            zoneutils::ForEachZone([&](CZone* PEach)
+            {
+                if (hasTable(PEach))
+                {
+                    zonesWithTables->push_back(static_cast<uint16>(PEach->GetID()));
+                }
+            });
+        }
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        if (std::ranges::find(*zonesWithTables, zoneId) == zonesWithTables->end())
+        {
+            return true;
+        }
+        const auto now = realtime::now();
+        if (now - lastFirstFill < kFirstFillGap)
+        {
+            return false;
+        }
+        const uint32 mine = hopsOf(zoneId);
+        for (const auto zone : *zonesWithTables)
+        {
+            if (!filledAtBoot.contains(zone) && hopsOf(zone) < mine)
+            {
+                return false;
+            }
+        }
+        lastFirstFill = now;
+        return true;
     }
 
     // The file as a table; nullopt when it does not parse (logged), so a
@@ -1712,6 +1881,66 @@ namespace
         return names;
     }
 
+    // The census's dealable names -- minted, unrecruited, not held by a contract -- read once and shared
+    // by every slot that deals in the next few seconds, so a fill costs one query however many slots it
+    // deals. A name minted since shows up at the next read; one placed since is known to the bodies and
+    // the queue; one recruited or contracted since is refused at placement (placePresence), and its
+    // recruitment or hold drops the read (forgetDealable)
+    struct Dealable
+    {
+        std::string name;
+        uint32      cohort = 0;
+        uint32      seed   = 0;
+        uint8       job    = 0;
+        uint8       level  = 0;
+    };
+    std::vector<Dealable>                  dealable;
+    std::unordered_map<std::string, uint8> dealableLevel; // the same read by name, for the seats' band check
+    realtime::time_point                   dealableAt{};
+    constexpr auto                         kDealableFor = std::chrono::seconds(5);
+
+    auto dealableNames() -> const std::vector<Dealable>&
+    {
+        const auto now = realtime::now();
+        if (dealableAt != realtime::time_point{} && now - dealableAt < kDealableFor)
+        {
+            return dealable;
+        }
+        dealable.clear();
+        dealableLevel.clear();
+        dealableAt = now;
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.cohort, c.seed, c.job, s.mlvl FROM cardian_census c JOIN char_stats s ON s.charid = c.charid "
+                                               "WHERE c.recruited = 0 AND c.anchor <> 'bank' " // a census cut before the name bank was retired keeps its unused names as 'bank' rows
+                                               "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '')");
+            rset)
+        {
+            while (rset->next())
+            {
+                dealable.push_back(Dealable{ .name   = rset->get<std::string>("name"),
+                                             .cohort = rset->get<uint32>("cohort"),
+                                             .seed   = rset->get<uint32>("seed"),
+                                             .job    = rset->get<uint8>("job"),
+                                             .level  = rset->get<uint8>("mlvl") });
+                dealableLevel.emplace(dealable.back().name, dealable.back().level);
+            }
+        }
+        return dealable;
+    }
+
+    // A dealable body's level as of the last census read; 0 for one it did not list (recruited, or held by a contract)
+    auto dealableLevelOf(const std::string& name) -> uint8
+    {
+        dealableNames();
+        const auto it = dealableLevel.find(name);
+        return it == dealableLevel.end() ? 0 : it->second;
+    }
+
+    // A body recruited or held for a player leaves the pool now, not at the next read
+    void forgetDealable()
+    {
+        dealableAt = {};
+    }
+
     // A slot's occupants: in the world, level in band, not recruited, not
     // placed anywhere already; the preferred names first (a town seat that
     // prefers the player's sellers), then cohort rows (the recruitment pool
@@ -1734,29 +1963,24 @@ namespace
         const std::vector<std::string> preferred = spec.prefer == "sellers" ? recentCounterparties() : std::vector<std::string>{};
         std::vector<Candidate>         candidates;
         std::vector<Candidate>         shown; // recent faces, taken only when nobody else fits
-        // minted bodies only, at the level their character rows say: a name
-        // without a body waits for the census tool's mint
-        // ...and none held for a player by an open contract (ROADMAP H)
-        if (const auto rset = db::preparedStmt("SELECT c.name, c.cohort, c.seed, c.job FROM cardian_census c JOIN char_stats s ON s.charid = c.charid "
-                                               "WHERE c.anchor <> 'bank' AND c.recruited = 0 AND s.mlvl BETWEEN ? AND ? "
-                                               "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '')",
-                                               spec.band[0], spec.band[1]);
-            rset)
+        // minted bodies only, at the level their character rows say, none held for a player by an open
+        // contract (ROADMAP H), none placed or on her way to a seat
+        std::unordered_set<std::string_view> queued;
+        for (const auto& p : pending)
         {
-            while (rset->next())
+            queued.insert(p.name);
+        }
+        for (const auto& d : dealableNames())
+        {
+            if (d.level < spec.band[0] || d.level > spec.band[1] || charidByName.contains(d.name) || queued.contains(d.name))
             {
-                auto name = rset->get<std::string>("name");
-                if (charidByName.contains(name) || std::ranges::any_of(pending, [&](const Pending& p) { return p.name == name; }))
-                {
-                    continue;
-                }
-                const uint32 seed      = rset->get<uint32>("seed");
-                const uint32 order     = (seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u) ^ (turn * 0x9E3779B9u);
-                const bool   isPreferred = std::ranges::find(preferred, name) != preferred.end();
-                const bool   wasShown    = std::ranges::find(recent, name) != recent.end();
-                Candidate    c{ .name = std::move(name), .preferred = isPreferred, .shared = rset->get<uint32>("cohort") == 0, .healer = isHealer(rset->get<uint8>("job")), .order = order };
-                (wasShown ? shown : candidates).push_back(std::move(c));
+                continue;
             }
+            const uint32 order       = (d.seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u) ^ (turn * 0x9E3779B9u);
+            const bool   isPreferred = std::ranges::find(preferred, d.name) != preferred.end();
+            const bool   wasShown    = std::ranges::find(recent, d.name) != recent.end();
+            Candidate    c{ .name = d.name, .preferred = isPreferred, .shared = d.cohort == 0, .healer = isHealer(d.job), .order = order };
+            (wasShown ? shown : candidates).push_back(std::move(c));
         }
         if (candidates.size() < wanted)
         {
@@ -1817,14 +2041,31 @@ namespace
         return point;
     }
 
+    // How long she holds her seat. A seat dealt as a zone fills every seat at once (a seasoned stay)
+    // keeps a random part of a stay, as if the town had been up for hours: drawn whole, every such
+    // stay would run out together a dwell later, and the seats would turn over in one wave
+    auto stayFor(const std::array<uint32, 2>& dwell, const bool seasoned) -> uint32
+    {
+        const auto whole = static_cast<uint32>(xirand::GetRandomNumber(dwell[0], dwell[1] + 1));
+        return seasoned ? std::max<uint32>(1, static_cast<uint32>(xirand::GetRandomNumber(0, static_cast<int32>(whole) + 1))) : whole;
+    }
+
+    // Arrivals queued for a slot and not yet placed: a seat already promised to one of them is not
+    // short. Placement is paced, so the queue can outlive the slot poll, and the poll must not deal
+    // the same seats again
+    auto queuedFor(const uint16 zoneId, const uint32 slot) -> size_t
+    {
+        return static_cast<size_t>(std::ranges::count_if(pending, [&](const Pending& p) { return p.presence && p.zone == zoneId && p.slot == static_cast<int32>(slot); }));
+    }
+
     // Presence queued for what a slot is short of. A town seat fills only
     // in its hours, and a turnstile no sooner than its refill time
-    auto queueSlot(CZone* PZone, const uint32 slot) -> uint32
+    auto queueSlot(CZone* PZone, const uint32 slot, const bool seasoned = false) -> uint32
     {
         const auto  zoneId = static_cast<uint16>(PZone->GetID());
         auto&       table  = zoneSlots[zoneId];
         const auto& spec   = table.specs[slot];
-        const auto  have   = table.occupants[slot].size();
+        const auto  have   = table.occupants[slot].size() + queuedFor(zoneId, slot);
         if (have >= spec.seats() || !seatOpen(spec) || (spec.turnstile() && timer::now() < table.refillAt[slot]))
         {
             return 0;
@@ -1859,6 +2100,7 @@ namespace
         for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer && spec.isCamp(), table.turns[slot], table.recent[slot]))
         {
             Pending item{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam, .party = std::max<uint32>(1, spec.party) };
+            item.seasoned = seasoned;
             if (spec.clustered())
             {
                 if (queued >= freeSeats.size())
@@ -1899,13 +2141,15 @@ namespace
         return queued;
     }
 
+    // Every seat of the zone's table dealt at once (its first fill, a re-read, a new slot): the stays
+    // dealt are seasoned (stayFor)
     auto fillZone(CZone* PZone) -> uint32
     {
         auto&  table  = loadSlots(PZone);
         uint32 queued = 0;
         for (uint32 slot = 0; slot < table.specs.size(); ++slot)
         {
-            queued += queueSlot(PZone, slot);
+            queued += queueSlot(PZone, slot, true);
         }
         return queued;
     }
@@ -1915,8 +2159,16 @@ namespace
     // if the zone is live, else when a player arrives (the rising edge)
     bool placePresence(const Pending& item, CZone* PZone)
     {
+        const auto zoneId = static_cast<uint16>(PZone->GetID());
+        // the seat may have been filled, closed for the hour, or the table re-read since she was queued
+        if (const auto it = zoneSlots.find(zoneId); item.slot >= 0 &&
+            (it == zoneSlots.end() || static_cast<size_t>(item.slot) >= it->second.specs.size() ||
+             it->second.occupants[item.slot].size() >= it->second.specs[item.slot].seats() || !seatOpen(it->second.specs[item.slot])))
+        {
+            return false;
+        }
         auto row = readCensus(item.name);
-        if (!row.has_value())
+        if (!row.has_value() || row->claimed)
         {
             return false;
         }
@@ -1925,7 +2177,6 @@ namespace
         {
             return false;
         }
-        const auto zoneId = static_cast<uint16>(PZone->GetID());
         Body&      body   = bodies[charid];
         body.charid       = charid;
         body.name         = item.name;
@@ -1941,6 +2192,7 @@ namespace
         body.seed         = row->seed;
         body.face         = item.face;
         body.dwell        = item.dwell;
+        body.seasoned     = item.seasoned;
         body.pose         = item.pose;
         body.cameFrom     = item.cameFrom;
         body.seat         = item.seat;
@@ -1963,9 +2215,10 @@ namespace
         {
             // Nobody to see her walk in: she is at her seat already, and the
             // town's clock runs unseen -- she leaves it on time all the same
-            body.atSeat  = true;
-            body.viaNext = body.via.size();
-            body.leaveAt = timer::now() + std::chrono::seconds(xirand::GetRandomNumber(item.dwell[0], item.dwell[1] + 1));
+            body.atSeat   = true;
+            body.viaNext  = body.via.size();
+            body.leaveAt  = timer::now() + std::chrono::seconds(stayFor(item.dwell, body.seasoned));
+            body.seasoned = false;
         }
         return true;
     }
@@ -2261,11 +2514,20 @@ namespace
             {
                 continue;
             }
+            // A seat held unseen keeps time whether or not she ever stands: one the standing cap never
+            // stands would otherwise hold it for good. Standing, she walks in and her stay starts over
+            // at the seat; she does not turn back before she reaches it
+            if (!body.present && !body.leaveAt.has_value() && !body.leaving && body.dwell[1] > 0)
+            {
+                body.leaveAt  = now + std::chrono::seconds(stayFor(body.dwell, body.seasoned));
+                body.seasoned = false;
+            }
+            const bool timeUp = body.leaveAt.has_value() && now >= *body.leaveAt && (body.atSeat || !body.present);
             if (body.gone || (body.leaving && !body.present))
             {
                 gone.push_back(charid);
             }
-            else if (!body.leaving && ((body.leaveAt.has_value() && now >= *body.leaveAt) || (poll && !seatOpen(table.specs[body.slot]))) && !pawn::finder::shoutedFor(body.name))
+            else if (!body.leaving && (timeUp || (poll && !seatOpen(table.specs[body.slot]))) && !pawn::finder::shoutedFor(body.name))
             {
                 due.push_back(charid);
             }
@@ -2284,14 +2546,13 @@ namespace
                 unseat(it->second, "gone her way");
             }
         }
+        // Every seat short of its occupants is asked again on the poll, a field seat as much as a
+        // turnstile: a zone filled before the census had minted bodies for it fills as they come
         if (poll)
         {
             for (uint32 slot = 0; slot < table.specs.size(); ++slot)
             {
-                if (table.specs[slot].timed())
-                {
-                    queueSlot(PZone, slot);
-                }
+                queueSlot(PZone, slot);
             }
         }
     }
@@ -2315,11 +2576,8 @@ namespace
             {
                 continue;
             }
-            uint8 level = 0;
-            if (const auto rset = db::preparedStmt("SELECT mlvl FROM char_stats WHERE charid = ?", charid); rset && rset->next())
-            {
-                level = rset->get<uint8>("mlvl");
-            }
+            // her level as the census read shared by every slot has it, not a query per seated body
+            const uint8 level = dealableLevelOf(body.name);
             if (level == 0)
             {
                 continue;
@@ -2579,6 +2837,7 @@ namespace pawn::world
 
     bool leaveWorld(const uint32 charid)
     {
+        forgetDealable();
         const auto it = bodies.find(charid);
         if (it == bodies.end())
         {
@@ -2594,6 +2853,7 @@ namespace pawn::world
 
     bool hold(const uint32 charid, const uint32 playerCharID)
     {
+        forgetDealable();
         const auto it = bodies.find(charid);
         if (it == bodies.end() || playerCharID == 0)
         {
@@ -2997,7 +3257,8 @@ namespace pawn::world
         body.atSeat = true;
         if (body.dwell[1] > 0)
         {
-            const auto seconds = xirand::GetRandomNumber(body.dwell[0], body.dwell[1] + 1);
+            const auto seconds = stayFor(body.dwell, body.seasoned);
+            body.seasoned      = false;
             body.leaveAt       = timer::now() + std::chrono::seconds(seconds);
             ShowInfoFmt("world: {} takes her seat for {} s", body.name, seconds);
         }
@@ -3100,6 +3361,7 @@ namespace pawn::world
         }
         const auto zoneId = static_cast<uint16>(PZone->GetID());
         const auto now    = timer::now();
+        noteZoneTick(zoneId, realtime::now(), now);
 
         // Where the players are, for the ladder's lookups (seats.cpp): a
         // zone is live with a real player in it or next door, and stays warm
@@ -3138,10 +3400,13 @@ namespace pawn::world
             bool poll = false;
             if (!filledAtBoot.contains(zoneId))
             {
-                filledAtBoot.insert(zoneId);
-                if (const auto queued = fillZone(PZone); queued > 0)
+                if (firstFillTurn(PZone))
                 {
-                    ShowInfoFmt("world: {} fills {} seat(s)", PZone->getName(), queued);
+                    filledAtBoot.insert(zoneId);
+                    if (const auto queued = fillZone(PZone); queued > 0)
+                    {
+                        ShowInfoFmt("world: {} fills {} seat(s)", PZone->getName(), queued);
+                    }
                 }
             }
             else if (++slotPoll[zoneId] % kSlotPollTicks == 0)
@@ -3191,23 +3456,33 @@ namespace pawn::world
             }
         }
 
-        // The queue: a few of this zone's pending bodies stand each tick
+        // The queue: this zone's pending bodies, nearest first -- a zone places only when no zone nearer
+        // the players has someone waiting. Every placement spends the world's placement budget; a body
+        // standing straight up from the queue (the debug ring) is also a character load, and a zone
+        // takes kStandPerTick of those a tick
         uint32 stoodThisTick = 0;
-        for (auto it = pending.begin(); it != pending.end() && stoodThisTick < kStandPerTick;)
+        bool   myTurn        = false;
+        if (std::ranges::any_of(pending, [&](const Pending& p) { return p.zone == zoneId; }))
         {
-            if (it->zone != static_cast<uint16>(PZone->GetID()))
+            const uint32 mine = hopsOf(zoneId);
+            myTurn            = std::ranges::none_of(pending, [&](const Pending& p) { return p.zone != zoneId && hopsOf(p.zone) < mine; });
+        }
+        for (auto it = pending.begin(); myTurn && it != pending.end();)
+        {
+            if (it->zone != zoneId || (!it->presence && stoodThisTick >= kStandPerTick))
             {
                 ++it;
                 continue;
+            }
+            if (!placeBudget())
+            {
+                break;
             }
             const Pending item = *it;
             it                 = pending.erase(it);
             if (item.presence)
             {
-                if (placePresence(item, PZone))
-                {
-                    ++stoodThisTick;
-                }
+                placePresence(item, PZone);
                 continue;
             }
             if (spawnByName(item.name, PZone, item.point, item.pinned))
@@ -3348,8 +3623,12 @@ namespace pawn::world
         }
         const auto brainAvg  = load.brainTicks > 0 ? microseconds(load.brainTotal / load.brainTicks) : 0LL;
         const auto moduleAvg = load.moduleTicks > 0 ? microseconds(load.moduleTotal / load.moduleTicks) : 0LL;
-        ShowInfoFmt("world: load: {} bodies standing in {} zones ({} live); a body's tick {} us, the module's {} us; map {:.1f}% of one core, {} MB",
-                    present, zonesWithBodies.size(), liveZones, brainAvg, moduleAvg, cpu, rssMegabytes());
+        ShowInfoFmt("world: load: {} bodies standing in {} zones ({} live); a body's tick {} us, the module's {} us; map {:.1f}% of one core, {} MB; "
+                    "worst tick lag {} ms, {} over 100 ms; {} waiting to be placed",
+                    present, zonesWithBodies.size(), liveZones, brainAvg, moduleAvg, cpu, rssMegabytes(),
+                    std::chrono::duration_cast<std::chrono::milliseconds>(worstLag).count(), lagsOver100, pending.size());
+        worstLag    = {};
+        lagsOver100 = 0;
 
         load.since       = now;
         load.cpuAtSince  = cpuNow;

@@ -21,6 +21,7 @@
 #include "entities/char_entity.h"
 #include "utils/zoneutils.h"
 
+#include <algorithm>
 #include <chrono>
 #include <optional>
 #include <unordered_map>
@@ -168,7 +169,8 @@ namespace pawn::seats
                            [](const uint16 zone) { return pawn::world::playerIn(zone); },
                            [](const uint32 charid) { return invitedNow(charid) || pawn::withRealPlayer(charid); },
                        },
-                       Engine{ stand, fade, signIn, signOut });
+                       Engine{ stand, fade, signIn, signOut },
+                       std::max<uint32>(1, settings::get<uint32>("pawn.WORLD_STANDS_PER_RUN")));
         summonBeside.clear();
         invited.clear();
         lastRun = {};

@@ -26,6 +26,8 @@
 #include "data/enums/zone.h"
 
 #include <optional>
+#include <unordered_map>
+#include <vector>
 
 // World travel for pawns: a walkable zone graph built from the per-zone
 // zoneline datasets (each line carries the trigger-box centre in its own
@@ -46,5 +48,9 @@ namespace pawn
         // First hop on a walkable route from one zone toward another;
         // nullopt when no walkable route exists.
         auto nextHop(xi::ZoneId from, xi::ZoneId to) -> std::optional<TravelHop>;
+
+        // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
+        // at 0 (BFS from all of them at once); a zone no line reaches is absent
+        auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>;
     } // namespace travel
 } // namespace pawn

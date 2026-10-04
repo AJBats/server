@@ -146,4 +146,39 @@ namespace pawn::travel
         const Edge* first = arrivedVia.at(step);
         return TravelHop{ first->to, first->walkTo, first->arriveAt };
     }
+
+    auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>
+    {
+        if (!graphBuilt)
+        {
+            buildGraph();
+        }
+        std::unordered_map<uint16, uint32> out;
+        std::deque<uint16>                 frontier;
+        for (const auto zone : from)
+        {
+            if (out.emplace(static_cast<uint16>(zone), 0).second)
+            {
+                frontier.push_back(static_cast<uint16>(zone));
+            }
+        }
+        while (!frontier.empty())
+        {
+            const uint16 current = frontier.front();
+            frontier.pop_front();
+            const auto it = graph.find(current);
+            if (it == graph.end())
+            {
+                continue;
+            }
+            for (const auto& edge : it->second)
+            {
+                if (out.emplace(static_cast<uint16>(edge.to), out[current] + 1).second)
+                {
+                    frontier.push_back(static_cast<uint16>(edge.to));
+                }
+            }
+        }
+        return out;
+    }
 } // namespace pawn::travel
