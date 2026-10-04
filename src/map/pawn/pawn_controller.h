@@ -869,6 +869,10 @@ private:
     // the distance or the draw's own wait stands in the way (m_Approach);
     // a refusal said once otherwise. True when she drew.
     auto Draw(CBattleEntity* PTarget, ApproachKind kind, std::string_view how, bool hold = false) -> bool;
+    // At a camp a damage dealer joining the party's fight waits at her seat,
+    // weapon away, until the tank's receive rule (CampReceive) says the pull
+    // has come in: at the landing point, on her, or stalled outside (#253)
+    auto WaitsForThePull(const CBattleEntity* PTarget, ApproachKind kind) -> bool;
 
     // The one writer of the mode: the exits it owns (a fight's draw
     // cooldown, seat and beats; a walk in's target) happen here, and the
