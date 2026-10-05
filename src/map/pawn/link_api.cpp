@@ -29,6 +29,7 @@
 #include "gate_guards.h"
 #include "live_controller.h"
 #include "mog_house.h"
+#include "offers.h"
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_gambits.h"
@@ -2158,6 +2159,12 @@ namespace pawn::linkapi
             }
             reply.finish(answer, CL_S_OK);
         }
+
+        // His answer to a question the server put to him (offers.h)
+        void offerAnswer(CCharEntity* PChar, const cl_offer_answer& ask, Reply& reply)
+        {
+            reply.finish(ask, pawn::offers::answer(PChar, ask.offer, ask.yes != 0));
+        }
     } // namespace
 
     void loadLibraries()
@@ -2233,5 +2240,6 @@ namespace pawn::linkapi
         handle<cl_jobs>(jobs);
         handle<cl_skills>(skills);
         handle<cl_job_change>(jobChange);
+        handle<cl_offer_answer>(offerAnswer);
     }
 } // namespace pawn::linkapi

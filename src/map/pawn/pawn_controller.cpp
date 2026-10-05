@@ -275,6 +275,7 @@ auto CPawnController::IsWorld() const -> bool
 void CPawnController::SetWaiting(const bool on, const bool ordered, const std::string_view why)
 {
     const bool was = m_Waiting;
+    m_WarpHold     = false; // HoldForWarp marks its own after this
     if (ordered && !on)
     {
         EndRestOrder("the player's follow order");
@@ -637,23 +638,29 @@ auto CPawnController::IsWaiting() const -> bool
     return m_Waiting;
 }
 
-void CPawnController::Carried(const bool withPlayer)
+auto CPawnController::HoldNow() const -> cardian::hold::Hold
+{
+    return { m_Waiting, m_WaitOrdered, m_WarpHold };
+}
+
+void CPawnController::HoldForWarp(const std::string_view why)
+{
+    if (cardian::hold::warped(HoldNow()) == HoldNow())
+    {
+        return; // held already: on his order, or by a warp
+    }
+    SetWaiting(true, false, why);
+    m_WarpHold = true;
+}
+
+void CPawnController::Carried()
 {
     // The player's magic, seen a moment ago, was this same carry: it must
-    // not read as them leaving her behind once she lands
+    // not read as them leaving her behind once she lands. She holds where she
+    // lands, and follows again once he is in her zone: there already, or
+    // arriving after her
     m_PlayerMagicSeen = timer::time_point::min();
-    if (withPlayer)
-    {
-        if (m_Waiting && !m_WaitOrdered)
-        {
-            SetWaiting(false, false);
-        }
-    }
-    else
-    {
-        SetWaiting(true, false);
-        ShowInfoFmt("pawn: {} will wait where she lands", POwner->getName());
-    }
+    HoldForWarp("holds where she lands (carried off by a warp)");
 }
 
 void CPawnController::ArriveWith(const position_t& landing)
@@ -4363,7 +4370,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         if (Treks() && m_PlayerMagicSeen != timer::time_point::min() && m_Tick - m_PlayerMagicSeen < 5s)
         {
             m_PlayerMagicSeen = timer::time_point::min();
-            SetWaiting(true, false, fmt::format("waits in {} (the player warped away)", POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?"));
+            HoldForWarp(fmt::format("waits in {} (the player warped away)", POwner->loc.zone != nullptr ? POwner->loc.zone->getName() : "?"));
         }
         // In the player's party with the player in another zone, she goes to
         // them, unless told to wait. A player out of the world is loading
@@ -4403,9 +4410,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     {
         NotePlayerMagic(PPlayer);
 
-        // An automatic wait ends with the player back in her zone; an
-        // ordered one holds until told otherwise
-        if (m_Waiting && !m_WaitOrdered)
+        // The automatic hold a warp set lifts with the player back in her
+        // zone; one he ordered holds until he lifts it
+        if (cardian::hold::reunited(HoldNow()) != HoldNow())
         {
             SetWaiting(false, false, fmt::format("follows again ({} is back)", PPlayer->getName()));
         }

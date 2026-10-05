@@ -197,12 +197,14 @@ local did = { accept = 'accepted', complete = 'completed' }
 -- The party memory at a completion (ROADMAP H slice 3, the contracts): a
 -- wild cardian recruited for this earns affinity -- a mission counts
 -- toward the pearl's lock, and a mission recruit earns on a quest too --
--- and one recruited for something else complains, in the chat log, and
--- nothing counts. The player's own cardians need no affinity
-local complaints =
+-- and for one recruited for something else nothing counts. A cardian
+-- recruited for exp hints that exp is what she came for, in party chat:
+-- one of them, once a completion, a nudge rather than a complaint (the
+-- user, 2026-10-04). The player's own cardians need no affinity
+local expHints =
 {
-    exp   = { 'Worst exp party ever.', "This isn't what I signed up for.", 'Are we ever going to fight something?', 'One more of these and I\'m out.' },
-    quest = { 'I came along for a quest, not this.', "This isn't what I signed up for." },
+    "Questing is fine, but I'm here for the experience points.",
+    "Now that that's done, experience points?",
 }
 
 -- The missions that are a fight, by log and id: a battlefield, a
@@ -214,7 +216,7 @@ local complaints =
 -- mission (Promathia most of all), the Zeruhn Report, the Crystal Line,
 -- the Rites of Life, Unraveling Reason. A mission not here
 -- completes, her log moves, and nobody's affinity changes, nobody
--- complains. Quests all count until the pass on them
+-- hints. Quests all count until the pass on them
 -- Built from the enum's own keys, so an upstream renumbering cannot
 -- reclassify a mission; a key the enum no longer has is reported and skipped
 local function missionIds(area, keys)
@@ -421,7 +423,7 @@ end
 local inHelper = false -- inside npcUtil.completeMission / completeQuest
 
 -- The player hears the gain once for the party, the way exp is told, and
--- each complaint on its own
+-- an exp recruit's hint in party chat, in her own name
 local gained =
 {
     mission = 'Mission accomplished! Everyone in the party thinks a little more of you.',
@@ -435,6 +437,7 @@ local function settleContracts(player, kind, counts)
     end
     local here     = partyCardians(player, 'all')
     local bonded   = false
+    local hinted   = false
     local outcomes = {}
     for _, cardian in ipairs(here) do
         local name = cardian:getName()
@@ -444,10 +447,14 @@ local function settleContracts(player, kind, counts)
                 player:cardianBond(name, 'a ' .. kind .. ' completed together', kind == 'mission')
                 bonded = true
                 outcomes[#outcomes + 1] = name .. ' +1 affinity'
+            elseif contract == 'exp' and not hinted then
+                local line = expHints[math.random(#expHints)]
+                print(string.format('[cardian] %s to %s in party chat: %s', name, player:getName(), line))
+                player:printToPlayer(line, xi.msg.channel.PARTY, name)
+                hinted = true
+                outcomes[#outcomes + 1] = name .. ' hints (exp)'
             elseif contract ~= '' then
-                local lines = complaints[contract] or complaints.exp
-                say(player, name .. ': ' .. lines[(cardian:getID() % #lines) + 1])
-                outcomes[#outcomes + 1] = name .. ' complains (' .. contract .. ')'
+                outcomes[#outcomes + 1] = name .. ' nothing counts (' .. contract .. ')'
             else
                 outcomes[#outcomes + 1] = name .. ' no contract'
             end

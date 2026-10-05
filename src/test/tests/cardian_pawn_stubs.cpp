@@ -26,7 +26,7 @@
 // does: nobody is a world body, every exp grant lands whole, nobody signs
 // in or out with the player, nobody leaving a party has a trek to end,
 // nobody's followers set out ahead of him, nobody lands beside him in a
-// battlefield, and nobody is a cardian.
+// battlefield, no warp of his is held for a question, and nobody is a cardian.
 
 #include "map/lua/lua_base_entity.h"
 #include "map/pause/input_gate.h"
@@ -100,6 +100,14 @@ class CardianTestStubs : public CPPModule
         ::lua["CBaseEntity"]["cardianContract"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const uint32 /* playerCharID */) -> std::string
         {
             return "";
+        };
+
+        // The party's warp held for his answer: no addon is bound to ask him,
+        // so the warp is bought as upstream buys it (a test that wants the
+        // question put stubs this to true)
+        ::lua["CBaseEntity"]["cardianOfferPartyWarp"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const sol::table& /* purchase */, const sol::table& /* cardians */, const uint32 /* seconds */) -> bool
+        {
+            return false;
         };
 
         // The combat pause is core, so this is the real manager, not a stub: what a

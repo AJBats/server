@@ -48,8 +48,8 @@ namespace pawn::finder
     // gains beside them; a quest asks more and pays affinity at its
     // completion; a mission asks the most, her rank as well, and is the
     // only recruitment under which a mission completed together counts
-    // (the pearl's lock). Under the wrong contract she complains and
-    // nothing counts
+    // (the pearl's lock). Under the wrong contract nothing counts, and
+    // an exp recruit hints in party chat that exp is what she came for
     struct Goal
     {
         enum class Kind : uint8

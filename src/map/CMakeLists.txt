@@ -71,6 +71,12 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/live_controller.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/mog_house.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/mog_house.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/offers.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/offers.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/redress.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/redress.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/redress_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/warp_hold.h
 )
 
 set(MAP_CORE_SOURCES
