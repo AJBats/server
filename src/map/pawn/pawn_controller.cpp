@@ -5082,15 +5082,15 @@ void CPawnController::SetOwnMaster(const bool on)
     m_Gambits->SetMaster(on);
 }
 
+// Move here, or Move here and hold: paused, the route the ring laid; live,
+// the point the ring stands on now (OPEN_ISSUES #273: a live maneuver's "go
+// here and wait"). Either way her one queued command, and the maneuver
+// lasts until she has walked it
 auto CPawnController::ComposeMove(const bool wait) -> uint16
 {
     if (!InManeuver())
     {
         return CL_S_NO_MANEUVER;
-    }
-    if (!cardian::pause::isHeld())
-    {
-        return CL_S_NOT_PAUSED;
     }
     if (m_ManeuverComposed)
     {
