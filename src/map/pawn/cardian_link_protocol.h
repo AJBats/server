@@ -36,7 +36,7 @@
 // carries it both ways, and a mismatch unloads the addon (no message is kept
 // compatible, the user, 2026-09-14). 37: a cardian's rest on her queue line,
 // her own (CL_AK_OWN_REST) or his order's (CL_AK_REST), and CANCEL calls it
-// off; 36: the server's yes-or-no questions,
+// off; the camp placed at a spot, STAKE's CL_STAKE_AT; 36: the server's yes-or-no questions,
 // OFFER and OFFER_ANSWER (the party's warp); 35: the Mog House, JOB_CHANGE, the
 // roster's CL_MEMBER_BY_MOG_HOUSE, and JOBS' unlocked; 34: the orders' Dia or Bio (ORDERS'
 // diaBio, CL_HUNT_DIA_BIO); 33: the gambit messages name the player
@@ -150,6 +150,8 @@ enum
     CL_S_UNDERGROUND       = 0x0124, // the monster is out of reach underground
     CL_S_NO_CARDIANS_OUT   = 0x0125, // none of his cardians is out in his zone
     CL_S_NOT_IN_PARTY      = 0x0126, // nobody by that charid is in his party
+    CL_S_CAMP_TOO_FAR      = 0x0127, // a camp placed beyond pawn.STAKE_PLACE_REACH of him
+    CL_S_CAMP_OFF_MESH     = 0x0128, // no ground to stand a camp on at the spot placed
 
     // One cardian's orders
     CL_S_NOT_KNOCKED_OUT   = 0x0130, // a home point is for a KO'd cardian
@@ -1172,13 +1174,18 @@ enum
     CL_STAKE_SET    = 0, // set it, or move it, where he stands, facing his way
     CL_STAKE_CLEAR  = 1,
     CL_STAKE_TOGGLE = 2, // decided by the server, so two presses before the first answer still alternate
+    CL_STAKE_AT     = 3, // set it, or move it, at x, y, z facing rotation: the camp placed as a maneuver
 };
 
 typedef struct cl_stake
 {
     cl_header h;
-    uint8_t   mode; // CL_STAKE_*
-    uint8_t   spare[3];
+    uint8_t   mode;     // CL_STAKE_*
+    uint8_t   rotation; // CL_STAKE_AT: the camp's facing, the game's 0-255
+    uint8_t   spare[2];
+    float     x;        // CL_STAKE_AT: the spot, in the server's axes (y the height)
+    float     y;
+    float     z;
 } cl_stake;
 
 // Every cardian of his in his zone fights his target. Answered by the outcome alone.

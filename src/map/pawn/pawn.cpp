@@ -1568,6 +1568,27 @@ namespace pawn
         return CL_S_OK;
     }
 
+    auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16
+    {
+        if (POwner == nullptr || POwner->loc.zone == nullptr)
+        {
+            return CL_S_REFUSED;
+        }
+        if (distance(POwner->loc.p, at) > settings::get<float>("pawn.STAKE_PLACE_REACH"))
+        {
+            return CL_S_CAMP_TOO_FAR;
+        }
+        // On the ground the mesh has there, a step's slack for the ring's
+        // own height easing
+        const auto landed = snapToMesh(POwner->loc.zone, at, 3.0f);
+        if (!landed.has_value())
+        {
+            return CL_S_CAMP_OFF_MESH;
+        }
+        placeStake(POwner, POwner->getZone(), *landed, "placed");
+        return CL_S_OK;
+    }
+
     void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how)
     {
         auto&      orders = ordersFor(POwner->id);

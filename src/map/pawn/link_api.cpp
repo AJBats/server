@@ -1471,9 +1471,13 @@ namespace pawn::linkapi
         {
             const bool clear = ask.mode == CL_STAKE_CLEAR || (ask.mode == CL_STAKE_TOGGLE && pawn::stakeOf(PChar->id).has_value());
             uint16     status = CL_S_OK;
-            if (ask.mode > CL_STAKE_TOGGLE)
+            if (ask.mode > CL_STAKE_AT)
             {
                 status = CL_S_MALFORMED;
+            }
+            else if (ask.mode == CL_STAKE_AT)
+            {
+                status = pawn::setStakeAt(PChar, position_t(ask.x, ask.y, ask.z, 0, ask.rotation));
             }
             else if (clear)
             {

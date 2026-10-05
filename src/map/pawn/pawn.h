@@ -253,6 +253,10 @@ namespace pawn
     };
     auto stakeOf(uint32 ownerCharID) -> std::optional<Stake>;
     auto setStake(CCharEntity* POwner) -> uint16; // CL_S_OK when set or moved (the Link's outcomes); otherwise why not
+    // The camp placed as a maneuver (OPEN_ISSUES #272): at a spot within
+    // pawn.STAKE_PLACE_REACH of him, set down on the zone's ground, facing
+    // the way given. CL_S_OK, or why not
+    auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16;
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 

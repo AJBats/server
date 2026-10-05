@@ -176,6 +176,10 @@ xi.settings.pawn =
     -- eats it (see the local overrides).
     FORMATION_CATCHUP_DISTANCE = 3.0,
 
+    -- The camp placed as a maneuver (chord + left with no camp standing;
+    -- OPEN_ISSUES #272): how far from the player its spot may be
+    STAKE_PLACE_REACH = 40.0,
+
     -- A rest the player calls off from her queue line (OPEN_ISSUES #256):
     -- she stands, and her own kneels -- her MP's pacing, her Rest row, Rest
     -- With Player -- wait this many seconds, so she stays with the party
