@@ -8,7 +8,7 @@ xi.settings = xi.settings or {}
 xi.settings.pawn =
 {
     ENABLE_PAWNS = true,
-    PAWN_SPEED   = 100,
+    PAWN_SPEED   = 85,
     GAMBIT_DEBUG = true,
     FORMATION_DEBUG = true,
     INVITE_ACCEPT_DELAY = 2500, -- experiment: human-like accept latency

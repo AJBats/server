@@ -5463,7 +5463,8 @@ void CPawnController::WalkStep()
     {
         const auto  point   = pawn::walkOrderOf(POwner->id);
         const float toRing  = point.has_value() ? distance(POwner->loc.p, *point) : 0.0f;
-        const float leadMax = settings::get<float>("pawn.STEER_LEAD_MS") / 1000.0f * static_cast<float>(POwner->GetSpeed()) / 50.0f * 2.5f;
+        // Her run in yalms a second: upstream's step, speed / 17 (pathfind.cpp)
+        const float leadMax = settings::get<float>("pawn.STEER_LEAD_MS") / 1000.0f * static_cast<float>(POwner->GetSpeed()) / 17.0f;
         const float lead    = std::min(leadMax, toRing);
         const auto  real    = POwner->loc.p;
         if (lead > 0.05f)
