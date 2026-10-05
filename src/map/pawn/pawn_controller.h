@@ -884,6 +884,13 @@ private:
     // has come in: at the landing point, on her, or stalled outside (#253)
     auto WaitsForThePull(const CBattleEntity* PTarget, ApproachKind kind) -> bool;
 
+    // At a camp a caster holds her spells on a pull until it has come in,
+    // as the melee wait for it: no walk out to meet it, and no enfeeble or
+    // nuke from afar that would turn it from the puller. A cure for the
+    // puller still goes; the player's own order is never held
+    auto HoldsFireOn(const CBattleEntity* PTarget) -> bool;
+    uint32 m_HeldFireOn = 0; // the pull her spells wait on, said once
+
     // The one writer of the mode: the exits it owns (a fight's draw
     // cooldown, seat and beats; a walk in's target) happen here, and the
     // change is said -- "Follow -> Fight: draws on X (with Jevyak)". A call

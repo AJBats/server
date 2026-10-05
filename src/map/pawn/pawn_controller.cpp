@@ -2985,7 +2985,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
             auto* target = pawn::tactics::entity(static_cast<CCharEntity*>(POwner), cast->target);
             auto* PSpell = spell::GetSpell(cast->spell);
             const float reach = pawn::tactics::bank::castRange(POwner, PSpell, target);
-            if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f)
+            if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f && !HoldsFireOn(target))
             {
                 // Use the same line-of-sight requirement as spell validation.
                 const bool sight = !POwner->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock) || POwner->CanSeeTarget(target);
@@ -5603,7 +5603,7 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
     }
 
     auto* PTarget = castTarget.resolve<CBattleEntity>();
-    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone ||
+    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone || HoldsFireOn(PTarget) ||
         distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
     {
         return false;
@@ -5651,7 +5651,7 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
     }
     const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
     auto* PTarget = castTarget.resolve<CBattleEntity>();
-    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone ||
+    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone || HoldsFireOn(PTarget) ||
         distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
     {
         return false;
@@ -7354,6 +7354,23 @@ auto CPawnController::TowsAtStake() const -> bool
     // for (RESEARCH §17.13), and with the master switch off nothing of her
     // rows or her seat moves her
     return Staked() && m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank;
+}
+
+auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
+{
+    // Held while the tank's own receive rule (CampReceive) says the pull is
+    // still on its way: not at the landing point, not on her, not stalled
+    if (PTarget == nullptr || PTarget->objtype != TYPE_MOB || !Staked() || TowsAtStake() || PTarget->GetBattleTarget() == POwner ||
+        CampReceive(PTarget) == cardian::stake::ReceiveAction::Join)
+    {
+        return false;
+    }
+    if (m_HeldFireOn != PTarget->id)
+    {
+        m_HeldFireOn = PTarget->id;
+        ShowInfoFmt("pawn: {} holds her spells on {} until it comes in to the camp", POwner->getName(), PTarget->getName());
+    }
+    return true;
 }
 
 auto CPawnController::WaitsForThePull(const CBattleEntity* PTarget, const ApproachKind kind) -> bool
