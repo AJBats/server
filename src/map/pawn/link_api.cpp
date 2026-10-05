@@ -1606,15 +1606,12 @@ namespace pawn::linkapi
                 return;
             }
 
-            uint16     wait   = 0; // never the packed field's own address
-            const auto status = PController->DoAction(key, PTarget, &wait);
+            const auto status = PController->DoAction(key, PTarget);
             if (status == CL_S_OK)
             {
                 ShowInfoFmt("pawn: {} is ordered {} on {} by {}", PPawn->getName(), key, PTarget->getName(), PChar->getName());
             }
-            auto answer = ask;
-            answer.wait = wait;
-            reply.finish(answer, status);
+            reply.finish(ask, status);
         }
 
         // His queue lines as they stand, for an addon that has just bound: his own

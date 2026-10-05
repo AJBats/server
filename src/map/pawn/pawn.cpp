@@ -1265,7 +1265,7 @@ namespace pawn
             // keeps hers when this one leaves.
             if (PController != nullptr && (herself || herPlayer == PMember->id))
             {
-                PController->DropQueuedOrder(herself ? "out of the party" : "her player left the party", herPlayer);
+                PController->ClearQueuedOrders(herself ? "out of the party" : "her player left the party", herPlayer);
                 PController->EndRestOrder(herself ? "out of the party" : "her player left the party");
                 // A maneuver is his hand on her: it ends with the party tie too
                 PController->EndManeuver(herself ? "out of the party, the maneuver ends" : "her player left the party, the maneuver ends");

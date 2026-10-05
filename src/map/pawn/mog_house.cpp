@@ -178,7 +178,7 @@ namespace pawn::moghouse
         }
         if (PController != nullptr)
         {
-            PController->DropQueuedOrder("her job changed");
+            PController->ClearQueuedOrders("her job changed");
         }
 
         const auto before = fmt::format("{} {}/{} {}", magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel(), magic_enum::enum_name(PPawn->GetSJob()), PPawn->GetSLevel());

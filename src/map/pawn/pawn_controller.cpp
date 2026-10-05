@@ -545,7 +545,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         if (m_ManeuverComposed && m_QueuedOrder.has_value())
         {
             m_ManeuverComposed = false;
-            DropQueuedOrder("the maneuver ended first");
+            ClearQueuedOrders("the maneuver ended first");
         }
         m_Gambits->SetMaster(m_ManeuverPriorMaster);
         pawn::clearWalkOrder(POwner->id);
@@ -1485,18 +1485,6 @@ void CPawnController::HeadLook(const CBaseEntity* PAt)
 
 namespace
 {
-    // cardian.ORDER_GRACE, as a duration
-    auto orderGrace() -> timer::duration
-    {
-        return std::chrono::milliseconds(static_cast<int64>(settings::get<float>("cardian.ORDER_GRACE") * 1000.0f));
-    }
-
-    // A wait as the player reads it: whole seconds, rounded up
-    auto wholeSeconds(const timer::duration d) -> int
-    {
-        return static_cast<int>(std::ceil(std::chrono::duration<double>(d).count()));
-    }
-
     // The command window's Attack and Disengage, as the addon sends them and her queue holds them
     constexpr std::string_view kAttackOrder    = "attack";
     constexpr std::string_view kDisengageOrder = "disengage";
@@ -1554,7 +1542,7 @@ namespace
     }
 } // namespace
 
-auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, uint16* waitSeconds) -> uint16
+auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> uint16
 {
     if (key == kAttackOrder)
     {
@@ -1599,6 +1587,26 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
     // paused maneuver's route may bring her into reach first, so its order's
     // reach is judged as it fires (FireQueuedOrder)
     const EntityId target(PTarget);
+
+    // Something waits already: the order joins the line behind it, in the
+    // order he gives them, kQueueDepth deep in all (the user, 2026-10-05: his
+    // commands go as he gave them, his cancel peels the line back). A
+    // maneuver's order is its own, one command, as it has always been
+    if (m_QueuedOrder.has_value() && !InManeuver())
+    {
+        if (m_QueuedNext.size() + 1 >= kQueueDepth)
+        {
+            return CL_S_QUEUE_FULL;
+        }
+        m_QueuedNext.emplace_back(key, target);
+        ShowInfoFmt("pawn: {} queues {} on {} behind {} ({} waiting)", POwner->getName(), key, PTarget->getName(), m_QueuedOrder->first, m_QueuedNext.size() + 1);
+        if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+        {
+            cardian::link::send(owner, QueueLine());
+        }
+        return CL_S_OK;
+    }
+
     const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
     if (outOfReach && m_Waiting && kind == kWeaponSkillOrder && !(cardian::pause::isHeld() && InManeuver()))
     {
@@ -1632,25 +1640,12 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
         }
     }
 
-    // A little early is held, too early refused. The wait is the least
-    // she has to wait (an action in progress other than a cast adds what
-    // its state does not tell), so a refusal here is certain and the
-    // deadline judges the rest. The 2.5 s after a spell is the server's
-    // wait for everyone and is never early: an order pressed late in her
-    // cast bar fires the moment it is over
-    const auto grace = orderGrace();
-    const auto wait  = OrderWait(kind, id);
-    if (wait > grace)
-    {
-        if (waitSeconds != nullptr)
-        {
-            *waitSeconds = static_cast<uint16>(std::clamp(wholeSeconds(wait), 1, static_cast<int>(UINT16_MAX)));
-        }
-        return CL_S_TOO_SOON;
-    }
-    m_QueuedOrderDeadline = m_Tick + grace + SpellWaitAhead();
+    // Nothing is refused for its timing (the user, 2026-10-05: with a line
+    // to wait in, every order joins it): one she cannot start now waits, her
+    // cast under way or its own recast however long, until it goes or he
+    // takes it back
     SetQueuedOrder(std::make_pair(key, target));
-    ShowInfoFmt("pawn: {} queues {} on {} ({}, {} s of grace)", POwner->getName(), key, PTarget->getName(), heldFor, wholeSeconds(grace));
+    ShowInfoFmt("pawn: {} queues {} on {} ({})", POwner->getName(), key, PTarget->getName(), heldFor);
     if (InManeuver())
     {
         if (cardian::pause::isHeld())
@@ -1669,53 +1664,6 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget, u
         }
     }
     return CL_S_OK;
-}
-
-auto CPawnController::CastBarLeft() const -> timer::duration
-{
-    const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
-    if (PState == nullptr || PState->IsCompleted())
-    {
-        return 0s;
-    }
-    return std::max<timer::duration>(PState->GetStartTime() + PState->GetCastTime() - m_Tick, 0s);
-}
-
-auto CPawnController::SpellWaitAhead() -> timer::duration
-{
-    // The player controller's canAct: 2.5 s from the moment her last spell
-    // landed. A cast under way starts it afresh as it lands
-    constexpr auto kAfterSpell = 2500ms;
-    const auto*    PState      = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
-    if (PState != nullptr && !PState->IsCompleted())
-    {
-        return kAfterSpell;
-    }
-    return std::max<timer::duration>(getLastSpellFinishedTime() + kAfterSpell - m_Tick, 0s);
-}
-
-auto CPawnController::OrderWait(const unsigned kind, const unsigned id) const -> timer::duration
-{
-    const auto bar = CastBarLeft();
-    if (kind != 2)
-    {
-        return bar;
-    }
-    const auto spellId = static_cast<SpellID>(id);
-    if (const auto* PState = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState()); PState != nullptr)
-    {
-        if (auto* PSpell = PState->GetSpell(); PSpell != nullptr && PSpell->getID() == spellId)
-        {
-            return bar + PState->GetRecast(); // the same spell again: its timer starts when this cast lands
-        }
-    }
-    const auto* recast = static_cast<CCharEntity*>(POwner)->PRecastContainer->GetRecast(RECAST_MAGIC, static_cast<Recast>(spellId));
-    if (recast == nullptr || recast->RecastTime <= 0s)
-    {
-        return bar;
-    }
-    const auto left = recast->TimeStamp + recast->RecastTime - m_Tick;
-    return std::max(bar, left > timer::duration::zero() ? left : timer::duration::zero());
 }
 
 auto CPawnController::OrderName(const unsigned kind, const unsigned id) const -> std::string
@@ -1751,6 +1699,14 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
 
 void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order)
 {
+    // The first done or let go, the next in line takes its place (the user,
+    // 2026-10-05: back to back, as he gave them)
+    if (!order.has_value() && !m_QueuedNext.empty())
+    {
+        order = std::move(m_QueuedNext.front());
+        m_QueuedNext.pop_front();
+        ShowInfoFmt("pawn: {}'s next queued order comes up: {}", POwner->getName(), order->first);
+    }
     if (order.has_value() && !order->first.starts_with("rest:"))
     {
         EndRestOrder("the player's next order");
@@ -1786,6 +1742,17 @@ auto CPawnController::QueueLine() const -> cl_queue
         const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
         line.action         = pawn::actionOfKey(m_QueuedOrder->first);
         line.target         = PTarget != nullptr ? PTarget->targid : uint16{ 0 };
+        for (const auto& [key, who] : m_QueuedNext)
+        {
+            if (line.more >= std::size(line.next))
+            {
+                break;
+            }
+            const auto* PNext           = who.resolve<CBattleEntity>();
+            line.next[line.more].action = pawn::actionOfKey(key);
+            line.next[line.more].target = PNext != nullptr ? PNext->targid : uint16{ 0 };
+            ++line.more;
+        }
     }
     else if (m_RestLineKind != CL_AK_NONE)
     {
@@ -1819,9 +1786,27 @@ auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 f
     return true;
 }
 
+// His cancel peels her line back from its end, one order a press: mashed, it
+// clears the lot (the user, 2026-10-05)
 auto CPawnController::CancelQueuedOrder() -> bool
 {
+    if (!m_QueuedNext.empty())
+    {
+        ShowInfoFmt("pawn: {} drops the queued {} (the player took it back)", POwner->getName(), m_QueuedNext.back().first);
+        m_QueuedNext.pop_back();
+        if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+        {
+            cardian::link::send(owner, QueueLine());
+        }
+        return true;
+    }
     return DropQueuedOrder("the player took it back");
+}
+
+auto CPawnController::ClearQueuedOrders(const std::string_view why, const uint32 formerOwner) -> bool
+{
+    m_QueuedNext.clear();
+    return DropQueuedOrder(why, formerOwner);
 }
 
 void CPawnController::OrderStarted(const std::string& key, const unsigned kind, const unsigned id)
@@ -1984,7 +1969,6 @@ void CPawnController::FireQueuedOrder()
         }
         if (!RouteWalked())
         {
-            m_QueuedOrderDeadline = m_Tick + orderGrace();
             return;
         }
         // The move orders (ComposeMove): the route was the order
@@ -2125,7 +2109,6 @@ void CPawnController::FireQueuedOrder()
             }
             return;
         }
-        m_QueuedOrderDeadline = m_Tick + orderGrace();
         return;
     }
     if (m_OrderApproaching)
@@ -2134,21 +2117,9 @@ void CPawnController::FireQueuedOrder()
         POwner->PAI->PathFind->Clear();
     }
 
-    // The grace ran out: with her still busy, or the timer still running
-    if (m_Tick > m_QueuedOrderDeadline)
-    {
-        SetQueuedOrder(std::nullopt);
-        const auto wait = OrderWait(kind, id);
-        const bool busy = !ReadyToAct() || wait <= 0s;
-        ShowInfoFmt("pawn: {} lets the queued {} go ({})", POwner->getName(), key, busy ? std::string("busy too long") : fmt::format("{} s of recast left", wholeSeconds(wait)));
-        auto note   = cardian::link::make<cl_note>();
-        note.kind   = CL_NOTE_LET_GO;
-        note.action = pawn::actionOfKey(key);
-        note.wait   = busy ? 0 : static_cast<uint16_t>(std::clamp(wholeSeconds(wait), 0, static_cast<int>(UINT16_MAX)));
-        Note(note, CL_S_TOO_SOON);
-        return;
-    }
-    // The pacer: it goes out the first tick the server would take it
+    // The pacer: it goes out the first tick the server would take it, her
+    // cast under way or its recast waited out however long (nothing in her
+    // line is let go for its timing)
     if (!ReadyToAct())
     {
         return;
@@ -5100,7 +5071,6 @@ auto CPawnController::ComposeMove(const bool wait) -> uint16
     {
         return CL_S_NO_ROUTE;
     }
-    m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(std::string(wait ? "movewait" : "move"), EntityId(POwner)));
     MarkComposed(fmt::format("walk the route{}", wait ? ", then hold there" : ""));
     return CL_S_OK;
@@ -5143,7 +5113,6 @@ auto CPawnController::ComposeRest(const int percent) -> uint16
     {
         pawn::clearWalkOrder(POwner->id);
     }
-    m_QueuedOrderDeadline = m_Tick + orderGrace();
     SetQueuedOrder(std::make_pair(fmt::format("rest:{}", percent), EntityId(POwner)));
     MarkComposed(fmt::format("{}rest until {}%", pawn::walkOrderOf(POwner->id).has_value() ? "walk the route, then " : "", percent));
     return CL_S_OK;
@@ -5162,6 +5131,7 @@ auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> uint16
     }
     if (cardian::pause::isHeld())
     {
+        m_QueuedNext.clear(); // his attack replaces her line, as it does unpaused
         SetQueuedOrder(std::make_pair(std::string(kAttackOrder), EntityId(PMob)));
         ShowInfoFmt("pawn: {} queues the attack on {} (paused)", POwner->getName(), PMob->getName());
         if (InManeuver())
@@ -5171,7 +5141,7 @@ auto CPawnController::AttackOrder(CBattleEntity* PTarget) -> uint16
         return CL_S_OK;
     }
     EndManeuver("his order is away, she attacks: the maneuver ends");
-    DropQueuedOrder("his attack order replaces it"); // her newest order is the one she carries out
+    ClearQueuedOrders("his attack order replaces it"); // her newest order is the one she carries out
     m_PlayersOrder = EntityId(PMob);
     EngageOn(PMob);
     return CL_S_OK;

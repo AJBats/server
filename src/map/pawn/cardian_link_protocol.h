@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 37: a cardian's rest on her queue line,
+// compatible, the user, 2026-09-14). 38: a cardian's queue four deep, QUEUE's
+// next[] behind its first command, and QUEUE_FULL; 37: a cardian's rest on her queue line,
 // her own (CL_AK_OWN_REST) or his order's (CL_AK_REST), and CANCEL calls it
 // off; the camp placed at a spot, STAKE's CL_STAKE_AT; 36: the server's yes-or-no questions,
 // OFFER and OFFER_ANSWER (the party's warp); 35: the Mog House, JOB_CHANGE, the
@@ -79,7 +80,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 37 };
+enum { CL_PROTOCOL = 38 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -161,6 +162,7 @@ enum
     CL_S_NOTHING_QUEUED    = 0x0134, // no command waits to be taken back
     CL_S_UNREACHED         = 0x0135, // she could not get in reach of the order's target, or holds her position out of a weapon skill's reach
     CL_S_CANNOT_RECOVER    = 0x0136, // resting, she cannot recover right now (a poison, an avatar out)
+    CL_S_QUEUE_FULL        = 0x0137, // four commands wait already: take one back first
 
     // The pause button
     CL_S_PAUSE_OFF         = 0x0140, // the pause is switched off on this server
@@ -1237,10 +1239,9 @@ typedef struct cl_cancel
 } cl_cancel;
 
 // The command window: one action now, on a target. An order she cannot start
-// at once -- busy, on recast, out of reach, the game paused -- is held as her
-// one queued order within cardian.ORDER_GRACE, the server's 2.5 s after a spell
-// added on (QUEUE tells it); one that could not start in that time is refused
-// CL_S_TOO_SOON. Answered by the outcome.
+// at once -- busy, on recast, out of reach, the game paused -- joins her line
+// of queued orders, four deep, and waits there however long (QUEUE tells it);
+// a fifth is refused CL_S_QUEUE_FULL. Answered by the outcome.
 typedef struct cl_do
 {
     cl_header h;
@@ -1378,17 +1379,28 @@ typedef struct cl_note
     char      about[32]; // for people: the battle message's name (REFUSED), the target's (UNREACHED)
 } cl_note;
 
+// One command behind the first on a queue line
+typedef struct cl_queue_next
+{
+    cl_action action;
+    uint16_t  target; // the target's index in the zone; 0 when it is gone
+    uint16_t  spare;
+} cl_queue_next;
+
 // One-way, to a player at every change of a queue line of his (and an answer
-// to QUEUES): the one command a character has waiting -- one of his cardians'
-// orders, held behind what she is doing or through a pause, or his own command
-// through a pause. The server names it; the addon words it.
+// to QUEUES): the commands a character has waiting, in the order they go --
+// one of his cardians' orders, held behind what she is doing or through a
+// pause, up to four (the first, and up to three behind it), or his own one
+// command through a pause. The server names them; the addon words them.
 typedef struct cl_queue
 {
-    cl_header h;
-    uint32_t  character; // charid: one of his cardians, or himself
-    cl_action action;    // CL_AK_NONE: nothing waits now
-    uint16_t  target;    // the target's index in the zone; 0 when it is gone
-    uint16_t  spare;
+    cl_header     h;
+    uint32_t      character; // charid: one of his cardians, or himself
+    cl_action     action;    // the first; CL_AK_NONE: nothing waits now
+    uint16_t      target;    // the target's index in the zone; 0 when it is gone
+    uint8_t       more;      // how many of next[] follow the first
+    uint8_t       spare;
+    cl_queue_next next[3];   // the commands behind the first, in order
 } cl_queue;
 
 // The pause button: takes the hold, or lets go of his own. Answered by the

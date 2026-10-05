@@ -38,6 +38,7 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
@@ -352,19 +353,15 @@ public:
     // (4:2:id), the ranged attack (1:0:0), an item she carries (item:<id>);
     // the "best of" entries are the gambit engine's -- or "attack", her order
     // to fight the mob picked (AttackOrder), or "disengage" (DisengageOrder).
-    // CL_S_OK when it fired or is held (the Link's outcomes), else why not;
-    // CL_S_TOO_SOON puts the seconds it is away in `waitSeconds`.
-    auto DoAction(const std::string& key, CBattleEntity* PTarget, uint16* waitSeconds = nullptr) -> uint16;
+    // CL_S_OK when it fired or joined her line (the Link's outcomes), else
+    // why not; never refused for its timing, only CL_S_QUEUE_FULL when four wait.
+    auto DoAction(const std::string& key, CBattleEntity* PTarget) -> uint16;
 
-    // The order given a little early -- while she acts, or while the
-    // spell is on recast -- is held and fired the moment both allow, the
-    // way the client queues one action behind a cast. Held only within
-    // cardian.ORDER_GRACE of the press, the 2.5 s the server makes anyone
-    // wait after a spell added on: an order that cannot fire in that time
-    // is refused at once (pressed early in a long cast bar, a spell on a
-    // long recast, the same spell pressed twice mid-cast), and a held
-    // order the grace runs out on is let go with a note to the addon. A
-    // newer order replaces it.
+    // An order she cannot start now -- while she acts, while the spell is on
+    // recast, out of reach, the game paused -- waits in her line and fires the
+    // moment it can, however long that is: nothing is refused or let go for
+    // its timing (the user, 2026-10-05). Orders behind it wait their turn,
+    // kQueueDepth deep in all.
     void FireQueuedOrder();
     auto HasQueuedOrder() const -> bool
     {
@@ -377,6 +374,8 @@ public:
     // player can take the order back.
     auto QueueLine() const -> cl_queue;
     auto CancelQueuedOrder() -> bool;
+    // Her whole line dropped: the orders behind the first, then the first
+    auto ClearQueuedOrders(std::string_view why, uint32 formerOwner = 0) -> bool;
     // The player's cancel on her queue line with nothing queued: a rest she
     // is on -- her own, or his order's -- called off. She stands, and her own
     // kneels are held off for pawn.REST_CALL_OFF_SECONDS, so she stays with
@@ -1121,20 +1120,11 @@ private:
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
-    timer::time_point                               m_QueuedOrderDeadline;
+    // The orders behind m_QueuedOrder, in the order he gave them: the line is
+    // kQueueDepth deep in all, the first taking the next's place as it goes
+    std::deque<std::pair<std::string, EntityId>> m_QueuedNext;
+    static constexpr std::size_t                 kQueueDepth = 4;
 
-    // The least an order has to wait before she could take it, the 2.5 s
-    // after a spell aside: the cast bar she is under, and for a spell its
-    // recast left, or the recast the cast in progress will set when it is
-    // the same spell. Abilities and weapon skills carry their own recast
-    // refusals, and the other states do not tell how long they have left
-    auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
-    // What is left of the cast bar she is under; 0 when she is not casting
-    auto CastBarLeft() const -> timer::duration;
-    // How much of the 2.5 s the server makes anyone wait after a spell
-    // (CPlayerController::canAct) is still ahead of her: all of it while
-    // she casts, else what is left since her last spell landed
-    auto SpellWaitAhead() -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     // What came of one of the player's orders, to his addon (the Link's NOTE,
     // cardian_link_protocol.h): the note as the caller filled it, and why
