@@ -1155,6 +1155,7 @@ private:
     bool m_RestDeferredPosition = false;
     double m_RestChatAt = 0.0;
     uint32 m_KneelHeldFor = 0;   // the member a kneel would put at risk, as last said; 0: none
+    std::string m_RestHeldWhy;   // what keeps her up with a reason to kneel, as last said; empty: nothing
     uint32 m_SaidMpShortFor = 0; // the fight's mob whose "My MP won't last" she has said
     // Magic aggro (#77): a cast of hers that costs MP is held where an
     // aggressive mob's magic detection would hear it, and while the hold

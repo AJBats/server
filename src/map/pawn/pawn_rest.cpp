@@ -15,6 +15,8 @@
 #include "status_effect_container.h"
 
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace
 {
@@ -247,6 +249,49 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         .urgent = urgent, .blocked = blocked,
         .moving = !stationary, .routinePosition = deferPosition,
         .ordered = ordered});
+
+    // Up with a reason to kneel: every reason holding her up, said as the
+    // reasons change, so a rest that never starts can be read from the log
+    if (decision == cardian::rest::Decision::StayUp && healing == nullptr && (want || withPlayer || ordered))
+    {
+        std::vector<std::string> held;
+        const auto hold = [&](const bool on, const char* why)
+        {
+            if (on)
+            {
+                held.emplace_back(why);
+            }
+        };
+        hold(Acting(), "acting");
+        hold(noRecovery, "she cannot recover");
+        hold(POwner->PAI->IsEngaged(), "engaged");
+        hold(urgent, "first aid calls her");
+        hold(!deliberate && unsafe, "danger");
+        hold(!deliberate && m_Retreat, "the retreat");
+        hold(!deliberate && m_Mode == Mode::Travel, "travelling");
+        hold(!deliberate && HasQueuedOrder(), "an order queued");
+        hold(!deliberate && HasPlayersOrder(), "the player's order");
+        hold(!deliberate && rowRest && fightOn(), "the party's fight");
+        hold(!stationary && POwner->PAI->PathFind->IsFollowingPath(), "walking a path");
+        hold(!stationary && !POwner->PAI->PathFind->IsFollowingPath(), "her spot is off from where she stands");
+        hold(m_Rest.standPending, "a stand pending");
+        hold(now < m_Rest.actAfter, "still getting up");
+        if (held.empty())
+        {
+            held.emplace_back("nothing named");
+        }
+        const auto why = fmt::format("{}", fmt::join(held, ", "));
+        if (why != m_RestHeldWhy)
+        {
+            m_RestHeldWhy = why;
+            ShowInfoFmt("rest: {} stays up with a reason to kneel ({}): {}", POwner->getName(),
+                        ordered ? "an order" : withPlayer ? "with the player" : "her MP", why);
+        }
+    }
+    else if (!m_RestHeldWhy.empty())
+    {
+        m_RestHeldWhy.clear();
+    }
     if (decision == cardian::rest::Decision::Stand)
     {
         StandFromRest(urgent ? advice->why : unsafe && !deliberate ? "danger" : noRecovery ? "recovery blocked" :
