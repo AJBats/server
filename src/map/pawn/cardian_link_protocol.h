@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 36: the server's yes-or-no questions,
+// compatible, the user, 2026-09-14). 37: a cardian's rest on her queue line,
+// her own (CL_AK_OWN_REST) or his order's (CL_AK_REST), and CANCEL calls it
+// off; 36: the server's yes-or-no questions,
 // OFFER and OFFER_ANSWER (the party's warp); 35: the Mog House, JOB_CHANGE, the
 // roster's CL_MEMBER_BY_MOG_HOUSE, and JOBS' unlocked; 34: the orders' Dia or Bio (ORDERS'
 // diaBio, CL_HUNT_DIA_BIO); 33: the gambit messages name the player
@@ -77,7 +79,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 36 };
+enum { CL_PROTOCOL = 37 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -269,6 +271,7 @@ enum
     CL_AK_REST        = 10, // id: rest until this percent of HP and MP
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
+    CL_AK_OWN_REST    = 13, // a cardian kneeling on her own -- her MP's pacing, her Rest row, beside the resting player -- no order of his; on her queue line only
 };
 
 typedef struct cl_action

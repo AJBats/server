@@ -1563,7 +1563,7 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(ask, PController->CancelQueuedOrder() ? CL_S_OK : CL_S_NOTHING_QUEUED);
+            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() ? CL_S_OK : CL_S_NOTHING_QUEUED);
         }
 
         // The command window: one action now, on a target index in her zone (0 =

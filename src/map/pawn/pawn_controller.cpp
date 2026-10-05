@@ -1787,6 +1787,13 @@ auto CPawnController::QueueLine() const -> cl_queue
         line.action         = pawn::actionOfKey(m_QueuedOrder->first);
         line.target         = PTarget != nullptr ? PTarget->targid : uint16{ 0 };
     }
+    else if (m_RestLineKind != CL_AK_NONE)
+    {
+        // Nothing queued, a rest under way: his order's, by its percent, or
+        // her own (#256)
+        line.action = cl_action{ m_RestLineKind, 0, static_cast<uint16_t>(m_RestLineKind == CL_AK_REST ? m_RestOrder.percent : 0) };
+        line.target = POwner->targid;
+    }
     return line;
 }
 

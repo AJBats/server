@@ -1,4 +1,5 @@
 // Cardian: one lifecycle for the tactician's MP pacing (her marked Rest row), a plain Rest row, Rest With Player, town kneeling and the player's rest order.
+#include "cardian_link.h"
 #include "pawn_controller.h"
 #include "pawn.h"
 #include "rest_policy.h"
@@ -39,6 +40,19 @@ void CPawnController::EndRestOrder(const std::string_view why)
     }
     ShowInfoFmt("rest: {}'s {} to rest until {}% ends ({})", POwner->getName(), m_RestOrder.byRow ? "Rest row" : "order", m_RestOrder.percent, why);
     m_RestOrder = {};
+}
+
+auto CPawnController::CallOffRest() -> bool
+{
+    if (m_RestLineKind == CL_AK_NONE)
+    {
+        return false;
+    }
+    const double holdOff = settings::get<float>("pawn.REST_CALL_OFF_SECONDS");
+    m_RestCalledOffUntil = restSeconds(timer::now()) + holdOff;
+    EndRestOrder("the player called it off");
+    ShowInfoFmt("rest: {}'s rest is called off by the player; her own kneels wait {:.0f} s", POwner->getName(), holdOff);
+    return true;
 }
 
 auto CPawnController::RestAllowsAction() const -> bool
@@ -109,7 +123,10 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         }
         return *fightSeen;
     };
-    const bool followEnabled = m_Gambits->MasterOn() && RestsWithPlayer() && leader != nullptr;
+    // Called off by the player (CallOffRest): her own kneels wait, so she
+    // stays with the party; his rest order still stands her down
+    const bool calledOff     = now < m_RestCalledOffUntil;
+    const bool followEnabled = m_Gambits->MasterOn() && RestsWithPlayer() && leader != nullptr && !calledOff;
     const bool follow = m_RestFollow.request(followEnabled, leader != nullptr && leader->animation == xi::Animation::Healing,
                                            now, std::chrono::duration<double>(ReactionBeat()).count());
     const bool nearLeader = leader != nullptr && (Staked() || distance(POwner->loc.p, leader->loc.p) < 10.0f);
@@ -174,7 +191,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     {
         m_SaidMpShortFor = 0;
     }
-    const bool want   = townKneel || kneel || (support && place != nullptr && healing != nullptr && mpMissing);
+    const bool want   = !calledOff && (townKneel || kneel || (support && place != nullptr && healing != nullptr && mpMissing));
     const int  ticks  = healing != nullptr ? healing->GetElapsedTickCount() : 0;
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
     m_RestTicks       = ticks;
@@ -196,7 +213,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // solo farmer's rest, half HP or low MP
     const bool mayKneel = !Acting() && !noRecovery && !POwner->isDead() && !POwner->PAI->IsEngaged() &&
                           !m_Retreat && m_Mode != Mode::Travel && !HasQueuedOrder() && !HasPlayersOrder();
-    const bool rowDue   = RestRowDue() && mayKneel;
+    const bool rowDue   = RestRowDue() && mayKneel && !calledOff;
     bool unsafe = false;
     if (want || withPlayer || healing != nullptr || rowDue || (m_RestOrder.active() && m_RestOrder.byRow))
     {
@@ -331,6 +348,24 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         }
     }
     const bool down = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+
+    // Her queue line's rest: his order while it stands, her own while she
+    // kneels without one; told to her player as it changes, when nothing is
+    // queued to show instead (#256)
+    const bool  hisOrder = m_RestOrder.active() && !m_RestOrder.byRow;
+    const uint8 restLine = hisOrder ? uint8{ CL_AK_REST } : down ? uint8{ CL_AK_OWN_REST } : uint8{ CL_AK_NONE };
+    if (restLine != m_RestLineKind)
+    {
+        m_RestLineKind = restLine;
+        if (!m_QueuedOrder.has_value())
+        {
+            if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+            {
+                cardian::link::send(owner, QueueLine());
+            }
+        }
+    }
+
     if (down && deferPosition && !stationary && !m_RestDeferredPosition)
     {
         m_RestDeferredPosition = true;

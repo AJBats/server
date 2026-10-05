@@ -163,6 +163,7 @@ TEST_CASE("Cardian link: a cardian's order key and its action fields cross both 
     CHECK(pawn::actionOfKey("rest:0").kind == CL_AK_NONE);
     CHECK(pawn::keyOfAction(cl_action{ CL_AK_CLIENT, 0, 2 }).empty());
     CHECK(pawn::keyOfAction(cl_action{ CL_AK_HEAL, 0, 0 }).empty());
+    CHECK(pawn::keyOfAction(cl_action{ CL_AK_OWN_REST, 0, 0 }).empty()); // her own rest is shown, never ordered
     CHECK(pawn::keyOfAction(cl_action{ CL_AK_REST, 0, 101 }).empty());
     CHECK(pawn::keyOfAction(cl_action{ 99, 0, 0 }).empty());
 }

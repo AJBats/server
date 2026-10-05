@@ -377,6 +377,11 @@ public:
     // player can take the order back.
     auto QueueLine() const -> cl_queue;
     auto CancelQueuedOrder() -> bool;
+    // The player's cancel on her queue line with nothing queued: a rest she
+    // is on -- her own, or his order's -- called off. She stands, and her own
+    // kneels are held off for pawn.REST_CALL_OFF_SECONDS, so she stays with
+    // the party. False when she is not resting
+    auto CallOffRest() -> bool;
 
     // An order waits on the player's behalf: it ends with the tie to him, as a trek
     // does (pawn::leftParty). Says whether one was queued. `formerOwner` is told her
@@ -1174,6 +1179,8 @@ private:
     double m_RestChatAt = 0.0;
     uint32 m_KneelHeldFor = 0;   // the member a kneel would put at risk, as last said; 0: none
     std::string m_RestHeldWhy;   // what keeps her up with a reason to kneel, as last said; empty: nothing
+    uint8 m_RestLineKind = 0;           // the rest her queue line shows: CL_AK_NONE, CL_AK_REST (his order) or CL_AK_OWN_REST
+    double m_RestCalledOffUntil = 0.0;  // restSeconds: her own kneels held off until then (CallOffRest)
     uint32 m_SaidMpShortFor = 0; // the fight's mob whose "My MP won't last" she has said
     // Magic aggro (#77): a cast of hers that costs MP is held where an
     // aggressive mob's magic detection would hear it, and while the hold

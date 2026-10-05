@@ -175,6 +175,11 @@ xi.settings.pawn =
     -- map.SPEED_LIMIT must be at least the catch-up speed or the clamp
     -- eats it (see the local overrides).
     FORMATION_CATCHUP_DISTANCE = 3.0,
+
+    -- A rest the player calls off from her queue line (OPEN_ISSUES #256):
+    -- she stands, and her own kneels -- her MP's pacing, her Rest row, Rest
+    -- With Player -- wait this many seconds, so she stays with the party
+    REST_CALL_OFF_SECONDS = 60,
     FORMATION_CATCHUP_SPEED    = 100, -- 5.9 yalms a second, as 118 was under the old step
 
     -- The courtesy: where a walk would cut straight through the player,
