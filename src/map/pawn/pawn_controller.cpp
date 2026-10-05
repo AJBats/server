@@ -5435,6 +5435,14 @@ auto CPawnController::OrderApproach() -> std::optional<Intent>
     return intent;
 }
 
+namespace
+{
+    // A walk order's end counts as reached this near: past the walker's "no
+    // forward step" arrival (1.5 y), so a point beside a wall she stops short
+    // of still counts
+    constexpr float kRouteReached = 1.6f;
+} // namespace
+
 auto CPawnController::RouteWalked() const -> bool
 {
     const auto point = pawn::walkOrderOf(POwner->id);
@@ -5442,9 +5450,7 @@ auto CPawnController::RouteWalked() const -> bool
     {
         return true;
     }
-    // 1.6 y: past the walker's "no forward step" arrival (1.5 y), so a point
-    // beside a wall she stops short of still counts as reached
-    return !pawn::routeFront(POwner->id).has_value() && distance(POwner->loc.p, *point) < 1.6f;
+    return !pawn::routeFront(POwner->id).has_value() && distance(POwner->loc.p, *point) < kRouteReached;
 }
 
 // The maneuver's tick: it lives as long as its driver looks through her --
@@ -5535,10 +5541,21 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
         m_LastWalkStep = now; // standing on the ring: the next step is a period's worth, not the time she stood
         return;
     }
+    // Kneeling, she stays down on an end point the route already counts as
+    // reached (RouteWalked): a ring that has not left her, its point snapped
+    // to the mesh a little off her feet, is no reason to stand, and a rest
+    // ordered there finds her still kneeling
+    const bool kneeling = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    if (kneeling && !crumb.has_value() && away < kRouteReached)
+    {
+        PPathFind->Clear();
+        m_WalkPoint    = *point;
+        m_LastWalkStep = now;
+        return;
+    }
     // Kneeling, she rises before she walks: the path moves her, and only
-    // Move's stand would otherwise lift her off her knees. On her point she
-    // stays down (above)
-    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    // Move's stand would otherwise lift her off her knees
+    if (kneeling)
     {
         EndRestOrder("a walk order");
         StandFromRest("a walk order");
