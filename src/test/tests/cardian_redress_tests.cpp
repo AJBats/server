@@ -1,0 +1,97 @@
+// Cardian: a wild cardian re-dressed at the auction house (pawn/redress.h):
+// when the map asks the census, what the census's skill values raise, and
+// which pieces leave her bag.
+#include "pawn/redress_math.h"
+
+#include <catch2/catch_test_macros.hpp>
+
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <set>
+#include <vector>
+
+using namespace cardian::redress;
+
+TEST_CASE("Redress: a body never dressed at a counter asks for the level she has", "[cardian][redress]")
+{
+    CHECK(shouldAsk(12, std::nullopt));
+    CHECK(shouldAsk(1, std::nullopt));
+    CHECK_FALSE(shouldAsk(0, std::nullopt)); // no level read: nothing to ask for
+}
+
+TEST_CASE("Redress: a body dressed at a counter asks again only once she has risen past it", "[cardian][redress]")
+{
+    CHECK_FALSE(shouldAsk(20, Record{ 20, State::Done }));
+    CHECK_FALSE(shouldAsk(19, Record{ 20, State::Done })); // a level lost to death: never a step down
+    CHECK(shouldAsk(21, Record{ 20, State::Done }));
+}
+
+TEST_CASE("Redress: a request on its way is never asked over", "[cardian][redress]")
+{
+    CHECK_FALSE(shouldAsk(25, Record{ 20, State::Asked }));
+    CHECK_FALSE(shouldAsk(25, Record{ 20, State::Ready }));
+}
+
+TEST_CASE("Redress: the row's state reads by its three words", "[cardian][redress]")
+{
+    CHECK(stateOf("asked") == State::Asked);
+    CHECK(stateOf("ready") == State::Ready);
+    CHECK(stateOf("done") == State::Done);
+    CHECK_FALSE(stateOf("").has_value());
+    CHECK_FALSE(stateOf("Done").has_value());
+}
+
+TEST_CASE("Redress: the census's skill values read as skill and tenths", "[cardian][redress]")
+{
+    const auto skills = parseSkills("1:520,3:488,25:120");
+    REQUIRE(skills.size() == 3);
+    CHECK(skills[0] == SkillValue{ 1, 520 });
+    CHECK(skills[1] == SkillValue{ 3, 488 });
+    CHECK(skills[2] == SkillValue{ 25, 120 });
+
+    CHECK(parseSkills("").empty());
+}
+
+TEST_CASE("Redress: a piece of the skill list that does not read is left out", "[cardian][redress]")
+{
+    const auto skills = parseSkills("1:520,,x:3,4:,7:70000,300:5,9:90,12 :4");
+    REQUIRE(skills.size() == 2);
+    CHECK(skills[0] == SkillValue{ 1, 520 });
+    CHECK(skills[1] == SkillValue{ 9, 90 });
+}
+
+TEST_CASE("Redress: skills are raised to the census's values, never lowered", "[cardian][redress]")
+{
+    std::array<uint16_t, 64> have{};
+    have[1]  = 600; // the game raised her sword past the census's point: it stands
+    have[3]  = 400;
+    have[25] = 120; // exactly there: nothing to write
+
+    const auto wanted = parseSkills("1:520,3:488,25:120,12:310");
+    const auto out    = raises(wanted, [&](const uint8_t skill)
+    {
+        return have[skill];
+    });
+
+    REQUIRE(out.size() == 2);
+    CHECK(out[0] == SkillValue{ 3, 488 });
+    CHECK(out[1] == SkillValue{ 12, 310 });
+}
+
+TEST_CASE("Redress: the pieces the census had issued read as item ids", "[cardian][redress]")
+{
+    CHECK(parseIds("16465,12505,0,abc,12505") == std::set<uint16_t>{ 12505, 16465 });
+    CHECK(parseIds("").empty());
+}
+
+TEST_CASE("Redress: only a census piece the new plan has no place for leaves her bag", "[cardian][redress]")
+{
+    const std::set<uint16_t> plan{ 16535, 12576 };   // the new plan: a sword and a body piece
+    const std::set<uint16_t> issued{ 16465, 12576 }; // what the census had issued her before
+
+    CHECK(dropsPiece(16465, false, plan, issued));       // her old dagger: issued, out of the plan, unworn
+    CHECK_FALSE(dropsPiece(16465, true, plan, issued));  // ... but never one she still wears
+    CHECK_FALSE(dropsPiece(12576, false, plan, issued)); // a piece the new plan keeps
+    CHECK_FALSE(dropsPiece(13014, false, plan, issued)); // a piece somebody else gave her
+}

@@ -116,6 +116,8 @@ namespace cardian::link
     X(SET_PARTY_ROLE, cl_set_party_role) \
     X(QUEUE, cl_queue)           \
     X(NOTE, cl_note)             \
+    X(OFFER, cl_offer)           \
+    X(OFFER_ANSWER, cl_offer_answer) \
     X(MANEUVER_STATE, cl_maneuver_state) \
     X(WALK_TAKEN, cl_walk_taken) \
     X(PAUSE, cl_pause)           \

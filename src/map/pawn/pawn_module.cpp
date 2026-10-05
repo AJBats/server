@@ -30,7 +30,9 @@
 #include "gambit_text.h"
 #include "link_api.h"
 #include "live_controller.h"
+#include "offers.h"
 #include "pawn_gambits.h"
+#include "redress.h"
 #include "spell_bank.h"
 #include "tactics.h"
 #include "view.h"
@@ -254,6 +256,9 @@ class PawnModule : public CPPModule
         // date here: dbtool's update skips module SQL on a database it
         // thinks current
         pawn::ensureOrdersTable();
+        // The census's answers for a wild cardian dressed at the auction
+        // house, likewise (redress.h)
+        pawn::redress::ensureTable();
         // The cardian API's messages on the Cardian Link (link_api.cpp), and
         // the Lua libraries two of them are answered from
         pawn::linkapi::registerHandlers();
@@ -598,6 +603,83 @@ class PawnModule : public CPPModule
             return PChar != nullptr && pawn::isPawn(PChar);
         };
 
+        // The party's warp (modules/cardian/lua/party_warp.lua): a warp the
+        // player has picked, not yet bought, held while his addon asks him
+        // whether to take the cardians beside him (offers.h). The purchase is
+        // the override's own numbers, kept as they are for his answer. Whether
+        // the question went to him: false with no addon bound to ask, and the
+        // override buys the warp as upstream would
+        ::lua["CBaseEntity"]["cardianOfferPartyWarp"] = [](CLuaBaseEntity* PLuaBaseEntity, const sol::table& purchase, const sol::table& cardians, const uint32 seconds) -> bool
+        {
+            auto* PChar = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || pawn::isPawn(PChar))
+            {
+                return false;
+            }
+            pawn::offers::Offer offer;
+            offer.kind = CL_OFFER_PARTY_WARP;
+            for (std::size_t i = 0; i < offer.args.size(); ++i)
+            {
+                const auto value = purchase.get<sol::object>(static_cast<int>(i + 1));
+                offer.args[i]           = value.get_type() == sol::type::number ? value.as<uint32>() : 0;
+            }
+            for (const auto& pair : cardians)
+            {
+                if (pair.second.get_type() == sol::type::number)
+                {
+                    offer.members.push_back(pair.second.as<uint32>());
+                }
+            }
+            return pawn::offers::put(PChar, std::move(offer), std::chrono::seconds(seconds));
+        };
+
+        // ...and his answer, or the question lapsing as his no
+        // (xi.cardian.partyWarp.resolve): a yes buys the warp and takes the
+        // cardians with him; a no buys nothing and moves nobody
+        pawn::offers::setResolver(CL_OFFER_PARTY_WARP, [](CCharEntity* PPlayer, const pawn::offers::Offer& offer, const bool yes)
+        {
+            const sol::object cardian = ::lua["xi"]["cardian"];
+            sol::object       resolve;
+            if (cardian.get_type() == sol::type::table)
+            {
+                const sol::object partyWarp = cardian.as<sol::table>()["partyWarp"];
+                if (partyWarp.get_type() == sol::type::table)
+                {
+                    resolve = partyWarp.as<sol::table>()["resolve"];
+                }
+            }
+            if (resolve.get_type() != sol::type::function)
+            {
+                ShowErrorFmt("pawn: xi.cardian.partyWarp.resolve is not loaded (modules/cardian/lua/party_warp.lua); {}'s warp is not bought", PPlayer->getName());
+                return;
+            }
+            auto purchase = ::lua.create_table();
+            for (const auto value : offer.args)
+            {
+                purchase.add(value);
+            }
+            auto ids = ::lua.create_table();
+            for (const auto id : offer.members)
+            {
+                ids.add(id);
+            }
+            const auto result = resolve.as<sol::protected_function>()(CLuaBaseEntity(PPlayer), yes, purchase, ids);
+            if (!result.valid())
+            {
+                const sol::error err = result;
+                ShowErrorFmt("pawn: {}'s warp failed: {}", PPlayer->getName(), err.what());
+                return;
+            }
+            if (yes)
+            {
+                ShowInfoFmt("pawn: {} buys the warp, {} of his party with him", PPlayer->getName(), result.get_type(0) == sol::type::number ? result.get<uint32>(0) : 0);
+            }
+            else
+            {
+                ShowInfoFmt("pawn: {}'s warp is called off: nothing bought, nobody moves", PPlayer->getName());
+            }
+        });
+
         // The steer tick (pawn/view.h, every kSteerPeriodMs): every cardian
         // under a walk order takes her step
         cardian::view::setSteerTick([]()
@@ -650,6 +732,8 @@ class PawnModule : public CPPModule
     // Formation latency instrumentation: when did the client's own position
     // packet last arrive for this character (compared against the link's
     // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG).
+    // His walk into a zone line, so his zone change that follows is read as
+    // a walk his cardians follow, not magic they hold for (pawn::playerZoning).
     // And the game's own party invite (UniqueNo is the invitee's charid
     // whether she was targeted or named): one of the world's adventurers
     // is refused and the packet dropped, a faded cardian of the player's
@@ -666,6 +750,10 @@ class PawnModule : public CPPModule
         if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
         {
             pawn::notePositionPacket(PChar);
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_MAPRECT))
+        {
+            pawn::noteZoneLine(PChar);
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_ACTION))
         {
