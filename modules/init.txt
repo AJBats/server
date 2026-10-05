@@ -60,3 +60,5 @@ cardian/lua/era_vendors.lua
 cardian/lua/exp_spread.lua
 # CARDIAN: the party warps with the player from an outpost teleporter or vendor
 cardian/lua/party_warp.lua
+# CARDIAN: a grant of major progression reaches the whole account (ROADMAP N)
+cardian/lua/account_wide.lua

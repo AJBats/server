@@ -39,6 +39,15 @@ xi.settings.cardian =
     -- does. false: the game carries on from the second it stopped.
     CLOCK_RUNS_OFFLINE = true,
 
+    -- A player's major progression is his account's (ROADMAP N;
+    -- src/map/pawn/account_wide.cpp): the support job, the level cap, the
+    -- gate crystals and Limit Breaker, and the outposts' warps any character
+    -- of an account earns are copied to every character of it. A copy is for
+    -- good, so false stops further copies and takes back none. The maps are
+    -- shared without being copied, each player's choice in the addon's
+    -- Settings (Shared maps), and are not this setting's.
+    ACCOUNT_WIDE_PROGRESSION = true,
+
     -- The exp formula (RESEARCH §15; modules/cardian/lua/exp_spread.lua).
     -- true: Cardian's rule. While the party's level spread -- highest less
     -- lowest among the members counted for a kill -- is within

@@ -35,6 +35,7 @@
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "account_wide.h"
 #include "pawn_items.h"
 #include "view.h"
 
@@ -1616,6 +1617,13 @@ namespace pawn::linkapi
             reply.finish(answer, status);
         }
 
+        // The player's preferences the server applies to him (account_wide.h)
+        void prefs(CCharEntity* PChar, const cl_prefs& ask, Reply& reply)
+        {
+            pawn::accountwide::setSharedMaps(PChar, ask.sharedMaps != 0);
+            reply.finish(ask, CL_S_OK);
+        }
+
         // A KO'd cardian to his home point, where she waits
         void homePoint(CCharEntity* PChar, const cl_homepoint& ask, Reply& reply)
         {
@@ -2298,6 +2306,7 @@ namespace pawn::linkapi
         handle<cl_wait>(wait);
         handle<cl_rescue>(rescue);
         handle<cl_homepoint>(homePoint);
+        handle<cl_prefs>(prefs);
         handle<cl_cancel>(cancel);
         handle<cl_do>(doAction);
         handle<cl_queues>(queues);

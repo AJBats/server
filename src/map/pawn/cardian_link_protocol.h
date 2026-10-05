@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 40: QUEUE's running, the order she is
+// compatible, the user, 2026-09-14). 41: PREFS, the player's preferences the
+// server applies to him (Shared maps); 40: QUEUE's running, the order she is
 // carrying out now; 39: Use, Give & use's use and Rescue join her line
 // (CL_AK_RESCUE on it), and WALK's place, the camp's ring; 38: a cardian's queue four deep, QUEUE's
 // next[] behind its first command, and QUEUE_FULL; 37: a cardian's rest on her queue line,
@@ -82,7 +83,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 40 };
+enum { CL_PROTOCOL = 41 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -300,6 +301,7 @@ enum
     CL_T_STATS     = 0x0006,
     CL_T_WHOAMI    = 0x0007,
     CL_T_UNBOUND   = 0x0008,
+    CL_T_PREFS     = 0x0009,
     // 0x00FF was LEGACY_CD, which carried the text protocol's lines (15 to 27)
 };
 
@@ -380,6 +382,16 @@ typedef struct cl_unbound
 {
     cl_header h;
 } cl_unbound;
+
+// The player's preferences the server applies to him, from his addon after
+// each bind and whenever one changes; without an addon each is the server's
+// default. Answered by the outcome.
+typedef struct cl_prefs
+{
+    cl_header h;
+    uint8_t   sharedMaps; // 1 (the default): the maps any character of his account holds are shown to him too; 0: only his own
+    uint8_t   spare[3];
+} cl_prefs;
 
 // ---- 0x01xx: a cardian's state --------------------------------------------
 //
