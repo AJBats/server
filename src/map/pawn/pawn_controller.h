@@ -623,7 +623,8 @@ private:
         bool                 fighting   = false;   // in danger, hold at the rim (else re-seat the slot)
         bool                 vet        = true;    // false: the party waved the company through
         bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
-        bool                 seat       = false;   // a walk to her spot: failing it pins her where she stands (HerdPin)
+        bool                 seat       = false;   // a walk to a seat (her herd spot, the mob's back, the camp tank's spot): the mover keeps its path
+        bool                 herdSpot   = false;   // a walk to her herd spot: failing it pins her where she stands (HerdPin)
         bool                 comesIn    = false;   // the mob she attends is coming in on her: a move no rest puts off
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
@@ -762,6 +763,8 @@ private:
     auto HerdPoint(const CBattleEntity* PMob, float bearing) const -> position_t; // her spot at a bearing
     void NoteHerd(const CBattleEntity* PMob, float bearing, bool inReach, const position_t& point);
     void HerdPin(std::string_view why);                                         // a bad spot: she holds where she stands a while
+    auto HerdPinned(const CBattleEntity* PMob) const -> bool;                   // pinned on this mob now
+    auto HerdAvoids(const CBattleEntity* PMob, float bearing) -> bool;          // a bearing near the spot that failed her lately: she holds instead
     auto HerdDeadband() const -> float;                                         // how far off her spot she stands: HERD_MOVE_MIN to set off, the arrival once walking
     static constexpr float kSpotArrive = 0.3f;                                  // the spot mover's arrival
     auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false, bool ownSeat = true) -> Intent; // the spot mover: stand on it, hop to it, keep the path, or path round the mob's side; not her own herd spot (the walk for Sneak Attack): her herd bookkeeping left alone
@@ -1043,8 +1046,9 @@ private:
 
     // Her spot in the herd on the mob she fights: the bearing the herd
     // pass gave her, whether she has taken it (in reach and on it), whether
-    // she is walking to it in reach, and how long a bad spot pins her where
-    // she stands. Then the way round to it, and where it was when the path
+    // she is walking to it in reach and since when, how long a bad spot
+    // pins her where she stands, and the bearing that failed her, avoided
+    // a while. Then the way round to it, and where it was when the path
     // there was planned
     struct HerdSpot
     {
@@ -1052,7 +1056,10 @@ private:
         float             bearing = 0.0f;
         bool              taken   = false;
         bool              walking = false;
+        timer::time_point walkingSince{};
         timer::time_point pinnedUntil{};
+        float             blocked = 0.0f;
+        timer::time_point blockedUntil{};
     };
     HerdSpot   m_Herd;
     bool       m_SeatVia = false;

@@ -26,7 +26,6 @@
 #include <cstddef>
 #include <numbers>
 #include <numeric>
-#include <optional>
 #include <vector>
 
 // The melee ring round a mob as a herd (ROADMAP A item 9): every body in
@@ -77,6 +76,12 @@ namespace cardian::herd
         return std::fmod(std::fmod(deg, 360.0f) + 360.0f, 360.0f);
     }
 
+    // The same, in whole degrees for a log line: 0 to 359, never 360
+    inline auto compassRounded(const float bearing) -> int
+    {
+        return static_cast<int>(std::lround(compassDegrees(bearing))) % 360;
+    }
+
     // A body on the ring: where it is (or is going), whether the pass may
     // move it at all, and whether it has settled in place -- a settled body
     // gives way only when the newcomers cannot make room by themselves
@@ -99,41 +104,41 @@ namespace cardian::herd
         return order;
     }
 
-    // Neighbours pushed apart to at least `gap`, in the given order, the
-    // pinned never moved: a pair both free share the push, a pair with one
-    // pinned the other takes it all. The ring is unrolled along the order
-    // first, so a push that carries a body past its neighbour is undone by
-    // the next pass rather than read as a lap. Repeated until nothing is
-    // too close; nullopt when that cannot be met (a free body pinned in
-    // between two bodies closer than twice the gap pushes to and fro)
-    inline auto pushApart(const std::vector<float>& bearings, const std::vector<std::size_t>& order, const std::vector<bool>& pinned, const float gap) -> std::optional<std::vector<float>>
+    // Neighbours pushed apart to at least `gap`, along a line of positions
+    // already unrolled in ring order (`wraps`: the last one's neighbour is
+    // the first, a lap on). A pair both free share the push, a pair with
+    // one pinned the other takes it all. A pass that carries a body past
+    // its neighbour is undone by the next, so order holds. False when the
+    // gaps cannot be met: a free body boxed in pushes to and fro, and a
+    // pair too close with both pinned fails when `pinnedPairFails` (the
+    // settled are pinned only on a first try)
+    inline auto pushApart(std::vector<float>& pos, const std::vector<bool>& pin, const float gap, const bool wraps, const bool pinnedPairFails) -> bool
     {
-        const std::size_t n = bearings.size();
+        const std::size_t n = pos.size();
         if (n < 2)
         {
-            return bearings;
+            return true;
         }
-        std::vector<float> pos(n);
-        std::vector<bool>  pin(n);
-        pos[0] = wrap(bearings[order[0]]);
-        pin[0] = pinned[order[0]];
-        for (std::size_t k = 1; k < n; ++k)
-        {
-            pos[k] = pos[k - 1] + ccw(bearings[order[k - 1]], bearings[order[k]]);
-            pin[k] = pinned[order[k]];
-        }
-        constexpr float kSlack = 1e-4f;
-        bool            met    = false;
-        for (int pass = 0; pass < 256 && !met; ++pass)
+        constexpr float   kSlack = 1e-4f;
+        const std::size_t pairs  = wraps ? n : n - 1;
+        for (int pass = 0; pass < 256; ++pass)
         {
             bool moved = false;
-            for (std::size_t a = 0; a < n; ++a)
+            for (std::size_t a = 0; a < pairs; ++a)
             {
                 const std::size_t c    = (a + 1) % n;
                 const float       d    = c == 0 ? pos[0] + kTau - pos[n - 1] : pos[c] - pos[a];
                 const float       need = gap - d;
-                if (need <= kSlack || (pin[a] && pin[c]))
+                if (need <= kSlack)
                 {
+                    continue;
+                }
+                if (pin[a] && pin[c])
+                {
+                    if (pinnedPairFails)
+                    {
+                        return false;
+                    }
                     continue;
                 }
                 if (!pin[a] && !pin[c])
@@ -151,18 +156,12 @@ namespace cardian::herd
                 }
                 moved = true;
             }
-            met = !moved;
+            if (!moved)
+            {
+                return true;
+            }
         }
-        if (!met)
-        {
-            return std::nullopt;
-        }
-        std::vector<float> out(n);
-        for (std::size_t k = 0; k < n; ++k)
-        {
-            out[order[k]] = wrap(pos[k]);
-        }
-        return out;
+        return false;
     }
 
     // The gap the pass keeps: the one asked for, shrunk when more bodies
@@ -173,47 +172,110 @@ namespace cardian::herd
         return bodies == 0 ? gap : std::min(gap, 0.95f * kTau / static_cast<float>(bodies));
     }
 
-    // The spacing pass: every body at least `gap` from its neighbours, the
-    // order round the mob kept. The newcomers make room first, the settled
-    // bodies held; only what they cannot fix moves the settled ones. Fixed
-    // bodies never move, and when the gaps cannot be met round them nobody
-    // moves: a ring that stays put beats one that hops. One bearing per
-    // body, in the bodies' order
-    inline auto spread(const std::vector<Body>& bodies, const float gap) -> std::vector<float>
+    // One stretch of the ring spaced: `members` (indices into the bodies,
+    // in ring order) unrolled from the first, a lap at most. With `ends`,
+    // the first and last are fixed bodies that bound it and never move.
+    // The newcomers make room first, the settled held; only what they
+    // cannot fix moves the settled. Written into `out` when it can be met;
+    // left as it is when it cannot
+    inline void spaceStretch(const std::vector<Body>& bodies, const std::vector<std::size_t>& members, const bool ends, const float gap, std::vector<float>& out)
     {
-        std::vector<float> bearings;
-        bearings.reserve(bodies.size());
-        for (const auto& b : bodies)
+        const std::size_t  n = members.size();
+        std::vector<float> pos(n);
+        pos[0] = wrap(bodies[members[0]].bearing);
+        for (std::size_t k = 1; k < n; ++k)
         {
-            bearings.push_back(wrap(b.bearing));
+            pos[k] = pos[k - 1] + ccw(wrap(bodies[members[k - 1]].bearing), wrap(bodies[members[k]].bearing));
         }
-        if (bodies.size() < 2)
+        if (ends && n >= 2 && pos[n - 1] <= pos[0])
         {
-            return bearings;
+            pos[n - 1] = pos[0] + kTau; // a lone fixed body bounds its own lap
         }
-        const auto  order = ringOrder(bodies);
-        const float g     = effectiveGap(bodies.size(), gap);
-
-        std::vector<bool> heldFirst(bodies.size());
-        std::vector<bool> fixedOnly(bodies.size());
-        for (std::size_t i = 0; i < bodies.size(); ++i)
+        // Between two fixed bodies the stretch must hold every gap
+        if (ends && pos[n - 1] - pos[0] < static_cast<float>(n - 1) * gap - 1e-4f)
         {
-            heldFirst[i] = bodies[i].fixed || bodies[i].settled;
-            fixedOnly[i] = bodies[i].fixed;
+            return;
         }
-        if (auto first = pushApart(bearings, order, heldFirst, g); first.has_value())
+        std::vector<bool> settledHeld(n);
+        std::vector<bool> fixedHeld(n);
+        for (std::size_t k = 0; k < n; ++k)
         {
-            return *first;
+            const bool end = ends && (k == 0 || k == n - 1);
+            fixedHeld[k]   = end;
+            settledHeld[k] = end || bodies[members[k]].settled;
         }
-        if (auto second = pushApart(bearings, order, fixedOnly, g); second.has_value())
+        const std::size_t first = ends ? 1 : 0;
+        const std::size_t last  = ends ? n - 1 : n;
+        for (const bool settledFirst : { true, false })
         {
-            return *second;
+            auto tried = pos;
+            if (pushApart(tried, settledFirst ? settledHeld : fixedHeld, gap, !ends, settledFirst))
+            {
+                for (std::size_t k = first; k < last; ++k)
+                {
+                    out[members[k]] = wrap(tried[k]);
+                }
+                return;
+            }
         }
-        return bearings;
     }
 
-    // The evening-out step: each free body turned towards the middle of
-    // the gap between its neighbours, by at most `step`, and not at all
+    // The spacing pass: every body at least `gap` from its neighbours, the
+    // order round the mob kept and fixed bodies never moved. The ring is
+    // spaced stretch by stretch between fixed bodies, so a stretch that
+    // cannot be met -- a body boxed in between two fixed ones -- stays as
+    // it is without holding the rest; with no fixed body it is one ring.
+    // One bearing per body, in the bodies' order
+    inline auto spread(const std::vector<Body>& bodies, const float gap) -> std::vector<float>
+    {
+        std::vector<float> out;
+        out.reserve(bodies.size());
+        for (const auto& b : bodies)
+        {
+            out.push_back(wrap(b.bearing));
+        }
+        const std::size_t n = bodies.size();
+        if (n < 2)
+        {
+            return out;
+        }
+        const auto  order = ringOrder(bodies);
+        const float g     = effectiveGap(n, gap);
+
+        std::vector<std::size_t> fixedAt; // positions in ring order
+        for (std::size_t k = 0; k < n; ++k)
+        {
+            if (bodies[order[k]].fixed)
+            {
+                fixedAt.push_back(k);
+            }
+        }
+        if (fixedAt.empty())
+        {
+            spaceStretch(bodies, order, false, g, out);
+            return out;
+        }
+        // Each stretch runs from one fixed body to the next round the ring,
+        // both ends included; a lone fixed body bounds a whole lap
+        for (std::size_t j = 0; j < fixedAt.size(); ++j)
+        {
+            const std::size_t from = fixedAt[j];
+            const std::size_t to   = fixedAt.size() == 1 ? from + n : (j + 1 < fixedAt.size() ? fixedAt[j + 1] : fixedAt[0] + n);
+            std::vector<std::size_t> stretch;
+            for (std::size_t k = from; k <= to; ++k)
+            {
+                stretch.push_back(order[k % n]);
+            }
+            if (stretch.size() > 2)
+            {
+                spaceStretch(bodies, stretch, true, g, out);
+            }
+        }
+        return out;
+    }
+
+    // The evening-out step: each free body turned half way towards the
+    // middle of the gap between its neighbours, by at most `step`, and not at all
     // when it is within `minMove` of it. A body alone has nowhere to go;
     // a body with one neighbour heads for the far side from it. One
     // bearing per body, in the bodies' order
@@ -242,7 +304,9 @@ namespace cardian::herd
             const std::size_t q      = order[(k + 1) % n];
             const float       before = ccw(wrap(bodies[p].bearing), wrap(bodies[i].bearing));
             const float       after  = n == 2 ? kTau - before : ccw(wrap(bodies[i].bearing), wrap(bodies[q].bearing));
-            const float       delta  = (after - before) / 2.0f;
+            // Half the way to the middle: every body steps at once, from
+            // where they all stood, and a whole step overshoots and swings
+            const float       delta  = (after - before) / 4.0f;
             if (std::abs(delta) < minMove)
             {
                 continue;

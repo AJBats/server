@@ -197,9 +197,10 @@ xi.settings.pawn =
     COURTESY_WAKE_RUN      = 8.0,
     COURTESY_WAKE_STANDING = 2.0,
 
-    -- The step back: a mob walks onto its target's exact coordinates and
-    -- stops there (upstream's approach since the 2026-06 pathfind
-    -- refactor), so a cardian it targets ends up under its feet. Once it
+    -- The step back, off by MELEE_STEP_BACK below: a mob used to walk onto
+    -- its target's exact coordinates and stop there (upstream's pathfind
+    -- refactor of 2026-06, until its stop-short fix of 2026-10), so a
+    -- cardian it targeted ended up under its feet. Once it
     -- has stood still for BACKOFF_DELAY seconds, a cardian nearer it than
     -- BACKOFF_TRIGGER yalms takes a backward step toward her preferred
     -- distance (up to 3 yalms, capped at melee reach less BACKOFF_MARGIN).
@@ -221,7 +222,7 @@ xi.settings.pawn =
     MELEE_BACKOFF_COOLDOWN = 2.0,
 
     -- The herd (ROADMAP A item 9): every melee cardian on a mob stands at
-    -- a bearing from it in world terms, 3 y out inside its reach, so the
+    -- a bearing from it in world terms, up to 3 y out inside its reach, so the
     -- mob turning moves nobody. Mobs tow: out of reach she closes from
     -- where she is and takes the bearing she arrives on. One pass per mob
     -- spaces the party's melee round it, the Tank and the player held where

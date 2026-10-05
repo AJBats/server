@@ -82,6 +82,7 @@ TEST_CASE("herd: a bearing reads as the in-game map does, north at 0 and clockwi
     CHECK_THAT(compassDegrees(deg(90.0f)), WithinAbs(0.0f, 0.01f));        // north (+z)
     CHECK_THAT(compassDegrees(deg(180.0f)), WithinAbs(270.0f, 0.01f));     // west
     CHECK_THAT(compassDegrees(deg(270.0f)), WithinAbs(180.0f, 0.01f));     // south
+    CHECK(compassRounded(deg(90.2f)) == 0);                                // a hair west of north rounds to 0, never 360
     CHECK_THAT(bearingOf(0.0f, 0.0f, 0.0f, 5.0f), WithinAbs(deg(90.0f), 0.0001f));
     CHECK_THAT(shortest(deg(350.0f), deg(10.0f)), WithinAbs(deg(20.0f), 0.0001f));
     CHECK_THAT(shortest(deg(10.0f), deg(350.0f)), WithinAbs(deg(-20.0f), 0.0001f));
@@ -175,4 +176,59 @@ TEST_CASE("herd: the even step turns a body towards the middle of its gap, a ste
     // A body alone has nowhere to go
     out = evenStep({ loose(deg(45.0f)) }, deg(20.0f), deg(10.0f));
     CHECK_THAT(out[0], WithinAbs(deg(45.0f), 0.0001f));
+}
+
+TEST_CASE("herd: two settled too close are pushed apart, as a settled one by a fixed one", "[cardian][herd]")
+{
+    auto out = spread({ settledAt(0.0f), settledAt(deg(10.0f)) }, deg(40.0f));
+    CHECK_THAT(ccw(out[0], out[1]), WithinAbs(deg(40.0f), 0.001f));
+
+    // A Thief on the mob's back, fixed, onto a cardian settled there
+    out = spread({ fixedAt(0.0f), settledAt(deg(5.0f)) }, deg(40.0f));
+    CHECK_THAT(out[0], WithinAbs(0.0f, 0.0001f));
+    CHECK_THAT(out[1], WithinAbs(deg(40.0f), 0.001f));
+}
+
+TEST_CASE("herd: a body boxed in between two fixed ones stays, and the rest of the ring still spreads", "[cardian][herd]")
+{
+    const auto out = spread({ fixedAt(0.0f), fixedAt(deg(30.0f)), loose(deg(15.0f)), loose(deg(180.0f)), loose(deg(180.0f)) }, deg(40.0f));
+    CHECK_THAT(out[2], WithinAbs(deg(15.0f), 0.0001f));
+    CHECK_THAT(ccw(out[3], out[4]), WithinAbs(deg(40.0f), 0.001f));
+}
+
+TEST_CASE("herd: spacing reaches across north, where the bearings wrap", "[cardian][herd]")
+{
+    const auto out = spread({ loose(deg(350.0f)), loose(deg(5.0f)) }, deg(40.0f));
+    CHECK_THAT(ccw(out[0], out[1]), WithinAbs(deg(40.0f), 0.001f));
+    CHECK_THAT(out[0], WithinAbs(deg(337.5f), 0.001f));
+}
+
+TEST_CASE("herd: the even step settles a ring with no fixed body instead of swinging it", "[cardian][herd]")
+{
+    // Gaps of 115 and 65 in turn: a whole step to the middle would swap them every beat
+    std::vector<Body> bodies{ loose(0.0f), loose(deg(115.0f)), loose(deg(180.0f)), loose(deg(295.0f)) };
+    for (int beat = 0; beat < 3; ++beat)
+    {
+        const auto out = evenStep(bodies, 1.0f, 0.01f);
+        for (std::size_t i = 0; i < bodies.size(); ++i)
+        {
+            bodies[i].bearing = out[i];
+        }
+    }
+    std::vector<float> bearings;
+    for (const auto& b : bodies)
+    {
+        bearings.push_back(b.bearing);
+    }
+    for (const float gap : gapsRound(bearings))
+    {
+        CHECK_THAT(gap, WithinAbs(deg(90.0f), 0.01f));
+    }
+}
+
+TEST_CASE("herd: two free bodies even out by stepping away from each other", "[cardian][herd]")
+{
+    const auto out = evenStep({ loose(0.0f), loose(deg(90.0f)) }, deg(20.0f), deg(5.0f));
+    CHECK_THAT(out[0], WithinAbs(deg(340.0f), 0.001f));
+    CHECK_THAT(out[1], WithinAbs(deg(110.0f), 0.001f));
 }
