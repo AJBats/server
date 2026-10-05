@@ -130,7 +130,7 @@ namespace
         }
         auto FreeToCast(CSpell* /*PSpell*/, CBattleEntity* /*PTarget*/) -> bool override
         {
-            return m_controller.RestAllowsAction() && !m_controller.Acting() && !m_controller.HasQueuedOrder() && m_controller.canAct();
+            return m_controller.RestAllowsAction() && !m_controller.Acting() && !m_controller.QueuedOrderHoldsHer() && m_controller.canAct();
         }
         auto Ability(const EntityId target, const uint16 ability) -> bool override
         {
@@ -158,7 +158,7 @@ namespace
         }
         auto HasQueuedOrder() const -> bool override
         {
-            return m_controller.HasQueuedOrder();
+            return m_controller.QueuedOrderHoldsHer();
         }
         auto IsRetreating() const -> bool override
         {
@@ -561,6 +561,12 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_ManeuverBy       = 0;
         m_ManeuverComposed = false;
     }
+    // KO'd, her line goes: nothing he queued outlives her fall to fire stale
+    // at her raise
+    if (to == Mode::Down && from != Mode::Down)
+    {
+        ClearQueuedOrders("she is KO'd");
+    }
     // A pending act belongs to the mode it was scheduled in; only the
     // player's order outlives a change
     if (from != to && m_Pending.has_value() && m_Pending->act != Pending::Act::Order)
@@ -574,6 +580,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
 
 void CPawnController::PlayerZoning()
 {
+    ClearQueuedOrders("the player is zoning"); // its targets stay behind in this zone
     StandDown("the player is zoning; stands down");
 }
 
@@ -1488,6 +1495,7 @@ namespace
     // The command window's Attack and Disengage, as the addon sends them and her queue holds them
     constexpr std::string_view kAttackOrder    = "attack";
     constexpr std::string_view kDisengageOrder = "disengage";
+    constexpr std::string_view kRescueOrder    = "rescue"; // QueueRescue: its target is the player
 
     // An order's key: the catalogue's kind:mode:id, or item:<id> for an item
     // she uses on herself -- the queue line's own word for an item, read here
@@ -1577,11 +1585,11 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         return CL_S_KNOCKED_OUT;
     }
 
-    // Held (pause/pause.h), nothing starts: the order goes straight to her queue. Her
-    // tick clock stands still with the simulation, so its grace runs from the release.
+    // Held (pause/pause.h), nothing starts: the order goes straight to her queue.
     // Out of the action's reach, the order is queued too: she walks in first
-    // (OrderApproach) and the queue's grace waits for her. So too an order on its
-    // recast, or given as she gets up from a rest. Holding her position she never
+    // (OrderApproach). So too an order on its recast, while she acts (a weapon
+    // skill held behind its opener included), or given as she gets up from a
+    // rest. Holding her position she never
     // walks in: a weapon skill out of reach is refused, and anything else she tries
     // from where she stands, the game's own refusal reaching him as a note. A
     // paused maneuver's route may bring her into reach first, so its order's
@@ -1594,17 +1602,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
     // maneuver's order is its own, one command, as it has always been
     if (m_QueuedOrder.has_value() && !InManeuver())
     {
-        if (m_QueuedNext.size() + 1 >= kQueueDepth)
-        {
-            return CL_S_QUEUE_FULL;
-        }
-        m_QueuedNext.emplace_back(key, target);
-        ShowInfoFmt("pawn: {} queues {} on {} behind {} ({} waiting)", POwner->getName(), key, PTarget->getName(), m_QueuedOrder->first, m_QueuedNext.size() + 1);
-        if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
-        {
-            cardian::link::send(owner, QueueLine());
-        }
-        return CL_S_OK;
+        return JoinLine(key, target);
     }
 
     const bool     outOfReach = PTarget != POwner && PTarget->loc.zone == POwner->loc.zone && distance(POwner->loc.p, PTarget->loc.p) > OrderReach(kind, id, PTarget);
@@ -1613,7 +1611,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         return CL_S_UNREACHED;
     }
     const bool       walksIn = outOfReach && !m_Waiting;
-    std::string_view heldFor = cardian::pause::isHeld() ? "paused" : !ReadyToAct() ? "busy" : walksIn ? "out of reach" : "";
+    std::string_view heldFor = cardian::pause::isHeld() ? "paused" : (!ReadyToAct() || m_HeldWs.has_value()) ? "busy" : walksIn ? "out of reach" : "";
     if (heldFor.empty())
     {
         OrderStarted(key, kind, id);
@@ -1697,6 +1695,73 @@ auto CPawnController::OrderName(const unsigned kind, const unsigned id) const ->
     }
 }
 
+auto CPawnController::JoinLine(const std::string& key, const EntityId target) -> uint16
+{
+    const auto* PTarget = target.resolve<CBattleEntity>();
+    if (!m_QueuedOrder.has_value())
+    {
+        SetQueuedOrder(std::make_pair(key, target));
+        ShowInfoFmt("pawn: {} queues {} on {}", POwner->getName(), key, PTarget != nullptr ? PTarget->getName() : std::string("nobody"));
+        return CL_S_OK;
+    }
+    if (m_QueuedNext.size() + 1 >= kQueueDepth)
+    {
+        return CL_S_QUEUE_FULL;
+    }
+    m_QueuedNext.emplace_back(key, target);
+    ShowInfoFmt("pawn: {} queues {} on {} behind {} ({} waiting)", POwner->getName(), key, PTarget != nullptr ? PTarget->getName() : std::string("nobody"), m_QueuedOrder->first,
+                m_QueuedNext.size() + 1);
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+    {
+        cardian::link::send(owner, QueueLine());
+    }
+    return CL_S_OK;
+}
+
+auto CPawnController::QueueRescue(CCharEntity* PPlayer) -> uint16
+{
+    if (PPlayer == nullptr)
+    {
+        return CL_S_REFUSED;
+    }
+    if (POwner->isDead())
+    {
+        return CL_S_KNOCKED_OUT;
+    }
+    return JoinLine(std::string(kRescueOrder), EntityId(PPlayer));
+}
+
+auto CPawnController::QueuedOrderHoldsHer() const -> bool
+{
+    if (!m_QueuedOrder.has_value())
+    {
+        return false;
+    }
+    // Walking in on it, the order has her: her rows would walk her elsewhere
+    if (m_OrderApproaching)
+    {
+        return true;
+    }
+    unsigned kind = 0;
+    unsigned mode = 0;
+    unsigned id   = 0;
+    if (!parseOrderKey(m_QueuedOrder->first, kind, mode, id))
+    {
+        return true;
+    }
+    auto* PChar = static_cast<CCharEntity*>(POwner);
+    if (kind == 2)
+    {
+        return !PChar->PRecastContainer->HasRecast(RECAST_MAGIC, static_cast<Recast>(id), 0s);
+    }
+    if (kind == 3)
+    {
+        const auto* PAbility = ability::GetAbility(static_cast<uint16>(id));
+        return PAbility == nullptr || !PChar->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime());
+    }
+    return true;
+}
+
 void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order)
 {
     // The first done or let go, the next in line takes its place (the user,
@@ -1719,7 +1784,9 @@ void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, Entity
         EndRestOrder("its maneuver's order is gone");
     }
     m_QueuedOrder = std::move(order);
-    if (!m_QueuedOrder.has_value() && m_OrderApproaching)
+    // A new first in line, or none: a walk in was the last one's, and its
+    // reach timer with it
+    if (m_OrderApproaching)
     {
         m_OrderApproaching = false;
         if (POwner->PAI->PathFind)
@@ -1742,6 +1809,10 @@ auto CPawnController::QueueLine() const -> cl_queue
         const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
         line.action         = pawn::actionOfKey(m_QueuedOrder->first);
         line.target         = PTarget != nullptr ? PTarget->targid : uint16{ 0 };
+        if (m_ManeuverResting)
+        {
+            line.action.mode = 1; // the maneuver's rest, kneeling now: under way, not waiting
+        }
         for (const auto& [key, who] : m_QueuedNext)
         {
             if (line.more >= std::size(line.next))
@@ -1776,14 +1847,20 @@ auto CPawnController::DropQueuedOrder(const std::string_view why, const uint32 f
     {
         EndManeuver(fmt::format("its order is gone ({}), the maneuver ends", why));
     }
+    TellFormerOwner(formerOwner);
+    return true;
+}
 
-    // Out of his party she has no orders owner for SetQueuedOrder to tell: his addon
-    // still shows the line
+void CPawnController::TellFormerOwner(const uint32 formerOwner) const
+{
+    // Out of his party she has no orders owner for SetQueuedOrder to tell: his
+    // addon still shows her line, a rest's included, and an empty one clears it
     if (formerOwner != 0 && pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)) == 0)
     {
-        cardian::link::send(formerOwner, QueueLine());
+        auto line      = cardian::link::make<cl_queue>();
+        line.character = POwner->id;
+        cardian::link::send(formerOwner, line);
     }
-    return true;
 }
 
 // His cancel peels her line back from its end, one order a press: mashed, it
@@ -1806,7 +1883,12 @@ auto CPawnController::CancelQueuedOrder() -> bool
 auto CPawnController::ClearQueuedOrders(const std::string_view why, const uint32 formerOwner) -> bool
 {
     m_QueuedNext.clear();
-    return DropQueuedOrder(why, formerOwner);
+    if (DropQueuedOrder(why, formerOwner))
+    {
+        return true;
+    }
+    TellFormerOwner(formerOwner); // nothing queued, but a rest may be on his line
+    return false;
 }
 
 void CPawnController::OrderStarted(const std::string& key, const unsigned kind, const unsigned id)
@@ -1916,6 +1998,11 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             if (mode != 2)
             {
                 return CL_S_MALFORMED;
+            }
+            if (const auto* PAbility = ability::GetAbility(static_cast<uint16>(id));
+                PAbility != nullptr && static_cast<CCharEntity*>(POwner)->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()))
+            {
+                return CL_S_ON_RECAST;
             }
             fired = Ability(target, static_cast<uint16>(id));
             // His Berserk or Defender is never taken off by her tactician's
@@ -2044,6 +2131,28 @@ void CPawnController::FireQueuedOrder()
         StandDown("the player's order: she sheathes");
         return;
     }
+    // His Rescue (QueueRescue): it waits out the rescue's cooldown as an order
+    // waits out its recast; any other refusal lets it go with a note
+    if (key == kRescueOrder)
+    {
+        auto*               PPlayer = target.resolve<CCharEntity>();
+        pawn::RescueRefusal refusal;
+        const auto          status = PPlayer != nullptr ? pawn::rescue(PPlayer, static_cast<CCharEntity*>(POwner), refusal) : uint16{ CL_S_NO_TARGET };
+        if (status == CL_S_COOLING_DOWN)
+        {
+            return;
+        }
+        SetQueuedOrder(std::nullopt);
+        if (status != CL_S_OK)
+        {
+            ShowInfoFmt("pawn: {} lets the queued rescue go (outcome 0x{:04X})", POwner->getName(), status);
+            auto note   = cardian::link::make<cl_note>();
+            note.kind   = CL_NOTE_LET_GO;
+            note.action = pawn::actionOfKey(key);
+            Note(note, status);
+        }
+        return;
+    }
 
     unsigned kind = 0;
     unsigned mode = 0;
@@ -2119,8 +2228,9 @@ void CPawnController::FireQueuedOrder()
 
     // The pacer: it goes out the first tick the server would take it, her
     // cast under way or its recast waited out however long (nothing in her
-    // line is let go for its timing)
-    if (!ReadyToAct())
+    // line is let go for its timing), and never ahead of a weapon skill held
+    // behind its opener, which the combat tick fires first
+    if (!ReadyToAct() || m_HeldWs.has_value())
     {
         return;
     }
@@ -2961,7 +3071,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
 
     // Spell approaches seek range and line of sight through the shared
     // avoidance checks. They may leave the camp's formation boundary.
-    if (!m_Retreat && !HasQueuedOrder() && m_Gambits->MasterOn() && RestAllowsAction())
+    if (!m_Retreat && !QueuedOrderHoldsHer() && m_Gambits->MasterOn() && RestAllowsAction())
     {
         const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
         const auto cast    = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged);
@@ -3436,6 +3546,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         Transition(Mode::Fight, fmt::format("engaged on {} by a hand not hers", POwner->GetBattleTarget()->getName()));
     }
 
+    UpdateRestLine();
     if (POwner->isDead())
     {
         if (m_Mode != Mode::Down)
@@ -4992,6 +5103,10 @@ auto CPawnController::BeginManeuver(CCharEntity* PBy, uint32* other) -> uint16
     // (SetQueuedOrder), an action it fires stands her as any does, and a
     // maneuver that rests her keeps her ticks (the user, 2026-10-03: Zapp
     // stood to take "Rest until 100%" and lost his)
+    // The wheel taken replaces her line: the maneuver is his command now, and
+    // an order left in it would fire mid-drive or be lost under the
+    // maneuver's own (his commands win)
+    ClearQueuedOrders("he takes the wheel");
     m_ManeuverBy          = PBy->id;
     m_ManeuverComposed    = false;
     m_ManeuverResting     = false;
@@ -5155,6 +5270,7 @@ auto CPawnController::DisengageOrder() -> uint16
     }
     if (cardian::pause::isHeld())
     {
+        m_QueuedNext.clear(); // his disengage replaces her line, as his attack does
         SetQueuedOrder(std::make_pair(std::string(kDisengageOrder), EntityId(POwner)));
         ShowInfoFmt("pawn: {} queues the disengage (paused)", POwner->getName());
         if (InManeuver())
@@ -5169,6 +5285,7 @@ auto CPawnController::DisengageOrder() -> uint16
         return CL_S_NOT_FIGHTING;
     }
     EndManeuver("his order is away, she disengages: the maneuver ends");
+    ClearQueuedOrders("his disengage replaces it");
     StandDown("the player's order: she sheathes");
     return CL_S_OK;
 }

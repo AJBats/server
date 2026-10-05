@@ -42,6 +42,29 @@ void CPawnController::EndRestOrder(const std::string_view why)
     m_RestOrder = {};
 }
 
+void CPawnController::UpdateRestLine()
+{
+    // Her queue line's rest: his order while it stands, her own while she
+    // kneels without one; told to her player as it changes, when nothing is
+    // queued to show instead (#256). Asked every tick, not by RestTick alone,
+    // which a fight, a walk or a KO leaves unasked
+    const bool  down     = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    const bool  hisOrder = m_RestOrder.active() && !m_RestOrder.byRow;
+    const uint8 restLine = hisOrder ? uint8{ CL_AK_REST } : down ? uint8{ CL_AK_OWN_REST } : uint8{ CL_AK_NONE };
+    if (restLine == m_RestLineKind)
+    {
+        return;
+    }
+    m_RestLineKind = restLine;
+    if (!m_QueuedOrder.has_value())
+    {
+        if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+        {
+            cardian::link::send(owner, QueueLine());
+        }
+    }
+}
+
 auto CPawnController::CallOffRest() -> bool
 {
     if (m_RestLineKind == CL_AK_NONE)
@@ -348,23 +371,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         }
     }
     const bool down = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-
-    // Her queue line's rest: his order while it stands, her own while she
-    // kneels without one; told to her player as it changes, when nothing is
-    // queued to show instead (#256)
-    const bool  hisOrder = m_RestOrder.active() && !m_RestOrder.byRow;
-    const uint8 restLine = hisOrder ? uint8{ CL_AK_REST } : down ? uint8{ CL_AK_OWN_REST } : uint8{ CL_AK_NONE };
-    if (restLine != m_RestLineKind)
-    {
-        m_RestLineKind = restLine;
-        if (!m_QueuedOrder.has_value())
-        {
-            if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
-            {
-                cardian::link::send(owner, QueueLine());
-            }
-        }
-    }
+    UpdateRestLine();
 
     if (down && deferPosition && !stationary && !m_RestDeferredPosition)
     {

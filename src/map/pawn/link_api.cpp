@@ -396,13 +396,32 @@ namespace pawn::linkapi
                 [&](CCharEntity* PPawn) { reply.more(statsOf(PPawn, true)); });
         }
 
+        // An item of hers used on herself, as an order in her line
+        // (CPawnController::DoAction, item:<id>): now when nothing waits, else
+        // behind what does, through a pause too -- the stack it names, not the
+        // slot, since her bag can be sorted meanwhile
+        auto useAsOrder(CCharEntity* PPawn, const uint8 slot, const uint8 bag) -> uint16
+        {
+            if (bag != LOC_INVENTORY)
+            {
+                return CL_S_INVENTORY_ONLY; // a bag's contents are fetched first
+            }
+            auto*       PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            const auto* PItem       = PPawn->getStorage(LOC_INVENTORY)->GetItem(slot);
+            if (PController == nullptr || PItem == nullptr || slot == 0)
+            {
+                return pawn::items::useItem(PPawn, slot, bag); // its own refusal
+            }
+            return PController->DoAction(fmt::format("item:{}", PItem->getID()), PPawn);
+        }
+
         // She uses an item on herself: the stack thins when the use completes,
         // so the outcome is all there is to tell now. His own item use is his
         // client's (own.lua: a chat line), never this
         void use(CCharEntity* PChar, const cl_use& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::useItem(PPawn, ask.slot, ask.bag); },
+                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return useAsOrder(PPawn, ask.slot, ask.bag); },
                 [](CCharEntity*) {});
         }
 
@@ -518,19 +537,14 @@ namespace pawn::linkapi
             reply.finish(answer, status);
         }
 
-        // The scroll's way: the stack given, then used from wherever it landed
+        // The scroll's way: the stack given now, a pause or not, and its use an
+        // order in her line from wherever it landed (useAsOrder)
         void giveUse(CCharEntity* PChar, const cl_give_use& ask, Reply& reply)
         {
             auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
-                return;
-            }
-            // Refused whole while held, as the use would be: not half of it, the transfer
-            if (cardian::pause::isHeld())
-            {
-                reply.finish(ask, CL_S_NOT_WHILE_PAUSED);
                 return;
             }
             uint8 landed = 0;
@@ -542,7 +556,7 @@ namespace pawn::linkapi
             reply.more(inventoryOf(PPawn, LOC_INVENTORY));
             auto answer  = ask;
             answer.given = 1;
-            reply.finish(answer, pawn::items::useItem(PPawn, landed));
+            reply.finish(answer, useAsOrder(PPawn, landed, LOC_INVENTORY));
         }
 
         // ---- gambits (the gambit editor, M3.85) ----------------------------
@@ -1526,7 +1540,9 @@ namespace pawn::linkapi
             reply.finish(ask, CL_S_OK);
         }
 
-        // A stuck cardian to his side, within reach and off cooldown
+        // A stuck cardian to his side, within reach: an order like any other
+        // (the user, 2026-10-05), so behind whatever waits in her line, and
+        // through a pause or the rescue's cooldown it waits in it (QueueRescue)
         void rescue(CCharEntity* PChar, const cl_rescue& ask, Reply& reply)
         {
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
@@ -1535,8 +1551,19 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController != nullptr && PController->HasQueuedOrder())
+            {
+                reply.finish(ask, PController->QueueRescue(PChar));
+                return;
+            }
             pawn::RescueRefusal refusal;
-            const auto          status = pawn::rescue(PChar, PPawn, refusal);
+            auto                status = pawn::rescue(PChar, PPawn, refusal);
+            if (PController != nullptr && (status == CL_S_NOT_WHILE_PAUSED || status == CL_S_COOLING_DOWN))
+            {
+                reply.finish(ask, PController->QueueRescue(PChar));
+                return;
+            }
             auto                answer = ask;
             answer.away                = refusal.away;
             answer.range               = refusal.range;

@@ -356,6 +356,10 @@ public:
     // CL_S_OK when it fired or joined her line (the Link's outcomes), else
     // why not; never refused for its timing, only CL_S_QUEUE_FULL when four wait.
     auto DoAction(const std::string& key, CBattleEntity* PTarget) -> uint16;
+    // His Rescue (pawn::rescue) as an order in her line, "rescue" on him: it
+    // waits its turn, a pause and the rescue's cooldown as an order waits out
+    // its recast, then brings her to his side. CL_S_OK when it joined her line
+    auto QueueRescue(CCharEntity* PPlayer) -> uint16;
 
     // An order she cannot start now -- while she acts, while the spell is on
     // recast, out of reach, the game paused -- waits in her line and fires the
@@ -367,6 +371,11 @@ public:
     {
         return m_QueuedOrder.has_value();
     }
+    // Her line holds her own AI back -- her gambits stand aside, and her Cure
+    // readiness with them -- while its first waits on anything but its own
+    // recast: an order waiting out a long recast (Raise pressed twice) leaves
+    // her free to cure meanwhile, and goes the moment the recast is over
+    auto QueuedOrderHoldsHer() const -> bool;
 
     // The queued order as the command window's queue line shows it: the Link's
     // QUEUE, her action and its target's index (CL_AK_NONE with none). The addon
@@ -381,11 +390,20 @@ public:
     // kneels are held off for pawn.REST_CALL_OFF_SECONDS, so she stays with
     // the party. False when she is not resting
     auto CallOffRest() -> bool;
+    // The rest her queue line shows (m_RestLineKind) brought up to date, and
+    // told to her player when it changed with nothing queued
+    void UpdateRestLine();
+
+    // An order behind whatever waits in her line, or first when nothing does:
+    // CL_S_QUEUE_FULL when kQueueDepth wait already
+    auto JoinLine(const std::string& key, EntityId target) -> uint16;
 
     // An order waits on the player's behalf: it ends with the tie to him, as a trek
     // does (pawn::leftParty). Says whether one was queued. `formerOwner` is told her
     // queue line is empty when she no longer has an orders owner to tell.
     auto DropQueuedOrder(std::string_view why, uint32 formerOwner = 0) -> bool;
+    // Out of his party, his addon's copy of her line emptied (DropQueuedOrder)
+    void TellFormerOwner(uint32 formerOwner) const;
 
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line

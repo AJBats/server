@@ -339,7 +339,9 @@ namespace pawn
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's
     // cardians. CL_S_OK when she came (the Link's outcomes), else why not,
-    // with the numbers behind a refusal in `refusal`.
+    // with the numbers behind a refusal in `refusal`. The refusals of timing
+    // come last -- a pause, then the cooldown -- so either means she could
+    // come once it is over (her line waits it out, QueueRescue).
     struct RescueRefusal
     {
         float  away         = 0; // CL_S_TOO_FAR: yalms between them

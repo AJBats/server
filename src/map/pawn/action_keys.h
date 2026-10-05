@@ -24,7 +24,7 @@
 // A cardian's order as the pawn code keeps it (pawn_controller.h, her queued
 // order) and as the Cardian Link carries it. The pawn code names an order by a
 // key: the gambit catalogue's kind:mode:id, item:<id>, attack, disengage, move,
-// movewait or rest:<percent>. The Link carries typed fields (cl_action); these
+// movewait, rest:<percent> or rescue. The Link carries typed fields (cl_action); these
 // two cross between them at the Link's edge, so no key text crosses the wire.
 
 #include "cardian_link_messages.h"
@@ -54,6 +54,10 @@ namespace pawn
         {
             action.kind = CL_AK_MOVE_WAIT;
         }
+        else if (key == "rescue")
+        {
+            action.kind = CL_AK_RESCUE;
+        }
         else if (unsigned id = 0; std::sscanf(key.c_str(), "item:%u", &id) == 1 && id <= UINT16_MAX)
         {
             action.kind = CL_AK_ITEM;
@@ -75,7 +79,8 @@ namespace pawn
     }
 
     // The key for the fields; "" for fields that name no cardian's order (none,
-    // an unknown kind, a player's own command)
+    // an unknown kind, a player's own command, a rescue: his Rescue comes by its
+    // own message)
     inline auto keyOfAction(const cl_action& action) -> std::string
     {
         switch (action.kind)

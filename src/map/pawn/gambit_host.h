@@ -73,6 +73,7 @@ namespace pawn
         virtual auto SneakAttackNow(const CBattleEntity* PTarget) -> bool = 0;
 
         // The player's order from her command window waits as her next action
+        // (a cardian's waiting out its own recast does not: her rows go on)
         virtual auto HasQueuedOrder() const -> bool = 0;
         virtual auto IsRetreating() const -> bool   = 0;
         // Her rest lets an action through (a cardian kneels by policy), and

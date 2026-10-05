@@ -1824,12 +1824,6 @@ namespace pawn
             return CL_S_KNOCKED_OUT;
         }
 
-        // A held simulation (pause/pause.h) moves nobody
-        if (cardian::pause::isHeld())
-        {
-            return CL_S_NOT_WHILE_PAUSED;
-        }
-
         const float range = settings::get<float>("pawn.RESCUE_RANGE");
         const float away  = distance(PPlayer->loc.p, PPawn->loc.p);
         if (away > range)
@@ -1837,6 +1831,12 @@ namespace pawn
             refusal.away  = away;
             refusal.range = range;
             return CL_S_TOO_FAR;
+        }
+
+        // A held simulation (pause/pause.h) moves nobody
+        if (cardian::pause::isHeld())
+        {
+            return CL_S_NOT_WHILE_PAUSED;
         }
 
         const auto cooldown = std::chrono::seconds(static_cast<int64>(settings::get<float>("pawn.RESCUE_COOLDOWN")));

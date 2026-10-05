@@ -80,7 +80,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 38 };
+enum { CL_PROTOCOL = 39 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -172,12 +172,12 @@ enum
     CL_S_PAUSED_BY_OTHER   = 0x0144, // another player holds it, and only its holder resumes
 
     // The command window's orders (DO), and using an item
-    CL_S_TOO_SOON          = 0x0150, // it could not start within the order's grace: the answer's wait
+    CL_S_TOO_SOON          = 0x0150, // no longer sent: an order waits however long (kept, never reused)
     CL_S_NOT_CARRIED       = 0x0151, // she carries none of that item
     CL_S_NOT_FIGHTING      = 0x0152, // a disengage with no fight to leave
     CL_S_NOT_MANAGED       = 0x0153, // her items are hers to use only when she is yours
     CL_S_CANNOT_NOW        = 0x0154, // the game would not start it now
-    CL_S_ON_RECAST         = 0x0155, // its recast runs (an order within its grace waits it out instead)
+    CL_S_ON_RECAST         = 0x0155, // its recast runs (an order waits it out in her line instead)
     CL_S_STANDING_UP       = 0x0156, // she is getting up from a rest (an order waits instead)
     CL_S_ITEM_UNUSABLE     = 0x0157, // not an item anyone uses
     CL_S_INVENTORY_ONLY    = 0x0158, // an item is used or dropped from the inventory only
@@ -276,6 +276,7 @@ enum
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
     CL_AK_OWN_REST    = 13, // a cardian kneeling on her own -- her MP's pacing, her Rest row, beside the resting player -- no order of his; on her queue line only, mode 1
+    CL_AK_RESCUE      = 14, // his Rescue waiting in her line (a pause, the cooldown, the orders ahead of it); on her queue line only
 };
 
 typedef struct cl_action
@@ -1248,7 +1249,7 @@ typedef struct cl_do
     uint32_t  cardian; // charid
     cl_action action;
     uint16_t  target;  // a target index in her zone; 0 = herself
-    uint16_t  wait;    // answered with CL_S_TOO_SOON: seconds until it could start
+    uint16_t  wait;    // unused: 0 (nothing is refused for its timing)
 } cl_do;
 
 // The Debug screen's spawn and despawn of one of his (OWNED; creation stays
@@ -1360,9 +1361,8 @@ enum
 // One-way, to the player whose order it was: what came of one of his cardians'
 // orders after it was taken, which she has no client to show. The header's
 // status says why. Let go -- CL_S_NO_TARGET its target gone, CL_S_UNREACHED she
-// could not get in reach of it, CL_S_TOO_SOON busy or on recast past the
-// order's grace (wait: the recast's seconds left, 0 busy), or what the game
-// answered when she tried; refused by the game on its next step, with the
+// could not get in reach of it, or what the game answered when she tried;
+// refused by the game on its next step, with the
 // battle message it answered; or her rest order ended. The server names it;
 // the addon words it.
 typedef struct cl_note
@@ -1373,7 +1373,7 @@ typedef struct cl_note
     uint8_t   spare[3];
     cl_action action;   // the order
     uint16_t  target;   // CL_S_UNREACHED: the target's index in her zone
-    uint16_t  wait;     // CL_S_TOO_SOON: seconds of recast left; 0 busy
+    uint16_t  wait;     // unused: 0 (nothing is let go for its timing)
     uint16_t  message;  // CL_NOTE_REFUSED: the game's battle message (MsgBasic)
     uint16_t  spare2;
     char      about[32]; // for people: the battle message's name (REFUSED), the target's (UNREACHED)
