@@ -1789,9 +1789,9 @@ auto CPawnController::QueueLine() const -> cl_queue
     }
     else if (m_RestLineKind != CL_AK_NONE)
     {
-        // Nothing queued, a rest under way: his order's, by its percent, or
-        // her own (#256)
-        line.action = cl_action{ m_RestLineKind, 0, static_cast<uint16_t>(m_RestLineKind == CL_AK_REST ? m_RestOrder.percent : 0) };
+        // Nothing queued, a rest under way (mode 1): his order's, by its
+        // percent, or her own (#256)
+        line.action = cl_action{ m_RestLineKind, 1, static_cast<uint16_t>(m_RestLineKind == CL_AK_REST ? m_RestOrder.percent : 0) };
         line.target = POwner->targid;
     }
     return line;

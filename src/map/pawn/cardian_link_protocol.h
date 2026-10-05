@@ -270,10 +270,10 @@ enum
     CL_AK_DISENGAGE   = 7,
     CL_AK_MOVE        = 8,  // a paused maneuver's order: walk the route the ring laid
     CL_AK_MOVE_WAIT   = 9,  // the same, then hold position at its end
-    CL_AK_REST        = 10, // id: rest until this percent of HP and MP
+    CL_AK_REST        = 10, // id: rest until this percent of HP and MP; mode 1 on a queue line: under way, not waiting
     CL_AK_CLIENT      = 11, // a player's own command from his client: id the action menu's (packet 0x01A's action id)
     CL_AK_HEAL        = 12, // a player's own /heal
-    CL_AK_OWN_REST    = 13, // a cardian kneeling on her own -- her MP's pacing, her Rest row, beside the resting player -- no order of his; on her queue line only
+    CL_AK_OWN_REST    = 13, // a cardian kneeling on her own -- her MP's pacing, her Rest row, beside the resting player -- no order of his; on her queue line only, mode 1
 };
 
 typedef struct cl_action
