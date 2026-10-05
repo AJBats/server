@@ -95,6 +95,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_link_protocol_tests.cpp # CARDIAN: the Link's messages: sizes, headers, text
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_party_roles_tests.cpp # CARDIAN: the party's roles and the join rule (RESEARCH §17.6)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_tank_calls_tests.cpp # CARDIAN: the tank tactician's Provoke pacing
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_herd_tests.cpp # CARDIAN: the herd round a mob: spacing, order and the even step (herd_math.h)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

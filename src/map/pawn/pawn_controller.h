@@ -23,6 +23,7 @@
 
 #include "cardian_link_messages.h"
 #include "engage_math.h"
+#include "herd_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
 #include "pawn_gambits.h"
@@ -401,10 +402,11 @@ public:
 
     auto FormationSlot() const -> pawn::Slot;
 
-    // Her seat on a mob's fight ring, and where it is, for the party's
-    // other cardians to read when they pick theirs (TakeFightSeat)
-    auto FightSeatOn(uint32 mobId) const -> std::optional<pawn::Slot>;
-    auto HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>;
+    // Her body in the herd round a mob (herd_math.h, ROADMAP A item 9),
+    // for the herd pass to read: the bearing she stands on, or the one she
+    // is walking to, and whether the pass may move her. nullopt when she
+    // is not in its melee ring
+    auto HerdBody(const CBattleEntity* PMob) const -> std::optional<cardian::herd::Body>;
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
@@ -555,7 +557,7 @@ private:
     // The formation point the world allows: the ray from the player to the
     // projected point clipped where the mesh ends (a wall, a cliff's edge),
     // then priced by the walk from where she stands; a walk not worth it
-    // (the seats' rule, worthTheWalk) brings the point in toward the
+    // (worthTheWalk) brings the point in toward the
     // player a third at a time, so a lead point across a wall never sends
     // her round the maze
     auto ReachableFormationPoint(const Anchor& anchor, float offset, float angle) -> position_t;
@@ -621,7 +623,7 @@ private:
         bool                 fighting   = false;   // in danger, hold at the rim (else re-seat the slot)
         bool                 vet        = true;    // false: the party waved the company through
         bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
-        bool                 seat       = false;   // a seat's path: failing it drops the seat
+        bool                 seat       = false;   // a walk to her spot: failing it pins her where she stands (HerdPin)
         bool                 comesIn    = false;   // the mob she attends is coming in on her: a move no rest puts off
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
@@ -731,11 +733,8 @@ private:
     // cardian standing still in Escape, Hold or Detour names its cause
     void NotePathFailure(AvoidAction action, const position_t& point, float away);
 
-    // The declump mover: a party cardian standing on her at the front is
-    // given room by a sidestep round the mob, to a clear spot
-    auto DeclumpIntent(const CBattleEntity* PTarget) const -> std::optional<Intent>;
-
-    // The step back: a target that has settled on her toes (a mob walks
+    // The step back, off unless MELEE_STEP_BACK (the herd keeps her
+    // distance now): a target that has settled on her toes (a mob walks
     // onto its target's exact coordinates) is given room. Once it has
     // stood still for MELEE_BACKOFF_DELAY, a cardian nearer it than
     // FightClearance steps straight back to RoamDistance, capped at
@@ -747,20 +746,25 @@ private:
     // resetting the settle wait without changing the movement/cooldown.
     auto StepBackIntent(const CBattleEntity* PTarget, bool positioned = true) -> std::optional<Intent>;
 
-    // The fight ring (formation_math.h RingSeats): every cardian on a mob
-    // but the one it is fighting takes a seat around it -- the nearest
-    // free one, kept for the fight -- and walks to it; as the mob's target
-    // she has none, the front being wherever she stands. The seat sits
-    // FightRadius out: RoamDistance, capped inside the mob's reach (the
-    // step back's rule). A far seat is reached round the mob's side, never
-    // through it.
+    // The herd (herd_math.h, ROADMAP A item 9): every melee cardian on a
+    // mob stands at a bearing from it in world terms, so the mob turning
+    // moves nobody. Mobs tow: in reach she stands; out of reach she closes
+    // from where she is. One pass per mob per tick (HerdBearing) spaces
+    // the party's melee round it -- order kept, the least movement, the
+    // ring evened out a step every HERD_BEAT -- round the fixed bodies:
+    // the Tank, the player, a Thief on her Sneak Attack walk, a cardian
+    // holding her position. Her spot sits FightRadius out: RoamDistance,
+    // capped inside the mob's reach.
     auto FightRadius(const CBattleEntity* PTarget) const -> float;
     auto FightClearance(const CBattleEntity* PTarget) const -> float;
-    auto TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>;
-    auto LiveFrame(const CBattleEntity* PTarget) const -> uint8; // the ring's rotation now: the mob's bearing to its target
-    auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat, uint8 frame) const -> position_t;
-    auto SeatPoint(const CBattleEntity* PTarget, pawn::Slot seat) const -> position_t; // by the live frame
-    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false, bool ownSeat = true) -> Intent; // the seat mover: stand on it, hop to it, keep the path, or path round the mob's side; not her own ring seat (the walk for Sneak Attack): her seat's bookkeeping left alone
+    auto HerdFixed(const CBattleEntity* PMob) const -> bool;                   // the pass never moves her
+    auto HerdBearing(const CBattleEntity* PMob) -> float;                     // the herd pass's bearing for her this tick
+    auto HerdPoint(const CBattleEntity* PMob, float bearing) const -> position_t; // her spot at a bearing
+    void NoteHerd(const CBattleEntity* PMob, float bearing, bool inReach, const position_t& point);
+    void HerdPin(std::string_view why);                                         // a bad spot: she holds where she stands a while
+    auto HerdDeadband() const -> float;                                         // how far off her spot she stands: HERD_MOVE_MIN to set off, the arrival once walking
+    static constexpr float kSpotArrive = 0.3f;                                  // the spot mover's arrival
+    auto SeatIntent(const CBattleEntity* PTarget, const position_t& seat, bool inReach, bool campRoute = false, bool ownSeat = true) -> Intent; // the spot mover: stand on it, hop to it, keep the path, or path round the mob's side; not her own herd spot (the walk for Sneak Attack): her herd bookkeeping left alone
 
     // The beat: how long she takes to act on a decision -- to set off on
     // a hunt, to draw with the party, to close when the hold ends, to step
@@ -1037,20 +1041,20 @@ private:
     timer::time_point m_TargetRestSince{ timer::time_point::min() };
     timer::time_point m_LastStepBackAt{ timer::time_point::min() };
 
-    // The fight ring: her seat on the mob she fights, the way round to it,
-    // and where the seat was when the path there was planned. A seat is
-    // sticky: walking to it she follows the live ring (the mob's bearing
-    // to its target), and once she has settled on it the ring's frame is
-    // hers for the fight, so a hate swing that turns the mob does not
-    // send her round its body to the same seat on the other side
-    struct FightSeat
+    // Her spot in the herd on the mob she fights: the bearing the herd
+    // pass gave her, whether she has taken it (in reach and on it), whether
+    // she is walking to it in reach, and how long a bad spot pins her where
+    // she stands. Then the way round to it, and where it was when the path
+    // there was planned
+    struct HerdSpot
     {
-        uint32     mob     = 0;
-        pawn::Slot seat    = pawn::Slot::Follow;
-        bool       settled = false;
-        uint8      frame   = 0; // the ring's rotation she settled by
+        uint32            mob     = 0;
+        float             bearing = 0.0f;
+        bool              taken   = false;
+        bool              walking = false;
+        timer::time_point pinnedUntil{};
     };
-    FightSeat  m_FightSeat;
+    HerdSpot   m_Herd;
     bool       m_SeatVia = false;
     bool       m_SeatPathActive = false; // only the seat mover owns this path
     position_t m_SeatDestination{};
@@ -1221,6 +1225,7 @@ private:
     // back, by its own facing (utils.h behind, the same 64 the hit asks)
     auto                  BehindFor(const CBattleEntity* PTarget) const -> bool;
     auto                  KeepsSneakForBack(const CBattleEntity* PTarget) const -> bool; // Sneak Attack on her, the back not yet hers: no turn to swing
+    auto                  SneaksOn(const CBattleEntity* PTarget) const -> bool;          // bound for this mob's back for Sneak Attack, or keeping it there for the swing
     // The swing goes whenever the mob is in her front cone (facing, 64):
     // kept for the back, her heading is held clear of it, within reach
     void                  KeepSwingOff(const CBattleEntity* PTarget);

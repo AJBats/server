@@ -237,39 +237,6 @@ TEST_CASE("backOff: at or beyond the radius nothing moves", "[cardian][formation
     CHECK(z2 == 1.0f);
 }
 
-TEST_CASE("seatBearing: the flanks and rear quarters mirror, right positive; behind is straight back", "[cardian][formation]")
-{
-    CHECK(seatBearing(Slot::FlankRight, 1.0f, 2.0f) == 1.0f);
-    CHECK(seatBearing(Slot::FlankLeft, 1.0f, 2.0f) == -1.0f);
-    CHECK(seatBearing(Slot::RearRight, 1.0f, 2.0f) == 2.0f);
-    CHECK(seatBearing(Slot::RearLeft, 1.0f, 2.0f) == -2.0f);
-    CHECK_THAT(seatBearing(Slot::Behind, 1.0f, 2.0f), WithinAbs(std::numbers::pi_v<float>, 0.0001f));
-}
-
-TEST_CASE("nearestSeat: the nearest free seat, the far side as the near ones fill", "[cardian][formation]")
-{
-    // A ring of radius 3 around the origin: flanks at +-80, rear quarters at +-140, behind at 180
-    constexpr float pi = std::numbers::pi_v<float>;
-    SeatPoints      points{};
-    for (std::size_t i = 0; i < RingSeats.size(); ++i)
-    {
-        const float a = seatBearing(RingSeats[i], 80.0f * pi / 180.0f, 140.0f * pi / 180.0f);
-        points[i]     = { 3.0f * std::cos(a), 3.0f * std::sin(a) };
-    }
-
-    // Standing off the positive side: the right flank, then the right rear, then the back
-    SeatsTaken taken{};
-    CHECK(RingSeats[nearestSeat(points, taken, 0.0f, 4.0f)] == Slot::FlankRight);
-    taken[0] = true;
-    CHECK(RingSeats[nearestSeat(points, taken, 0.0f, 4.0f)] == Slot::RearRight);
-    taken[2] = true;
-    CHECK(RingSeats[nearestSeat(points, taken, 0.0f, 4.0f)] == Slot::Behind);
-
-    // All taken: the nearest of them all
-    taken = { true, true, true, true, true };
-    CHECK(RingSeats[nearestSeat(points, taken, 0.0f, 4.0f)] == Slot::FlankRight);
-}
-
 namespace
 {
     auto seated(const std::vector<Seat>& seats) -> std::vector<Slot>
@@ -515,18 +482,6 @@ TEST_CASE("segmentClosest: the nearest approach of a segment to the centre, endp
     REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 20.0f, 0.0f), WithinAbs(0.0f, 0.001f)); // through the centre
     REQUIRE_THAT(segmentClosest(c, 0.0f, 5.0f, 20.0f, 5.0f), WithinAbs(5.0f, 0.001f)); // passes 5 y to the side
     REQUIRE_THAT(segmentClosest(c, 0.0f, 0.0f, 6.0f, 0.0f), WithinAbs(4.0f, 0.001f));  // stops short: the end is nearest
-}
-
-TEST_CASE("cheapestSeat: the least walk wins, infinity is no seat", "[cardian][formation][ring]")
-{
-    SeatCosts costs{};
-    costs.fill(std::numeric_limits<float>::infinity());
-    REQUIRE_FALSE(cheapestSeat(costs).has_value());
-
-    costs[1] = 9.0f;
-    costs[3] = 4.0f;
-    costs[4] = 4.5f;
-    REQUIRE(cheapestSeat(costs) == 3);
 }
 
 TEST_CASE("worthTheWalk: a detour past the factor and slack is not", "[cardian][formation][ring]")
