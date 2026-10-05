@@ -197,9 +197,10 @@ xi.settings.pawn =
     COURTESY_WAKE_RUN      = 8.0,
     COURTESY_WAKE_STANDING = 2.0,
 
-    -- The step back: a mob walks onto its target's exact coordinates and
-    -- stops there (upstream's approach since the 2026-06 pathfind
-    -- refactor), so a cardian it targets ends up under its feet. Once it
+    -- The step back, off by MELEE_STEP_BACK below: a mob used to walk onto
+    -- its target's exact coordinates and stop there (upstream's pathfind
+    -- refactor of 2026-06, until its stop-short fix of 2026-10), so a
+    -- cardian it targeted ended up under its feet. Once it
     -- has stood still for BACKOFF_DELAY seconds, a cardian nearer it than
     -- BACKOFF_TRIGGER yalms takes a backward step toward her preferred
     -- distance (up to 3 yalms, capped at melee reach less BACKOFF_MARGIN).
@@ -209,26 +210,34 @@ xi.settings.pawn =
     -- Each step keeps her in melee range: a target out of reach is one it
     -- walks onto again. Steps are at least BACKOFF_COOLDOWN seconds apart
     -- (the mob's own re-path cadence). A TRIGGER of 0 disables this spacing.
+    -- MELEE_STEP_BACK switches the step back on at all: off since mobs
+    -- stop short of their target (upstream, 2026-10) and the herd keeps a
+    -- cardian at her distance, to be played without it (the user,
+    -- 2026-10-04). The TRIGGER also sets the camp route's clearance, so it
+    -- stays.
+    MELEE_STEP_BACK        = false,
     MELEE_BACKOFF_DELAY    = 0.5,
     MELEE_BACKOFF_TRIGGER  = 1.5,
     MELEE_BACKOFF_MARGIN   = 1.6, -- was 0.6: she sat at the edge of her reach; now about 1.6 y off a small mob (2026-09-05)
     MELEE_BACKOFF_COOLDOWN = 2.0,
 
-    -- The fight ring: every cardian on a mob but the one it is fighting
-    -- takes a seat around it -- the flanks at FIGHT_FLANK_DEG off the mob's
-    -- facing, the rear quarters at FIGHT_REAR_DEG, behind at 180 --
-    -- measured off the bearing from the mob to its target; the seat sits
-    -- at the step back's radius (3 y, inside the mob's reach). The
-    -- nearest free seat is hers: near seats first, the far side as they
-    -- fill, kept for the fight. A far seat is reached round the mob's
-    -- side, never through it. She walks to her seat when more than
-    -- FIGHT_SEAT_DEADBAND yalms off it, and once there the seat is
-    -- sticky: it keeps the ring's frame she settled by, so a hate swing
-    -- that turns the mob moves nobody who is already seated (a seat
-    -- turned into the mob's front is left for a later rule). As the
-    -- mob's target she has no seat: the front is wherever she stands.
-    FIGHT_FLANK_DEG     = 80,
-    FIGHT_REAR_DEG      = 140,
+    -- The herd (ROADMAP A item 9): every melee cardian on a mob stands at
+    -- a bearing from it in world terms, up to 3 y out inside its reach, so the
+    -- mob turning moves nobody. Mobs tow: out of reach she closes from
+    -- where she is and takes the bearing she arrives on. One pass per mob
+    -- spaces the party's melee round it, the Tank and the player held where
+    -- they stand: neighbours at least HERD_GAP_DEG apart (less when more
+    -- are round the mob than fit), their order kept, the least movement;
+    -- every HERD_BEAT seconds the ring is evened out by a step of at most
+    -- HERD_EVEN_STEP yalms. In reach she walks to a spot the herd has moved
+    -- only once it is HERD_MOVE_MIN yalms off her. Tuned in play.
+    HERD_GAP_DEG   = 40,
+    HERD_EVEN_STEP = 1.0,
+    HERD_BEAT      = 2.0,
+    HERD_MOVE_MIN  = 0.7,
+
+    -- How near she must be to the mob's back for Sneak Attack, and the camp
+    -- tank to her spot at the stake, to stand rather than step to it
     FIGHT_SEAT_DEADBAND = 1.2,
 
     -- Camp receive: distance to the ideal mob spot, not the moving tank.

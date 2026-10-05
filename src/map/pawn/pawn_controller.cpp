@@ -293,10 +293,10 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
         {
             m_Approach.reset();
         }
-        // Holding, she keeps no seat on the fight ring: one kept would push
-        // the party's others to worse seats for a place she never walks to
-        m_FightSeat = {};
-        m_SeatVia   = false;
+        // Holding, she gives up her herd spot: the herd spaces round her as
+        // a fixed body where she stands, and she rejoins it from there
+        m_Herd    = {};
+        m_SeatVia = false;
         if (POwner->PAI->PathFind)
         {
             POwner->PAI->PathFind->Clear();
@@ -476,7 +476,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
 
     // The exits this writer owns. Leaving a fight (Hold counts: she drew)
     // starts the draw cooldown against the mob she had, and clears the
-    // seat, the close beat and the hold; leaving a walk in drops its
+    // herd spot, the close beat and the hold; leaving a walk in drops its
     // target and draw beat. A fight to a fight (a new target) leaves
     // nothing.
     const bool wasEngaged = from == Mode::Fight || from == Mode::Hold;
@@ -484,7 +484,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     if (wasEngaged && !nowEngaged)
     {
         m_LeftFightAt   = m_Tick;
-        m_FightSeat     = {};
+        m_Herd          = {};
         m_SeatVia       = false;
         m_Towing        = false;
         m_TowingMob.reset();
@@ -2272,7 +2272,7 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
     // no Attack row of hers claims the mob, and it is not the mob the
     // player's own Attack named) is taken attending, whatever
     // else brought her to the door, the party's engage chord included:
-    // distance and the draw cooldown are the fight ring's
+    // distance and the draw cooldown are the melee herd's
     // business, not hers. Attending needs a place to keep cure range to,
     // the player or a stake; without one she draws like anyone on what
     // reaches this door -- an order, the world's own engagement, a row of
@@ -2960,7 +2960,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
     }
 
     // Holding her position (SetWaiting), she takes no step of her own: no
-    // chase, no fight seat, no perimeter, no walk into a spell's range, no
+    // chase, no herd spot, no perimeter, no walk into a spell's range, no
     // step out of an aggro circle, and no walk in for the player's order.
     // She keeps her target in front of her, and whatever needs no step runs
     // from where she stands. The hold lasts until he lifts it or moves it
@@ -2992,7 +2992,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
             auto* target = pawn::tactics::entity(static_cast<CCharEntity*>(POwner), cast->target);
             auto* PSpell = spell::GetSpell(cast->spell);
             const float reach = pawn::tactics::bank::castRange(POwner, PSpell, target);
-            if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f)
+            if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f && !HoldsFireOn(target))
             {
                 // Use the same line-of-sight requirement as spell validation.
                 const bool sight = !POwner->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock) || POwner->CanSeeTarget(target);
@@ -3116,9 +3116,9 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                             intent.fallback.reset();
                             return Walk(std::move(intent));
                         }
-                        if (intent.seat)
+                        if (intent.herdSpot)
                         {
-                            m_FightSeat = {};
+                            HerdPin("her way there failed");
                         }
                     }
                 }
@@ -3174,6 +3174,12 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
         PPathFind->LookAt(intent.target->loc.p);
     }
     return action;
+}
+
+auto CPawnController::SneaksOn(const CBattleEntity* PTarget) const -> bool
+{
+    return PTarget != nullptr && ((m_SneakStep.has_value() && m_SneakStep->target.resolve<CBattleEntity>() == PTarget) ||
+                                  (m_SneakHold.has_value() && m_SneakHold->target.resolve<CBattleEntity>() == PTarget));
 }
 
 auto CPawnController::KeepsSneakForBack(const CBattleEntity* PTarget) const -> bool
@@ -4040,17 +4046,23 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         else
         {
             m_HasSlot = false;
-            // Her place on the mob: a seat on the fight ring, or, as its
-            // target, wherever she stands -- the front. The tank at a
-            // stake takes no seat: she tows (TowIntent)
-            const bool tows = TowsAtStake();
-            const auto seat = tows ? std::nullopt : TakeFightSeat(PTarget);
-            // Bound for the mob's back for Sneak Attack, or keeping it for
-            // the swing that spends a naked one, she stands there rather
-            // than on her seat, reached round the mob's side as a seat is
-            const bool       sneaking = !tows && ((m_SneakStep.has_value() && m_SneakStep->target == PTarget) ||
-                                            (m_SneakHold.has_value() && m_SneakHold->target == PTarget));
-            const position_t point    = sneaking ? SneakPoint(PTarget) : HeldSeatPoint(PTarget).value_or(PTarget->loc.p);
+            // Her place on the mob: a bearing round it in the herd
+            // (HerdBearing). Bound for the mob's back for Sneak Attack, or
+            // keeping it for the swing that spends a naked one, she stands
+            // there instead, reached round the mob's side. The tank at a
+            // stake takes neither: she tows (TowIntent)
+            const bool           tows     = TowsAtStake();
+            const bool           sneaking = !tows && SneaksOn(PTarget);
+            std::optional<float> bearing;
+            if (!tows && !sneaking)
+            {
+                bearing = HerdBearing(PTarget);
+                if (HerdAvoids(PTarget, *bearing))
+                {
+                    bearing = cardian::herd::bearingOf(PTarget->loc.p.x, PTarget->loc.p.z, POwner->loc.p.x, POwner->loc.p.z);
+                }
+            }
+            const position_t point = sneaking ? SneakPoint(PTarget) : bearing.has_value() ? HerdPoint(PTarget, *bearing) : PTarget->loc.p;
 
             // An idle target is a pull on its way in, judged by the pull rule
             // the pick used (PullBlocker), never by the shape of her own
@@ -4078,12 +4090,12 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
                 }
             }
 
-            // A camp tank finishes her tow/seat before step-back polish.
-            // Else the movers propose the step back, the seat/front, then
-            // the declump. Reach is the distance
-            // alone -- the server's CanAttack would say it, but it
-            // disengages her as a side effect on a claimed or far target,
-            // and counts a walking cardian as out of reach
+            // The camp tank tows; anyone else is offered the step back
+            // first (off unless MELEE_STEP_BACK), then her herd spot or the
+            // mob's back. Reach is the distance alone -- the server's
+            // CanAttack would say it, but it disengages her as a side
+            // effect on a claimed or far target, and counts a walking
+            // cardian as out of reach
             const bool inReach = distance(POwner->loc.p, PTarget->loc.p) <= POwner->GetMeleeRange(PTarget);
             intent             = tows ? std::optional<Intent>(TowIntent(PTarget)) : StepBackIntent(PTarget);
             if (!intent.has_value())
@@ -4092,20 +4104,17 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
                 {
                     intent = Intent{}; // in the cone at its back and in reach: she stands, a swing from there is the point
                 }
-                else if (seat.has_value() || sneaking)
+                else if (bearing.has_value() && !inReach && HerdPinned(PTarget))
                 {
-                    intent = SeatIntent(PTarget, point, inReach, false, !sneaking);
+                    intent = ApproachIntent(PTarget); // her way to her spot failed: she closes on the mob itself
                 }
                 else
                 {
-                    intent = inReach ? Intent{} : ApproachIntent(PTarget);
-                    if (intent->kind == Intent::Kind::Stand)
+                    if (bearing.has_value())
                     {
-                        if (auto declump = DeclumpIntent(PTarget); declump.has_value())
-                        {
-                            intent = declump;
-                        }
+                        NoteHerd(PTarget, *bearing, inReach, point);
                     }
+                    intent = SeatIntent(PTarget, point, inReach, false, !sneaking);
                 }
             }
             intent->target   = PTarget;
@@ -5601,7 +5610,7 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
     }
 
     auto* PTarget = castTarget.resolve<CBattleEntity>();
-    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone ||
+    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone || HoldsFireOn(PTarget) ||
         distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
     {
         return false;
@@ -5649,7 +5658,7 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
     }
     const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
     auto* PTarget = castTarget.resolve<CBattleEntity>();
-    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone ||
+    if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone || HoldsFireOn(PTarget) ||
         distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
     {
         return false;
@@ -7099,13 +7108,239 @@ auto CPawnController::GetPawnPartyPosition() const -> uint8
     return 0;
 }
 
-auto CPawnController::FightSeatOn(const uint32 mobId) const -> std::optional<pawn::Slot>
+namespace
 {
-    if (mobId != 0 && m_FightSeat.mob == mobId)
+    // The herd pass for one mob, kept for the tick it was worked out in so
+    // every cardian on the mob reads the same pass, and when the ring was
+    // last evened out
+    struct HerdPass
     {
-        return m_FightSeat.seat;
+        timer::time_point                 tick{};
+        timer::time_point                 evenedAt{};
+        std::unordered_map<uint32, float> bearings; // by character id
+    };
+    std::unordered_map<uint32, HerdPass> herdPasses; // by mob id
+} // namespace
+
+auto CPawnController::HerdFixed(const CBattleEntity* PMob) const -> bool
+{
+    // The Tank places herself and the herd spaces round her; a cardian
+    // holding her position stays put; a Thief on her way to the mob's back
+    // is on an errand; a bad spot pins her a while; one who cannot move
+    // (asleep, bound, casting) is where she stands
+    return m_Waiting || SneaksOn(PMob) || HerdPinned(PMob) || !POwner->PAI->CanFollowPath() || POwner->GetSpeed() == 0 ||
+           (m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank);
+}
+
+auto CPawnController::HerdBody(const CBattleEntity* PMob) const -> std::optional<cardian::herd::Body>
+{
+    if (PMob == nullptr || m_Mode != Mode::Fight || POwner->GetBattleTarget() != PMob || POwner->isDead())
+    {
+        return std::nullopt;
     }
-    return std::nullopt;
+    const auto& me   = POwner->loc.p;
+    const float here = cardian::herd::bearingOf(PMob->loc.p.x, PMob->loc.p.z, me.x, me.z);
+    if (HerdFixed(PMob))
+    {
+        return cardian::herd::Body{ .bearing = here, .fixed = true };
+    }
+    // Walking to a new spot in reach, the pass sees her where she is going;
+    // otherwise where she stands, settled once she has taken her spot
+    if (m_Herd.mob == PMob->id && m_Herd.walking)
+    {
+        return cardian::herd::Body{ .bearing = m_Herd.bearing };
+    }
+    return cardian::herd::Body{ .bearing = here, .settled = m_Herd.mob == PMob->id && m_Herd.taken };
+}
+
+auto CPawnController::HerdBearing(const CBattleEntity* PMob) -> float
+{
+    using namespace cardian::herd;
+    constexpr float kPi = std::numbers::pi_v<float>;
+
+    auto& pass = herdPasses[PMob->id];
+    if (pass.tick != m_Tick)
+    {
+        // A mob nobody has asked about for half a minute is let go
+        std::erase_if(herdPasses, [&](const auto& entry)
+                      {
+                          return entry.first != PMob->id && entry.second.tick + 30s < m_Tick;
+                      });
+        pass.tick = m_Tick;
+        pass.bearings.clear();
+
+        // Everyone in the melee ring: the party's cardians fighting it, as
+        // each reads herself (HerdBody), and the player near enough to be
+        // in it -- spaced round, never moved
+        std::vector<uint32> ids;
+        std::vector<Body>   bodies;
+        const auto*         PPawn = static_cast<const CCharEntity*>(POwner);
+        if (PPawn->PParty != nullptr)
+        {
+            for (auto* PMember : PPawn->PParty->members)
+            {
+                auto* PChar = dynamic_cast<CCharEntity*>(PMember);
+                if (PChar == nullptr || PChar->loc.zone != POwner->loc.zone || PChar->isDead())
+                {
+                    continue;
+                }
+                if (pawn::isPawn(PChar))
+                {
+                    const auto* PController = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
+                    if (const auto body = PController != nullptr ? PController->HerdBody(PMob) : std::nullopt; body.has_value())
+                    {
+                        ids.push_back(PChar->id);
+                        bodies.push_back(*body);
+                    }
+                }
+                else if (distance(PChar->loc.p, PMob->loc.p) <= PChar->GetMeleeRange(PMob) + 1.0f)
+                {
+                    ids.push_back(PChar->id);
+                    bodies.push_back(Body{ .bearing = bearingOf(PMob->loc.p.x, PMob->loc.p.z, PChar->loc.p.x, PChar->loc.p.z), .fixed = true });
+                }
+            }
+        }
+        if (std::ranges::find(ids, POwner->id) == ids.end())
+        {
+            if (const auto body = HerdBody(PMob); body.has_value())
+            {
+                ids.push_back(POwner->id);
+                bodies.push_back(*body);
+            }
+        }
+
+        // Spaced to the gap; every HERD_BEAT evened out a step, in yalms of
+        // walk at her distance from the mob, and spaced again
+        const float gap  = settings::get<float>("pawn.HERD_GAP_DEG") * kPi / 180.0f;
+        auto        out  = spread(bodies, gap);
+        const auto  beat = std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.HERD_BEAT")));
+        if (m_Tick >= pass.evenedAt + beat)
+        {
+            pass.evenedAt      = m_Tick;
+            const float radius = std::max(FightRadius(PMob), 0.5f);
+            for (std::size_t i = 0; i < bodies.size(); ++i)
+            {
+                bodies[i].bearing = out[i];
+            }
+            out = evenStep(bodies, settings::get<float>("pawn.HERD_EVEN_STEP") / radius, settings::get<float>("pawn.HERD_MOVE_MIN") / radius);
+            for (std::size_t i = 0; i < bodies.size(); ++i)
+            {
+                bodies[i].bearing = out[i];
+            }
+            out = spread(bodies, gap);
+        }
+        for (std::size_t i = 0; i < ids.size(); ++i)
+        {
+            pass.bearings[ids[i]] = out[i];
+        }
+    }
+    if (const auto it = pass.bearings.find(POwner->id); it != pass.bearings.end())
+    {
+        return it->second;
+    }
+    const auto& me = POwner->loc.p;
+    return bearingOf(PMob->loc.p.x, PMob->loc.p.z, me.x, me.z);
+}
+
+auto CPawnController::HerdPoint(const CBattleEntity* PMob, const float bearing) const -> position_t
+{
+    const float radius = FightRadius(PMob);
+    position_t  point  = PMob->loc.p;
+    point.x += std::cos(bearing) * radius;
+    point.z += std::sin(bearing) * radius;
+    return point;
+}
+
+void CPawnController::NoteHerd(const CBattleEntity* PMob, const float bearing, const bool inReach, const position_t& point)
+{
+    using cardian::herd::compassRounded;
+
+    if (m_Herd.mob != PMob->id)
+    {
+        m_Herd     = {};
+        m_Herd.mob = PMob->id;
+    }
+    m_Herd.bearing = bearing;
+    if (!inReach)
+    {
+        // Towed: out of reach she closes from where she is, and takes her
+        // spot again on arrival
+        m_Herd.taken   = false;
+        m_Herd.walking = false;
+        return;
+    }
+    // Set off once the spot is HERD_MOVE_MIN off her; once walking, carry
+    // on until she is on it (the mover's arrival), so a step is a step
+    if (distance(POwner->loc.p, point) <= HerdDeadband())
+    {
+        if (!m_Herd.taken)
+        {
+            ShowInfoFmt("pawn: {} engages {} at {}°", POwner->getName(), PMob->getName(), compassRounded(bearing));
+        }
+        else if (m_Herd.walking)
+        {
+            ShowInfoFmt("pawn: {} settles round {} at {}°", POwner->getName(), PMob->getName(), compassRounded(bearing));
+        }
+        m_Herd.taken   = true;
+        m_Herd.walking = false;
+        return;
+    }
+    // In reach and off her spot: on arrival she walks onto it; once taken,
+    // a spot the herd has moved is a walk round the mob
+    if (m_Herd.taken && !m_Herd.walking)
+    {
+        ShowInfoFmt("pawn: {} moves round {} to {}° (the herd)", POwner->getName(), PMob->getName(), compassRounded(bearing));
+        m_Herd.walkingSince = m_Tick;
+    }
+    m_Herd.walking = m_Herd.taken;
+    // A walk round the mob that has not arrived in a few seconds -- held at
+    // a danger's rim, or a path that ends short -- is given up where she is
+    if (m_Herd.walking && m_Tick > m_Herd.walkingSince + 6s)
+    {
+        HerdPin("her spot is out of her way");
+    }
+}
+
+auto CPawnController::HerdDeadband() const -> float
+{
+    return m_Herd.walking ? kSpotArrive : settings::get<float>("pawn.HERD_MOVE_MIN");
+}
+
+void CPawnController::HerdPin(const std::string_view why)
+{
+    if (m_Herd.mob == 0)
+    {
+        return;
+    }
+    if (m_Tick >= m_Herd.pinnedUntil)
+    {
+        ShowInfoFmt("pawn: {} holds where she stands ({}); the herd spaces round her a while", POwner->getName(), why);
+    }
+    m_Herd.pinnedUntil  = m_Tick + 3s;
+    m_Herd.walking      = false;
+    m_Herd.blocked      = m_Herd.bearing;
+    m_Herd.blockedUntil = m_Tick + 20s;
+}
+
+auto CPawnController::HerdPinned(const CBattleEntity* PMob) const -> bool
+{
+    return PMob != nullptr && m_Herd.mob == PMob->id && m_Tick < m_Herd.pinnedUntil;
+}
+
+auto CPawnController::HerdAvoids(const CBattleEntity* PMob, const float bearing) -> bool
+{
+    // The pass sending her back to a spot that failed her lately (a wall,
+    // a path that never arrives): she holds where she stands instead, pinned
+    // again without a word, until the spot has been left alone a while
+    constexpr float kNear = 15.0f * std::numbers::pi_v<float> / 180.0f;
+    if (PMob == nullptr || m_Herd.mob != PMob->id || m_Tick >= m_Herd.blockedUntil || HerdPinned(PMob) ||
+        std::abs(cardian::herd::shortest(m_Herd.blocked, bearing)) > kNear)
+    {
+        return false;
+    }
+    m_Herd.pinnedUntil = m_Tick + 3s;
+    m_Herd.walking     = false;
+    return true;
 }
 
 auto CPawnController::FightRadius(const CBattleEntity* PTarget) const -> float
@@ -7120,50 +7355,29 @@ auto CPawnController::FightClearance(const CBattleEntity* PTarget) const -> floa
     return cardian::formation::meleeClearance(FightRadius(PTarget), settings::get<float>("pawn.MELEE_BACKOFF_TRIGGER"));
 }
 
-auto CPawnController::LiveFrame(const CBattleEntity* PTarget) const -> uint8
-{
-    // The ring's frame: the mob facing its target; a mob with none faces
-    // where it faces
-    if (const auto* PFront = PTarget->GetBattleTarget(); PFront != nullptr)
-    {
-        return worldAngle(PTarget->loc.p, PFront->loc.p);
-    }
-    return PTarget->loc.p.rotation;
-}
-
-auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat, const uint8 frameRotation) const -> position_t
-{
-    constexpr float kPi = std::numbers::pi_v<float>;
-
-    position_t frame = PTarget->loc.p;
-    frame.rotation   = frameRotation;
-    const float bearing = cardian::formation::seatBearing(seat, settings::get<float>("pawn.FIGHT_FLANK_DEG") * kPi / 180.0f,
-                                                          settings::get<float>("pawn.FIGHT_REAR_DEG") * kPi / 180.0f);
-    return nearPosition(frame, FightRadius(PTarget), bearing);
-}
-
-auto CPawnController::SeatPoint(const CBattleEntity* PTarget, const pawn::Slot seat) const -> position_t
-{
-    return SeatPoint(PTarget, seat, LiveFrame(PTarget));
-}
-
-auto CPawnController::HeldSeatPoint(const CBattleEntity* PTarget) const -> std::optional<position_t>
-{
-    if (PTarget == nullptr || m_FightSeat.mob != PTarget->id)
-    {
-        return std::nullopt;
-    }
-    // Settled, the seat keeps the frame she settled by; on the way to it,
-    // it follows the live ring
-    return SeatPoint(PTarget, m_FightSeat.seat, m_FightSeat.settled ? m_FightSeat.frame : LiveFrame(PTarget));
-}
-
 auto CPawnController::TowsAtStake() const -> bool
 {
     // The party's Tank tows, with her gambits on: the seat is what she is
     // for (RESEARCH §17.13), and with the master switch off nothing of her
     // rows or her seat moves her
     return Staked() && m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank;
+}
+
+auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
+{
+    // Held while the tank's own receive rule (CampReceive) says the pull is
+    // still on its way: not at the landing point, not on her, not stalled
+    if (PTarget == nullptr || PTarget->objtype != TYPE_MOB || !Staked() || TowsAtStake() || PTarget->GetBattleTarget() == POwner ||
+        CampReceive(PTarget) == cardian::stake::ReceiveAction::Join)
+    {
+        return false;
+    }
+    if (m_HeldFireOn != PTarget->id)
+    {
+        m_HeldFireOn = PTarget->id;
+        ShowInfoFmt("pawn: {} holds her spells on {} until it comes in to the camp", POwner->getName(), PTarget->getName());
+    }
+    return true;
 }
 
 auto CPawnController::WaitsForThePull(const CBattleEntity* PTarget, const ApproachKind kind) -> bool
@@ -7328,130 +7542,9 @@ auto CPawnController::TowIntent(CBattleEntity* PTarget) -> Intent
     return intent;
 }
 
-auto CPawnController::TakeFightSeat(const CBattleEntity* PTarget) -> std::optional<pawn::Slot>
-{
-    using cardian::formation::RingSeats;
-    using cardian::formation::seatName;
-
-    // The ring forms around a fight: a mob with no target yet (a pull on
-    // the way in) is approached, not seated. Its target is the front, and
-    // the front is wherever she stands
-    const auto* PFront = PTarget->GetBattleTarget();
-    if (PFront == nullptr || PFront == POwner)
-    {
-        if (m_FightSeat.mob == PTarget->id)
-        {
-            ShowInfoFmt("pawn: {} leaves {}'s {} ({})", POwner->getName(), PTarget->getName(), seatName(m_FightSeat.seat),
-                        PFront == POwner ? "it turned on her" : "it has no one to face");
-            m_FightSeat = {};
-            m_SeatVia   = false;
-        }
-        return std::nullopt;
-    }
-
-    // Hers for the fight
-    if (m_FightSeat.mob == PTarget->id)
-    {
-        return m_FightSeat.seat;
-    }
-
-    // The seats the party's other cardians hold on this mob, by name and
-    // by spot: a settled seat keeps its own frame, so the ring's live
-    // "left flank" can sit where another cardian's settled "right flank"
-    // is -- a seat within kSeatSpacing of a held spot is taken too
-    constexpr float                kSeatSpacing = 2.0f;
-    cardian::formation::SeatsTaken taken{};
-    std::vector<position_t>        heldPoints;
-    if (const auto* PPawn = static_cast<const CCharEntity*>(POwner); PPawn->PParty != nullptr)
-    {
-        for (const auto* PMember : PPawn->PParty->members)
-        {
-            const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
-            if (PChar == nullptr || PChar == POwner || !pawn::isPawn(PChar) || PChar->loc.zone != POwner->loc.zone)
-            {
-                continue;
-            }
-            const auto* PController = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
-            if (PController == nullptr)
-            {
-                continue;
-            }
-            if (const auto held = PController->FightSeatOn(PTarget->id); held.has_value())
-            {
-                if (const auto it = std::ranges::find(RingSeats, *held); it != RingSeats.end())
-                {
-                    taken[static_cast<std::size_t>(it - RingSeats.begin())] = true;
-                }
-            }
-            if (const auto spot = PController->HeldSeatPoint(PTarget); spot.has_value())
-            {
-                heldPoints.push_back(*spot);
-            }
-        }
-    }
-
-    // A seat off the mesh (the mob against a wall) is no seat; none on
-    // the mesh and she closes as the front does
-    cardian::formation::SeatPoints points{};
-    for (std::size_t i = 0; i < RingSeats.size(); ++i)
-    {
-        const auto p = SeatPoint(PTarget, RingSeats[i]);
-        points[i]    = { p.x, p.z };
-        if (!POwner->PAI->PathFind->ValidPosition(p))
-        {
-            taken[i] = true;
-        }
-        for (const auto& held : heldPoints)
-        {
-            if (cardian::formation::planarDistance(p.x, p.z, held.x, held.z) < kSeatSpacing)
-            {
-                taken[i] = true;
-            }
-        }
-    }
-    if (std::ranges::all_of(taken, [](const bool t) { return t; }))
-    {
-        return std::nullopt;
-    }
-
-    // The seat that costs the least walk (formation_math.h cheapestSeat):
-    // each free seat is priced by the navmesh's own path from where she
-    // stands, not the straight line, so a seat across a cliff's edge is
-    // priced by the walk round the cliff and loses to one she can step
-    // to; a detour past what a seat is worth (worthTheWalk), or no path
-    // at all, prices it out. Five queries at most, once per seat pick,
-    // never again for the fight
-    cardian::formation::SeatCosts costs{};
-    costs.fill(std::numeric_limits<float>::infinity());
-    for (std::size_t i = 0; i < RingSeats.size(); ++i)
-    {
-        if (taken[i])
-        {
-            continue;
-        }
-        const position_t p(points[i].first, PTarget->loc.p.y, points[i].second, 0, 0);
-        const auto       walk = WalkLength(p);
-        if (walk.has_value() && cardian::formation::worthTheWalk(*walk, distance(POwner->loc.p, p)))
-        {
-            costs[i] = *walk;
-        }
-    }
-    const auto pick = cardian::formation::cheapestSeat(costs);
-    if (!pick.has_value())
-    {
-        return std::nullopt;
-    }
-    const auto seat = RingSeats[*pick];
-    m_FightSeat     = { PTarget->id, seat };
-    m_SeatVia       = false;
-    ShowInfoFmt("pawn: {} takes {}'s {}", POwner->getName(), PTarget->getName(), seatName(seat));
-    return seat;
-}
-
 auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
 {
     using cardian::formation::Circle;
-    using cardian::formation::seatName;
     using cardian::formation::segmentCrosses;
 
     const auto* PPathFind = POwner->PAI->PathFind.get();
@@ -7471,22 +7564,18 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
         }
     }
 
-    // On her seat, or near enough while in reach: she stands. The first
-    // time, the seat settles: the ring's frame as it stands is hers for
-    // the fight, whatever the mob turns to face
-    const float deadband = inReach ? settings::get<float>("pawn.FIGHT_SEAT_DEADBAND") : 0.5f;
+    // On her spot, or near enough while in reach: she stands. Her herd
+    // spot waits until it is HERD_MOVE_MIN off her (HerdDeadband); the
+    // mob's back and the camp tank's spot keep FIGHT_SEAT_DEADBAND
+    const float deadband = !inReach                ? 0.5f
+                           : ownSeat && !campRoute ? HerdDeadband()
+                                                   : settings::get<float>("pawn.FIGHT_SEAT_DEADBAND");
     if (off <= deadband)
     {
         m_SeatVia = false;
         if (campRoute)
         {
             m_TowRoute.reset();
-        }
-        if (ownSeat && m_FightSeat.mob == PTarget->id && !m_FightSeat.settled)
-        {
-            m_FightSeat.settled = true;
-            m_FightSeat.frame   = LiveFrame(PTarget);
-            ShowInfoFmt("pawn: {} settles on {}'s {}", POwner->getName(), PTarget->getName(), seatName(m_FightSeat.seat));
         }
         return intent;
     }
@@ -7504,12 +7593,13 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
             intent.point = seat;
             return intent;
         }
-        // The seat has left the mesh (the mob against a wall): given up,
-        // and another is picked next tick. Not her seat (the mob's back for
-        // Sneak Attack): she stands, and the walk's own clock gives it up
-        if (ownSeat)
+        // The spot has left the mesh (the mob against a wall): she holds
+        // where she stands, and the herd spaces round her a while. Not her
+        // spot (the mob's back for Sneak Attack): she stands, and the
+        // walk's own clock gives it up
+        if (ownSeat && !campRoute)
         {
-            m_FightSeat = {};
+            HerdPin("her spot is off the mesh");
         }
         return intent;
     }
@@ -7522,8 +7612,9 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
         return intent;
     }
 
-    // A far seat is reached round the mob's side, never through it: a way
-    // there crossing the mob goes by the flank on her side first
+    // A far spot is reached round the mob's side, never through it: a way
+    // there crossing the mob goes first to the middle of the arc, a quarter
+    // turn at most, on the side of the shorter turn, at the spot's distance
     position_t   goal = seat;
     const Circle body{ PTarget->loc.p.x, PTarget->loc.p.z, PTarget->modelHitboxSize + 0.8f };
     if (campRoute)
@@ -7534,16 +7625,21 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     }
     else if (segmentCrosses(body, me.x, me.z, seat.x, seat.z))
     {
-        const auto  right = SeatPoint(PTarget, pawn::Slot::FlankRight);
-        const auto  left  = SeatPoint(PTarget, pawn::Slot::FlankLeft);
-        const bool  byRight = distance(me, right) <= distance(me, left);
-        const auto& via     = byRight ? right : left;
+        using cardian::herd::bearingOf;
+        constexpr float kQuarter = std::numbers::pi_v<float> / 2.0f;
+        const float     from     = bearingOf(body.x, body.z, me.x, me.z);
+        const float     turn     = cardian::herd::shortest(from, bearingOf(body.x, body.z, seat.x, seat.z));
+        const float     viaAt    = from + std::clamp(turn / 2.0f, -kQuarter, kQuarter);
+        const float     reach    = std::hypot(seat.x - body.x, seat.z - body.z);
+        position_t      via      = seat;
+        via.x                    = body.x + std::cos(viaAt) * reach;
+        via.z                    = body.z + std::sin(viaAt) * reach;
         if (distance(me, via) > 1.0f)
         {
             goal = via;
             if (!m_SeatVia)
             {
-                ShowInfoFmt("pawn: {} goes round {} by the {}", POwner->getName(), PTarget->getName(), seatName(byRight ? pawn::Slot::FlankRight : pawn::Slot::FlankLeft));
+                ShowInfoFmt("pawn: {} goes round {} ({})", POwner->getName(), PTarget->getName(), turn > 0.0f ? "anticlockwise" : "clockwise");
             }
             m_SeatVia = true;
         }
@@ -7553,9 +7649,10 @@ auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t&
     // Choose the movement method from the next waypoint's distance.
     intent.kind       = IsShortHop(goal, 0.0f) ? Intent::Kind::Hop : Intent::Kind::Path;
     intent.point      = goal;
-    intent.arrive     = 0.3f;
+    intent.arrive     = kSpotArrive;
     intent.tolerance  = 0.0f;
     intent.seat       = true;
+    intent.herdSpot   = ownSeat && !campRoute;
     return intent;
 }
 
@@ -7586,6 +7683,13 @@ auto CPawnController::ReactionBeat() const -> timer::duration
 auto CPawnController::StepBackIntent(const CBattleEntity* PTarget, const bool positioned) -> std::optional<Intent>
 {
     TracyZoneScoped;
+
+    // Off unless MELEE_STEP_BACK: mobs stop short of their target now, and
+    // the herd keeps her at her distance (ROADMAP A item 9)
+    if (!settings::get<bool>("pawn.MELEE_STEP_BACK"))
+    {
+        return std::nullopt;
+    }
 
     // The rest clock: the target is settled once it is off its path and on
     // the same spot as last tick; any move restarts the clock
@@ -7682,46 +7786,6 @@ auto CPawnController::StepBackIntent(const CBattleEntity* PTarget, const bool po
     intent.point = position_t(x, me.y, z, 0, me.rotation);
     ShowInfoFmt("pawn: {} steps back from {} ({:.1f}y -> {:.1f}y)", POwner->getName(), PTarget->getName(), away, distance(intent.point, mob));
     return intent;
-}
-
-auto CPawnController::DeclumpIntent(const CBattleEntity* PTarget) const -> std::optional<Intent>
-{
-    TracyZoneScoped;
-
-    const auto* PPawn = static_cast<CCharEntity*>(POwner);
-    if (PPawn->PParty == nullptr)
-    {
-        return std::nullopt;
-    }
-
-    const uint8 currentPartyPos = GetPawnPartyPosition();
-    for (const auto* PMember : PPawn->PParty->members)
-    {
-        const auto* POther = dynamic_cast<const CCharEntity*>(PMember);
-        if (POther == nullptr || POther == POwner || !pawn::isPawn(POther) ||
-            POther->loc.zone != POwner->loc.zone ||
-            (POther->PAI->PathFind && POther->PAI->PathFind->IsFollowingPath()) ||
-            distance(POther->loc.p, POwner->loc.p) >= 1.5f)
-        {
-            continue;
-        }
-
-        // Spread around the shared target rather than away from each other,
-        // to a spot on the mesh and clear of every circle
-        const float moveAmount = xirand::GetRandomNumber(0.0f, 1.5f) * ((currentPartyPos % 2) ? 1.0f : -1.0f);
-        const auto  newPos     = sidestepPosition(POwner->loc.p, PTarget->loc.p, moveAmount);
-        if (!POwner->PAI->PathFind->ValidPosition(newPos) || !IsClear(newPos.x, newPos.z))
-        {
-            return std::nullopt;
-        }
-        Intent intent;
-        intent.kind      = distance(POwner->loc.p, newPos) < 1.2f ? Intent::Kind::Hop : Intent::Kind::Path;
-        intent.point     = newPos;
-        intent.arrive    = 0.3f;
-        intent.tolerance = 0.0f;
-        return intent;
-    }
-    return std::nullopt;
 }
 
 auto CPawnController::PathToward(const position_t& point, const float closeTo, const position_t* rearBoundary) -> bool
