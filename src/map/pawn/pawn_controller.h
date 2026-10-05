@@ -1161,8 +1161,20 @@ private:
     // stays out. Held and in a maneuver, as Attack
     auto DisengageOrder() -> uint16;
 
-    // The one way the queued order changes, so the addon's queue line is never stale
+    // The one way the first in her line changes, so the addon's queue line is never stale
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
+
+    // The order of his she is carrying out now: one fired from the command
+    // window or from her line whose action is under way (a cast, an ability,
+    // a weapon skill, a shot, an item's use), shown first on her queue line as
+    // executing until that action is over (the user, 2026-10-05). Set as it
+    // fires (SetRunning); let go once she has been seen acting and no longer
+    // is, or never seen acting within kRunningBeat (UpdateRunning, each tick)
+    std::optional<std::pair<std::string, EntityId>> m_Running;
+    timer::time_point                               m_RunningSince;
+    bool                                            m_RunningSeen = false;
+    void                                            SetRunning(const std::string& key, EntityId target);
+    void                                            UpdateRunning();
 
     // The order that last started, and when: what a refusal right after it is about
     // The order last started, the game's word on it heard for kHeels after: its

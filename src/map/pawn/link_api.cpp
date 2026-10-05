@@ -1701,7 +1701,7 @@ namespace pawn::linkapi
                 {
                     continue;
                 }
-                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE)
+                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE)
                 {
                     reply.more(line);
                 }

@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 38: a cardian's queue four deep, QUEUE's
+// compatible, the user, 2026-09-14). 40: QUEUE's running, the order she is
+// carrying out now; 39: Use, Give & use's use and Rescue join her line
+// (CL_AK_RESCUE on it), and WALK's place, the camp's ring; 38: a cardian's queue four deep, QUEUE's
 // next[] behind its first command, and QUEUE_FULL; 37: a cardian's rest on her queue line,
 // her own (CL_AK_OWN_REST) or his order's (CL_AK_REST), and CANCEL calls it
 // off; the camp placed at a spot, STAKE's CL_STAKE_AT; 36: the server's yes-or-no questions,
@@ -80,7 +82,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 39 };
+enum { CL_PROTOCOL = 40 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1395,7 +1397,10 @@ typedef struct cl_queue_next
 // to QUEUES): the commands a character has waiting, in the order they go --
 // one of his cardians' orders, held behind what she is doing or through a
 // pause, up to four (the first, and up to three behind it), or his own one
-// command through a pause. The server names them; the addon words them.
+// command through a pause -- and, ahead of them, the order of his she is
+// carrying out now (running: from when it fires until her action is over:
+// the cast lands or is cut, the ability, weapon skill, shot or item's use is
+// done). The server names them; the addon words them.
 typedef struct cl_queue
 {
     cl_header     h;
@@ -1405,6 +1410,7 @@ typedef struct cl_queue
     uint8_t       more;      // how many of next[] follow the first
     uint8_t       spare;
     cl_queue_next next[3];   // the commands behind the first, in order
+    cl_queue_next running;   // the order she is carrying out now; CL_AK_NONE: none
 } cl_queue;
 
 // The pause button: takes the hold, or lets go of his own. Answered by the

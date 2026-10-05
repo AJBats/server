@@ -68,7 +68,8 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_pause) == sizeof(cl_header));
     STATIC_REQUIRE(sizeof(cl_action) == 4);
     STATIC_REQUIRE(sizeof(cl_do) == 28);
-    STATIC_REQUIRE(sizeof(cl_queue) == 52);
+    STATIC_REQUIRE(sizeof(cl_queue) == 60);
+    STATIC_REQUIRE(offsetof(cl_queue, running) == 52);
     STATIC_REQUIRE(sizeof(cl_queues) == sizeof(cl_header));
     STATIC_REQUIRE(sizeof(cl_offer) == 24);
     STATIC_REQUIRE(sizeof(cl_offer_answer) == 24);

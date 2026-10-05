@@ -481,6 +481,12 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     // nothing.
     const bool wasEngaged = from == Mode::Fight || from == Mode::Hold;
     const bool nowEngaged = to == Mode::Fight || to == Mode::Hold;
+    // A weapon skill held behind its opener lasts the fight it was for: out of
+    // it, or down, it is gone, or she would count as acting until the next
+    if ((wasEngaged && !nowEngaged) || to == Mode::Down)
+    {
+        m_HeldWs.reset();
+    }
     if (wasEngaged && !nowEngaged)
     {
         m_LeftFightAt   = m_Tick;
@@ -1633,6 +1639,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
             if (status == CL_S_OK)
             {
                 NoteOrderFired();
+                SetRunning(key, target);
             }
             return status;
         }
@@ -1800,10 +1807,62 @@ void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, Entity
     }
 }
 
+void CPawnController::SetRunning(const std::string& key, const EntityId target)
+{
+    // Only an order with an action to be over: an attack, a disengage, a move,
+    // a rest and a rescue have none
+    unsigned kind = 0;
+    unsigned mode = 0;
+    unsigned id   = 0;
+    if (!parseOrderKey(key, kind, mode, id))
+    {
+        return;
+    }
+    m_Running      = std::make_pair(key, target);
+    m_RunningSince = m_Tick;
+    m_RunningSeen  = Acting();
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+    {
+        cardian::link::send(owner, QueueLine());
+    }
+}
+
+void CPawnController::UpdateRunning()
+{
+    if (!m_Running.has_value())
+    {
+        return;
+    }
+    // A weapon skill held behind its opener is still hers to carry out
+    if (Acting() || m_HeldWs.has_value())
+    {
+        m_RunningSeen = true;
+        return;
+    }
+    // Over once she has acted and stopped; an action the game refused before
+    // it began, or one over within a tick, never shows her acting
+    constexpr auto kRunningBeat = 1s;
+    if (!m_RunningSeen && m_Tick - m_RunningSince < kRunningBeat)
+    {
+        return;
+    }
+    m_Running.reset();
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+    {
+        cardian::link::send(owner, QueueLine());
+    }
+}
+
 auto CPawnController::QueueLine() const -> cl_queue
 {
     auto line      = cardian::link::make<cl_queue>();
     line.character = POwner->id;
+    if (m_Running.has_value())
+    {
+        const auto* PRunning  = m_Running->second.resolve<CBattleEntity>();
+        line.running.action = pawn::actionOfKey(m_Running->first);
+        line.running.target = PRunning != nullptr ? PRunning->targid : uint16{ 0 };
+    }
     if (m_QueuedOrder.has_value())
     {
         const auto* PTarget = m_QueuedOrder->second.resolve<CBattleEntity>();
@@ -2251,7 +2310,14 @@ void CPawnController::FireQueuedOrder()
     if (status == CL_S_ON_RECAST || status == CL_S_STANDING_UP)
     {
         OrderNotStarted();
-        return; // the timer has not run out: next tick, until the deadline
+        return; // tried again next tick, for as long as it takes
+    }
+    if (status == CL_S_OK)
+    {
+        // running before the line moves on, so the one QUEUE the move sends shows it
+        m_Running      = std::make_pair(key, target);
+        m_RunningSince = m_Tick;
+        m_RunningSeen  = Acting();
     }
     SetQueuedOrder(std::nullopt);
     if (status != CL_S_OK)
@@ -3554,6 +3620,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
             Transition(Mode::Down, "KO'd");
         }
         WatchPlayerHomePoint();
+        UpdateRunning();
     }
     else
     {
@@ -3564,6 +3631,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         m_PlayerSeenDead = false;
         CheckBrain();
         FireQueuedOrder();
+        UpdateRunning(); // after the line moves: an order over and the next away in one tick is one QUEUE
         FireOrderedEngage();
 
         // Mobs check a character for aggro only when that character's client
