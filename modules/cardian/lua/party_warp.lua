@@ -122,13 +122,9 @@ m:addOverride('xi.conquest.vendorOnEventFinish', function(player, option, vendor
     super(player, option, vendorRegion)
 end)
 
--- The warp a handler has just sold him: a teleport effect he did not carry
--- before it ran, to an outpost or to his nation
-local function warpBought(player, carriedBefore)
-    if carriedBefore then
-        return nil
-    end
-
+-- The warp a handler has just sold him: a teleport effect, to an outpost or
+-- to his nation
+local function warpBought(player)
     local effect = player:getStatusEffect(xi.effect.TELEPORT)
     if effect == nil then
         return nil
@@ -151,8 +147,12 @@ end
 -- of the question still beside him -- in his party and his zone, standing --
 -- is sent to where it takes him: the outpost's own spot, or his nation's
 -- capital. Carried off ahead of him, she holds where she lands until he
--- arrives (the automatic hold), and follows him from there. How many went
--- with him.
+-- arrives (the automatic hold), and follows him from there. A warp already
+-- under way on him (another bought in its last second) refuses the yes
+-- before anything is charged. Dead by his answer, he still goes, and his
+-- party with him (the user, 2026-10-04: a question answered is a warp
+-- bought): the teleport effect moves no dead body, so he is moved here. How
+-- many went with him.
 xi.cardian = xi.cardian or {}
 xi.cardian.partyWarp = xi.cardian.partyWarp or {}
 
@@ -167,18 +167,25 @@ xi.cardian.partyWarp.resolve = function(player, yes, purchase, cardianIds)
         return 0
     end
 
-    local carriedBefore = player:hasStatusEffect(xi.effect.TELEPORT)
+    if player:hasStatusEffect(xi.effect.TELEPORT) then
+        player:printToPlayer('The warp did not go through.', xi.msg.channel.SYSTEM_3)
+        return 0
+    end
+
     if purchase[1] == teleporter then
         buy(player, purchase[2], purchase[3], purchase[4])
     else
         buy(player, purchase[3], purchase[4])
     end
 
-    local effect = warpBought(player, carriedBefore)
+    local effect = warpBought(player)
     if effect == nil then
         player:printToPlayer('The warp did not go through.', xi.msg.channel.SYSTEM_3)
         return 0
     end
+
+    local power  = effect:getPower()
+    local region = effect:getSubPower()
 
     local beside = {}
     for _, id in ipairs(cardiansWith(player)) do
@@ -189,13 +196,22 @@ xi.cardian.partyWarp.resolve = function(player, yes, purchase, cardianIds)
     for _, id in ipairs(cardianIds or {}) do
         local cardian = beside[id] and GetPlayerByID(id) or nil
         if cardian ~= nil then
-            if effect:getPower() == xi.teleport.id.OUTPOST then
-                xi.teleport.toOutpost(cardian, effect:getSubPower())
+            if power == xi.teleport.id.OUTPOST then
+                xi.teleport.toOutpost(cardian, region)
             else
                 cardian:setPos(unpack(capitalOf(player)))
             end
 
             went = went + 1
+        end
+    end
+
+    if player:isDead() then
+        player:delStatusEffectSilent(xi.effect.TELEPORT)
+        if power == xi.teleport.id.OUTPOST then
+            xi.teleport.toOutpost(player, region)
+        else
+            xi.teleport.toHomeNation(player)
         end
     end
 

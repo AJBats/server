@@ -111,6 +111,14 @@ namespace pawn::offers
         }
         const Offer offer = std::move(it->second);
         open.erase(it);
+        // Past its time or out of its zone, the question has lapsed even when
+        // the once-a-second look has not caught it yet: a no, whatever he said
+        if (timer::now() >= offer.deadline || static_cast<uint16>(PPlayer->getZone()) != offer.zone)
+        {
+            ShowInfoFmt("offer: {} answers #{} {} after it lapsed: a no", PPlayer->getName(), offer.id, yes ? "yes" : "no");
+            resolve(PPlayer, offer, false);
+            return CL_S_OFFER_GONE;
+        }
         ShowInfoFmt("offer: {} answers #{} {}", PPlayer->getName(), offer.id, yes ? "yes" : "no");
         resolve(PPlayer, offer, yes);
         return CL_S_OK;

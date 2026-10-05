@@ -68,7 +68,9 @@ namespace pawn::offers
     auto put(CCharEntity* PPlayer, Offer offer, std::chrono::seconds patience) -> bool;
 
     // His answer, by the question's id: CL_S_OK when it was his open question
-    // (its resolver has run), CL_S_OFFER_GONE when it is not.
+    // (its resolver has run), CL_S_OFFER_GONE when it is not, or when it had
+    // lapsed by then -- past its time, or he has left its zone -- and the
+    // look had not yet caught it (its resolver has run as a no).
     auto answer(CCharEntity* PPlayer, uint32 id, bool yes) -> uint16;
 
     // Every second or so, from the zone tick: the questions that lapse, and

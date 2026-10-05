@@ -202,8 +202,10 @@ namespace pawn::redress
         // wearing found in her bag, or given her, and worn. A piece that does
         // not fit in her bag, or that she cannot wear, is left out and said;
         // a piece that could not go on in the first pass (one under a cover
-        // still worn) is tried once more after the rest. Then the pieces the
+        // still worn) is tried once more after the rest. The pieces the
         // census had issued her that the plan has no place for leave her bag
+        // first, to make room for the new, and again at the end, for the
+        // ones the new pieces took off her
         auto dress(CCharEntity* PPawn, const std::vector<Piece>& plan, const std::set<uint16>& issued) -> Dressed
         {
             Dressed out;
@@ -217,6 +219,24 @@ namespace pawn::redress
             {
                 wanted.insert(piece.itemId);
             }
+
+            const auto dropUnplanned = [&]
+            {
+                for (uint8 slot = 1; slot <= bag->GetSize(); ++slot)
+                {
+                    const CItem* PItem = bag->GetItem(slot);
+                    if (PItem == nullptr || PItem->getQuantity() == 0 ||
+                        !cardian::redress::dropsPiece(PItem->getID(), PItem->state() == ItemState::Equipped, wanted, issued))
+                    {
+                        continue;
+                    }
+                    if (pawn::items::dropItem(PPawn, slot, PItem->getQuantity(), LOC_INVENTORY) == CL_S_OK)
+                    {
+                        ++out.dropped;
+                    }
+                }
+            };
+            dropUnplanned();
 
             // A copy in her bag she is not wearing, else one given her
             const auto bagSlotFor = [&](const Piece& piece) -> std::optional<uint8>
@@ -289,20 +309,7 @@ namespace pawn::redress
             {
                 putOn(piece, true);
             }
-
-            for (uint8 slot = 1; slot <= bag->GetSize(); ++slot)
-            {
-                const CItem* PItem = bag->GetItem(slot);
-                if (PItem == nullptr || PItem->getQuantity() == 0 ||
-                    !cardian::redress::dropsPiece(PItem->getID(), PItem->state() == ItemState::Equipped, wanted, issued))
-                {
-                    continue;
-                }
-                if (pawn::items::dropItem(PPawn, slot, PItem->getQuantity(), LOC_INVENTORY) == CL_S_OK)
-                {
-                    ++out.dropped;
-                }
-            }
+            dropUnplanned();
 
             if (out.worn > 0)
             {
@@ -332,7 +339,9 @@ namespace pawn::redress
             return learned;
         }
 
-        // Her skills raised to the census's values for her level, never lowered
+        // Her skills raised to the census's values for her level, never
+        // lowered, and the weapon skills they open hers: the whole list built
+        // again, since a raise can pass more than one at once
         auto raiseSkills(CCharEntity* PPawn, const std::string& text) -> uint32
         {
             const auto wanted = cardian::redress::parseSkills(text);
@@ -348,7 +357,7 @@ namespace pawn::redress
             if (!raises.empty())
             {
                 charutils::BuildingCharSkillsTable(PPawn);
-                charutils::CheckWeaponSkill(PPawn, static_cast<uint8>(xi::SkillType::None));
+                charutils::BuildingCharWeaponSkills(PPawn);
             }
             return static_cast<uint32>(raises.size());
         }
