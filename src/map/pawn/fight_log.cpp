@@ -748,9 +748,21 @@ namespace pawn::tactics
         {
             return; // somebody not ours
         }
-        auto&      m          = r.member(PAttacker->id, PAttacker->getName());
-        const bool weaponSkill = PAttacker->PAI->IsCurrentState<CWeaponSkillState>();
+        auto& m = r.member(PAttacker->id, PAttacker->getName());
+        // A skillchain's damage arrives while its closer is still in her
+        // weapon skill (or spell), as special damage: it is the
+        // skillchain's, told and counted on its own, not a second landing
+        // of the weapon skill
+        const bool inWeaponSkill = PAttacker->PAI->IsCurrentState<CWeaponSkillState>();
+        const bool skillchain    = attackType == xi::AttackType::Special && (inWeaponSkill || PAttacker->PAI->IsCurrentState<CMagicState>());
+        const bool weaponSkill   = inWeaponSkill && !skillchain;
         m.damageDealt += landed;
+        if (skillchain)
+        {
+            m.scDamage += landed;
+            ++m.scCount;
+            ShowInfoFmt("tactics: {}'s skillchain bursts on {} for {}", m.name, r.mobName, landed);
+        }
         if (weaponSkill)
         {
             m.wsDamage += landed;
