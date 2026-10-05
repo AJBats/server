@@ -242,8 +242,10 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool blocked = impossible || (!deliberate && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || HasPlayersOrder() || (rowRest && fightOn())));
     // An ongoing support rest, or one the player ordered, defers formation
     // and seat requests every tick, even while the player moves. The rest
-    // policy decides when to stand.
-    const bool deferPosition = routinePosition && ((support && place != nullptr) || ordered);
+    // policy decides when to stand. So does a kneel beside the resting
+    // player: it ends the moment he stands, so a seat that moved under it
+    // (a camp set, moved or lifted) is not worth standing for (#254)
+    const bool deferPosition = routinePosition && ((support && place != nullptr) || ordered || (withPlayer && healing != nullptr));
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
         .urgent = urgent, .blocked = blocked,
