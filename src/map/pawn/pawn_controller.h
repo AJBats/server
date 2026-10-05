@@ -30,6 +30,7 @@
 #include "perimeter_math.h"
 #include "stake_math.h"
 #include "rest_math.h"
+#include "warp_hold.h"
 
 #include "ai/controllers/player_controller.h"
 #include "data/enums/status_effect.h"
@@ -273,12 +274,15 @@ public:
     // following, hunting or travel, and no step of her own at all (Move),
     // in a fight or out of one -- she fights and casts from where she
     // stands, and a weapon skill out of her reach is refused rather than
-    // walked to. An ordered hold lasts until told otherwise; an automatic
-    // one (left behind by a warp or a teleport, or carried off alone) ends
-    // when the player is back in her zone.
+    // walked to. An ordered hold lasts until told otherwise. The automatic
+    // hold (warp_hold.h) is a warp's: parted from the player by one, either
+    // way, she holds where she is (HoldForWarp, unless she holds on his order
+    // already), and it lifts by itself once he is in her zone again. Any
+    // other hold or follow given here is not the automatic one.
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
-    void Carried(bool withPlayer); // carried off by a warp or a teleport: alone, she waits where she lands; with the player, she arrives following
+    void HoldForWarp(std::string_view why);
+    void Carried(); // carried off by a warp or a teleport: she holds where she lands until the player is in her zone with her
     void ArriveWith(const position_t& landing); // set down beside the player by an event (pawn::landWithPlayer): she stands until he is seen there
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, after her beat (FireOrderedEngage)
     void ShareSignet(CCharEntity* PPlayer); // the gate guard's Signet, taken with the player for its remaining time
@@ -676,6 +680,7 @@ public:
     }
 
 private:
+    auto HoldNow() const -> cardian::hold::Hold; // her hold as warp_hold.h's rules read it
     auto RearCampRoute(const position_t& point, const position_t& camp) const -> std::optional<std::vector<pathpoint_t>>;
     auto CastRange() const -> float;
     void Attend(CBattleEntity* PTarget, std::string_view how);
@@ -986,6 +991,7 @@ private:
     // Nobody real in her party since: a load lasts seconds, a party he left lasts
     timer::time_point m_NoPlayerSince{};
     bool              m_WaitOrdered = false;
+    bool              m_WarpHold    = false; // the hold she holds is the automatic one a warp set (warp_hold.h)
     timer::time_point m_PlayerMagicSeen{ timer::time_point::min() }; // the player seen mid-warp or mid-teleport, so their vanishing reads as magic
     bool              m_HoldForPlayer = false; // drawn on the player's word: walking in with them, no closing until they strike
     struct Arrival

@@ -47,6 +47,7 @@ cardian/sql/cardian_census.sql
 cardian/sql/cardian_party_memory.sql
 cardian/sql/cardian_snapshot.sql
 cardian/sql/cardian_clock.sql
+cardian/sql/cardian_redress.sql
 # CARDIAN: the party progresses together (quests, missions, battlefields)
 cardian/lua/party_progress.lua
 # CARDIAN: the club signs in with the player (ROADMAP H)
@@ -57,3 +58,5 @@ cardian/lua/market_unlocks.lua
 cardian/lua/era_vendors.lua
 # CARDIAN: the exp formula, fair within a small level spread (RESEARCH 15)
 cardian/lua/exp_spread.lua
+# CARDIAN: the party warps with the player from an outpost teleporter or vendor
+cardian/lua/party_warp.lua

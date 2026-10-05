@@ -139,13 +139,20 @@ namespace pawn
     void leftParty(const CBattleEntity* PMember, const CParty* PParty);
 
     // Her player is leaving his zone (charutils::SendToZone, the one gate
-    // every client zone change passes): each cardian following him there
-    // sets out for his destination now, not when he lands three or four
-    // seconds later. The rule is the roam tick's own for a player in
-    // another zone -- in his party, not waiting -- plus no trek of her own
-    // under way, and only where a zone line leads there from where she
-    // stands; a warp's followers keep today's path
+    // every client zone change passes). Walked through a zone line (his
+    // client's zone line packet just before, noteZoneLine), each cardian
+    // following him there sets out for his destination now, not when he
+    // lands three or four seconds later: the rule is the roam tick's own for
+    // a player in another zone -- in his party, not waiting -- plus no trek
+    // of her own under way, and only where a zone line leads there from
+    // where she stands. Gone any other way, it is magic -- a warp, a
+    // teleport, a home point -- and gives no trek: every cardian of his
+    // party not bound for his destination takes the automatic hold where
+    // she is (warp_hold.h), and follows again once they are in one zone
     void playerZoning(const CCharEntity* PPlayer, xi::ZoneId destination);
+    // A real player's client walked into a zone line (packet 0x05E, seen
+    // before its handler): his next zone change is a walk
+    void noteZoneLine(const CCharEntity* PChar);
 
     // A character to mint: the client's race enum (race and sex in one),
     // face 0-15, size 0-2, nation 0-2, main job and level. The census
@@ -298,9 +305,10 @@ namespace pawn
     // A dead pawn home points: revived the way a home point revives a
     // player (full HP/MP, no weakness) and moved to its home point -- the
     // player's, copied at this moment: PPlayer's when given, else her
-    // summoner's, else the real player in her party's. Party membership is
-    // untouched. false unless the pawn is dead and one of those players is
-    // in the world.
+    // summoner's, else the real player in her party's -- where she holds
+    // until her player is in her zone with her (warp_hold.h). Party
+    // membership is untouched. false unless the pawn is dead and one of
+    // those players is in the world.
     bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer = nullptr);
     // The player's order to one of his: home points, then waits there as a
     // warp leaves her (the user, 2026-09-14). CL_S_OK, or CL_S_NOT_KNOCKED_OUT.
@@ -308,10 +316,11 @@ namespace pawn
 
     // A zone change the server meant to carry through the client protocol
     // -- a warp of her own (a scroll, Warp, Warp II on her) or a party
-    // teleport she stood in range of -- is carried by the pawn transfer
-    // instead: a warp to the party's home point, a teleport to where it
-    // put her. Called each tick ahead of the zone's own check; true when
-    // a carry was requested.
+    // teleport she stood in range of, the party's warp -- is carried by the
+    // pawn transfer instead: a warp to the party's home point, a teleport to
+    // where it put her. Carried, she holds where she lands until her player
+    // is in her zone with her (warp_hold.h). Called each tick ahead of the
+    // zone's own check; true when a carry was requested.
     bool carryZoning(CCharEntity* PPawn);
 
     // An event has moved the player while he is in a battlefield -- its

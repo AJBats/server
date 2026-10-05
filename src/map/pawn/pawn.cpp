@@ -21,6 +21,7 @@
 
 #include "pawn.h"
 #include "cardian_link.h"
+#include "offers.h"
 #include "players.h"
 #include "stake_math.h"
 #include "stake_flag.h" // CARDIAN TRIAL: the stake's flag
@@ -28,6 +29,8 @@
 #include "party_roster.h"
 #include "pawn_items.h"
 #include "pawn_loot.h"
+#include "redress.h"
+#include "warp_hold.h"
 #include "seats.h"
 #include "tactics.h"
 #include "world.h"
@@ -105,6 +108,9 @@ namespace
 
     // played charid -> arrival time of its last 0x015 position packet
     std::unordered_map<uint32, realtime::time_point> lastPositionPacket;
+    // A player's client walked into a zone line (packet 0x05E), when: his
+    // next zone change is a walk, which his cardians follow (warp_hold.h)
+    std::unordered_map<uint32, realtime::time_point> zoneLineAt;
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
@@ -1867,6 +1873,12 @@ namespace pawn
         ShowInfoFmt("pawn: {} home points to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
         clearTravelOrder(PPawn->id); // she waits at her home point: a trek she was on ends there
         requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
+        // Carried there by the warp, she holds until her player is in her
+        // zone with her (warp_hold.h); his order to home point holds her on it
+        if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+        {
+            PController->HoldForWarp("holds at her home point (carried there by the warp)");
+        }
         return true;
     }
 
@@ -1905,20 +1917,18 @@ namespace pawn
             return false;
         }
 
-        // Carried alone, she waits where she lands; carried with her player
-        // -- the same teleport, or a warp home on the player's heels -- she
-        // arrives following
-        const auto settle = [&](const xi::ZoneId destination)
+        // Carried off by magic, she holds where she lands -- a trek she was on
+        // to meet her player ends -- and follows again once he is in her zone
+        // with her: there already, or arriving after her (warp_hold.h)
+        const auto settle = [&]()
         {
-            const CCharEntity* PSummoner  = zoneutils::GetChar(summonerOf(PPawn->id));
-            const bool         withPlayer = PSummoner != nullptr &&
-                                    (PSummoner->getZone() == destination ||
-                                     (PSummoner->requestedZoneChange && PSummoner->loc.destination == destination) ||
-                                     (PSummoner->requestedWarp != WarpRequest::None && PSummoner->profile.home_point.destination == destination) ||
-                                     PSummoner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Teleport));
+            if (const auto it = travelOrders.find(PPawn->id); it != travelOrders.end() && it->second.meet != 0)
+            {
+                travelOrders.erase(it);
+            }
             if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
             {
-                PController->Carried(withPlayer);
+                PController->Carried();
             }
         };
 
@@ -1939,7 +1949,7 @@ namespace pawn
             const auto& home = PPawn->profile.home_point;
 
             ShowInfoFmt("pawn: {} warps to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
-            settle(home.destination);
+            settle();
             requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
             return true;
         }
@@ -1952,7 +1962,7 @@ namespace pawn
             if (PPawn->loc.destination != ZONE_NO_DESTINATION && PPawn->loc.destination != PPawn->getZone())
             {
                 ShowInfoFmt("pawn: {} is carried to zone {}", PPawn->getName(), static_cast<uint16>(PPawn->loc.destination));
-                settle(PPawn->loc.destination);
+                settle();
                 requestTransfer(PPawn->id, TravelHop{ .destinationZone = PPawn->loc.destination, .walkTo = {}, .arriveAt = PPawn->loc.p });
                 return true;
             }
@@ -2390,20 +2400,57 @@ namespace pawn
 
     void playerZoning(const CCharEntity* PPlayer, const xi::ZoneId destination)
     {
-        if (PPlayer == nullptr || PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
+        if (PPlayer == nullptr)
         {
             return;
         }
+
+        // A walk through a zone line, or magic: the zone line packet his
+        // client sent moments before says which, and is spent on this zone
+        // change, whatever it is (a Mog House's own door included)
+        std::optional<std::chrono::milliseconds> sinceZoneLine;
+        if (const auto it = zoneLineAt.find(PPlayer->id); it != zoneLineAt.end())
+        {
+            sinceZoneLine = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second);
+            zoneLineAt.erase(it);
+        }
+        if (PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
+        {
+            return;
+        }
+        const bool walked = cardian::hold::walked(sinceZoneLine);
+
         for (auto& [charid, PPawn] : pawns)
         {
-            if (PPawn->loc.zone != PPlayer->loc.zone)
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController == nullptr)
             {
                 continue;
             }
-            // Zoning ends the current commitment for every cardian with him.
-            // Only followers who trek also receive the destination order.
-            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            if (PController == nullptr || PController->GetLivePlayer() != PPlayer)
+
+            // Gone by magic: no trek. Every cardian of his party who is not
+            // where he is going holds where she is -- beside him a moment
+            // ago, or on her way to him -- until they are in one zone again;
+            // a hold he ordered stays his, and a fight she is in is fought out
+            // from where she stands before she holds (SetWaiting)
+            if (!walked)
+            {
+                if (PPawn->PParty == nullptr || PPawn->PParty != PPlayer->PParty || PPawn->getZone() == destination)
+                {
+                    continue;
+                }
+                if (const auto it = travelOrders.find(charid); it != travelOrders.end() && it->second.meet == PPlayer->id)
+                {
+                    travelOrders.erase(it);
+                }
+                PController->HoldForWarp(fmt::format("waits in {} (the player warped away)", PPawn->loc.zone != nullptr ? PPawn->loc.zone->getName() : "?"));
+                continue;
+            }
+
+            // A walk: zoning ends the current commitment for every cardian
+            // with him, and each follower who treks sets out for his
+            // destination now, where a walking route leads there
+            if (PPawn->loc.zone != PPlayer->loc.zone || PController->GetLivePlayer() != PPlayer)
             {
                 continue;
             }
@@ -2418,6 +2465,14 @@ namespace pawn
             }
             travelOrders[charid] = TravelOrder{ destination, PPlayer->id };
             ShowInfoFmt("pawn: {} sets out for zone {} on {}'s heels", PPawn->getName(), static_cast<uint16>(destination), PPlayer->getName());
+        }
+    }
+
+    void noteZoneLine(const CCharEntity* PChar)
+    {
+        if (PChar != nullptr && !isPawn(PChar))
+        {
+            zoneLineAt.insert_or_assign(PChar->id, realtime::now());
         }
     }
 
@@ -2835,6 +2890,8 @@ namespace pawn
 
         world::onZoneTick(PZone);
         seats::tick();
+        redress::tick(PZone);
+        offers::tick();
         world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

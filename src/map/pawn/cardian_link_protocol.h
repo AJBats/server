@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 35: the Mog House, JOB_CHANGE, the
+// compatible, the user, 2026-09-14). 36: the server's yes-or-no questions,
+// OFFER and OFFER_ANSWER (the party's warp); 35: the Mog House, JOB_CHANGE, the
 // roster's CL_MEMBER_BY_MOG_HOUSE, and JOBS' unlocked; 34: the orders' Dia or Bio (ORDERS'
 // diaBio, CL_HUNT_DIA_BIO); 33: the gambit messages name the player
 // himself too (his own set), and CL_GS_CLIENT; 32: ROLE_LOCKED, and a GAMBIT_ROW's on
@@ -76,7 +77,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 35 };
+enum { CL_PROTOCOL = 36 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -245,6 +246,9 @@ enum
     CL_S_SAME_JOB          = 0x01C3, // the support job asked for is her main job
     CL_S_IN_A_FIGHT        = 0x01C4, // not while she fights
     CL_S_FAR_FROM_MOOGLE   = 0x01C5, // she stands beyond 20 yalms of the Nomad Moogle he stands by
+
+    // The server's questions (OFFER)
+    CL_S_OFFER_GONE        = 0x01D0, // the question is no longer open: answered, lapsed or withdrawn
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -1331,6 +1335,8 @@ enum
     CL_T_PAUSE          = 0x0506,
     CL_T_QUEUE          = 0x0507,
     CL_T_NOTE           = 0x0508,
+    CL_T_OFFER          = 0x0509,
+    CL_T_OFFER_ANSWER   = 0x050A,
 };
 
 enum
@@ -1414,6 +1420,37 @@ typedef struct cl_maneuver_state
     uint8_t   state; // CL_MS_*
     uint8_t   spare[3];
 } cl_maneuver_state;
+
+// What a question the server puts is about. The server names it; the addon
+// words it.
+enum
+{
+    CL_OFFER_PARTY_WARP = 1, // a warp he has picked, not yet bought: bought with his party on a yes, called off on a no
+};
+
+// One-way, to the player: a yes-or-no question the server puts to him, which
+// the addon asks on a screen of the Cardian menu. He answers with OFFER_ANSWER,
+// by its id; unanswered for `seconds` of the simulation's time (a pause holds
+// it), or once he leaves his zone, it lapses and counts as his no. One stands
+// for him at a time. Sent again with status OFFER_GONE, the same id, when it
+// lapses or is withdrawn before he answers: the addon takes it down.
+typedef struct cl_offer
+{
+    cl_header h;
+    uint32_t  offer;   // its id, which his answer names
+    uint8_t   kind;    // CL_OFFER_*
+    uint8_t   spare;
+    uint16_t  seconds; // how long it stands unanswered
+} cl_offer;
+
+// His answer to an OFFER. Answered OK, or OFFER_GONE when it is no longer open.
+typedef struct cl_offer_answer
+{
+    cl_header h;
+    uint32_t  offer;
+    uint8_t   yes;     // 1 yes, 0 no
+    uint8_t   spare[3];
+} cl_offer_answer;
 
 // One-way, to every bound addon as the simulation is held, and to an addon
 // that binds while it is. gametime is Vana'diel's clock in seconds
