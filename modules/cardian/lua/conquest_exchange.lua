@@ -193,16 +193,14 @@ xi.cardian.exchange.buy = function(buyer, guardNation, guardType, option)
     if entry == nil then
         return { refusal = 'NOT_SOLD', cp = buyer:getCP(), have = 0, need = 0 }
     end
-    if option >= 32933 and option <= 32935 then
-        return { refusal = 'NOT_BY_PROXY', cp = buyer:getCP(), have = 0, need = 0 }
-    end
 
     -- The guard's own judgement and his own sale, her cutscene answered for
     -- her: overseerOnEventUpdate weighs the item the way the menu would --
     -- job, level, points, rank, the nations' standing, the place -- and arms
     -- the sale; overseerOnEventFinish makes it, charging her and handing her
-    -- the item. Refused, nothing changes hands, and refusalOf only names the
-    -- guard's reason.
+    -- the item. An experience ring goes by his rules for one too: none while
+    -- she holds one. Refused, nothing changes hands, and refusalOf only names
+    -- the guard's reason.
     local before = buyer:getCP()
     xi.conquest.overseerOnEventUpdate(buyer, 0, option, guardNation)
     xi.conquest.overseerOnEventFinish(buyer, 0, option, guardNation, guardType, nil)
