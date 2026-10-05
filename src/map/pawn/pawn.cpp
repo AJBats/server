@@ -1570,7 +1570,7 @@ namespace pawn
 
     auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16
     {
-        if (POwner == nullptr || POwner->loc.zone == nullptr)
+        if (POwner == nullptr || POwner->loc.zone == nullptr || !std::isfinite(at.x) || !std::isfinite(at.y) || !std::isfinite(at.z))
         {
             return CL_S_REFUSED;
         }

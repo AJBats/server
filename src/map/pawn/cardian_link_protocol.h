@@ -1053,16 +1053,20 @@ enum
 // player's ring moves; off takes the order back. The point is slid along her
 // zone's mesh from the last one toward the one asked, so it never leaves floor
 // she can walk. The server says nothing unless the mesh moved the point or
-// the order was refused (WALK_TAKEN).
+// the order was refused (WALK_TAKEN). With place, the ring is the camp being
+// placed (STAKE at a spot): cardian 0, nobody walks, and the same mesh rule
+// moves the point, which also stops within STAKE_PLACE_REACH of the player;
+// off forgets that ring.
 typedef struct cl_walk
 {
     cl_header h;
-    uint32_t  cardian; // charid
+    uint32_t  cardian; // charid; 0 with place
     float     x;
     float     y;
     float     z;
     uint8_t   off;     // 1: take the walk order back
-    uint8_t   spare[3];
+    uint8_t   place;   // 1: the camp's ring, not a walk order
+    uint8_t   spare[2];
 } cl_walk;
 
 // Direct control's view origin (pawn/view.h): the player looks through this

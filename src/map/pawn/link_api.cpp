@@ -1174,14 +1174,71 @@ namespace pawn::linkapi
             }
         }
 
+        // A ring point on the mesh: slid along it from the last point toward
+        // the one asked -- a wall or a ledge stops it, so it never leaves the
+        // floor -- and given the surface's own height
+        void ringStep(const CZone* PZone, const position_t& from, position_t& point)
+        {
+            if (auto* PMesh = PZone->navMesh(); PMesh != nullptr)
+            {
+                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
+                {
+                    point = *slid;
+                }
+                else
+                {
+                    point = from; // nowhere to slide from: the ring stays where it was
+                }
+                PMesh->snapToValidPosition(point);
+            }
+        }
+
+        // The camp being placed: by player, his zone and his ring's last point
+        std::unordered_map<uint32, std::pair<const CZone*, position_t>> placing;
+
+        // The camp's ring (cl_walk's place): moved on the mesh as a cardian's
+        // ring is (ringStep), from the player's feet at first, and held within
+        // STAKE_PLACE_REACH of him the way a wall holds it, so the spot it
+        // shows is a spot STAKE takes. Nobody walks to it
+        void placeRing(CCharEntity* PChar, const cl_walk& ask, Reply& reply)
+        {
+            if (ask.off != 0)
+            {
+                placing.erase(PChar->id);
+                return;
+            }
+            if (!std::isfinite(ask.x) || !std::isfinite(ask.y) || !std::isfinite(ask.z))
+            {
+                return;
+            }
+            if (PChar->loc.zone == nullptr)
+            {
+                tellTaken(reply, ask, ask.x, ask.y, ask.z, CL_S_REFUSED);
+                return;
+            }
+            const auto       it   = placing.find(PChar->id);
+            const position_t from = it != placing.end() && it->second.first == PChar->loc.zone ? it->second.second : PChar->loc.p;
+            position_t       point{ ask.x, ask.y, ask.z, 0, 0 };
+            ringStep(PChar->loc.zone, from, point);
+            if (distance(PChar->loc.p, point) > settings::get<float>("pawn.STAKE_PLACE_REACH"))
+            {
+                point = from;
+            }
+            placing[PChar->id] = { PChar->loc.zone, point };
+            tellTaken(reply, ask, point);
+        }
+
         // A walk order (pawn.h): a point in her zone, or none, streamed one-way.
         // The point is the player's ring, which is its own thing on his client
-        // (no mesh there): it is slid along the mesh from the last point toward
-        // the one asked -- a wall or a ledge stops it, so it never leaves the
-        // floor she can walk -- and its height is the mesh's. He hears only
+        // (no mesh there), on the floor she can walk (ringStep). He hears only
         // when it was not taken as asked.
         void walk(CCharEntity* PChar, const cl_walk& ask, Reply& reply)
         {
+            if (ask.place != 0)
+            {
+                placeRing(PChar, ask, reply);
+                return;
+            }
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
@@ -1219,19 +1276,7 @@ namespace pawn::linkapi
             }
 
             position_t point{ ask.x, ask.y, ask.z, 0, 0 };
-            if (auto* PMesh = PPawn->loc.zone->navMesh(); PMesh != nullptr)
-            {
-                const auto from = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
-                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
-                {
-                    point = *slid;
-                }
-                else
-                {
-                    point = from; // nowhere to slide from: the ring stays where it was
-                }
-                PMesh->snapToValidPosition(point); // the surface's own height
-            }
+            ringStep(PPawn->loc.zone, pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p), point);
             // Held, in a maneuver, the ring lays a route (docs/maneuvers.md)
             const bool laying = PController != nullptr && PController->InManeuver() && cardian::pause::isHeld();
             pawn::setWalkOrder(PPawn->id, point, PChar->id, laying);
