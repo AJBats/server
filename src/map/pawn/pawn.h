@@ -253,6 +253,10 @@ namespace pawn
     };
     auto stakeOf(uint32 ownerCharID) -> std::optional<Stake>;
     auto setStake(CCharEntity* POwner) -> uint16; // CL_S_OK when set or moved (the Link's outcomes); otherwise why not
+    // The camp placed as a maneuver (OPEN_ISSUES #272): at a spot within
+    // pawn.STAKE_PLACE_REACH of him, set down on the zone's ground, facing
+    // the way given. CL_S_OK, or why not
+    auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16;
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 
@@ -335,7 +339,9 @@ namespace pawn
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
     // across the zone), on a RESCUE_COOLDOWN shared by all the player's
     // cardians. CL_S_OK when she came (the Link's outcomes), else why not,
-    // with the numbers behind a refusal in `refusal`.
+    // with the numbers behind a refusal in `refusal`. The refusals of timing
+    // come last -- a pause, then the cooldown -- so either means she could
+    // come once it is over (her line waits it out, QueueRescue).
     struct RescueRefusal
     {
         float  away         = 0; // CL_S_TOO_FAR: yalms between them

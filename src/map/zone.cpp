@@ -850,7 +850,12 @@ void CZone::UpdateWeather()
     scheduler_.postToMainThread(
         [this, duration = std::chrono::duration_cast<earth_time::duration>(WeatherNextUpdate)]() -> Task<void>
         {
-            co_await scheduler_.yieldFor(duration);
+            // CARDIAN: the wait counts the game's clock, which a pause holds: paused, the
+            // time left stands still, and it runs on from there at the release
+            for (const auto due = timer::now() + std::chrono::duration_cast<timer::duration>(duration); timer::now() < due;)
+            {
+                co_await scheduler_.yieldFor(due - timer::now());
+            }
             if (!this->weather().isStatic())
             {
                 this->UpdateWeather();

@@ -361,6 +361,17 @@ TEST_CASE("Rest With Player yields to danger, orders, actions and urgent healing
     CHECK(s.decide({.now=11, .withPlayer=true}) == Decision::Kneel);
 }
 
+TEST_CASE("Rest With Player stays down through a routine seat move: a camp set, moved or lifted (#254)", "[cardian][rest]")
+{
+    State s;
+    REQUIRE(s.decide({.now=10, .withPlayer=true}) == Decision::Kneel);
+    // Kneeling beside the resting player, her seat moves under her: the
+    // move waits, as it does for a mage's own rest
+    CHECK(s.decide({.now=12, .resting=true, .withPlayer=true, .moving=true, .routinePosition=true}) == Decision::StayDown);
+    // He stands: the request ends, and she rises to follow
+    CHECK(s.decide({.now=14, .resting=true, .moving=true, .routinePosition=false}) == Decision::Stand);
+}
+
 TEST_CASE("An urgent cure stands now and casts only after standing", "[cardian][rest]")
 {
     State s;

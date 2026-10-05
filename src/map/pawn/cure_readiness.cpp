@@ -127,13 +127,14 @@ namespace pawn::tactics
                         recast = std::max(recast, seconds(casting->GetStartTime()) + duration(casting->GetCastTime() + casting->GetRecast()) - now);
                     }
                     const double gap = std::max(0.0, static_cast<double>(distance(body->loc.p, target->loc.p) - bank::castRange(body, spell, target)));
-                    // Path movement is a speed/40 step per 400-ms map tick.
-                    // This is straight-line travel, not a navmesh/LOS promise.
+                    // Path movement is upstream's step, speed / 17 yalms a
+                    // second (pathfind.cpp's kYalmsPerSecondPerSpeed). This is
+                    // straight-line travel, not a navmesh/LOS promise.
                     // Nothing walks a played character: out of reach, his
                     // cure is not on offer
                     const double walk = gap == 0.0 ? 0.0 : !host.OwnClient() && body->GetSpeed() > 0 &&
                         !body->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Bind) ?
-                        (gap + 0.5) / (body->GetSpeed() / 16.0) : cardian::cure::unavailable;
+                        (gap + 0.5) / (body->GetSpeed() / 17.0) : cardian::cure::unavailable;
                     // Future casts use base duration: no Quick Magic roll or
                     // consumption of a one-shot status during observation.
                     option.time = cardian::cure::timing(!blocked && option.mp <= body->health.mp - committed,

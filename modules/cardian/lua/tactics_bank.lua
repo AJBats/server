@@ -26,6 +26,11 @@
 --        server's damage chain with every die taken at its expectation;
 --        with intDown, a second table in the same pass, as if the target's
 --        INT were that much lower (Burn).
+--   xi.cardian.bank.debuffSubPower(scriptName, effectId)
+--     -> the subPower a debuff's own script puts on its effect (Dia's
+--        defence down, Bio's attack down, in percent), read by running the
+--        script's onSpellCast on stand-ins: whatever script is in force,
+--        the era module's overrides included. nil when it cannot be read.
 --
 -- A library, not a module: it overrides nothing, so the pawn module loads
 -- it at init (bank::load) rather than init.txt, and xi_test -- which has
@@ -677,4 +682,59 @@ xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
     end
 
     return seeds, seedsMoved
+end
+
+-- A debuff spell's own script, run on stand-ins: the caster answers 0 to
+-- every question, the target carries nothing and keeps what it is given,
+-- and the opening hit's damage chain answers 0. What the script hands
+-- addStatusEffect for the effect is what it would put on a mob
+xi.cardian.bank.debuffSubPower = function(scriptName, effectId)
+    local script = nil
+    for _, school in pairs(xi.actions and xi.actions.spells or {}) do
+        if type(school) == 'table' and type(school[scriptName]) == 'table' then
+            script = school[scriptName]
+            break
+        end
+    end
+
+    if script == nil or type(script.onSpellCast) ~= 'function' then
+        return nil
+    end
+
+    local function inert()
+        return 0
+    end
+
+    local function none()
+        return nil
+    end
+
+    local function no()
+        return false
+    end
+
+    local recorded = nil
+    local caster   = setmetatable({ getStatusEffect = none, hasStatusEffect = no }, { __index = function() return inert end })
+    local target   = setmetatable({
+        getStatusEffect = none,
+        hasStatusEffect = no,
+        addStatusEffect = function(_, effect, params)
+            if effect == effectId and type(params) == 'table' then
+                recorded = params.subPower
+            end
+
+            return true
+        end,
+    }, { __index = function() return inert end })
+    local spell    = setmetatable({}, { __index = function() return inert end })
+
+    local damage = xi.spells.damage.useDamageSpell
+    xi.spells.damage.useDamageSpell = inert
+    local ok = pcall(script.onSpellCast, caster, target, spell)
+    xi.spells.damage.useDamageSpell = damage
+    if not ok or type(recorded) ~= 'number' then
+        return nil
+    end
+
+    return recorded
 end

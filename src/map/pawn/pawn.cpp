@@ -1265,7 +1265,7 @@ namespace pawn
             // keeps hers when this one leaves.
             if (PController != nullptr && (herself || herPlayer == PMember->id))
             {
-                PController->DropQueuedOrder(herself ? "out of the party" : "her player left the party", herPlayer);
+                PController->ClearQueuedOrders(herself ? "out of the party" : "her player left the party", herPlayer);
                 PController->EndRestOrder(herself ? "out of the party" : "her player left the party");
                 // A maneuver is his hand on her: it ends with the party tie too
                 PController->EndManeuver(herself ? "out of the party, the maneuver ends" : "her player left the party, the maneuver ends");
@@ -1568,6 +1568,27 @@ namespace pawn
         return CL_S_OK;
     }
 
+    auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16
+    {
+        if (POwner == nullptr || POwner->loc.zone == nullptr || !std::isfinite(at.x) || !std::isfinite(at.y) || !std::isfinite(at.z))
+        {
+            return CL_S_REFUSED;
+        }
+        if (distance(POwner->loc.p, at) > settings::get<float>("pawn.STAKE_PLACE_REACH"))
+        {
+            return CL_S_CAMP_TOO_FAR;
+        }
+        // On the ground the mesh has there, a step's slack for the ring's
+        // own height easing
+        const auto landed = snapToMesh(POwner->loc.zone, at, 3.0f);
+        if (!landed.has_value())
+        {
+            return CL_S_CAMP_OFF_MESH;
+        }
+        placeStake(POwner, POwner->getZone(), *landed, "placed");
+        return CL_S_OK;
+    }
+
     void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how)
     {
         auto&      orders = ordersFor(POwner->id);
@@ -1803,12 +1824,6 @@ namespace pawn
             return CL_S_KNOCKED_OUT;
         }
 
-        // A held simulation (pause/pause.h) moves nobody
-        if (cardian::pause::isHeld())
-        {
-            return CL_S_NOT_WHILE_PAUSED;
-        }
-
         const float range = settings::get<float>("pawn.RESCUE_RANGE");
         const float away  = distance(PPlayer->loc.p, PPawn->loc.p);
         if (away > range)
@@ -1816,6 +1831,12 @@ namespace pawn
             refusal.away  = away;
             refusal.range = range;
             return CL_S_TOO_FAR;
+        }
+
+        // A held simulation (pause/pause.h) moves nobody
+        if (cardian::pause::isHeld())
+        {
+            return CL_S_NOT_WHILE_PAUSED;
         }
 
         const auto cooldown = std::chrono::seconds(static_cast<int64>(settings::get<float>("pawn.RESCUE_COOLDOWN")));

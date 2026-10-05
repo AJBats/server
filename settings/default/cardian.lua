@@ -29,16 +29,6 @@ xi.settings.cardian =
     -- lockout, which alone holds him off the mob of that swing (pawn/reengage.h).
     REENGAGE_SWITCH_DELAY = 2.0,
 
-    -- An order from the command window given a little early -- she is
-    -- mid-action, or the spell is still on recast -- is held and fires the
-    -- moment it can, as long as that moment is within this many seconds of
-    -- the press, the 2.5 s the server makes anyone wait after a spell
-    -- added on: an order pressed late in her cast bar fires as soon as
-    -- that wait is over. Later than that the order is refused with the
-    -- wait, and a held order the grace runs out on is let go with a note:
-    -- a spell pressed twice is one cast, not two.
-    ORDER_GRACE = 3.0,
-
     -- The combat pause (ROADMAP B): the addon's pause button holds the whole
     -- simulation -- combat and movement, nothing else -- until the player who
     -- took it resumes. Off, the button is refused with a note.
@@ -48,6 +38,15 @@ xi.settings.cardian =
     -- keep) while the server is off. true: its time goes by, as upstream's
     -- does. false: the game carries on from the second it stopped.
     CLOCK_RUNS_OFFLINE = true,
+
+    -- A player's major progression is his account's (ROADMAP N;
+    -- src/map/pawn/account_wide.cpp): the support job, the level cap, the
+    -- gate crystals and Limit Breaker, and the outposts' warps any character
+    -- of an account earns are copied to every character of it. A copy is for
+    -- good, so false stops further copies and takes back none. The maps are
+    -- shared without being copied, each player's choice in the addon's
+    -- Settings (Shared maps), and are not this setting's.
+    ACCOUNT_WIDE_PROGRESSION = true,
 
     -- The exp formula (RESEARCH §15; modules/cardian/lua/exp_spread.lua).
     -- true: Cardian's rule. While the party's level spread -- highest less

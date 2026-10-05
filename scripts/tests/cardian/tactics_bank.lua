@@ -195,4 +195,27 @@ describe('Cardian tactics bank', function()
         local protect = xi.cardian.bank.nukeSeeds(blm, mob, { { id = xi.magic.spell.PROTECT, element = xi.element.LIGHT, skillType = xi.skill.ENHANCING_MAGIC, spellGroup = xi.magic.spellGroup.WHITE, family = 3 } })
         assert(protect[xi.magic.spell.PROTECT] == nil, 'Protect is not in the damage table')
     end)
+
+    it('debuffSubPower reads what Dia and Bio scripts put on a mob, overrides included', function()
+        local bank = xi.cardian.bank
+        assert(bank.debuffSubPower('dia', xi.effect.DIA) == 10, 'Dia lowers defence 10% in upstream\'s script')
+        assert(bank.debuffSubPower('dia_ii', xi.effect.DIA) ~= nil, 'Dia II is read')
+        assert(bank.debuffSubPower('bio', xi.effect.BIO) == 10, 'Bio lowers attack 10% in upstream\'s script')
+        assert(bank.debuffSubPower('no_such_spell', xi.effect.DIA) == nil, 'an unknown script reads nil')
+
+        -- A script overridden as the era module does is read as overridden,
+        -- and the damage chain it borrowed is put back after
+        local damage = xi.spells.damage.useDamageSpell
+        local dia    = xi.actions.spells.white.dia.onSpellCast
+        xi.actions.spells.white.dia.onSpellCast = function(caster, target, spell)
+            local hit = xi.spells.damage.useDamageSpell(caster, target, spell)
+            target:delStatusEffect(xi.effect.BIO)
+            target:addStatusEffect(xi.effect.DIA, { power = 1 + caster:getMod(xi.mod.DIA_DOT), duration = 60, origin = caster, tick = 3, subPower = 5, tier = 1 })
+            return hit
+        end
+        local read = bank.debuffSubPower('dia', xi.effect.DIA)
+        xi.actions.spells.white.dia.onSpellCast = dia
+        assert(read == 5, string.format('the overridden Dia read %s, not 5', tostring(read)))
+        assert(xi.spells.damage.useDamageSpell == damage, 'the damage chain was not put back')
+    end)
 end)

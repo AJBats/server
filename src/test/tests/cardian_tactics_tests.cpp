@@ -576,6 +576,16 @@ TEST_CASE("NukePrice: the seed by her correction, capped by what the mob has lef
     CHECK_THAT(blindFour.line(), ContainsSubstring("72 a second of hers, the party's rate unknown"));
 }
 
+TEST_CASE("summary: a skillchain's damage is its own, not a second weapon skill", "[cardian][tactics]")
+{
+    auto  r      = sampleFight();
+    auto& closer = r.member(1, "Jevyak");
+    closer.scDamage += 150;
+    closer.scCount += 1;
+    CHECK_THAT(summary(r), ContainsSubstring("(1 weapon skill for 200) (1 skillchain for 150)"));
+    CHECK(r.wsDamage() == std::pair<uint32, int32>{ 1, 200 });
+}
+
 TEST_CASE("summary: each Thief's Sneak Attacks, held for her weapon skill with what the waiting cost, and spent on a plain hit", "[cardian][tactics]")
 {
     FightRecord r;

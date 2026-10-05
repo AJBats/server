@@ -194,6 +194,8 @@ namespace cardian::tactics
         int32       meleeDealt   = 0; // her plain swings alone: what a defence down on the mob strengthens
         int32       wsDamage     = 0;
         uint32      wsCount      = 0;
+        int32       scDamage     = 0; // the skillchains she closed
+        uint32      scCount      = 0;
         uint32      casts        = 0;
         uint32      interrupted  = 0;
         int32       mpSpent      = 0;
@@ -443,6 +445,18 @@ namespace cardian::tactics
             return { count, sum };
         }
 
+        auto scDamage() const -> std::pair<uint32, int32>
+        {
+            uint32 count = 0;
+            int32  sum   = 0;
+            for (const auto& m : members)
+            {
+                count += m.scCount;
+                sum += m.scDamage;
+            }
+            return { count, sum };
+        }
+
         auto cureMp() const -> int32
         {
             int32 sum = 0;
@@ -534,6 +548,10 @@ namespace cardian::tactics
         if (const auto [wsCount, wsSum] = r.wsDamage(); wsCount > 0)
         {
             line += fmt::format(" ({} weapon skill{} for {})", wsCount, wsCount == 1 ? "" : "s", wsSum);
+        }
+        if (const auto [scCount, scSum] = r.scDamage(); scCount > 0)
+        {
+            line += fmt::format(" ({} skillchain{} for {})", scCount, scCount == 1 ? "" : "s", scSum);
         }
         if (const auto cures = r.cureCasts(); cures > 0)
         {

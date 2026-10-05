@@ -35,6 +35,7 @@
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "account_wide.h"
 #include "pawn_items.h"
 #include "view.h"
 
@@ -396,13 +397,32 @@ namespace pawn::linkapi
                 [&](CCharEntity* PPawn) { reply.more(statsOf(PPawn, true)); });
         }
 
+        // An item of hers used on herself, as an order in her line
+        // (CPawnController::DoAction, item:<id>): now when nothing waits, else
+        // behind what does, through a pause too -- the stack it names, not the
+        // slot, since her bag can be sorted meanwhile
+        auto useAsOrder(CCharEntity* PPawn, const uint8 slot, const uint8 bag) -> uint16
+        {
+            if (bag != LOC_INVENTORY)
+            {
+                return CL_S_INVENTORY_ONLY; // a bag's contents are fetched first
+            }
+            auto*       PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            const auto* PItem       = PPawn->getStorage(LOC_INVENTORY)->GetItem(slot);
+            if (PController == nullptr || PItem == nullptr || slot == 0)
+            {
+                return pawn::items::useItem(PPawn, slot, bag); // its own refusal
+            }
+            return PController->DoAction(fmt::format("item:{}", PItem->getID()), PPawn);
+        }
+
         // She uses an item on herself: the stack thins when the use completes,
         // so the outcome is all there is to tell now. His own item use is his
         // client's (own.lua: a chat line), never this
         void use(CCharEntity* PChar, const cl_use& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::useItem(PPawn, ask.slot, ask.bag); },
+                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return useAsOrder(PPawn, ask.slot, ask.bag); },
                 [](CCharEntity*) {});
         }
 
@@ -518,19 +538,14 @@ namespace pawn::linkapi
             reply.finish(answer, status);
         }
 
-        // The scroll's way: the stack given, then used from wherever it landed
+        // The scroll's way: the stack given now, a pause or not, and its use an
+        // order in her line from wherever it landed (useAsOrder)
         void giveUse(CCharEntity* PChar, const cl_give_use& ask, Reply& reply)
         {
             auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
-                return;
-            }
-            // Refused whole while held, as the use would be: not half of it, the transfer
-            if (cardian::pause::isHeld())
-            {
-                reply.finish(ask, CL_S_NOT_WHILE_PAUSED);
                 return;
             }
             uint8 landed = 0;
@@ -542,7 +557,7 @@ namespace pawn::linkapi
             reply.more(inventoryOf(PPawn, LOC_INVENTORY));
             auto answer  = ask;
             answer.given = 1;
-            reply.finish(answer, pawn::items::useItem(PPawn, landed));
+            reply.finish(answer, useAsOrder(PPawn, landed, LOC_INVENTORY));
         }
 
         // ---- gambits (the gambit editor, M3.85) ----------------------------
@@ -1160,14 +1175,71 @@ namespace pawn::linkapi
             }
         }
 
+        // A ring point on the mesh: slid along it from the last point toward
+        // the one asked -- a wall or a ledge stops it, so it never leaves the
+        // floor -- and given the surface's own height
+        void ringStep(const CZone* PZone, const position_t& from, position_t& point)
+        {
+            if (auto* PMesh = PZone->navMesh(); PMesh != nullptr)
+            {
+                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
+                {
+                    point = *slid;
+                }
+                else
+                {
+                    point = from; // nowhere to slide from: the ring stays where it was
+                }
+                PMesh->snapToValidPosition(point);
+            }
+        }
+
+        // The camp being placed: by player, his zone and his ring's last point
+        std::unordered_map<uint32, std::pair<const CZone*, position_t>> placing;
+
+        // The camp's ring (cl_walk's place): moved on the mesh as a cardian's
+        // ring is (ringStep), from the player's feet at first, and held within
+        // STAKE_PLACE_REACH of him the way a wall holds it, so the spot it
+        // shows is a spot STAKE takes. Nobody walks to it
+        void placeRing(CCharEntity* PChar, const cl_walk& ask, Reply& reply)
+        {
+            if (ask.off != 0)
+            {
+                placing.erase(PChar->id);
+                return;
+            }
+            if (!std::isfinite(ask.x) || !std::isfinite(ask.y) || !std::isfinite(ask.z))
+            {
+                return;
+            }
+            if (PChar->loc.zone == nullptr)
+            {
+                tellTaken(reply, ask, ask.x, ask.y, ask.z, CL_S_REFUSED);
+                return;
+            }
+            const auto       it   = placing.find(PChar->id);
+            const position_t from = it != placing.end() && it->second.first == PChar->loc.zone ? it->second.second : PChar->loc.p;
+            position_t       point{ ask.x, ask.y, ask.z, 0, 0 };
+            ringStep(PChar->loc.zone, from, point);
+            if (distance(PChar->loc.p, point) > settings::get<float>("pawn.STAKE_PLACE_REACH"))
+            {
+                point = from;
+            }
+            placing[PChar->id] = { PChar->loc.zone, point };
+            tellTaken(reply, ask, point);
+        }
+
         // A walk order (pawn.h): a point in her zone, or none, streamed one-way.
         // The point is the player's ring, which is its own thing on his client
-        // (no mesh there): it is slid along the mesh from the last point toward
-        // the one asked -- a wall or a ledge stops it, so it never leaves the
-        // floor she can walk -- and its height is the mesh's. He hears only
+        // (no mesh there), on the floor she can walk (ringStep). He hears only
         // when it was not taken as asked.
         void walk(CCharEntity* PChar, const cl_walk& ask, Reply& reply)
         {
+            if (ask.place != 0)
+            {
+                placeRing(PChar, ask, reply);
+                return;
+            }
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
             if (PPawn == nullptr)
             {
@@ -1205,19 +1277,7 @@ namespace pawn::linkapi
             }
 
             position_t point{ ask.x, ask.y, ask.z, 0, 0 };
-            if (auto* PMesh = PPawn->loc.zone->navMesh(); PMesh != nullptr)
-            {
-                const auto from = pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p);
-                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
-                {
-                    point = *slid;
-                }
-                else
-                {
-                    point = from; // nowhere to slide from: the ring stays where it was
-                }
-                PMesh->snapToValidPosition(point); // the surface's own height
-            }
+            ringStep(PPawn->loc.zone, pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p), point);
             // Held, in a maneuver, the ring lays a route (docs/maneuvers.md)
             const bool laying = PController != nullptr && PController->InManeuver() && cardian::pause::isHeld();
             pawn::setWalkOrder(PPawn->id, point, PChar->id, laying);
@@ -1471,9 +1531,13 @@ namespace pawn::linkapi
         {
             const bool clear = ask.mode == CL_STAKE_CLEAR || (ask.mode == CL_STAKE_TOGGLE && pawn::stakeOf(PChar->id).has_value());
             uint16     status = CL_S_OK;
-            if (ask.mode > CL_STAKE_TOGGLE)
+            if (ask.mode > CL_STAKE_AT)
             {
                 status = CL_S_MALFORMED;
+            }
+            else if (ask.mode == CL_STAKE_AT)
+            {
+                status = pawn::setStakeAt(PChar, position_t(ask.x, ask.y, ask.z, 0, ask.rotation));
             }
             else if (clear)
             {
@@ -1522,7 +1586,9 @@ namespace pawn::linkapi
             reply.finish(ask, CL_S_OK);
         }
 
-        // A stuck cardian to his side, within reach and off cooldown
+        // A stuck cardian to his side, within reach: an order like any other
+        // (the user, 2026-10-05), so behind whatever waits in her line, and
+        // through a pause or the rescue's cooldown it waits in it (QueueRescue)
         void rescue(CCharEntity* PChar, const cl_rescue& ask, Reply& reply)
         {
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
@@ -1531,13 +1597,31 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
+            auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            if (PController != nullptr && PController->HasQueuedOrder())
+            {
+                reply.finish(ask, PController->QueueRescue(PChar));
+                return;
+            }
             pawn::RescueRefusal refusal;
-            const auto          status = pawn::rescue(PChar, PPawn, refusal);
+            auto                status = pawn::rescue(PChar, PPawn, refusal);
+            if (PController != nullptr && (status == CL_S_NOT_WHILE_PAUSED || status == CL_S_COOLING_DOWN))
+            {
+                reply.finish(ask, PController->QueueRescue(PChar));
+                return;
+            }
             auto                answer = ask;
             answer.away                = refusal.away;
             answer.range               = refusal.range;
             answer.cooldownLeft        = refusal.cooldownLeft;
             reply.finish(answer, status);
+        }
+
+        // The player's preferences the server applies to him (account_wide.h)
+        void prefs(CCharEntity* PChar, const cl_prefs& ask, Reply& reply)
+        {
+            pawn::accountwide::setSharedMaps(PChar, ask.sharedMaps != 0);
+            reply.finish(ask, CL_S_OK);
         }
 
         // A KO'd cardian to his home point, where she waits
@@ -1563,7 +1647,7 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(ask, PController->CancelQueuedOrder() ? CL_S_OK : CL_S_NOTHING_QUEUED);
+            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() ? CL_S_OK : CL_S_NOTHING_QUEUED);
         }
 
         // The command window: one action now, on a target index in her zone (0 =
@@ -1602,15 +1686,12 @@ namespace pawn::linkapi
                 return;
             }
 
-            uint16     wait   = 0; // never the packed field's own address
-            const auto status = PController->DoAction(key, PTarget, &wait);
+            const auto status = PController->DoAction(key, PTarget);
             if (status == CL_S_OK)
             {
                 ShowInfoFmt("pawn: {} is ordered {} on {} by {}", PPawn->getName(), key, PTarget->getName(), PChar->getName());
             }
-            auto answer = ask;
-            answer.wait = wait;
-            reply.finish(answer, status);
+            reply.finish(ask, status);
         }
 
         // His queue lines as they stand, for an addon that has just bound: his own
@@ -1628,7 +1709,7 @@ namespace pawn::linkapi
                 {
                     continue;
                 }
-                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE)
+                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE)
                 {
                     reply.more(line);
                 }
@@ -2225,6 +2306,7 @@ namespace pawn::linkapi
         handle<cl_wait>(wait);
         handle<cl_rescue>(rescue);
         handle<cl_homepoint>(homePoint);
+        handle<cl_prefs>(prefs);
         handle<cl_cancel>(cancel);
         handle<cl_do>(doAction);
         handle<cl_queues>(queues);

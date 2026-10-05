@@ -102,6 +102,12 @@ class CardianTestStubs : public CPPModule
             return "";
         };
 
+        // A grant told to the account (modules/cardian/lua/account_wide.lua):
+        // the account-wide copying is the pawn module's, not linked here
+        ::lua["CBaseEntity"]["cardianAccountGranted"] = [](CLuaBaseEntity* /* PLuaBaseEntity */, const std::string& /* what */)
+        {
+        };
+
         // The party's warp held for his answer: no addon is bound to ask him,
         // so the warp is bought as upstream buys it (a test that wants the
         // question put stubs this to true)

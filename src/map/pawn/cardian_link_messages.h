@@ -49,6 +49,7 @@ namespace cardian::link
     X(STATS, cl_stats)           \
     X(WHOAMI, cl_whoami)         \
     X(UNBOUND, cl_unbound)       \
+    X(PREFS, cl_prefs)           \
     X(INVENTORY, cl_inventory)   \
     X(ROSTER, cl_roster)         \
     X(MEMBER, cl_member)         \

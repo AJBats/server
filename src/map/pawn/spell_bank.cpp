@@ -46,6 +46,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cmath>
 #include <limits>
 #include <map>
@@ -121,18 +122,13 @@ namespace pawn::tactics
         constexpr std::size_t kPdifCacheCap = 4096; // entries; cleared when full, a cache and not a leak
 
         // The defence a defence-down effect takes, in percent, learned from
-        // the first one seen on a mob, by effect and tier (Dia, Dia II and
-        // Diaga all write the one effect); ten stands in until then
+        // each one seen on a mob, by effect and tier (Dia, Dia II and Diaga
+        // all write the one effect)
         std::map<std::pair<xi::StatusEffect, uint16>, int32> observedDefenceDown;
 
-        auto defenceDownPercent(const xi::StatusEffect effect, const uint16 tier) -> std::pair<int32, bool> // the percent, and whether it is assumed
-        {
-            if (const auto it = observedDefenceDown.find({ effect, tier }); it != observedDefenceDown.end())
-            {
-                return { it->second, false };
-            }
-            return { 10, true };
-        }
+        // What each debuff's own script puts on a mob as its subPower, asked
+        // once per spell for the process (subPowerOf, below)
+        std::map<SpellID, std::optional<int32>> scriptedSubPower;
 
         // The mean pDIF a member's melee lands at a defence, sampled once
         // per everything the formula reads and kept for the process: the
@@ -193,6 +189,53 @@ namespace pawn::tactics
                 ShowError("tactics: bank: {} failed: {}", name, err.what());
             }
             return true;
+        }
+
+        // What a debuff's own script puts on a mob as its effect's subPower
+        // (Dia's defence down, Bio's attack down, in percent), read by the
+        // bank's dry run of the script on stand-ins: the profile's own
+        // amount -- the era module's halved ones on prod -- before any is
+        // seen on a mob (#261)
+        auto subPowerOf(const SpellID spellId, const xi::StatusEffect effect) -> std::optional<int32>
+        {
+            if (const auto it = scriptedSubPower.find(spellId); it != scriptedSubPower.end())
+            {
+                return it->second;
+            }
+            std::optional<int32> out;
+            auto*                PSpell = spell::GetSpell(spellId);
+            if (auto fn = bankFunction("debuffSubPower"); fn.has_value() && PSpell != nullptr)
+            {
+                // The script's name: the spell's, lower case, words joined by _
+                std::string name = PSpell->getName();
+                for (auto& c : name)
+                {
+                    c = c == ' ' ? '_' : static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                }
+                const auto res = (*fn)(name, static_cast<uint16>(effect));
+                if (!failed("debuffSubPower", res) && res.get_type() == sol::type::number)
+                {
+                    out = res.get<int32>();
+                }
+                ShowInfoFmt("tactics: bank: {}'s script {}", PSpell->getName(), out.has_value() ? fmt::format("lowers by {}%", *out) : "could not be read; ten percent stands in");
+            }
+            scriptedSubPower[spellId] = out;
+            return out;
+        }
+
+        // The defence a defence-down spell takes, in percent: as last seen on
+        // a mob, else as its script puts it, else ten (assumed)
+        auto defenceDownPercent(const Priced& p) -> std::pair<int32, bool> // the percent, and whether it is assumed
+        {
+            if (const auto it = observedDefenceDown.find({ p.effect, p.tier }); it != observedDefenceDown.end())
+            {
+                return { it->second, false };
+            }
+            if (const auto scripted = subPowerOf(p.id, p.effect); scripted.has_value())
+            {
+                return { *scripted, false };
+            }
+            return { 10, true };
         }
 
         // Each effect on the mob carrying the modifier: the effect, its
@@ -616,7 +659,7 @@ namespace pawn::tactics
             // defenceOf has just noted every defence-down effect on the mob,
             // so an effect on it already reads its exact percent here
             const auto d                  = defenceOf(PMob);
-            const auto [percent, assumed] = defenceDownPercent(p.effect, p.tier);
+            const auto [percent, assumed] = defenceDownPercent(p);
             const int32 defWith           = onAlready ? d.now : d.at(d.defp - percent);
             const int32 defWithout        = onAlready ? d.at(d.defp + percent) : d.now;
             double      weighted          = 0.0;
@@ -1152,7 +1195,9 @@ namespace pawn::tactics
                     // attack down by the effect's subPower for its duration,
                     // which takes that share of the mob's melee as Slow's
                     // lost rounds do
-                    constexpr double kBioAttackDown = 0.10; // bio.lua: subPower 10, as ATTP
+                    // The attack down its script puts on the mob, as ATTP
+                    // (bio.lua's 10, the era module's 5 on prod)
+                    const double attackDown = subPowerOf(p.id, p.effect).value_or(10) / 100.0;
                     std::map<uint16, double> seeds;
                     double                   hit = 0.0;
                     if (seedNukes(r, PCaster, PMob, { PSpell }, seeds).has_value())
@@ -1162,9 +1207,9 @@ namespace pawn::tactics
                     const double ticks = dotDamage(*pot, p.tick, price.window);
                     priceExtraDamage(price, hit + ticks, rt.dealtPerSecond, rt.takenPerSecond, rt.remaining,
                                      fmt::format("its hit ~{:.0f} and {:.0f} a tick (+{:.0f})", hit, *pot, ticks));
-                    const double saved = attackDownSaved(price.landChance, price.window, rt.roundDelay, rt.meleePerRound, kBioAttackDown);
+                    const double saved = attackDownSaved(price.landChance, price.window, rt.roundDelay, rt.meleePerRound, attackDown);
                     price.hpSaved += saved;
-                    price.detail += fmt::format(", attack -{:.0f}% takes ~{:.0f} of its melee over {:.0f} s at {:.0f} a round", kBioAttackDown * 100.0, saved, price.window, rt.meleePerRound);
+                    price.detail += fmt::format(", attack -{:.0f}% takes ~{:.0f} of its melee over {:.0f} s at {:.0f} a round", attackDown * 100.0, saved, price.window, rt.meleePerRound);
                     break;
                 }
             }

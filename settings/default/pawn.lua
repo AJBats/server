@@ -16,14 +16,17 @@ xi.settings.pawn =
     ENABLE_PAWNS = false,
 
     -- Pawn movement speed (base entity speed). Server-side stepping moves
-    -- speed/50 yalms per 400ms tick. 100 matches the player's own run
-    -- (the user, 2026-09-07, watching the town's bodies outrun them at
-    -- 107: the earlier formation measurement that asked for ~105 was
-    -- wrong); the formation lead's catch-up sprint (FORMATION_CATCHUP_SPEED)
-    -- covers the gap behind a running player. NOTE: PC-type entities are
-    -- clamped to map.SPEED_LIMIT (default 80) each step; raise that limit
-    -- above the catch-up speed or the pawn runs at the limit instead.
-    PAWN_SPEED = 100,
+    -- speed/17 yalms a second (upstream's pathfind.cpp, since its "Move
+    -- mobs at retail ground speed" of 2026-09-17; speed/20 before it). 85
+    -- matches the player's own run, 5 yalms a second -- the 100 the user
+    -- tuned by eye on 2026-09-07 under the old step, watching the town's
+    -- bodies outrun them at 107 (OPEN_ISSUES #268: at 100 the new step
+    -- had them outrun him again). The formation lead's catch-up sprint
+    -- (FORMATION_CATCHUP_SPEED) covers the gap behind a running player.
+    -- NOTE: PC-type entities are clamped to map.SPEED_LIMIT (default 80)
+    -- each step; raise that limit above the catch-up speed or the pawn
+    -- runs at the limit instead.
+    PAWN_SPEED = 85,
 
     -- Direct control (ROADMAP C): a steered cardian's position packet leads
     -- her by this much of her run, along her facing and never past the ring
@@ -172,7 +175,16 @@ xi.settings.pawn =
     -- map.SPEED_LIMIT must be at least the catch-up speed or the clamp
     -- eats it (see the local overrides).
     FORMATION_CATCHUP_DISTANCE = 3.0,
-    FORMATION_CATCHUP_SPEED    = 118,
+
+    -- The camp placed as a maneuver (chord + left with no camp standing;
+    -- OPEN_ISSUES #272): how far from the player its spot may be
+    STAKE_PLACE_REACH = 40.0,
+
+    -- A rest the player calls off from her queue line (OPEN_ISSUES #256):
+    -- she stands, and her own kneels -- her MP's pacing, her Rest row, Rest
+    -- With Player -- wait this many seconds, so she stays with the party
+    REST_CALL_OFF_SECONDS = 60,
+    FORMATION_CATCHUP_SPEED    = 100, -- 5.9 yalms a second, as 118 was under the old step
 
     -- The courtesy: where a walk would cut straight through the player,
     -- this tick's step is planned instead over a one-yalm grid round the

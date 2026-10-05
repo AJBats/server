@@ -77,6 +77,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/redress.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/redress_math.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/warp_hold.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.h
 )
 
 set(MAP_CORE_SOURCES

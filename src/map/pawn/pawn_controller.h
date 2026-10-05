@@ -38,6 +38,7 @@
 
 #include <array>
 #include <chrono>
+#include <deque>
 #include <memory>
 #include <optional>
 #include <string>
@@ -352,24 +353,29 @@ public:
     // (4:2:id), the ranged attack (1:0:0), an item she carries (item:<id>);
     // the "best of" entries are the gambit engine's -- or "attack", her order
     // to fight the mob picked (AttackOrder), or "disengage" (DisengageOrder).
-    // CL_S_OK when it fired or is held (the Link's outcomes), else why not;
-    // CL_S_TOO_SOON puts the seconds it is away in `waitSeconds`.
-    auto DoAction(const std::string& key, CBattleEntity* PTarget, uint16* waitSeconds = nullptr) -> uint16;
+    // CL_S_OK when it fired or joined her line (the Link's outcomes), else
+    // why not; never refused for its timing, only CL_S_QUEUE_FULL when four wait.
+    auto DoAction(const std::string& key, CBattleEntity* PTarget) -> uint16;
+    // His Rescue (pawn::rescue) as an order in her line, "rescue" on him: it
+    // waits its turn, a pause and the rescue's cooldown as an order waits out
+    // its recast, then brings her to his side. CL_S_OK when it joined her line
+    auto QueueRescue(CCharEntity* PPlayer) -> uint16;
 
-    // The order given a little early -- while she acts, or while the
-    // spell is on recast -- is held and fired the moment both allow, the
-    // way the client queues one action behind a cast. Held only within
-    // cardian.ORDER_GRACE of the press, the 2.5 s the server makes anyone
-    // wait after a spell added on: an order that cannot fire in that time
-    // is refused at once (pressed early in a long cast bar, a spell on a
-    // long recast, the same spell pressed twice mid-cast), and a held
-    // order the grace runs out on is let go with a note to the addon. A
-    // newer order replaces it.
+    // An order she cannot start now -- while she acts, while the spell is on
+    // recast, out of reach, the game paused -- waits in her line and fires the
+    // moment it can, however long that is: nothing is refused or let go for
+    // its timing (the user, 2026-10-05). Orders behind it wait their turn,
+    // kQueueDepth deep in all.
     void FireQueuedOrder();
     auto HasQueuedOrder() const -> bool
     {
         return m_QueuedOrder.has_value();
     }
+    // Her line holds her own AI back -- her gambits stand aside, and her Cure
+    // readiness with them -- while its first waits on anything but its own
+    // recast: an order waiting out a long recast (Raise pressed twice) leaves
+    // her free to cure meanwhile, and goes the moment the recast is over
+    auto QueuedOrderHoldsHer() const -> bool;
 
     // The queued order as the command window's queue line shows it: the Link's
     // QUEUE, her action and its target's index (CL_AK_NONE with none). The addon
@@ -377,11 +383,27 @@ public:
     // player can take the order back.
     auto QueueLine() const -> cl_queue;
     auto CancelQueuedOrder() -> bool;
+    // Her whole line dropped: the orders behind the first, then the first
+    auto ClearQueuedOrders(std::string_view why, uint32 formerOwner = 0) -> bool;
+    // The player's cancel on her queue line with nothing queued: a rest she
+    // is on -- her own, or his order's -- called off. She stands, and her own
+    // kneels are held off for pawn.REST_CALL_OFF_SECONDS, so she stays with
+    // the party. False when she is not resting
+    auto CallOffRest() -> bool;
+    // The rest her queue line shows (m_RestLineKind) brought up to date, and
+    // told to her player when it changed with nothing queued
+    void UpdateRestLine();
+
+    // An order behind whatever waits in her line, or first when nothing does:
+    // CL_S_QUEUE_FULL when kQueueDepth wait already
+    auto JoinLine(const std::string& key, EntityId target) -> uint16;
 
     // An order waits on the player's behalf: it ends with the tie to him, as a trek
     // does (pawn::leftParty). Says whether one was queued. `formerOwner` is told her
     // queue line is empty when she no longer has an orders owner to tell.
     auto DropQueuedOrder(std::string_view why, uint32 formerOwner = 0) -> bool;
+    // Out of his party, his addon's copy of her line emptied (DropQueuedOrder)
+    void TellFormerOwner(uint32 formerOwner) const;
 
     // The game told her something (pawn::noteBattleMessage). An order that has just
     // started and this on its heels is the game refusing it -- out of range, no line
@@ -1116,20 +1138,11 @@ private:
     timer::time_point m_LastTidyTime;
     timer::time_point m_NextIdleEmoteTime;
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
-    timer::time_point                               m_QueuedOrderDeadline;
+    // The orders behind m_QueuedOrder, in the order he gave them: the line is
+    // kQueueDepth deep in all, the first taking the next's place as it goes
+    std::deque<std::pair<std::string, EntityId>> m_QueuedNext;
+    static constexpr std::size_t                 kQueueDepth = 4;
 
-    // The least an order has to wait before she could take it, the 2.5 s
-    // after a spell aside: the cast bar she is under, and for a spell its
-    // recast left, or the recast the cast in progress will set when it is
-    // the same spell. Abilities and weapon skills carry their own recast
-    // refusals, and the other states do not tell how long they have left
-    auto OrderWait(unsigned kind, unsigned id) const -> timer::duration;
-    // What is left of the cast bar she is under; 0 when she is not casting
-    auto CastBarLeft() const -> timer::duration;
-    // How much of the 2.5 s the server makes anyone wait after a spell
-    // (CPlayerController::canAct) is still ahead of her: all of it while
-    // she casts, else what is left since her last spell landed
-    auto SpellWaitAhead() -> timer::duration;
     auto OrderName(unsigned kind, unsigned id) const -> std::string;
     // What came of one of the player's orders, to his addon (the Link's NOTE,
     // cardian_link_protocol.h): the note as the caller filled it, and why
@@ -1148,8 +1161,20 @@ private:
     // stays out. Held and in a maneuver, as Attack
     auto DisengageOrder() -> uint16;
 
-    // The one way the queued order changes, so the addon's queue line is never stale
+    // The one way the first in her line changes, so the addon's queue line is never stale
     void SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order);
+
+    // The order of his she is carrying out now: one fired from the command
+    // window or from her line whose action is under way (a cast, an ability,
+    // a weapon skill, a shot, an item's use), shown first on her queue line as
+    // executing until that action is over (the user, 2026-10-05). Set as it
+    // fires (SetRunning); let go once she has been seen acting and no longer
+    // is, or never seen acting within kRunningBeat (UpdateRunning, each tick)
+    std::optional<std::pair<std::string, EntityId>> m_Running;
+    timer::time_point                               m_RunningSince;
+    bool                                            m_RunningSeen = false;
+    void                                            SetRunning(const std::string& key, EntityId target);
+    void                                            UpdateRunning();
 
     // The order that last started, and when: what a refusal right after it is about
     // The order last started, the game's word on it heard for kHeels after: its
@@ -1174,6 +1199,8 @@ private:
     double m_RestChatAt = 0.0;
     uint32 m_KneelHeldFor = 0;   // the member a kneel would put at risk, as last said; 0: none
     std::string m_RestHeldWhy;   // what keeps her up with a reason to kneel, as last said; empty: nothing
+    uint8 m_RestLineKind = 0;           // the rest her queue line shows: CL_AK_NONE, CL_AK_REST (his order) or CL_AK_OWN_REST
+    double m_RestCalledOffUntil = 0.0;  // restSeconds: her own kneels held off until then (CallOffRest)
     uint32 m_SaidMpShortFor = 0; // the fight's mob whose "My MP won't last" she has said
     // Magic aggro (#77): a cast of hers that costs MP is held where an
     // aggressive mob's magic detection would hear it, and while the hold

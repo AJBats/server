@@ -59,7 +59,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_set_strategy) == 20);
     STATIC_REQUIRE(sizeof(cl_set_hunt) == 20);
     STATIC_REQUIRE(sizeof(cl_retreat) == 20);
-    STATIC_REQUIRE(sizeof(cl_stake) == 20);
+    STATIC_REQUIRE(sizeof(cl_stake) == 32);
     STATIC_REQUIRE(sizeof(cl_engage) == 20);
     STATIC_REQUIRE(sizeof(cl_wait) == 24);
     STATIC_REQUIRE(sizeof(cl_rescue) == 32);
@@ -68,7 +68,9 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_pause) == sizeof(cl_header));
     STATIC_REQUIRE(sizeof(cl_action) == 4);
     STATIC_REQUIRE(sizeof(cl_do) == 28);
-    STATIC_REQUIRE(sizeof(cl_queue) == 28);
+    STATIC_REQUIRE(sizeof(cl_queue) == 60);
+    STATIC_REQUIRE(offsetof(cl_queue, running) == 52);
+    STATIC_REQUIRE(sizeof(cl_prefs) == 20);
     STATIC_REQUIRE(sizeof(cl_queues) == sizeof(cl_header));
     STATIC_REQUIRE(sizeof(cl_offer) == 24);
     STATIC_REQUIRE(sizeof(cl_offer_answer) == 24);
@@ -163,6 +165,10 @@ TEST_CASE("Cardian link: a cardian's order key and its action fields cross both 
     CHECK(pawn::actionOfKey("rest:0").kind == CL_AK_NONE);
     CHECK(pawn::keyOfAction(cl_action{ CL_AK_CLIENT, 0, 2 }).empty());
     CHECK(pawn::keyOfAction(cl_action{ CL_AK_HEAL, 0, 0 }).empty());
+    CHECK(pawn::keyOfAction(cl_action{ CL_AK_OWN_REST, 0, 0 }).empty()); // her own rest is shown, never ordered
+    // His Rescue waits in her line and shows there, but comes by its own message
+    CHECK(pawn::actionOfKey("rescue").kind == CL_AK_RESCUE);
+    CHECK(pawn::keyOfAction(cl_action{ CL_AK_RESCUE, 0, 0 }).empty());
     CHECK(pawn::keyOfAction(cl_action{ CL_AK_REST, 0, 101 }).empty());
     CHECK(pawn::keyOfAction(cl_action{ 99, 0, 0 }).empty());
 }
