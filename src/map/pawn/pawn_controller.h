@@ -22,6 +22,7 @@
 #pragma once
 
 #include "cardian_link_messages.h"
+#include "claim_board.h"
 #include "engage_math.h"
 #include "herd_math.h"
 #include "pawn.h"
@@ -669,6 +670,13 @@ private:
         bool                 comesIn    = false;   // the mob she attends is coming in on her: a move no rest puts off
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
+        // The claim board (claim_board.h): what a spot that gives way to
+        // another member's claim keeps as it slides
+        std::optional<position_t> slideRound;      // the centre she keeps her distance from (the attended mob, a spell's target); none: the party's place
+        std::optional<position_t> keepTo;          // and a point she keeps within keepWithin of (the tank she cures)
+        float                     keepWithin = 0.0f;
+        bool                      holdsSpot  = false; // Stand: she was placed where she stands (the crescent, the camp's backline): crowded, she gives way as a walk would
+        bool                      claimed    = false; // the board has had its say on this point: the walker does not ask again
     };
     auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
@@ -693,33 +701,76 @@ private:
     auto CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent;
     // The camp's backline search (CampAttendIntent's): the best spot behind
     // the flag for a mob at `mob` with its tank at `tank` and AoE out to
-    // `ring`, keeping clear of the fellow mages before her in the party
-    // (#250). `geometry` names the picture for the log; nothing is said
-    // when it is empty
+    // `ring`. The fellow mages are kept clear of by the claim board, as
+    // every mover's spot is (ClaimSpot). `geometry` names the picture for
+    // the log; nothing is said when it is empty
     auto CampSpot(const Place& place, const position_t& mob, const position_t& tank, float ring, std::string_view geometry) -> Intent;
     // Between pulls at a camp, an attending mage waits -- and kneels --
     // where she expects to attend the next fight (the user, 2026-10-03):
     // the backline for a pull landing at the flag, planned once a camp
     // with the ring last seen there, and after a fight the spot she
-    // attended from
+    // attended from; a plan another member has claimed slides off it
     auto CampWaitIntent(const Place& place) -> Intent;
     auto WaitsAtCampSpot() const -> bool; // she attends the camp's fights: a mage whose rows take none
     std::optional<position_t> m_CampWaitPoint; // her planned spot at this camp; reset when the camp is set again
-    std::optional<position_t> m_CampCrowdedBy; // the lower-id mage's spot hers last made way for
+    std::optional<position_t> m_CampWaitSlidTo; // where the claim board last slid the plan: walking to it, she arrives as close as a slide asks
     float                     m_CampWaitBest = 0.0f; // her nearest to the spot so far, and when: a walk that gains nothing ends
     timer::time_point         m_CampWaitBestAt{};
     float                     m_CampRing   = 0.0f; // the ring of the last mob she attended at a camp; 0: none yet
     float                     m_AttendRing = 0.0f; // the ring of the mob she attends, as her mover last measured it
 
 public:
-    // Where she waits at the camp, planned or not yet: what a fellow mage
-    // keeps clear of (CampSpot)
-    auto CampWaitPoint() const -> std::optional<position_t>
-    {
-        return m_CampWaitPoint;
-    }
+    // Her claims on the party's claim board (claim_board.h): where the
+    // walker is taking her while she walks, else where she stands -- and,
+    // waiting at a camp, the spot she plans to wait on while her rest puts
+    // the walk there off
+    auto SpotClaims() const -> std::vector<position_t>;
 
 private:
+    // The claim board (claim_board.h, RESEARCH §12.15): no two party
+    // members aim for one spot. The claims of the cardians before her in
+    // the party order, in that order: those she gives way to
+    struct BoardClaim
+    {
+        const CCharEntity*     PMember = nullptr;
+        position_t             at{};
+    };
+    auto ClaimsBefore() const -> std::vector<BoardClaim>;
+    // The rule for one spot she proposes: crowded by a claim before hers,
+    // it slides to the nearest clear point that keeps the intent's purpose
+    // -- round slideRound (else the party's place) at the spot's distance,
+    // within keepWithin of keepTo, behind a rear boundary -- on the mesh and
+    // out of the danger map. Nothing in `to` when nothing clear is near:
+    // the spot stands
+    struct GaveWay
+    {
+        const CCharEntity*        PBy = nullptr; // the member whose claim crowds the spot; none: the spot is hers
+        position_t                at{};          // that claim
+        std::optional<position_t> to;
+    };
+    auto GiveWay(const position_t& spot, const Intent& intent) -> GaveWay;
+    // The walker's pass through the board: a walk to a point (Path) that
+    // is crowded -- or the spot of a stand she was placed on -- gives way,
+    // said in the map log when it changes. Not the fight's own movers (a
+    // seat, a walk in on a mob, the player's order), a hop, nor the
+    // formation's followers, whose seats are spaced already: they are
+    // claims on the board, never slid
+    void ClaimSpot(Intent& intent);
+    // This tick's verdicts (GiveWay), each with what it was asked on: the
+    // spot, where she stood, the purpose and the board
+    struct GiveWayMemo
+    {
+        std::array<float, 12>               asked{};
+        std::vector<cardian::claims::Point> board;
+        GaveWay                             verdict;
+    };
+    timer::time_point        m_GiveWayTick{};
+    std::vector<GiveWayMemo> m_GiveWayMemo;
+    std::optional<position_t> m_WalkTo; // where the walker is taking her: her claim while she walks
+    timer::time_point         m_WalkToAt{};
+    uint32                    m_GaveWayTo = 0; // the slide last said: to whom, where to, or kept
+    position_t                m_GaveWayAt{};
+    bool                      m_GaveWayKept = false;
     auto HoldNow() const -> cardian::hold::Hold; // her hold as warp_hold.h's rules read it
     auto RearCampRoute(const position_t& point, const position_t& camp) const -> std::optional<std::vector<pathpoint_t>>;
     auto CastRange() const -> float;
@@ -1086,6 +1137,7 @@ private:
     uint32                  m_SaidNoSpotFor   = 0;
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
     uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change
+    bool                    m_Joining         = false; // walking to the first attending mage's side: she walks on until beside her (AttendIntent)
     // The attended mob's reach, read once per mob and skill list
     struct ReachMemo
     {

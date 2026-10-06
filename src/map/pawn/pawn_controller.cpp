@@ -80,6 +80,7 @@
 #include "tactics.h"
 #include "items/item_weapon.h"
 #include "navmesh/navmesh.h"
+#include "navmesh/null_navmesh.h"
 #include "party.h"
 #include "pause/pause.h"
 #include "recast_container.h"
@@ -99,6 +100,15 @@
 
 namespace
 {
+    // The zone's navmesh, or none when it has none: a zone without a mesh
+    // holds a NullNavMesh, whose every query fails, and there a point is
+    // taken as it is
+    auto meshOf(const CZone* PZone) -> NavMesh*
+    {
+        auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
+        return navMesh == nullptr || dynamic_cast<const NullNavMesh*>(navMesh) != nullptr ? nullptr : navMesh;
+    }
+
     // Her route on the navmesh as her own walk finds it (CPathFind): her
     // body's half-width kept off the walls, off-mesh links allowed
     auto routeOf(NavMesh* navMesh, const CBaseEntity* PEntity, const position_t& from, const position_t& to) -> Maybe<PathResult>
@@ -432,6 +442,7 @@ void CPawnController::Attend(CBattleEntity* PTarget, const std::string_view how)
     }
     m_Attended        = EntityId(PTarget);
     m_AttendedEngaged = false;
+    m_Joining         = false;
     // Attendance observes a fight; the rest policy decides when she stands.
     m_Gambits->Prompt();
     Transition(Mode::Attend, fmt::format("attends the fight on {} from the perimeter ({})", PTarget->getName(), how));
@@ -1261,7 +1272,7 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
     }
     m_Stake        = std::move(stake);
     m_CampWaitPoint.reset(); // planned afresh for the new camp
-    m_CampCrowdedBy.reset();
+    m_CampWaitSlidTo.reset();
     pawn::tactics::resetRestMemory(static_cast<CCharEntity*>(POwner));
     // A new place: her seats aim afresh, and a spot kept after a fight goes
     m_Towing = false;
@@ -2766,24 +2777,121 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     const float     width  = mobToTank + range - ring; // along the ray from the mob through the tank
     const float     inset  = cardian::perimeter::crescentInset(width);
 
-    if (toMob >= ring && toTank <= range)
+    // What her spot keeps when the claim board slides it off another
+    // member's (ClaimSpot): round the mob at its distance, so it stays
+    // outside the reach, and within cure range of the tank, the inset's
+    // half her cover for arriving short
+    const auto purpose = [&](Intent& i, const float within)
+    {
+        i.slideRound = mob;
+        i.keepTo     = tank;
+        i.keepWithin = within;
+    };
+    const float keep = range - inset / 2.0f;
+
+    // The attending mages before her in the party order, on this mob: she
+    // stands with them, a body's width apart (the user, 2026-10-03: the
+    // mages stick together, never on one pixel). The first one's claim
+    // seeds a later mage's spot, so the two never take opposite sides of
+    // the fight (#250)
+    const CCharEntity*                  PFirst = nullptr;
+    position_t                          firstAt{};
+    std::vector<cardian::claims::Point> mates;
+    for (const auto& claim : ClaimsBefore())
+    {
+        const auto* PPeer = claim.PMember->PAI != nullptr ? dynamic_cast<const CPawnController*>(claim.PMember->PAI->GetController()) : nullptr;
+        if (PPeer != nullptr && PPeer->Attending(PMob))
+        {
+            if (PFirst == nullptr)
+            {
+                PFirst  = claim.PMember;
+                firstAt = claim.at;
+            }
+            mates.push_back({ claim.at.x, claim.at.z });
+        }
+    }
+    // Together is within kTogether of one of them; walking to the first
+    // one's side, she walks on until she is beside her
+    const bool inCrescent = toMob >= ring && toTank <= range;
+    const bool together   = mates.empty() || cardian::claims::together({ me.x, me.z }, mates, m_Joining ? cardian::claims::kBeside : cardian::claims::kTogether);
+    m_Joining             = false;
+
+    // In the crescent and with the mages before her, she holds where she
+    // stands, so the tank's small moves never drag her round the fight
+    const auto stands = [&]
     {
         note(3, fmt::format("in the crescent: stands (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f})", toMob, ring, PTank->getName(), toTank, range));
+        intent.holdsSpot = true;
+        purpose(intent, keep);
         return intent;
+    };
+    if (inCrescent && together)
+    {
+        return stands();
     }
     // The search's seed: the spot of the crescent nearest to it. Where she
     // stands, following; at a place with a heading, its backline -- the 6
     // o'clock behind the stake at the ring's distance, 90 degrees from the
     // tank's 3 o'clock and out of the mob's cones (the user, 2026-09-17).
-    // She still moves only once she has left the crescent
-    const auto       backline = place != nullptr ? place->behind(ring) : std::nullopt;
-    const position_t seed     = backline.value_or(me);
+    // Following, a later mage's seed is the first mage's claim, and the
+    // board takes her beside it; a fight's far side is reached round the
+    // ring, a leg at a time, never through the mob's reach
+    const auto backline = place != nullptr ? place->behind(ring) : std::nullopt;
+    if (!backline.has_value() && PFirst != nullptr)
+    {
+        if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, firstAt.x, firstAt.z); spot.has_value())
+        {
+            Intent join;
+            join.kind  = Intent::Kind::Path;
+            join.point = position_t(spot->first, me.y, spot->second, 0, me.rotation);
+            purpose(join, keep);
+            // Beside her, or nowhere: with no room near her, she seeks her
+            // own spot as a mage alone would
+            if (const auto room = GiveWay(join.point, join); room.PBy == nullptr || room.to.has_value())
+            {
+                // Round the tank's side when the crescent does not reach
+                // behind the mob: the far side is out of cure range
+                constexpr float      kLegTurn = std::numbers::pi_v<float> / 6.0f;
+                const position_t     beside   = room.to.value_or(join.point);
+                std::optional<float> never;
+                if (mobToTank > 0.01f && ring + inset + mobToTank > range - inset)
+                {
+                    never = std::atan2(mob.z - tank.z, mob.x - tank.x);
+                }
+                const auto leg = cardian::claims::roundTheRing({ mob.x, mob.z }, { me.x, me.z }, { beside.x, beside.z }, ring, kLegTurn, never);
+                const bool       aLeg    = std::hypot(leg.x - beside.x, leg.z - beside.z) > 0.01f;
+                m_Joining                = true;
+                intent.kind              = Intent::Kind::Path;
+                intent.point             = aLeg ? position_t(leg.x, me.y, leg.z, 0, me.rotation) : beside;
+                intent.arrive            = std::min(intent.arrive, room.to.has_value() ? cardian::claims::kArrive : inset / 2.0f);
+                intent.tolerance         = std::min(intent.tolerance, room.to.has_value() ? cardian::claims::kArrive : inset / 2.0f);
+                purpose(intent, keep);
+                if (aLeg)
+                {
+                    note(11, fmt::format("goes round {} to {}'s side: walks a leg to ({:.1f}, {:.1f}), for ({:.1f}, {:.1f}) (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y)", PMob->getName(), PFirst->getName(),
+                                         leg.x, leg.z, beside.x, beside.z, toMob, ring, PTank->getName(), toTank));
+                }
+                else
+                {
+                    note(10, fmt::format("joins {}: walks to ({:.1f}, {:.1f}), {:.1f} y from {}'s claim (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f})", PFirst->getName(), beside.x, beside.z,
+                                         distance(beside, firstAt, true), PFirst->getName(), toMob, ring, PTank->getName(), toTank, range));
+                }
+                return intent;
+            }
+        }
+    }
+    if (inCrescent)
+    {
+        return stands();
+    }
+    const position_t seed = backline.value_or(me);
     if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, seed.x, seed.z); spot.has_value())
     {
         intent.kind      = Intent::Kind::Path;
         intent.point     = position_t(spot->first, me.y, spot->second, 0, me.rotation);
         intent.arrive    = std::min(intent.arrive, inset / 2.0f);
         intent.tolerance = std::min(intent.tolerance, inset / 2.0f);
+        purpose(intent, keep);
         note(4, fmt::format("out of the crescent: walks to ({:.1f}, {:.1f}){} (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f}; width {:.1f}, inset {:.1f})",
                             spot->first, spot->second, backline.has_value() ? fmt::format(", the spot nearest the backline ({:.1f}, {:.1f})", backline->x, backline->z) : "",
                             toMob, ring, PTank->getName(), toTank, range, width, inset));
@@ -2817,10 +2925,13 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
         const auto [x, z]    = cardian::perimeter::atRange(mob.x, mob.z, tank.x, tank.z, mobToTank + range - kInset, fallback);
         intent.kind          = Intent::Kind::Path;
         intent.point         = position_t(x, me.y, z, 0, me.rotation);
+        purpose(intent, range);
         note(5, fmt::format("crescent empty (width {:.1f}): walks in to cure range at ({:.1f}, {:.1f}) (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y)", width, x, z, toMob, ring, PTank->getName(), toTank));
         return intent;
     }
     note(6, fmt::format("crescent empty (width {:.1f}): stays in (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f})", width, toMob, ring, PTank->getName(), toTank, range));
+    intent.holdsSpot = true;
+    purpose(intent, range);
     return intent;
 }
 
@@ -2834,7 +2945,7 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
     // If avoidance left her in front, she can walk back. Once behind the
     // line, an AoE reposition cannot route round a wall through the front.
     const float limit   = std::max(0.0f, forward(POwner->loc.p)) + 0.05f;
-    auto*       navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    auto*       navMesh = meshOf(POwner->loc.zone);
     if (navMesh == nullptr)
     {
         return std::vector<pathpoint_t>{ pathpoint_t{ .position = point, .wait = {}, .setRotation = false } };
@@ -2852,12 +2963,6 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
         }
     }
     return std::move(path->points);
-}
-
-namespace
-{
-    // At a camp, how far apart two attending mages keep: together, never on one spot (#250)
-    constexpr float kMageSpacing = 2.0f;
 }
 
 auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent
@@ -2885,7 +2990,7 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
     const auto  me     = POwner->loc.p;
     const float range  = CastRange();
     const float radius = std::clamp(ring + 1.0f - cardian::stake::kMobAhead, 3.0f, std::max(3.0f, range - 2.0f - cardian::stake::kMobAhead));
-    auto*       navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
+    auto*       navMesh = meshOf(POwner->loc.zone);
     const auto clipped = [&](const position_t& point) -> std::optional<position_t>
     {
         if (navMesh == nullptr)
@@ -2898,31 +3003,10 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
     const auto  forward   = [&](const position_t& p) { return cardian::stake::forwardOf(camp.x, camp.z, camp.rotation, p.x, p.z); };
     const auto  rear      = clipped(nearPosition(camp, radius, std::numbers::pi_v<float>));
     const float rearDepth = rear.has_value() ? std::max(0.0f, -forward(*rear)) : radius;
-    // The mages stand together, never on one spot (#250): the spots of the
-    // attending mages of her party in her zone with a lower character id --
-    // planned, and where each stands -- are taken, and a spot within
-    // kMageSpacing of one costs as much as the AoE would. Only the mage with
-    // the higher id gives way, so two never dance round each other
-    std::vector<position_t> taken;
-    POwner->ForParty([&](CBattleEntity* PMember)
-    {
-        auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->loc.zone == POwner->loc.zone && PMember->PAI != nullptr
-                          ? dynamic_cast<CPawnController*>(PMember->PAI->GetController())
-                          : nullptr;
-        if (PPeer != nullptr && PPeer->WaitsAtCampSpot())
-        {
-            taken.push_back(PMember->loc.p);
-            if (const auto planned = PPeer->CampWaitPoint(); planned.has_value())
-            {
-                taken.push_back(*planned);
-            }
-        }
-    });
     const auto cost = [&](const position_t& p)
     {
-        const float side   = cardian::stake::forwardOf(camp.x, camp.z, static_cast<uint8>(camp.rotation + 64), p.x, p.z);
-        const bool  crowds = std::any_of(taken.begin(), taken.end(), [&](const position_t& t) { return distance(p, t, true) < kMageSpacing; });
-        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range) + (crowds ? 12.0f : 0.0f);
+        const float side = cardian::stake::forwardOf(camp.x, camp.z, static_cast<uint8>(camp.rotation + 64), p.x, p.z);
+        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range);
     };
 
     // Small rear arc search; mesh clipping naturally compresses it against
@@ -2986,6 +3070,15 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
             intent.rearBoundary = camp;
         }
     }
+    // Every mage of the camp's search picks the same best spot: the claim
+    // board (ClaimSpot) slides a later one's off an earlier one's, round
+    // the mob at its distance, behind the flag and in cure range, and
+    // slides her off a spot she holds that an earlier mage has come to
+    intent.slideRound   = mob;
+    intent.keepTo       = tank;
+    intent.keepWithin   = range;
+    intent.rearBoundary = camp;
+    intent.holdsSpot    = intent.kind == Intent::Kind::Stand;
     const bool  moves   = intent.kind == Intent::Kind::Path;
     const bool  exposed = distance(me, mob, true) < ring;
     const uint8 verdict = moves ? 7 : exposed ? 8 : 9;
@@ -3012,54 +3105,61 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
     m_HasSlot       = false; // a camp spot is no formation slot for the vet to re-seat
     RestoreNormalSpeed();    // no catch-up sprint carried onto her walk to it
     const auto camp = place.position();
-    // Planned in the same tick as a mage with a lower character id, hers may
-    // sit on that one's spot, which was not yet planned to keep clear of:
-    // she plans again -- once for each new spot of that mage's, so a tight
-    // camp that has nothing better does not plan every tick (#250)
-    if (m_CampWaitPoint.has_value())
-    {
-        std::optional<position_t> crowding;
-        POwner->ForParty([&](CBattleEntity* PMember)
-        {
-            auto* PPeer = PMember != POwner && PMember->id < POwner->id && PMember->loc.zone == POwner->loc.zone && PMember->PAI != nullptr
-                              ? dynamic_cast<CPawnController*>(PMember->PAI->GetController())
-                              : nullptr;
-            const auto planned = PPeer != nullptr && PPeer->WaitsAtCampSpot() ? PPeer->CampWaitPoint() : std::nullopt;
-            if (planned.has_value() && distance(*planned, *m_CampWaitPoint, true) < kMageSpacing)
-            {
-                crowding = planned;
-            }
-        });
-        if (crowding.has_value() && !(m_CampCrowdedBy.has_value() && distance(*m_CampCrowdedBy, *crowding, true) < 0.1f))
-        {
-            m_CampCrowdedBy = crowding;
-            m_CampWaitPoint.reset();
-        }
-    }
+    // The pull lands at the flag (kMobAhead), its tank at its 3 o'clock at
+    // an ordinary mob's melee reach; its AoE the last ring seen at a camp,
+    // else an ordinary melee mob's TP reach. A search that finds nothing
+    // better than where she stands keeps her there
+    constexpr float kOrdinaryReach = 3.0f;
+    constexpr float kOrdinaryRing  = 12.0f;
+    const auto      landing        = nearPosition(camp, cardian::stake::kMobAhead, 0.0f);
     if (!m_CampWaitPoint.has_value())
     {
-        // The pull lands at the flag (kMobAhead), its tank at its 3 o'clock
-        // at an ordinary mob's melee reach; its AoE the last ring seen at a
-        // camp, else an ordinary melee mob's TP reach. A search that finds
-        // nothing better than where she stands keeps her there
-        constexpr float kOrdinaryReach = 3.0f;
-        constexpr float kOrdinaryRing  = 12.0f;
-        const auto      mob            = nearPosition(camp, cardian::stake::kMobAhead, 0.0f);
-        const auto      tank           = nearPosition(mob, kOrdinaryReach, std::numbers::pi_v<float> / 2.0f);
-        const float     ring           = m_CampRing > 0.0f ? m_CampRing : kOrdinaryRing;
-        const auto      spot           = CampSpot(place, mob, tank, ring, "");
-        m_CampWaitPoint                = spot.kind == Intent::Kind::Path ? spot.point : POwner->loc.p;
-        m_CampWaitBest                 = std::numeric_limits<float>::max();
-        m_CampWaitBestAt               = m_Tick;
+        const auto  tank  = nearPosition(landing, kOrdinaryReach, std::numbers::pi_v<float> / 2.0f);
+        const float ring  = m_CampRing > 0.0f ? m_CampRing : kOrdinaryRing;
+        const auto  spot  = CampSpot(place, landing, tank, ring, "");
+        m_CampWaitPoint   = spot.kind == Intent::Kind::Path ? spot.point : POwner->loc.p;
+        m_CampWaitBest    = std::numeric_limits<float>::max();
+        m_CampWaitBestAt  = m_Tick;
         ShowInfoFmt("pawn: {} plans to wait for the camp's pulls at ({:.1f}, {:.1f}), {:.1f} y from the flag (ring {:.1f}{})", POwner->getName(),
                     m_CampWaitPoint->x, m_CampWaitPoint->z, distance(*m_CampWaitPoint, camp, true), ring, m_CampRing > 0.0f ? ", the last seen at a camp" : ", an ordinary mob's");
     }
+    // The mages wait together, never on one spot (#250): every mage's
+    // search picks the same best spot, and the claim board slides a plan
+    // that a member before her has claimed -- where she stands, where she
+    // is going, or the spot she plans to wait on -- round the flag at its
+    // distance, behind it and in cure range of the landing point. The
+    // plan moves with it, so the walk there is judged on the spot she
+    // will stand on
+    const auto withPurpose = [&](Intent& i)
+    {
+        i.slideRound   = camp;
+        i.keepTo       = landing;
+        i.keepWithin   = CastRange();
+        i.rearBoundary = camp;
+    };
+    Intent plan;
+    plan.kind  = Intent::Kind::Path;
+    plan.point = *m_CampWaitPoint;
+    withPurpose(plan);
+    ClaimSpot(plan);
+    if (distance(plan.point, *m_CampWaitPoint, true) > 0.01f)
+    {
+        m_CampWaitPoint  = plan.point;
+        m_CampWaitSlidTo = plan.point;
+        m_CampWaitBest   = std::numeric_limits<float>::max();
+        m_CampWaitBestAt = m_Tick;
+    }
+    // A slid plan is walked to as closely as any slide: arriving short
+    // still leaves her clear of the claim it gave way to
+    const bool  slid      = m_CampWaitSlidTo.has_value() && distance(*m_CampWaitSlidTo, *m_CampWaitPoint, true) < 0.01f;
+    const float arrive    = slid ? cardian::claims::kArrive : 0.5f;
+    const float tolerance = slid ? cardian::claims::kArrive : 0.75f;
     // Standing, she walks there before she kneels; kneeling when the camp
     // was set, she rests on where she is and walks over once topped up
     // (the walk is a routine step her rest puts off)
     Intent intent;
     const float away = distance(POwner->loc.p, *m_CampWaitPoint, true);
-    if (away > 0.75f)
+    if (away > tolerance)
     {
         // Best effort, no cooldown: a walk that gains nothing for a few
         // seconds -- no route from where she stands -- ends where she is,
@@ -3075,11 +3175,11 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
             m_CampWaitPoint = POwner->loc.p;
             return intent;
         }
-        intent.kind         = Intent::Kind::Path;
-        intent.point        = *m_CampWaitPoint;
-        intent.arrive       = 0.5f;
-        intent.tolerance    = 0.75f;
-        intent.rearBoundary = camp;
+        intent.kind      = Intent::Kind::Path;
+        intent.point     = *m_CampWaitPoint;
+        intent.arrive    = arrive;
+        intent.tolerance = tolerance;
+        withPurpose(intent);
     }
     return intent;
 }
@@ -3140,6 +3240,222 @@ auto CPawnController::ApproachIntent(const CBattleEntity* PTarget) const -> Inte
     return intent;
 }
 
+auto CPawnController::SpotClaims() const -> std::vector<position_t>
+{
+    // Walking, the walker's destination; standing, her body. A destination
+    // the walker set a while ago belongs to a walk some other tick has taken
+    // over (an order's route, a trek), and her body speaks for her then
+    std::vector<position_t> out;
+    const auto*             PPathFind = POwner->PAI != nullptr ? POwner->PAI->PathFind.get() : nullptr;
+    const bool              walking   = m_WalkTo.has_value() && PPathFind != nullptr && PPathFind->IsFollowingPath() && timer::now() - m_WalkToAt < 2s;
+    out.push_back(walking ? *m_WalkTo : POwner->loc.p);
+    // Waiting at a camp, the spot she plans to wait on is hers too: kneeling
+    // elsewhere, her rest puts the walk there off, and the spot is still taken
+    if (m_CampWaitPoint.has_value() && Staked() && AttendedTarget() == nullptr && distance(*m_CampWaitPoint, out.front(), true) >= cardian::claims::kSpacing)
+    {
+        out.push_back(*m_CampWaitPoint);
+    }
+    return out;
+}
+
+auto CPawnController::ClaimsBefore() const -> std::vector<BoardClaim>
+{
+    // The party's cardians in her zone, alive, before her in the party
+    // order: the same order for everyone, so of any two only the later
+    // gives way. A cardian another controller drives (a possession) claims
+    // her body
+    std::vector<BoardClaim> out;
+    const auto*             PParty = static_cast<const CCharEntity*>(POwner)->PParty;
+    if (PParty == nullptr)
+    {
+        return out;
+    }
+    for (const auto* PMember : PParty->members)
+    {
+        if (PMember == POwner)
+        {
+            break;
+        }
+        const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
+        if (PChar == nullptr || !pawn::isPawn(PChar) || PChar->loc.zone != POwner->loc.zone || PChar->isDead())
+        {
+            continue;
+        }
+        const auto* PPeer = PChar->PAI != nullptr ? dynamic_cast<const CPawnController*>(PChar->PAI->GetController()) : nullptr;
+        if (PPeer == nullptr)
+        {
+            out.push_back({ PChar, PChar->loc.p });
+            continue;
+        }
+        for (const auto& at : PPeer->SpotClaims())
+        {
+            out.push_back({ PChar, at });
+        }
+    }
+    return out;
+}
+
+auto CPawnController::GiveWay(const position_t& spot, const Intent& intent) -> GaveWay
+{
+    namespace claims = cardian::claims;
+    GaveWay    out;
+    const auto before = ClaimsBefore();
+    if (before.empty())
+    {
+        return out;
+    }
+    std::vector<claims::Point> board;
+    board.reserve(before.size());
+    for (const auto& claim : before)
+    {
+        board.push_back({ claim.at.x, claim.at.z });
+    }
+
+    // The mover's purpose: round the centre it names, else the party's
+    // place -- the player, or the stake -- else round herself
+    position_t centre = POwner->loc.p;
+    if (intent.slideRound.has_value())
+    {
+        centre = *intent.slideRound;
+    }
+    else if (const auto* place = CurrentPlace(GetAnchor()); place != nullptr)
+    {
+        centre = place->position();
+    }
+    claims::Purpose purpose{ .centre = { centre.x, centre.z } };
+    if (intent.keepTo.has_value())
+    {
+        purpose.keepTo = claims::Point{ intent.keepTo->x, intent.keepTo->z };
+        purpose.within = intent.keepWithin;
+    }
+
+    // Asked again this tick on the same spot, purpose and board -- the
+    // roam tick's pass, the walker's, a mover's own question -- the answer
+    // is the one already worked out: a crowded spot with nothing clear
+    // near would otherwise walk the mesh and the danger map for every
+    // candidate each time
+    const auto&                 rear = intent.rearBoundary;
+    const std::array<float, 12> asked{ spot.x, spot.z, POwner->loc.p.x, POwner->loc.p.z, centre.x, centre.z,
+                                       purpose.keepTo.has_value() ? purpose.keepTo->x : 0.0f, purpose.keepTo.has_value() ? purpose.keepTo->z : 0.0f,
+                                       purpose.keepTo.has_value() ? purpose.within : -1.0f, rear.has_value() ? rear->x : 0.0f, rear.has_value() ? rear->z : 0.0f,
+                                       rear.has_value() ? static_cast<float>(rear->rotation) : -1.0f };
+    if (m_GiveWayTick != m_Tick)
+    {
+        m_GiveWayTick = m_Tick;
+        m_GiveWayMemo.clear();
+    }
+    for (const auto& memo : m_GiveWayMemo)
+    {
+        if (memo.asked == asked && memo.board == board)
+        {
+            return memo.verdict;
+        }
+    }
+    const auto remember = [&](const GaveWay& verdict)
+    {
+        m_GiveWayMemo.push_back({ asked, board, verdict });
+        return verdict;
+    };
+
+    const auto verdict = claims::giveWay(board, board.size(), { spot.x, spot.z }, { POwner->loc.p.x, POwner->loc.p.z }, purpose);
+    if (!verdict.by.has_value())
+    {
+        return remember(out);
+    }
+    out.PBy = before[*verdict.by].PMember;
+    out.at  = before[*verdict.by].at;
+
+    // The world has the last word on each candidate, nearest first: on the
+    // mesh and reached along it from the spot (not past a wall or an
+    // edge), behind the camp's line when the mover keeps one, and clear of
+    // the danger map. A zone with no mesh takes the candidate as it is
+    auto* navMesh = meshOf(POwner->loc.zone);
+    for (const auto& candidate : verdict.to)
+    {
+        position_t point(candidate.x, spot.y, candidate.z, 0, spot.rotation);
+        if (navMesh != nullptr)
+        {
+            const auto end = navMesh->findFurthestValidPoint(spot, point);
+            if (!end.has_value() || std::hypot(end->x - point.x, end->z - point.z) > 0.3f)
+            {
+                continue;
+            }
+            point.y = end->y;
+        }
+        if (intent.rearBoundary.has_value() &&
+            cardian::stake::forwardOf(intent.rearBoundary->x, intent.rearBoundary->z, intent.rearBoundary->rotation, point.x, point.z) > 0.05f)
+        {
+            continue;
+        }
+        if (!IsClear(point.x, point.z))
+        {
+            continue;
+        }
+        out.to = point;
+        break;
+    }
+    return remember(out);
+}
+
+void CPawnController::ClaimSpot(Intent& intent)
+{
+    // The fight's own movers keep their own spacing -- a seat (the herd,
+    // the mob's back, the camp tank's spot), a walk in on a mob, the
+    // player's order -- and a hop is a step too short to plan. The
+    // formation's followers keep their seats, which are spaced already
+    // and arrived at loosely: a slide there would chase them round the
+    // player as he moves. A walk to a point goes through the board, and so
+    // does a stand she was placed on. Asked once: the roam tick asks before
+    // the rest decides, and the walker then takes its answer
+    if (intent.claimed || intent.seat || intent.target != nullptr)
+    {
+        return;
+    }
+    intent.claimed    = true;
+    const bool stands = intent.kind == Intent::Kind::Stand && intent.holdsSpot;
+    if (!stands && intent.kind != Intent::Kind::Path)
+    {
+        return;
+    }
+    const position_t spot = stands ? POwner->loc.p : intent.point;
+    // A spot on its own centre (a walk straight at a spell's target) has no
+    // circle to slide round, and the target may well be the member it meets
+    if (intent.slideRound.has_value() && distance(spot, *intent.slideRound, true) < cardian::claims::kMinRadius)
+    {
+        return;
+    }
+    const auto way = GiveWay(spot, intent);
+    if (way.PBy == nullptr)
+    {
+        return;
+    }
+    // Said when it changes: a new member, a new spot, or nowhere to go
+    if (!way.to.has_value())
+    {
+        if (m_GaveWayTo != way.PBy->id || !m_GaveWayKept)
+        {
+            m_GaveWayTo   = way.PBy->id;
+            m_GaveWayKept = true;
+            ShowInfoFmt("pawn: {} gives way to {}, but nothing clear is near ({:.1f}, {:.1f}), {:.1f} y from {}'s claim: she keeps her spot", POwner->getName(), way.PBy->getName(),
+                        spot.x, spot.z, distance(spot, way.at, true), way.PBy->getName());
+        }
+        return;
+    }
+    if (m_GaveWayTo != way.PBy->id || m_GaveWayKept || distance(m_GaveWayAt, *way.to, true) > 1.0f)
+    {
+        m_GaveWayTo   = way.PBy->id;
+        m_GaveWayKept = false;
+        m_GaveWayAt   = *way.to;
+        ShowInfoFmt("pawn: {} gives way to {}: {} ({:.1f}, {:.1f}) is {:.1f} y from {}'s claim; slides to ({:.1f}, {:.1f}), {:.1f} y from it", POwner->getName(), way.PBy->getName(),
+                    stands ? "where she stands" : "her spot", spot.x, spot.z, distance(spot, way.at, true), way.PBy->getName(), way.to->x, way.to->z, distance(*way.to, way.at, true));
+    }
+    // Close enough to the slid spot that arriving short leaves her clear
+    intent.kind      = Intent::Kind::Path;
+    intent.point     = *way.to;
+    intent.arrive    = std::min(intent.arrive, cardian::claims::kArrive);
+    intent.tolerance = std::min(intent.tolerance, cardian::claims::kArrive);
+}
+
 auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
 {
     // Stay stationary during spells and ranged attacks to avoid interrupting them.
@@ -3187,6 +3503,12 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
                 const bool sight = !POwner->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock) || POwner->CanSeeTarget(target);
                 intent.kind = Intent::Kind::Stand;
                 intent.fallback.reset();
+                // The approach's purpose, for the claim board: the target at
+                // the distance the approach chose, so a slide keeps her range
+                intent.slideRound = target->loc.p;
+                intent.keepTo.reset();
+                intent.holdsSpot = false;
+                intent.claimed   = false;
                 if (const auto goal = cardian::casting::approach(POwner->loc.p, target->loc.p, reach, sight); goal.has_value())
                 {
                     intent.kind = Intent::Kind::Path;
@@ -3206,6 +3528,10 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
 
 auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
 {
+    // The claim board first (claim_board.h): no two party members aim for
+    // one spot, whichever mover proposed it
+    ClaimSpot(intent);
+
     auto*      PPathFind    = POwner->PAI->PathFind.get();
     position_t point        = intent.point;
     float      followMax    = intent.tolerance;
@@ -3303,6 +3629,7 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                             intent.arrive = 0.0f;
                             intent.tolerance = 0.0f;
                             intent.fallback.reset();
+                            intent.claimed = false;
                             return Walk(std::move(intent));
                         }
                         if (intent.herdSpot)
@@ -3343,6 +3670,19 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                 break;
             }
         }
+    }
+
+    // Her claim on the board while she walks: the point the walker sent
+    // her to, or the end of the path she keeps (SpotClaims)
+    if (PPathFind->IsFollowingPath())
+    {
+        // A path she keeps may be another mover's by now: its own end
+        m_WalkTo   = action != AvoidAction::None || intent.kind != Intent::Kind::Keep ? point : PPathFind->GetDestination();
+        m_WalkToAt = m_Tick;
+    }
+    else
+    {
+        m_WalkTo.reset();
     }
 
     PPathFind->FollowPath(m_Tick);
@@ -4919,6 +5259,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         RestoreNormalSpeed();
         proposal.kind = Intent::Kind::Keep;
     }
+    // The claim board's slide before the rest's judgement, so a mage that
+    // must give way is not kneeled on a spot another member has claimed,
+    // and one beside it is judged on the spot she will stand on; the
+    // walker's own pass then finds it clear
+    ClaimSpot(proposal);
     const bool stationary = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
                              distance(POwner->loc.p, proposal.point) <= proposal.tolerance) &&
                             !POwner->PAI->PathFind->IsFollowingPath();
@@ -4935,8 +5280,9 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const bool nearPlace = place == nullptr || distance(POwner->loc.p, place->position(), true) <= std::max(CastRange(), 10.0f);
     if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.comesIn && nearPlace))
     {
-        proposal.kind = Intent::Kind::Stand;
-        proposal.seat = false;
+        proposal.kind      = Intent::Kind::Stand;
+        proposal.seat      = false;
+        proposal.holdsSpot = false;
     }
     const auto avoidAction = Move(proposal);
     if (!avoidAction.has_value())
