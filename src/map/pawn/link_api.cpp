@@ -78,6 +78,12 @@ namespace pawn::linkapi
     {
         using namespace cardian::link;
 
+        // A number into a field of two bytes, held at its top rather than wrapped
+        auto clamp16(const int64 value) -> uint16_t
+        {
+            return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
+        }
+
         // One of her containers as it stands now
         auto inventoryOf(CCharEntity* PPawn, const uint8 location) -> cl_inventory
         {
@@ -105,14 +111,19 @@ namespace pawn::linkapi
                 item.id    = PItem->getID();
                 item.qty   = PItem->getQuantity();
                 item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
+                // An enchanted piece: its charges, and how long until it can be used --
+                // worn, the game's own wait (the recast, or the delay wearing it
+                // started); not worn, its recast alone, since wearing it starts the delay
+                // afresh
+                if (auto* PUsable = dynamic_cast<CItemUsable*>(const_cast<CItem*>(PItem)); PUsable != nullptr && PItem->isType(ITEM_EQUIPMENT) && PItem->isSubType(ITEM_CHARGED))
+                {
+                    const auto worn = PItem->state() == ItemState::Equipped;
+                    const auto left = worn ? PUsable->getReuseTime() : PUsable->getLastUseTime() + PUsable->getReuseDelay() - timer::now();
+                    item.charges    = PUsable->getCurrentCharges();
+                    item.readyIn    = clamp16(std::chrono::ceil<std::chrono::seconds>(std::max(left, timer::duration::zero())).count()); // up: 0 only once ready
+                }
             }
             return msg;
-        }
-
-        // A number into a field of two bytes, held at its top rather than wrapped
-        auto clamp16(const int64 value) -> uint16_t
-        {
-            return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
         }
 
         // A zone's name for people: the game's, its underscores as spaces
@@ -403,13 +414,22 @@ namespace pawn::linkapi
         // slot, since her bag can be sorted meanwhile
         auto useAsOrder(CCharEntity* PPawn, const uint8 slot, const uint8 bag) -> uint16
         {
+            auto*       PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            auto*       storage     = PPawn->getStorage(bag);
+            const auto* PItem       = storage != nullptr && slot != 0 ? storage->GetItem(slot) : nullptr;
+            // An enchanted piece of gear (one with charges: every piece of gear is
+            // ITEM_USABLE to the game) is worn to be used, from her inventory or a
+            // wardrobe: its own lane puts it on, waits, uses it and puts back what
+            // it replaced (#297)
+            if (PController != nullptr && PItem != nullptr && PItem->isType(ITEM_EQUIPMENT) && PItem->isSubType(ITEM_CHARGED))
+            {
+                return PController->StartEnchant(bag, slot);
+            }
             if (bag != LOC_INVENTORY)
             {
                 return CL_S_INVENTORY_ONLY; // a bag's contents are fetched first
             }
-            auto*       PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            const auto* PItem       = PPawn->getStorage(LOC_INVENTORY)->GetItem(slot);
-            if (PController == nullptr || PItem == nullptr || slot == 0)
+            if (PController == nullptr || PItem == nullptr)
             {
                 return pawn::items::useItem(PPawn, slot, bag); // its own refusal
             }
@@ -1177,21 +1197,91 @@ namespace pawn::linkapi
 
         // A ring point on the mesh: slid along it from the last point toward
         // the one asked -- a wall or a ledge stops it, so it never leaves the
-        // floor -- and given the surface's own height
-        void ringStep(const CZone* PZone, const position_t& from, position_t& point)
+        // floor -- and given the surface's own height. The slide is a straight
+        // line along the mesh and stops at every edge the mesh has, a seam
+        // between its pieces too, where the floor goes on. Stopped short at
+        // all, it looks a yalm past the stop in the way it was pushed: floor
+        // there, which she can reach by a walk of her own that ends on it and
+        // is not much longer than the straight line, takes the ring on. A wall
+        // stays a wall: no walk ends past it, or its way round is long. A look
+        // refused is remembered a moment for `who`, so a ring pressed at a
+        // wall does not search the mesh every frame. Returns whether the mesh
+        // held the ring short of the point asked
+        struct RingLook
         {
-            if (auto* PMesh = PZone->navMesh(); PMesh != nullptr)
+            position_t           at;
+            realtime::time_point when;
+        };
+        std::unordered_map<uint32, RingLook> ringRefused; // by who: the last look past a stop that found no way on
+
+        bool ringStep(const CZone* PZone, const position_t& from, position_t& point, const uint32 who)
+        {
+            constexpr float kLookPast = 1.0f; // yalms past the stop the floor is looked for
+            constexpr float kOnFloor  = 0.5f; // the floor that far from the look at most, and a walk ending that near it
+            auto*           PMesh     = PZone->navMesh();
+            if (PMesh == nullptr)
             {
-                if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
-                {
-                    point = *slid;
-                }
-                else
-                {
-                    point = from; // nowhere to slide from: the ring stays where it was
-                }
-                PMesh->snapToValidPosition(point);
+                return false;
             }
+            const position_t asked = point;
+            if (const auto slid = PMesh->findFurthestValidPoint(from, point); slid.has_value())
+            {
+                point = *slid;
+            }
+            else
+            {
+                point = from; // nowhere to slide from: the ring stays where it was
+            }
+            const float dx    = asked.x - point.x;
+            const float dz    = asked.z - point.z;
+            const float shortBy = std::sqrt(dx * dx + dz * dz);
+            if (shortBy > kRingMoved)
+            {
+                position_t look = point;
+                look.x += dx / shortBy * kLookPast;
+                look.z += dz / shortBy * kLookPast;
+                const auto seen   = ringRefused.find(who);
+                const bool recent = seen != ringRefused.end() && realtime::now() - seen->second.when < 500ms && distance(seen->second.at, look, true) < 0.3f;
+                bool       onward = false;
+                if (!recent)
+                {
+                    const auto onFloor = PMesh->findClosestValidPoint(look);
+                    if (onFloor.has_value() && distance(*onFloor, look, true) <= kOnFloor)
+                    {
+                        const auto path = PMesh->findPath(point, *onFloor, 0.0f, AvoidLinks{ false });
+                        if (path.has_value() && !path->isPartial && !path->points.empty() && distance(path->points.back().position, *onFloor) <= kOnFloor)
+                        {
+                            float      walked = 0.0f;
+                            position_t at     = point;
+                            for (const auto& step : path->points)
+                            {
+                                walked += distance(at, step.position);
+                                at = step.position;
+                            }
+                            if (walked <= distance(point, *onFloor) * 1.5f + 1.0f)
+                            {
+                                point  = *onFloor;
+                                onward = true;
+                            }
+                        }
+                    }
+                    if (onward)
+                    {
+                        ringRefused.erase(who);
+                    }
+                    else
+                    {
+                        ringRefused[who] = RingLook{ look, realtime::now() };
+                    }
+                }
+                if (!onward)
+                {
+                    PMesh->snapToValidPosition(point);
+                    return true;
+                }
+            }
+            PMesh->snapToValidPosition(point);
+            return false;
         }
 
         // The camp being placed: by player, his zone and his ring's last point
@@ -1220,7 +1310,7 @@ namespace pawn::linkapi
             const auto       it   = placing.find(PChar->id);
             const position_t from = it != placing.end() && it->second.first == PChar->loc.zone ? it->second.second : PChar->loc.p;
             position_t       point{ ask.x, ask.y, ask.z, 0, 0 };
-            ringStep(PChar->loc.zone, from, point);
+            ringStep(PChar->loc.zone, from, point, PChar->id);
             if (distance(PChar->loc.p, point) > settings::get<float>("pawn.STAKE_PLACE_REACH"))
             {
                 point = from;
@@ -1277,7 +1367,18 @@ namespace pawn::linkapi
             }
 
             position_t point{ ask.x, ask.y, ask.z, 0, 0 };
-            ringStep(PPawn->loc.zone, pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p), point);
+            if (ringStep(PPawn->loc.zone, pawn::walkOrderOf(PPawn->id).value_or(PPawn->loc.p), point, PPawn->id))
+            {
+                // where the mesh holds a steered ring, for the map log: once in a while,
+                // since a ring pushed at a wall is held at every step
+                static std::unordered_map<uint32, realtime::time_point> heldSaid;
+                if (auto& said = heldSaid[PPawn->id]; realtime::now() >= said + 3s)
+                {
+                    said = realtime::now();
+                    ShowInfoFmt("link: {}'s ring is held by the mesh in {} at ({:.1f}, {:.1f}, {:.1f}), asked ({:.1f}, {:.1f}, {:.1f})", PPawn->getName(),
+                                PPawn->loc.zone->getName(), point.x, point.y, point.z, ask.x, ask.y, ask.z);
+                }
+            }
             // Held, in a maneuver, the ring lays a route (docs/maneuvers.md)
             const bool laying = PController != nullptr && PController->InManeuver() && cardian::pause::isHeld();
             pawn::setWalkOrder(PPawn->id, point, PChar->id, laying);
@@ -1647,7 +1748,9 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() ? CL_S_OK : CL_S_NOTHING_QUEUED);
+            // from the bottom of her line as the addon shows it up: the orders, her
+            // rest, then her enchanted item, last
+            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() || PController->CancelEnchant() ? CL_S_OK : CL_S_NOTHING_QUEUED);
         }
 
         // The command window: one action now, on a target index in her zone (0 =
@@ -1709,7 +1812,8 @@ namespace pawn::linkapi
                 {
                     continue;
                 }
-                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE)
+                if (const auto line = PController->QueueLine();
+                    line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE || line.lane.action.kind != CL_AK_NONE)
                 {
                     reply.more(line);
                 }

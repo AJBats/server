@@ -111,6 +111,8 @@ namespace
     // A player's client walked into a zone line (packet 0x05E), when: his
     // next zone change is a walk, which his cardians follow (warp_hold.h)
     std::unordered_map<uint32, realtime::time_point> zoneLineAt;
+    // A player's last walk through a zone line (playerExit)
+    std::unordered_map<uint32, pawn::PlayerExit> exits;
 
     // pawn charid -> summoner charid
     std::unordered_map<uint32, uint32> summonerByPawn;
@@ -1265,6 +1267,7 @@ namespace pawn
             // keeps hers when this one leaves.
             if (PController != nullptr && (herself || herPlayer == PMember->id))
             {
+                PController->EndEnchant(herself ? "out of the party" : "her player left the party"); // before the line, whose drop tells his addon
                 PController->ClearQueuedOrders(herself ? "out of the party" : "her player left the party", herPlayer);
                 PController->EndRestOrder(herself ? "out of the party" : "her player left the party");
                 // A maneuver is his hand on her: it ends with the party tie too
@@ -2440,6 +2443,10 @@ namespace pawn
             return;
         }
         const bool walked = cardian::hold::walked(sinceZoneLine);
+        if (walked)
+        {
+            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, PPlayer->loc.p };
+        }
 
         for (auto& [charid, PPawn] : pawns)
         {
@@ -2487,6 +2494,12 @@ namespace pawn
             travelOrders[charid] = TravelOrder{ destination, PPlayer->id };
             ShowInfoFmt("pawn: {} sets out for zone {} on {}'s heels", PPawn->getName(), static_cast<uint16>(destination), PPlayer->getName());
         }
+    }
+
+    auto playerExit(const uint32 playerCharID) -> std::optional<PlayerExit>
+    {
+        const auto it = exits.find(playerCharID);
+        return it != exits.end() ? std::optional<PlayerExit>(it->second) : std::nullopt;
     }
 
     void noteZoneLine(const CCharEntity* PChar)

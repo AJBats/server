@@ -150,11 +150,20 @@ TEST_CASE("herd: more bodies than the gap allows share the ring a little under e
     }
 }
 
-TEST_CASE("herd: when the gaps cannot be met round fixed bodies, nobody moves", "[cardian][herd]")
+TEST_CASE("herd: when the gaps cannot be met round fixed bodies, the free ones take even places between them, and hold", "[cardian][herd]")
 {
-    // A free body between two fixed ones five degrees apart
-    const auto out = spread({ fixedAt(0.0f), fixedAt(deg(5.0f)), loose(deg(2.0f)) }, deg(40.0f));
-    CHECK_THAT(out[2], WithinAbs(deg(2.0f), 0.0001f));
+    // A free body between two fixed ones five degrees apart: the middle
+    auto out = spread({ fixedAt(0.0f), fixedAt(deg(5.0f)), loose(deg(2.0f)) }, deg(40.0f));
+    CHECK_THAT(out[2], WithinAbs(deg(2.5f), 0.0001f));
+
+    // Two free bodies between fixed ones sixty degrees apart, both near the
+    // first: thirds, and the pass after finds them there and moves nobody
+    out = spread({ fixedAt(0.0f), fixedAt(deg(60.0f)), loose(deg(5.0f)), loose(deg(8.0f)) }, deg(40.0f));
+    CHECK_THAT(out[2], WithinAbs(deg(20.0f), 0.0001f));
+    CHECK_THAT(out[3], WithinAbs(deg(40.0f), 0.0001f));
+    const auto again = spread({ fixedAt(0.0f), fixedAt(deg(60.0f)), loose(out[2]), loose(out[3]) }, deg(40.0f));
+    CHECK_THAT(again[2], WithinAbs(out[2], 0.0001f));
+    CHECK_THAT(again[3], WithinAbs(out[3], 0.0001f));
 }
 
 TEST_CASE("herd: the even step turns a body towards the middle of its gap, a step at a time", "[cardian][herd]")
@@ -189,9 +198,9 @@ TEST_CASE("herd: two settled too close are pushed apart, as a settled one by a f
     CHECK_THAT(out[1], WithinAbs(deg(40.0f), 0.001f));
 }
 
-TEST_CASE("herd: a body boxed in between two fixed ones stays, and the rest of the ring still spreads", "[cardian][herd]")
+TEST_CASE("herd: a body boxed in between two fixed ones takes the middle, and the rest of the ring still spreads", "[cardian][herd]")
 {
-    const auto out = spread({ fixedAt(0.0f), fixedAt(deg(30.0f)), loose(deg(15.0f)), loose(deg(180.0f)), loose(deg(180.0f)) }, deg(40.0f));
+    const auto out = spread({ fixedAt(0.0f), fixedAt(deg(30.0f)), loose(deg(3.0f)), loose(deg(180.0f)), loose(deg(180.0f)) }, deg(40.0f));
     CHECK_THAT(out[2], WithinAbs(deg(15.0f), 0.0001f));
     CHECK_THAT(ccw(out[3], out[4]), WithinAbs(deg(40.0f), 0.001f));
 }

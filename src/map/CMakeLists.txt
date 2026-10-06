@@ -79,6 +79,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/warp_hold.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_enchant.cpp
 )
 
 set(MAP_CORE_SOURCES

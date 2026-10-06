@@ -239,12 +239,16 @@ xi.settings.pawn =
     -- where she is and takes the bearing she arrives on. One pass per mob
     -- spaces the party's melee round it, the Tank and the player held where
     -- they stand: neighbours at least HERD_GAP_DEG apart (less when more
-    -- are round the mob than fit), their order kept, the least movement;
-    -- every HERD_BEAT seconds the ring is evened out by a step of at most
-    -- HERD_EVEN_STEP yalms. In reach she walks to a spot the herd has moved
+    -- are round the mob than fit), their order kept, the least movement:
+    -- a cardian who stands clear of her neighbours holds her spot all fight,
+    -- and one crowded walks once, the whole way, to the nearest clear one.
+    -- Every HERD_BEAT seconds the ring could be evened out by a step of at
+    -- most HERD_EVEN_STEP yalms; 0, off (the user, 2026-10-05: real players
+    -- hold their spot -- evened out, Jevyak walked a yalm every two seconds,
+    -- four times a fight). In reach she walks to a spot the herd has moved
     -- only once it is HERD_MOVE_MIN yalms off her. Tuned in play.
     HERD_GAP_DEG   = 40,
-    HERD_EVEN_STEP = 1.0,
+    HERD_EVEN_STEP = 0,
     HERD_BEAT      = 2.0,
     HERD_MOVE_MIN  = 0.7,
 

@@ -178,6 +178,7 @@ namespace pawn::moghouse
         }
         if (PController != nullptr)
         {
+            PController->EndEnchant("her job changed");
             PController->ClearQueuedOrders("her job changed");
         }
 

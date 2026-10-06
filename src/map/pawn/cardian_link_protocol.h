@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 41: PREFS, the player's preferences the
+// compatible, the user, 2026-09-14). 43: an item's charges and readyIn, an enchanted
+// piece's charges left and the seconds until it can be used; 42: QUEUE's lane, the enchanted item she is
+// putting on, waiting out and using (#297), ENCHANT_BUSY and NO_CHARGES; 41: PREFS, the player's preferences the
 // server applies to him (Shared maps); 40: QUEUE's running, the order she is
 // carrying out now; 39: Use, Give & use's use and Rescue join her line
 // (CL_AK_RESCUE on it), and WALK's place, the camp's ring; 38: a cardian's queue four deep, QUEUE's
@@ -83,7 +85,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 41 };
+enum { CL_PROTOCOL = 43 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -211,6 +213,8 @@ enum
     CL_S_CANNOT_REMOVE     = 0x0172, // the game kept the piece on
     CL_S_USING_ITEM        = 0x0173, // she is using an item: her worn pieces stay where they are meanwhile
     CL_S_VIA_INVENTORY     = 0x0174, // a stack moves between her inventory and a bag, never bag to bag
+    CL_S_ENCHANT_BUSY      = 0x0175, // an enchanted item of hers is under way already: one at a time
+    CL_S_NO_CHARGES        = 0x0176, // the enchanted item has no charges left
 
     // Her gambits
     CL_S_NO_SUCH_ROW       = 0x0180,
@@ -420,9 +424,12 @@ enum { CL_ITEM_EQUIPPED = 0x01 };
 typedef struct cl_item
 {
     uint8_t  slot;
-    uint8_t  flags; // CL_ITEM_*
+    uint8_t  flags;   // CL_ITEM_*
     uint16_t id;
     uint32_t qty;
+    uint8_t  charges; // an enchanted piece of gear: its charges left (its most is the client's to know); 0 for anything else
+    uint8_t  spare;
+    uint16_t readyIn; // an enchanted piece: seconds until it can be used -- its recast, and once worn the wait wearing it starts -- held at 65535
 } cl_item;
 
 // One of her containers as it stands: the inventory (loc 0) or a storage bag.
@@ -1412,7 +1419,10 @@ typedef struct cl_queue_next
 // command through a pause -- and, ahead of them, the order of his she is
 // carrying out now (running: from when it fires until her action is over:
 // the cast lands or is cut, the ability, weapon skill, shot or item's use is
-// done). The server names them; the addon words them.
+// done) -- and above it all her enchanted-item lane (#297): the piece she has
+// put on and waits out (mode 0) or is using (mode 1), CL_AK_ITEM by its id,
+// beside her line and holding no place in it. The server names them; the
+// addon words them.
 typedef struct cl_queue
 {
     cl_header     h;
@@ -1423,6 +1433,7 @@ typedef struct cl_queue
     uint8_t       spare;
     cl_queue_next next[3];   // the commands behind the first, in order
     cl_queue_next running;   // the order she is carrying out now; CL_AK_NONE: none
+    cl_queue_next lane;      // her enchanted item under way; CL_AK_NONE: none
 } cl_queue;
 
 // The pause button: takes the hold, or lets go of his own. Answered by the

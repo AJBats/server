@@ -22,6 +22,7 @@
 #include "pawn_travel.h"
 
 #include "common/logging.h"
+#include "common/utils.h"
 
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
@@ -82,7 +83,7 @@ namespace
 
 namespace pawn::travel
 {
-    auto nextHop(const xi::ZoneId from, const xi::ZoneId to) -> std::optional<TravelHop>
+    auto nextHop(const xi::ZoneId from, const xi::ZoneId to, const std::optional<position_t> closeTo) -> std::optional<TravelHop>
     {
         if (from == to)
         {
@@ -143,7 +144,18 @@ namespace pawn::travel
             step = cameFrom.at(step);
         }
 
+        // Of the lines out of here into that zone, the one nearest her
         const Edge* first = arrivedVia.at(step);
+        if (closeTo.has_value())
+        {
+            for (const auto& edge : graph.at(fromKey))
+            {
+                if (static_cast<uint16>(edge.to) == step && distance(edge.walkTo, *closeTo) < distance(first->walkTo, *closeTo))
+                {
+                    first = &edge;
+                }
+            }
+        }
         return TravelHop{ first->to, first->walkTo, first->arriveAt };
     }
 

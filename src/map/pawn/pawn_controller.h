@@ -394,6 +394,20 @@ public:
     // told to her player when it changed with nothing queued
     void UpdateRestLine();
 
+    // The enchanted-item lane (OPEN_ISSUES #297, pawn_enchant.cpp): an
+    // enchanted piece -- an experience ring -- used from her inventory is put
+    // on at once, waits out its delay while her gambits and his orders go on,
+    // is used the moment she is free, ahead of her line and without a place
+    // in it, and the piece it replaced goes back on. One at a time; shown on
+    // her queue line above the rest (QUEUE's lane)
+    auto StartEnchant(uint8 location, uint8 slot) -> uint16;
+    // Ended early: the replaced piece back on at once. A use already under way
+    // is the game's to finish: its charge is spent and its effect lands
+    void EndEnchant(std::string_view why);
+    // His cancel, once nothing waits in her line and no rest is on it: the
+    // lane taken back, unless its use is under way
+    auto CancelEnchant() -> bool;
+
     // An order behind whatever waits in her line, or first when nothing does:
     // CL_S_QUEUE_FULL when kQueueDepth wait already
     auto JoinLine(const std::string& key, EntityId target) -> uint16;
@@ -984,6 +998,14 @@ private:
     timer::time_point                 m_TravelProgressTime;
     float                             m_TravelBestDist = 0.0f;
     xi::ZoneId                        m_TravelHopZone{};
+    // The hop her travel chose as she set out, from this zone toward that
+    // one, kept while she walks it (TravelTick): chosen afresh every tick, the
+    // nearest line could change under her mid-walk. Let go once TravelTick
+    // has not run for a while, so the next journey chooses again
+    std::optional<pawn::TravelHop>    m_TravelHop;
+    xi::ZoneId                        m_TravelHopFrom{};
+    xi::ZoneId                        m_TravelHopTarget{};
+    timer::time_point                 m_TravelHopAt;
 
     bool              m_Hunting    = false;
     bool              m_World      = false;
@@ -1175,6 +1197,25 @@ private:
     bool                                            m_RunningSeen = false;
     void                                            SetRunning(const std::string& key, EntityId target);
     void                                            UpdateRunning();
+
+    // The enchanted-item lane (StartEnchant): the piece by the slot it is
+    // worn in (sorting her bags moves it; worn it stays), whether the lane put
+    // it on there and the item that slot held before (0: bare), its tries,
+    // and its use once fired -- when the item was last used then, so a use
+    // that lands is told from one cut short
+    struct Enchant
+    {
+        uint16            itemId     = 0;
+        uint8             equipSlot  = 0;
+        bool              putOn      = false;
+        uint16            replacedId = 0;
+        bool              fired      = false;
+        timer::time_point usedBefore;
+        uint8             tries = 0;
+    };
+    std::optional<Enchant> m_Enchant;
+    void                   EnchantTick();
+    void                   TellQueueLine() const;
 
     // The order that last started, and when: what a refusal right after it is about
     // The order last started, the game's word on it heard for kHeels after: its
