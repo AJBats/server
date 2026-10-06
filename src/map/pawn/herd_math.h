@@ -176,8 +176,10 @@ namespace cardian::herd
     // in ring order) unrolled from the first, a lap at most. With `ends`,
     // the first and last are fixed bodies that bound it and never move.
     // The newcomers make room first, the settled held; only what they
-    // cannot fix moves the settled. Written into `out` when it can be met;
-    // left as it is when it cannot
+    // cannot fix moves the settled. Between two fixed bodies too close for
+    // every gap, the free ones take even places between them -- the most
+    // room each can have, reached in one move and held, since the next pass
+    // finds them there
     inline void spaceStretch(const std::vector<Body>& bodies, const std::vector<std::size_t>& members, const bool ends, const float gap, std::vector<float>& out)
     {
         const std::size_t  n = members.size();
@@ -191,9 +193,14 @@ namespace cardian::herd
         {
             pos[n - 1] = pos[0] + kTau; // a lone fixed body bounds its own lap
         }
-        // Between two fixed bodies the stretch must hold every gap
+        // Between two fixed bodies too close for every gap: even places
         if (ends && pos[n - 1] - pos[0] < static_cast<float>(n - 1) * gap - 1e-4f)
         {
+            const float step = (pos[n - 1] - pos[0]) / static_cast<float>(n - 1);
+            for (std::size_t k = 1; k + 1 < n; ++k)
+            {
+                out[members[k]] = wrap(pos[0] + step * static_cast<float>(k));
+            }
             return;
         }
         std::vector<bool> settledHeld(n);
@@ -223,8 +230,9 @@ namespace cardian::herd
     // The spacing pass: every body at least `gap` from its neighbours, the
     // order round the mob kept and fixed bodies never moved. The ring is
     // spaced stretch by stretch between fixed bodies, so a stretch that
-    // cannot be met -- a body boxed in between two fixed ones -- stays as
-    // it is without holding the rest; with no fixed body it is one ring.
+    // cannot be met -- a body boxed in between two fixed ones -- takes even
+    // places there without holding the rest; with no fixed body it is one
+    // ring.
     // One bearing per body, in the bodies' order
     inline auto spread(const std::vector<Body>& bodies, const float gap) -> std::vector<float>
     {

@@ -7400,7 +7400,8 @@ auto CPawnController::HerdBearing(const CBattleEntity* PMob) -> float
         }
 
         // Spaced to the gap; every HERD_BEAT evened out a step, in yalms of
-        // walk at her distance from the mob, and spaced again
+        // walk at her distance from the mob, and spaced again (a step of 0,
+        // the default: never)
         const float gap  = settings::get<float>("pawn.HERD_GAP_DEG") * kPi / 180.0f;
         auto        out  = spread(bodies, gap);
         const auto  beat = std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.HERD_BEAT")));
