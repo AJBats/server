@@ -385,13 +385,14 @@ namespace cardian::food
         BlackMage,
         WhiteMage,
         RedMage,
+        Ranged,
     };
 
     // Her seat in a party role (tools/world/food_rank.py seat_of): a Tank a
     // blood tank, a ninja tank on a Ninja; a Healer a white mage, whatever her
     // job; Damage her job's own fighting seat -- a black mage on a Black Mage,
-    // a thief on a Thief, melee on everyone else; a Puller and no role eat as
-    // Damage
+    // a thief on a Thief, ranged on a Ranger or a Corsair, melee on everyone
+    // else; a Puller and no role eat as Damage
     constexpr auto seatFor(const cardian::party::Role role, const xi::Job job) -> Seat
     {
         switch (role)
@@ -401,7 +402,18 @@ namespace cardian::food
             case cardian::party::Role::Healer:
                 return Seat::WhiteMage;
             default:
-                return job == xi::Job::BLM ? Seat::BlackMage : job == xi::Job::THF ? Seat::Thief : Seat::Melee;
+                switch (job)
+                {
+                    case xi::Job::BLM:
+                        return Seat::BlackMage;
+                    case xi::Job::THF:
+                        return Seat::Thief;
+                    case xi::Job::RNG:
+                    case xi::Job::COR:
+                        return Seat::Ranged;
+                    default:
+                        return Seat::Melee;
+                }
         }
     }
 
@@ -420,28 +432,34 @@ namespace cardian::food
     // Her own attack, defence, accuracy and evasion, the ones an owned
     // cardian's food is judged at: what her level, her base stats, her skills
     // and her gear give, by the game's formulas (battle_entity.cpp ATT, DEF,
-    // ACC, EVA) with no effect on her -- no buff, no food -- so her pick, and
-    // her Food line, hold while Berserk or a meal comes and goes. Her HP and
-    // MP are her job's base and her gear's. The census estimates the same
-    // numbers for a body of the world (census.py own_estimate)
+    // ACC, EVA, RATT, RACC) with no effect on her -- no buff, no food -- so
+    // her pick, and her Food line, hold while Berserk or a meal comes and
+    // goes. Her HP and MP are her job's base and her gear's. The census
+    // estimates the same numbers for a body of the world (census.py
+    // own_estimate)
     struct Own
     {
-        uint8 level         = 1;
-        int32 skill         = 0;     // her main weapon's skill (hand-to-hand bare-handed)
-        int32 str           = 0;     // her base STR and her gear's
-        float strMultiplier = 0.75f; // STR to attack for her main weapon (main.lua's multipliers)
-        int32 gearAtt       = 0;
-        int32 vit           = 0;     // her base VIT and her gear's
-        float vitFactor     = 1.5f;  // VIT to defence (main.lua's PLAYER_ALLIES_VIT_DEF_MULTIPLIER)
-        int32 gearDef       = 0;
-        int32 dex           = 0;     // her base DEX and her gear's
-        float dexMultiplier = 0.75f; // DEX to accuracy (main.lua's multipliers)
-        int32 gearAcc       = 0;
-        int32 evasionSkill  = 0;
-        int32 agi           = 0;     // her base AGI and her gear's
-        int32 gearEva       = 0;
-        int32 hp            = 0;     // her base HP and her gear's
-        int32 mp            = 0;     // her base MP and her gear's
+        uint8 level          = 1;
+        int32 skill          = 0;     // her main weapon's skill (hand-to-hand bare-handed)
+        int32 str            = 0;     // her base STR and her gear's
+        float strMultiplier  = 0.75f; // STR to attack for her main weapon (main.lua's multipliers)
+        int32 gearAtt        = 0;
+        int32 vit            = 0;     // her base VIT and her gear's
+        float vitFactor      = 1.5f;  // VIT to defence (main.lua's PLAYER_ALLIES_VIT_DEF_MULTIPLIER)
+        int32 gearDef        = 0;
+        int32 dex            = 0;     // her base DEX and her gear's
+        float dexMultiplier  = 0.75f; // DEX to accuracy (main.lua's multipliers)
+        int32 gearAcc        = 0;
+        int32 evasionSkill   = 0;
+        int32 agi            = 0;     // her base AGI and her gear's
+        int32 gearEva        = 0;
+        int32 hp             = 0;     // her base HP and her gear's
+        int32 mp             = 0;     // her base MP and her gear's
+        int32 rangedSkill    = 0;     // her ranged weapon's skill (or her ammunition's)
+        float rStrMultiplier = 1.0f;  // STR to ranged attack (main.lua's RANGED_STR_ATTACK_MULTIPLIER)
+        int32 gearRatt       = 0;
+        float rAgiMultiplier = 0.75f; // AGI to ranged accuracy (main.lua's RANGED_AGI_ACCURACY_MULTIPLIER)
+        int32 gearRacc       = 0;
     };
 
     // The part of a player's defence his level gives (battle_entity.cpp DEF)
@@ -495,6 +513,16 @@ namespace cardian::food
         return accuracyFromSkill(o.skill) + static_cast<int32>(static_cast<float>(o.dex) * o.dexMultiplier) + o.gearAcc;
     }
 
+    constexpr auto ownRangedAttack(const Own& o) -> int32
+    {
+        return std::max(1, 8 + o.rangedSkill + static_cast<int32>(static_cast<float>(o.str) * o.rStrMultiplier) + o.gearRatt);
+    }
+
+    constexpr auto ownRangedAccuracy(const Own& o) -> int32
+    {
+        return accuracyFromSkill(o.rangedSkill) + static_cast<int32>(static_cast<float>(o.agi) * o.rAgiMultiplier) + o.gearRacc;
+    }
+
     constexpr auto ownEvasion(const Own& o) -> int32
     {
         const int32 skill = o.evasionSkill <= 200 ? o.evasionSkill : 200 + static_cast<int32>((o.evasionSkill - 200) * 0.9f);
@@ -506,19 +534,21 @@ namespace cardian::food
     // census has them (tiebreakers for every seat)
     struct Stats
     {
-        int32 attack   = 0;
-        int32 defence  = 0;
-        int32 accuracy = 0;
-        int32 evasion  = 0;
-        int32 hp       = 0;
-        int32 mp       = 0;
-        int32 macc     = 0;
-        int32 meva     = 0;
+        int32 attack    = 0;
+        int32 defence   = 0;
+        int32 accuracy  = 0;
+        int32 evasion   = 0;
+        int32 hp        = 0;
+        int32 mp        = 0;
+        int32 macc      = 0;
+        int32 meva      = 0;
+        int32 rattack   = 0;
+        int32 raccuracy = 0;
     };
 
     constexpr auto statsOf(const Own& o) -> Stats
     {
-        return { ownAttack(o), ownDefence(o), ownAccuracy(o), ownEvasion(o), o.hp, o.mp, 3 * o.level, 3 * o.level };
+        return { ownAttack(o), ownDefence(o), ownAccuracy(o), ownEvasion(o), o.hp, o.mp, 3 * o.level, 3 * o.level, ownRangedAttack(o), ownRangedAccuracy(o) };
     }
 
     namespace detail
@@ -541,8 +571,8 @@ namespace cardian::food
             { "FOOD_MEVAP", "FOOD_MEVA_CAP", "MEVA", &Stats::meva },
             { "FOOD_HPP", "FOOD_HP_CAP", "HP", &Stats::hp },
             { "FOOD_MPP", "FOOD_MP_CAP", "MP", &Stats::mp },
-            { "FOOD_RATTP", "FOOD_RATT_CAP", "RATT", &Stats::attack },
-            { "FOOD_RACCP", "FOOD_RACC_CAP", "RACC", &Stats::accuracy },
+            { "FOOD_RATTP", "FOOD_RATT_CAP", "RATT", &Stats::rattack },
+            { "FOOD_RACCP", "FOOD_RACC_CAP", "RACC", &Stats::raccuracy },
         } };
         // FOOD_HP and FOOD_MP are HP and MP; ATTP and DEFP a plain percentage
         inline constexpr std::array<std::pair<std::string_view, std::string_view>, 2> kFlatTwins{ { { "FOOD_HP", "HP" }, { "FOOD_MP", "MP" } } };
@@ -663,8 +693,10 @@ namespace cardian::food
                 return detail::weightIn(weights::kBlackMage, name);
             case Seat::WhiteMage:
                 return detail::weightIn(weights::kWhiteMage, name);
-            default:
+            case Seat::RedMage:
                 return detail::weightIn(weights::kRedMage, name);
+            default:
+                return detail::weightIn(weights::kRanged, name);
         }
     }
 

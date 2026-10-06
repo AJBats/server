@@ -132,9 +132,9 @@ namespace pawn::food
         }
 
         // Her own numbers (food_math.h Own): her level, her base STR, VIT,
-        // DEX and AGI, her main weapon's skill and her evasion, her base HP
-        // and MP, and her gear, with no effect on her, so a buff or a meal
-        // coming and going never moves her pick
+        // DEX and AGI, her main and ranged weapons' skills and her evasion,
+        // her base HP and MP, and her gear, with no effect on her, so a buff
+        // or a meal coming and going never moves her pick
         auto ownStats(CCharEntity* PChar) -> cardian::food::Stats
         {
             cardian::food::Own own;
@@ -161,6 +161,8 @@ namespace pawn::food
                     own.gearDef += PEquip->getModifier(xi::Mod::DEF);
                     own.gearAcc += PEquip->getModifier(xi::Mod::ACC);
                     own.gearEva += PEquip->getModifier(xi::Mod::EVA);
+                    own.gearRatt += PEquip->getModifier(xi::Mod::RATT);
+                    own.gearRacc += PEquip->getModifier(xi::Mod::RACC);
                 }
             }
             auto*      weapon    = dynamic_cast<CItemWeapon*>(PChar->getEquip(SLOT_MAIN));
@@ -173,6 +175,14 @@ namespace pawn::food
             own.dexMultiplier    = settings::get<float>(handed      ? "main.HAND_TO_HAND_DEX_ACCURACY_MULTIPLIER"
                                                         : twoHanded ? "main.TWO_HANDED_DEX_ACCURACY_MULTIPLIER"
                                                                     : "main.ONE_HAND_MAIN_HAND_DEX_ACCURACY_MULTIPLIER");
+            auto* shooter = dynamic_cast<CItemWeapon*>(PChar->getEquip(SLOT_RANGED));
+            if (shooter == nullptr)
+            {
+                shooter = dynamic_cast<CItemWeapon*>(PChar->getEquip(SLOT_AMMO));
+            }
+            own.rangedSkill    = shooter != nullptr && shooter->getSkillType() != xi::SkillType::None ? PChar->GetSkill(shooter->getSkillType()) : 0;
+            own.rStrMultiplier = settings::get<float>("main.RANGED_STR_ATTACK_MULTIPLIER");
+            own.rAgiMultiplier = settings::get<float>("main.RANGED_AGI_ACCURACY_MULTIPLIER");
             return cardian::food::statsOf(own);
         }
 
