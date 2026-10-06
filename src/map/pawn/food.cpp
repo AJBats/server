@@ -131,36 +131,53 @@ namespace pawn::food
             return plan;
         }
 
-        // Her own attack and defence (food_math.h Own): her level, her base
-        // STR and VIT, her main weapon's skill and her gear, with no effect
-        // on her, so a buff or a meal coming and going never moves her pick
-        auto ownStats(CCharEntity* PChar) -> std::pair<int32, int32>
+        // Her own numbers (food_math.h Own): her level, her base STR, VIT,
+        // DEX and AGI, her main weapon's skill and her evasion, her base HP
+        // and MP, and her gear, with no effect on her, so a buff or a meal
+        // coming and going never moves her pick
+        auto ownStats(CCharEntity* PChar) -> cardian::food::Stats
         {
             cardian::food::Own own;
-            own.level     = PChar->GetMLevel();
-            own.str       = PChar->stats.STR;
-            own.vit       = PChar->stats.VIT;
-            own.vitFactor = settings::get<float>("main.PLAYER_ALLIES_VIT_DEF_MULTIPLIER");
+            own.level        = PChar->GetMLevel();
+            own.str          = PChar->stats.STR;
+            own.vit          = PChar->stats.VIT;
+            own.dex          = PChar->stats.DEX;
+            own.agi          = PChar->stats.AGI;
+            own.hp           = PChar->health.maxhp;
+            own.mp           = PChar->health.maxmp;
+            own.vitFactor    = settings::get<float>("main.PLAYER_ALLIES_VIT_DEF_MULTIPLIER");
+            own.evasionSkill = PChar->GetSkill(xi::SkillType::Evasion);
             for (uint8 slot = SLOT_MAIN; slot <= SLOT_BACK; ++slot)
             {
                 if (auto* PEquip = PChar->getEquip(static_cast<SLOTTYPE>(slot)); PEquip != nullptr)
                 {
                     own.str += PEquip->getModifier(xi::Mod::STR);
                     own.vit += PEquip->getModifier(xi::Mod::VIT);
+                    own.dex += PEquip->getModifier(xi::Mod::DEX);
+                    own.agi += PEquip->getModifier(xi::Mod::AGI);
+                    own.hp += PEquip->getModifier(xi::Mod::HP);
+                    own.mp += PEquip->getModifier(xi::Mod::MP);
                     own.gearAtt += PEquip->getModifier(xi::Mod::ATT);
                     own.gearDef += PEquip->getModifier(xi::Mod::DEF);
+                    own.gearAcc += PEquip->getModifier(xi::Mod::ACC);
+                    own.gearEva += PEquip->getModifier(xi::Mod::EVA);
                 }
             }
-            auto*       weapon     = dynamic_cast<CItemWeapon*>(PChar->getEquip(SLOT_MAIN));
-            const char* multiplier = weapon == nullptr || weapon->isHandToHand() ? "main.HAND_TO_HAND_STR_ATTACK_MULTIPLIER"
-                                     : weapon->isTwoHanded()                     ? "main.TWO_HANDED_STR_ATTACK_MULTIPLIER"
-                                                                                 : "main.ONE_HAND_MAIN_HAND_STR_ATTACK_MULTIPLIER";
-            own.skill         = PChar->GetSkill(weapon != nullptr ? weapon->getSkillType() : xi::SkillType::HandToHand);
-            own.strMultiplier = settings::get<float>(multiplier);
-            return { cardian::food::ownAttack(own), cardian::food::ownDefence(own) };
+            auto*      weapon    = dynamic_cast<CItemWeapon*>(PChar->getEquip(SLOT_MAIN));
+            const bool handed    = weapon == nullptr || weapon->isHandToHand();
+            const bool twoHanded = !handed && weapon->isTwoHanded();
+            own.skill            = PChar->GetSkill(weapon != nullptr ? weapon->getSkillType() : xi::SkillType::HandToHand);
+            own.strMultiplier    = settings::get<float>(handed      ? "main.HAND_TO_HAND_STR_ATTACK_MULTIPLIER"
+                                                        : twoHanded ? "main.TWO_HANDED_STR_ATTACK_MULTIPLIER"
+                                                                    : "main.ONE_HAND_MAIN_HAND_STR_ATTACK_MULTIPLIER");
+            own.dexMultiplier    = settings::get<float>(handed      ? "main.HAND_TO_HAND_DEX_ACCURACY_MULTIPLIER"
+                                                        : twoHanded ? "main.TWO_HANDED_DEX_ACCURACY_MULTIPLIER"
+                                                                    : "main.ONE_HAND_MAIN_HAND_DEX_ACCURACY_MULTIPLIER");
+            return cardian::food::statsOf(own);
         }
 
-        // An owned cardian's food for a role: the best her bags hold (food_math.h pickOwned)
+        // An owned cardian's food for a role: the best her bags hold for her
+        // seat (food_math.h pickOwned), by the gear scorer's weights
         auto ownedPick(CCharEntity* PChar, const Role role) -> std::optional<Pick>
         {
             std::vector<Carried> bag;
@@ -175,11 +192,11 @@ namespace pawn::food
             {
                 return std::nullopt;
             }
-            const auto [attack, defence] = ownStats(PChar);
-            const auto race              = static_cast<CharRace>(PChar->look.race);
-            const bool fish              = race == CharRace::Mithra || PChar->getMod(xi::Mod::EAT_RAW_FISH) == 1;
-            const bool meat              = race == CharRace::Galka || PChar->getMod(xi::Mod::EAT_RAW_MEAT) == 1;
-            return cardian::food::pickOwned(bag, cardian::food::classFor(role, PChar->GetMJob()), attack, defence, fish, meat);
+            const auto race = static_cast<CharRace>(PChar->look.race);
+            const bool fish = race == CharRace::Mithra || PChar->getMod(xi::Mod::EAT_RAW_FISH) == 1;
+            const bool meat = race == CharRace::Galka || PChar->getMod(xi::Mod::EAT_RAW_MEAT) == 1;
+            const auto seat = cardian::food::seatFor(role, PChar->GetMJob());
+            return cardian::food::pickOwned(bag, seat, role == Role::Healer, ownStats(PChar), fish, meat);
         }
 
         // A stack of the item in her inventory she can use now

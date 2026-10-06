@@ -1,16 +1,22 @@
 // Cardian: food (pawn/food_math.h, RESEARCH §19): a food's facts as its item
 // script states them -- by the rule tools/economy/gamedata.py reads them by --
-// the stat a food gives, an owned cardian's pick from her bags, and the
-// moments she eats: with the player, and a Healer's cookie as she kneels.
+// what a food gives her and its score by the gear scorer's weights (the same
+// numbers tools/world/check.py pins for the census), an owned cardian's pick
+// from her bags, and the moments she eats: with the player, and a Healer's
+// cookie as she kneels.
 #include "pawn/food_math.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <initializer_list>
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 using namespace cardian::food;
@@ -47,26 +53,37 @@ namespace
         return text.replace(text.find(from), from.size(), to);
     }
 
-    auto food(const uint32 duration) -> Facts
+    // A food lasting `duration`, with these mods
+    auto food(const uint32 duration, std::initializer_list<std::pair<std::string_view, int32>> mods = {}) -> Facts
     {
         Facts f;
         f.duration = duration;
+        for (const auto& [name, value] : mods)
+        {
+            f.add(name, value);
+        }
         return f;
     }
 
     auto attack(const int32 pct, const int32 cap, const uint32 duration = 1800) -> Facts
     {
-        auto f       = food(duration);
-        f.foodAttp   = pct;
-        f.foodAttCap = cap;
-        return f;
+        return food(duration, { { "FOOD_ATTP", pct }, { "FOOD_ATT_CAP", cap } });
     }
 
     auto mp(const int32 heal, const uint32 duration) -> Facts
     {
-        auto f   = food(duration);
-        f.mpheal = heal;
-        return f;
+        return food(duration, { { "MPHEAL", heal } });
+    }
+
+    // A food's gains as (name, value) pairs, for a readable check
+    auto given(const Facts& f, const Stats& her) -> std::vector<std::pair<std::string, int32>>
+    {
+        std::vector<std::pair<std::string, int32>> out;
+        for (const auto& m : gains(f, her))
+        {
+            out.emplace_back(m.name, m.value);
+        }
+        return out;
     }
 } // namespace
 
@@ -77,10 +94,12 @@ TEST_CASE("Food: a script's facts read as the census reads them", "[cardian][foo
     CHECK(f->duration == 1800);
     CHECK(f->kind == Kind::Basic);
     CHECK_FALSE(f->conditional);
-    CHECK(f->intel == -1);
-    CHECK(f->foodAttp == 27);
-    CHECK(f->foodAttCap == 30);
-    CHECK(f->mpheal == 0);
+    CHECK(f->mod("STR") == 3);
+    CHECK(f->mod("INT") == -1);
+    CHECK(f->mod("FOOD_ATTP") == 27);
+    CHECK(f->mod("FOOD_ATT_CAP") == 30);
+    CHECK(f->mod("MPHEAL") == 0);
+    CHECK(f->mods.size() == 4);
 
     // raw fish and raw meat by the check its script makes
     CHECK(parseScript(replaced(kSausage, "xi.foodType.BASIC", "xi.foodType.RAW_FISH"))->kind == Kind::RawFish);
@@ -93,7 +112,7 @@ TEST_CASE("Food: a script that branches or loops is conditional, its mods left a
     const auto        f       = parseScript(replaced(kSausage, strLine, "    if target:getRace() ~= xi.race.GALKA then\n        effect:addMod(xi.mod.STR, 3)\n    end\n"));
     REQUIRE(f.has_value());
     CHECK(f->conditional);
-    CHECK(f->foodAttp == 0);
+    CHECK(f->mods.empty());
     CHECK(f->duration == 1800);
 
     CHECK(parseScript(replaced(kSausage, strLine, "    for i = 1, #dataTable do\n        effect:addMod(dataTable[i][1], dataTable[i][2])\n    end\n"))->conditional);
@@ -125,17 +144,17 @@ TEST_CASE("Food: the real scripts read as the census reads them (tools/world/che
     const auto cookie = read("ginger_cookie");
     REQUIRE(cookie.has_value());
     CHECK(cookie->duration == 180);
-    CHECK(cookie->mpheal == 5);
+    CHECK(cookie->mod("MPHEAL") == 5);
     CHECK(cookie->kind == Kind::Basic);
     const auto crayfish = read("boiled_crayfish");
     REQUIRE(crayfish.has_value());
-    CHECK(crayfish->foodDefp == 30);
-    CHECK(crayfish->foodDefCap == 25);
+    CHECK(crayfish->mod("FOOD_DEFP") == 30);
+    CHECK(crayfish->mod("FOOD_DEF_CAP") == 25);
     const auto sausage = read("sausage");
     REQUIRE(sausage.has_value());
-    CHECK(sausage->foodAttp == 27);
-    CHECK(sausage->foodAttCap == 30);
-    CHECK(sausage->intel == -1);
+    CHECK(sausage->mod("FOOD_ATTP") == 27);
+    CHECK(sausage->mod("FOOD_ATT_CAP") == 30);
+    CHECK(sausage->mod("INT") == -1);
     CHECK(read("sandfish")->kind == Kind::RawFish);
     CHECK(read("galkan_sausage")->conditional);
     CHECK(read("serving_of_red_curry")->conditional);
@@ -159,62 +178,94 @@ TEST_CASE("Food: the real scripts read as the census reads them (tools/world/che
     CHECK(branching < 30);
 }
 
-TEST_CASE("Food: the class by role, a Puller and no role eating as Damage", "[cardian][food]")
+TEST_CASE("Food: the seat by role, a Puller and no role eating as Damage", "[cardian][food]")
 {
-    CHECK(classFor(Role::Tank, xi::Job::PLD) == Class::Defence);
-    CHECK(classFor(Role::Healer, xi::Job::WHM) == Class::Mp);
-    CHECK(classFor(Role::Damage, xi::Job::WAR) == Class::Attack);
-    CHECK(classFor(Role::Damage, xi::Job::BLM) == Class::Int);
-    CHECK(classFor(Role::Puller, xi::Job::THF) == Class::Attack);
-    CHECK(classFor(Role::None, xi::Job::BLM) == Class::Int);
+    CHECK(seatFor(Role::Tank, xi::Job::PLD) == Seat::BloodTank);
+    CHECK(seatFor(Role::Tank, xi::Job::WAR) == Seat::BloodTank);
+    CHECK(seatFor(Role::Tank, xi::Job::NIN) == Seat::NinjaTank);
+    CHECK(seatFor(Role::Healer, xi::Job::WHM) == Seat::WhiteMage);
+    CHECK(seatFor(Role::Healer, xi::Job::RDM) == Seat::WhiteMage);
+    CHECK(seatFor(Role::Damage, xi::Job::WAR) == Seat::Melee);
+    CHECK(seatFor(Role::Damage, xi::Job::WHM) == Seat::Melee);
+    CHECK(seatFor(Role::Damage, xi::Job::BLM) == Seat::BlackMage);
+    CHECK(seatFor(Role::Damage, xi::Job::THF) == Seat::Thief);
+    CHECK(seatFor(Role::Puller, xi::Job::THF) == Seat::Thief);
+    CHECK(seatFor(Role::None, xi::Job::BLM) == Seat::BlackMage);
     CHECK(planRole(Role::Puller) == Role::Damage);
     CHECK(planRole(Role::None) == Role::Damage);
     CHECK(planRole(Role::Tank) == Role::Tank);
     CHECK(planRole(Role::Healer) == Role::Healer);
 }
 
-TEST_CASE("Food: the stat a food gives is the game's formula at her own", "[cardian][food]")
+TEST_CASE("Food: what a food gives her is the game's formula at her own numbers", "[cardian][food]")
 {
+    using Given = std::vector<std::pair<std::string, int32>>;
     // at a level-15 attack the cap rarely binds, and the cheap Sausage is the stronger (RESEARCH §19.3)
-    CHECK(gain(attack(27, 30), Class::Attack, 60, 0) == 16);
-    CHECK(gain(attack(22, 65), Class::Attack, 60, 0) == 13);
-    CHECK(gain(attack(27, 30), Class::Attack, 300, 0) == 30);
-    CHECK(gain(attack(22, 65), Class::Attack, 300, 0) == 65);
+    const auto sausage = food(1800, { { "FOOD_ATTP", 27 }, { "FOOD_ATT_CAP", 30 }, { "STR", 3 }, { "INT", -1 } });
+    CHECK(given(sausage, Stats{ .attack = 60 }) == Given{ { "ATT", 16 }, { "INT", -1 }, { "STR", 3 } });
+    CHECK(given(attack(22, 65), Stats{ .attack = 60 }) == Given{ { "ATT", 13 } });
+    CHECK(given(sausage, Stats{ .attack = 300 })[0] == std::pair<std::string, int32>{ "ATT", 30 });
+    CHECK(given(attack(22, 65), Stats{ .attack = 300 }) == Given{ { "ATT", 65 } });
 
-    // a flat attack counts, and the percentage reads the attack it raised
-    auto flat = attack(10, 99);
-    flat.att  = 10;
-    CHECK(gain(flat, Class::Attack, 90, 0) == 20);
+    // a flat part counts, and the percentage reads the stat it raised
+    CHECK(given(food(1800, { { "ATT", 10 }, { "FOOD_ATTP", 10 }, { "FOOD_ATT_CAP", 99 } }), Stats{ .attack = 90 }) == Given{ { "ATT", 20 } });
 
-    // defence the same shape; a percentage with no cap adds nothing (Crayfish)
-    auto crayfish       = food(1800);
-    crayfish.foodDefp   = 30;
-    crayfish.foodDefCap = 25;
-    CHECK(gain(crayfish, Class::Defence, 0, 60) == 18);
-    crayfish.foodDefCap = 0;
-    CHECK(gain(crayfish, Class::Defence, 0, 200) == 0);
-
-    auto pie  = food(1800);
-    pie.intel = 3;
-    CHECK(gain(pie, Class::Int, 0, 0) == 3);
-    CHECK(gain(mp(5, 180), Class::Mp, 0, 0) == 5);
+    // a percentage with no cap adds nothing (Crayfish); FOOD_HP is HP, and HP% reads her HP
+    CHECK(given(food(1800, { { "FOOD_DEFP", 30 }, { "FOOD_DEF_CAP", 25 } }), Stats{ .defence = 60 }) == Given{ { "DEF", 18 } });
+    CHECK(given(food(1800, { { "FOOD_DEFP", 30 } }), Stats{ .defence = 200 }).empty());
+    CHECK(given(food(1800, { { "FOOD_HP", 10 }, { "FOOD_HPP", 5 }, { "FOOD_HP_CAP", 20 } }), Stats{ .hp = 290 }) == Given{ { "HP", 25 } });
+    CHECK(given(food(1800, { { "FOOD_ACCP", 10 }, { "FOOD_ACC_CAP", 15 }, { "FOOD_MP", 8 } }), Stats{ .accuracy = 120 }) == Given{ { "ACC", 12 }, { "MP", 8 } });
+    // a plain percentage, uncapped
+    CHECK(given(food(1800, { { "DEFP", 10 } }), Stats{ .defence = 150 }) == Given{ { "DEF", 15 } });
 }
 
-TEST_CASE("Food: an owned cardian is judged at her own attack and defence, the game's formula with no effect on her", "[cardian][food]")
+TEST_CASE("Food: a food's score is its stats by the gear scorer's weights for her seat (the census's numbers)", "[cardian][food]")
+{
+    const Stats her{ .attack = 150, .defence = 150, .accuracy = 150, .hp = 400, .mp = 200 };
+    // a Black Mage's weights give STR nothing: Pamamas' -3 costs her nothing, its INT+1 is a point
+    const auto pamamas = food(1800, { { "INT", 1 }, { "STR", -3 } });
+    CHECK(score(pamamas, Seat::BlackMage, her) == 1.0);
+    // the melee seat counts the STR-3 against it in full
+    CHECK(score(pamamas, Seat::Melee, her) == -1.8);
+    const auto parfait = food(1800, { { "INT", 3 }, { "MND", 2 }, { "MATT", 6 }, { "STR", -3 } });
+    CHECK(score(parfait, Seat::BlackMage, her) == 15.0); // INT 3, Magic Attack 6 at 2.0 a point
+    CHECK(std::round(score(parfait, Seat::WhiteMage, her) * 1000) / 1000 == 2.0); // MND 2, and Magic Attack a tiebreaker
+    // accuracy, worth a point to a fighter, outweighs attack at 0.35
+    CHECK(score(food(1800, { { "FOOD_ACCP", 10 }, { "FOOD_ACC_CAP", 15 } }), Seat::Melee, her) == 15.0);
+    CHECK(score(attack(10, 15), Seat::Melee, her) == 5.25);
+    // resting MP: a white mage's 2.0, a black mage's 0.25
+    CHECK(score(mp(5, 180), Seat::WhiteMage, her) == 10.0);
+    CHECK(score(mp(5, 180), Seat::BlackMage, her) == 1.25);
+    // a food of tiebreakers alone (a killer effect) feeds no seat
+    CHECK_FALSE(givesSomething(score(food(1800, { { "PLANTOID_KILLER", 10 } }), Seat::Melee, her)));
+    CHECK(givesSomething(score(pamamas, Seat::BlackMage, her)));
+}
+
+TEST_CASE("Food: an owned cardian is judged at her own numbers, the game's formulas with no effect on her", "[cardian][food]")
 {
     // a level-30 Warrior: sword skill 90, STR 30 at the one-handed 0.75,
-    // her gear's 10 attack; VIT 28 at 1.5, the level's 30, her gear's 60
-    const Own warrior{ .level = 30, .skill = 90, .str = 30, .strMultiplier = 0.75f, .gearAtt = 10, .vit = 28, .vitFactor = 1.5f, .gearDef = 60 };
-    CHECK(ownAttack(warrior) == 8 + 90 + 22 + 10);
-    CHECK(ownDefence(warrior) == 8 + 42 + 30 + 60);
+    // her gear's 10 attack; VIT 28 at 1.5, the level's 30, her gear's 60;
+    // DEX 24 at 0.75 and 5 accuracy from gear; evasion skill 85, AGI 26
+    const Own warrior{ .level = 30, .skill = 90, .str = 30, .strMultiplier = 0.75f, .gearAtt = 10, .vit = 28, .vitFactor = 1.5f, .gearDef = 60,
+                       .dex = 24, .dexMultiplier = 0.75f, .gearAcc = 5, .evasionSkill = 85, .agi = 26, .gearEva = 0, .hp = 400, .mp = 0 };
+    const auto stats = statsOf(warrior);
+    CHECK(stats.attack == 8 + 90 + 22 + 10);
+    CHECK(stats.defence == 8 + 42 + 30 + 60);
+    CHECK(stats.accuracy == 90 + 18 + 5);
+    CHECK(stats.evasion == 85 + 13);
+    CHECK(stats.hp == 400);
+    CHECK(stats.macc == 90);
 
-    // the level's part of defence, by the game's four bands
+    // the level's part of defence, by the game's four bands, and accuracy past 200 skill
     CHECK(levelDefence(50) == 50);
     CHECK(levelDefence(51) == 60);
     CHECK(levelDefence(60) == 78);
     CHECK(levelDefence(61) == 79);
     CHECK(levelDefence(90) == 108);
     CHECK(levelDefence(99) == 122);
+    CHECK(accuracyFromSkill(200) == 200);
+    CHECK(accuracyFromSkill(250) == 245);
+    CHECK(ownEvasion(Own{ .evasionSkill = 250 }) == 245);
 
     // nothing worn, nothing learned: never below 1
     CHECK(ownAttack(Own{}) == 8);
@@ -234,45 +285,50 @@ TEST_CASE("Food: raw fish for a Mithra, raw meat for a Galka", "[cardian][food]"
     CHECK(edible(food(1800), false, false));
 }
 
-TEST_CASE("Food: an owned cardian eats the strongest food of her role her bags hold", "[cardian][food]")
+TEST_CASE("Food: an owned cardian eats the best food for her seat her bags hold", "[cardian][food]")
 {
     const std::vector<Carried> bag{
-        { 4578, 12, attack(27, 30) },        // Sausage
-        { 4574, 3, attack(22, 65) },         // Meat Chiefkabob
-        { 5000, 6, attack(50, 90, 300) },    // a five-minute food: no candidate
-        { 4394, 20, mp(5, 180) },            // Ginger Cookie
-        { 4576, 2, mp(7, 300) },             // Wizard Cookie
-        { 5592, 1, mp(3, 10800) },           // Imperial Coffee
-        { 6000, 0, attack(99, 999) },        // none left
+        { 4578, 12, food(1800, { { "FOOD_ATTP", 27 }, { "FOOD_ATT_CAP", 30 }, { "STR", 3 } }) }, // Sausage
+        { 4574, 3, attack(22, 65) },                                                          // Meat Chiefkabob
+        { 5000, 6, attack(50, 90, 300) },                                                     // a five-minute food: no candidate
+        { 5001, 2, food(1800, { { "FOOD_ACCP", 10 }, { "FOOD_ACC_CAP", 30 } }) },              // an accuracy food
+        { 5002, 4, food(1800, { { "INT", 3 }, { "MATT", 6 } }) },                              // a Black Mage's
+        { 4394, 20, mp(5, 180) },                                                             // Ginger Cookie
+        { 4576, 2, mp(7, 300) },                                                              // Wizard Cookie
+        { 5592, 1, mp(3, 10800) },                                                            // Imperial Coffee
+        { 6000, 0, attack(99, 999) },                                                         // none left
     };
-    // at a low attack the Sausage, at a high one the Chiefkabob
-    CHECK(pickOwned(bag, Class::Attack, 60, 60, false, false) == Pick{ 4578, false });
-    CHECK(pickOwned(bag, Class::Attack, 300, 300, false, false) == Pick{ 4574, false });
+    // a fighter at a low attack: the accuracy food (15 accuracy at a point each) over the Sausage (16
+    // attack at 0.35 and STR 3 at 0.6); at a high one, the Chiefkabob's 65 attack beats both
+    CHECK(pickOwned(bag, Seat::Melee, false, Stats{ .attack = 60, .accuracy = 150 }, false, false) == Pick{ 5001, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, Stats{ .attack = 300, .accuracy = 50 }, false, false) == Pick{ 4574, false });
+    // a Black Mage on the damage seat: her INT and Magic Attack food
+    CHECK(pickOwned(bag, Seat::BlackMage, false, Stats{}, false, false) == Pick{ 5002, false });
     // a Healer prefers a long MP food to any cookie
-    CHECK(pickOwned(bag, Class::Mp, 0, 0, false, false) == Pick{ 5592, false });
-    // nothing for the role: nothing
-    CHECK_FALSE(pickOwned(bag, Class::Defence, 100, 100, false, false).has_value());
-    CHECK_FALSE(pickOwned(bag, Class::Int, 100, 100, false, false).has_value());
-    CHECK_FALSE(pickOwned({}, Class::Attack, 100, 100, false, false).has_value());
+    CHECK(pickOwned(bag, Seat::WhiteMage, true, Stats{}, false, false) == Pick{ 5592, false });
+    // nothing for the seat: nothing
+    CHECK_FALSE(pickOwned(std::vector<Carried>{ { 4394, 20, mp(5, 180) } }, Seat::Melee, false, Stats{}, false, false).has_value());
+    CHECK_FALSE(pickOwned({}, Seat::Melee, false, Stats{ .attack = 100 }, false, false).has_value());
 }
 
-TEST_CASE("Food: with no long MP food, a Healer's pick is her strongest cookie", "[cardian][food]")
+TEST_CASE("Food: with no long MP food, a Healer's pick is her best cookie; the floor keeps the weak ones out", "[cardian][food]")
 {
     const std::vector<Carried> bag{
-        { 4394, 20, mp(5, 180) },   // Ginger Cookie
-        { 4576, 2, mp(7, 300) },    // Wizard Cookie
-        { 5100, 9, mp(2, 10800) },  // a long food under the floor
-        { 5101, 9, mp(1, 300) },    // a cookie under the floor
+        { 4394, 20, mp(5, 180) },  // Ginger Cookie
+        { 4576, 2, mp(7, 300) },   // Wizard Cookie
+        { 5100, 9, mp(2, 10800) }, // a long food under the floor
+        { 5101, 9, mp(1, 300) },   // a cookie under the floor
     };
-    CHECK(pickOwned(bag, Class::Mp, 0, 0, false, false) == Pick{ 4576, true });
+    CHECK(pickOwned(bag, Seat::WhiteMage, true, Stats{}, false, false) == Pick{ 4576, true });
     const std::vector<Carried> weak{ { 5100, 9, mp(2, 10800) }, { 5101, 9, mp(1, 300) } };
-    CHECK_FALSE(pickOwned(weak, Class::Mp, 0, 0, false, false).has_value());
+    CHECK_FALSE(pickOwned(weak, Seat::WhiteMage, true, Stats{}, false, false).has_value());
 }
 
 TEST_CASE("Food: a tie goes to the stack she carries more of, then the lower item; raw and conditional food are passed over", "[cardian][food]")
 {
+    const Stats her{ .attack = 60 };
     std::vector<Carried> bag{ { 7000, 2, attack(27, 30) }, { 7001, 5, attack(27, 30) }, { 6999, 5, attack(27, 30) } };
-    CHECK(pickOwned(bag, Class::Attack, 60, 60, false, false) == Pick{ 6999, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, her, false, false) == Pick{ 6999, false });
 
     auto raw = attack(50, 90);
     raw.kind = Kind::RawMeat;
@@ -280,8 +336,8 @@ TEST_CASE("Food: a tie goes to the stack she carries more of, then the lower ite
     branch.conditional = true;
     bag.push_back({ 8000, 1, raw });
     bag.push_back({ 8001, 1, branch });
-    CHECK(pickOwned(bag, Class::Attack, 60, 60, false, false) == Pick{ 6999, false });
-    CHECK(pickOwned(bag, Class::Attack, 60, 60, false, true) == Pick{ 8000, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, her, false, false) == Pick{ 6999, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, her, false, true) == Pick{ 8000, false });
 }
 
 TEST_CASE("Food: she eats with the player when he has food on and she has none, between fights and free", "[cardian][food]")

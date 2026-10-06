@@ -21,34 +21,43 @@
 
 #pragma once
 
+#include "food_weights.h"
 #include "party_roles.h"
 
 #include "common/cbasetypes.h"
 #include "data/enums/job.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 // Food (RESEARCH §19): the cardians eat with the player. Her party role
-// says what she eats -- the Tank defence food, the Healer food for MP while
-// resting, Damage attack food (a Black Mage INT food), a Puller and no role
-// as Damage -- and her "Self -> Eat with the player" row eats it: every 30
-// seconds between fights, when the player has a food effect on and she has
-// none. A Healer whose food is a cookie (a short MP food) eats it instead as
-// she kneels for MP, armed by the player's food. A body of the world eats the
-// census's pick for her (cardian_food, tools/world/census.py) and is kept
-// topped up while she is in the player's party; an owned cardian eats the
-// best food for her role that her own bags hold, by the same value rule the
-// census uses.
+// says what she eats, and her "Self -> Eat with the player" row eats it:
+// every 30 seconds between fights, when the player has a food effect on and
+// she has none. A Healer whose food is a cookie (a short MP food) eats it
+// instead as she kneels for MP, armed by the player's food. A body of the
+// world eats the census's pick for her (cardian_food, tools/world/census.py)
+// and is kept topped up while she is in the player's party; an owned cardian
+// eats the best food for her role that her own bags hold.
+//
+// A food is ranked as gear is (RESEARCH §19.6, tools/world/food_rank.py):
+// every stat it gives her now, weighed by the gear scorer's weights for her
+// seat (food_weights.h, a copy of tools/world/gear_roles.py's), the
+// food-only percentages turned into the points they add at her own attack,
+// defence, accuracy and the rest.
 //
 // Pure, so xi_test pins it (cardian_food_tests.cpp): a food's facts as its
 // item script states them, read by the rule tools/economy/gamedata.py
-// parse_food reads them by -- the two must agree -- the stat a food gives,
-// the owned cardian's pick, and the moments she eats.
+// parse_food reads them by -- the two must agree -- what a food gives her
+// and its score, the owned cardian's pick, and the moments she eats.
 namespace cardian::food
 {
     constexpr uint32 kLongSeconds = 1800; // a food lasting this long is eaten with the player; a shorter MP food is a cookie
@@ -65,25 +74,50 @@ namespace cardian::food
         RawMeat,
     };
 
+    // One stat a food adds, by its xi.mod name
+    struct Mod
+    {
+        std::string name;
+        int32       value = 0;
+
+        auto operator==(const Mod&) const -> bool = default;
+    };
+
     // A food as its script states it: how long its effect lasts, who may eat
-    // it, and the mods its onEffectGain adds that a role's food is judged
-    // by. A script whose onEffectGain branches or loops (by race, by party
-    // size) is conditional: its mods are left at zero and no rule picks it
+    // it, and every mod its onEffectGain adds, summed by name. A script whose
+    // onEffectGain branches or loops (by race, by party size) is conditional:
+    // its mods are left out and no rule picks it
     struct Facts
     {
-        uint32 duration    = 0; // seconds
-        Kind   kind        = Kind::Basic;
-        bool   conditional = false;
-        int32  att         = 0;
-        int32  attp        = 0;
-        int32  foodAttp    = 0;
-        int32  foodAttCap  = 0;
-        int32  def         = 0;
-        int32  defp        = 0;
-        int32  foodDefp    = 0;
-        int32  foodDefCap  = 0;
-        int32  intel       = 0;
-        int32  mpheal      = 0;
+        uint32           duration    = 0; // seconds
+        Kind             kind        = Kind::Basic;
+        bool             conditional = false;
+        std::vector<Mod> mods;
+
+        auto mod(const std::string_view name) const -> int32
+        {
+            for (const auto& m : mods)
+            {
+                if (m.name == name)
+                {
+                    return m.value;
+                }
+            }
+            return 0;
+        }
+
+        void add(const std::string_view name, const int32 value)
+        {
+            for (auto& m : mods)
+            {
+                if (m.name == name)
+                {
+                    m.value += value;
+                    return;
+                }
+            }
+            mods.push_back({ std::string(name), value });
+        }
     };
 
     namespace detail
@@ -245,53 +279,9 @@ namespace cardian::food
             return {};
         }
 
-        constexpr void addMod(Facts& f, const std::string_view name, const int32 value)
-        {
-            if (name == "ATT")
-            {
-                f.att += value;
-            }
-            else if (name == "ATTP")
-            {
-                f.attp += value;
-            }
-            else if (name == "FOOD_ATTP")
-            {
-                f.foodAttp += value;
-            }
-            else if (name == "FOOD_ATT_CAP")
-            {
-                f.foodAttCap += value;
-            }
-            else if (name == "DEF")
-            {
-                f.def += value;
-            }
-            else if (name == "DEFP")
-            {
-                f.defp += value;
-            }
-            else if (name == "FOOD_DEFP")
-            {
-                f.foodDefp += value;
-            }
-            else if (name == "FOOD_DEF_CAP")
-            {
-                f.foodDefCap += value;
-            }
-            else if (name == "INT")
-            {
-                f.intel += value;
-            }
-            else if (name == "MPHEAL")
-            {
-                f.mpheal += value;
-            }
-        }
-
         // One line of the body, its comment cut off: a branch or a loop
         // makes the food conditional, an `effect:addMod(xi.mod.X, n)` adds
-        constexpr void readLine(Facts& f, std::string_view line)
+        inline void readLine(Facts& f, std::string_view line)
         {
             if (const auto comment = line.find("--"); comment != std::string_view::npos)
             {
@@ -334,14 +324,14 @@ namespace cardian::food
                 {
                     continue;
                 }
-                addMod(f, name, value->value);
+                f.add(name, value->value);
             }
         }
     } // namespace detail
 
     // An item script read as food: nullopt when it puts no food effect on
     // its eater or says nothing of how long the effect lasts
-    constexpr auto parseScript(const std::string_view text) -> std::optional<Facts>
+    inline auto parseScript(const std::string_view text) -> std::optional<Facts>
     {
         const auto params = detail::effectParams(text);
         if (!params.has_value())
@@ -385,25 +375,33 @@ namespace cardian::food
         return f;
     }
 
-    // What a role eats (RESEARCH §19.2 item 1)
-    enum class Class : uint8
+    // The gear scorer's role whose weights rank her food: a seat
+    enum class Seat : uint8
     {
-        Attack,
-        Int,
-        Defence,
-        Mp,
+        Melee,
+        Thief,
+        NinjaTank,
+        BloodTank,
+        BlackMage,
+        WhiteMage,
+        RedMage,
     };
 
-    constexpr auto classFor(const cardian::party::Role role, const xi::Job job) -> Class
+    // Her seat in a party role (tools/world/food_rank.py seat_of): a Tank a
+    // blood tank, a ninja tank on a Ninja; a Healer a white mage, whatever her
+    // job; Damage her job's own fighting seat -- a black mage on a Black Mage,
+    // a thief on a Thief, melee on everyone else; a Puller and no role eat as
+    // Damage
+    constexpr auto seatFor(const cardian::party::Role role, const xi::Job job) -> Seat
     {
         switch (role)
         {
             case cardian::party::Role::Tank:
-                return Class::Defence;
+                return job == xi::Job::NIN ? Seat::NinjaTank : Seat::BloodTank;
             case cardian::party::Role::Healer:
-                return Class::Mp;
+                return Seat::WhiteMage;
             default:
-                return job == xi::Job::BLM ? Class::Int : Class::Attack;
+                return job == xi::Job::BLM ? Seat::BlackMage : job == xi::Job::THF ? Seat::Thief : Seat::Melee;
         }
     }
 
@@ -419,37 +417,13 @@ namespace cardian::food
         return base * pct / 100;
     }
 
-    // The stat a food gives her at her attack and defence: the game's own
-    // formula for those two (battle_entity.cpp ATT, DEF: a flat part, then a
-    // percentage of the stat it raised, capped -- no cap, nothing), INT and
-    // MP while healing as they are
-    constexpr auto gain(const Facts& f, const Class cls, const int32 attack, const int32 defence) -> int32
-    {
-        switch (cls)
-        {
-            case Class::Attack:
-            {
-                const int32 base = attack + f.att;
-                return f.att + percent(base, f.attp) + std::min(percent(base, f.foodAttp), f.foodAttCap);
-            }
-            case Class::Defence:
-            {
-                const int32 base = defence + f.def;
-                return f.def + percent(base, f.defp) + std::min(percent(base, f.foodDefp), f.foodDefCap);
-            }
-            case Class::Int:
-                return f.intel;
-            default:
-                return f.mpheal;
-        }
-    }
-
-    // Her own attack and defence, the ones an owned cardian's food is judged
-    // at: what her level, her base stats, her weapon skill and her gear give,
-    // by the game's formula (battle_entity.cpp ATT, DEF) with no effect on
-    // her -- no buff, no food -- so her pick, and her Food line, hold while
-    // Berserk or a meal comes and goes. The census estimates the same two
-    // numbers for a body of the world (census.py Pantry.estimates)
+    // Her own attack, defence, accuracy and evasion, the ones an owned
+    // cardian's food is judged at: what her level, her base stats, her skills
+    // and her gear give, by the game's formulas (battle_entity.cpp ATT, DEF,
+    // ACC, EVA) with no effect on her -- no buff, no food -- so her pick, and
+    // her Food line, hold while Berserk or a meal comes and goes. Her HP and
+    // MP are her job's base and her gear's. The census estimates the same
+    // numbers for a body of the world (census.py own_estimate)
     struct Own
     {
         uint8 level         = 1;
@@ -460,6 +434,14 @@ namespace cardian::food
         int32 vit           = 0;     // her base VIT and her gear's
         float vitFactor     = 1.5f;  // VIT to defence (main.lua's PLAYER_ALLIES_VIT_DEF_MULTIPLIER)
         int32 gearDef       = 0;
+        int32 dex           = 0;     // her base DEX and her gear's
+        float dexMultiplier = 0.75f; // DEX to accuracy (main.lua's multipliers)
+        int32 gearAcc       = 0;
+        int32 evasionSkill  = 0;
+        int32 agi           = 0;     // her base AGI and her gear's
+        int32 gearEva       = 0;
+        int32 hp            = 0;     // her base HP and her gear's
+        int32 mp            = 0;     // her base MP and her gear's
     };
 
     // The part of a player's defence his level gives (battle_entity.cpp DEF)
@@ -480,6 +462,24 @@ namespace cardian::food
         return level + 18 + (level - 89) / 2;
     }
 
+    // Accuracy from a combat skill (battle_entity.cpp GetAccFromSkill)
+    constexpr auto accuracyFromSkill(const int32 skill) -> int32
+    {
+        if (skill > 600)
+        {
+            return static_cast<int32>((skill - 600) * 0.9f) + 540;
+        }
+        if (skill > 400)
+        {
+            return static_cast<int32>((skill - 400) * 0.8f) + 380;
+        }
+        if (skill > 200)
+        {
+            return static_cast<int32>((skill - 200) * 0.9f) + 200;
+        }
+        return skill;
+    }
+
     constexpr auto ownAttack(const Own& o) -> int32
     {
         return std::max(1, 8 + o.skill + static_cast<int32>(static_cast<float>(o.str) * o.strMultiplier) + o.gearAtt);
@@ -488,6 +488,206 @@ namespace cardian::food
     constexpr auto ownDefence(const Own& o) -> int32
     {
         return std::max(1, 8 + static_cast<int32>(static_cast<float>(o.vit) * o.vitFactor) + levelDefence(o.level) + o.gearDef);
+    }
+
+    constexpr auto ownAccuracy(const Own& o) -> int32
+    {
+        return accuracyFromSkill(o.skill) + static_cast<int32>(static_cast<float>(o.dex) * o.dexMultiplier) + o.gearAcc;
+    }
+
+    constexpr auto ownEvasion(const Own& o) -> int32
+    {
+        const int32 skill = o.evasionSkill <= 200 ? o.evasionSkill : 200 + static_cast<int32>((o.evasionSkill - 200) * 0.9f);
+        return skill + o.agi / 2 + o.gearEva;
+    }
+
+    // The numbers a food's percentages read, hers (statsOf) or the census's
+    // estimate; magic accuracy and magic evasion three a level, as the
+    // census has them (tiebreakers for every seat)
+    struct Stats
+    {
+        int32 attack   = 0;
+        int32 defence  = 0;
+        int32 accuracy = 0;
+        int32 evasion  = 0;
+        int32 hp       = 0;
+        int32 mp       = 0;
+        int32 macc     = 0;
+        int32 meva     = 0;
+    };
+
+    constexpr auto statsOf(const Own& o) -> Stats
+    {
+        return { ownAttack(o), ownDefence(o), ownAccuracy(o), ownEvasion(o), o.hp, o.mp, 3 * o.level, 3 * o.level };
+    }
+
+    namespace detail
+    {
+        // A food-only percentage, its cap, the gear stat it raises and which
+        // of her numbers it reads (food_rank.py TWINS)
+        struct Twin
+        {
+            std::string_view percent;
+            std::string_view cap;
+            std::string_view stat;
+            int32 Stats::*   reads;
+        };
+        inline constexpr std::array<Twin, 10> kTwins{ {
+            { "FOOD_ATTP", "FOOD_ATT_CAP", "ATT", &Stats::attack },
+            { "FOOD_DEFP", "FOOD_DEF_CAP", "DEF", &Stats::defence },
+            { "FOOD_ACCP", "FOOD_ACC_CAP", "ACC", &Stats::accuracy },
+            { "FOOD_EVAP", "FOOD_EVA_CAP", "EVA", &Stats::evasion },
+            { "FOOD_MACCP", "FOOD_MACC_CAP", "MACC", &Stats::macc },
+            { "FOOD_MEVAP", "FOOD_MEVA_CAP", "MEVA", &Stats::meva },
+            { "FOOD_HPP", "FOOD_HP_CAP", "HP", &Stats::hp },
+            { "FOOD_MPP", "FOOD_MP_CAP", "MP", &Stats::mp },
+            { "FOOD_RATTP", "FOOD_RATT_CAP", "RATT", &Stats::attack },
+            { "FOOD_RACCP", "FOOD_RACC_CAP", "RACC", &Stats::accuracy },
+        } };
+        // FOOD_HP and FOOD_MP are HP and MP; ATTP and DEFP a plain percentage
+        inline constexpr std::array<std::pair<std::string_view, std::string_view>, 2> kFlatTwins{ { { "FOOD_HP", "HP" }, { "FOOD_MP", "MP" } } };
+        struct Plain
+        {
+            std::string_view percent;
+            std::string_view stat;
+            int32 Stats::*   reads;
+        };
+        inline constexpr std::array<Plain, 2> kPlainPercents{ { { "ATTP", "ATT", &Stats::attack }, { "DEFP", "DEF", &Stats::defence } } };
+
+        inline auto foodOnly(const std::string_view name) -> bool
+        {
+            for (const auto& t : kTwins)
+            {
+                if (name == t.percent || name == t.cap)
+                {
+                    return true;
+                }
+            }
+            for (const auto& [from, to] : kFlatTwins)
+            {
+                if (name == from)
+                {
+                    return true;
+                }
+            }
+            for (const auto& p : kPlainPercents)
+            {
+                if (name == p.percent)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        template <std::size_t N>
+        auto weightIn(const std::array<weights::Weight, N>& table, const std::string_view name) -> double
+        {
+            for (const auto& w : table)
+            {
+                if (w.mod == name)
+                {
+                    return w.value;
+                }
+            }
+            return 0.0;
+        }
+    } // namespace detail
+
+    // What a food gives her now, as the stats gear carries, by xi.mod name
+    // and sorted by it (food_rank.py gains): its own gear stats as they are,
+    // FOOD_HP and FOOD_MP as HP and MP, a percentage as the points it adds at
+    // her number with the food's flat part in it -- capped where it has a
+    // cap, nothing where the cap is 0
+    inline auto gains(const Facts& f, const Stats& her) -> std::vector<Mod>
+    {
+        Facts out;
+        for (const auto& m : f.mods)
+        {
+            if (!detail::foodOnly(m.name))
+            {
+                out.add(m.name, m.value);
+            }
+        }
+        for (const auto& [from, to] : detail::kFlatTwins)
+        {
+            if (const auto v = f.mod(from); v != 0)
+            {
+                out.add(to, v);
+            }
+        }
+        const Facts flat = out;
+        for (const auto& p : detail::kPlainPercents)
+        {
+            if (const auto pct = f.mod(p.percent); pct != 0)
+            {
+                out.add(p.stat, percent(her.*(p.reads) + flat.mod(p.stat), pct));
+            }
+        }
+        for (const auto& t : detail::kTwins)
+        {
+            if (const auto pct = f.mod(t.percent); pct != 0)
+            {
+                out.add(t.stat, std::min(percent(her.*(t.reads) + flat.mod(t.stat), pct), f.mod(t.cap)));
+            }
+        }
+        std::vector<Mod> given;
+        for (auto& m : out.mods)
+        {
+            if (m.value != 0)
+            {
+                given.push_back(std::move(m));
+            }
+        }
+        std::sort(given.begin(), given.end(), [](const Mod& a, const Mod& b)
+        {
+            return a.name < b.name;
+        });
+        return given;
+    }
+
+    // A seat's weight for a stat (food_weights.h)
+    inline auto weightOf(const Seat seat, const std::string_view name) -> double
+    {
+        switch (seat)
+        {
+            case Seat::Melee:
+                return detail::weightIn(weights::kMelee, name);
+            case Seat::Thief:
+                return detail::weightIn(weights::kThief, name);
+            case Seat::NinjaTank:
+                return detail::weightIn(weights::kNinjaTank, name);
+            case Seat::BloodTank:
+                return detail::weightIn(weights::kBloodTank, name);
+            case Seat::BlackMage:
+                return detail::weightIn(weights::kBlackMage, name);
+            case Seat::WhiteMage:
+                return detail::weightIn(weights::kWhiteMage, name);
+            default:
+                return detail::weightIn(weights::kRedMage, name);
+        }
+    }
+
+    // A food's score for her seat: every stat it gives her now, weighed as
+    // the gear scorer weighs it, negatives in full where the seat weighs the
+    // stat; rounded to the census's nine places, so equal foods tie exactly
+    inline auto score(const Facts& f, const Seat seat, const Stats& her) -> double
+    {
+        double sum = 0.0;
+        for (const auto& m : gains(f, her))
+        {
+            sum += weightOf(seat, m.name) * m.value;
+        }
+        return std::round(sum * 1e9) / 1e9;
+    }
+
+    // A score worth a named stat's step at least (gear_roles.py NAMED_STEP):
+    // a food of only tiebreakers feeds nobody's seat
+    constexpr double kNamedStep = 0.005;
+
+    constexpr auto givesSomething(const double value) -> bool
+    {
+        return value >= kNamedStep;
     }
 
     constexpr auto edible(const Facts& f, const bool eatsRawFish, const bool eatsRawMeat) -> bool
@@ -527,31 +727,31 @@ namespace cardian::food
     };
 
     // An owned cardian's food for a role, from her own bags (the user,
-    // 2026-10-05): the strongest food of the role's class, at her attack and
-    // defence -- for attack, INT and defence a food lasting kLongSeconds at
-    // least that gives the stat; for MP the strongest long food giving
-    // kHealerFloor at least, else the strongest such cookie. A tie goes to
-    // the stack she carries more of, then the lower item. Nothing suitable:
+    // 2026-10-05): the best score for her seat among the foods she carries
+    // (score, at her own numbers) -- foods lasting kLongSeconds at least that
+    // feed her seat; for a Healer the best such food giving kHealerFloor of
+    // MP while resting or more, else the best such cookie. A tie goes to the
+    // stack she carries more of, then the lower item. Nothing suitable:
     // nothing. Conditional foods and raw food not hers to eat are never picked
-    constexpr auto pickOwned(const std::span<const Carried> bag, const Class cls, const int32 attack, const int32 defence, const bool eatsRawFish,
-                             const bool eatsRawMeat) -> std::optional<Pick>
+    inline auto pickOwned(const std::span<const Carried> bag, const Seat seat, const bool healer, const Stats& her, const bool eatsRawFish,
+                          const bool eatsRawMeat) -> std::optional<Pick>
     {
         const auto best = [&](const bool cookies) -> std::optional<Pick>
         {
             const Carried* chosen = nullptr;
-            int32          top    = 0;
+            double         top    = 0.0;
             for (const auto& c : bag)
             {
                 if (c.count == 0 || c.itemId == 0 || c.facts.conditional || !edible(c.facts, eatsRawFish, eatsRawMeat))
                 {
                     continue;
                 }
-                if (isCookie(c.facts) != cookies)
+                if (isCookie(c.facts) != cookies || (healer && c.facts.mod("MPHEAL") < kHealerFloor))
                 {
                     continue;
                 }
-                const int32 value = gain(c.facts, cls, attack, defence);
-                if (value < (cls == Class::Mp ? kHealerFloor : 1))
+                const double value = score(c.facts, seat, her);
+                if (!givesSomething(value))
                 {
                     continue;
                 }
@@ -571,7 +771,7 @@ namespace cardian::food
         {
             return lasting;
         }
-        return cls == Class::Mp ? best(true) : std::nullopt;
+        return healer ? best(true) : std::nullopt;
     }
 
     // The 30-second check: once her look has found her role's food due --
