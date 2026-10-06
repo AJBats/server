@@ -5730,6 +5730,30 @@ void CPawnController::TravelTick()
             return;
         }
         targetZone = PPlayer->getZone();
+
+        // Recruited from afar on his shout: the teleport the travel code
+        // falls back on carries her to his side, not a walk across the
+        // world (RESEARCH §18.6). While he is in his Mog House, or leaving
+        // his zone, she waits where she is, and goes once he is out
+        if (pawn::carriedToPlayer(static_cast<const CCharEntity*>(POwner)))
+        {
+            if (PPlayer->inMogHouse() || PPlayer->requestedZoneChange)
+            {
+                if (narrate)
+                {
+                    ShowInfoFmt("pawn: travel {}: from afar, waits while {} is {}", POwner->getName(), PPlayer->getName(),
+                                PPlayer->inMogHouse() ? "in his Mog House" : "zoning");
+                }
+                return;
+            }
+            if (narrate)
+            {
+                ShowInfoFmt("pawn: travel {}: from afar, {} -> {} by the teleport to {}", POwner->getName(), static_cast<uint16>(POwner->getZone()),
+                            static_cast<uint16>(targetZone), PPlayer->getName());
+            }
+            pawn::requestTransfer(POwner->id, std::nullopt);
+            return;
+        }
     }
 
     // The line chosen as she sets out, and kept while she walks it: of the

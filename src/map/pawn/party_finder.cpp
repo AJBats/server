@@ -23,6 +23,7 @@
 
 #include "cardian_link_messages.h"
 #include "pawn.h"
+#include "pawn_travel.h"
 #include "seats.h"
 
 #include "ai/ai_container.h"
@@ -136,14 +137,16 @@ namespace pawn::finder
             return readFacts(rset);
         }
 
-        // The shout's pool: a body with an open contract is held for her
-        // player (his Your contract rows, never a shout's), his or another's
-        constexpr auto kNotHeld = " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')";
+        // The shout's pool: the online -- a session row, standing or faded,
+        // so search finds her -- less a body with an open contract, held for
+        // her player (his Your contract rows, never a shout's), his or another's
+        constexpr auto kShoutPool = " AND EXISTS (SELECT 1 FROM accounts_sessions o WHERE o.charid = x.charid)"
+                                    " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')";
 
         auto allFacts(const uint32 playerCharID) -> std::vector<Facts>
         {
             std::vector<Facts> out;
-            const auto         rset = db::preparedStmt(std::string(kFactsQuery) + kNotHeld, playerCharID);
+            const auto         rset = db::preparedStmt(std::string(kFactsQuery) + kShoutPool, playerCharID);
             while (rset && rset->next())
             {
                 out.push_back(readFacts(rset));
@@ -162,16 +165,11 @@ namespace pawn::finder
             return PPawn != nullptr ? PPawn->GetMLevel() : rowLevel;
         }
 
-        auto inReach(const CCharEntity* PPlayer, CZone* PHere) -> bool
+        // A city or a town, by the game's own zone type (Selbina and Mhaura
+        // are typed cities too): where the shout is heard
+        auto cityOrTown(CZone* PZone) -> bool
         {
-            return PHere != nullptr && (PHere == PPlayer->loc.zone || pawn::sameCity(PHere, PPlayer->loc.zone));
-        }
-
-        // A nation's own missions are for its own people: nobody from
-        // another nation hears a shout for them
-        auto hears(const Facts& f, const Goal& goal) -> bool
-        {
-            return goal.kind != Goal::Kind::Mission || goal.log > static_cast<uint8>(MissionLog::Windurst) || f.nation == goal.log;
+            return PZone != nullptr && (PZone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
         }
 
         // Nobody already in the player's party hears the player's shout, nor
@@ -270,23 +268,17 @@ namespace pawn::finder
                     return Answer{ false, fit, "I'm in the middle of something!" };
                 }
             }
-            else if (!pawn::seats::has(f.charid))
-            {
-                return Answer{ false, fit, "She's nowhere to be found." };
-            }
             else if (pawn::world::campLeaderOf(f.charid) != 0)
             {
                 return Answer{ false, fit, "I'm out camping with friends." };
             }
 
-            const int band  = settings::get<uint8>("pawn.FINDER_BAND");
-            const int mine  = PPlayer->GetMLevel();
-            const int level = levelOf(PPawn, f.level);
-            if (level < mine - band)
+            const int side = rules::bandSide(PPlayer->GetMLevel(), levelOf(PPawn, f.level), settings::get<uint8>("pawn.FINDER_BAND"));
+            if (side < 0)
             {
                 return Answer{ false, fit, pick(f.seed, { "I'd only slow you down.", "I'm not ready for what you're doing." }) };
             }
-            if (level > mine + band)
+            if (side > 0)
             {
                 return Answer{ false, fit, pick(f.seed, { "Come back when you've grown a little.", "You'd be a liability out there." }) };
             }
@@ -297,27 +289,24 @@ namespace pawn::finder
             return std::nullopt;
         }
 
-        // Her disposition: who you are (fame in her nation, rank against
-        // hers), who you are to her (partied before, affinity), against her
-        // seeded threshold; a quest asks more of it than exp, a mission more
-        // still; `mood` is a shout's roll on it
+        // Her disposition (rules::willing): who you are to the world -- fame
+        // in her nation, rank against hers -- against her seeded threshold,
+        // `mood` a shout's roll on it; a quest asks more than exp, and a
+        // mission she is on needs no asking. Having partied with you and her
+        // affinity colour the words of a yes, never the yes
         auto softAnswer(const CCharEntity* PPlayer, const Facts& f, const Goal& goal, const Fame& fame, const int mood, const MissionFit fit) -> Answer
         {
-            const uint8 level     = fame.byNation[f.nation];
-            const int   rankDiff  = static_cast<int>(PPlayer->profile.rank[f.nation]) - static_cast<int>(f.rank[f.nation]);
-            const int   onIt      = fit == MissionFit::On ? 25 : fit == MissionFit::Done ? 5 : 0;
-            const int   score     = 30 + mood + level * 5 + std::clamp(rankDiff * 5, -10, 15) + (f.partied ? 15 : 0) + static_cast<int>(std::min<uint32>(f.affinity, 6)) * 5 + onIt;
-            const int   asking    = goal.kind == Goal::Kind::Mission ? 20 : goal.kind == Goal::Kind::Quest ? 10 : 0;
-            const int   threshold = 25 + asking + static_cast<int>(f.seed % 40);
-            if (score < threshold)
+            const uint8 level    = fame.byNation[f.nation];
+            const int   rankDiff = static_cast<int>(PPlayer->profile.rank[f.nation]) - static_cast<int>(f.rank[f.nation]);
+            if (!rules::willing(goal, fit, level, rankDiff, mood, f.seed))
             {
-                if (level <= 1 && !f.partied)
+                if (level <= 1)
                 {
-                    return { false, fit, pick(f.seed, { "Do I know you?", "I don't party with strangers.", "Maybe when I've heard of you." }) };
+                    return { false, fit, pick(f.seed, { "Do I know you?", "Maybe when I've heard of you." }) };
                 }
-                if (asking > 0 && !f.partied)
+                if (goal.kind == Goal::Kind::Quest)
                 {
-                    return { false, fit, pick(f.seed, { "That's a big ask from someone I've never partied with.", "Let's do some exp first, then we'll talk." }) };
+                    return { false, fit, pick(f.seed, { "Not that one, sorry.", "I've got errands of my own today." }) };
                 }
                 return { false, fit, pick(f.seed, { "Not today.", "I'll pass, thanks.", "Some other time." }) };
             }
@@ -383,10 +372,15 @@ namespace pawn::finder
         {
             uint32            playerCharID = 0;
             Goal              goal;
-            timer::time_point at; // a consent not answered within kConsentLifetime lapses
+            timer::time_point at;            // a consent not answered within kConsentLifetime lapses
+            bool              shout = false; // her yes to his shout, not her open contract
         };
         std::unordered_map<uint32, Consent> consented;
         constexpr auto                      kConsentLifetime = std::chrono::minutes(2);
+
+        // Joined just now on a yes to his shout, until gatherOrHold asks
+        // (joinedFromShout)
+        std::unordered_set<uint32> joinedShout;
 
         // Her contract while she is in the party (pawn charid -> the player
         // and the goal), and the pawns known to hold none, so a miss is not
@@ -404,7 +398,8 @@ namespace pawn::finder
         std::unordered_map<uint32, timer::time_point> shoutedAt;
         uint32                                        lastShoutId = 0;
         // When each body last heard a player's shout, by player: the friend
-        // seat goes to the friend longest unheard
+        // seat goes to the friend longest unheard, and so does the affinity
+        // seat among equals
         std::unordered_map<uint32, std::unordered_map<uint32, timer::time_point>> lastHeard;
 
         constexpr auto kShoutLifetime = std::chrono::minutes(10);
@@ -547,16 +542,18 @@ namespace pawn::finder
             return nullptr;
         }
 
-        // Everyone in reach the world holds, each with a mood for this shout
-        std::vector<Candidate> willing;
-        std::vector<Candidate> unwilling;
-        std::vector<Candidate> notYet; // a mission she has not reached: the extra nos
-        const auto             fame = fameOf(PPlayer);
+        // Everyone online in a city or a town, wherever he shouts from (the
+        // user, 2026-10-02): a body in the field or a dungeon is busy and does
+        // not hear it. Each with a mood for this shout, and her distance in
+        // zone lines from him
+        std::vector<Candidate> pool;
+        const auto             fame   = fameOf(PPlayer);
+        const auto             hopsTo = pawn::travel::hops({ PPlayer->getZone() });
         for (const auto& f : allFacts(PPlayer->id))
         {
             const auto* PPawn = pawn::findPawn(f.charid);
             auto*       PHere = zoneOf(PPawn, f.posZone);
-            if (!inReach(PPlayer, PHere) || !hears(f, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
+            if (!rules::hears(cityOrTown(PHere), f.nation, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
             {
                 continue;
             }
@@ -570,90 +567,75 @@ namespace pawn::finder
             c.rank     = f.rank[f.nation];
             c.zone     = PHere->getName();
             c.zoneId   = static_cast<uint16>(PHere->GetID());
+            const auto hop = hopsTo.find(c.zoneId);
+            c.hops     = hop != hopsTo.end() ? hop->second : std::numeric_limits<uint32>::max();
             c.presence = presenceOf(PPlayer, PPawn, f.charid, PHere);
-            c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(-10, 11));
+            c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(rules::kMoodMin, rules::kMoodMax + 1));
             c.charid   = f.charid;
             c.friendly = f.partied || f.affinity > 0;
-            (c.answer.yes ? willing : c.answer.fit == MissionFit::Behind ? notYet : unwilling).push_back(std::move(c));
+            pool.push_back(std::move(c));
         }
 
-        // Enough yeses to fill the party when the crowd has them (the user,
-        // 2026-09-13: one shout should be able to form a party; a re-shout
-        // is for the picky), the rest of the eight a mix, then up to three
-        // who have not reached the mission, all in one shuffled order
-        constexpr size_t kResponders = 8;
-        constexpr size_t kNotYet     = 3;
-        const size_t     need        = std::min<size_t>(kResponders, 6 - std::min<size_t>(6, partySize(PPlayer)));
-        std::ranges::shuffle(willing, xirand::rng());
-        std::ranges::shuffle(unwilling, xirand::rng());
-        std::ranges::shuffle(notYet, xirand::rng());
-
-        // The friend seat (the user, 2026-09-14): one of the eight goes to a
-        // friend in reach, the one longest unheard, so friendship shows on
-        // every shout without crowding out new faces. She answers as she
-        // would anyway, and a yes counts toward the party; empty when no
-        // friend is in reach
-        std::vector<Candidate> picked;
-        auto&                  heard = lastHeard[PPlayer->id];
-        std::vector<std::pair<std::vector<Candidate>*, size_t>> friends;
-        for (auto* list : { &willing, &unwilling, &notYet })
+        // Who of them hear it, and in what order (rules::pickHeard): a friend
+        // seat and an affinity seat, enough yeses to fill the party when the
+        // crowd has them (the user, 2026-09-13: one shout should be able to
+        // form a party; a re-shout is for the picky), up to three who cannot
+        // come -- out of the band, or short of the mission -- and the rest a
+        // mix of those who could; nearest first
+        auto&                    heard = lastHeard[PPlayer->id];
+        const int                band  = settings::get<uint8>("pawn.FINDER_BAND");
+        std::vector<rules::Seat> seats;
+        seats.reserve(pool.size());
+        for (std::size_t i = 0; i < pool.size(); ++i)
         {
-            for (size_t i = 0; i < list->size(); ++i)
-            {
-                if ((*list)[i].friendly)
-                {
-                    friends.emplace_back(list, i);
-                }
-            }
+            const auto& c      = pool[i];
+            const auto  it     = heard.find(c.charid);
+            const bool  cannot = !c.answer.yes && (c.answer.fit == MissionFit::Behind || rules::bandSide(PPlayer->GetMLevel(), c.level, band) != 0);
+            seats.push_back(rules::Seat{ .index    = i,
+                                         .yes      = c.answer.yes,
+                                         .cannot   = cannot,
+                                         .friendly = c.friendly,
+                                         .affinity = c.affinity,
+                                         .hops     = c.hops,
+                                         .heardAt  = it != heard.end() ? it->second.time_since_epoch().count() : std::numeric_limits<int64>::min() });
         }
-        std::ranges::shuffle(friends, xirand::rng());
-        const auto heardAt = [&](const std::pair<std::vector<Candidate>*, size_t>& ref)
-        {
-            const auto it = heard.find((*ref.first)[ref.second].charid);
-            return it != heard.end() ? it->second : timer::time_point::min();
-        };
-        std::string seat = "empty";
-        if (const auto oldest = std::ranges::min_element(friends, {}, heardAt); oldest != friends.end())
-        {
-            auto& [list, index] = *oldest;
-            seat                = (*list)[index].name;
-            picked.push_back(std::move((*list)[index]));
-            list->erase(list->begin() + static_cast<std::ptrdiff_t>(index));
-        }
-        const size_t seatYes = !picked.empty() && picked.front().answer.yes ? 1 : 0;
-        const size_t sure    = std::min(need - std::min(need, seatYes), willing.size());
-        picked.insert(picked.end(), std::make_move_iterator(willing.begin()), std::make_move_iterator(willing.begin() + sure));
-        std::vector<Candidate> rest;
-        rest.insert(rest.end(), std::make_move_iterator(willing.begin() + sure), std::make_move_iterator(willing.end()));
-        rest.insert(rest.end(), std::make_move_iterator(unwilling.begin()), std::make_move_iterator(unwilling.end()));
-        std::ranges::shuffle(rest, xirand::rng());
-        const size_t fill = std::min(kResponders - picked.size(), rest.size());
-        picked.insert(picked.end(), std::make_move_iterator(rest.begin()), std::make_move_iterator(rest.begin() + fill));
-        const size_t extra = std::min(kNotYet, notYet.size());
-        picked.insert(picked.end(), std::make_move_iterator(notYet.begin()), std::make_move_iterator(notYet.begin() + extra));
-        std::ranges::shuffle(picked, xirand::rng());
+        const auto        count        = static_cast<std::size_t>(xirand::GetRandomNumber(static_cast<int>(rules::kHeardMin), static_cast<int>(rules::kHeardMax) + 1));
+        const std::size_t need         = 6 - std::min<std::size_t>(6, partySize(PPlayer));
+        const auto        picked       = rules::pickHeard(std::move(seats), count, need, xirand::rng());
+        const auto        nameAt       = [&](const std::optional<std::size_t>& index) { return index.has_value() ? pool[*index].name : std::string("empty"); };
+        const std::string friendSeat   = nameAt(picked.friendSeat);
+        const std::string affinitySeat = nameAt(picked.affinitySeat);
 
         // Her timing: the first voice after a beat, then uneven gaps -- most
-        // short, now and then a lull -- and each deliberates a while
+        // short, now and then a lull -- and each deliberates a while. Paced
+        // so a crowd of twenty is all heard in about twenty seconds
         Held made;
         made.madeAt     = timer::now();
         made.shout.id   = ++lastShoutId;
         made.shout.goal = goal;
         uint32 at       = xirand::GetRandomNumber(700, 2200);
-        for (auto& c : picked)
+        for (const auto& s : picked.seats)
         {
+            auto& c         = pool[s.index];
             heard[c.charid] = made.madeAt;
             Responder r;
             r.c        = std::move(c);
             r.revealMs = at;
             r.decideMs = xirand::GetRandomNumber(1500, 5200);
-            const bool lull = xirand::GetRandomNumber(0, 5) == 0;
-            at += lull ? xirand::GetRandomNumber(2500, 5000) : xirand::GetRandomNumber(400, 2400);
+            const bool lull = xirand::GetRandomNumber(0, 6) == 0;
+            at += lull ? xirand::GetRandomNumber(1500, 3000) : xirand::GetRandomNumber(250, 1200);
             made.shout.rows.push_back(std::move(r));
         }
-        const auto yes = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.answer.yes; });
-        ShowInfoFmt("pawn: {} shouts ({}, log {}): {} hear it, {} would come, {} needed to fill the party, friend seat: {}",
-                    PPlayer->getName(), kindName(goal), goal.log, made.shout.rows.size(), yes, need, seat);
+        const auto yes      = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.answer.yes; });
+        const auto known    = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.friendly; });
+        const auto inBand   = std::ranges::count_if(pool, [&](const Candidate& c) { return rules::bandSide(PPlayer->GetMLevel(), c.level, band) == 0; });
+        const auto hopsText = [](const uint32 hops) { return hops == std::numeric_limits<uint32>::max() ? std::string("no route") : std::to_string(hops); };
+        ShowInfoFmt("pawn: {} shouts ({}, log {}): {} in reach, {} of them in the band, {} hear it ({} strangers), {} would come, {} needed to fill the party, "
+                    "friend seat: {}, affinity seat: {}, zone lines away: nearest {}, farthest {}",
+                    PPlayer->getName(), kindName(goal), goal.log, pool.size(), inBand, made.shout.rows.size(), made.shout.rows.size() - static_cast<std::size_t>(known),
+                    yes, need, friendSeat, affinitySeat,
+                    made.shout.rows.empty() ? "-" : hopsText(made.shout.rows.front().c.hops),
+                    made.shout.rows.empty() ? "-" : hopsText(made.shout.rows.back().c.hops));
         if (!made.shout.rows.empty())
         {
             shoutedAt[PPlayer->id] = made.madeAt;
@@ -810,9 +792,10 @@ namespace pawn::finder
             return CL_S_PARTY_FULL;
         }
         // The list's own gate: an unrecruited census body, a yes in the
-        // player's current shout for this goal, in the player's zone or
-        // city, then what stops her whatever she said before. Her zone is
-        // her body's when she stands and her row's when she is faded
+        // player's current shout for this goal, still in a city or a town
+        // (where the shout reached her), then what stops her whatever she
+        // said before. Her zone is her body's when she stands and her row's
+        // when she is faded
         const auto facts = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
         if (!facts.has_value())
         {
@@ -838,9 +821,13 @@ namespace pawn::finder
             {
                 return CL_S_NOT_A_YES;
             }
-            if (!inReach(PPlayer, zoneOf(PPawn, facts->posZone)))
+            if (PPawn == nullptr && !pawn::seats::has(charid))
             {
-                return CL_S_NOT_IN_CITY;
+                return CL_S_AWAY;
+            }
+            if (!cityOrTown(zoneOf(PPawn, facts->posZone)))
+            {
+                return CL_S_LEFT_TOWN;
             }
             const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, *facts, PPawn, goal) : MissionFit::Free;
             if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal, fit); hard.has_value())
@@ -875,7 +862,7 @@ namespace pawn::finder
             return CL_S_INVITE_PENDING;
         }
 
-        consented[charid] = Consent{ PPlayer->id, asked, timer::now() };
+        consented[charid] = Consent{ PPlayer->id, asked, timer::now(), !held.has_value() };
         PPawn->InvitePending.entity.UniqueNo = PPlayer->id;
         PPawn->InvitePending.entity.ActIndex = PPlayer->targid;
         PPawn->InvitePending.kind            = PartyKind::Party;
@@ -920,12 +907,21 @@ namespace pawn::finder
         // Her contract starts on the yes, and the two of you have partied
         contracts[PPawn->id] = consent;
         noContract.erase(PPawn->id);
+        if (consent.shout)
+        {
+            joinedShout.insert(PPawn->id);
+        }
         db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND player_charid <> ? AND contract <> ''", PPawn->id, consent.playerCharID);
         db::preparedStmt("INSERT INTO cardian_party_memory (player_charid, pawn_charid, last_partied, contract) VALUES (?, ?, NOW(), ?) "
                          "ON DUPLICATE KEY UPDATE contract = VALUES(contract), last_partied = NOW()",
                          consent.playerCharID, PPawn->id, kindName(consent.goal));
         ShowInfoFmt("pawn: {} joins {} under the {} contract", PPawn->getName(), PInviter->getName(), kindName(consent.goal));
         return true;
+    }
+
+    auto joinedFromShout(const uint32 charid) -> bool
+    {
+        return joinedShout.erase(charid) > 0;
     }
 
     auto contractWith(const uint32 charid, const uint32 playerCharID) -> const char*
@@ -939,6 +935,7 @@ namespace pawn::finder
         contracts.erase(charid);
         noContract.erase(charid);
         expBank.erase(charid);
+        joinedShout.erase(charid);
         if (const auto held = openContractOf(charid); held.has_value())
         {
             db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND contract <> ''", charid);
@@ -1116,7 +1113,7 @@ namespace pawn::finder
         {
             const auto name = pawn::seats::nameOf(charid);
             PPlayer->pushPacket<GP_SERV_COMMAND_MESSAGE>(PPlayer, 0, 0, MsgStd::InvitationDeclined);
-            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is one of the world's adventurers. Recruit her through the Party Finder.", name));
+            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} joins a party only through the Party Finder.", name));
             ShowInfoFmt("pawn: {} invites {} by name; refused, she is the world's (the Party Finder recruits her)", PPlayer->getName(), name);
             return true;
         }

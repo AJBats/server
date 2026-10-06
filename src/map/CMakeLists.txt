@@ -85,6 +85,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/food.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_food.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/food_weights.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/finder_rules.h
 )
 
 set(MAP_CORE_SOURCES
