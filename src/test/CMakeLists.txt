@@ -101,6 +101,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_food_tests.cpp # CARDIAN: food: a script's facts, the stat a food gives, the owned pick and the moments she eats
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_finder_tests.cpp # CARDIAN: the party finder's rules: who hears, the yes or no, the seats and the order
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_claims_tests.cpp # CARDIAN: the party's claim board: who gives way, the slide and its purpose (claim_board.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_glance_tests.cpp # CARDIAN: an idle cardian's glances and emotes, and a mage's heading at her spot
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)
