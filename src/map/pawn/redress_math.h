@@ -148,8 +148,8 @@ namespace cardian::redress
         return out;
     }
 
-    // Item ids joined by commas: the pieces the census had issued her before
-    // this plan (the row's `issued`)
+    // Item ids joined by commas: the pieces and the food the census had
+    // issued her before this plan (the row's `issued`)
     inline auto parseIds(const std::string_view text) -> std::set<uint16_t>
     {
         std::set<uint16_t> out;

@@ -74,8 +74,10 @@ namespace pawn::items
     // all run the game's item machinery. The inventory only; a bag's
     // contents are worn or fetched first. Refusals raised inside the AI (wrong job,
     // mid-action) surface only as drained packets; the caller re-syncs for
-    // the truth. CL_S_OK when it began, else why not.
-    auto useItem(CCharEntity* PPawn, uint8 slot, uint8 location = 0) -> uint16;
+    // the truth. `ordered`: the player's order, which ends a rest order she
+    // is on and stands her; false for her own use that keeps one (her food,
+    // pawn/food.h). CL_S_OK when it began, else why not.
+    auto useItem(CCharEntity* PPawn, uint8 slot, uint8 location = 0, bool ordered = true) -> uint16;
 
     // Destroy qty of the stack in the inventory slot; any other container
     // refuses (its contents are fetched first).

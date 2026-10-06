@@ -60,19 +60,23 @@ namespace pawn
     // tactician deciding the when) and orders alike (RESEARCH §17.13).
     //  - Melee: the assist trio, her best weapon skill on a target with half
     //    its HP or more (the user, 2026-09-26: TP not spent on a mob about to
-    //    fall), then rest with the player. The trio takes the party leader's
-    //    fight first, and another cardian's only after it, so a cardian
-    //    whose mob has died joins the player's fight before anyone else's.
+    //    fall), then rest with the player and eat with the player. The trio
+    //    takes the party leader's fight first, and another cardian's only
+    //    after it, so a cardian whose mob has died joins the player's fight
+    //    before anyone else's.
     //    A Monk, a Warrior and a Thief carry their tactician's tools between
     //    the trio and the weapon skill, so they go out first (RESEARCH
     //    §17.13): the Monk's Boost (right before her weapon skill), Focus
     //    and Dodge, the Warrior's Berserk (never as the party's Tank),
     //    Defender (only as the Tank) and Aggressor, the Thief's Sneak
-    //    Attack (right before her weapon skill, from the mob's back).
+    //    Attack (right before her weapon skill, from the mob's back). Eat
+    //    with the player (RESEARCH §19) eats her party role's food when he
+    //    has food on and she has none.
     //  - Mage: the tactician's tools first -- the Cure, the -na and the
     //    enfeebles left to its judgement, so curing outranks everything
     //    below, and her rest, the MP pacing -- then her weapon skill and
-    //    Rest with the player as orders, and her Attack row, marked and
+    //    Rest with the player and Eat with the player as orders (a Healer's
+    //    cookie waits for her kneel), and her Attack row, marked and
     //    shipped unchecked: checking it makes her a melee mage whose
     //    tactician leaves a fight to rest (RESEARCH §14.12 decisions 19
     //    and 20; an unmarked Attack row would be an order that keeps her
@@ -91,6 +95,7 @@ namespace pawn
             { "102|0:0|0:0:0|0", true },  // Foe: targeting ally -> Attack
             { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
+            { "0|0:0|100:15:1|0", true }, // Self -> Eat with the player
         };
         static const std::vector<std::pair<std::string, bool>> monk{
             { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
@@ -101,6 +106,7 @@ namespace pawn
             { "0|101:0|3:2:37|0", true },  // * Self -> Dodge
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+            { "0|0:0|100:15:1|0", true },  // Self -> Eat with the player
         };
         static const std::vector<std::pair<std::string, bool>> thief{
             { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
@@ -109,6 +115,7 @@ namespace pawn
             { "0|101:0|3:2:44|0", true },  // * Self -> Sneak Attack
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+            { "0|0:0|100:15:1|0", true },  // Self -> Eat with the player
         };
         static const std::vector<std::pair<std::string, bool>> warrior{
             { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
@@ -119,6 +126,7 @@ namespace pawn
             { "0|101:0|3:2:34|0", true },  // * Self -> Aggressor
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
+            { "0|0:0|100:15:1|0", true },  // Self -> Eat with the player
         };
         static const std::vector<std::pair<std::string, bool>> mage{
             { "1|101:0|2:0:1|0", true },   // * Ally -> Cure (best)
@@ -127,6 +135,7 @@ namespace pawn
             { "0|101:0|100:14:1|0", true }, // * Self -> Rest
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
+            { "0|0:0|100:15:1|0", true },   // Self -> Eat with the player
             { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
         };
         static const std::vector<std::pair<std::string, bool>> blackMage{
@@ -137,6 +146,7 @@ namespace pawn
             { "0|101:0|100:14:1|0", true }, // * Self -> Rest
             { "2|2:50|4:0:0|0", true },     // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
+            { "0|0:0|100:15:1|0", true },   // Self -> Eat with the player
             { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
         };
         if (job == xi::Job::BLM)

@@ -3643,6 +3643,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         FireQueuedOrder();
         UpdateRunning(); // after the line moves: an order over and the next away in one tick is one QUEUE
         FireOrderedEngage();
+        FoodTick(); // her food: eaten with the player, a body of the world's topped up
 
         // Mobs check a character for aggro only when that character's client
         // sends a position or action packet (CZoneEntities::tapMobAggro). A

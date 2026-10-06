@@ -454,6 +454,7 @@ public:
     auto RestsByRow() const -> bool;
     auto RestRowDue() const -> bool; // her plain Rest row speaks, she is short, and no rest order is on
     auto HomePointsWithPlayer() const -> bool;
+    auto EatsWithPlayer() const -> bool; // her "Self -> Eat with the player" row speaks (RESEARCH §19)
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float LockOnSlack      = 2.0f; // lock-on holds this far beyond melee reach, so a step out of reach does not drop it
@@ -1216,6 +1217,19 @@ private:
     std::optional<Enchant> m_Enchant;
     void                   EnchantTick();
     void                   TellQueueLine() const;
+
+    // Her food (RESEARCH §19, pawn_food.cpp). Every kCheckEvery she looks:
+    // a body of the world in the player's party is topped up, and when her
+    // Eat with the player row speaks, the player has food on and she has
+    // none, her role's food is due -- eaten at the first moment between
+    // fights she is free and standing still. A Healer's cookie is not: it
+    // waits for her kneel (EatCookieBeforeKneel, from RestTick)
+    timer::time_point     m_FoodLookAt{};
+    std::optional<uint16> m_FoodDue;    // the food she eats at her first free moment
+    std::string           m_FoodSaid;   // what her food check last said in the map log
+    void                  FoodTick();
+    auto                  EatCookieBeforeKneel(bool aboutToKneel, bool shortOfMp) -> bool;
+    void                  SayFood(const std::string& line);
 
     // The order that last started, and when: what a refusal right after it is about
     // The order last started, the game's word on it heard for kHeels after: its
