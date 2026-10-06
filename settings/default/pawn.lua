@@ -280,6 +280,49 @@ xi.settings.pawn =
     REACTION_BEATS_BEHIND = 4,
     REACTION_JITTER       = 1,
 
+    -- Her eyes out of a fight (ROADMAP G item 1, #249), idle, held or left
+    -- behind: she looks ahead. Every GLANCE_GAP_MIN to GLANCE_GAP_MAX
+    -- seconds she glances at the player for GLANCE_SECONDS_MIN to
+    -- GLANCE_SECONDS_MAX seconds, when he is within GLANCE_RANGE yalms;
+    -- GLANCE_GAP_MAX 0 turns the glances off. In a fight anywhere in her
+    -- party (hers, a member engaged, a mob on one of them) her eyes are on
+    -- the fight and she never glances; the glance clock starts afresh once
+    -- it is over, so the party never turns as one.
+    GLANCE_GAP_MIN     = 20,
+    GLANCE_GAP_MAX     = 60,
+    GLANCE_SECONDS_MIN = 2,
+    GLANCE_SECONDS_MAX = 4,
+    GLANCE_RANGE       = 40,
+
+    -- Her emotes, in a real player's party (ROADMAP G item 4): one every
+    -- EMOTE_GAP_MIN to EMOTE_GAP_MAX seconds after her last, standing still
+    -- within EMOTE_RANGE yalms of the player. One that comes due waits out
+    -- a fight anywhere in her party, a cast or an item's use, and a kneel;
+    -- after a fight it waits EMOTE_AFTER_MIN to EMOTE_AFTER_MAX seconds
+    -- more, so the party never emotes as one. One that comes due while she
+    -- walks, or with the player far off, is let go, and the next is a whole
+    -- gap on. EMOTE_AT_PLAYER percent of them are aimed at the player and
+    -- EMOTE_AT_MEMBER percent at another party member within EMOTE_RANGE of
+    -- her; the rest are fidgets of her own (think, sigh, look about). She
+    -- looks at whoever she emotes at for EMOTE_LOOK_SECONDS, and a cardian
+    -- she emotes at looks back for a glance's length. EMOTE_GAP_MAX 0 turns
+    -- them off.
+    EMOTE_GAP_MIN      = 180,
+    EMOTE_GAP_MAX      = 420,
+    EMOTE_AFTER_MIN    = 5,
+    EMOTE_AFTER_MAX    = 30,
+    EMOTE_AT_PLAYER    = 20,
+    EMOTE_AT_MEMBER    = 30,
+    EMOTE_RANGE        = 20,
+    EMOTE_LOOK_SECONDS = 3,
+
+    -- A mage arriving at her safety spot -- the crescent or the camp's
+    -- backline while she attends a fight, her camp spot between pulls --
+    -- turns to face the battle: a heading drawn within SPOT_FACING_ARC
+    -- degrees either side of facing the mob she attends (between pulls,
+    -- where the pull lands), held until she moves again.
+    SPOT_FACING_ARC    = 45,
+
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
     -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
     -- always, low-HP while the cardian is under 75%, magic only while it is
@@ -417,6 +460,14 @@ xi.settings.pawn =
     -- body alone keeps her fidgets. WORLD_CHAT_GAP_MAX 0 turns it off.
     WORLD_CHAT_GAP_MIN = 8,
     WORLD_CHAT_GAP_MAX = 20,
+    -- A body of the world away from any real player's party (a town seat,
+    -- a roamer, a camp of the world, its leader and members alike) emotes
+    -- every WORLD_FIDGET_GAP_MIN to WORLD_FIDGET_GAP_MAX seconds, by the
+    -- rules of the party emotes above. A cardian in a real player's party,
+    -- a wild one included, emotes on the party's rarer clock
+    -- (EMOTE_GAP_MIN). WORLD_FIDGET_GAP_MAX 0 turns it off.
+    WORLD_FIDGET_GAP_MIN = 45,
+    WORLD_FIDGET_GAP_MAX = 120,
 
     -- Liveness: a zone is live while a real player is in it or, with
     -- WORLD_LIVE_RADIUS 1, one zone line away (the neighbours come from the

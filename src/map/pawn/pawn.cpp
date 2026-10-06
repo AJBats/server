@@ -1272,6 +1272,9 @@ namespace pawn
                 PController->EndRestOrder(herself ? "out of the party" : "her player left the party");
                 // A maneuver is his hand on her: it ends with the party tie too
                 PController->EndManeuver(herself ? "out of the party, the maneuver ends" : "her player left the party, the maneuver ends");
+                // Her head lets go of whoever it was on: a head target is an
+                // index in this zone, and may belong to a stranger later
+                PController->HeadLook(nullptr);
             }
             // Signed out with the last human (carryOut), she has not left: her
             // contract and the gambits he gave her wait for his login

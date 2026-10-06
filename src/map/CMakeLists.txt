@@ -80,6 +80,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_enchant.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/glance_math.h
 )
 
 set(MAP_CORE_SOURCES

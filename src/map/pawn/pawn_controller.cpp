@@ -782,7 +782,7 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
         Move(Intent{});
         if (!order.kneel && !order.chatty && (PPathFind == nullptr || !PPathFind->IsFollowingPath()))
         {
-            IdleEmote(nullptr);
+            IdleEmote(nullptr, true);
         }
         return;
     }
@@ -976,7 +976,7 @@ void CPawnController::RoamTick()
         if (!PPathFind->IsFollowingPath() && !POwner->PAI->IsCurrentState<CMagicState>())
         {
             m_Gambits->Tick(m_Tick, false);
-            IdleEmote(nullptr);
+            IdleEmote(nullptr, true);
         }
         return;
     }
@@ -1001,7 +1001,7 @@ void CPawnController::RoamTick()
             if (!POwner->PAI->IsCurrentState<CMagicState>())
             {
                 m_Gambits->Tick(m_Tick, false);
-                IdleEmote(nullptr);
+                IdleEmote(nullptr, true);
             }
             if (m_Tick - m_LastHuntLogTime > 15s)
             {
@@ -1076,7 +1076,7 @@ void CPawnController::RoamTick()
         if (!POwner->PAI->IsCurrentState<CMagicState>())
         {
             m_Gambits->Tick(m_Tick, false);
-            IdleEmote(nullptr);
+            IdleEmote(nullptr, true);
         }
         return;
     }
@@ -3432,35 +3432,298 @@ void CPawnController::WalkToward(CBattleEntity* PTarget)
     Move(ApproachIntent(PTarget));
 }
 
-void CPawnController::IdleEmote(const CCharEntity* PPlayer)
+namespace
 {
-    if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    // A die for glance_math.h's clocks: [0, 1)
+    auto roll() -> double
+    {
+        return xirand::GetRandomNumber(0.0, 1.0);
+    }
+
+    // The map's clock in seconds, as glance_math.h counts it
+    auto secondsOf(const timer::time_point tp) -> double
+    {
+        return std::chrono::duration<double>(tp.time_since_epoch()).count();
+    }
+
+    auto glanceTiming() -> cardian::glance::GlanceTiming
+    {
+        return { { settings::get<float>("pawn.GLANCE_GAP_MIN"), settings::get<float>("pawn.GLANCE_GAP_MAX") },
+                 { settings::get<float>("pawn.GLANCE_SECONDS_MIN"), settings::get<float>("pawn.GLANCE_SECONDS_MAX") } };
+    }
+
+    auto secondsAsDuration(const double seconds) -> timer::duration
+    {
+        return std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(seconds));
+    }
+
+    auto emoteStagger() -> cardian::glance::Span
+    {
+        return { settings::get<float>("pawn.EMOTE_AFTER_MIN"), settings::get<float>("pawn.EMOTE_AFTER_MAX") };
+    }
+} // namespace
+
+auto CPawnController::PartyInFight() const -> bool
+{
+    // Asked by her eyes and her emote in one tick: scanned once
+    if (m_FightAskedAt == m_Tick)
+    {
+        return m_FightAnswer;
+    }
+    cardian::glance::Fight fight;
+    fight.own = POwner->PAI->IsEngaged() || m_Approach.has_value() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Attend ||
+                m_Mode == Mode::Approach || m_Mode == Mode::Retreat;
+
+    std::vector<uint32> members;
+    POwner->ForParty([&](CBattleEntity* PMember)
+    {
+        members.push_back(PMember->id);
+        if (PMember != POwner && PMember->loc.zone == POwner->loc.zone && PMember->PAI != nullptr && PMember->PAI->IsEngaged())
+        {
+            fight.memberEngaged = true;
+        }
+    });
+    // The mobs within the hunt leash of her: one on a member farther off
+    // than that is a fight she is not standing about beside
+    if (!fight.own && !fight.memberEngaged)
+    {
+        const auto member = [&](const uint32 id)
+        {
+            return id != 0 && std::find(members.begin(), members.end(), id) != members.end();
+        };
+        const auto ours = [&](const CBattleEntity* PEntity)
+        {
+            return PEntity != nullptr && (member(PEntity->id) || (PEntity->PMaster != nullptr && member(PEntity->PMaster->id)));
+        };
+        const auto onParty = [&](CMobEntity* PMob)
+        {
+            if (!fight.mobOnParty && PMob->isAlive())
+            {
+                fight.mobOnParty = (PMob->PAI->IsEngaged() && ours(PMob->GetBattleTarget())) || member(PMob->m_OwnerID.UniqueNo);
+            }
+        };
+        pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.HUNT_LEASH"), onParty);
+    }
+    m_FightAskedAt = m_Tick;
+    m_FightAnswer  = cardian::glance::inFight(fight);
+    return m_FightAnswer;
+}
+
+auto CPawnController::HeldLook() -> const CBaseEntity*
+{
+    if (!m_Look.has_value())
+    {
+        return nullptr;
+    }
+    const auto* PAt = m_Look->at.resolve();
+    if (m_Tick < m_Look->until && PAt != nullptr && PAt->loc.zone == POwner->loc.zone)
+    {
+        return PAt;
+    }
+    m_Look.reset();
+    return nullptr;
+}
+
+void CPawnController::IdleLook(const CCharEntity* PPlayer)
+{
+    // Back from a fight, or from a stretch away from the idle tick -- a
+    // fight of her own, a walk he ordered, a maneuver -- the glances start
+    // afresh, and an emote already due waits a short stagger (settle), so
+    // the party never turns or emotes as one. A cast or an item's use is no
+    // stretch away: DoRoamTick counts it as idle time
+    const bool fight = PartyInFight();
+    if (m_Tick - m_IdleLookAt > 2s || (m_IdleFight && !fight))
+    {
+        m_Glances = {};
+        cardian::glance::settle(m_Emotes, secondsOf(m_Tick), emoteStagger(), roll);
+    }
+    m_IdleLookAt = m_Tick;
+    m_IdleFight  = fight;
+    if (Acting())
+    {
+        return; // the action's own target keeps her head (Cast, Ability, WeaponSkill)
+    }
+
+    // A fight anywhere in her party has her eyes, on its mob when she
+    // knows it, and no glance
+    if (fight)
+    {
+        m_Glances = {};
+        m_Look.reset();
+        const CBattleEntity* PFight = AttendedTarget();
+        if (PFight == nullptr && PPlayer != nullptr && PPlayer->PAI->IsEngaged())
+        {
+            PFight = PPlayer->GetBattleTarget();
+        }
+        HeadLook(PFight);
+        return;
+    }
+
+    // Whoever she emoted at, or who emoted at her, for its seconds
+    if (const auto* PAt = HeldLook(); PAt != nullptr)
+    {
+        HeadLook(PAt);
+        return;
+    }
+
+    // The player now and then, for a few seconds; ahead otherwise
+    const bool inSight = PPlayer != nullptr && PPlayer->loc.zone == POwner->loc.zone &&
+                         distance(POwner->loc.p, PPlayer->loc.p) < settings::get<float>("pawn.GLANCE_RANGE");
+    const bool glances = cardian::glance::step(m_Glances, secondsOf(m_Tick), inSight, glanceTiming(), roll);
+    HeadLook(glances ? PPlayer : nullptr);
+}
+
+void CPawnController::LookAhead()
+{
+    if (!Acting())
+    {
+        HeadLook(nullptr);
+    }
+}
+
+void CPawnController::RoamLook()
+{
+    if (!Acting())
+    {
+        HeadLook(HeldLook());
+    }
+}
+
+void CPawnController::IdleEmote(const CCharEntity* PPlayer, const bool stands)
+{
+    namespace glance = cardian::glance;
+    // A body of the world away from any real player's party -- a town
+    // seat, a roamer, a camp of the world, its leader and members alike --
+    // emotes on the world's clock; a cardian in a real player's party, on
+    // the party's rarer one
+    const bool         world = m_World && pawn::partyPlayer(static_cast<const CCharEntity*>(POwner)) == nullptr;
+    const glance::Span gap{ settings::get<float>(world ? "pawn.WORLD_FIDGET_GAP_MIN" : "pawn.EMOTE_GAP_MIN"),
+                            settings::get<float>(world ? "pawn.WORLD_FIDGET_GAP_MAX" : "pawn.EMOTE_GAP_MAX") };
+    const double       now = secondsOf(m_Tick);
+    if (!glance::due(m_Emotes, now, gap, roll))
     {
         return;
     }
-    // The first idle moment only sets the clock: no fidget on arrival
-    if (m_NextIdleEmoteTime == timer::time_point::min() || m_Tick >= m_NextIdleEmoteTime)
+    // Due, it waits out a fight anywhere in her party (and a short stagger
+    // after it, IdleLook), an action and a kneel
+    if (PartyInFight() || Acting() || POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
     {
-        const bool due      = m_NextIdleEmoteTime != timer::time_point::min();
-        m_NextIdleEmoteTime = m_Tick + std::chrono::seconds(xirand::GetRandomNumber(45, 120));
-        // Alone (waiting somewhere), she fidgets too; with the player far
-        // off she does not, and a stare needs someone to stare at
-        if (!due || POwner->PAI->IsCurrentState<CMagicState>() || POwner->loc.zone == nullptr || (PPlayer != nullptr && distance(POwner->loc.p, PPlayer->loc.p) > 20.0f))
-        {
-            return;
-        }
-
-        static constexpr std::array<Emote, 4> kFidgets{ Emote::Think, Emote::Sigh, Emote::Huh, Emote::Stare };
-        auto                                  emote = kFidgets[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(kFidgets.size())))];
-        if (emote == Emote::Stare && PPlayer == nullptr)
-        {
-            emote = Emote::Think;
-        }
-        const CBaseEntity* PAt = emote == Emote::Stare ? static_cast<const CBaseEntity*>(PPlayer) : POwner;
-
-        const auto* PPawn = static_cast<const CCharEntity*>(POwner);
-        POwner->loc.zone->PushPacket(POwner, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(PPawn, PAt->id, PAt->targid, emote, EmoteMode::Motion, 0));
+        return;
     }
+    // It is let go, the next a whole gap on, while she walks, with the
+    // player far off, or nowhere: none piles up for the party's next stop.
+    // Alone (waiting somewhere, a body of the world) she emotes too
+    const float range = settings::get<float>("pawn.EMOTE_RANGE");
+    glance::rearm(m_Emotes, now, gap, roll);
+    if (!stands || POwner->loc.zone == nullptr || (PPlayer != nullptr && distance(POwner->loc.p, PPlayer->loc.p) > range))
+    {
+        return;
+    }
+
+    // Another party member near her, on her feet, to emote at
+    std::vector<CBattleEntity*> mates;
+    POwner->ForParty([&](CBattleEntity* PMember)
+    {
+        if (PMember != POwner && PMember != PPlayer && PMember->loc.zone == POwner->loc.zone && PMember->isAlive() &&
+            distance(POwner->loc.p, PMember->loc.p) <= range)
+        {
+            mates.push_back(PMember);
+        }
+    });
+
+    static constexpr std::array<Emote, 3> kFidgets{ Emote::Think, Emote::Sigh, Emote::Huh };
+    static constexpr std::array<Emote, 4> kAtPlayer{ Emote::Wave, Emote::Smile, Emote::Yes, Emote::Grin };
+    static constexpr std::array<Emote, 6> kAtMember{ Emote::Wave, Emote::Smile, Emote::Laugh, Emote::Yes, Emote::Grin, Emote::Point };
+
+    const CBattleEntity* PAt   = nullptr;
+    Emote                emote = xirand::GetRandomElement(kFidgets);
+    switch (glance::aim(roll(), settings::get<float>("pawn.EMOTE_AT_PLAYER"), settings::get<float>("pawn.EMOTE_AT_MEMBER"), PPlayer != nullptr, !mates.empty()))
+    {
+        case glance::Aim::Player:
+            PAt   = PPlayer;
+            emote = xirand::GetRandomElement(kAtPlayer);
+            break;
+        case glance::Aim::Member:
+            PAt   = xirand::GetRandomElement(mates);
+            emote = xirand::GetRandomElement(kAtMember);
+            break;
+        case glance::Aim::Nobody:
+            break;
+    }
+
+    // Aimed at someone, she looks at them while she does it, and a cardian
+    // she emotes at looks back for a glance's length
+    if (PAt != nullptr)
+    {
+        m_Look = Look{ EntityId(PAt), m_Tick + secondsAsDuration(settings::get<float>("pawn.EMOTE_LOOK_SECONDS")) };
+        HeadLook(PAt);
+        if (auto* PPeer = PAt->PAI != nullptr ? dynamic_cast<CPawnController*>(PAt->PAI->GetController()) : nullptr; PPeer != nullptr)
+        {
+            PPeer->m_Look = Look{ EntityId(POwner), m_Tick + secondsAsDuration(glance::draw(glanceTiming().length, roll())) };
+        }
+        ShowInfoFmt("pawn: {} emotes at {} ({})", POwner->getName(), PAt->getName(), magic_enum::enum_name(emote));
+    }
+
+    const CBaseEntity* PTarget = PAt != nullptr ? static_cast<const CBaseEntity*>(PAt) : POwner;
+    const auto*        PPawn   = static_cast<const CCharEntity*>(POwner);
+    POwner->loc.zone->PushPacket(POwner, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(PPawn, PTarget->id, PTarget->targid, emote, EmoteMode::Motion, 0));
+}
+
+auto CPawnController::SafetySpotBattle(const Place* place) -> std::optional<position_t>
+{
+    // Where a camp's pull lands: the flag's mob spot, as the camp's backline
+    // plans for it (CampAttendIntent, CampWaitIntent)
+    const auto landing = [&] { return nearPosition(place->position(), cardian::stake::kMobAhead, 0.0f); };
+    if (auto* PAttended = dynamic_cast<CMobEntity*>(AttendedTarget()); PAttended != nullptr)
+    {
+        // Attending: the mob, or at a camp, where it lands while it is still being pulled
+        if (place != nullptr && place->fixed() && !PAttended->PAI->IsEngaged())
+        {
+            return landing();
+        }
+        return PAttended->loc.p;
+    }
+    // Her camp spot between pulls, when the tick's proposal is that walk:
+    // not while she awaits the player's arrival or rests on an order, when
+    // she keeps where she is
+    if (place != nullptr && place->fixed() && !m_Waiting && WaitsAtCampSpot() && !AwaitsArrival(*place) && !m_RestOrder.active())
+    {
+        return landing();
+    }
+    return std::nullopt;
+}
+
+void CPawnController::FaceBattleOnArrival(const std::optional<position_t>& battleAt, const Intent& planned, const position_t& before)
+{
+    if (!battleAt.has_value())
+    {
+        m_SpotWalk = false;
+        return;
+    }
+    // A step, a hop or a path under way is the walk there
+    if (distance(before, POwner->loc.p) > 0.05f || POwner->PAI->PathFind->IsFollowingPath())
+    {
+        m_SpotWalk = true;
+        return;
+    }
+    // Standing still after a walk, at the spot as planned -- not stopped
+    // short of it by a cast or a kneel -- she turns round to the battle,
+    // once; nothing turns her again until she moves
+    const bool there = planned.kind != Intent::Kind::Path || distance(POwner->loc.p, planned.point) <= planned.tolerance;
+    if (!m_SpotWalk || !there || Acting())
+    {
+        return;
+    }
+    m_SpotWalk             = false;
+    const uint8 toward     = worldAngle(POwner->loc.p, *battleAt);
+    POwner->loc.p.rotation = cardian::glance::battleHeading(toward, settings::get<float>("pawn.SPOT_FACING_ARC"), roll());
+    POwner->updatemask |= UPDATE_POS;
+    const auto* PAttended = AttendedTarget();
+    const auto  toFace    = PAttended == nullptr                                   ? std::string("where the camp's next pull lands")
+                            : distance(*battleAt, PAttended->loc.p, true) < 0.1f ? PAttended->getName()
+                                                                                 : fmt::format("where {} lands", PAttended->getName());
+    ShowInfoFmt("pawn: {} faces the fight from her spot, {} degrees off {}", POwner->getName(),
+                cardian::glance::turnBetween(toward, POwner->loc.p.rotation) * 360 / cardian::glance::kTurn, toFace);
 }
 
 void CPawnController::TidyBag()
@@ -3669,6 +3932,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     // reconciles it into a fight as any hand not hers
     if (m_Mode == Mode::Maneuver)
     {
+        LookAhead();
         ManeuverTick();
         co_return;
     }
@@ -4467,6 +4731,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     if (!POwner->PAI->CanFollowPath())
     {
+        m_IdleLookAt = m_Tick; // a cast or an item's use is idle time to her glance and emote clocks (IdleLook)
         co_return;
     }
 
@@ -4479,6 +4744,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             Transition(Mode::Travel, "ordered to another zone");
         }
+        LookAhead();
         TravelTick();
         co_return;
     }
@@ -4489,6 +4755,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             Transition(Mode::Walk, "walked by the player");
         }
+        LookAhead();
         WalkTick();
         co_return;
     }
@@ -4519,6 +4786,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
         if (m_Mode == Mode::Roam)
         {
+            RoamLook();
             RoamTick();
         }
         co_return;
@@ -4565,6 +4833,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             {
                 Transition(Mode::Travel, "the player is in another zone");
             }
+            LookAhead();
             TravelTick();
             co_return;
         }
@@ -4589,11 +4858,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
 
         ShareSignet(PPlayer);
-        // Walking in on a mob, her eye is on it (below), not the player
-        if (!Acting() && !m_Approach.has_value())
-        {
-            HeadLook(distance(POwner->loc.p, PPlayer->loc.p) < 40.0f ? PPlayer : nullptr);
-        }
+    }
+
+    // Her eyes: on the fight, on whoever she emotes at, on the player now
+    // and then, else ahead (IdleLook). Walking in on a mob, they are on it
+    // (ApproachTick)
+    if (!m_Approach.has_value())
+    {
+        IdleLook(PPlayer);
     }
 
     // Somewhere to go: her place in formation round the party's place --
@@ -4894,6 +5166,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     const bool stationary = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
                              distance(POwner->loc.p, proposal.point) <= proposal.tolerance) &&
                             !POwner->PAI->PathFind->IsFollowingPath();
+    // A mage's safety spot as planned, the battle she faces from it, and
+    // where she stands before her move (FaceBattleOnArrival): taken before
+    // a kneel stands her where she is
+    const auto       battleAt = SafetySpotBattle(place);
+    const Intent     planned  = proposal;
+    const position_t before   = POwner->loc.p;
     // RestTick may defer a proposed seat adjustment during support recovery.
     // An active path is already movement, and still requires a stand.
     // RestTick first checks urgent healing, danger and orders. Only when it
@@ -4911,6 +5189,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         proposal.seat = false;
     }
     const auto avoidAction = Move(proposal);
+    FaceBattleOnArrival(battleAt, planned, before);
     if (!avoidAction.has_value())
     {
         co_return;
@@ -4920,15 +5199,15 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // the walk (CastAndStop), never the other way round (the user,
     // 2026-09-17) -- except the step out of an aggro circle, the one walk
     // a cast would undo by rooting her inside it. Attending an engaged mob,
-    // the fight's spells too. The emote, standing still only
+    // the fight's spells too
     if (!POwner->PAI->IsCurrentState<CMagicState>() && *avoidAction != AvoidAction::Escape)
     {
         m_Gambits->Tick(tick, attendedEngaged);
-        if (!POwner->PAI->PathFind->IsFollowingPath() && *avoidAction != AvoidAction::Detour)
-        {
-            IdleEmote(PPlayer);
-        }
     }
+    // The emote, standing still only: one due while she walks is let go
+    const bool stands = distance(before, POwner->loc.p) <= 0.05f && !POwner->PAI->PathFind->IsFollowingPath() &&
+                        *avoidAction != AvoidAction::Escape && *avoidAction != AvoidAction::Detour;
+    IdleEmote(PPlayer, stands);
 
     co_return;
 }
@@ -6178,7 +6457,11 @@ auto CPawnController::RangedAttack(const EntityId target) -> bool
 
 void CPawnController::FaceTarget(const EntityId target) const
 {
-    if (const auto* PTarget = target.resolve(); PTarget != nullptr && PTarget != POwner)
+    // Her body turns to a foe she acts on -- the mob of her weapon skill,
+    // spell, ability or shot -- as a player's does. An ally she acts on (a
+    // Cure on the player, a buff on a member) turns her head (HeadLook),
+    // never her body: a body that swings round to its friend is a mob's
+    if (const auto* PTarget = target.resolve(); PTarget != nullptr && PTarget != POwner && PTarget->allegiance != POwner->allegiance)
     {
         POwner->PAI->PathFind->LookAt(PTarget->loc.p);
     }

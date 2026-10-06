@@ -23,6 +23,7 @@
 
 #include "cardian_link_messages.h"
 #include "engage_math.h"
+#include "glance_math.h"
 #include "herd_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
@@ -296,8 +297,32 @@ public:
     // Her head turns to PAt (nullptr: straight ahead): the face-target
     // index in the character update, which the client turns a player's
     // head with -- players set it with every position packet, she never
-    // sends one. An update goes out only when it changes.
+    // sends one. Her body's heading is the update's other field, and this
+    // leaves it alone. An update goes out only when it changes.
     void HeadLook(const CBaseEntity* PAt);
+    // Her eyes while she is idle, held or left behind (ROADMAP G item 1,
+    // #249; glance_math.h): in a fight anywhere in her party, on its mob --
+    // the one she attends, else the player's -- or ahead; out of one, on
+    // whoever she emotes at (or who emoted at her) for its seconds, on the
+    // player now and then for a few seconds, and otherwise ahead. Never
+    // through an action, whose own target holds her head. After a fight, or
+    // any stretch away from the idle tick (a fight of her own, a walk he
+    // ordered, a maneuver), the glances start afresh and an emote already
+    // due waits a short stagger, so nothing due meanwhile goes the moment
+    // she is back, the whole party at once
+    void IdleLook(const CCharEntity* PPlayer);
+    // Out of the idle tick -- a walk he ordered, a maneuver, a trek -- her
+    // head is ahead, not left on whatever she last looked at
+    void LookAhead();
+    // A body of the world on her own (RoamTick, a town seat): her head on
+    // whoever she emoted at while it lasts, else ahead
+    void RoamLook();
+    // A fight anywhere in her party (glance_math.h inFight): her own --
+    // engaged, holding, attending, walking in on a mob, a retreat -- a party
+    // member engaged, or a mob on the party, engaged on a member (or a
+    // member's pet) or claimed by one, within the hunt leash of her. Scanned
+    // once a tick
+    auto PartyInFight() const -> bool;
 
     // Mid-action: casting, readying a weapon skill or ability, or shooting
     auto Acting() const -> bool;
@@ -335,10 +360,14 @@ public:
     // over, a later one of the tactician's is the tactician's again
     auto PlayersBuff(uint16 ability, xi::StatusEffect effect) -> bool;
 
-    // A fidget now and then while standing about -- motion only, no text,
-    // to everyone in range; a stare goes to the player. Never mid-walk,
-    // in a fight, resting or casting.
-    void IdleEmote(const CCharEntity* PPlayer);
+    // An emote now and then while standing about (glance_math.h) --
+    // motion only, no text, to everyone in range: a fidget of her own, or
+    // one aimed at the player or at another party member near her, whom she
+    // looks at while she does it; a cardian she emotes at looks back. Its
+    // clock runs from her last emote. One that comes due waits out a fight
+    // anywhere in her party, an action and a kneel, and is let go while she
+    // walks (`stands` false) or the player is far off.
+    void IdleEmote(const CCharEntity* PPlayer, bool stands);
 
     // May she draw on this target yet? The cooldown is set when she LEAVES
     // a fight, not by her last swing: a cardian fresh from rest draws at
@@ -823,6 +852,8 @@ private:
     // PathAround supplies the stop-short distance. Never uses raw stepping.
     auto PathToward(const position_t& point, float closeTo, const position_t* rearBoundary = nullptr) -> bool;
 
+    // Her body turns to the target of an action as it fires, a foe only:
+    // an ally's action turns her head alone (ROADMAP G, #249)
     void FaceTarget(EntityId target) const;
 
     // Seed her gambit rows once, on her first living tick (pawn::loadBrain);
@@ -1158,7 +1189,35 @@ private:
     timer::time_point m_HoldOffUntil{ timer::time_point::min() };
     void              HoldOff(const CBattleEntity* PTarget);
     timer::time_point m_LastTidyTime;
-    timer::time_point m_NextIdleEmoteTime;
+
+    // A mage's safety spot faces the battle (ROADMAP G, #249): where the
+    // battle is when this tick's proposal is one -- the crescent or the
+    // camp's backline while she attends (the mob, or where its pull lands),
+    // her camp spot between pulls (where the pull lands); nothing otherwise
+    auto SafetySpotBattle(const Place* place) -> std::optional<position_t>;
+    // After her move: walking to her safety spot (moved since `before`, or
+    // on a path) marks the walk; standing at it after one -- `planned`, the
+    // safety proposal, met -- she turns to face `battleAt`, give or take
+    // pawn.SPOT_FACING_ARC degrees, once, and holds it until she moves again
+    void FaceBattleOnArrival(const std::optional<position_t>& battleAt, const Intent& planned, const position_t& before);
+    bool m_SpotWalk = false; // a walk to her safety spot is under way
+
+    // Who holds her eyes out of a fight, and until when: the one she emoted
+    // at, or a member who emoted at her (IdleLook)
+    struct Look
+    {
+        EntityId          at;
+        timer::time_point until;
+    };
+    std::optional<Look>       m_Look;
+    auto                      HeldLook() -> const CBaseEntity*; // m_Look's entity while it lasts; let go once it is over
+    cardian::glance::Glances  m_Glances;
+    cardian::glance::Emotes   m_Emotes;
+    timer::time_point         m_IdleLookAt{};      // the last idle tick, a cast's included: a gap settles the clocks
+    bool                      m_IdleFight = false; // a fight was on in her party at the last idle tick
+    mutable timer::time_point m_FightAskedAt{};    // PartyInFight's tick, and its answer then
+    mutable bool              m_FightAnswer = false;
+
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
     // The orders behind m_QueuedOrder, in the order he gave them: the line is
     // kQueueDepth deep in all, the first taking the next's place as it goes
