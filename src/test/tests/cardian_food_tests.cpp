@@ -189,6 +189,9 @@ TEST_CASE("Food: the seat by role, a Puller and no role eating as Damage", "[car
     CHECK(seatFor(Role::Damage, xi::Job::WHM) == Seat::Melee);
     CHECK(seatFor(Role::Damage, xi::Job::BLM) == Seat::BlackMage);
     CHECK(seatFor(Role::Damage, xi::Job::THF) == Seat::Thief);
+    CHECK(seatFor(Role::Damage, xi::Job::RNG) == Seat::Ranged);
+    CHECK(seatFor(Role::Damage, xi::Job::COR) == Seat::Ranged);
+    CHECK(seatFor(Role::Tank, xi::Job::RNG) == Seat::BloodTank);
     CHECK(seatFor(Role::Puller, xi::Job::THF) == Seat::Thief);
     CHECK(seatFor(Role::None, xi::Job::BLM) == Seat::BlackMage);
     CHECK(planRole(Role::Puller) == Role::Damage);
@@ -217,6 +220,9 @@ TEST_CASE("Food: what a food gives her is the game's formula at her own numbers"
     CHECK(given(food(1800, { { "FOOD_ACCP", 10 }, { "FOOD_ACC_CAP", 15 }, { "FOOD_MP", 8 } }), Stats{ .accuracy = 120 }) == Given{ { "ACC", 12 }, { "MP", 8 } });
     // a plain percentage, uncapped
     CHECK(given(food(1800, { { "DEFP", 10 } }), Stats{ .defence = 150 }) == Given{ { "DEF", 15 } });
+    // the ranged percentages read her ranged numbers, not her melee ones
+    CHECK(given(food(1800, { { "FOOD_RACCP", 10 }, { "FOOD_RACC_CAP", 15 }, { "FOOD_RATTP", 27 }, { "FOOD_RATT_CAP", 30 } }),
+                Stats{ .attack = 300, .accuracy = 300, .rattack = 60, .raccuracy = 120 }) == Given{ { "RACC", 12 }, { "RATT", 16 } });
 }
 
 TEST_CASE("Food: a food's score is its stats by the gear scorer's weights for her seat (the census's numbers)", "[cardian][food]")
@@ -236,6 +242,9 @@ TEST_CASE("Food: a food's score is its stats by the gear scorer's weights for he
     // resting MP: a white mage's 2.0, a black mage's 0.25
     CHECK(score(mp(5, 180), Seat::WhiteMage, her) == 10.0);
     CHECK(score(mp(5, 180), Seat::BlackMage, her) == 1.25);
+    // a Ranger or a Corsair: ranged accuracy at a point, ranged attack at 0.35
+    const auto ranged = food(1800, { { "FOOD_RACCP", 10 }, { "FOOD_RACC_CAP", 15 }, { "FOOD_RATTP", 10 }, { "FOOD_RATT_CAP", 15 } });
+    CHECK(score(ranged, Seat::Ranged, Stats{ .rattack = 150, .raccuracy = 150 }) == 20.25);
     // a food of tiebreakers alone (a killer effect) feeds no seat
     CHECK_FALSE(givesSomething(score(food(1800, { { "PLANTOID_KILLER", 10 } }), Seat::Melee, her)));
     CHECK(givesSomething(score(pamamas, Seat::BlackMage, her)));
@@ -255,6 +264,12 @@ TEST_CASE("Food: an owned cardian is judged at her own numbers, the game's formu
     CHECK(stats.evasion == 85 + 13);
     CHECK(stats.hp == 400);
     CHECK(stats.macc == 90);
+
+    // a Ranger's ranged numbers: marksmanship 80, STR 30 at 1.0, her gear's 6
+    // ranged attack; AGI 26 at 0.75 and 4 ranged accuracy from gear
+    const Own ranger{ .str = 30, .agi = 26, .rangedSkill = 80, .rStrMultiplier = 1.0f, .gearRatt = 6, .rAgiMultiplier = 0.75f, .gearRacc = 4 };
+    CHECK(statsOf(ranger).rattack == 8 + 80 + 30 + 6);
+    CHECK(statsOf(ranger).raccuracy == 80 + 19 + 4);
 
     // the level's part of defence, by the game's four bands, and accuracy past 200 skill
     CHECK(levelDefence(50) == 50);
