@@ -1329,15 +1329,17 @@ private:
     void                   EnchantTick();
     void                   TellQueueLine() const;
 
-    // Her food (RESEARCH §19, pawn_food.cpp). Every kCheckEvery she looks:
-    // a body of the world in the player's party is topped up, and when her
-    // Eat with the player row speaks, the player has food on and she has
-    // none, her role's food is due -- eaten at the first moment between
-    // fights she is free and standing still. A Healer's cookie is not: it
-    // waits for her kneel (EatCookieBeforeKneel, from RestTick)
-    timer::time_point     m_FoodLookAt{};
-    std::optional<uint16> m_FoodDue;    // the food she eats at her first free moment
-    std::string           m_FoodSaid;   // what her food check last said in the map log
+    // Her food (RESEARCH §19, pawn_food.cpp). A body of the world in the
+    // player's party is topped up every kTopUpEvery. When her Eat with the
+    // player row speaks, the player in her zone has food on and she has none,
+    // she waits a delay of her own, 2 to 7 seconds, and her role's food is
+    // due -- eaten at the first moment between fights she is free and
+    // standing still. A Healer's cookie is not: it waits for her kneel
+    // (EatCookieBeforeKneel, from RestTick)
+    timer::time_point                m_FoodTopUpAt{};
+    std::optional<timer::time_point> m_FoodAt;      // when she looks for her food: her delay after the player, or a look again
+    std::optional<uint16>            m_FoodDue;     // the food she eats at her first free moment
+    std::string                      m_FoodSaid;    // what her food check last said in the map log
     void                  FoodTick();
     auto                  EatCookieBeforeKneel(bool aboutToKneel, bool shortOfMp) -> bool;
     void                  SayFood(const std::string& line);

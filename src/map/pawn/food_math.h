@@ -41,9 +41,10 @@
 
 // Food (RESEARCH §19): the cardians eat with the player. Her party role
 // says what she eats, and her "Self -> Eat with the player" row eats it:
-// every 30 seconds between fights, when the player has a food effect on and
-// she has none. A Healer whose food is a cookie (a short MP food) eats it
-// instead as she kneels for MP, armed by the player's food. A body of the
+// when the player in her zone has a food effect on and she has none, 2 to 7
+// seconds later, at her first free moment between fights. A Healer whose
+// food is a cookie (a short MP food) eats it instead as she kneels for MP,
+// armed by the player's food. A body of the
 // world eats the census's pick for her (cardian_food, tools/world/census.py)
 // and is kept topped up while she is in the player's party; an owned cardian
 // eats the best food for her role that her own bags hold.
@@ -63,7 +64,10 @@ namespace cardian::food
     constexpr uint32 kLongSeconds = 1800; // a food lasting this long is eaten with the player; a shorter MP food is a cookie
     constexpr int32  kHealerFloor = 3;    // MP recovered while healing: the least a Healer's food gives
     constexpr uint32 kStock       = 12;   // a body of the world's stock of each food, as the census lays it (FOOD_STOCK)
-    constexpr auto   kCheckEvery  = std::chrono::seconds(30);
+    constexpr auto   kTopUpEvery  = std::chrono::seconds(30); // a body of the world's top-up, while she is in the player's party
+    constexpr auto   kLookAgain   = std::chrono::seconds(30); // nothing to eat now, or a food that has not taken: she looks again this much later
+    constexpr int32  kDelayMinMs  = 2000;                     // she eats this long after the player at the soonest...
+    constexpr int32  kDelayMaxMs  = 7000;                     // ...and this long at the latest, by a roll of her own
 
     // Who may eat it (xi.itemUtils.foodOnItemCheck): raw fish a Mithra,
     // raw meat a Galka, or anyone with the mod that lets them
@@ -806,41 +810,59 @@ namespace cardian::food
         return healer ? best(true) : std::nullopt;
     }
 
-    // The 30-second check: once her look has found her role's food due --
-    // one she carries that is no cookie -- she eats it with the player while
-    // her row is on, the player has a food effect on and she has none, no
-    // fight is on, and she is free: standing still and up (done standing
-    // from a kneel), not acting, no order of his waiting, no rest order on
+    // Eating with the player. Her reason to eat: her row is on, the player
+    // has a food effect on and she has none, and he is in her zone -- how far
+    // away does not matter, out of his sight in another zone does. From the
+    // moment she has a reason she waits a delay of her own, 2 to 7 seconds
+    // (delayAfterPlayer), so a party does not eat as one; then she eats her
+    // role's food -- one she carries that is no cookie -- at her first moment
+    // with no fight on that she is free: standing still and up (done
+    // standing from a kneel), not acting, no order of his waiting, no rest
+    // order on
     struct WithPlayer
     {
         bool rowOn         = false;
         bool playerFed     = false;
         bool selfFed       = false;
+        bool sameZone      = false;
         bool betweenFights = false;
         bool free          = false;
     };
 
+    constexpr auto hasReason(const WithPlayer& m) -> bool
+    {
+        return m.rowOn && m.playerFed && !m.selfFed && m.sameZone;
+    }
+
     constexpr auto eatsWithPlayer(const WithPlayer& m) -> bool
     {
-        return m.rowOn && m.playerFed && !m.selfFed && m.betweenFights && m.free;
+        return hasReason(m) && m.betweenFights && m.free;
+    }
+
+    // Her delay after the player, from her roll in milliseconds; a roll
+    // outside kDelayMinMs to kDelayMaxMs is held to it
+    constexpr auto delayAfterPlayer(const int32 rollMs) -> std::chrono::milliseconds
+    {
+        return std::chrono::milliseconds(std::clamp(rollMs, kDelayMinMs, kDelayMaxMs));
     }
 
     // The Healer's cookie: eaten as she is about to kneel short of MP, when
     // her row is on, her food is a cookie she carries, the player's food has
-    // armed her and she has none of her own on
+    // armed her -- he in her zone, as above -- and she has none of her own on
     struct BeforeKneel
     {
         bool rowOn     = false;
         bool hasCookie = false;
         bool playerFed = false;
         bool selfFed   = false;
+        bool sameZone  = false;
         bool kneeling  = false; // about to kneel, from standing
         bool shortOfMp = false;
     };
 
     constexpr auto eatsBeforeKneel(const BeforeKneel& k) -> bool
     {
-        return k.rowOn && k.hasCookie && k.playerFed && !k.selfFed && k.kneeling && k.shortOfMp;
+        return k.rowOn && k.hasCookie && k.playerFed && !k.selfFed && k.sameZone && k.kneeling && k.shortOfMp;
     }
 
     // A body of the world's top-up of one food: back to her stock, or a

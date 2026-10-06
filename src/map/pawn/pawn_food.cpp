@@ -1,10 +1,10 @@
 // Cardian: her food (RESEARCH §19). Her "Self -> Eat with the player" row
-// eats her party role's food when the player has food on and she has none,
-// looked at every 30 seconds and eaten at her first free moment between
-// fights; a Healer whose food is a cookie eats it as she kneels for MP
-// instead (RestTick); and a body of the world in the player's party is kept
-// topped up, so she never runs out. What she eats is pawn/food.h's, the
-// rules food_math.h's.
+// eats her party role's food when the player in her zone has food on and
+// she has none, 2 to 7 seconds later by a roll of her own, at her first free
+// moment between fights; a Healer whose food is a cookie eats it as she
+// kneels for MP instead (RestTick); and a body of the world in the player's
+// party is kept topped up, so she never runs out. What she eats is
+// pawn/food.h's, the rules food_math.h's.
 #include "food.h"
 #include "party_roster.h"
 #include "pawn.h"
@@ -14,6 +14,7 @@
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
 #include "common/logging.h"
+#include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "items/item.h"
 #include "status_effect_container.h"
@@ -32,6 +33,11 @@ namespace
     {
         const auto* PKind = xi::items::lookup(itemId);
         return PKind != nullptr ? PKind->getName() : fmt::format("item {}", itemId);
+    }
+
+    auto sameZone(const CBaseEntity* PPlayer, const CBaseEntity* PPawn) -> bool
+    {
+        return PPlayer->loc.zone != nullptr && PPlayer->loc.zone == PPawn->loc.zone;
     }
 } // namespace
 
@@ -59,42 +65,64 @@ void CPawnController::FoodTick()
     auto* PPlayer = pawn::partyPlayer(PChar);
     if (PPlayer == nullptr || POwner->isDead())
     {
+        m_FoodAt.reset();
         m_FoodDue.reset();
         return;
     }
 
     const auto now = timer::now();
-    if (now >= m_FoodLookAt)
+    // A body of the world in his party never runs out (the user,
+    // 2026-10-05); a recruit's food, and his own cardians', is his
+    if (now >= m_FoodTopUpAt)
     {
-        m_FoodLookAt = now + cardian::food::kCheckEvery;
-        // A body of the world in his party never runs out (the user,
-        // 2026-10-05); a recruit's food, and his own cardians', is his
+        m_FoodTopUpAt = now + cardian::food::kTopUpEvery;
         if (pawn::seats::isWorlds(PChar->id))
         {
             pawn::food::topUp(PChar);
         }
+    }
+
+    cardian::food::WithPlayer moment{
+        .rowOn     = m_Gambits->MasterOn() && EatsWithPlayer(),
+        .playerFed = fed(PPlayer),
+        .selfFed   = fed(PChar),
+        .sameZone  = sameZone(PPlayer, POwner),
+    };
+    // no reason to eat, or it has gone: his food wore off, hers came on, the
+    // row went off, he left her zone
+    if (!cardian::food::hasReason(moment))
+    {
+        m_FoodAt.reset();
         m_FoodDue.reset();
-        if (m_Gambits->MasterOn() && EatsWithPlayer() && fed(PPlayer) && !fed(PChar))
-        {
-            const auto role = pawn::roster::roleOf(PChar);
-            const auto pick = pawn::food::pickFor(PChar, role);
-            if (!pick.has_value())
-            {
-                SayFood(fmt::format("has no food for her role ({}) to eat with the player", cardian::party::roleName(role)));
-            }
-            else if (pick->cookie)
-            {
-                SayFood(fmt::format("keeps her {} for her next kneel", itemName(pick->itemId)));
-            }
-            else
-            {
-                m_FoodDue = pick->itemId;
-            }
-        }
+        return;
+    }
+    // a new reason: her own delay after the player starts
+    if (!m_FoodAt.has_value())
+    {
+        m_FoodAt = now + cardian::food::delayAfterPlayer(xirand::GetRandomNumber(cardian::food::kDelayMinMs, cardian::food::kDelayMaxMs + 1));
+        return;
+    }
+    if (now < *m_FoodAt)
+    {
+        return;
     }
     if (!m_FoodDue.has_value())
     {
-        return;
+        const auto role = pawn::roster::roleOf(PChar);
+        const auto pick = pawn::food::pickFor(PChar, role);
+        if (!pick.has_value())
+        {
+            SayFood(fmt::format("has no food for her role ({}) to eat with the player", cardian::party::roleName(role)));
+            m_FoodAt = now + cardian::food::kLookAgain;
+            return;
+        }
+        if (pick->cookie)
+        {
+            SayFood(fmt::format("keeps her {} for her next kneel", itemName(pick->itemId)));
+            m_FoodAt = now + cardian::food::kLookAgain;
+            return;
+        }
+        m_FoodDue = pick->itemId;
     }
 
     // Due, she eats at her first moment between fights that she is free:
@@ -102,31 +130,21 @@ void CPawnController::FoodTick()
     // from a kneel (the rest policy's word: a use asked sooner is refused),
     // not acting, nothing of his to carry out, no enchanted item on its way,
     // no rest order on
-    const bool betweenFights = !POwner->PAI->IsEngaged() && !PPlayer->PAI->IsEngaged() && PartyFightTarget() == nullptr && m_Mode != Mode::Fight &&
-                               m_Mode != Mode::Hold && m_Mode != Mode::Attend;
+    moment.betweenFights = !POwner->PAI->IsEngaged() && !PPlayer->PAI->IsEngaged() && PartyFightTarget() == nullptr && m_Mode != Mode::Fight &&
+                           m_Mode != Mode::Hold && m_Mode != Mode::Attend;
     const bool still = POwner->PAI->PathFind == nullptr || !POwner->PAI->PathFind->IsFollowingPath();
-    const bool free  = still && !Acting() && ReadyToAct() && RestAllowsAction() && !InManeuver() && !HasQueuedOrder() && !HasPlayersOrder() &&
-                      !m_Enchant.has_value() && !m_RestOrder.active() && m_Mode != Mode::Travel &&
-                      !POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    const cardian::food::WithPlayer moment{
-        .rowOn         = m_Gambits->MasterOn() && EatsWithPlayer(),
-        .playerFed     = fed(PPlayer),
-        .selfFed       = fed(PChar),
-        .betweenFights = betweenFights,
-        .free          = free,
-    };
-    // the reason to eat has gone: his food wore off, hers came on, the row went off
-    if (!moment.rowOn || !moment.playerFed || moment.selfFed)
-    {
-        m_FoodDue.reset();
-        return;
-    }
+    moment.free      = still && !Acting() && ReadyToAct() && RestAllowsAction() && !InManeuver() && !HasQueuedOrder() && !HasPlayersOrder() &&
+                  !m_Enchant.has_value() && !m_RestOrder.active() && m_Mode != Mode::Travel &&
+                  !POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
     if (!cardian::food::eatsWithPlayer(moment))
     {
         return;
     }
     const auto itemId = *m_FoodDue;
     m_FoodDue.reset();
+    // her food's effect comes on as the use ends; one that never does is
+    // looked at again then
+    m_FoodAt = now + cardian::food::kLookAgain;
     if (const auto status = pawn::food::eat(PChar, itemId); status != CL_S_OK)
     {
         SayFood(fmt::format("could not eat her {} with the player (outcome 0x{:04X})", itemName(itemId), status));
@@ -145,7 +163,7 @@ auto CPawnController::EatCookieBeforeKneel(const bool aboutToKneel, const bool s
     auto*      PChar   = static_cast<CCharEntity*>(POwner);
     auto*      PPlayer = pawn::partyPlayer(PChar);
     const bool rowOn   = m_Gambits->MasterOn() && EatsWithPlayer();
-    if (PPlayer == nullptr || !rowOn || !fed(PPlayer) || fed(PChar))
+    if (PPlayer == nullptr || !rowOn || !fed(PPlayer) || fed(PChar) || !sameZone(PPlayer, POwner))
     {
         return false;
     }
@@ -155,6 +173,7 @@ auto CPawnController::EatCookieBeforeKneel(const bool aboutToKneel, const bool s
         .hasCookie = pick.has_value() && pick->cookie,
         .playerFed = true,
         .selfFed   = false,
+        .sameZone  = true,
         .kneeling  = aboutToKneel,
         .shortOfMp = shortOfMp,
     };

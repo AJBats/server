@@ -355,36 +355,61 @@ TEST_CASE("Food: a tie goes to the stack she carries more of, then the lower ite
     CHECK(pickOwned(bag, Seat::Melee, false, her, false, true) == Pick{ 8000, false });
 }
 
-TEST_CASE("Food: she eats with the player when he has food on and she has none, between fights and free", "[cardian][food]")
+TEST_CASE("Food: she eats with the player when he has food on in her zone and she has none, between fights and free", "[cardian][food]")
 {
-    const WithPlayer due{ .rowOn = true, .playerFed = true, .selfFed = false, .betweenFights = true, .free = true };
+    const WithPlayer due{ .rowOn = true, .playerFed = true, .selfFed = false, .sameZone = true, .betweenFights = true, .free = true };
+    CHECK(hasReason(due));
     CHECK(eatsWithPlayer(due));
 
     auto m  = due;
     m.rowOn = false;
-    CHECK_FALSE(eatsWithPlayer(m)); // the row is off
+    CHECK_FALSE(hasReason(m)); // the row is off
+    CHECK_FALSE(eatsWithPlayer(m));
     m           = due;
     m.playerFed = false;
-    CHECK_FALSE(eatsWithPlayer(m)); // she follows the player alone
+    CHECK_FALSE(hasReason(m)); // she follows the player alone
+    CHECK_FALSE(eatsWithPlayer(m));
     m         = due;
     m.selfFed = true;
-    CHECK_FALSE(eatsWithPlayer(m)); // one food at a time
+    CHECK_FALSE(hasReason(m)); // one food at a time
+    CHECK_FALSE(eatsWithPlayer(m));
+    m          = due;
+    m.sameZone = false;
+    CHECK_FALSE(hasReason(m)); // he ate out of her sight, in another zone
+    CHECK_FALSE(eatsWithPlayer(m));
+
+    // a fight or a busy moment holds her eating, never her reason
     m               = due;
     m.betweenFights = false;
+    CHECK(hasReason(m));
     CHECK_FALSE(eatsWithPlayer(m));
     m      = due;
     m.free = false;
+    CHECK(hasReason(m));
     CHECK_FALSE(eatsWithPlayer(m)); // still getting up from a kneel, walking, acting
+}
+
+TEST_CASE("Food: she eats 2 to 7 seconds after the player, by a roll of her own", "[cardian][food]")
+{
+    using std::chrono::milliseconds;
+    CHECK(delayAfterPlayer(kDelayMinMs) == milliseconds(2000));
+    CHECK(delayAfterPlayer(4500) == milliseconds(4500));
+    CHECK(delayAfterPlayer(kDelayMaxMs) == milliseconds(7000));
+    CHECK(delayAfterPlayer(0) == milliseconds(2000)); // a roll outside the range is held to it
+    CHECK(delayAfterPlayer(60000) == milliseconds(7000));
 }
 
 TEST_CASE("Food: a Healer's cookie is eaten as she kneels short of MP, armed by the player's food", "[cardian][food]")
 {
-    const BeforeKneel due{ .rowOn = true, .hasCookie = true, .playerFed = true, .selfFed = false, .kneeling = true, .shortOfMp = true };
+    const BeforeKneel due{ .rowOn = true, .hasCookie = true, .playerFed = true, .selfFed = false, .sameZone = true, .kneeling = true, .shortOfMp = true };
     CHECK(eatsBeforeKneel(due));
 
     auto k      = due;
     k.playerFed = false;
     CHECK_FALSE(eatsBeforeKneel(k)); // not armed
+    k          = due;
+    k.sameZone = false;
+    CHECK_FALSE(eatsBeforeKneel(k)); // armed by a food out of her sight, in another zone
     k           = due;
     k.hasCookie = false;
     CHECK_FALSE(eatsBeforeKneel(k)); // her food is a long one: eaten with the player
