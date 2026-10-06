@@ -98,6 +98,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_herd_tests.cpp # CARDIAN: the herd round a mob: spacing, order and the even step (herd_math.h)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_redress_tests.cpp # CARDIAN: a wild cardian re-dressed at the auction house: when to ask, the skill raise, the bag
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_warp_hold_tests.cpp # CARDIAN: the automatic hold a warp sets, and when a zone change is a walk
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_finder_tests.cpp # CARDIAN: the party finder's rules: who hears, the yes or no, the seats and the order
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

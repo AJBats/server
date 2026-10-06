@@ -473,9 +473,17 @@ namespace pawn
     auto summonerOf(uint32 pawnCharID) -> uint32;
 
     // Queue a zone transfer, executed on the module tick. Without a hop the
-    // pawn is delivered straight to its summoner's side (the escape hatch
-    // for unroutable or unloaded destinations).
+    // pawn is delivered straight to its summoner's side -- for one of the
+    // world's, who has no summoner, the side of the player whose party she
+    // is in (the escape hatch for unroutable or unloaded destinations).
     void requestTransfer(uint32 pawnCharID, std::optional<TravelHop> hop);
+
+    // A recruit from afar, still in the zone she set out from on her yes to
+    // his shout (RESEARCH §18.6): her trek to the player goes by the escape
+    // hatch above, not on foot (TravelTick), until long travel is built;
+    // never while he is in his Mog House or zoning. False once she has left
+    // that zone by any road, or he has come to her
+    auto carriedToPlayer(const CCharEntity* PPawn) -> bool;
 
     // Order the named pawn to travel to a zone. The order takes precedence
     // over follow behavior and clears on arrival. `meet`: the trek is to

@@ -83,9 +83,9 @@ xi.settings.pawn =
     RESCUE_RANGE    = 15,
     RESCUE_COOLDOWN = 300,
 
-    -- The party finder lists the wild cardians in the player's zone or
-    -- elsewhere in their city; one within this many levels of the player
-    -- fits the goal, one outside it says why not
+    -- The party finder's shout is heard by the wild cardians online in
+    -- every city and town, wherever the player shouts from; one within this
+    -- many levels of the player fits the goal, one outside it says why not
     FINDER_BAND = 3,
 
     -- The party finder's shout can be repeated (a fresh crowd, a reroll

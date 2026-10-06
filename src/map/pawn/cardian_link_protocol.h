@@ -35,7 +35,7 @@
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
 // compatible, the user, 2026-09-14). 43: an item's charges and readyIn, an enchanted
-// piece's charges left and the seconds until it can be used; 42: QUEUE's lane, the enchanted item she is
+// piece's charges left and the seconds until it can be used; the finder's LEFT_TOWN; 42: QUEUE's lane, the enchanted item she is
 // putting on, waiting out and using (#297), ENCHANT_BUSY and NO_CHARGES; 41: PREFS, the player's preferences the
 // server applies to him (Shared maps); 40: QUEUE's running, the order she is
 // carrying out now; 39: Use, Give & use's use and Rescue join her line
@@ -240,6 +240,7 @@ enum
     CL_S_IN_A_PARTY        = 0x019E,
     CL_S_INVITE_PENDING    = 0x019F, // she already has an invite
     CL_S_NO_CONTRACT       = 0x01A0, // she holds no contract with him
+    CL_S_LEFT_TOWN         = 0x01A1, // she has left the cities and towns his shout reached
 
     // The conquest exchange (no room in her inventory: CL_S_NO_SPACE)
     CL_S_NO_GUARD          = 0x01B0, // the player stands by no gate guard that sells
@@ -1561,7 +1562,7 @@ enum
 enum
 {
     CL_PRESENCE_HERE     = 0, // standing in his zone
-    CL_PRESENCE_STANDING = 1, // standing elsewhere in his city
+    CL_PRESENCE_STANDING = 1, // standing elsewhere: a city or town his shout reached
     CL_PRESENCE_BUSY     = 2, // in a party, standing or camping faded
     CL_PRESENCE_FADED    = 3, // online, no body: she stands for an invite
     CL_PRESENCE_AWAY     = 4,
@@ -1601,8 +1602,10 @@ typedef struct cl_shout_responder
     char      line[96];     // for people
 } cl_shout_responder;
 
-// The shout for a goal: up to eight adventurers in reach hear it and answer
-// in their own time, each a SHOUT_RESPONDER (CL_F_MORE), then this. The same
+// The shout for a goal: sixteen to twenty adventurers in the cities and
+// towns hear it and answer in their own time, nearest first (their revealMs
+// rise with the zone lines between them and him), each a SHOUT_RESPONDER
+// (CL_F_MORE), then this. The same
 // goal again without `again` is the shout he has, to replay; `again` is a new
 // one, refused inside the cooldown with the one he has coming back. Refused
 // CL_S_COOLING_DOWN with none, waitMs saying how long

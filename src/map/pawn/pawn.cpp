@@ -192,6 +192,14 @@ namespace
     // Zone transfers awaiting execution on the module tick
     std::unordered_map<uint32, std::optional<pawn::TravelHop>> pendingTransfers;
 
+    // A recruit from afar (party_finder.h joinedFromShout) and the zone she
+    // set out from: while she is still there her trek to the player goes by
+    // the teleport the travel code falls back on, not on foot (TravelTick,
+    // carriedToPlayer), until long travel is built (RESEARCH §18.6). Ended
+    // by her arrival (executeTransfer), by the two of them in one zone (the
+    // module tick), and by her leaving the party or the world
+    std::unordered_map<uint32, uint16> carriedFrom;
+
     void savePawnPosition(const CCharEntity* PPawn)
     {
         db::preparedStmt("UPDATE chars "
@@ -483,10 +491,14 @@ namespace
 
     // Invited (ROADMAP H): in the player's zone she simply follows; from her
     // own city she runs to them (the wait ends, a travel order to their
-    // zone); from anywhere else she holds where she stands until gathered
-    // ("follow me", the Link's WAIT off), a field route walking past aggro
+    // zone); from anywhere else, recruited on a yes to his shout, she sets
+    // out at once and arrives by the travel code's teleport (RESEARCH
+    // §18.6); invited from anywhere else on her open contract, or as one of
+    // his own, she holds where she stands until gathered ("follow me", the
+    // Link's WAIT off), a field route walking past aggro
     void gatherOrHold(CCharEntity* PPawn)
     {
+        const bool         fromShout   = pawn::finder::joinedFromShout(PPawn->id);
         auto*              PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
         const CCharEntity* PSummoner   = invitingPlayer(PPawn);
         if (PController == nullptr || PSummoner == nullptr || PSummoner->loc.zone == nullptr || PPawn->loc.zone == nullptr)
@@ -510,6 +522,15 @@ namespace
             pawn::applyOrdersTo(PPawn);
             travelOrders[PPawn->id] = TravelOrder{ PSummoner->getZone(), PSummoner->id };
             ShowInfoFmt("pawn: {} runs to {} in {} (her own city)", PPawn->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
+        }
+        else if (fromShout)
+        {
+            PController->SetWaiting(false, false, "sets out from afar");
+            pawn::applyOrdersTo(PPawn);
+            travelOrders.erase(PPawn->id);
+            carriedFrom[PPawn->id] = static_cast<uint16>(PPawn->getZone());
+            ShowInfoFmt("pawn: {} sets out from {} for {} in {} (a yes to his shout from afar: the travel code's teleport carries her)",
+                        PPawn->getName(), PPawn->loc.zone->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
         }
         else
         {
@@ -1251,6 +1272,7 @@ namespace pawn
                 }
             }
             const bool trekking = travelOrders.erase(charid) > 0;
+            carriedFrom.erase(charid);
             const bool walking  = PPawn->PAI->PathFind != nullptr && PPawn->PAI->PathFind->IsFollowingPath();
             if (walking)
             {
@@ -2261,6 +2283,7 @@ namespace pawn
         playerByPawn.erase(targetCharID);
         pendingTransfers.erase(targetCharID);
         travelOrders.erase(targetCharID);
+        carriedFrom.erase(targetCharID);
         pawns.erase(it);
         return true;
     }
@@ -2524,6 +2547,27 @@ namespace pawn
         }
     }
 
+    auto carriedToPlayer(const CCharEntity* PPawn) -> bool
+    {
+        if (PPawn == nullptr)
+        {
+            return false;
+        }
+        const auto it = carriedFrom.find(PPawn->id);
+        if (it == carriedFrom.end())
+        {
+            return false;
+        }
+        // Out of the zone she set out from -- carried, or walked out with
+        // him -- she follows as anyone does from here
+        if (it->second != static_cast<uint16>(PPawn->getZone()))
+        {
+            carriedFrom.erase(it);
+            return false;
+        }
+        return true;
+    }
+
     auto partyPlayer(const CCharEntity* PPawn) -> CCharEntity*
     {
         if (PPawn == nullptr || PPawn->PParty == nullptr)
@@ -2668,6 +2712,7 @@ namespace pawn
         pendingInvites.erase(pawnCharID);
         pendingTransfers.erase(pawnCharID);
         travelOrders.erase(pawnCharID);
+        carriedFrom.erase(pawnCharID);
         PChar->InvitePending.clean();
 
         // Nothing moves: the character keeps its zone, targid, position,
@@ -2810,8 +2855,17 @@ namespace pawn
 
         if (PDestZone == nullptr)
         {
+            // Her summoner's side, or for one of the world's (no summoner)
+            // the side of the player whose party she is in
             CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
-            if (PSummoner == nullptr || PSummoner->loc.zone == nullptr)
+            if (PSummoner == nullptr)
+            {
+                PSummoner = zoneutils::GetChar(ordersOwnerOf(PPawn));
+            }
+            // Never into his Mog House, where he stands parked at its origin,
+            // nor into the zone he is leaving: nothing moves, and the trek
+            // that asked asks again
+            if (PSummoner == nullptr || PSummoner->loc.zone == nullptr || PSummoner->inMogHouse() || PSummoner->requestedZoneChange)
             {
                 return;
             }
@@ -2842,6 +2896,7 @@ namespace pawn
         db::preparedStmt("UPDATE accounts_sessions SET targid = ? WHERE charid = ?", PPawn->targid, PPawn->id);
         savePawn(PPawn, false);
         seats::moved(PPawn->id, static_cast<uint16>(destZoneId));
+        carriedFrom.erase(PPawn->id); // a recruit from afar has arrived
 
         ShowInfoFmt("pawn: {} ({}) crossed into zone {}", PPawn->getName(), PPawn->id, static_cast<uint16>(destZoneId));
     }
@@ -2915,6 +2970,12 @@ namespace pawn
             if (const auto* PPlayer = partyPlayer(PPawn.get()); PPlayer != nullptr)
             {
                 playerByPawn[charid] = PPlayer->id;
+                // A recruit from afar he has reached on foot is with him: from
+                // here she follows as anyone does
+                if (PPlayer->loc.zone == PPawn->loc.zone)
+                {
+                    carriedFrom.erase(charid);
+                }
             }
 
             // Nobody drains a session-less char's outbound queue; without
