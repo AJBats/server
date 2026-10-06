@@ -46,8 +46,11 @@ namespace pawn
     namespace travel
     {
         // First hop on a walkable route from one zone toward another;
-        // nullopt when no walkable route exists.
-        auto nextHop(xi::ZoneId from, xi::ZoneId to) -> std::optional<TravelHop>;
+        // nullopt when no walkable route exists. Where several zone lines lead
+        // the same way (West Ronfaure has more than one into East Ronfaure),
+        // the one nearest `closeTo` -- where she stands, so a follower takes the
+        // line her player just walked through -- else the first the data lists
+        auto nextHop(xi::ZoneId from, xi::ZoneId to, std::optional<position_t> closeTo = std::nullopt) -> std::optional<TravelHop>;
 
         // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
         // at 0 (BFS from all of them at once); a zone no line reaches is absent

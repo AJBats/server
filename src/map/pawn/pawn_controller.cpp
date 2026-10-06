@@ -5704,7 +5704,22 @@ void CPawnController::TravelTick()
         targetZone = PPlayer->getZone();
     }
 
-    const auto hop = pawn::travel::nextHop(POwner->getZone(), targetZone);
+    // The line chosen as she sets out, and kept while she walks it: of the
+    // lines that lead the way, the one nearest where her player walked
+    // through, when she follows him out of the zone he left; else the one
+    // nearest her
+    constexpr auto kHopForgotten = 10s;
+    if (!(m_TravelHop.has_value() && m_TravelHopFrom == POwner->getZone() && m_TravelHopTarget == targetZone && m_Tick - m_TravelHopAt < kHopForgotten))
+    {
+        const auto*      PLeader = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
+        const auto       left    = PLeader != nullptr ? pawn::playerExit(PLeader->id) : std::nullopt;
+        const position_t closeTo = left.has_value() && left->from == POwner->getZone() && left->to == targetZone ? left->at : POwner->loc.p;
+        m_TravelHop       = pawn::travel::nextHop(POwner->getZone(), targetZone, closeTo);
+        m_TravelHopFrom   = POwner->getZone();
+        m_TravelHopTarget = targetZone;
+    }
+    m_TravelHopAt  = m_Tick;
+    const auto hop = m_TravelHop;
     if (!hop.has_value())
     {
         if (order.has_value())

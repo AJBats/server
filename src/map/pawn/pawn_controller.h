@@ -998,6 +998,14 @@ private:
     timer::time_point                 m_TravelProgressTime;
     float                             m_TravelBestDist = 0.0f;
     xi::ZoneId                        m_TravelHopZone{};
+    // The hop her travel chose as she set out, from this zone toward that
+    // one, kept while she walks it (TravelTick): chosen afresh every tick, the
+    // nearest line could change under her mid-walk. Let go once TravelTick
+    // has not run for a while, so the next journey chooses again
+    std::optional<pawn::TravelHop>    m_TravelHop;
+    xi::ZoneId                        m_TravelHopFrom{};
+    xi::ZoneId                        m_TravelHopTarget{};
+    timer::time_point                 m_TravelHopAt;
 
     bool              m_Hunting    = false;
     bool              m_World      = false;

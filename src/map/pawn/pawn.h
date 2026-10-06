@@ -150,6 +150,17 @@ namespace pawn
     // party not bound for his destination takes the automatic hold where
     // she is (warp_hold.h), and follows again once they are in one zone
     void playerZoning(const CCharEntity* PPlayer, xi::ZoneId destination);
+    // The zone line a real player last walked through: the zone he left, the
+    // zone it led to and where he stood as he went. His followers make for
+    // the line nearest that spot (TravelTick), not the one nearest them --
+    // a zone can have several lines into the next
+    struct PlayerExit
+    {
+        xi::ZoneId from{};
+        xi::ZoneId to{};
+        position_t at{};
+    };
+    auto playerExit(uint32 playerCharID) -> std::optional<PlayerExit>;
     // A real player's client walked into a zone line (packet 0x05E, seen
     // before its handler): his next zone change is a walk
     void noteZoneLine(const CCharEntity* PChar);
