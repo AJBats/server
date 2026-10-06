@@ -280,6 +280,12 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool rowRest    = ordered && m_RestOrder.byRow;
     // The player's own Attack keeps her up until the fight it named is over
     const bool blocked = impossible || (!deliberate && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || HasPlayersOrder() || (rowRest && fightOn())));
+    // The Healer's cookie (RESEARCH §19.2 item 5): about to kneel short of MP,
+    // with the player's food on and none of her own, she eats it first and
+    // kneels once it is down, so a fresh cookie covers the kneel
+    const bool aboutToKneel = healing == nullptr && (want || withPlayer || ordered) && !blocked && !urgent && stationary && !m_Rest.standPending &&
+                              m_Rest.canAct(now, false);
+    const bool eatsFirst = EatCookieBeforeKneel(aboutToKneel, mpMissing);
     // An ongoing support rest, or one the player ordered, defers formation
     // and seat requests every tick, even while the player moves. The rest
     // policy decides when to stand. So does a kneel beside the resting
@@ -288,7 +294,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool deferPosition = routinePosition && ((support && place != nullptr) || ordered || (withPlayer && healing != nullptr));
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
-        .urgent = urgent, .blocked = blocked,
+        .urgent = urgent, .blocked = blocked || eatsFirst,
         .moving = !stationary, .routinePosition = deferPosition,
         .ordered = ordered});
 
@@ -305,6 +311,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
             }
         };
         hold(Acting(), "acting");
+        hold(eatsFirst, "eating before she kneels");
         hold(noRecovery, "she cannot recover");
         hold(POwner->PAI->IsEngaged(), "engaged");
         hold(urgent, "first aid calls her");

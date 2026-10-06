@@ -33,6 +33,7 @@
 #include "offers.h"
 #include "pawn_gambits.h"
 #include "redress.h"
+#include "food.h"
 #include "spell_bank.h"
 #include "tactics.h"
 #include "view.h"
@@ -259,6 +260,7 @@ class PawnModule : public CPPModule
         // The census's answers for a wild cardian dressed at the auction
         // house, likewise (redress.h)
         pawn::redress::ensureTable();
+        pawn::food::ensureTable();
         // The cardian API's messages on the Cardian Link (link_api.cpp), and
         // the Lua libraries two of them are answered from
         pawn::linkapi::registerHandlers();
@@ -277,7 +279,8 @@ class PawnModule : public CPPModule
                                                               "AVOID_LINKS", static_cast<uint16>(pawn::Behavior::AvoidLinks),
                                                               "FORMATION", static_cast<uint16>(pawn::Behavior::Formation),
                                                               "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
-                                                              "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));
+                                                              "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer),
+                                                              "EAT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::EatWithPlayer));
         ::lua["xi"]["pawn"]["slot"]     = ::lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
                                                               "LEAD", static_cast<uint16>(pawn::Slot::Lead),
                                                               "FLANK_LEFT", static_cast<uint16>(pawn::Slot::FlankLeft),

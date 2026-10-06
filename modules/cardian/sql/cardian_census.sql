@@ -45,3 +45,19 @@ CREATE TABLE IF NOT EXISTS `cardian_spells` (
   `spellid` smallint(5) unsigned NOT NULL,
   PRIMARY KEY (`name`, `spellid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- CARDIAN: her food (RESEARCH.md §19) -- one food for each party role she
+-- might hold, picked by the census tool with her wardrobe by her wealth and
+-- a roll of her seed, and laid in her bag at every dress; the map tops it up
+-- while she is in a player's party and eats it with him. `role` is the
+-- party role as the Cardian Link numbers it (1 Tank, 2 Healer, 3 Damage; a
+-- Puller and no role eat as Damage). `cookie`: a Healer's short MP food,
+-- eaten as she kneels rather than with the player. The census tool and the
+-- map both make the table where it is missing.
+CREATE TABLE IF NOT EXISTS `cardian_food` (
+  `name`   varchar(15)          NOT NULL,
+  `role`   tinyint(3) unsigned  NOT NULL,
+  `itemid` smallint(5) unsigned NOT NULL,
+  `cookie` tinyint(1) unsigned  NOT NULL DEFAULT '0',
+  PRIMARY KEY (`name`, `role`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

@@ -400,7 +400,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     }
     // the tactician's tools first (her cures, her rest), then her orders,
     // and her marked Attack row (off: the melee mage's switch) last
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Tool });
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Tool });
 
     std::vector<std::string> melee;
     for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::PLD))
@@ -413,7 +413,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     }
 
     // a Monk's and a Warrior's: the trio, her three tools, her weapon
-    // skill and rest with the player
+    // skill, rest with the player and eat with the player
     for (const auto job : { xi::Job::MNK, xi::Job::WAR })
     {
         std::vector<std::string> specs;
@@ -421,7 +421,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
         {
             specs.push_back(spec);
         }
-        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order });
+        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order });
     }
 }
 

@@ -2651,7 +2651,7 @@ namespace pawn
     {
         // One name per behaviour value, "?" for the gaps and the retired
         // values; the assert keeps the list in step with the enum
-        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "?", "?", "?", "?", "avoid links", "rest" });
+        static constexpr auto names = std::to_array<std::string_view>({ "?", "avoid aggro", "?", "?", "formation", "?", "rest with player", "home point with player", "?", "?", "?", "?", "?", "avoid links", "rest", "eat with player" });
         static_assert(names.size() == pawn::BehaviorCount);
         const auto name = names[std::min<std::size_t>(static_cast<std::size_t>(behavior), names.size() - 1)];
         const bool sw   = pawn::isSwitch(behavior);
@@ -3003,6 +3003,8 @@ namespace pawn
                     return fmt::format("Home point with the player{}", off);
                 case pawn::Behavior::Rest:
                     return fmt::format("Rest{}", off);
+                case pawn::Behavior::EatWithPlayer:
+                    return fmt::format("Eat with the player{}", off);
                 default:
                     return fmt::format("behaviour {} = {}", static_cast<uint16>(a.select), a.select_arg);
             }
@@ -3744,6 +3746,7 @@ namespace pawn
             v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::Rest), 1, "Rest", ActionGroup::Behaviours });
             v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::RestWithPlayer), 1, "Rest with the player", ActionGroup::Behaviours });
             v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::HomePointWithPlayer), 1, "Home point with the player", ActionGroup::Behaviours });
+            v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::EatWithPlayer), 1, "Eat with the player", ActionGroup::Behaviours });
         }
 
         // The actions of her main job and her support job, at every level, in

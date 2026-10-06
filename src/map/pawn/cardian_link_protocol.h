@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 43: an item's charges and readyIn, an enchanted
+// compatible, the user, 2026-09-14). 44: a PARTY_ROLE's food, what the member eats
+// in her party role (RESEARCH §19); 43: an item's charges and readyIn, an enchanted
 // piece's charges left and the seconds until it can be used; 42: QUEUE's lane, the enchanted item she is
 // putting on, waiting out and using (#297), ENCHANT_BUSY and NO_CHARGES; 41: PREFS, the player's preferences the
 // server applies to him (Shared maps); 40: QUEUE's running, the order she is
@@ -85,7 +86,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 43 };
+enum { CL_PROTOCOL = 44 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1334,7 +1335,7 @@ typedef struct cl_party_role
     uint16_t  tp;
     uint16_t  attack;
     uint16_t  defence;
-    uint16_t  spare2;
+    uint16_t  food;      // the item she eats in her party role, 0 for none; on the player's own row, the food he has on now
     int16_t   total[7];  // STR, DEX, VIT, AGI, INT, MND, CHR
     int16_t   bonus[7];  // the part of each that gear and effects give
     uint16_t  worn[16];  // the item in each equipment slot, main hand to back; 0 for an empty slot

@@ -25,6 +25,7 @@
 #include "auction.h"
 #include "cardian_link.h"
 #include "engage_math.h"
+#include "food.h"
 #include "gambit_wire.h"
 #include "gate_guards.h"
 #include "live_controller.h"
@@ -1569,6 +1570,17 @@ namespace pawn::linkapi
                 msg.tp      = clamp16(row.who->health.tp);
                 msg.attack  = numbers.attack;
                 msg.defence = numbers.defence;
+                // Her Food row (RESEARCH §19): what a cardian eats in her role;
+                // a player's own food is his, and his row shows the one he has on
+                if (pawn::isPawn(row.who))
+                {
+                    const auto pick = pawn::food::pickFor(row.who, row.role);
+                    msg.food        = pick.has_value() ? pick->itemId : 0;
+                }
+                else
+                {
+                    msg.food = pawn::food::eating(row.who);
+                }
                 for (std::size_t i = 0; i < numbers.total.size(); ++i)
                 {
                     msg.total[i] = numbers.total[i];

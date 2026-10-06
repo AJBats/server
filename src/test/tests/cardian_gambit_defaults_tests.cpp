@@ -56,10 +56,11 @@ namespace
         { "102|0:0|0:0:0|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
+        { "0|0:0|100:15:1|0", true },
     };
 
     // A Monk's and a Warrior's: the trio, their tactician's tools, then the
-    // melee set's weapon skill and rest with the player (RESEARCH §17.13)
+    // melee set's weapon skill, rest and eat with the player (RESEARCH §17.13)
     const Rows kMonk{
         { "100|0:0|0:0:0|0", true },
         { "101|0:0|0:0:0|0", true },
@@ -69,6 +70,7 @@ namespace
         { "0|101:0|3:2:37|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
+        { "0|0:0|100:15:1|0", true },
     };
 
     const Rows kWarrior{
@@ -80,10 +82,11 @@ namespace
         { "0|101:0|3:2:34|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
+        { "0|0:0|100:15:1|0", true },
     };
 
     // A Thief's: the trio, her Sneak Attack before her weapon skill, then
-    // the melee set's weapon skill and rest with the player
+    // the melee set's weapon skill, rest and eat with the player
     const Rows kThief{
         { "100|0:0|0:0:0|0", true },
         { "101|0:0|0:0:0|0", true },
@@ -91,6 +94,7 @@ namespace
         { "0|101:0|3:2:44|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
+        { "0|0:0|100:15:1|0", true },
     };
 
     const Rows kMage{
@@ -100,6 +104,7 @@ namespace
         { "0|101:0|100:14:1|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
+        { "0|0:0|100:15:1|0", true },
         { "102|101:0|0:0:0|0", false },
     };
 
@@ -112,6 +117,7 @@ namespace
         { "0|101:0|100:14:1|0", true },
         { "2|2:50|4:0:0|0", true },
         { "0|0:0|100:6:1|0", true },
+        { "0|0:0|100:15:1|0", true },
         { "102|101:0|0:0:0|0", false },
     };
 
@@ -159,6 +165,7 @@ namespace
     constexpr auto kAttack   = G_REACTION::ATTACK;
     constexpr auto kBehavior = pawn::G_REACTION_BEHAVIOR;
     constexpr auto kRest     = static_cast<uint16>(pawn::Behavior::RestWithPlayer);
+    constexpr auto kEat      = static_cast<uint16>(pawn::Behavior::EatWithPlayer);
 } // namespace
 
 TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage's with her nukes), the Monk, the Warrior and the Thief their own, every other job the melee set", "[cardian][gambits][defaults]")
@@ -195,7 +202,7 @@ TEST_CASE("gambit defaults: the six mage jobs take the mage set (the Black Mage'
     CHECK_FALSE(isMageJob(xi::Job::MON));
 }
 
-TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill and rest with the player, all on, every one an order", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon skill, rest with the player and eat with the player, all on, every one an order", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::PLD);
     REQUIRE(rows == kMelee);
@@ -210,6 +217,7 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon sk
     requireRow(rows[2].first, { pawn::G_TARGET_TARGETING_ALLY, G_CONDITION::ALWAYS, kAttack, 0, 0 });
     requireRow(rows[3].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
     requireRow(rows[4].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
+    requireRow(rows[5].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kEat, 1 });
 
     // The Role row that once ended the set (Damage, a name with nothing
     // behind it) is retired with the tactician line: the grammar refuses
@@ -262,7 +270,7 @@ TEST_CASE("gambit defaults: the Monk, the Warrior and the Thief carry their tact
     CHECK_FALSE(parseRow("0|0:0|100:9:1|0").has_value());
 }
 
-TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enfeebles and rest first, then her weapon skill and rest with the player, her marked Attack row last and off", "[cardian][gambits][defaults]")
+TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enfeebles and rest first, then her weapon skill, rest with the player and eat with the player, her marked Attack row last and off", "[cardian][gambits][defaults]")
 {
     const auto& rows = defaultRowsFor(xi::Job::WHM);
     REQUIRE(rows == kMage);
@@ -270,13 +278,13 @@ TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enf
     // Checking the Attack row is what makes her a melee mage, so it ships
     // off; marked, so checked it is her tactician's melee, which leaves a
     // fight to rest (RESEARCH §14.12 decisions 19 and 20)
-    for (std::size_t i = 0; i < 6; ++i)
+    for (std::size_t i = 0; i < 7; ++i)
     {
         INFO("row " << i);
         CHECK(rows[i].second);
     }
-    CHECK_FALSE(rows[6].second);
-    CHECK(cardian::tactician::isMarked(*parseRow(rows[6].first)));
+    CHECK_FALSE(rows[7].second);
+    CHECK(cardian::tactician::isMarked(*parseRow(rows[7].first)));
 
     requireRow(rows[0].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_CURE) });
     requireRow(rows[1].first, { G_TARGET::PARTY, pawn::G_CONDITION_TACTICIANS_CHOICE, G_REACTION::MA, static_cast<uint16>(G_SELECT::HIGHEST), static_cast<uint32>(SPELLFAMILY_NA) });
@@ -284,7 +292,8 @@ TEST_CASE("gambit defaults: the mage set is the tactician's cures, ailments, enf
     requireRow(rows[3].first, { G_TARGET::SELF, pawn::G_CONDITION_TACTICIANS_CHOICE, kBehavior, static_cast<uint16>(pawn::Behavior::Rest), 1 });
     requireRow(rows[4].first, { G_TARGET::TARGET, G_CONDITION::HPP_GTE, G_REACTION::WS, static_cast<uint16>(G_SELECT::HIGHEST), 0, 50 });
     requireRow(rows[5].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kRest, 1 });
-    requireRow(rows[6].first, { pawn::G_TARGET_TARGETING_ALLY, pawn::G_CONDITION_TACTICIANS_CHOICE, kAttack, 0, 0 });
+    requireRow(rows[6].first, { G_TARGET::SELF, G_CONDITION::ALWAYS, kBehavior, kEat, 1 });
+    requireRow(rows[7].first, { pawn::G_TARGET_TARGETING_ALLY, pawn::G_CONDITION_TACTICIANS_CHOICE, kAttack, 0, 0 });
 }
 
 TEST_CASE("gambit defaults: the Black Mage's set is the mage set with her tactician's nukes after the enfeebles", "[cardian][gambits][defaults]")

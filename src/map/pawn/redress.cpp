@@ -23,6 +23,7 @@
 #include "redress_math.h"
 
 #include "auction.h"
+#include "food.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_items.h"
@@ -225,11 +226,12 @@ namespace pawn::redress
         // wearing found in her bag, or given her, and worn. A piece that does
         // not fit in her bag, or that she cannot wear, is left out and said;
         // a piece that could not go on in the first pass (one under a cover
-        // still worn) is tried once more after the rest. The pieces the
-        // census had issued her that the plan has no place for leave her bag
-        // first, to make room for the new, and again at the end, for the
-        // ones the new pieces took off her
-        auto dress(CCharEntity* PPawn, const std::vector<Piece>& plan, const std::set<uint16>& issued) -> Dressed
+        // still worn) is tried once more after the rest. The pieces and the
+        // food the census had issued her that the plan has no place for
+        // leave her bag first, to make room for the new, and again at the
+        // end, for the ones the new pieces took off her; the food the plan
+        // keeps stays
+        auto dress(CCharEntity* PPawn, const std::vector<Piece>& plan, const std::set<uint16>& issued, const std::set<uint16>& food) -> Dressed
         {
             Dressed out;
             auto*   bag = PPawn->getStorage(LOC_INVENTORY);
@@ -237,7 +239,7 @@ namespace pawn::redress
             {
                 return out;
             }
-            std::set<uint16> wanted;
+            std::set<uint16> wanted = food;
             for (const auto& piece : plan)
             {
                 wanted.insert(piece.itemId);
@@ -461,8 +463,8 @@ namespace pawn::redress
         }
 
         // The census's answer put on her: her support job, her gear, her
-        // spells, her skills, her health recomputed for them; the player she
-        // is with told
+        // food laid in her bag, her spells, her skills, her health
+        // recomputed for them; the player she is with told
         void apply(CCharEntity* PPawn, const Answer& answer)
         {
             const auto plan = planOf(PPawn->getName());
@@ -472,7 +474,9 @@ namespace pawn::redress
                 return;
             }
             const bool subbed  = takeSub(PPawn, answer);
-            const auto dressed = dress(PPawn, *plan, cardian::redress::parseIds(answer.issued));
+            pawn::food::forget(PPawn->id);
+            const auto dressed = dress(PPawn, *plan, cardian::redress::parseIds(answer.issued), pawn::food::plannedIds(PPawn->getName()));
+            pawn::food::topUp(PPawn);
             const auto learned = learnSpells(PPawn);
             const auto raised  = raiseSkills(PPawn, answer.skills);
             PPawn->UpdateHealth();

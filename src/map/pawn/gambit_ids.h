@@ -99,8 +99,9 @@ namespace pawn
         // mage fights it. The grammar refuses 12, so no row carries it.
         AvoidLinks          = 13, // switch: keep clear of the idle kin of every mob fighting her, whatever AvoidAggro says
         Rest                = 14, // switch: when it holds and no fight is on, her own rest order, down until full; marked, the tactician's MP pacing (RESEARCH §17.13)
+        EatWithPlayer       = 15, // switch: eat her party role's food when the player has food on and she has none; a Healer's cookie as she kneels (RESEARCH §19)
     };
-    constexpr uint16 BehaviorCount = 15; // one past the highest value ever given, retired ones included
+    constexpr uint16 BehaviorCount = 16; // one past the highest value ever given, retired ones included
 
     // The retired behaviour values: the grammar refuses a row that names
     // one, saved or imported, so an old meaning never comes back
@@ -134,9 +135,11 @@ namespace pawn
     static_assert(static_cast<uint16>(Behavior::HomePointWithPlayer) == 7);
     static_assert(static_cast<uint16>(Behavior::AvoidLinks) == 13);
     static_assert(static_cast<uint16>(Behavior::Rest) == 14);
-    static_assert(BehaviorCount == 15);
+    static_assert(static_cast<uint16>(Behavior::EatWithPlayer) == 15);
+    static_assert(BehaviorCount == 16);
     static_assert(isRetiredBehavior(8) && isRetiredBehavior(9) && isRetiredBehavior(10) && isRetiredBehavior(11) && isRetiredBehavior(12));
     static_assert(!isRetiredBehavior(static_cast<uint16>(Behavior::AvoidAggro)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Formation)) &&
                   !isRetiredBehavior(static_cast<uint16>(Behavior::RestWithPlayer)) && !isRetiredBehavior(static_cast<uint16>(Behavior::HomePointWithPlayer)) &&
-                  !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Rest)));
+                  !isRetiredBehavior(static_cast<uint16>(Behavior::AvoidLinks)) && !isRetiredBehavior(static_cast<uint16>(Behavior::Rest)) &&
+                  !isRetiredBehavior(static_cast<uint16>(Behavior::EatWithPlayer)));
 } // namespace pawn
