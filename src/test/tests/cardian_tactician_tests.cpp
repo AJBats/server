@@ -498,6 +498,17 @@ TEST_CASE("tactician: the self buffs, Boost and Sneak Attack are tools on a Self
     CHECK_FALSE(t::isOrderedUse(std::chrono::minutes(5)));
 }
 
+TEST_CASE("tactician: a row's weapon skill waits while its mob runs, not while it steps", "[cardian][gambits][tactician]")
+{
+    namespace t = cardian::tactician;
+    CHECK_FALSE(t::mobRunning(false, 0.0f));
+    CHECK_FALSE(t::mobRunning(false, 30.0f)); // a path ended, wherever it was going
+    CHECK_FALSE(t::mobRunning(true, 1.5f));   // a step to turn or settle
+    CHECK_FALSE(t::mobRunning(true, t::kMobRunningYalms));
+    CHECK(t::mobRunning(true, t::kMobRunningYalms + 0.1f));
+    CHECK(t::mobRunning(true, 20.0f)); // chasing, or running off
+}
+
 TEST_CASE("tactician: Damage spell (any) marked is her nukes, a tool on a Foe row, her tactician's when and which; an order unmarked", "[cardian][gambits][tactician]")
 {
     using cardian::tactician::Allowance;

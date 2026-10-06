@@ -449,9 +449,10 @@ namespace pawn
         }
 
         // The stance buffs the player's own order fired: her tactician's
-        // stance never takes one off (tactician_line.h isOrderedUse). Noted
-        // as his order fires -- a cardian's from her command window, a played
-        // character's from his own client -- and asked of the effect on her
+        // stance never takes one off (tactician_line.h isOrderedUse). A
+        // cardian's are noted as his order fires, from her command window or
+        // a plain row of hers; a played character's are every use his
+        // tactician's marked rows did not fire, judged from the effect on him
         void NoteOrderedStance(uint16 ability);
         auto PlayersBuff(uint16 ability, xi::StatusEffect effect) const -> bool;
 
@@ -587,6 +588,7 @@ namespace pawn
         GambitHost*       m_host;
         FoesMemo          m_foesMemo;
         mutable std::unordered_map<uint16, timer::time_point> m_orderedBuffs; // NoteOrderedStance: ability -> when his order fired; PlayersBuff forgets an order whose time has gone
+        std::unordered_map<uint16, timer::time_point>         m_tacticianStances; // a marked row's Berserk or Defender: ability -> when it fired (a played character's PlayersBuff)
         CSpellBook        m_spellBook;
         timer::time_point m_lastAction;
         uint32            m_nextId = 0;

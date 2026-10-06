@@ -65,4 +65,35 @@ describe('Cardian party progress', function()
         reportWithPartner()
         partner.assert:hasCompletedMission(logId, missionId)
     end)
+
+    -- A grant a script makes by a direct call beside a completion (a job
+    -- unlock, a pact, a title, a key item) reaches the cardians the
+    -- completion reached; one with no completion beside it is the player's
+    it('shares with a cardian a title granted right after the completion', function()
+        stub('CBaseEntity.isCardian', function(entity)
+            return entity:getID() == partner:getID()
+        end)
+
+        reportWithPartner()
+        player:addTitle(xi.title.PURVEYOR_IN_TRAINING)
+        assert(partner:hasTitle(xi.title.PURVEYOR_IN_TRAINING), 'the cardian present was given the title too')
+    end)
+
+    it('keeps from a cardian a title granted with no completion beside it', function()
+        -- two who have completed nothing (before_each completed a mission for
+        -- the others, which opens the window)
+        local loner  = xi.test.world:spawnPlayer()
+        local friend = xi.test.world:spawnPlayer()
+        stub('CBaseEntity.isCardian', function(entity)
+            return entity:getID() == friend:getID()
+        end)
+
+        loner:gotoZone(xi.zone.METALWORKS)
+        friend:gotoZone(xi.zone.METALWORKS)
+        loner.actions:inviteToParty(friend)
+        friend.actions:acceptPartyInvite()
+        loner:addTitle(xi.title.PURVEYOR_IN_TRAINING)
+        assert(loner:hasTitle(xi.title.PURVEYOR_IN_TRAINING), 'the player has his title')
+        assert(not friend:hasTitle(xi.title.PURVEYOR_IN_TRAINING), 'a title given outside a completion stays his')
+    end)
 end)

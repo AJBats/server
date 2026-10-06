@@ -1204,9 +1204,9 @@ void CPawnController::SetRetreat(const bool on)
         if (on && (POwner->PAI->IsCurrentState<CMagicState>() || POwner->PAI->IsCurrentState<CRangeState>()))
         {
             bool ordered = false;
-            if (!m_StartedOrder.empty())
+            if (!m_Started.name.empty())
             {
-                const auto sinceOrder = POwner->PAI->GetCurrentState()->GetStartTime() - m_StartedOrderAt;
+                const auto sinceOrder = POwner->PAI->GetCurrentState()->GetStartTime() - m_Started.at;
                 ordered               = sinceOrder > -1s && sinceOrder < 1s;
             }
             if (!ordered)
@@ -1640,6 +1640,7 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
         {
             if (status == CL_S_OK)
             {
+                OrderUnderWay();
                 NoteOrderFired();
                 SetRunning(key, target);
             }
@@ -1960,23 +1961,44 @@ auto CPawnController::ClearQueuedOrders(const std::string_view why, const uint32
 
 void CPawnController::OrderStarted(const std::string& key, const unsigned kind, const unsigned id)
 {
-    m_StartedOrder    = OrderName(kind, id);
-    m_StartedOrderKey = key;
-    m_StartedOrderAt  = m_Tick;
+    if (!m_Started.name.empty())
+    {
+        m_StartedBefore = std::move(m_Started);
+    }
+    m_Started = StartedOrder{ OrderName(kind, id), key, m_Tick, timer::time_point::min() };
+}
+
+void CPawnController::OrderUnderWay()
+{
+    // A state that began as it was tried is the order's; one older is
+    // whatever she was doing already (her swings)
+    if (const auto* PState = POwner->PAI->GetCurrentState(); PState != nullptr && PState->GetStartTime() >= m_Started.at)
+    {
+        m_Started.stateAt = PState->GetStartTime();
+    }
 }
 
 auto CPawnController::OrderNotStarted() -> bool
 {
-    const bool untold = !m_StartedOrder.empty();
-    m_StartedOrder.clear();
-    m_StartedOrderKey.clear();
+    const bool untold = !m_Started.name.empty();
+    m_Started         = StartedOrder{};
     return untold;
 }
 
 void CPawnController::ToldAfterOrder(const uint16 message, const std::string& said)
 {
     constexpr auto kHeels = 2s;
-    if (m_StartedOrder.empty() || m_Tick - m_StartedOrderAt > kHeels)
+    // The game speaks from the action state it is running: one the order
+    // before the last began is still that order's to answer for. Otherwise
+    // the word is the last order's
+    StartedOrder* order = &m_Started;
+    if (const auto* PState = POwner->PAI->GetCurrentState();
+        PState != nullptr && !m_StartedBefore.name.empty() && m_StartedBefore.stateAt != timer::time_point::min() &&
+        PState->GetStartTime() == m_StartedBefore.stateAt)
+    {
+        order = &m_StartedBefore;
+    }
+    if (order->name.empty() || m_Tick - order->at > kHeels)
     {
         return;
     }
@@ -1996,21 +2018,25 @@ void CPawnController::ToldAfterOrder(const uint16 message, const std::string& sa
         unsigned    kind     = 0;
         unsigned    mode     = 0;
         unsigned    id       = 0;
-        const auto* PAbility = parseOrderKey(m_StartedOrderKey, kind, mode, id) && kind == 3 ? ability::GetAbility(static_cast<uint16>(id)) : nullptr;
+        const auto* PAbility = parseOrderKey(order->key, kind, mode, id) && kind == 3 ? ability::GetAbility(static_cast<uint16>(id)) : nullptr;
         if (PAbility == nullptr || !PAbility->isPetAbility())
         {
             return;
         }
     }
-    ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), m_StartedOrder, said);
+    TellRefused(*order, message, said);
+}
+
+void CPawnController::TellRefused(StartedOrder& order, const uint16 message, const std::string& said)
+{
+    ShowInfoFmt("pawn: {}'s order {} was refused by the game: {}", POwner->getName(), order.name, said);
     auto note    = cardian::link::make<cl_note>();
     note.kind    = CL_NOTE_REFUSED;
-    note.action  = pawn::actionOfKey(m_StartedOrderKey);
+    note.action  = pawn::actionOfKey(order.key);
     note.message = message;
     cardian::link::setText(note.about, said);
     Note(note, CL_S_REFUSED);
-    m_StartedOrder.clear();
-    m_StartedOrderKey.clear();
+    order = StartedOrder{};
 }
 
 void CPawnController::Note(cl_note note, const uint16 reason) const
@@ -2322,6 +2348,7 @@ void CPawnController::FireQueuedOrder()
     }
     if (status == CL_S_OK)
     {
+        OrderUnderWay();
         // running before the line moves on, so the one QUEUE the move sends shows it
         m_Running      = std::make_pair(key, target);
         m_RunningSince = m_Tick;

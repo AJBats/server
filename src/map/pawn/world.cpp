@@ -124,9 +124,10 @@ namespace
         // her dwell, then walks to an exit and fades, and the seat refills
         // with another face. The controller walks her (TownTick) and
         // reports the arrivals; the zone tick keeps the clock and unseats
-        std::optional<position_t>        cameFrom;
+        std::optional<position_t>        cameFrom; // her own spot at the exit she came in by (gateSpot)
         std::optional<position_t>        face;
-        std::optional<position_t>        exitAt;
+        std::optional<position_t>        exitAt;   // her own spot at the exit she leaves by (gateSpot)
+        std::optional<position_t>        exitGate; // that exit's point, which a group leaving with her shares
         std::array<uint32, 2>            dwell{};
         bool                             seasoned = false; // her first stay began before she was seen (stayFor)
         std::optional<timer::time_point> leaveAt;
@@ -1569,9 +1570,12 @@ namespace
         }
     }
 
+    // How far from an exit point a body's own spot at it may lie (gateSpot)
+    constexpr float kGateSpread = 3.0f;
+
     // The exit a word means from a point: a name, "any" (a random one, not
-    // `notThis` when there is another), else the nearest. Nothing when the
-    // zone has no exits
+    // the one `notThis` stands at when there is another), else the nearest.
+    // Nothing when the zone has no exits
     auto exitPoint(const ZoneSlots& table, const std::string& how, const position_t& from, const std::optional<position_t>& notThis) -> std::optional<position_t>
     {
         if (table.exits.empty() || table.exitPoints.size() != table.exits.size())
@@ -1593,7 +1597,7 @@ namespace
             std::vector<const position_t*> others;
             for (const auto& p : table.exitPoints)
             {
-                if (!notThis.has_value() || flatDistance(p, *notThis) > 1.0f)
+                if (!notThis.has_value() || flatDistance(p, *notThis) > kGateSpread + 1.0f)
                 {
                     others.push_back(&p);
                 }
@@ -2041,6 +2045,27 @@ namespace
         return point;
     }
 
+    // Where at an exit she comes in or goes: her own spot within kGateSpread
+    // of the exit point, from her name (salted apart for coming and going),
+    // on the mesh. Every body of a zone shares its few exit points, so
+    // bodies arriving or leaving together stood on one another in a pile at
+    // the gate (the user, 2026-10-05). The exit point itself where the mesh
+    // has no floor near the spot
+    constexpr uint32 kComingSalt  = 0x6A7E1u;
+    constexpr uint32 kLeavingSalt = 0x0A7E2u;
+
+    auto gateSpot(CZone* PZone, const position_t& exit, const std::string& name, const uint32 salt) -> position_t
+    {
+        const uint32 h      = nameHash(name) ^ salt;
+        const float  angle  = 2.0f * std::numbers::pi_v<float> * static_cast<float>(h % 1000) / 1000.0f;
+        const float  radius = kGateSpread * std::sqrt(static_cast<float>((h / 1000) % 1000) / 1000.0f);
+        position_t   spot   = exit;
+        spot.x += radius * std::cos(angle);
+        spot.z += radius * std::sin(angle);
+        const auto snapped = snapToMesh(PZone, spot);
+        return flatDistance(snapped, exit) <= kGateSpread + 0.5f && std::fabs(snapped.y - exit.y) < 2.0f ? snapped : exit;
+    }
+
     // How long she holds her seat. A seat dealt as a zone fills every seat at once (a seasoned stay)
     // keeps a random part of a stay, as if the town had been up for hours: drawn whole, every such
     // stay would run out together a dwell later, and the seats would turn over in one wave
@@ -2132,7 +2157,10 @@ namespace
             {
                 item.dwell    = spec.dwell;
                 // she comes in from the exit nearest her first via point, else her seat
-                item.cameFrom = exitPoint(table, spec.enter, item.via.empty() ? item.point : item.via.front(), std::nullopt);
+                if (const auto gate = exitPoint(table, spec.enter, item.via.empty() ? item.point : item.via.front(), std::nullopt); gate.has_value())
+                {
+                    item.cameFrom = gateSpot(PZone, *gate, name, kComingSalt);
+                }
             }
             item.pose = spec.pose;
             pending.push_back(std::move(item));
@@ -2284,9 +2312,11 @@ namespace
             body.wayOut.push_back(body.via[i - 1]);
         }
         const position_t& from = body.via.empty() ? body.point : body.via.front();
-        body.exitAt            = sharedExit.has_value() ? sharedExit : exitPoint(table, spec.exit, from, body.cameFrom);
-        if (body.exitAt.has_value())
+        body.exitGate          = sharedExit.has_value() ? sharedExit : exitPoint(table, spec.exit, from, body.cameFrom);
+        body.exitAt.reset();
+        if (body.exitGate.has_value())
         {
+            body.exitAt = gateSpot(zoneutils::GetZone(static_cast<xi::ZoneId>(body.zone)), *body.exitGate, body.name, kLeavingSalt);
             body.wayOut.push_back(*body.exitAt);
         }
     }
@@ -2311,7 +2341,7 @@ namespace
             {
                 mate->leaving = true;
                 mate->leaveAt.reset();
-                setWayOut(*mate, table, body.exitAt);
+                setWayOut(*mate, table, body.exitGate);
                 mate->gone = !mate->present;
             }
         }
@@ -2636,6 +2666,7 @@ namespace
                 body.face.reset();
                 body.cameFrom.reset();
                 body.exitAt.reset();
+                body.exitGate.reset();
                 body.leaveAt.reset();
                 body.faceBackAt.reset();
                 body.via.clear();
