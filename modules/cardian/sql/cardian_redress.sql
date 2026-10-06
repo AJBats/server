@@ -7,7 +7,9 @@
 --          cardian_spells), her skill values for it in `skills` ("skillid:value"
 --          pairs in the game's tenths, joined by commas), the pieces it had
 --          issued her before this plan in `issued` (item ids, joined by commas),
---          and the support job of that level in `sub` and `sublevel` (0 for none)
+--          and the support job of that level in `sub`, with the job's own level as
+--          she levelled it in `sublevel` (ahead of the half of her main the game
+--          shows; 0 for none)
 --   done   the map: the plan put on her while she stands -- the census never writes
 --          the character tables of a body the map holds; `level` is the level she
 --          was dressed for

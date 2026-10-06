@@ -183,8 +183,9 @@ namespace cardian::redress
         return answerLevel != 0 && answerLevel == levelNow;
     }
 
-    // The support job the census planned for the level (the row's `sub` and
-    // `sublevel`; job 0 for none)
+    // The support job the census planned for the level and the job's own
+    // level as she levelled it, ahead of the half the game shows (the row's
+    // `sub` and `sublevel`; job 0 for none)
     struct SubPlan
     {
         uint8_t job   = 0;

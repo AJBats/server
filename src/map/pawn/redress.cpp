@@ -150,7 +150,9 @@ namespace pawn::redress
 
         // The census's answer for one of them: the level, her skill values,
         // the pieces it had issued her before this plan, and the support job
-        // the convention gives that level (job 0 for none)
+        // the convention gives that level (job 0 for none) with the job's own
+        // level as she levelled it, ahead of the half of her main the game
+        // shows (census.py sub_trained)
         struct Answer
         {
             uint32      charid = 0;
@@ -385,7 +387,9 @@ namespace pawn::redress
 
         // Her support job as the census planned it for the level, before her
         // gear: the support job and that job unlocked, the job raised to the
-        // plan's level. Another support job than hers is set by the game's own
+        // level she levelled it to, which the game shows only up to half her
+        // main, so it rises with her main by itself as she dings. Another
+        // support job than hers is set by the game's own
         // job change, as her player's Mog House does it (mog_house.cpp
         // changeJobs: her pet sent away, a waiting order and an enchanted
         // piece on its way let go), which rebuilds her stats, abilities and
