@@ -24,6 +24,7 @@
 
 #include "auction.h"
 #include "pawn.h"
+#include "pawn_controller.h"
 #include "pawn_items.h"
 #include "seats.h"
 
@@ -37,11 +38,18 @@
 #include "item_container.h"
 #include "items/item.h"
 #include "items/transactions/item_claim.h"
+#include "job_points.h"
+#include "latent_effect_container.h"
+#include "packets/c2s/0x100_myroom_job.h"
 #include "packets/s2c/0x017_chat_std.h"
 #include "party.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
+#include "utils/petutils.h"
+#include "utils/puppetutils.h"
 #include "zone.h"
+
+#include <magic_enum/magic_enum.hpp>
 
 #include <algorithm>
 #include <chrono>
@@ -95,8 +103,9 @@ namespace pawn::redress
 
         void ask(const CCharEntity* PPawn, const uint8 level)
         {
-            if (!db::preparedStmt("INSERT INTO cardian_redress (charid, level, state, skills, issued, asked_at) VALUES (?, ?, 'asked', '', '', NOW()) "
-                                  "ON DUPLICATE KEY UPDATE level = VALUES(level), state = 'asked', skills = '', issued = '', asked_at = NOW(), ready_at = NULL",
+            if (!db::preparedStmt("INSERT INTO cardian_redress (charid, level, state, skills, issued, sub, sublevel, asked_at) VALUES (?, ?, 'asked', '', '', 0, 0, NOW()) "
+                                  "ON DUPLICATE KEY UPDATE level = VALUES(level), state = 'asked', skills = '', issued = '', sub = 0, sublevel = 0, asked_at = NOW(), "
+                                  "ready_at = NULL",
                                   PPawn->id, level))
             {
                 ShowErrorFmt("world: {} could not ask the census to dress her for level {}", PPawn->getName(), level);
@@ -140,35 +149,49 @@ namespace pawn::redress
         }
 
         // The census's answer for one of them: the level, her skill values,
-        // and the pieces it had issued her before this plan
+        // the pieces it had issued her before this plan, and the support job
+        // the convention gives that level (job 0 for none) with the job's own
+        // level as she levelled it, ahead of the half of her main the game
+        // shows (census.py sub_trained)
         struct Answer
         {
             uint32      charid = 0;
             uint8       level  = 0;
             std::string skills;
             std::string issued;
+            uint8       sub      = 0;
+            uint8       sublevel = 0;
         };
 
         auto readyAnswers() -> std::vector<Answer>
         {
             std::vector<Answer> out;
-            const auto          rset = db::preparedStmt("SELECT charid, level, skills, issued FROM cardian_redress WHERE state = 'ready'");
+            const auto          rset = db::preparedStmt("SELECT charid, level, skills, issued, sub, sublevel FROM cardian_redress WHERE state = 'ready'");
             if (!rset)
             {
                 return out;
             }
             while (rset->next())
             {
-                out.push_back({ rset->get<uint32>("charid"), rset->get<uint8>("level"), rset->get<std::string>("skills"), rset->get<std::string>("issued") });
+                out.push_back({ rset->get<uint32>("charid"), rset->get<uint8>("level"), rset->get<std::string>("skills"), rset->get<std::string>("issued"),
+                                rset->get<uint8>("sub"), rset->get<uint8>("sublevel") });
             }
             return out;
         }
 
-        // She takes it now: up, out of a fight, standing in her zone
+        // She takes it now: up, standing in her zone, in no event, and out of
+        // a fight -- not engaged, nor attending the party's fight from its
+        // edge -- the refusals of her player's Mog House (mog_house.cpp
+        // changeJobs), since a re-dress may change her support job
         auto canDress(const CCharEntity* PPawn) -> bool
         {
-            return PPawn->loc.zone != nullptr && !PPawn->isDead() && PPawn->status == xi::Status::Normal && PPawn->PAI != nullptr &&
-                   !PPawn->PAI->IsEngaged();
+            if (PPawn->loc.zone == nullptr || PPawn->isDead() || PPawn->isInEvent() || PPawn->status != xi::Status::Normal || PPawn->PAI == nullptr ||
+                PPawn->PAI->IsEngaged())
+            {
+                return false;
+            }
+            const auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            return PController == nullptr || PController->PartyFightTarget() == nullptr;
         }
 
         struct Piece
@@ -362,14 +385,84 @@ namespace pawn::redress
             return static_cast<uint32>(raises.size());
         }
 
+        // Her support job as the census planned it for the level, before her
+        // gear: the support job and that job unlocked, the job raised to the
+        // level she levelled it to, which the game shows only up to half her
+        // main, so it rises with her main by itself as she dings. Another
+        // support job than hers is set by the game's own
+        // job change, as her player's Mog House does it (mog_house.cpp
+        // changeJobs: her pet sent away, a waiting order and an enchanted
+        // piece on its way let go), which rebuilds her stats, abilities and
+        // traits and takes a second weapon off her -- so the plan's gear goes
+        // on after it, its second blade wanting the Dual Wield a Ninja support
+        // job brings. The same support job at a higher level takes only what
+        // the game's own level change does (charutils, a ding): her buffs, her
+        // recasts, her orders and her gear stay. Whether it changed anything
+        auto takeSub(CCharEntity* PPawn, const Answer& answer) -> bool
+        {
+            const uint8 planned = answer.sub < MAX_JOBTYPE ? answer.sub : 0;
+            const auto  change  = cardian::redress::subChange({ planned, answer.sublevel }, { static_cast<uint8>(PPawn->GetMJob()), static_cast<uint8>(PPawn->GetSJob()),
+                                                                                              PPawn->jobs.job[planned], PPawn->jobs.unlocked });
+            if (!change.has_value())
+            {
+                return false;
+            }
+            const auto before = fmt::format("{} {}", magic_enum::enum_name(PPawn->GetSJob()), PPawn->GetSLevel());
+            PPawn->jobs.unlocked     = change->unlocked;
+            PPawn->jobs.job[planned] = change->jobLevel;
+            charutils::SaveCharJob(PPawn, static_cast<xi::Job>(planned));
+
+            if (change->switchJob)
+            {
+                if (PPawn->PPet != nullptr)
+                {
+                    petutils::DespawnPet(PPawn);
+                }
+                if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+                {
+                    PController->EndEnchant("her support job changed");
+                    PController->ClearQueuedOrders("her support job changed");
+                }
+                GP_CLI_COMMAND_MYROOM_JOB jobChange{};
+                jobChange.MainJobIndex    = 0;
+                jobChange.SupportJobIndex = planned;
+                jobChange.process(nullptr, PPawn);
+            }
+            else
+            {
+                const uint8 slvlBefore = PPawn->GetSLevel();
+                PPawn->SetSLevel(PPawn->jobs.job[planned]);
+                if (PPawn->GetSLevel() != slvlBefore)
+                {
+                    jobpointutils::RefreshGiftMods(PPawn);
+                    charutils::BuildingCharSkillsTable(PPawn);
+                    charutils::CalculateStats(PPawn);
+                    charutils::BuildingCharAbilityTable(PPawn);
+                    charutils::BuildingCharTraitsTable(PPawn);
+                    charutils::BuildingCharWeaponSkills(PPawn);
+                    puppetutils::LoadAutomaton(PPawn);
+                    PPawn->PLatentEffectContainer->CheckLatentsJobLevel();
+                    if (PPawn->PParty != nullptr)
+                    {
+                        PPawn->PParty->ReloadParty();
+                    }
+                }
+            }
+
+            ShowInfoFmt("world: {} takes the support job of level {}: {} -> {} {}", PPawn->getName(), answer.level, before, magic_enum::enum_name(PPawn->GetSJob()),
+                        PPawn->GetSLevel());
+            return true;
+        }
+
         void markDone(const Answer& answer)
         {
             db::preparedStmt("UPDATE cardian_redress SET state = 'done', done_at = NOW() WHERE charid = ? AND state = 'ready' AND level = ?", answer.charid,
                              answer.level);
         }
 
-        // The census's answer put on her: her gear, her spells, her skills,
-        // her health recomputed for them; the player she is with told
+        // The census's answer put on her: her support job, her gear, her
+        // spells, her skills, her health recomputed for them; the player she
+        // is with told
         void apply(CCharEntity* PPawn, const Answer& answer)
         {
             const auto plan = planOf(PPawn->getName());
@@ -378,6 +471,7 @@ namespace pawn::redress
                 ShowErrorFmt("world: {}'s wardrobe could not be read; her re-dress waits", PPawn->getName());
                 return;
             }
+            const bool subbed  = takeSub(PPawn, answer);
             const auto dressed = dress(PPawn, *plan, cardian::redress::parseIds(answer.issued));
             const auto learned = learnSpells(PPawn);
             const auto raised  = raiseSkills(PPawn, answer.skills);
@@ -385,8 +479,8 @@ namespace pawn::redress
             PPawn->clearPacketList();
             markDone(answer);
 
-            ShowInfoFmt("world: {} is dressed for level {} at the auction house ({} pieces put on, {} taken off, {} spells learned, {} skills raised)",
-                        PPawn->getName(), answer.level, dressed.worn, dressed.dropped, learned, raised);
+            ShowInfoFmt("world: {} is dressed for level {} at the auction house ({}{} pieces put on, {} taken off, {} spells learned, {} skills raised)",
+                        PPawn->getName(), answer.level, subbed ? "her support job set, " : "", dressed.worn, dressed.dropped, learned, raised);
             if (auto* PPlayer = pawn::partyPlayer(PPawn); PPlayer != nullptr)
             {
                 PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is dressed for level {}.", PPawn->getName(), answer.level));
@@ -412,6 +506,13 @@ namespace pawn::redress
                     markDone(answer);
                     continue;
                 }
+                if (!cardian::redress::answerFits(answer.level, levelOf(PPawn)))
+                {
+                    ShowInfoFmt("world: {} is level {} now; the census's plan for level {} is set aside, and she asks again at a counter", PPawn->getName(),
+                                levelOf(PPawn), answer.level);
+                    markDone(answer);
+                    continue;
+                }
                 apply(PPawn, answer);
             }
         }
@@ -425,10 +526,16 @@ namespace pawn::redress
                          "`state` enum('asked','ready','done') NOT NULL DEFAULT 'asked', "
                          "`skills` varchar(1024) NOT NULL DEFAULT '', "
                          "`issued` varchar(512) NOT NULL DEFAULT '', "
+                         "`sub` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`sublevel` tinyint(3) unsigned NOT NULL DEFAULT '0', "
                          "`asked_at` datetime DEFAULT NULL, "
                          "`ready_at` datetime DEFAULT NULL, "
                          "`done_at` datetime DEFAULT NULL, "
                          "PRIMARY KEY (`charid`), KEY `state` (`state`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        // The support job's two columns, on a table made before the answer carried them
+        db::preparedStmt("ALTER TABLE `cardian_redress` "
+                         "ADD COLUMN IF NOT EXISTS `sub` tinyint(3) unsigned NOT NULL DEFAULT '0' AFTER `issued`, "
+                         "ADD COLUMN IF NOT EXISTS `sublevel` tinyint(3) unsigned NOT NULL DEFAULT '0' AFTER `sub`");
     }
 
     void tick(CZone* PZone)
