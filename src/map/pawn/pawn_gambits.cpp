@@ -198,6 +198,24 @@ namespace pawn
                     return std::nullopt;
             }
         }
+
+        // A played character's Berserk and Defender, each one up on him: his
+        // own or his tactician's, and the start and end of the use that was
+        // judged (CGambits::PlayersBuff, asked of both every think). Kept by
+        // his charid apart from his gambit engine, which every zone-in builds
+        // anew, so a stance carried across a zone line keeps its owner
+        struct LiveStance
+        {
+            bool              his = true;
+            timer::time_point started{};
+            timer::time_point ends{};
+        };
+        std::unordered_map<uint32, std::unordered_map<uint16, LiveStance>> liveStances;
+
+        // A zone-in reloads his effects, each started anew with the time it had
+        // left: the use judged before is the one that still ends about when it
+        // did, give or take the seconds the zone took
+        constexpr auto kZoneSlack = std::chrono::seconds(60);
         static_assert(cardian::tactician::kTargetEnemy == TARGET_ENEMY);
         static_assert(cardian::tactician::kTargetFriendly == (TARGET_SELF | TARGET_PLAYER_PARTY | TARGET_PLAYER_ALLIANCE | TARGET_PLAYER | TARGET_PLAYER_DEAD |
                                                               TARGET_PLAYER_PARTY_PIANISSIMO | TARGET_PET | TARGET_PLAYER_PARTY_ENTRUST));
@@ -450,6 +468,27 @@ namespace pawn
     , m_spellBook(PChar)
     , m_masterOn(!PHost->OwnClient())
     {
+        // A zone-in reloaded his effects, each with a new start: a stance
+        // already judged follows its use, and one gone, or another use since,
+        // is forgotten and judged afresh
+        if (const auto found = liveStances.find(PChar->id); PHost->OwnClient() && found != liveStances.end())
+        {
+            for (auto it = found->second.begin(); it != found->second.end();)
+            {
+                const auto* PEffect = PChar->StatusEffectContainer->GetStatusEffect(*buffEffect(it->first));
+                const auto  ends    = PEffect != nullptr ? PEffect->GetStartTime() + PEffect->GetDuration() : timer::time_point{};
+                if (PEffect != nullptr && ends >= it->second.ends - kZoneSlack && ends <= it->second.ends + kZoneSlack)
+                {
+                    it->second.started = PEffect->GetStartTime();
+                    it->second.ends    = ends;
+                    ++it;
+                }
+                else
+                {
+                    it = found->second.erase(it);
+                }
+            }
+        }
     }
 
     auto CGambits::Conveyed() const -> bool
@@ -603,6 +642,17 @@ namespace pawn
         if (!engaged)
         {
             m_nukeHold.clear();
+        }
+
+        // A played character's stances are judged as they go up, while what
+        // his tactician fired is still fresh (PlayersBuff), and forgotten as
+        // they wear off
+        if (m_host->OwnClient())
+        {
+            for (const auto stance : { cardian::tactician::kBerserk, cardian::tactician::kDefender })
+            {
+                std::ignore = PlayersBuff(static_cast<uint16>(stance), *buffEffect(stance));
+            }
         }
 
         // The pacer (readyToAct): her think waits until the
@@ -2294,12 +2344,33 @@ namespace pawn
 
     auto CGambits::PlayersBuff(const uint16 ability, const xi::StatusEffect effect) const -> bool
     {
+        const auto* PEffect = POwner->StatusEffectContainer->GetStatusEffect(effect);
+        if (m_host->OwnClient())
+        {
+            // A played character's: every use his tactician's marked rows did
+            // not fire is his -- pressed on his client, replayed at a pause's
+            // release, or fired by a plain row of his -- judged once per use
+            auto& judged = liveStances[POwner->id];
+            if (PEffect == nullptr)
+            {
+                judged.erase(ability);
+                return false;
+            }
+            if (const auto seen = judged.find(ability); seen != judged.end() && seen->second.started == PEffect->GetStartTime())
+            {
+                return seen->second.his;
+            }
+            const auto fired = m_tacticianStances.find(ability);
+            const bool his   = fired == m_tacticianStances.end() || !cardian::tactician::isOrderedUse(PEffect->GetStartTime() - fired->second);
+            judged[ability]  = LiveStance{ his, PEffect->GetStartTime(), PEffect->GetStartTime() + PEffect->GetDuration() };
+            return his;
+        }
+
         const auto it = m_orderedBuffs.find(ability);
         if (it == m_orderedBuffs.end())
         {
             return false;
         }
-        const auto* PEffect = POwner->StatusEffectContainer->GetStatusEffect(effect);
         if (PEffect != nullptr && cardian::tactician::isOrderedUse(PEffect->GetStartTime() - it->second))
         {
             return true;
@@ -3181,11 +3252,19 @@ namespace pawn
                     executed = ExecuteAbility(action, PTarget, engaged);
                     // A plain row's Berserk or Defender is the player's
                     // command, as his order is: the tactician's stance leaves
-                    // it be (dumb gambits overrule, the user, 2026-10-02)
-                    if (executed && action.select == G_SELECT::SPECIFIC && !cardian::tactician::isMarked(gambit) &&
-                        cardian::tactician::isStanceAbility(action.select_arg))
+                    // it be (dumb gambits overrule, the user, 2026-10-02). A
+                    // marked row's is the tactician's own, which a played
+                    // character's PlayersBuff tells from his
+                    if (executed && cardian::tactician::isStanceAbility(action.select_arg))
                     {
-                        NoteOrderedStance(static_cast<uint16>(action.select_arg));
+                        if (cardian::tactician::isMarked(gambit))
+                        {
+                            m_tacticianStances[static_cast<uint16>(action.select_arg)] = timer::now();
+                        }
+                        else if (action.select == G_SELECT::SPECIFIC)
+                        {
+                            NoteOrderedStance(static_cast<uint16>(action.select_arg));
+                        }
                     }
                     break;
                 }
