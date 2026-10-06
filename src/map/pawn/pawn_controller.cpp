@@ -572,6 +572,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     if (to == Mode::Down && from != Mode::Down)
     {
         ClearQueuedOrders("she is KO'd");
+        EndEnchant("she is KO'd");
     }
     // A pending act belongs to the mode it was scheduled in; only the
     // player's order outlives a change
@@ -587,6 +588,7 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
 void CPawnController::PlayerZoning()
 {
     ClearQueuedOrders("the player is zoning"); // its targets stay behind in this zone
+    EndEnchant("the player is zoning");
     StandDown("the player is zoning; stands down");
 }
 
@@ -1890,6 +1892,12 @@ auto CPawnController::QueueLine() const -> cl_queue
         // percent, or her own (#256)
         line.action = cl_action{ m_RestLineKind, 1, static_cast<uint16_t>(m_RestLineKind == CL_AK_REST ? m_RestOrder.percent : 0) };
         line.target = POwner->targid;
+    }
+    if (m_Enchant.has_value())
+    {
+        // the enchanted item, waiting out its delay (mode 0) or in use (mode 1)
+        line.lane.action = cl_action{ CL_AK_ITEM, static_cast<uint8_t>(m_Enchant->fired ? 1 : 0), m_Enchant->itemId };
+        line.lane.target = POwner->targid;
     }
     return line;
 }
@@ -3630,6 +3638,8 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         }
         m_PlayerSeenDead = false;
         CheckBrain();
+        UpdateRunning(); // an order over lets its line go before the enchanted item's use begins
+        EnchantTick();   // the enchanted item's use goes ahead of her line, holding no place in it
         FireQueuedOrder();
         UpdateRunning(); // after the line moves: an order over and the next away in one tick is one QUEUE
         FireOrderedEngage();

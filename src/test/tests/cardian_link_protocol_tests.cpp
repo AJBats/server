@@ -45,8 +45,8 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_hello) == 72);
     STATIC_REQUIRE(sizeof(cl_bind) == 36);
     STATIC_REQUIRE(sizeof(cl_pos) == 36);
-    STATIC_REQUIRE(sizeof(cl_item) == 8);
-    STATIC_REQUIRE(sizeof(cl_inventory) == 664);
+    STATIC_REQUIRE(sizeof(cl_item) == 12);
+    STATIC_REQUIRE(sizeof(cl_inventory) == 984);
     STATIC_REQUIRE(sizeof(cl_give) == 28);
     STATIC_REQUIRE(sizeof(cl_paused) == 40);
     STATIC_REQUIRE(sizeof(cl_walk) == 36);
@@ -68,7 +68,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_pause) == sizeof(cl_header));
     STATIC_REQUIRE(sizeof(cl_action) == 4);
     STATIC_REQUIRE(sizeof(cl_do) == 28);
-    STATIC_REQUIRE(sizeof(cl_queue) == 60);
+    STATIC_REQUIRE(sizeof(cl_queue) == 68);
     STATIC_REQUIRE(offsetof(cl_queue, running) == 52);
     STATIC_REQUIRE(sizeof(cl_prefs) == 20);
     STATIC_REQUIRE(sizeof(cl_queues) == sizeof(cl_header));

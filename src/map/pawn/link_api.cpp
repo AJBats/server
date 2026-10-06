@@ -78,6 +78,12 @@ namespace pawn::linkapi
     {
         using namespace cardian::link;
 
+        // A number into a field of two bytes, held at its top rather than wrapped
+        auto clamp16(const int64 value) -> uint16_t
+        {
+            return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
+        }
+
         // One of her containers as it stands now
         auto inventoryOf(CCharEntity* PPawn, const uint8 location) -> cl_inventory
         {
@@ -105,14 +111,19 @@ namespace pawn::linkapi
                 item.id    = PItem->getID();
                 item.qty   = PItem->getQuantity();
                 item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
+                // An enchanted piece: its charges, and how long until it can be used --
+                // worn, the game's own wait (the recast, or the delay wearing it
+                // started); not worn, its recast alone, since wearing it starts the delay
+                // afresh
+                if (auto* PUsable = dynamic_cast<CItemUsable*>(const_cast<CItem*>(PItem)); PUsable != nullptr && PItem->isType(ITEM_EQUIPMENT) && PItem->isSubType(ITEM_CHARGED))
+                {
+                    const auto worn = PItem->state() == ItemState::Equipped;
+                    const auto left = worn ? PUsable->getReuseTime() : PUsable->getLastUseTime() + PUsable->getReuseDelay() - timer::now();
+                    item.charges    = PUsable->getCurrentCharges();
+                    item.readyIn    = clamp16(std::chrono::ceil<std::chrono::seconds>(std::max(left, timer::duration::zero())).count()); // up: 0 only once ready
+                }
             }
             return msg;
-        }
-
-        // A number into a field of two bytes, held at its top rather than wrapped
-        auto clamp16(const int64 value) -> uint16_t
-        {
-            return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
         }
 
         // A zone's name for people: the game's, its underscores as spaces
@@ -403,13 +414,22 @@ namespace pawn::linkapi
         // slot, since her bag can be sorted meanwhile
         auto useAsOrder(CCharEntity* PPawn, const uint8 slot, const uint8 bag) -> uint16
         {
+            auto*       PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
+            auto*       storage     = PPawn->getStorage(bag);
+            const auto* PItem       = storage != nullptr && slot != 0 ? storage->GetItem(slot) : nullptr;
+            // An enchanted piece of gear (one with charges: every piece of gear is
+            // ITEM_USABLE to the game) is worn to be used, from her inventory or a
+            // wardrobe: its own lane puts it on, waits, uses it and puts back what
+            // it replaced (#297)
+            if (PController != nullptr && PItem != nullptr && PItem->isType(ITEM_EQUIPMENT) && PItem->isSubType(ITEM_CHARGED))
+            {
+                return PController->StartEnchant(bag, slot);
+            }
             if (bag != LOC_INVENTORY)
             {
                 return CL_S_INVENTORY_ONLY; // a bag's contents are fetched first
             }
-            auto*       PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            const auto* PItem       = PPawn->getStorage(LOC_INVENTORY)->GetItem(slot);
-            if (PController == nullptr || PItem == nullptr || slot == 0)
+            if (PController == nullptr || PItem == nullptr)
             {
                 return pawn::items::useItem(PPawn, slot, bag); // its own refusal
             }
@@ -1647,7 +1667,9 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() ? CL_S_OK : CL_S_NOTHING_QUEUED);
+            // from the bottom of her line as the addon shows it up: the orders, her
+            // rest, then her enchanted item, last
+            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() || PController->CancelEnchant() ? CL_S_OK : CL_S_NOTHING_QUEUED);
         }
 
         // The command window: one action now, on a target index in her zone (0 =
@@ -1709,7 +1731,8 @@ namespace pawn::linkapi
                 {
                     continue;
                 }
-                if (const auto line = PController->QueueLine(); line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE)
+                if (const auto line = PController->QueueLine();
+                    line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE || line.lane.action.kind != CL_AK_NONE)
                 {
                     reply.more(line);
                 }

@@ -1265,6 +1265,7 @@ namespace pawn
             // keeps hers when this one leaves.
             if (PController != nullptr && (herself || herPlayer == PMember->id))
             {
+                PController->EndEnchant(herself ? "out of the party" : "her player left the party"); // before the line, whose drop tells his addon
                 PController->ClearQueuedOrders(herself ? "out of the party" : "her player left the party", herPlayer);
                 PController->EndRestOrder(herself ? "out of the party" : "her player left the party");
                 // A maneuver is his hand on her: it ends with the party tie too
