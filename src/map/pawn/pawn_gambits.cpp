@@ -46,6 +46,7 @@
 
 #include "ability.h"
 #include "ai/ai_container.h"
+#include "ai/helpers/pathfind/pathfind.h"
 #include "ai/states/ability_state.h"
 #include "ai/states/magic_state.h"
 #include "ai/states/mobskill_state.h"
@@ -3422,7 +3423,17 @@ namespace pawn
         }
 
         CBattleEntity* PTarget = battleutils::isValidSelfTargetWeaponskill(wsid) ? POwner : POwner->GetBattleTarget();
-        if (PTarget == nullptr || !m_host->WeaponSkill(PTarget->entityId(), wsid))
+        if (PTarget == nullptr)
+        {
+            return false;
+        }
+        // Held while the mob runs, and thrown once it stops (tactician_line.h mobRunning)
+        if (const auto* PPath = PTarget != POwner && PTarget->PAI != nullptr ? PTarget->PAI->PathFind.get() : nullptr;
+            PPath != nullptr && cardian::tactician::mobRunning(PPath->IsFollowingPath(), distance(PTarget->loc.p, PPath->GetDestination())))
+        {
+            return false;
+        }
+        if (!m_host->WeaponSkill(PTarget->entityId(), wsid))
         {
             return false;
         }

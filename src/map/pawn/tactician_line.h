@@ -258,6 +258,19 @@ namespace cardian::tactician
         return effectStartAfterOrder >= effectStartAfterOrder.zero() && effectStartAfterOrder <= kOrderLands;
     }
 
+    // A row's weapon skill waits while its mob is running (the user,
+    // 2026-10-05): players never threw one at a mob on the move, since one
+    // that is out of reach by the time it goes is lost with its TP, and a
+    // cardian, whom the server would let, plays as they did. Running is a
+    // path with more than this left to walk; a mob stepping a yalm or two to
+    // turn or settle is not
+    inline constexpr float kMobRunningYalms = 4.0f;
+
+    constexpr auto mobRunning(const bool followingPath, const float pathLeft) -> bool
+    {
+        return followingPath && pathLeft > kMobRunningYalms;
+    }
+
     // A self buff's when: she is fighting, it is not on her already, and
     // her seat allows it -- Defender is the Tank seat's, Berserk is never
     // the Tank seat's (wrongStance), Aggressor, Focus and Dodge are any
