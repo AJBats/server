@@ -1217,16 +1217,26 @@ private:
     void                   EnchantTick();
     void                   TellQueueLine() const;
 
-    // The order that last started, and when: what a refusal right after it is about
-    // The order last started, the game's word on it heard for kHeels after: its
-    // name for the log and its key for the note, set and cleared together.
-    // Stamped before the order is tried, so a refusal the game gives as it
-    // starts is its own; a try that fails takes it back (OrderNotStarted)
-    std::string       m_StartedOrder;
-    std::string       m_StartedOrderKey;
-    timer::time_point m_StartedOrderAt{ timer::time_point::min() };
-    void              OrderStarted(const std::string& key, unsigned kind, unsigned id);
-    auto              OrderNotStarted() -> bool; // false when the game refused it already, and said so
+    // An order that started, the game's word on it heard for kHeels after:
+    // its name for the log, its key for the note, when it was tried, and the
+    // start of the action state it began (min when it began none)
+    struct StartedOrder
+    {
+        std::string       name;
+        std::string       key;
+        timer::time_point at{ timer::time_point::min() };
+        timer::time_point stateAt{ timer::time_point::min() };
+    };
+    // The order last started, stamped before it is tried, so a refusal the
+    // game gives as it starts is its own; a try that fails takes it back
+    // (OrderNotStarted). The one before it keeps its own word: a refusal its
+    // action gives once the next has started is still about it (ToldAfterOrder)
+    StartedOrder m_Started;
+    StartedOrder m_StartedBefore;
+    void         OrderStarted(const std::string& key, unsigned kind, unsigned id);
+    void         OrderUnderWay();                   // it fired: the action state it began, if any
+    auto         OrderNotStarted() -> bool;         // false when the game refused it already, and said so
+    void         TellRefused(StartedOrder& order, uint16 message, const std::string& said);
 
     // The action itself, no queueing: CL_S_OK when it fired; CL_S_ON_RECAST and
     // CL_S_STANDING_UP for an order to hold; else why not
