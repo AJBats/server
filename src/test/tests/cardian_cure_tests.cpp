@@ -67,6 +67,27 @@ TEST_CASE("Finishing the stand does not cancel its emergency, but receiving heal
     CHECK(choose(std::vector<Option>{casting, cure(2, 2)}, std::vector<Target>{injured}, up).empty());
 }
 
+TEST_CASE("An emergency's need follows the damage rate as it settles", "[cardian][cure]")
+{
+    // Called at 10 a second over a 4-second look-ahead: she needs 30 + 40 = 70
+    const auto called = plan({cure(1, 3, 30, 50)});
+    REQUIRE(called.size() == 1);
+    CHECK_THAT(called[0].requiredHp, WithinAbs(70, 1e-9));
+    CHECK_THAT(called[0].heldHorizon, WithinAbs(4, 1e-9));
+    // The rate settles to 2 a second: over the same look-ahead she needs
+    // 30 + 8 = 38, and at 60 HP she is out of danger
+    auto settled       = injured;
+    settled.damageRate = 2;
+    CHECK(choose(std::vector<Option>{cure(1, 2)}, std::vector<Target>{settled}, called).empty());
+    // At the rate it was called at, she is still in it, her stand notwithstanding
+    CHECK(choose(std::vector<Option>{cure(1, 2)}, std::vector<Target>{injured}, called).size() == 1);
+    // A cure that would land later keeps the look-ahead it was called over:
+    // the later landing is judged over its own look-ahead, the hold stays 4
+    const auto later = choose(std::vector<Option>{cure(1, 6)}, std::vector<Target>{injured}, called);
+    REQUIRE(later.size() == 1);
+    CHECK_THAT(later[0].heldHorizon, WithinAbs(4, 1e-9));
+}
+
 TEST_CASE("Below the floor a member is in danger whatever the hits on record", "[cardian][cure]")
 {
     // A weak mob's 3-point hits: at 20% of 400 HP she is safe by the record

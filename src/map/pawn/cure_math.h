@@ -59,7 +59,8 @@ namespace cardian::cure
     {
         Option cure;
         bool cast = true; // prepare for unsafe damage pressure without curing a full-HP target
-        double requiredHp = 0.0; // preserve an emergency through its stand/approach
+        double requiredHp = 0.0; // the HP she needs to be out of danger: today's figures over heldHorizon
+        double heldHorizon = 0.0; // the look-ahead the emergency was called over, held through its stand/approach
     };
 
     // Account for healing when it lands, capped at the target's HP capacity.
@@ -147,20 +148,28 @@ namespace cardian::cure
         });
         for (const auto& target : ordered)
         {
-            double requiredHp = 0.0;
+            // An emergency is held over the look-ahead it was called for:
+            // getting up shortens the ETA, and that alone must not cancel it
+            // and send her straight back to rest. What it needs is judged
+            // from today's figures over that look-ahead, so it falls as the
+            // damage rate settles; healing (a timely incoming Cure included)
+            // meets it
+            double heldHorizon = 0.0;
             for (const auto& choice : previous)
             {
                 if (choice.cast && choice.cure.target == target.id)
                 {
-                    requiredHp = std::max(requiredHp, choice.requiredHp);
+                    heldHorizon = std::max(heldHorizon, choice.heldHorizon);
                 }
             }
-            const auto remaining = [&](double horizon)
+            const auto needOver = [&](const double horizon)
             {
-                auto expected = target;
-                // Getting up shortens the ETA; that alone must not cancel
-                // the emergency and send her straight back to rest. Healing
-                // (including a timely incoming Cure) can satisfy this need.
+                return target.biggest + target.damageRate * horizon;
+            };
+            double     requiredHp = heldHorizon > 0.0 ? needOver(heldHorizon) : 0.0;
+            const auto remaining  = [&](double horizon)
+            {
+                auto expected    = target;
                 expected.biggest = std::max(expected.biggest, requiredHp - target.damageRate * horizon);
                 return margin(expected, horizon, incoming);
             };
@@ -194,8 +203,15 @@ namespace cardian::cure
                 const double gap = remaining(horizon);
                 if (gap >= 0.0) break;
                 assigned.insert(best->caster);
-                requiredHp = std::max(requiredHp, target.biggest + target.damageRate * horizon);
-                out.push_back({*best, target.hp < target.maximum, requiredHp});
+                // Set as the emergency is called, and kept: a later cure that
+                // would land later is judged over its own longer look-ahead
+                // anyway (remaining), so the hold never needs to grow
+                if (heldHorizon <= 0.0)
+                {
+                    heldHorizon = horizon;
+                }
+                requiredHp  = needOver(heldHorizon);
+                out.push_back({*best, target.hp < target.maximum, requiredHp, heldHorizon});
                 if (target.hp >= target.maximum) break;
                 incoming.push_back(*best);
                 // Another mage may cure simultaneously if this one still

@@ -280,6 +280,7 @@ namespace cardian::tactics
         std::string closeWhy;
         bool        overlapping = false; // another record was open at the same time: a link
         uint32      hitting     = 0;     // whom the mob is on
+        double      hittingSince = 0.0;  // seconds: when it turned onto `hitting`
         uint32      switches    = 0;
         uint32      procs       = 0;
 

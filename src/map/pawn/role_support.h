@@ -41,6 +41,7 @@ namespace pawn::tactics::role
     {
         double biggestHit = 0.0;
         double takenPerSecond = 0.0;
+        double expectedPerSecond = 0.0; // the part of the rate expected of the mobs on her (the map log's word on it)
     };
     auto threat(FightLog& log, CBattleEntity* PMember, double now) -> Threat;
 

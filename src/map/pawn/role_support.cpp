@@ -31,6 +31,7 @@
 #include "tactics.h"
 
 #include "common/logging.h"
+#include "common/settings.h"
 
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
@@ -50,8 +51,8 @@ namespace pawn::tactics::role
     // any has landed on anyone (a switch can bring it to her), the
     // worst the spot remembers -- the risk of death, not the likely
     // hit -- or the formulas' guess before either; and
-    // the rate she takes -- her own this fight, else the spot's or the
-    // guess only when the mob is on her, else nothing
+    // the rate she takes -- her own this fight, blended with the spot's or
+    // the guess while the mob is on her (below)
     auto threat(FightLog& log, CBattleEntity* PMember, const double now) -> Threat
     {
         Threat t;
@@ -72,16 +73,45 @@ namespace pawn::tactics::role
             }
             t.biggestHit = std::max({ t.biggestHit, top != nullptr ? static_cast<double>(top->biggestHit) : 0.0, spot.worstHit, guess ? guess->biggest : 0.0 });
 
-            const double secs = r.seconds(now);
-            const auto*  m    = r.find(PMember->id);
-            const double own  = m != nullptr && secs > 0.0 ? m->damageTaken / secs : 0.0;
-            if (own > 0.0)
+            // The rate she takes from this fight: what she has taken, with the
+            // rate expected of the mob on her counted as
+            // pawn.TACTICS_RATE_PRIOR_SECONDS of evidence ahead of it -- the
+            // spot's record, else the formulas' guess, while the mob is on
+            // her, weighed over the seconds it has been on her (a pull's run
+            // in, or the time it spent on the tank, is no evidence about her).
+            // A fight's first hit reads as a hit, not a torrent, and a mob
+            // known to hit hard reads as hard from its first second; as the
+            // fight runs, what she has taken has the say. With nothing
+            // expected of it, what she has taken over at least that long
+            static const double prior    = std::max(0.5, static_cast<double>(settings::get<float>("pawn.TACTICS_RATE_PRIOR_SECONDS")));
+            const double        secs     = std::max(0.0, r.seconds(now));
+            const auto*         m        = r.find(PMember->id);
+            const double        taken    = m != nullptr ? static_cast<double>(m->damageTaken) : 0.0;
+            double              expected = 0.0;
+            if (r.hitting == PMember->id)
             {
-                t.takenPerSecond += own;
+                if (spot.fights > 0)
+                {
+                    expected = spot.takenPerSecond.mean;
+                }
+                else
+                {
+                    if (!guess.has_value() && PMob != nullptr && PMob->id == r.mobId)
+                    {
+                        guess = bank::melee(r, PMob, PMember, true);
+                    }
+                    expected = guess.has_value() ? guess->perSecond : 0.0;
+                }
             }
-            else if (r.hitting == PMember->id)
+            if (expected > 0.0)
             {
-                t.takenPerSecond += spot.fights > 0 ? spot.takenPerSecond.mean : (guess ? guess->perSecond : 0.0);
+                const double onHer = r.hittingSince > 0.0 ? std::clamp(now - r.hittingSince, 0.0, secs) : secs;
+                t.takenPerSecond += (taken + expected * prior) / (onHer + prior);
+                t.expectedPerSecond += expected;
+            }
+            else if (taken > 0.0)
+            {
+                t.takenPerSecond += taken / std::max(secs, prior);
             }
         }
         return t;
