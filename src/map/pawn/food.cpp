@@ -21,6 +21,7 @@
 
 #include "food.h"
 
+#include "gambit_defaults.h"
 #include "pawn.h"
 #include "pawn_items.h"
 #include "seats.h"
@@ -206,7 +207,7 @@ namespace pawn::food
             const bool fish = race == CharRace::Mithra || PChar->getMod(xi::Mod::EAT_RAW_FISH) == 1;
             const bool meat = race == CharRace::Galka || PChar->getMod(xi::Mod::EAT_RAW_MEAT) == 1;
             const auto seat = cardian::food::seatFor(role, PChar->GetMJob());
-            return cardian::food::pickOwned(bag, seat, role == Role::Healer, ownStats(PChar), fish, meat);
+            return cardian::food::pickOwned(bag, seat, role == Role::Healer, pawn::isMageJob(PChar->GetMJob()), ownStats(PChar), fish, meat);
         }
 
         // A stack of the item in her inventory she can use now

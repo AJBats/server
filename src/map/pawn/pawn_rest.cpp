@@ -280,9 +280,10 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool rowRest    = ordered && m_RestOrder.byRow;
     // The player's own Attack keeps her up until the fight it named is over
     const bool blocked = impossible || (!deliberate && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || HasPlayersOrder() || (rowRest && fightOn())));
-    // The Healer's cookie (RESEARCH §19.2 item 5): about to kneel short of MP,
-    // with the player's food on and none of her own, she eats it first and
-    // kneels once it is down, so a fresh cookie covers the kneel
+    // A cookie, a Healer's or a mage's in any seat (RESEARCH §19.2 item 5,
+    // §19.6): about to kneel short of MP, with the player's food on and none
+    // of her own, she eats it first and kneels once it is down, so a fresh
+    // cookie covers the kneel
     const bool aboutToKneel = healing == nullptr && (want || withPlayer || ordered) && !blocked && !urgent && stationary && !m_Rest.standPending &&
                               m_Rest.canAct(now, false);
     const bool eatsFirst = EatCookieBeforeKneel(aboutToKneel, mpMissing);

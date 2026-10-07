@@ -42,9 +42,9 @@
 // Food (RESEARCH §19): the cardians eat with the player. Her party role
 // says what she eats, and her "Self -> Eat with the player" row eats it:
 // when the player in her zone has a food effect on and she has none, 2 to 7
-// seconds later, at her first free moment between fights. A Healer whose
-// food is a cookie (a short MP food) eats it instead as she kneels for MP,
-// armed by the player's food. A body of the
+// seconds later, at her first free moment between fights. A Healer, or a
+// mage in any seat, whose food is a cookie (a short MP food) eats it instead
+// as she kneels for MP, armed by the player's food. A body of the
 // world eats the census's pick for her (cardian_food, tools/world/census.py)
 // and is kept topped up while she is in the player's party; an owned cardian
 // eats the best food for her role that her own bags hold.
@@ -739,7 +739,8 @@ namespace cardian::food
         }
     }
 
-    // A Healer's short MP food, eaten as she kneels rather than with the player
+    // A short MP food, eaten by a Healer or a mage as she kneels rather than
+    // with the player
     constexpr auto isCookie(const Facts& f) -> bool
     {
         return f.duration < kLongSeconds;
@@ -766,11 +767,13 @@ namespace cardian::food
     // 2026-10-05): the best score for her seat among the foods she carries
     // (score, at her own numbers) -- foods lasting kLongSeconds at least that
     // feed her seat; for a Healer the best such food giving kHealerFloor of
-    // MP while resting or more, else the best such cookie. A tie goes to the
-    // stack she carries more of, then the lower item. Nothing suitable:
-    // nothing. Conditional foods and raw food not hers to eat are never picked
-    inline auto pickOwned(const std::span<const Carried> bag, const Seat seat, const bool healer, const Stats& her, const bool eatsRawFish,
-                          const bool eatsRawMeat) -> std::optional<Pick>
+    // MP while resting or more. With none, a Healer, or a mage in any seat,
+    // falls back to the best cookie giving kHealerFloor or more, eaten as she
+    // kneels. A tie goes to the stack she carries more of, then the lower
+    // item. Nothing suitable: nothing. Conditional foods and raw food not
+    // hers to eat are never picked
+    inline auto pickOwned(const std::span<const Carried> bag, const Seat seat, const bool healer, const bool mage, const Stats& her,
+                          const bool eatsRawFish, const bool eatsRawMeat) -> std::optional<Pick>
     {
         const auto best = [&](const bool cookies) -> std::optional<Pick>
         {
@@ -782,7 +785,7 @@ namespace cardian::food
                 {
                     continue;
                 }
-                if (isCookie(c.facts) != cookies || (healer && c.facts.mod("MPHEAL") < kHealerFloor))
+                if (isCookie(c.facts) != cookies || ((healer || cookies) && c.facts.mod("MPHEAL") < kHealerFloor))
                 {
                     continue;
                 }
@@ -807,7 +810,7 @@ namespace cardian::food
         {
             return lasting;
         }
-        return healer ? best(true) : std::nullopt;
+        return healer || mage ? best(true) : std::nullopt;
     }
 
     // Eating with the player. Her reason to eat: her row is on, the player
@@ -846,9 +849,10 @@ namespace cardian::food
         return std::chrono::milliseconds(std::clamp(rollMs, kDelayMinMs, kDelayMaxMs));
     }
 
-    // The Healer's cookie: eaten as she is about to kneel short of MP, when
-    // her row is on, her food is a cookie she carries, the player's food has
-    // armed her -- he in her zone, as above -- and she has none of her own on
+    // A cookie (a Healer's, or a mage's in any seat): eaten as she is about
+    // to kneel short of MP, when her row is on, her food is a cookie she
+    // carries, the player's food has armed her -- he in her zone, as above --
+    // and she has none of her own on
     struct BeforeKneel
     {
         bool rowOn     = false;

@@ -315,15 +315,15 @@ TEST_CASE("Food: an owned cardian eats the best food for her seat her bags hold"
     };
     // a fighter at a low attack: the accuracy food (15 accuracy at a point each) over the Sausage (16
     // attack at 0.35 and STR 3 at 0.6); at a high one, the Chiefkabob's 65 attack beats both
-    CHECK(pickOwned(bag, Seat::Melee, false, Stats{ .attack = 60, .accuracy = 150 }, false, false) == Pick{ 5001, false });
-    CHECK(pickOwned(bag, Seat::Melee, false, Stats{ .attack = 300, .accuracy = 50 }, false, false) == Pick{ 4574, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, false, Stats{ .attack = 60, .accuracy = 150 }, false, false) == Pick{ 5001, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, false, Stats{ .attack = 300, .accuracy = 50 }, false, false) == Pick{ 4574, false });
     // a Black Mage on the damage seat: her INT and Magic Attack food
-    CHECK(pickOwned(bag, Seat::BlackMage, false, Stats{}, false, false) == Pick{ 5002, false });
+    CHECK(pickOwned(bag, Seat::BlackMage, false, true, Stats{}, false, false) == Pick{ 5002, false });
     // a Healer prefers a long MP food to any cookie
-    CHECK(pickOwned(bag, Seat::WhiteMage, true, Stats{}, false, false) == Pick{ 5592, false });
+    CHECK(pickOwned(bag, Seat::WhiteMage, true, true, Stats{}, false, false) == Pick{ 5592, false });
     // nothing for the seat: nothing
-    CHECK_FALSE(pickOwned(std::vector<Carried>{ { 4394, 20, mp(5, 180) } }, Seat::Melee, false, Stats{}, false, false).has_value());
-    CHECK_FALSE(pickOwned({}, Seat::Melee, false, Stats{ .attack = 100 }, false, false).has_value());
+    CHECK_FALSE(pickOwned(std::vector<Carried>{ { 4394, 20, mp(5, 180) } }, Seat::Melee, false, false, Stats{}, false, false).has_value());
+    CHECK_FALSE(pickOwned({}, Seat::Melee, false, false, Stats{ .attack = 100 }, false, false).has_value());
 }
 
 TEST_CASE("Food: with no long MP food, a Healer's pick is her best cookie; the floor keeps the weak ones out", "[cardian][food]")
@@ -334,16 +334,38 @@ TEST_CASE("Food: with no long MP food, a Healer's pick is her best cookie; the f
         { 5100, 9, mp(2, 10800) }, // a long food under the floor
         { 5101, 9, mp(1, 300) },   // a cookie under the floor
     };
-    CHECK(pickOwned(bag, Seat::WhiteMage, true, Stats{}, false, false) == Pick{ 4576, true });
+    CHECK(pickOwned(bag, Seat::WhiteMage, true, true, Stats{}, false, false) == Pick{ 4576, true });
     const std::vector<Carried> weak{ { 5100, 9, mp(2, 10800) }, { 5101, 9, mp(1, 300) } };
-    CHECK_FALSE(pickOwned(weak, Seat::WhiteMage, true, Stats{}, false, false).has_value());
+    CHECK_FALSE(pickOwned(weak, Seat::WhiteMage, true, true, Stats{}, false, false).has_value());
+}
+
+TEST_CASE("Food: a mage in any seat falls back to her best cookie; a fighter never eats one", "[cardian][food]")
+{
+    const std::vector<Carried> cookies{
+        { 4394, 20, mp(5, 180) }, // Ginger Cookie
+        { 4576, 2, mp(7, 300) },  // Wizard Cookie
+        { 5101, 9, mp(1, 300) },  // a cookie under the floor
+    };
+    // a Black Mage on the damage seat with only cookies: her best one, eaten as she kneels
+    CHECK(pickOwned(cookies, Seat::BlackMage, false, true, Stats{}, false, false) == Pick{ 4576, true });
+    const std::vector<Carried> ginger{ { 4394, 20, mp(5, 180) } };
+    CHECK(pickOwned(ginger, Seat::BlackMage, false, true, Stats{}, false, false) == Pick{ 4394, true });
+    // her seat's long food comes first: one food at a time, and a cookie would take its place
+    auto withInt = cookies;
+    withInt.push_back({ 5002, 4, food(1800, { { "INT", 3 }, { "MATT", 6 } }) });
+    CHECK(pickOwned(withInt, Seat::BlackMage, false, true, Stats{}, false, false) == Pick{ 5002, false });
+    // the floor holds for a mage's cookie as for a Healer's
+    const std::vector<Carried> weak{ { 5101, 9, mp(1, 300) } };
+    CHECK_FALSE(pickOwned(weak, Seat::BlackMage, false, true, Stats{}, false, false).has_value());
+    // a fighter carrying cookies eats none of them
+    CHECK_FALSE(pickOwned(cookies, Seat::Melee, false, false, Stats{ .attack = 100 }, false, false).has_value());
 }
 
 TEST_CASE("Food: a tie goes to the stack she carries more of, then the lower item; raw and conditional food are passed over", "[cardian][food]")
 {
     const Stats her{ .attack = 60 };
     std::vector<Carried> bag{ { 7000, 2, attack(27, 30) }, { 7001, 5, attack(27, 30) }, { 6999, 5, attack(27, 30) } };
-    CHECK(pickOwned(bag, Seat::Melee, false, her, false, false) == Pick{ 6999, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, false, her, false, false) == Pick{ 6999, false });
 
     auto raw = attack(50, 90);
     raw.kind = Kind::RawMeat;
@@ -351,8 +373,8 @@ TEST_CASE("Food: a tie goes to the stack she carries more of, then the lower ite
     branch.conditional = true;
     bag.push_back({ 8000, 1, raw });
     bag.push_back({ 8001, 1, branch });
-    CHECK(pickOwned(bag, Seat::Melee, false, her, false, false) == Pick{ 6999, false });
-    CHECK(pickOwned(bag, Seat::Melee, false, her, false, true) == Pick{ 8000, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, false, her, false, false) == Pick{ 6999, false });
+    CHECK(pickOwned(bag, Seat::Melee, false, false, her, false, true) == Pick{ 8000, false });
 }
 
 TEST_CASE("Food: she eats with the player when he has food on in her zone and she has none, between fights and free", "[cardian][food]")
