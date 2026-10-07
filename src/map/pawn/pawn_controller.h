@@ -480,6 +480,7 @@ public:
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
+    auto KeepsClearOfAggro() const -> bool; // attending, or waiting at her camp spot: other mobs' detection kept out of whatever her switches say
     auto RestsWithPlayer() const -> bool;
     auto RestsByRow() const -> bool;
     auto RestRowDue() const -> bool; // her plain Rest row speaks, she is short, and no rest order is on
@@ -693,6 +694,7 @@ private:
         const CBattleEntity* target     = nullptr; // the mob in the fight: lock-on in reach
         bool                 fighting   = false;   // in danger, hold at the rim (else re-seat the slot)
         bool                 vet        = true;    // false: the party waved the company through
+        bool                 keepsClear = false;   // the walk to her attend or camp spot: vetted for other mobs' detection whatever her switches (KeepsClearOfAggro)
         bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
         bool                 seat       = false;   // a walk to a seat (her herd spot, the mob's back, the camp tank's spot): the mover keeps its path
         bool                 herdSpot   = false;   // a walk to her herd spot: failing it pins her where she stands (HerdPin)
@@ -717,8 +719,9 @@ private:
     auto InsideDanger() const -> bool;      // she stands inside a true circle whose mob sees her (or an ambusher's)
 
     // The perimeter's movers (RESEARCH §12.15): a mob's TP reach off its
-    // live skill list, every hostile move, read once per list per mob
-    // (ReachOf); her mover while she attends -- the crescent outside the
+    // live skill list, its round area moves weighed by move_harm.h, read
+    // once per list per mob (ReachOf); her mover while she attends -- the
+    // crescent outside the
     // ring the reach makes and inside cure range of the tank: out of it she
     // walks to its nearest point, in it she holds where she stands, and
     // when it is empty she stays in at cure range and says so once per
@@ -729,11 +732,12 @@ private:
     auto AttendIntent(CMobEntity* PMob, const Place* place) -> Intent;
     auto CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent;
     // The camp's backline search (CampAttendIntent's): the best spot behind
-    // the flag for a mob at `mob` with its tank at `tank` and AoE out to
-    // `ring`. The fellow mages are kept clear of by the claim board, as
+    // the flag for a mob at `mob` with its tank at `tank`, the AoE she keeps
+    // out of to `ring` and the one she avoids when safe to `softRing`
+    // (perimeter::softRingOf). The fellow mages are kept clear of by the claim board, as
     // every mover's spot is (ClaimSpot). `geometry` names the picture for
     // the log; nothing is said when it is empty
-    auto CampSpot(const Place& place, const position_t& mob, const position_t& tank, float ring, std::string_view geometry) -> Intent;
+    auto CampSpot(const Place& place, const position_t& mob, const position_t& tank, float ring, float softRing, std::string_view geometry) -> Intent;
     // Between pulls at a camp, an attending mage waits -- and kneels --
     // where she expects to attend the next fight (the user, 2026-10-03):
     // the backline for a pull landing at the flag, planned once a camp
@@ -746,6 +750,7 @@ private:
     float                     m_CampWaitBest = 0.0f; // her nearest to the spot so far, and when: a walk that gains nothing ends
     timer::time_point         m_CampWaitBestAt{};
     float                     m_CampRing   = 0.0f; // the ring of the last mob she attended at a camp; 0: none yet
+    float                     m_CampRingSoft = 0.0f; // the same with the moves she avoids when safe (perimeter::softRingOf)
     float                     m_AttendRing = 0.0f; // the ring of the mob she attends, as her mover last measured it
 
 public:

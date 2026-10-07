@@ -241,7 +241,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     if (want || withPlayer || healing != nullptr || rowDue || (m_RestOrder.active() && m_RestOrder.byRow))
     {
         RefreshDangers(AttendedTarget());
-        unsafe = InsideDanger();
+        unsafe = IsAvoiding() && InsideDanger(); // her switches', never an attending mage's spot rule (KeepsClearOfAggro)
         pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 30.0f, [&](CMobEntity* mob)
         {
             unsafe |= !mob->isDead() && mob->GetBattleTarget() == POwner;

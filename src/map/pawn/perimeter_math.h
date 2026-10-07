@@ -40,10 +40,20 @@
 
 namespace cardian::perimeter
 {
-    // A TP move as mob_skills describes it. aoe 0 is single target and its
-    // distance is the reach; 1 is a round centred on the mob and 2 a round
+    // How much a move matters to a mage caught in it (move_harm.h): she
+    // keeps out of it, avoids it when it is safe to, or ignores it
+    enum class Harm : uint8
+    {
+        Hard,
+        Soft,
+        None,
+    };
+
+    // A TP move as mob_skills describes it. aoe 0 is single target, no
+    // area to stand out of; 1 is a round centred on the mob and 2 a round
     // centred on its target, the radius the reach; 4 and 8 are cones from
-    // the mob, the distance again (a cone lies inside that circle).
+    // the mob, aimed at its target -- the tank's to turn away from the
+    // party, never a mage's to stand out of (the user, 2026-10-07).
     // Hostile: its valid targets include an enemy -- a move that only ever
     // lands on the mob's own side is no danger
     struct Move
@@ -53,74 +63,89 @@ namespace cardian::perimeter
         float            radius   = 0.0f;
         bool             hostile  = true;
         std::string_view name{};
+        Harm             harm = Harm::Hard;
     };
 
     // The two circles, as radii, and the move that set each; zero is no
-    // circle, and an empty name means the melee floor set it
+    // circle, and an empty name means the melee floor set it. mob and
+    // target are the moves she keeps out of; softMob and softTarget add the
+    // ones she avoids when it is safe to, so never less than those
     struct Reach
     {
         float            mob    = 0.0f;
         float            target = 0.0f;
         std::string_view mobBy{};
         std::string_view targetBy{};
+        float            softMob    = 0.0f;
+        float            softTarget = 0.0f;
     };
 
-    // Round the mob: the largest of a single-target move's distance, a
-    // self-centred round's radius, a cone's distance, and the mob's melee
-    // reach as the floor. Round its target: the largest target-centred
-    // round's radius. The margin goes on top of each circle there is.
+    // Round the mob: the largest self-centred round's radius, and the mob's
+    // melee reach as the floor. Round its target: the largest target-centred
+    // round's radius. Only rounds count: a single-target move lands on the
+    // one the mob is on, and a cone is the tank's to aim (the user,
+    // 2026-10-07), so a mob with neither lets her tuck in. A move she
+    // ignores counts for nothing, one she avoids when safe only in the soft
+    // circles. The margin goes on top of each circle there is.
     inline auto reachOf(std::span<const Move> moves, const float meleeReach, const float margin) -> Reach
     {
         Reach r;
-        r.mob = std::max(0.0f, meleeReach);
+        r.mob     = std::max(0.0f, meleeReach);
+        r.softMob = r.mob;
         for (const auto& m : moves)
         {
-            if (!m.hostile)
+            if (!m.hostile || m.harm == Harm::None || (m.aoe != 1 && m.aoe != 2))
             {
                 continue;
             }
-            const auto raise = [&](float& radius, std::string_view& by, const float to)
+            const float radius = m.radius;
+            if (m.aoe == 1)
             {
-                if (to > radius)
+                r.softMob = std::max(r.softMob, radius);
+                if (m.harm == Harm::Hard && radius > r.mob)
                 {
-                    radius = to;
-                    by     = m.name;
+                    r.mob   = radius;
+                    r.mobBy = m.name;
                 }
-            };
-            switch (m.aoe)
+            }
+            else
             {
-                case 0:
-                case 4:
-                case 8:
-                    raise(r.mob, r.mobBy, m.distance);
-                    break;
-                case 1:
-                    raise(r.mob, r.mobBy, m.radius);
-                    break;
-                case 2:
-                    raise(r.target, r.targetBy, m.radius);
-                    break;
-                default:
-                    break;
+                r.softTarget = std::max(r.softTarget, radius);
+                if (m.harm == Harm::Hard && radius > r.target)
+                {
+                    r.target   = radius;
+                    r.targetBy = m.name;
+                }
             }
         }
-        if (r.mob > 0.0f)
+        for (float* circle : { &r.mob, &r.target, &r.softMob, &r.softTarget })
         {
-            r.mob += margin;
-        }
-        if (r.target > 0.0f)
-        {
-            r.target += margin;
+            if (*circle > 0.0f)
+            {
+                *circle += margin;
+            }
         }
         return r;
     }
 
     // The ring she keeps round the mob, on the tank's side: the mob's own
     // circle, or the tank's circle carried out past the tank, whichever is
-    // larger
-    inline auto ringOf(const Reach& reach, const float mobToTank) -> float
+    // larger. The tank's circle is carried out from where she holds the mob,
+    // `hold` (its melee reach on her), never farther: while she stands off
+    // -- walking in, the mob on someone else, a pull still running -- the
+    // gap between them is no reach of the mob's, and carried into the ring
+    // it pushed the mages out past cure range
+    inline auto ringOf(const Reach& reach, const float mobToTank, const float hold) -> float
     {
-        return reach.target > 0.0f ? std::max(reach.mob, mobToTank + reach.target) : reach.mob;
+        return reach.target > 0.0f ? std::max(reach.mob, std::min(mobToTank, hold) + reach.target) : reach.mob;
+    }
+
+    // The ring with the moves she avoids when it is safe to: the same
+    // carrying out, and never inside the ring she keeps
+    inline auto softRingOf(const Reach& reach, const float mobToTank, const float hold) -> float
+    {
+        const float soft = reach.softTarget > 0.0f ? std::max(reach.softMob, std::min(mobToTank, hold) + reach.softTarget) : reach.softMob;
+        return std::max(soft, ringOf(reach, mobToTank, hold));
     }
 
     // No spot clears the ring and stays in cast range of the tank: the
@@ -128,6 +153,16 @@ namespace cardian::perimeter
     inline auto noSafeSpot(const float ring, const float mobToTank, const float castRange) -> bool
     {
         return ring - mobToTank > castRange;
+    }
+
+    // The ring she stands outside: the soft one (softRingOf) while the band
+    // between it and cure range of the tank leaves `room` to stand in, else
+    // the one she keeps out of. A band too thin to stand in would leave the
+    // spot finder nothing and her where she stands -- inside the moves she
+    // keeps out of, when the plain ring had room to spare
+    inline auto ringToKeep(const float ring, const float softRing, const float mobToTank, const float castRange, const float room) -> float
+    {
+        return mobToTank + castRange - softRing >= room ? softRing : ring;
     }
 
     // Leave a third of the thin crescent usable instead of collapsing both
@@ -142,10 +177,15 @@ namespace cardian::perimeter
     // every AoE radius impassable. Cure reach matters most; ordinary exposure
     // can be accepted to keep a cramped backline. These costs are in roughly
     // yalm-sized units, with a walking cost and improvement margin below.
-    inline auto campCost(const float forward, const float sideways, const float rearDepth, const float toMob, const float ring, const float toTank, const float castRange) -> float
+    inline auto campCost(const float forward, const float sideways, const float rearDepth, const float toMob, const float ring, const float toTank, const float castRange,
+                         const float softRing = 0.0f) -> float
     {
+        // the soft ring's band beyond the ring she keeps (softRingOf) weighs
+        // a third as much: she steps out of it when that costs little, and
+        // never into another mob's aggro or out of cure range for it. A mob
+        // with no soft moves has no band, and costs what it always did
         const float alignment = 0.45f * std::abs(sideways) + 0.35f * std::abs(-forward - rearDepth) + 3.0f * std::max(0.0f, forward);
-        const float exposure  = 1.5f * std::clamp(ring - toMob, 0.0f, 8.0f);
+        const float exposure  = 1.5f * std::clamp(ring - toMob, 0.0f, 8.0f) + 0.5f * std::clamp(softRing - std::max(toMob, ring), 0.0f, 8.0f);
         const float healing   = 20.0f * std::max(0.0f, toTank - castRange);
         return alignment + exposure + healing;
     }

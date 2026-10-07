@@ -47,6 +47,7 @@ namespace cardian::stake
     constexpr float kSettle   = 1.5f;
     constexpr float kMobAhead = 2.0f; // settle allowance remains entirely ahead of the flag
     constexpr float kFront    = 20.0f; // a camp's front line when the player chose none: a fight settles this far ahead of the flag untowed
+    constexpr float kBack     = 12.0f; // a camp's backline when the player chose none (a camp kept from before the spacing): the placing screen's Medium
 
     // A path being empty alone says nothing about arrival: it may have
     // failed. Confirm melee-ready stillness on consecutive mob updates.
@@ -95,13 +96,15 @@ namespace cardian::stake
         return front > 0.0f ? front : kFront;
     }
 
-    // How far behind the flag the mages stand: the camp's backline (0 when
-    // the player chose none), but never inside the mob's ring -- its reach,
-    // less what the mob stands ahead of the flag -- nor so deep that the tank
-    // is out of their cast range, and never under 3 yalms
+    // How far behind the flag the mages stand: the camp's backline (kBack
+    // when the player chose none, 0), but never inside the mob's ring -- its
+    // reach, less what the mob stands ahead of the flag; 0 when no mob's is
+    // known -- nor so deep that the tank is out of their cast range, and
+    // never under 3 yalms
     inline auto backlineDepth(const float back, const float ring, const float castRange) -> float
     {
-        return std::clamp(std::max(back, ring + 1.0f - kMobAhead), 3.0f, std::max(3.0f, castRange - 2.0f - kMobAhead));
+        const float chosen = back > 0.0f ? back : kBack;
+        return std::clamp(std::max(chosen, ring + 1.0f - kMobAhead), 3.0f, std::max(3.0f, castRange - 2.0f - kMobAhead));
     }
 
     struct ReceiveConfig

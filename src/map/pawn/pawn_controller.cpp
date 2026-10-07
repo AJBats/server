@@ -33,11 +33,13 @@
 #include "role_support.h"
 #include "spell_bank.h"
 #include "spell_movement.h"
+#include "move_harm.h"
 #include "stake_math.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 #include "pawn_rules.h"
 
+#include "common/lua.h"
 #include "common/settings.h"
 #include "enums/char_persist.h"
 #include "enums/msg_basic.h"
@@ -1270,6 +1272,13 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
     if (stake.has_value() && stake->zone != POwner->getZone())
     {
         StandFromRest("the camp is in another zone");
+    }
+    // The ring last seen plans a camp in the same zone's next wait; a camp
+    // in another zone has seen no mob yet
+    if (stake.has_value() && (!m_Stake.has_value() || m_Stake->zone != stake->zone))
+    {
+        m_CampRing     = 0.0f;
+        m_CampRingSoft = 0.0f;
     }
     m_Stake        = std::move(stake);
     m_CampWaitPoint.reset(); // planned afresh for the new camp
@@ -2602,7 +2611,7 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
 {
     m_Dangers.clear();
     m_SightMemo.clear();
-    if (!IsAvoiding())
+    if (!IsAvoiding() && !KeepsClearOfAggro())
     {
         return;
     }
@@ -2611,10 +2620,11 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // would hold her at the rim of the very mob she is meant to hit, or
     // walk up to
     auto* PPawn   = static_cast<CCharEntity*>(POwner);
-    auto  profile = pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks());
+    auto  profile = pawn::danger::Profile::of(PPawn, IsAvoidingAggro() || KeepsClearOfAggro(), IsAvoidingLinks());
     // A spell held for magic aggro (#77): the circles count as though she
-    // were casting, so the walk takes her clear of them before she does
-    profile.casting = profile.casting || m_Tick < m_MagicHoldUntil;
+    // were casting, so the walk takes her clear of them before she does.
+    // So do an attending mage's: she will cast from the spot she picks
+    profile.casting = profile.casting || m_Tick < m_MagicHoldUntil || KeepsClearOfAggro();
     m_Dangers       = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, PIgnore);
 }
 
@@ -2690,14 +2700,20 @@ auto CPawnController::ReachOf(CMobEntity* PMob) -> cardian::perimeter::Reach
     moves.reserve(ids.size());
     for (const auto id : ids)
     {
-        if (auto* PSkill = battleutils::GetMobSkill(id); PSkill != nullptr)
+        auto* PSkill = battleutils::GetMobSkill(id);
+        // A move with no script does nothing when it fires, and is refused
+        // the skill check besides (luautils::OnMobSkillCheck): nothing to
+        // stand out of
+        if (PSkill == nullptr || !::lua["xi"]["actions"]["mobskills"][PSkill->getName()]["onMobWeaponSkill"].valid())
         {
-            moves.push_back({ .aoe      = PSkill->getAoe(),
-                              .distance = PSkill->getDistance(),
-                              .radius   = PSkill->getRadius(),
-                              .hostile  = (PSkill->getValidTargets() & TARGET_ENEMY) != 0,
-                              .name     = PSkill->getName() });
+            continue;
         }
+        moves.push_back({ .aoe      = PSkill->getAoe(),
+                          .distance = PSkill->getDistance(),
+                          .radius   = PSkill->getRadius(),
+                          .hostile  = (PSkill->getValidTargets() & TARGET_ENEMY) != 0,
+                          .name     = PSkill->getName(),
+                          .harm     = cardian::perimeter::harmOf(PSkill->getName()) });
     }
     m_Reach = { PMob->id, listId, cardian::perimeter::reachOf(moves, PMob->GetMeleeRange(POwner), settings::get<float>("pawn.PERIMETER_MARGIN")) };
     return m_Reach.reach;
@@ -2770,7 +2786,11 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     const float       range     = CastRange();
     const auto        reach     = ReachOf(PMob);
     const float       mobToTank = distance(mob, tank, true);
-    const float       ring      = cardian::perimeter::ringOf(reach, mobToTank);
+    // Out of the moves she avoids when it is safe to as well, while a
+    // crescent in cure range clears them; else out of those she keeps out of
+    const float       hardRing  = cardian::perimeter::ringOf(reach, mobToTank, PMob->GetMeleeRange(PTank));
+    const float       softRing  = cardian::perimeter::softRingOf(reach, mobToTank, PMob->GetMeleeRange(PTank));
+    const float       ring      = cardian::perimeter::ringToKeep(hardRing, softRing, mobToTank, range, 1.0f); // a yalm: the crescent's walking room (crescentInset)
     m_AttendRing                = ring;
     const float       toMob     = distance(me, mob, true);
     const float       toTank    = distance(me, tank, true);
@@ -2976,7 +2996,7 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     if (m_SaidNoSpotFor != PMob->id)
     {
         m_SaidNoSpotFor      = PMob->id;
-        const bool  byTank   = reach.target > 0.0f && mobToTank + reach.target > reach.mob;
+        const bool  byTank   = reach.target > 0.0f && std::min(mobToTank, PMob->GetMeleeRange(PTank)) + reach.target > reach.mob;
         const auto  named    = byTank ? reach.targetBy : reach.mobBy;
         std::string move     = named.empty() ? std::string("its melee") : std::string(named);
         std::replace(move.begin(), move.end(), '_', ' ');
@@ -3053,13 +3073,17 @@ auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, con
         const float reach = std::max(1.0f, PMob->GetMeleeRange(POwner) - 0.3f);
         tank = nearPosition(mob, reach, std::numbers::pi_v<float> / 2.0f);
     }
-    const float ring = cardian::perimeter::ringOf(ReachOf(PMob), distance(mob, tank, true));
-    m_CampRing       = ring; // what the camp's next pull is planned for (CampWaitIntent)
-    m_AttendRing     = ring;
-    return CampSpot(place, mob, tank, ring, preparing ? "arrival" : "live");
+    const auto  reach    = ReachOf(PMob);
+    const float ring     = cardian::perimeter::ringOf(reach, distance(mob, tank, true), PMob->GetMeleeRange(PTank));
+    const float softRing = cardian::perimeter::softRingOf(reach, distance(mob, tank, true), PMob->GetMeleeRange(PTank));
+    m_CampRing           = ring; // what the camp's next pull is planned for (CampWaitIntent)
+    m_CampRingSoft       = softRing;
+    m_AttendRing         = ring;
+    return CampSpot(place, mob, tank, ring, softRing, preparing ? "arrival" : "live");
 }
 
-auto CPawnController::CampSpot(const Place& place, const position_t& mob, const position_t& tank, const float ring, const std::string_view geometry) -> Intent
+auto CPawnController::CampSpot(const Place& place, const position_t& mob, const position_t& tank, const float ring, const float softRing,
+                               const std::string_view geometry) -> Intent
 {
     const auto  camp   = place.position();
     const auto  me     = POwner->loc.p;
@@ -3084,7 +3108,7 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
     const auto cost = [&](const position_t& p)
     {
         const float side = cardian::stake::forwardOf(camp.x, camp.z, static_cast<uint8>(camp.rotation + 64), p.x, p.z);
-        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range);
+        return cardian::perimeter::campCost(forward(p), side, rearDepth, distance(p, mob, true), ring, distance(p, tank, true), range, softRing);
     };
 
     // Small rear arc search; mesh clipping naturally compresses it against
@@ -3111,7 +3135,8 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
             add(nearPosition(camp, depth, std::numbers::pi_v<float> + turn * std::numbers::pi_v<float> / 8.0f));
         }
     }
-    if (const auto nearest = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + 1.0f, range - 1.0f, me.x, me.z); nearest.has_value())
+    const float clearOf = cardian::perimeter::ringToKeep(ring, softRing, distance(mob, tank, true), range, 2.0f); // the yalm either side safeSpot is padded by
+    if (const auto nearest = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, clearOf + 1.0f, range - 1.0f, me.x, me.z); nearest.has_value())
     {
         add(position_t(nearest->first, me.y, nearest->second, 0, me.rotation));
     }
@@ -3185,21 +3210,23 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
     const auto camp = place.position();
     // The pull lands at the flag (kMobAhead), its tank at its 3 o'clock at
     // an ordinary mob's melee reach; its AoE the last ring seen at a camp,
-    // else an ordinary melee mob's TP reach. A search that finds nothing
-    // better than where she stands keeps her there
+    // the next pull most likely its kind, else none: with no mob seen, no
+    // AoE is invented and she tucks in to the camp's backline (the user,
+    // 2026-10-07). A search that finds nothing better than where she
+    // stands keeps her there
     constexpr float kOrdinaryReach = 3.0f;
-    constexpr float kOrdinaryRing  = 12.0f;
     const auto      landing        = nearPosition(camp, cardian::stake::kMobAhead, 0.0f);
     if (!m_CampWaitPoint.has_value())
     {
         const auto  tank  = nearPosition(landing, kOrdinaryReach, std::numbers::pi_v<float> / 2.0f);
-        const float ring  = m_CampRing > 0.0f ? m_CampRing : kOrdinaryRing;
-        const auto  spot  = CampSpot(place, landing, tank, ring, "");
+        const float ring  = m_CampRing;
+        const auto  spot  = CampSpot(place, landing, tank, ring, m_CampRingSoft, "");
         m_CampWaitPoint   = spot.kind == Intent::Kind::Path ? spot.point : POwner->loc.p;
         m_CampWaitBest    = std::numeric_limits<float>::max();
         m_CampWaitBestAt  = m_Tick;
-        ShowInfoFmt("pawn: {} plans to wait for the camp's pulls at ({:.1f}, {:.1f}), {:.1f} y from the flag (ring {:.1f}{})", POwner->getName(),
-                    m_CampWaitPoint->x, m_CampWaitPoint->z, distance(*m_CampWaitPoint, camp, true), ring, m_CampRing > 0.0f ? ", the last seen at a camp" : ", an ordinary mob's");
+        ShowInfoFmt("pawn: {} plans to wait for the camp's pulls at ({:.1f}, {:.1f}), {:.1f} y from the flag (ring {:.1f}, avoided when safe {:.1f}{})", POwner->getName(),
+                    m_CampWaitPoint->x, m_CampWaitPoint->z, distance(*m_CampWaitPoint, camp, true), ring, m_CampRingSoft,
+                    m_CampRing > 0.0f ? ", the last seen at a camp" : ", no mob seen yet");
     }
     // The mages wait together, never on one spot (#250): every mage's
     // search picks the same best spot, and the claim board slides a plan
@@ -3242,7 +3269,9 @@ auto CPawnController::CampWaitIntent(const Place& place) -> Intent
         // Best effort, no cooldown: a walk that gains nothing for a few
         // seconds -- no route from where she stands -- ends where she is,
         // which becomes her spot. A kneel puts the walk off, and is no stall
-        if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) || away < m_CampWaitBest - 0.5f)
+        // a detour round another mob's circle is progress too
+        if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) || away < m_CampWaitBest - 0.5f ||
+            m_LastAvoidAction == AvoidAction::Detour)
         {
             m_CampWaitBest   = std::min(m_CampWaitBest, away);
             m_CampWaitBestAt = m_Tick;
@@ -3645,7 +3674,7 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     // (aggressive company allowed) is not vetted at all
     const bool  proposes = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
     AvoidAction action   = AvoidAction::None;
-    if (intent.vet && IsAvoiding() && (proposes || InsideDanger()))
+    if (intent.vet && (IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro())) && (proposes || InsideDanger()))
     {
         if (!proposes)
         {
@@ -4258,6 +4287,18 @@ auto CPawnController::IsAvoiding() const -> bool
     return IsAvoidingAggro() || IsAvoidingLinks();
 }
 
+auto CPawnController::KeepsClearOfAggro() const -> bool
+{
+    // A mage attending a fight, or waiting at her camp spot for the next
+    // pull, keeps her spot and her walk to it out of every other mob's
+    // detection, its magic range among it, whatever her switches say: she
+    // would rather stand in the fight's area move than wake another mob
+    // (the user, 2026-10-07). Only those: the spot search (IsClear) and the
+    // walk her attend or camp spot proposes (Intent::keepsClear) read it;
+    // her rests, her other walks and her held spells stay her switches'
+    return !m_Retreat && (m_Mode == Mode::Attend || (m_Mode == Mode::Follow && Staked() && WaitsAtCampSpot()));
+}
+
 auto CPawnController::RestsWithPlayer() const -> bool
 {
     return Behavior(pawn::Behavior::RestWithPlayer).value_or(0) != 0;
@@ -4548,7 +4589,7 @@ void CPawnController::NoteAggro()
         ShowInfoFmt("pawn: {}: {} comes for her, {:.1f} y off ({}; she {}; it detects by {}; {})", POwner->getName(), PMob->getName(),
                     distance(POwner->loc.p, PMob->loc.p), PMob->PAI->PathFind != nullptr && PMob->PAI->PathFind->IsFollowingPath() ? "it was walking" : "it was standing",
                     POwner->PAI->IsCurrentState<CMagicState>() ? "was casting, rooted" : "was free to move", by.empty() ? "nothing" : by,
-                    !IsAvoidingAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it");
+                    !IsAvoidingAggro() && !KeepsClearOfAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it");
     });
     m_MobsOnHer = std::move(onHer);
 }
@@ -5617,7 +5658,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     Intent proposal;
     if (auto* PAttended = dynamic_cast<CMobEntity*>(AttendedTarget()); PAttended != nullptr)
     {
-        proposal = AttendIntent(PAttended, place);
+        proposal            = AttendIntent(PAttended, place);
+        proposal.keepsClear = true;
         // A kneeling mage puts her move to her attend spot off until the mob
         // comes in: within its ring and this many yalms more of her, the
         // seconds it takes to cover them hers to reach the spot (the user,
@@ -5628,7 +5670,15 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, or her Rest row's, she stays where she kneels
     {
         // At a camp an attending mage's seat is where she will attend the next pull from
-        proposal = place->fixed() && WaitsAtCampSpot() ? CampWaitIntent(*place) : FormationIntent(*place, PPlayer, nullptr);
+        if (place->fixed() && WaitsAtCampSpot())
+        {
+            proposal            = CampWaitIntent(*place);
+            proposal.keepsClear = true;
+        }
+        else
+        {
+            proposal = FormationIntent(*place, PPlayer, nullptr);
+        }
     }
     else
     {

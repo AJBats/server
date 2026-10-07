@@ -210,9 +210,13 @@ TEST_CASE("Stake spacing: the front line's default and the backline's bounds", "
     CHECK(backlineDepth(8, 12, 20) == 11);
     // never past cure range of the tank: a range of 14 allows 10
     CHECK(backlineDepth(16, 6, 14) == 10);
-    // no choice made: as far as the ring asks, and never under 3
-    CHECK(backlineDepth(0, 12, 20) == 11);
-    CHECK(backlineDepth(0, 2, 20) == 3);
+    // no choice made: the default backline, kBack, or as far as the ring asks
+    CHECK(backlineDepth(0, 12, 20) == kBack);
+    CHECK(backlineDepth(0, 15, 20) == 14);
+    // no mob seen (ring 0): the backline as chosen, nothing invented
+    CHECK(backlineDepth(8, 0, 20) == 8);
+    // and never under 3
+    CHECK(backlineDepth(1, 0, 20) == 3);
     // the ring wins over cure range only down to 3: a tiny range keeps 3
     CHECK(backlineDepth(8, 12, 4) == 3);
 }
