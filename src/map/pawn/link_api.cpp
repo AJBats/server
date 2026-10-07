@@ -1650,7 +1650,7 @@ namespace pawn::linkapi
             }
             else if (ask.mode == CL_STAKE_AT)
             {
-                status = pawn::setStakeAt(PChar, position_t(ask.x, ask.y, ask.z, 0, ask.rotation));
+                status = pawn::setStakeAt(PChar, position_t(ask.x, ask.y, ask.z, 0, ask.rotation), ask.front, ask.back);
             }
             else if (clear)
             {
@@ -1658,7 +1658,7 @@ namespace pawn::linkapi
             }
             else
             {
-                status = pawn::setStake(PChar);
+                status = pawn::setStake(PChar, ask.front, ask.back);
             }
             ordersChanged(PChar, ask, reply, status);
         }

@@ -145,6 +145,18 @@ TEST_CASE("Stake receive: arrival or hate joins immediately, never an idle draw"
     CHECK(r.update(0.2, 20, true, false, true, config) == ReceiveAction::Join);
 }
 
+TEST_CASE("Stake fight spot: the camp's front line bounds where a fight settles untowed", "[cardian][stake]")
+{
+    // The default front line, 20 yalms
+    CHECK(keepsFightSpot(false, true, 18, 1));
+    CHECK_FALSE(keepsFightSpot(false, true, 21, 1));
+    // A narrow front line, 5 yalms: a stop 8 yalms out is towed back
+    CHECK(keepsFightSpot(false, true, 4, 1, 5));
+    CHECK_FALSE(keepsFightSpot(false, true, 8, 1, 5));
+    CHECK_FALSE(keepsFightSpot(true, false, 8, 1, 5)); // a kept spot leaving it is revoked
+    CHECK_FALSE(keepsFightSpot(false, true, 3, -1, 5)); // behind the flag, never
+}
+
 TEST_CASE("Stake receive: a pull that turns off its puller is in at once, wherever it is", "[cardian][stake][receive]")
 {
     const ReceiveConfig config;
@@ -184,6 +196,25 @@ TEST_CASE("Stake receive: a pull that turns off its puller is in at once, wherev
     // ...and off the Tank onto a mage after that is a turn
     CHECK(member.update(2, 16, true, false, true, config, 9) == ReceiveAction::Join);
     CHECK(member.turned);
+}
+
+TEST_CASE("Stake spacing: the front line's default and the backline's bounds", "[cardian][stake]")
+{
+    // No choice made: the front line is kFront
+    CHECK(frontLine(0) == kFront);
+    CHECK(frontLine(5) == 5);
+    // The backline as chosen when the mob's ring asks less (a ring of 6:
+    // 6 + 1 - 2 = 5 behind the flag) and cure range allows it (20: 16)
+    CHECK(backlineDepth(12, 6, 20) == 12);
+    // never inside the mob's ring: a ring of 12 asks 11
+    CHECK(backlineDepth(8, 12, 20) == 11);
+    // never past cure range of the tank: a range of 14 allows 10
+    CHECK(backlineDepth(16, 6, 14) == 10);
+    // no choice made: as far as the ring asks, and never under 3
+    CHECK(backlineDepth(0, 12, 20) == 11);
+    CHECK(backlineDepth(0, 2, 20) == 3);
+    // the ring wins over cure range only down to 3: a tiny range keeps 3
+    CHECK(backlineDepth(8, 12, 4) == 3);
 }
 
 TEST_CASE("Stake receive: stationary pulls wait by distance with an eight-second cap", "[cardian][stake][receive]")

@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 44: a PARTY_ROLE's food, what the member eats
+// compatible, the user, 2026-09-14). 45: STAKE's front and back, the camp's front line
+// and backline spacing; 44: a PARTY_ROLE's food, what the member eats
 // in her party role (RESEARCH §19); 43: an item's charges and readyIn, an enchanted
 // piece's charges left and the seconds until it can be used; the finder's LEFT_TOWN; 42: QUEUE's lane, the enchanted item she is
 // putting on, waiting out and using (#297), ENCHANT_BUSY and NO_CHARGES; 41: PREFS, the player's preferences the
@@ -86,7 +87,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 44 };
+enum { CL_PROTOCOL = 45 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1212,7 +1213,8 @@ typedef struct cl_stake
     cl_header h;
     uint8_t   mode;     // CL_STAKE_*
     uint8_t   rotation; // CL_STAKE_AT: the camp's facing, the game's 0-255
-    uint8_t   spare[2];
+    uint8_t   front;    // SET, TOGGLE, AT: the front line, yalms ahead of the flag a fight may settle before the tank tows it back (0: the server's)
+    uint8_t   back;     // SET, TOGGLE, AT: the backline, yalms behind the flag the mages stand, never inside the mob's reach (0: the reach alone)
     float     x;        // CL_STAKE_AT: the spot, in the server's axes (y the height)
     float     y;
     float     z;

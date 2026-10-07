@@ -547,7 +547,7 @@ namespace pawn
     void carryOut(uint32 charid);
     void saveStake(CCharEntity* PPlayer);
     void restoreStake(CCharEntity* PPlayer);
-    void placeStake(CCharEntity* POwner, xi::ZoneId zone, const position_t& at, std::string_view how);
+    void placeStake(CCharEntity* POwner, xi::ZoneId zone, const position_t& at, std::string_view how, float front, float back);
 
     // One town: two city zones of one capital's region -- San d'Oria's,
     // Bastok's, Windurst's, Jeuno's (regions 19 to 22, never one
@@ -1068,6 +1068,8 @@ namespace pawn
         constexpr auto kStakeY    = "[CD]StakeY";
         constexpr auto kStakeZ    = "[CD]StakeZ";
         constexpr auto kStakeRot  = "[CD]StakeRot";
+        constexpr auto kStakeFront = "[CD]StakeFront"; // its spacing, whole yalms
+        constexpr auto kStakeBack  = "[CD]StakeBack";
     } // namespace
 
     void saveStake(CCharEntity* PPlayer)
@@ -1080,6 +1082,8 @@ namespace pawn
             PPlayer->setCharVar(kStakeY, static_cast<int32>(std::lround(stake->at.y * 100.0f)));
             PPlayer->setCharVar(kStakeZ, static_cast<int32>(std::lround(stake->at.z * 100.0f)));
             PPlayer->setCharVar(kStakeRot, stake->at.rotation);
+            PPlayer->setCharVar(kStakeFront, static_cast<int32>(std::lround(stake->front)));
+            PPlayer->setCharVar(kStakeBack, static_cast<int32>(std::lround(stake->back)));
         }
     }
 
@@ -1099,7 +1103,8 @@ namespace pawn
         }
         const position_t at(PPlayer->getCharVar(kStakeX) / 100.0f, PPlayer->getCharVar(kStakeY) / 100.0f, PPlayer->getCharVar(kStakeZ) / 100.0f, 0,
                             static_cast<uint8>(PPlayer->getCharVar(kStakeRot)));
-        placeStake(PPlayer, static_cast<xi::ZoneId>(zone), at, "back where he left it");
+        placeStake(PPlayer, static_cast<xi::ZoneId>(zone), at, "back where he left it", static_cast<float>(PPlayer->getCharVar(kStakeFront)),
+                   static_cast<float>(PPlayer->getCharVar(kStakeBack)));
     }
 
     void carryOut(const uint32 charid)
@@ -1572,7 +1577,7 @@ namespace pawn
         }
     } // namespace
 
-    auto setStake(CCharEntity* POwner) -> uint16
+    auto setStake(CCharEntity* POwner, const float front, const float back) -> uint16
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr)
         {
@@ -1592,11 +1597,11 @@ namespace pawn
                 at = streamed;
             }
         }
-        placeStake(POwner, POwner->getZone(), at, "");
+        placeStake(POwner, POwner->getZone(), at, "", front, back);
         return CL_S_OK;
     }
 
-    auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16
+    auto setStakeAt(CCharEntity* POwner, const position_t& at, const float front, const float back) -> uint16
     {
         if (POwner == nullptr || POwner->loc.zone == nullptr || !std::isfinite(at.x) || !std::isfinite(at.y) || !std::isfinite(at.z))
         {
@@ -1613,15 +1618,19 @@ namespace pawn
         {
             return CL_S_CAMP_OFF_MESH;
         }
-        placeStake(POwner, POwner->getZone(), *landed, "placed");
+        placeStake(POwner, POwner->getZone(), *landed, "placed", front, back);
         return CL_S_OK;
     }
 
-    void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how)
+    void placeStake(CCharEntity* POwner, const xi::ZoneId zone, const position_t& at, const std::string_view how, const float front, const float back)
     {
         auto&      orders = ordersFor(POwner->id);
         const bool moved  = orders.stake.has_value();
-        orders.stake      = Stake{ zone, at };
+        // the front line no farther out than the camp's leash: past it a
+        // fight is outside the camp anyway
+        const float frontYalms = std::clamp(front, 0.0f, settings::get<float>("pawn.HUNT_LEASH"));
+        const float backYalms  = std::max(0.0f, back);
+        orders.stake           = Stake{ zone, at, frontYalms, backYalms };
         // Every change of place leaves them holding: nothing the player does
         // to the camp ever starts him a fight he did not ask for (the user,
         // 2026-09-17). clearStake does the same when the camp comes down
@@ -1629,6 +1638,9 @@ namespace pawn
         ShowInfoFmt("pawn: {} {} the stake {} {} at ({:.1f}, {:.1f}, {:.1f}), facing {} deg; orders Hold{}{}", POwner->getName(), moved ? "moves" : "sets", moved ? "to" : "in",
                     zoneNameOf(orders.stake->zone), at.x, at.y, at.z, at.rotation * 360 / 256, orders.retreat ? "; retreat still active" : "",
                     how.empty() ? "" : fmt::format(" ({})", how));
+        ShowInfoFmt("pawn: {}'s camp spacing: front line {}, backline {}", POwner->getName(),
+                    frontYalms > 0.0f ? fmt::format("{:.0f} y", frontYalms) : std::string("the default"),
+                    backYalms > 0.0f ? fmt::format("{:.0f} y", backYalms) : std::string("as far as the mob's reach asks"));
 
         // CARDIAN TRIAL (stake_flag.h): stand his national banner on the spot,
         // facing the same way. Nothing above this line knows or cares.
