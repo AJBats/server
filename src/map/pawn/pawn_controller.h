@@ -22,7 +22,9 @@
 #pragma once
 
 #include "cardian_link_messages.h"
+#include "claim_board.h"
 #include "engage_math.h"
+#include "glance_math.h"
 #include "herd_math.h"
 #include "pawn.h"
 #include "pawn_danger.h"
@@ -296,8 +298,32 @@ public:
     // Her head turns to PAt (nullptr: straight ahead): the face-target
     // index in the character update, which the client turns a player's
     // head with -- players set it with every position packet, she never
-    // sends one. An update goes out only when it changes.
+    // sends one. Her body's heading is the update's other field, and this
+    // leaves it alone. An update goes out only when it changes.
     void HeadLook(const CBaseEntity* PAt);
+    // Her eyes while she is idle, held or left behind (ROADMAP G item 1,
+    // #249; glance_math.h): in a fight anywhere in her party, on its mob --
+    // the one she attends, else the player's -- or ahead; out of one, on
+    // whoever she emotes at (or who emoted at her) for its seconds, on the
+    // player now and then for a few seconds, and otherwise ahead. Never
+    // through an action, whose own target holds her head. After a fight, or
+    // any stretch away from the idle tick (a fight of her own, a walk he
+    // ordered, a maneuver), the glances start afresh and an emote already
+    // due waits a short stagger, so nothing due meanwhile goes the moment
+    // she is back, the whole party at once
+    void IdleLook(const CCharEntity* PPlayer);
+    // Out of the idle tick -- a walk he ordered, a maneuver, a trek -- her
+    // head is ahead, not left on whatever she last looked at
+    void LookAhead();
+    // A body of the world on her own (RoamTick, a town seat): her head on
+    // whoever she emoted at while it lasts, else ahead
+    void RoamLook();
+    // A fight anywhere in her party (glance_math.h inFight): her own --
+    // engaged, holding, attending, walking in on a mob, a retreat -- a party
+    // member engaged, or a mob on the party, engaged on a member (or a
+    // member's pet) or claimed by one, within the hunt leash of her. Scanned
+    // once a tick
+    auto PartyInFight() const -> bool;
 
     // Mid-action: casting, readying a weapon skill or ability, or shooting
     auto Acting() const -> bool;
@@ -335,10 +361,14 @@ public:
     // over, a later one of the tactician's is the tactician's again
     auto PlayersBuff(uint16 ability, xi::StatusEffect effect) -> bool;
 
-    // A fidget now and then while standing about -- motion only, no text,
-    // to everyone in range; a stare goes to the player. Never mid-walk,
-    // in a fight, resting or casting.
-    void IdleEmote(const CCharEntity* PPlayer);
+    // An emote now and then while standing about (glance_math.h) --
+    // motion only, no text, to everyone in range: a fidget of her own, or
+    // one aimed at the player or at another party member near her, whom she
+    // looks at while she does it; a cardian she emotes at looks back. Its
+    // clock runs from her last emote. One that comes due waits out a fight
+    // anywhere in her party, an action and a kneel, and is let go while she
+    // walks (`stands` false) or the player is far off.
+    void IdleEmote(const CCharEntity* PPlayer, bool stands);
 
     // May she draw on this target yet? The cooldown is set when she LEAVES
     // a fight, not by her last swing: a cardian fresh from rest draws at
@@ -454,6 +484,7 @@ public:
     auto RestsByRow() const -> bool;
     auto RestRowDue() const -> bool; // her plain Rest row speaks, she is short, and no rest order is on
     auto HomePointsWithPlayer() const -> bool;
+    auto EatsWithPlayer() const -> bool; // her "Self -> Eat with the player" row speaks (RESEARCH §19)
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float LockOnSlack      = 2.0f; // lock-on holds this far beyond melee reach, so a step out of reach does not drop it
@@ -668,6 +699,13 @@ private:
         bool                 comesIn    = false;   // the mob she attends is coming in on her: a move no rest puts off
         std::optional<position_t> rearBoundary;    // normal positioning stays behind this frontline; avoidance overrides
         std::optional<position_t> fallback;        // Path: retry toward this target with no stop-short, vetted again
+        // The claim board (claim_board.h): what a spot that gives way to
+        // another member's claim keeps as it slides
+        std::optional<position_t> slideRound;      // the centre she keeps her distance from (the attended mob, a spell's target); none: the party's place
+        std::optional<position_t> keepTo;          // and a point she keeps within keepWithin of (the tank she cures)
+        float                     keepWithin = 0.0f;
+        bool                      holdsSpot  = false; // Stand: she was placed where she stands (the crescent, the camp's backline): crowded, she gives way as a walk would
+        bool                      claimed    = false; // the board has had its say on this point: the walker does not ask again
     };
     auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
@@ -692,33 +730,76 @@ private:
     auto CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent;
     // The camp's backline search (CampAttendIntent's): the best spot behind
     // the flag for a mob at `mob` with its tank at `tank` and AoE out to
-    // `ring`, keeping clear of the fellow mages before her in the party
-    // (#250). `geometry` names the picture for the log; nothing is said
-    // when it is empty
+    // `ring`. The fellow mages are kept clear of by the claim board, as
+    // every mover's spot is (ClaimSpot). `geometry` names the picture for
+    // the log; nothing is said when it is empty
     auto CampSpot(const Place& place, const position_t& mob, const position_t& tank, float ring, std::string_view geometry) -> Intent;
     // Between pulls at a camp, an attending mage waits -- and kneels --
     // where she expects to attend the next fight (the user, 2026-10-03):
     // the backline for a pull landing at the flag, planned once a camp
     // with the ring last seen there, and after a fight the spot she
-    // attended from
+    // attended from; a plan another member has claimed slides off it
     auto CampWaitIntent(const Place& place) -> Intent;
     auto WaitsAtCampSpot() const -> bool; // she attends the camp's fights: a mage whose rows take none
     std::optional<position_t> m_CampWaitPoint; // her planned spot at this camp; reset when the camp is set again
-    std::optional<position_t> m_CampCrowdedBy; // the lower-id mage's spot hers last made way for
+    std::optional<position_t> m_CampWaitSlidTo; // where the claim board last slid the plan: walking to it, she arrives as close as a slide asks
     float                     m_CampWaitBest = 0.0f; // her nearest to the spot so far, and when: a walk that gains nothing ends
     timer::time_point         m_CampWaitBestAt{};
     float                     m_CampRing   = 0.0f; // the ring of the last mob she attended at a camp; 0: none yet
     float                     m_AttendRing = 0.0f; // the ring of the mob she attends, as her mover last measured it
 
 public:
-    // Where she waits at the camp, planned or not yet: what a fellow mage
-    // keeps clear of (CampSpot)
-    auto CampWaitPoint() const -> std::optional<position_t>
-    {
-        return m_CampWaitPoint;
-    }
+    // Her claims on the party's claim board (claim_board.h): where the
+    // walker is taking her while she walks, else where she stands -- and,
+    // waiting at a camp, the spot she plans to wait on while her rest puts
+    // the walk there off
+    auto SpotClaims() const -> std::vector<position_t>;
 
 private:
+    // The claim board (claim_board.h, RESEARCH §12.15): no two party
+    // members aim for one spot. The claims of the cardians before her in
+    // the party order, in that order: those she gives way to
+    struct BoardClaim
+    {
+        const CCharEntity*     PMember = nullptr;
+        position_t             at{};
+    };
+    auto ClaimsBefore() const -> std::vector<BoardClaim>;
+    // The rule for one spot she proposes: crowded by a claim before hers,
+    // it slides to the nearest clear point that keeps the intent's purpose
+    // -- round slideRound (else the party's place) at the spot's distance,
+    // within keepWithin of keepTo, behind a rear boundary -- on the mesh and
+    // out of the danger map. Nothing in `to` when nothing clear is near:
+    // the spot stands
+    struct GaveWay
+    {
+        const CCharEntity*        PBy = nullptr; // the member whose claim crowds the spot; none: the spot is hers
+        position_t                at{};          // that claim
+        std::optional<position_t> to;
+    };
+    auto GiveWay(const position_t& spot, const Intent& intent) -> GaveWay;
+    // The walker's pass through the board: a walk to a point (Path) that
+    // is crowded -- or the spot of a stand she was placed on -- gives way,
+    // said in the map log when it changes. Not the fight's own movers (a
+    // seat, a walk in on a mob, the player's order), a hop, nor the
+    // formation's followers, whose seats are spaced already: they are
+    // claims on the board, never slid
+    void ClaimSpot(Intent& intent);
+    // This tick's verdicts (GiveWay), each with what it was asked on: the
+    // spot, where she stood, the purpose and the board
+    struct GiveWayMemo
+    {
+        std::array<float, 12>               asked{};
+        std::vector<cardian::claims::Point> board;
+        GaveWay                             verdict;
+    };
+    timer::time_point        m_GiveWayTick{};
+    std::vector<GiveWayMemo> m_GiveWayMemo;
+    std::optional<position_t> m_WalkTo; // where the walker is taking her: her claim while she walks
+    timer::time_point         m_WalkToAt{};
+    uint32                    m_GaveWayTo = 0; // the slide last said: to whom, where to, or kept
+    position_t                m_GaveWayAt{};
+    bool                      m_GaveWayKept = false;
     auto HoldNow() const -> cardian::hold::Hold; // her hold as warp_hold.h's rules read it
     auto RearCampRoute(const position_t& point, const position_t& camp) const -> std::optional<std::vector<pathpoint_t>>;
     auto CastRange() const -> float;
@@ -823,6 +904,8 @@ private:
     // PathAround supplies the stop-short distance. Never uses raw stepping.
     auto PathToward(const position_t& point, float closeTo, const position_t* rearBoundary = nullptr) -> bool;
 
+    // Her body turns to the target of an action as it fires, a foe only:
+    // an ally's action turns her head alone (ROADMAP G, #249)
     void FaceTarget(EntityId target) const;
 
     // Seed her gambit rows once, on her first living tick (pawn::loadBrain);
@@ -1085,6 +1168,7 @@ private:
     uint32                  m_SaidNoSpotFor   = 0;
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
     uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change
+    bool                    m_Joining         = false; // walking to the first attending mage's side: she walks on until beside her (AttendIntent)
     // The attended mob's reach, read once per mob and skill list
     struct ReachMemo
     {
@@ -1158,7 +1242,35 @@ private:
     timer::time_point m_HoldOffUntil{ timer::time_point::min() };
     void              HoldOff(const CBattleEntity* PTarget);
     timer::time_point m_LastTidyTime;
-    timer::time_point m_NextIdleEmoteTime;
+
+    // A mage's safety spot faces the battle (ROADMAP G, #249): where the
+    // battle is when this tick's proposal is one -- the crescent or the
+    // camp's backline while she attends (the mob, or where its pull lands),
+    // her camp spot between pulls (where the pull lands); nothing otherwise
+    auto SafetySpotBattle(const Place* place) -> std::optional<position_t>;
+    // After her move: walking to her safety spot (moved since `before`, or
+    // on a path) marks the walk; standing at it after one -- `planned`, the
+    // safety proposal, met -- she turns to face `battleAt`, give or take
+    // pawn.SPOT_FACING_ARC degrees, once, and holds it until she moves again
+    void FaceBattleOnArrival(const std::optional<position_t>& battleAt, const Intent& planned, const position_t& before);
+    bool m_SpotWalk = false; // a walk to her safety spot is under way
+
+    // Who holds her eyes out of a fight, and until when: the one she emoted
+    // at, or a member who emoted at her (IdleLook)
+    struct Look
+    {
+        EntityId          at;
+        timer::time_point until;
+    };
+    std::optional<Look>       m_Look;
+    auto                      HeldLook() -> const CBaseEntity*; // m_Look's entity while it lasts; let go once it is over
+    cardian::glance::Glances  m_Glances;
+    cardian::glance::Emotes   m_Emotes;
+    timer::time_point         m_IdleLookAt{};      // the last idle tick, a cast's included: a gap settles the clocks
+    bool                      m_IdleFight = false; // a fight was on in her party at the last idle tick
+    mutable timer::time_point m_FightAskedAt{};    // PartyInFight's tick, and its answer then
+    mutable bool              m_FightAnswer = false;
+
     std::optional<std::pair<std::string, EntityId>> m_QueuedOrder;
     // The orders behind m_QueuedOrder, in the order he gave them: the line is
     // kQueueDepth deep in all, the first taking the next's place as it goes
@@ -1217,16 +1329,41 @@ private:
     void                   EnchantTick();
     void                   TellQueueLine() const;
 
-    // The order that last started, and when: what a refusal right after it is about
-    // The order last started, the game's word on it heard for kHeels after: its
-    // name for the log and its key for the note, set and cleared together.
-    // Stamped before the order is tried, so a refusal the game gives as it
-    // starts is its own; a try that fails takes it back (OrderNotStarted)
-    std::string       m_StartedOrder;
-    std::string       m_StartedOrderKey;
-    timer::time_point m_StartedOrderAt{ timer::time_point::min() };
-    void              OrderStarted(const std::string& key, unsigned kind, unsigned id);
-    auto              OrderNotStarted() -> bool; // false when the game refused it already, and said so
+    // Her food (RESEARCH §19, pawn_food.cpp). A body of the world in the
+    // player's party is topped up every kTopUpEvery. When her Eat with the
+    // player row speaks, the player in her zone has food on and she has none,
+    // she waits a delay of her own, 2 to 7 seconds, and her role's food is
+    // due -- eaten at the first moment between fights she is free and
+    // standing still. A Healer's cookie is not: it waits for her kneel
+    // (EatCookieBeforeKneel, from RestTick)
+    timer::time_point                m_FoodTopUpAt{};
+    std::optional<timer::time_point> m_FoodAt;      // when she looks for her food: her delay after the player, or a look again
+    std::optional<uint16>            m_FoodDue;     // the food she eats at her first free moment
+    std::string                      m_FoodSaid;    // what her food check last said in the map log
+    void                  FoodTick();
+    auto                  EatCookieBeforeKneel(bool aboutToKneel, bool shortOfMp) -> bool;
+    void                  SayFood(const std::string& line);
+
+    // An order that started, the game's word on it heard for kHeels after:
+    // its name for the log, its key for the note, when it was tried, and the
+    // start of the action state it began (min when it began none)
+    struct StartedOrder
+    {
+        std::string       name;
+        std::string       key;
+        timer::time_point at{ timer::time_point::min() };
+        timer::time_point stateAt{ timer::time_point::min() };
+    };
+    // The order last started, stamped before it is tried, so a refusal the
+    // game gives as it starts is its own; a try that fails takes it back
+    // (OrderNotStarted). The one before it keeps its own word: a refusal its
+    // action gives once the next has started is still about it (ToldAfterOrder)
+    StartedOrder m_Started;
+    StartedOrder m_StartedBefore;
+    void         OrderStarted(const std::string& key, unsigned kind, unsigned id);
+    void         OrderUnderWay();                   // it fired: the action state it began, if any
+    auto         OrderNotStarted() -> bool;         // false when the game refused it already, and said so
+    void         TellRefused(StartedOrder& order, uint16 message, const std::string& said);
 
     // The action itself, no queueing: CL_S_OK when it fired; CL_S_ON_RECAST and
     // CL_S_STANDING_UP for an order to hold; else why not

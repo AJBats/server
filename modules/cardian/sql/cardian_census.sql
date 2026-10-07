@@ -13,8 +13,8 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
   `job`       tinyint(3) unsigned NOT NULL DEFAULT '1',     -- main job id
   `target`    tinyint(3) unsigned NOT NULL DEFAULT '0',     -- what the ladder says she should be now (D6): her cap while the player is online, her level after the offline
                                                           --   catch-up. Her level itself is her character row's (char_stats.mlvl): the census never copies it (user, 2026-09-08)
-  `sub`       tinyint(3) unsigned NOT NULL DEFAULT '0',     -- support job id, 0 for none
-  `sublevel`  tinyint(3) unsigned NOT NULL DEFAULT '0',
+  `sub`       tinyint(3) unsigned NOT NULL DEFAULT '0',     -- support job id at her target (jobs.yaml's convention), 0 for none: her character rows carry the one at her level
+  `sublevel`  tinyint(3) unsigned NOT NULL DEFAULT '0',     --   at the level the game gives a support job (map.SUBJOB_RATIO)
   `anchor`    varchar(16)         NOT NULL DEFAULT 'bank',  -- newbie, peer, rival, veteran, settled, bank
   `cohort`    int(10) unsigned    NOT NULL DEFAULT '0',     -- a peer or rival's cohort: the job she follows, as charid * 100 + job; 0 = none
   `seed`      int(10) unsigned    NOT NULL DEFAULT '0',     -- her private variance
@@ -44,4 +44,20 @@ CREATE TABLE IF NOT EXISTS `cardian_spells` (
   `name`    varchar(15)          NOT NULL,
   `spellid` smallint(5) unsigned NOT NULL,
   PRIMARY KEY (`name`, `spellid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- CARDIAN: her food (RESEARCH.md §19) -- one food for each party role she
+-- might hold, picked by the census tool with her wardrobe by her wealth and
+-- a roll of her seed, and laid in her bag at every dress; the map tops it up
+-- while she is in a player's party and eats it with him. `role` is the
+-- party role as the Cardian Link numbers it (1 Tank, 2 Healer, 3 Damage; a
+-- Puller and no role eat as Damage). `cookie`: a Healer's short MP food,
+-- eaten as she kneels rather than with the player. The census tool and the
+-- map both make the table where it is missing.
+CREATE TABLE IF NOT EXISTS `cardian_food` (
+  `name`   varchar(15)          NOT NULL,
+  `role`   tinyint(3) unsigned  NOT NULL,
+  `itemid` smallint(5) unsigned NOT NULL,
+  `cookie` tinyint(1) unsigned  NOT NULL DEFAULT '0',
+  PRIMARY KEY (`name`, `role`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

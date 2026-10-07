@@ -80,6 +80,13 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/account_wide.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_enchant.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/food_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/food.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/food.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_food.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/food_weights.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/finder_rules.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/glance_math.h
 )
 
 set(MAP_CORE_SOURCES

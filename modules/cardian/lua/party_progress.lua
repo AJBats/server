@@ -422,6 +422,81 @@ end
 
 local inHelper = false -- inside npcUtil.completeMission / completeQuest
 
+-- What a quest or mission script grants the player by a direct call beside
+-- its completion -- a job's unlock ("The Old Lady"'s support job), a weapon
+-- skill, an avatar's pact, a title -- lies outside the reward table the
+-- completion mirror passes on, and reaches the cardians the completion
+-- reached. Key items are left out: one handed over beside a completion is
+-- often the next mission's first step, and a step's key item is each
+-- character's own (ROADMAP N). A script's finish makes those calls just before or
+-- just after the completion, in the same moment: a grant within
+-- kGrantWindow seconds of a completion, either side, is that completion's.
+-- Inside the helper they are the reward table's, which the mirror pays
+local kGrantWindow   = 2
+local lastCompletion = {} -- player id -> { at = os.time(), crew }
+local heldGrants     = {} -- player id -> the grants no completion has claimed yet
+
+local jobNames =
+{
+    'Warrior', 'Monk', 'White Mage', 'Black Mage', 'Red Mage', 'Thief', 'Paladin', 'Dark Knight',
+    'Beastmaster', 'Bard', 'Ranger', 'Samurai', 'Ninja', 'Dragoon', 'Summoner', 'Blue Mage',
+    'Corsair', 'Puppetmaster', 'Dancer', 'Scholar', 'Geomancer', 'Rune Fencer',
+}
+
+local function giveGrant(player, crew, grant)
+    local here, away = partyCardians(player, crew)
+    local names = {}
+    for _, cardian in ipairs(here) do
+        grant.apply(cardian)
+        names[#names + 1] = cardian:getName()
+    end
+    if #names == 0 then
+        return
+    end
+    if grant.line ~= nil then
+        say(player, joinNames(names) .. grant.line)
+    end
+    local behind = {}
+    for _, cardian in ipairs(away) do
+        behind[#behind + 1] = cardian:getName()
+    end
+    trace(player, string.format('%s: %s shared with %s%s', player:getName(), grant.label, table.concat(names, ', '),
+        #behind > 0 and ('; not in the zone: ' .. table.concat(behind, ', ')) or ''))
+end
+
+local function noteGrant(player, grant)
+    if inHelper or not player:isPC() or player:isCardian() then
+        return
+    end
+    local id, now = player:getID(), os.time()
+    local done    = lastCompletion[id]
+    if done ~= nil and now - done.at <= kGrantWindow then
+        giveGrant(player, done.crew, grant)
+        return
+    end
+    local held = {}
+    for _, g in ipairs(heldGrants[id] or {}) do
+        if now - g.at <= kGrantWindow then
+            held[#held + 1] = g -- the ones no completion came for are forgotten
+        end
+    end
+    grant.at          = now
+    held[#held + 1]   = grant
+    heldGrants[id]    = held
+end
+
+local function noteCompletion(player, crew)
+    local id, now      = player:getID(), os.time()
+    lastCompletion[id] = { at = now, crew = crew }
+    local held         = heldGrants[id] or {}
+    heldGrants[id]     = nil
+    for _, grant in ipairs(held) do
+        if now - grant.at <= kGrantWindow then
+            giveGrant(player, crew, grant)
+        end
+    end
+end
+
 -- The player hears the gain once for the party, the way exp is told, and
 -- an exp recruit's hint in party chat, in her own name
 local gained =
@@ -587,6 +662,7 @@ m:addOverride('CBaseEntity.completeMission', function(player, logId, missionId)
     local first = mine and not player:hasCompletedMission(logId, missionId)
     super(player, logId, missionId)
     if mine then
+        noteCompletion(player, kMissionCrew)
         local combat  = isCombatMission(logId, missionId)
         local outcome = settleContracts(player, 'mission', combat and first)
         trace(player, string.format('%s: %s #%d %s completed%s in %s; combat table: %s; %s; %s; party: %s',
@@ -609,6 +685,7 @@ m:addOverride('CBaseEntity.completeQuest', function(player, area, questId)
     local first = player:isPC() and not player:isCardian() and not player:hasCompletedQuest(area, questId)
     super(player, area, questId)
     if player:isPC() and not player:isCardian() then
+        noteCompletion(player, kQuestCrew)
         local outcome = settleContracts(player, 'quest', first)
         trace(player, string.format('%s: quest %s #%d %s completed%s in %s; %s; %s; party: %s',
             player:getName(), questLabel(area), questId, questName(area, questId),
@@ -642,6 +719,49 @@ m:addOverride('CBaseEntity.addFame', function(player, area, fame)
         trace(player, string.format('%s: fame +%d in area %d, shared with %s%s', player:getName(), fame, area, table.concat(names, ', '),
             #behind > 0 and ('; not in the zone: ' .. table.concat(behind, ', ')) or ''))
     end
+end)
+
+-- The grants beside a completion (noteGrant, above)
+m:addOverride('CBaseEntity.unlockJob', function(player, jobId)
+    super(player, jobId)
+    local job = jobNames[jobId]
+    noteGrant(player, {
+        label = string.format('job unlock %d', jobId),
+        line  = jobId == 0 and ' can now designate a support job.' or (job ~= nil and string.format(' can now become a %s.', job) or nil),
+        apply = function(cardian)
+            cardian:unlockJob(jobId)
+        end,
+    })
+end)
+
+m:addOverride('CBaseEntity.addLearnedWeaponskill', function(player, wsUnlockId)
+    super(player, wsUnlockId)
+    noteGrant(player, {
+        label = string.format('weapon skill unlock %d', wsUnlockId),
+        apply = function(cardian)
+            cardian:addLearnedWeaponskill(wsUnlockId)
+        end,
+    })
+end)
+
+m:addOverride('CBaseEntity.addSpell', function(player, spellId, params)
+    super(player, spellId, params)
+    noteGrant(player, {
+        label = string.format('spell %d', spellId),
+        apply = function(cardian)
+            cardian:addSpell(spellId, params)
+        end,
+    })
+end)
+
+m:addOverride('CBaseEntity.addTitle', function(player, titleId)
+    super(player, titleId)
+    noteGrant(player, {
+        label = string.format('title %d', titleId),
+        apply = function(cardian)
+            cardian:addTitle(titleId)
+        end,
+    })
 end)
 
 -- Into the battlefield right behind the player: registered with them by

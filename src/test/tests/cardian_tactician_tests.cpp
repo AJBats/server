@@ -400,7 +400,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     }
     // the tactician's tools first (her cures, her rest), then her orders,
     // and her marked Attack row (off: the melee mage's switch) last
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Tool });
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Tool });
 
     std::vector<std::string> melee;
     for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::PLD))
@@ -413,7 +413,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     }
 
     // a Monk's and a Warrior's: the trio, her three tools, her weapon
-    // skill and rest with the player
+    // skill, rest with the player and eat with the player
     for (const auto job : { xi::Job::MNK, xi::Job::WAR })
     {
         std::vector<std::string> specs;
@@ -421,7 +421,7 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
         {
             specs.push_back(spec);
         }
-        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order });
+        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order });
     }
 }
 
@@ -496,6 +496,17 @@ TEST_CASE("tactician: the self buffs, Boost and Sneak Attack are tools on a Self
     CHECK_FALSE(t::isOrderedUse(-1ms));   // up before the order: not his
     CHECK_FALSE(t::isOrderedUse(5001ms)); // up after his use: the tactician's
     CHECK_FALSE(t::isOrderedUse(std::chrono::minutes(5)));
+}
+
+TEST_CASE("tactician: a row's weapon skill waits while its mob runs, not while it steps", "[cardian][gambits][tactician]")
+{
+    namespace t = cardian::tactician;
+    CHECK_FALSE(t::mobRunning(false, 0.0f));
+    CHECK_FALSE(t::mobRunning(false, 30.0f)); // a path ended, wherever it was going
+    CHECK_FALSE(t::mobRunning(true, 1.5f));   // a step to turn or settle
+    CHECK_FALSE(t::mobRunning(true, t::kMobRunningYalms));
+    CHECK(t::mobRunning(true, t::kMobRunningYalms + 0.1f));
+    CHECK(t::mobRunning(true, 20.0f)); // chasing, or running off
 }
 
 TEST_CASE("tactician: Damage spell (any) marked is her nukes, a tool on a Foe row, her tactician's when and which; an order unmarked", "[cardian][gambits][tactician]")

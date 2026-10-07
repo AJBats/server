@@ -143,8 +143,8 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
     const auto wild  = layersFor<Row>(true, world, own);
     const auto party = layersFor<Row>(false, world, own);
 
-    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5" });
-    CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5" });
+    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5", "6" });
+    CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5", "6" });
 
     // The place is 1-based across both layers: the conveyor's order
     std::vector<std::size_t> places;
@@ -153,7 +153,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
                    places.push_back(place);
                    return false;
                });
-    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8 });
+    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8, 9 });
 
     // The first row to answer true ends the walk, in either layer
     std::vector<std::string> seen;
@@ -396,9 +396,10 @@ TEST_CASE("gambit layers: Healer's bundle onto a melee list puts the tactician's
     auto   lent = lentRows(kHealer, next);
 
     // the role's marked Cure, -na, Enfeeble and Rest come first -- a role
-    // is the quick override -- and her five orders follow in her order
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5" });
-    CHECK(fittedStates(own, lent) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Order });
+    // is the quick override -- and her six orders follow in her order
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5", "6" });
+    CHECK(fittedStates(own, lent) ==
+          std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Order, State::Order });
 
     // the lent rows are found by their ids among the running rows, her own
     // by theirs, and a lent id of a row the role did not lend is nobody's
@@ -406,7 +407,7 @@ TEST_CASE("gambit layers: Healer's bundle onto a melee list puts the tactician's
     CHECK(findRow(layers, "r2", idOf) == &lent[1]);
     CHECK(findRow(layers, "5", idOf) == &own[4]);
     CHECK(findRow(layers, "r9", idOf) == nullptr);
-    CHECK(order(layers) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5" });
+    CHECK(order(layers) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5", "6" });
 }
 
 TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the role's rows stand in her rows' places", "[cardian][gambits][layers][fit]")
@@ -418,7 +419,7 @@ TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the 
     // the bundle's four stand in the places of her Cure (1), her -na (2),
     // her Enfeeble (3) and her Rest (4), under her numbers; the rest of her
     // list is untouched
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "5", "6", "7" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "5", "6", "7", "8" });
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
     CHECK(rows[1].row == &lent[1]);
     CHECK(rows[1].index == 2);
@@ -494,9 +495,9 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     // hers, and her Berserk and Aggressor stay her tactician's tools, the
     // seat deciding which of Berserk and Defender it uses
     // (tactician_line.h buffNow)
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "r3*", "6", "7", "8" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "r3*", "6", "7", "8", "9" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 9);
+    REQUIRE(states.size() == 10);
     CHECK(states[0] == State::Tool);  // * Foe -> Provoke
     CHECK(states[1] == State::Order); // Foe: party leader's target -> Attack
     CHECK(states[2] == State::Tool);  // * Foe: targeted by ally -> Attack, in her row's place: her tactician's melee
@@ -506,6 +507,7 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     CHECK(states[6] == State::Tool);  // * Self -> Aggressor
     CHECK(states[7] == State::Order); // her weapon skill
     CHECK(states[8] == State::Order); // Rest with the player
+    CHECK(states[9] == State::Order); // Eat with the player
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
     CHECK(rows[2].origin == Origin::Both);
     CHECK(rows[2].index == 2);
@@ -525,9 +527,9 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     // them out any more: one tactician, every tool a row), then her orders,
     // and her own marked Attack row last, off: "targeting ally" is not the
     // pull's finder, so the pull does not stand in it
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5", "6", "7" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5", "6", "7", "8" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 10);
+    REQUIRE(states.size() == 11);
     CHECK(states[0] == State::Tool);  // the pull: the tank's melee
     CHECK(states[1] == State::Tool);  // Provoke
     CHECK(states[2] == State::Tool);  // Defender
@@ -537,10 +539,11 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     CHECK(states[6] == State::Tool);  // Rest
     CHECK(states[7] == State::Order); // her weapon skill
     CHECK(states[8] == State::Order); // Rest with the player
-    CHECK(states[9] == State::Tool);  // her own marked Attack row
+    CHECK(states[9] == State::Order); // Eat with the player
+    CHECK(states[10] == State::Tool); // her own marked Attack row
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-    CHECK_FALSE(rows[9].on);
-    CHECK(rows[9].origin == Origin::Own);
+    CHECK_FALSE(rows[10].on);
+    CHECK(rows[10].origin == Origin::Own);
 }
 
 TEST_CASE("gambit layers: an Attack row is its finder: a lent pull takes the same finder's row and leaves her other Attack rows standing", "[cardian][gambits][layers][fit]")
@@ -667,7 +670,7 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
     {
         auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::MNK), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::MNK));
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "r5*", "6", "7", "8" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "r5*", "6", "7", "8", "9" });
     }
     SECTION("a melee job with a hand-made list is lent the trio as orders, ahead of hers")
     {
@@ -718,12 +721,12 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
         // Mage's own
         auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::BLM), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::BLM));
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "r1*", "r2*", "r3*", "6", "7", "8" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "r1*", "r2*", "r3*", "6", "7", "8", "9" });
         // a Black Mage whose own rows have none of them (a Warrior's, kept
         // through a job change) is lent them: her MP pacing comes with the seat
         auto melee = ownRows(pawn::defaultRowsFor(xi::Job::WAR));
         auto again = lentRows(bundle(cardian::party::Role::Damage, xi::Job::BLM), next);
-        CHECK(fitted(melee, again) == std::vector<std::string>{ "r4", "r5", "r6", "1", "2", "3", "4", "5", "6", "7", "8" });
+        CHECK(fitted(melee, again) == std::vector<std::string>{ "r4", "r5", "r6", "1", "2", "3", "4", "5", "6", "7", "8", "9" });
     }
 }
 

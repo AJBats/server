@@ -33,6 +33,7 @@
 #include "offers.h"
 #include "pawn_gambits.h"
 #include "redress.h"
+#include "food.h"
 #include "spell_bank.h"
 #include "tactics.h"
 #include "view.h"
@@ -259,6 +260,7 @@ class PawnModule : public CPPModule
         // The census's answers for a wild cardian dressed at the auction
         // house, likewise (redress.h)
         pawn::redress::ensureTable();
+        pawn::food::ensureTable();
         // The cardian API's messages on the Cardian Link (link_api.cpp), and
         // the Lua libraries two of them are answered from
         pawn::linkapi::registerHandlers();
@@ -277,7 +279,8 @@ class PawnModule : public CPPModule
                                                               "AVOID_LINKS", static_cast<uint16>(pawn::Behavior::AvoidLinks),
                                                               "FORMATION", static_cast<uint16>(pawn::Behavior::Formation),
                                                               "REST_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::RestWithPlayer),
-                                                              "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer));
+                                                              "HOME_POINT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::HomePointWithPlayer),
+                                                              "EAT_WITH_PLAYER", static_cast<uint16>(pawn::Behavior::EatWithPlayer));
         ::lua["xi"]["pawn"]["slot"]     = ::lua.create_table_with("FOLLOW", static_cast<uint16>(pawn::Slot::Follow),
                                                               "LEAD", static_cast<uint16>(pawn::Slot::Lead),
                                                               "FLANK_LEFT", static_cast<uint16>(pawn::Slot::FlankLeft),
@@ -762,13 +765,6 @@ class PawnModule : public CPPModule
             if (PLive != nullptr && (action == GP_CLI_COMMAND_ACTION_ACTIONID::AttackOff || action == GP_CLI_COMMAND_ACTION_ACTIONID::Talk))
             {
                 PLive->LeavingByHand();
-            }
-            // His own Berserk or Defender is his order: his tactician's
-            // stance never takes it off (CGambits::PlayersBuff)
-            if (const auto ability = packet.as<GP_CLI_COMMAND_ACTION>()->JobAbility.SkillId;
-                PLive != nullptr && action == GP_CLI_COMMAND_ACTION_ACTIONID::JobAbility && cardian::tactician::isStanceAbility(ability))
-            {
-                PLive->Gambits().NoteOrderedStance(static_cast<uint16>(ability));
             }
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_GROUP_SOLICIT_REQ))

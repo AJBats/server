@@ -1,8 +1,9 @@
 // Cardian: re-dressing a wild cardian at the auction house (pawn/redress.h),
 // its decisions as plain rules: when to ask the census, what its answer
-// raises, and which pieces leave her bag.
+// raises, which pieces leave her bag, and what her support job takes.
 #pragma once
 
+#include <algorithm>
 #include <charconv>
 #include <cstdint>
 #include <optional>
@@ -148,8 +149,8 @@ namespace cardian::redress
         return out;
     }
 
-    // Item ids joined by commas: the pieces the census had issued her before
-    // this plan (the row's `issued`)
+    // Item ids joined by commas: the pieces and the food the census had
+    // issued her before this plan (the row's `issued`)
     inline auto parseIds(const std::string_view text) -> std::set<uint16_t>
     {
         std::set<uint16_t> out;
@@ -169,5 +170,73 @@ namespace cardian::redress
     inline auto dropsPiece(const uint16_t itemId, const bool worn, const std::set<uint16_t>& plan, const std::set<uint16_t>& issued) -> bool
     {
         return !worn && issued.contains(itemId) && !plan.contains(itemId);
+    }
+
+    // The census's answer is put on her only at the level it was planned
+    // for. One planned for another level -- she dinged after asking, or the
+    // catch-up moved her on while it waited for her next stand -- is set
+    // aside, gear, spells, skills and support job alike, and she asks again
+    // at the next counter: its support job could take back the one the
+    // catch-up gave her
+    inline auto answerFits(const uint8_t answerLevel, const uint8_t levelNow) -> bool
+    {
+        return answerLevel != 0 && answerLevel == levelNow;
+    }
+
+    // The support job the census planned for the level and the job's own
+    // level as she levelled it, ahead of the half the game shows (the row's
+    // `sub` and `sublevel`; job 0 for none)
+    struct SubPlan
+    {
+        uint8_t job   = 0;
+        uint8_t level = 0;
+    };
+
+    // What she has of it now: her main and support jobs, the planned job's
+    // own level in her job table, and her unlocked jobs (char_jobs.unlocked:
+    // bit 0 the support job itself, then one bit per job id)
+    struct SubNow
+    {
+        uint8_t  mainJob  = 0;
+        uint8_t  subJob   = 0;
+        uint8_t  jobLevel = 0;
+        uint32_t unlocked = 0;
+    };
+
+    // What the re-dress writes: the unlocks with the support job's and the
+    // job's own bits added, and the job's level raised to the plan's, never
+    // lowered. The game gives the support job the lesser of that level and
+    // half her main (SetSLevel). `switchJob` when she carries another support
+    // job, or none: that takes the game's own job change, as her player's Mog
+    // House would. The same support job at a higher level takes only what
+    // the game's own level change does, and nothing a job change would
+    struct SubChange
+    {
+        uint32_t unlocked  = 0;
+        uint8_t  jobLevel  = 0;
+        bool     switchJob = false;
+
+        auto operator==(const SubChange&) const -> bool = default;
+    };
+
+    // The highest job id a support job may be: the Rune Fencer's, the last
+    // job a character holds (Monstrosity's 23 is no job of hers)
+    constexpr uint8_t kLastJob = 22;
+
+    // Her support job as the census plans it: nothing when it plans none --
+    // a support job is never taken away -- when the plan names her main or
+    // no real job, or when she already carries it at that level, unlocked
+    inline auto subChange(const SubPlan plan, const SubNow now) -> std::optional<SubChange>
+    {
+        if (plan.job == 0 || plan.level == 0 || plan.job > kLastJob || plan.job == now.mainJob)
+        {
+            return std::nullopt;
+        }
+        const SubChange change{ now.unlocked | 1u | (1u << plan.job), std::max(now.jobLevel, plan.level), now.subJob != plan.job };
+        if (!change.switchJob && change.unlocked == now.unlocked && change.jobLevel == now.jobLevel)
+        {
+            return std::nullopt;
+        }
+        return change;
     }
 } // namespace cardian::redress

@@ -56,6 +56,28 @@ namespace pawn::auction
 {
     namespace
     {
+        // Every item ever listed, by its id and whether as a stack: what the
+        // shelves offer. It only grows, so it is read from the whole sale
+        // history once and then from the rows added since (the shelf is asked
+        // every few seconds while open, and the history runs to hundreds of
+        // thousands of rows). "Since" reaches kLateRows back: the market
+        // writes thousands of rows in one transaction, whose ids can sit below
+        // a listing the map committed first
+        auto listedEver() -> const std::set<std::pair<uint16, bool>>&
+        {
+            constexpr uint32                         kLateRows = 20000;
+            static std::set<std::pair<uint16, bool>> listed;
+            static uint32                            readTo = 0;
+            const uint32                             from   = readTo > kLateRows ? readTo - kLateRows : 0;
+            const auto rset = db::preparedStmt("SELECT itemid, stack, MAX(id) AS last FROM auction_house WHERE id > ? GROUP BY itemid, stack", from);
+            while (rset && rset->next())
+            {
+                listed.emplace(rset->get<uint16>("itemid"), rset->get<uint8>("stack") != 0);
+                readTo = std::max(readTo, rset->get<uint32>("last"));
+            }
+            return listed;
+        }
+
         // The level the equip handler weighs a piece against
         auto equipLevel(const CCharEntity* PChar) -> uint8
         {
@@ -340,17 +362,12 @@ namespace pawn::auction
         }
 
         const auto level = equipLevel(PChar);
+        for (const auto& [itemId, stack] : listedEver())
         {
-            const auto rset = db::preparedStmt("SELECT DISTINCT itemid, stack FROM auction_house");
-            while (rset && rset->next())
+            const auto* PItem = xi::items::lookup<CItemEquipment>(itemId);
+            if (wearable(PChar, PItem, equipSlot, job, level) && (!stack || PItem->getStackSize() > 1))
             {
-                const auto  itemId = rset->get<uint16>("itemid");
-                const bool  stack  = rset->get<uint8>("stack") != 0;
-                const auto* PItem  = xi::items::lookup<CItemEquipment>(itemId);
-                if (wearable(PChar, PItem, equipSlot, job, level) && (!stack || PItem->getStackSize() > 1))
-                {
-                    out.push_back({ itemId, PItem->getReqLvl(), 0, 0, PItem->getAHCat(), stack, stack ? PItem->getStackSize() : 1 });
-                }
+                out.push_back({ itemId, PItem->getReqLvl(), 0, 0, PItem->getAHCat(), stack, stack ? PItem->getStackSize() : 1 });
             }
         }
         if (out.empty())
@@ -398,36 +415,29 @@ namespace pawn::auction
         }
 
         std::unordered_map<uint16, std::string> names;
+        for (const auto& [itemId, stack] : listedEver())
         {
-            const auto rset = db::preparedStmt(fmt::format("SELECT DISTINCT ah.itemid, ah.stack FROM auction_house AS ah "
-                                                           "INNER JOIN item_basic AS ib ON ib.itemid = ah.itemid WHERE ib.aH IN ({})",
-                                                           fmt::join(categories, ",")));
-            while (rset && rset->next())
+            const auto* PItem = xi::items::lookup(itemId);
+            if (PItem == nullptr || !order.contains(PItem->getAHCat()) || (stack && PItem->getStackSize() <= 1))
             {
-                const auto  itemId = rset->get<uint16>("itemid");
-                const bool  stack  = rset->get<uint8>("stack") != 0;
-                const auto* PItem  = xi::items::lookup(itemId);
-                if (PItem == nullptr || (stack && PItem->getStackSize() <= 1))
+                continue;
+            }
+            uint8 level = 0;
+            if (learnable)
+            {
+                const auto needs = learnLevel(PChar, PItem);
+                if (!needs)
                 {
                     continue;
                 }
-                uint8 level = 0;
-                if (learnable)
-                {
-                    const auto needs = learnLevel(PChar, PItem);
-                    if (!needs)
-                    {
-                        continue;
-                    }
-                    level = *needs;
-                }
-                else if (const auto* PEquip = dynamic_cast<const CItemEquipment*>(PItem))
-                {
-                    level = PEquip->getReqLvl();
-                }
-                out.push_back({ itemId, level, 0, 0, PItem->getAHCat(), stack, stack ? PItem->getStackSize() : 1 });
-                names.try_emplace(itemId, PItem->getName());
+                level = *needs;
             }
+            else if (const auto* PEquip = dynamic_cast<const CItemEquipment*>(PItem))
+            {
+                level = PEquip->getReqLvl();
+            }
+            out.push_back({ itemId, level, 0, 0, PItem->getAHCat(), stack, stack ? PItem->getStackSize() : 1 });
+            names.try_emplace(itemId, PItem->getName());
         }
 
         priced(out);

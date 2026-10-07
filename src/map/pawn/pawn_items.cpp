@@ -631,7 +631,7 @@ namespace pawn::items
         }
     }
 
-    auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location) -> uint16
+    auto useItem(CCharEntity* PPawn, const uint8 slot, const uint8 location, const bool ordered) -> uint16
     {
         // A held simulation (pause/pause.h) starts nothing, and a slot is no order to
         // keep for the release: her bag can be sorted meanwhile.
@@ -669,7 +669,7 @@ namespace pawn::items
         // Finish the rest transitions before the item's engine wind-up.
         if (auto* controller = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); controller != nullptr)
         {
-            if (!controller->PrepareRestAction(true))
+            if (!controller->PrepareRestAction(ordered))
             {
                 return CL_S_STANDING_UP;
             }

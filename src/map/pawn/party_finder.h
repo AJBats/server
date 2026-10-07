@@ -21,16 +21,20 @@
 
 #pragma once
 
-// The party finder (ROADMAP H slice 3): the player names what they are
-// recruiting for and shouts; up to eight of the world's adventurers in
-// reach -- the player's zone or elsewhere in their city, the range an
-// invite crosses on its own -- hear it and answer, each with a line of
-// her own. The finder is the only way one of the world's adventurers
-// joins a party: the invite takes a yes from the player's current shout
-// for that same goal, and the game's own /invite at her is refused.
-// Recruiting proper, the pearl, is a later verb; this is the party's door.
+// The party finder (ROADMAP H slice 3, reworked by RESEARCH §18.6): the
+// player names what they are recruiting for and shouts; the yell reaches
+// every city and town wherever he shouts from, sixteen to twenty of the
+// world's adventurers there hear it, and each answers with a line of her
+// own, the nearest first. The finder is the only way one of the world's
+// adventurers joins a party: the invite takes a yes from the player's
+// current shout for that same goal, and the game's own /invite at her is
+// refused. A recruit from afar sets out on her yes and arrives by the
+// travel code's teleport (joinedFromShout). Recruiting proper, the pearl,
+// is a later verb; this is the party's door. The rules themselves -- who
+// hears, the yes or no, the seats, the order -- are finder_rules.h
 
 #include "common/cbasetypes.h"
+#include "finder_rules.h"
 #include "pawn.h"
 
 #include <array>
@@ -42,41 +46,8 @@ class CCharEntity;
 
 namespace pawn::finder
 {
-    // What the player is recruiting for, and once she joins, her contract
-    // (the user, 2026-09-13). Experience points is the easy ask -- anyone
-    // the player's fame reaches -- and her affinity grows with the exp she
-    // gains beside them; a quest asks more and pays affinity at its
-    // completion; a mission asks the most, her rank as well, and is the
-    // only recruitment under which a mission completed together counts
-    // (the pearl's lock). Under the wrong contract nothing counts, and
-    // an exp recruit hints in party chat that exp is what she came for
-    struct Goal
-    {
-        enum class Kind : uint8
-        {
-            Experience,
-            Mission,
-            Quest,
-        };
-        Kind  kind = Kind::Experience;
-        uint8 log  = 0; // the mission log or quest area
-
-        auto operator==(const Goal&) const -> bool = default;
-    };
-
     auto goalFrom(const std::string& kind, int log) -> Goal;
     auto kindName(const Goal& goal) -> const char*; // "exp", "quest", "mission"
-
-    // Where her mission log stands against the player's current mission in
-    // the goal's log: not that far (a no), on that very mission (a big yes),
-    // past it (she knows the way), or between missions and free to take it
-    enum class MissionFit : uint8
-    {
-        Free,
-        Behind,
-        On,
-        Done,
-    };
 
     struct Answer
     {
@@ -85,9 +56,9 @@ namespace pawn::finder
         std::string line;                   // hers: why she comes, or why not
     };
 
-    // Where she is, to the player: standing in his zone, standing elsewhere in
-    // his city, in a party (standing, or camping faded), online with no body,
-    // or away
+    // Where she is, to the player: standing in his zone, standing elsewhere
+    // (a town or city the shout reached), in a party (standing, or camping
+    // faded), online with no body, or away
     enum class Presence : uint8
     {
         Here,
@@ -110,22 +81,23 @@ namespace pawn::finder
         uint32      affinity = 0; // hers toward this player, from the memory row
         std::string zone;         // the underscore name, as the game names the zone
         uint16      zoneId   = 0; // for the client's own short name of it
+        uint32      hops     = 0; // zone lines between her zone and the player's
         Presence    presence = Presence::Away;
         Answer      answer;
     };
 
-    // The shout: up to eight of the adventurers in reach the world holds
-    // (on the ladder or standing) hear it, picked at random -- enough
-    // willing ones to fill the party when the crowd has them, the rest a
-    // mix -- and answer in their own time: a reveal delay and a deciding
-    // time each, drawn so the replies trickle in unevenly. Each answer is
-    // the willingness question with a mood roll on its soft part, fixed
-    // when the shout is made, so a marginal no can flip on a re-shout and
-    // a hard no never does. A mission shout also carries up to three
-    // extra nos from those who have not reached it, shuffled in with the
-    // rest. A shout is a snapshot per player, good for SHOUT_LIFETIME:
-    // asked again with `again` false it is the same shout, so the screen
-    // can replay it; `again` true is a new one, refused inside
+    // The shout: sixteen to twenty of the adventurers online in the cities
+    // and towns hear it (rules::pickHeard) -- a friend seat, an affinity
+    // seat, enough willing ones to fill the party when the crowd has them,
+    // up to three who cannot come (out of the level band, or short of the
+    // mission), the rest a mix of those who could -- and answer in their
+    // own time, nearest first: a reveal delay and a deciding time each,
+    // drawn so the replies trickle in unevenly. Each answer is the
+    // willingness question with a mood roll on its soft part, fixed when
+    // the shout is made, so a marginal no can flip on a re-shout and a hard
+    // no never does. A shout is a snapshot per player, good for
+    // SHOUT_LIFETIME: asked again with `again` false it is the same shout,
+    // so the screen can replay it; `again` true is a new one, refused inside
     // SHOUT_COOLDOWN (the current one comes back, its waitMs saying how
     // long). A shout with nobody in reach starts no cooldown. A no here
     // records nothing against her
@@ -183,14 +155,22 @@ namespace pawn::finder
     // The party invite the player would send by hand, sent for them. She
     // must be a yes in the player's current shout for this same goal (the
     // shout is the only ask; a name nobody shouted for, or a yes to another
-    // goal, is refused), then what stops her regardless of mood is asked
-    // again -- a party, a fight, a camp, the level band, a mission she has
-    // not reached -- then the packet handler's checks (a leader or
-    // unpartied inviter, room in the party, an invitee alive, unpartied
-    // and not already asked), then the solicit packet the pawn answers by
-    // herself. A faded candidate stands first. CL_S_OK on success, else
-    // why not; CL_S_DECLINES with her words in `line`
+    // goal, is refused) and still in a city or town (CL_S_LEFT_TOWN), then
+    // what stops her regardless of mood is asked again -- a party, a fight,
+    // a camp, the level band, a mission she has not reached -- then the
+    // packet handler's checks (a leader or unpartied inviter, room in the
+    // party, an invitee alive, unpartied and not already asked), then the
+    // solicit packet the pawn answers by herself. A faded candidate stands
+    // first, where she is. CL_S_OK on success, else why not; CL_S_DECLINES
+    // with her words in `line`
     auto invite(CCharEntity* PPlayer, uint32 charid, const Goal& goal, std::string& line) -> uint16;
+
+    // She joined his party just now on a yes to his shout, not on an open
+    // contract: true once, as she joins (pawn.cpp's gatherOrHold asks it).
+    // From anywhere but his zone or his city she then sets out at once and
+    // arrives by the travel code's teleport (RESEARCH §18.6), where a
+    // contract member invited from afar holds until gathered
+    auto joinedFromShout(uint32 charid) -> bool;
 
     // She answered a shout that has not lapsed: the invite may still come,
     // so the world's clocks (a town seat's dwell) leave her where she is

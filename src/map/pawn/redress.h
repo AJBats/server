@@ -26,9 +26,9 @@ class CZone;
 // A wild cardian re-dressed at the auction house. When the player stands by
 // an auction counter, each of the world's adventurers in his party who stands
 // by it too, and whose level has risen since she was last dressed there, is
-// re-geared, taught her spells and has her skills brought up to her level, by
-// the census's own rules (tools/world/census.py): her wardrobe, her spellbook,
-// her skill values. The census is asked through a row of cardian_redress and
+// re-geared, given her food, taught her spells and has her skills brought up
+// to her level, by the census's own rules (tools/world/census.py): her
+// wardrobe, her food, her spellbook, her skill values. The census is asked through a row of cardian_redress and
 // answers through it (cardian_redress.sql has the life of a row); the map
 // puts the answer on her while she stands, since the census never writes the
 // character tables of a body the map holds. An alt or a recruit is the
