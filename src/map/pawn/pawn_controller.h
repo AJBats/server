@@ -1334,7 +1334,7 @@ private:
     // player row speaks, the player in her zone has food on and she has none,
     // she waits a delay of her own, 2 to 7 seconds, and her role's food is
     // due -- eaten at the first moment between fights she is free and
-    // standing still. A Healer's cookie is not: it waits for her kneel
+    // standing still. A cookie is not: it waits for her kneel
     // (EatCookieBeforeKneel, from RestTick)
     timer::time_point                m_FoodTopUpAt{};
     std::optional<timer::time_point> m_FoodAt;      // when she looks for her food: her delay after the player, or a look again

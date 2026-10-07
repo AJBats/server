@@ -1,9 +1,9 @@
 // Cardian: her food (RESEARCH §19). Her "Self -> Eat with the player" row
 // eats her party role's food when the player in her zone has food on and
 // she has none, 2 to 7 seconds later by a roll of her own, at her first free
-// moment between fights; a Healer whose food is a cookie eats it as she
-// kneels for MP instead (RestTick); and a body of the world in the player's
-// party is kept topped up, so she never runs out. What she eats is
+// moment between fights; a Healer or a mage whose food is a cookie eats it
+// as she kneels for MP instead (RestTick); and a body of the world in the
+// player's party is kept topped up, so she never runs out. What she eats is
 // pawn/food.h's, the rules food_math.h's.
 #include "food.h"
 #include "party_roster.h"
