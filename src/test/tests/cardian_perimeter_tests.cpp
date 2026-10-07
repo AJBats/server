@@ -27,6 +27,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
+#include "map/pawn/move_harm.h"
 #include "map/pawn/perimeter_math.h"
 
 #include <cmath>
@@ -55,12 +56,79 @@ TEST_CASE("Perimeter: a target-centred round is a circle round the target alone"
     CHECK_THAT(r.target, WithinAbs(10.0f, 1e-4));
 }
 
-TEST_CASE("Perimeter: cones and single-target moves reach by their distance, the largest wins", "[cardian][perimeter]")
+TEST_CASE("Perimeter: only rounds count -- a cone is the tank's to aim, a single-target move no area", "[cardian][perimeter]")
 {
+    // Cones at 9 and 7, a single target at 6: only the 5 y round counts
     const std::vector<Move> moves{ { .aoe = 4, .distance = 9.0f }, { .aoe = 8, .distance = 7.0f }, { .aoe = 0, .distance = 6.0f }, { .aoe = 1, .radius = 5.0f } };
     const auto              r = reachOf(moves, 3.4f, 1.0f);
-    CHECK_THAT(r.mob, WithinAbs(10.0f, 1e-4));
+    CHECK_THAT(r.mob, WithinAbs(6.0f, 1e-4));
     CHECK_THAT(r.target, WithinAbs(0.0f, 1e-4));
+    // A single-target move at 20 y, however far it reaches, leaves the
+    // melee floor: a mob with no area attack lets the mages tuck in
+    const std::vector<Move> single{ { .aoe = 0, .distance = 20.0f, .name = "arrow" } };
+    const auto              s = reachOf(single, 3.4f, 1.0f);
+    CHECK_THAT(s.mob, WithinAbs(4.4f, 1e-4));
+    CHECK(s.mobBy.empty());
+}
+
+TEST_CASE("Perimeter: a move she ignores counts for nothing, one she avoids when safe only in the soft ring", "[cardian][perimeter]")
+{
+    // Kept out of: a 10 y round. Avoided when safe: a 16 y round (Slow)
+    // and an 8 y round on the target (Weight). Ignored: a 30 y round
+    // (Evasion Down)
+    const std::vector<Move> moves{ { .aoe = 1, .radius = 10.0f, .name = "kept" },
+                                   { .aoe = 1, .radius = 16.0f, .name = "slow", .harm = Harm::Soft },
+                                   { .aoe = 2, .radius = 8.0f, .name = "weight", .harm = Harm::Soft },
+                                   { .aoe = 1, .radius = 30.0f, .name = "evasion_down", .harm = Harm::None } };
+    const auto              r = reachOf(moves, 3.0f, 2.0f);
+    CHECK_THAT(r.mob, WithinAbs(12.0f, 1e-4));
+    CHECK(r.mobBy == "kept");
+    CHECK_THAT(r.target, WithinAbs(0.0f, 1e-4));
+    CHECK_THAT(r.softMob, WithinAbs(18.0f, 1e-4));
+    CHECK_THAT(r.softTarget, WithinAbs(10.0f, 1e-4));
+    // the tank 3 y from the mob: kept out of 12, avoided when safe 18
+    CHECK_THAT(ringOf(r, 3.0f, 4.0f), WithinAbs(12.0f, 1e-4));
+    CHECK_THAT(softRingOf(r, 3.0f, 4.0f), WithinAbs(18.0f, 1e-4));
+    // A reach with no soft circles: the soft ring is the ring
+    CHECK_THAT(softRingOf(Reach{ .mob = 12.0f, .target = 10.0f }, 3.0f, 4.0f), WithinAbs(13.0f, 1e-4));
+    // At a camp, a spot inside the soft ring costs more than one outside it
+    CHECK(campCost(-12, 0, 12, 14, 12, 15, 20, 18) > campCost(-12, 0, 12, 19, 12, 18, 20, 18));
+    // ...and a mob with no soft moves (the soft ring the ring) costs what it
+    // always did, at 1.5 a yalm inside the ring
+    CHECK_THAT(campCost(-12, 0, 12, 8, 12, 15, 20, 12), WithinAbs(campCost(-12, 0, 12, 8, 12, 15, 20), 1e-4));
+    CHECK_THAT(campCost(-12, 0, 12, 8, 12, 15, 20), WithinAbs(6.0f, 1e-4));
+    // A kept circle on the target and soft rounds on the mob: the soft ring
+    // is the larger of the two
+    const Reach mixed{ .mob = 5.0f, .target = 10.0f, .softMob = 18.0f, .softTarget = 10.0f };
+    CHECK_THAT(ringOf(mixed, 3.0f, 4.0f), WithinAbs(13.0f, 1e-4));
+    CHECK_THAT(softRingOf(mixed, 3.0f, 4.0f), WithinAbs(18.0f, 1e-4));
+}
+
+TEST_CASE("Perimeter: the soft ring is kept only while its band leaves room to stand", "[cardian][perimeter]")
+{
+    // A Sleep round she keeps out of to 12 y, a Slow round she avoids when
+    // safe to 22 y; the tank 2 y from the mob, cure range 20: the band
+    // outside 22 and inside cure range is no wider than nothing, so she
+    // keeps out of 12 -- a band of 10 y -- not out of 22 with nowhere to stand
+    CHECK(ringToKeep(12.0f, 22.0f, 2.0f, 20.0f, 1.0f) == 12.0f);
+    // A soft round to 18 y leaves 4 y: she keeps out of it
+    CHECK(ringToKeep(12.0f, 18.0f, 2.0f, 20.0f, 1.0f) == 18.0f);
+    // At a camp, whose nearest spot is padded a yalm either side, 2 y of room
+    CHECK(ringToKeep(12.0f, 20.5f, 2.0f, 20.0f, 2.0f) == 12.0f);
+    CHECK(ringToKeep(12.0f, 20.0f, 2.0f, 20.0f, 2.0f) == 20.0f);
+}
+
+TEST_CASE("Perimeter: how much a move matters, by its script name", "[cardian][perimeter]")
+{
+    CHECK(harmOf("ultrasonics") == Harm::None);         // Evasion Down: the Grave Bats'
+    CHECK(harmOf("ultrasonics_dynamis") == Harm::None); // every copy goes with its name
+    CHECK(harmOf("sonic_boom") == Harm::None);          // Attack Down
+    CHECK(harmOf("spider_web") == Harm::Soft);          // Slow
+    CHECK(harmOf("lodesong") == Harm::Soft);            // Weight
+    CHECK(harmOf("curse") == Harm::Hard);               // the user: Curse is kept out of
+    CHECK(harmOf("dispelling_wind") == Harm::Hard);     // a dispel
+    CHECK(harmOf("slumber_powder") == Harm::Hard);      // Sleep
+    CHECK(harmOf("a_move_added_upstream") == Harm::Hard);
 }
 
 TEST_CASE("Perimeter: the melee reach is the floor, and no circle takes no margin", "[cardian][perimeter]")
@@ -98,11 +166,15 @@ TEST_CASE("Perimeter: a point at range sits on the ray from the mob; on the mob,
 
 TEST_CASE("Perimeter: the ring is the mob's circle, or the tank's carried out past the tank", "[cardian][perimeter]")
 {
-    CHECK_THAT(ringOf(Reach{ .mob = 17.0f, .target = 0.0f }, 3.0f), WithinAbs(17.0f, 1e-4));
-    CHECK_THAT(ringOf(Reach{ .mob = 12.0f, .target = 10.0f }, 3.0f), WithinAbs(13.0f, 1e-4));
-    CHECK_THAT(ringOf(Reach{ .mob = 12.0f, .target = 8.0f }, 3.0f), WithinAbs(12.0f, 1e-4));
+    CHECK_THAT(ringOf(Reach{ .mob = 17.0f, .target = 0.0f }, 3.0f, 4.0f), WithinAbs(17.0f, 1e-4));
+    CHECK_THAT(ringOf(Reach{ .mob = 12.0f, .target = 10.0f }, 3.0f, 4.0f), WithinAbs(13.0f, 1e-4));
+    CHECK_THAT(ringOf(Reach{ .mob = 12.0f, .target = 8.0f }, 3.0f, 4.0f), WithinAbs(12.0f, 1e-4));
     // No target circle: the ring is the mob's own, however far the tank stands
-    CHECK_THAT(ringOf(Reach{ .mob = 9.0f, .target = 0.0f }, 15.0f), WithinAbs(9.0f, 1e-4));
+    CHECK_THAT(ringOf(Reach{ .mob = 9.0f, .target = 0.0f }, 15.0f, 4.0f), WithinAbs(9.0f, 1e-4));
+    // The tank standing off, 27 y out (walking in, the mob on someone
+    // else): her circle is carried out from where she will hold it, 4 y,
+    // not from 27 -- 14, never 37 (King Ranperre's Tomb, 2026-10-07)
+    CHECK_THAT(ringOf(Reach{ .mob = 12.0f, .target = 10.0f }, 27.0f, 4.0f), WithinAbs(14.0f, 1e-4));
 }
 
 TEST_CASE("Perimeter: the nearest safe spot is a step out, round the ring only as far as range asks, or in toward the tank", "[cardian][perimeter]")
