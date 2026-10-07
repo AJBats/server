@@ -1138,6 +1138,15 @@ private:
     std::optional<EntityId>     m_ReceiveMob;
     cardian::stake::Receive     m_Receive;
     std::unordered_map<uint32, cardian::stake::Receive> m_PullsIn; // PullIn's memory, by mob id
+    // The puller of the pull the tank last let go outside the camp's leash,
+    // so the same mob met again within a while keeps it (CampReceive)
+    struct LetGo
+    {
+        uint32            mob    = 0;
+        uint32            puller = 0;
+        timer::time_point at{};
+    };
+    LetGo m_LetGo;
     bool                       m_ClosingWithoutHate = false;
 
     // NoteForSaving's book: what she last had written, and when

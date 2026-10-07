@@ -100,6 +100,13 @@ namespace cardian::stake
     // One initial receive, independent of weapon draw and Provoke's recast.
     // The controller supplies distance to the fixed landing point and owns
     // the monster's identity. Once joined, hate changes never restart it.
+    // `target` is whom the monster is on now (0 when nobody, or unknown):
+    // the one it is on when first seen fighting is the pull's puller, and a
+    // turn onto anyone else but her -- a mage it heard, a member it passed --
+    // is a pull gone wrong (the user, 2026-10-07: almost always bad news),
+    // so it is in at once, wherever it is: she goes for it, Provokes it and
+    // tows it back. A turn onto `tank`, the party's Tank, is the pull handed
+    // to her as it comes in, not a turn
     struct Receive
     {
         bool joined = false;
@@ -107,17 +114,34 @@ namespace cardian::stake
         float sampleDistance = 0.0f;
         double sampleAt = 0.0;
         std::optional<double> deadline;
+        uint32 puller = 0;     // whom it was on when first seen fighting
+        bool   turned = false; // in because it turned off its puller
 
         auto update(const double now, const float distance, const bool inCamp,
-                    const bool hasHate, const bool fighting, const ReceiveConfig& config) -> ReceiveAction
+                    const bool hasHate, const bool fighting, const ReceiveConfig& config, const uint32 target = 0, const uint32 tank = 0) -> ReceiveAction
         {
             if (joined)
             {
                 return ReceiveAction::Join;
             }
+            if (fighting && target != 0)
+            {
+                if (puller == 0)
+                {
+                    puller = target;
+                }
+                else if (target != puller && target != tank && !hasHate)
+                {
+                    joined = true;
+                    turned = true;
+                    return ReceiveAction::Join;
+                }
+            }
             if (!inCamp)
             {
-                *this = {};
+                const uint32 keep = fighting ? puller : 0; // a pull run in from afar keeps its puller
+                *this  = {};
+                puller = keep;
                 return ReceiveAction::Outside;
             }
             if (!fighting)

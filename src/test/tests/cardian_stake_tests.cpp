@@ -145,6 +145,47 @@ TEST_CASE("Stake receive: arrival or hate joins immediately, never an idle draw"
     CHECK(r.update(0.2, 20, true, false, true, config) == ReceiveAction::Join);
 }
 
+TEST_CASE("Stake receive: a pull that turns off its puller is in at once, wherever it is", "[cardian][stake][receive]")
+{
+    const ReceiveConfig config;
+    // On its puller (7) far out, then onto member 9: the tank goes for it
+    Receive r;
+    CHECK(r.update(0, 30, true, false, true, config, 7) == ReceiveAction::Wait);
+    CHECK(r.update(1, 28, true, false, true, config, 7) == ReceiveAction::Wait);
+    CHECK(r.update(2, 26, true, false, true, config, 9) == ReceiveAction::Join);
+    CHECK(r.turned);
+    // Outside the camp's leash too: a pull run in from afar keeps its puller
+    Receive distant;
+    CHECK(distant.update(0, 60, false, false, true, config, 7) == ReceiveAction::Outside);
+    CHECK(distant.update(1, 58, false, false, true, config, 9) == ReceiveAction::Join);
+    // Onto her is hate, not a turn: in, as before, once in the camp
+    Receive self;
+    CHECK(self.update(0, 30, true, false, true, config, 7) == ReceiveAction::Wait);
+    CHECK(self.update(1, 28, true, true, true, config, 5) == ReceiveAction::Join);
+    CHECK_FALSE(self.turned);
+    // A monster that stops fighting forgets its puller: the next pull's is
+    // whoever it is on when seen fighting again
+    Receive idle;
+    CHECK(idle.update(0, 30, true, false, true, config, 7) == ReceiveAction::Wait);
+    CHECK(idle.update(1, 30, true, false, false, config) == ReceiveAction::Wait);
+    CHECK(idle.update(2, 30, true, false, true, config, 9) == ReceiveAction::Wait);
+    CHECK(idle.puller == 9);
+    // A target unknown (0) is no turn
+    Receive blank;
+    CHECK(blank.update(0, 30, true, false, true, config, 7) == ReceiveAction::Wait);
+    CHECK(blank.update(1, 29, true, false, true, config, 0) == ReceiveAction::Wait);
+    // The Tank (4) Provoking the pull on its way in: handed to her, not a
+    // turn, so the members keep waiting for it to land
+    Receive member;
+    CHECK(member.update(0, 30, true, false, true, config, 7) == ReceiveAction::Wait);
+    CHECK(member.update(1, 17, true, false, true, config, 4, 4) == ReceiveAction::Wait);
+    CHECK_FALSE(member.turned);
+    CHECK(member.puller == 7);
+    // ...and off the Tank onto a mage after that is a turn
+    CHECK(member.update(2, 16, true, false, true, config, 9) == ReceiveAction::Join);
+    CHECK(member.turned);
+}
+
 TEST_CASE("Stake receive: stationary pulls wait by distance with an eight-second cap", "[cardian][stake][receive]")
 {
     const ReceiveConfig config;
