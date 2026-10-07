@@ -21,6 +21,10 @@ namespace pawn::tactics
 {
     namespace
     {
+        // Yalms: the step a mage who cannot see a member is reckoned to take
+        // round a pillar or a corner before she can cure him
+        constexpr double kSightStep = 5.0;
+
         auto duration(const timer::duration value) -> double
         {
             return std::chrono::duration<double>(value).count();
@@ -105,6 +109,10 @@ namespace pawn::tactics
             for (auto* target : scope.members)
             {
                 if (target == nullptr || target->isDead() || target->loc.zone != body->loc.zone) continue;
+                // Out of sight is out of range (bank::inSight): she has a step
+                // to take round whatever is in the way, so a mage who can see
+                // the member comes first. Asked once a member, not once a tier
+                const bool sees = bank::inSight(body, target);
                 for (const auto& tier : tiers)
                 {
                     const auto id = tier.id;
@@ -126,10 +134,12 @@ namespace pawn::tactics
                     {
                         recast = std::max(recast, seconds(casting->GetStartTime()) + duration(casting->GetCastTime() + casting->GetRecast()) - now);
                     }
-                    const double gap = std::max(0.0, static_cast<double>(distance(body->loc.p, target->loc.p) - bank::castRange(body, spell, target)));
+                    const double reachGap = std::max(0.0, static_cast<double>(distance(body->loc.p, target->loc.p) - bank::castRange(body, spell, target)));
+                    const double gap      = sees ? reachGap : std::max(reachGap, kSightStep);
                     // Path movement is upstream's step, speed / 17 yalms a
                     // second (pathfind.cpp's kYalmsPerSecondPerSpeed). This is
-                    // straight-line travel, not a navmesh/LOS promise.
+                    // straight-line travel, not a navmesh promise; out of
+                    // sight, the step round is reckoned at kSightStep.
                     // Nothing walks a played character: out of reach, his
                     // cure is not on offer
                     const double walk = gap == 0.0 ? 0.0 : !host.OwnClient() && body->GetSpeed() > 0 &&

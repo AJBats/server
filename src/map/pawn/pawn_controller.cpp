@@ -2792,6 +2792,48 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     };
     const float keep = range - inset / 2.0f;
 
+    // Away from a camp a healer free to act keeps sight of the member the
+    // mob is on (SightPatient, bank::inSight): she holds a crescent spot
+    // only while she sees him, and seeks one she would see him from. For
+    // anyone else, and for her while she kneels, the crescent is as it
+    // always was and no sight is asked
+    const CBattleEntity* PWatched  = SightPatient(PMob) == PTank ? PTank : nullptr;
+    const bool           blind     = PWatched != nullptr && !pawn::tactics::bank::inSight(POwner, PWatched);
+    const auto           blindFrom = [&](const std::pair<float, float>& at)
+    {
+        return PWatched != nullptr && !pawn::tactics::bank::inSightFrom(POwner, position_t(at.first, me.y, at.second, 0, me.rotation), PWatched);
+    };
+    // The crescent's spot nearest the seed -- for a healer keeping sight,
+    // the nearest she would see him from: the seed's own first, then the
+    // seed turned round the mob a step at a time, either side, out to 90
+    // degrees; with none, the nearest spot as it is
+    const auto nearestSpot = [&](const position_t& seed) -> std::optional<std::pair<float, float>>
+    {
+        const auto plain = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, seed.x, seed.z);
+        if (!plain.has_value() || !blindFrom(*plain))
+        {
+            return plain;
+        }
+        constexpr int   kSteps = 6;
+        constexpr float kTurn  = std::numbers::pi_v<float> / 12.0f;
+        const float     base   = std::atan2(seed.z - mob.z, seed.x - mob.x);
+        const float     out    = std::max(distance(seed, mob, true), ring + inset);
+        for (int step = 1; step <= kSteps; ++step)
+        {
+            for (const float side : { 1.0f, -1.0f })
+            {
+                const float angle = base + side * static_cast<float>(step) * kTurn;
+                const auto  spot  = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, mob.x + out * std::cos(angle),
+                                                                 mob.z + out * std::sin(angle));
+                if (spot.has_value() && !blindFrom(*spot))
+                {
+                    return spot;
+                }
+            }
+        }
+        return plain;
+    };
+
     // The attending mages before her in the party order, on this mob: she
     // stands with them, a body's width apart (the user, 2026-10-03: the
     // mages stick together, never on one pixel). The first one's claim
@@ -2828,7 +2870,7 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
         purpose(intent, keep);
         return intent;
     };
-    if (inCrescent && together)
+    if (inCrescent && together && !blind)
     {
         return stands();
     }
@@ -2848,9 +2890,12 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
             join.kind  = Intent::Kind::Path;
             join.point = position_t(spot->first, me.y, spot->second, 0, me.rotation);
             purpose(join, keep);
-            // Beside her, or nowhere: with no room near her, she seeks her
-            // own spot as a mage alone would
-            if (const auto room = GiveWay(join.point, join); room.PBy == nullptr || room.to.has_value())
+            // Beside her, or nowhere: with no room near her, or none she
+            // could see the tank from, she seeks her own spot as a mage
+            // alone would
+            if (const auto room = GiveWay(join.point, join);
+                (room.PBy == nullptr || room.to.has_value()) &&
+                !blindFrom({ room.to.value_or(join.point).x, room.to.value_or(join.point).z }))
             {
                 // Round the tank's side when the crescent does not reach
                 // behind the mob: the far side is out of cure range
@@ -2883,20 +2928,42 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
             }
         }
     }
-    if (inCrescent)
+    if (inCrescent && !blind)
     {
         return stands();
     }
     const position_t seed = backline.value_or(me);
-    if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, seed.x, seed.z); spot.has_value())
+    const auto       spot = nearestSpot(seed);
+    if (blind && (!spot.has_value() || blindFrom(*spot)))
+    {
+        // No crescent spot she would see him from: toward him until she
+        // sees him, re-asked each tick
+        intent.kind      = Intent::Kind::Path;
+        intent.point     = PWatched->loc.p;
+        intent.arrive    = cardian::casting::kArrival;
+        intent.tolerance = cardian::casting::kTolerance;
+        intent.fallback  = PWatched->loc.p;
+        if (m_SightSaid != PWatched->id)
+        {
+            m_SightSaid = PWatched->id;
+            ShowInfoFmt("pawn: {} attend: cannot see {} from any spot round {}; steps toward him until she can", POwner->getName(), PWatched->getName(),
+                        PMob->getName());
+        }
+        return intent;
+    }
+    if (!blind)
+    {
+        m_SightSaid = 0;
+    }
+    if (spot.has_value())
     {
         intent.kind      = Intent::Kind::Path;
         intent.point     = position_t(spot->first, me.y, spot->second, 0, me.rotation);
         intent.arrive    = std::min(intent.arrive, inset / 2.0f);
         intent.tolerance = std::min(intent.tolerance, inset / 2.0f);
         purpose(intent, keep);
-        note(4, fmt::format("out of the crescent: walks to ({:.1f}, {:.1f}){} (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f}; width {:.1f}, inset {:.1f})",
-                            spot->first, spot->second, backline.has_value() ? fmt::format(", the spot nearest the backline ({:.1f}, {:.1f})", backline->x, backline->z) : "",
+        note(blind ? 12 : 4, fmt::format("{}: walks to ({:.1f}, {:.1f}){} (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f}; width {:.1f}, inset {:.1f})",
+                            blind ? fmt::format("cannot see {} from her spot", PTank->getName()) : std::string("out of the crescent"), spot->first, spot->second, backline.has_value() ? fmt::format(", the spot nearest the backline ({:.1f}, {:.1f})", backline->x, backline->z) : "",
                             toMob, ring, PTank->getName(), toTank, range, width, inset));
         return intent;
     }
@@ -3507,7 +3574,7 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
             if (target != nullptr && target->loc.zone == POwner->loc.zone && reach > 0.0f && !HoldsFireOn(target))
             {
                 // Use the same line-of-sight requirement as spell validation.
-                const bool sight = !POwner->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock) || POwner->CanSeeTarget(target);
+                const bool sight = pawn::tactics::bank::inSight(POwner, target);
                 intent.kind = Intent::Kind::Stand;
                 intent.fallback.reset();
                 // The approach's purpose, for the claim board: the target at
@@ -3531,6 +3598,29 @@ auto CPawnController::Move(Intent intent) -> std::optional<AvoidAction>
     }
 
     return Walk(std::move(intent));
+}
+
+auto CPawnController::SightPatient(const CBattleEntity* PMob) const -> const CBattleEntity*
+{
+    // At a camp she keeps her camp spot, sight or none (CampAttendIntent
+    // never asks): a spot that cannot see the fight tells the player the
+    // camp is poorly placed. Kneeling, or about to, she keeps her rest:
+    // only first aid stands her
+    if (PMob == nullptr || Staked() || !RestAllowsAction() || POwner->loc.zone == nullptr || !POwner->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock))
+    {
+        return nullptr;
+    }
+    const auto* PPatient = PMob->GetBattleTarget();
+    if (PPatient == nullptr || PPatient == POwner || PPatient->objtype != TYPE_PC || PPatient->isDead() || PPatient->loc.zone != POwner->loc.zone ||
+        PPatient->PParty == nullptr || PPatient->PParty != POwner->PParty)
+    {
+        return nullptr;
+    }
+    if (!pawn::tactics::offersSpells(POwner) || pawn::tactics::bank::cureTiers(POwner, pawn::tactics::bank::CureAvailability::Eligible).empty())
+    {
+        return nullptr;
+    }
+    return PPatient;
 }
 
 auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
@@ -6501,8 +6591,12 @@ auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
     }
 
     auto* PTarget = castTarget.resolve<CBattleEntity>();
+    // Out of sight is out of range (bank::inSight): a cast begun blind is
+    // refused, and the refused cast would hold her still where she cannot
+    // see, so the step that would find sight never comes
     if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone || HoldsFireOn(PTarget) ||
-        distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
+        distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget) ||
+        !pawn::tactics::bank::inSight(POwner, PTarget))
     {
         return false;
     }
@@ -6549,8 +6643,12 @@ auto CPawnController::CastAssigned(const EntityId target, const SpellID spellid)
     }
     const EntityId castTarget = PSpell->getValidTarget() == TARGET_SELF ? EntityId(POwner) : target;
     auto* PTarget = castTarget.resolve<CBattleEntity>();
+    // Out of sight is out of range (bank::inSight): a cast begun blind is
+    // refused, and the refused cast would hold her still where she cannot
+    // see, so the step that would find sight never comes
     if (PTarget == nullptr || PTarget->loc.zone != POwner->loc.zone || HoldsFireOn(PTarget) ||
-        distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget))
+        distance(POwner->loc.p, PTarget->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PTarget) ||
+        !pawn::tactics::bank::inSight(POwner, PTarget))
     {
         return false;
     }

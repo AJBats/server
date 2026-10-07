@@ -1023,6 +1023,14 @@ private:
     auto HoldsFireOn(const CBattleEntity* PTarget) -> bool;
     uint32 m_HeldFireOn = 0; // the pull her spells wait on, said once
 
+    // The member a healer keeps sight of in the open field (AttendIntent):
+    // the one the mob she attends is on, when she is a cardian with cures to
+    // offer, free to act, and the zone blocks spells by line of sight.
+    // Nothing otherwise -- at a camp, kneeling or about to, no healer, the
+    // mob on nobody of the party -- and the attend is then as it always was
+    auto SightPatient(const CBattleEntity* PMob) const -> const CBattleEntity*;
+    uint32 m_SightSaid = 0; // the patient she last said she cannot see
+
     // The one writer of the mode: the exits it owns (a fight's draw
     // cooldown, seat and beats; a walk in's target) happen here, and the
     // change is said -- "Follow -> Fight: draws on X (with Jevyak)". A call

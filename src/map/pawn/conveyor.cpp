@@ -574,14 +574,15 @@ namespace pawn::tactics
             cardian::tactics::Candidate c{ .id = PChar->id };
             c.spell = static_cast<uint16>(spellFor(n, PChar, PTarget));
             // In range as the magic state will judge the cast: the spell's
-            // own range plus both hitboxes
+            // own range plus both hitboxes, and in sight where the zone
+            // blocks spells by line of sight
             auto* PSpell = c.spell != 0 ? spell::GetSpell(static_cast<SpellID>(c.spell)) : nullptr;
             const float reach  = bank::castRange(PChar, PSpell, PTarget);
             c.open             = PSpell != nullptr && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone && PGambits->MasterOn() &&
                      !PChar->StatusEffectContainer->HasPreventActionEffect() &&
                      !PChar->StatusEffectContainer->HasStatusEffect({xi::StatusEffect::Silence, xi::StatusEffect::Mute}) &&
                      host.FreeToCast(PSpell, PTarget);
-            c.inRange          = distance(PChar->loc.p, PTarget->loc.p) <= reach;
+            c.inRange          = distance(PChar->loc.p, PTarget->loc.p) <= reach && bank::inSight(PChar, PTarget);
             // If nobody can cast now, the row's own mage can approach -- a
             // cardian: nothing walks a played character. Role-only needs
             // retain their position/range policy.
