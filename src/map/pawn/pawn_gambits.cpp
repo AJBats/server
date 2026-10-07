@@ -2132,6 +2132,11 @@ namespace pawn
             hold(fmt::format("{} is out of her reach", PTarget->getName()));
             return false;
         }
+        if (!pawn::tactics::bank::inSight(POwner, PTarget))
+        {
+            hold(fmt::format("she cannot see {}", PTarget->getName()));
+            return false;
+        }
         if (!m_host->CastAssigned(PTarget->entityId(), static_cast<SpellID>(pick->id)))
         {
             hold(fmt::format("the server would not start her {}", pick->spell));

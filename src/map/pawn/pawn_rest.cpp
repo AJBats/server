@@ -207,7 +207,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         m_SaidMpShortFor = risk->mob;
         ShowInfoFmt("rest: {}: her MP will run out before the fight ends (MP {}/{}, spending {:.1f}/s, the fight ~{:.0f} s left{})", POwner->getName(),
                     POwner->health.mp, POwner->GetMaxMP(), advice->spentPerSecond, risk->fightLeft, advice->criticalMp ? ", critical" : "");
-        pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), "My MP won't last this fight.");
+        pawn::tactics::role::sayPace(static_cast<CCharEntity*>(POwner), "My MP won't last this fight.");
     }
     // Once a fight, not once a mob: a camp's mob comes back with the same id
     if (m_SaidMpShortFor != 0 && !fightOn())
@@ -374,7 +374,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
                                                          clock.interval, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL));
             const auto line = advice->readyMp > POwner->GetMaxMP() ? std::string("A fight and link reserve here need more MP than I can hold.") :
                 fmt::format("Recovering: ready in about {:.0f} seconds, with a link reserve.", std::ceil(wait));
-            pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), line);
+            pawn::tactics::role::sayPace(static_cast<CCharEntity*>(POwner), line);
             ShowInfoFmt("rest: {}: {}", POwner->getName(), line);
         }
     }

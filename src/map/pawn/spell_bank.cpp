@@ -40,6 +40,7 @@
 #include "status_effect.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
+#include "ximesh/ximesh.h"
 #include "zone.h"
 
 #include <magic_enum/magic_enum.hpp>
@@ -1355,6 +1356,29 @@ namespace pawn::tactics
                 reach = 25.0f;
             }
             return std::min(reach, 40.0f); // magic state's outer range limit
+        }
+
+        auto inSight(CBattleEntity* PCaster, const CBattleEntity* PTarget) -> bool
+        {
+            if (PCaster == nullptr || PTarget == nullptr || PCaster == PTarget || PCaster->loc.zone == nullptr)
+            {
+                return true;
+            }
+            // CanSeeTarget only reads the target's position
+            return !PCaster->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock) || PCaster->CanSeeTarget(const_cast<CBattleEntity*>(PTarget));
+        }
+
+        auto inSightFrom(CBattleEntity* PCaster, const position_t& from, const CBattleEntity* PTarget) -> bool
+        {
+            if (PCaster == nullptr || PTarget == nullptr || PCaster->loc.zone == nullptr || !PCaster->loc.zone->CanUseMisc(xi::ZoneMisc::LosPlayerBlock))
+            {
+                return true;
+            }
+            // CBaseEntity::CanSeeTarget's ray, its eye height the same
+            constexpr float kEyeHeight = 2.0f;
+            const Vector3   src{ from.x, from.y - kEyeHeight, from.z };
+            const Vector3   dst{ PTarget->loc.p.x, PTarget->loc.p.y - kEyeHeight, PTarget->loc.p.z };
+            return !PCaster->loc.zone->xiMesh()->rayIntersect(src, dst);
         }
 
         auto usable(CBattleEntity* PCaster, const SpellID id) -> bool

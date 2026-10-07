@@ -278,7 +278,127 @@ namespace pawn::tactics
             // last choice keeping an emergency through its approach
             auto chooseFirstAid(const Conveyor::Scope& scope, const double at) -> std::vector<cardian::cure::Choice>
             {
-                return cardian::cure::choose(measureCures(scope, at), riskTargets(scope, at), m_conveyor.emergencies());
+                const auto targets  = riskTargets(scope, at);
+                const auto measured = measureCures(scope, at);
+                auto       choices  = cardian::cure::choose(measured, targets, m_conveyor.emergencies());
+                sayFirstAid(scope, targets, measured, choices, at);
+                return choices;
+            }
+
+            // The map log's word on first aid, as a member's emergency starts,
+            // turns from readying a mage to a cure, and ends: what called it --
+            // her HP, the rate she is taking damage at and what it is made of,
+            // the biggest hit planned for (on record or by the formulas, and
+            // the floor under it), what is left of her by the cure's landing
+            // after that hit, and the HP the emergency carries -- so a cure that
+            // seems small can be read back to the figure that called it. A
+            // member first aid stops choosing for is out of danger only when
+            // she is: she may have died, the fight may be over, a cure may be
+            // on its way, or no mage may be able to cure her now
+            void sayFirstAid(const Conveyor::Scope& scope, const std::vector<cardian::cure::Target>& targets, const std::vector<cardian::cure::Option>& measured,
+                             const std::vector<cardian::cure::Choice>& choices, const double at)
+            {
+                std::unordered_map<uint32, bool> inDanger; // by member: whether a cure is cast for her
+                for (const auto& choice : choices)
+                {
+                    inDanger[choice.cure.target] = inDanger[choice.cure.target] || choice.cast;
+                }
+                for (const auto& [id, cast] : inDanger)
+                {
+                    if (const auto was = m_inDanger.find(id); was != m_inDanger.end() && (was->second || !cast))
+                    {
+                        continue; // said already, and no turn from readying to a cure
+                    }
+                    m_noCureSaid.erase(id);
+                    const auto choice  = std::ranges::find_if(choices, [&](const auto& c) { return c.cure.target == id && c.cast == cast; });
+                    const auto target  = std::ranges::find(targets, id, &cardian::cure::Target::id);
+                    auto*      PMember = Conveyor::resolve(scope, id);
+                    if (choice == choices.end() || target == targets.end() || PMember == nullptr)
+                    {
+                        continue;
+                    }
+                    auto*        PCaster = Conveyor::resolve(scope, choice->cure.caster);
+                    const auto   threat  = role::threat(m_log, PMember, at);
+                    const double horizon = choice->cure.time.land + cardian::cure::safetySeconds;
+                    // What the rate is made of: each open fight's damage to her
+                    // over its seconds so far, and what is expected of the mobs on her
+                    std::string sources;
+                    for (auto& r : m_log.open())
+                    {
+                        if (const auto* figures = r.settling() ? nullptr : r.find(id); figures != nullptr && figures->damageTaken > 0)
+                        {
+                            sources += fmt::format("{}{} {} HP over {:.1f} s", sources.empty() ? "" : ", ", r.mobName, figures->damageTaken, r.seconds(at));
+                        }
+                    }
+                    ShowInfoFmt("tactics: first aid: {}'s rate is made of: {}; expected of the mobs on her {:.1f}/s", PMember->getName(),
+                                sources.empty() ? std::string("no hits yet") : sources, threat.expectedPerSecond);
+                    const std::string who = PCaster != nullptr ? PCaster->getName() : std::string("?");
+                    ShowInfoFmt("tactics: first aid: {} is in danger, {}: HP {:.0f}/{:.0f}, taking {:.1f}/s, biggest hit planned {:.0f} (on record or by the "
+                                "formulas {:.0f}, floor {:.0f}); by the cure's landing and a second after ({:.1f} s), {:.0f} HP left after it; the emergency "
+                                "carries {:.0f} HP",
+                                PMember->getName(), cast ? who + " to cure" : who + " readies (no cure at full HP)", target->hp, target->maximum, target->damageRate,
+                                target->biggest, threat.biggestHit, target->maximum * firstAidFloor(), horizon, target->hp - target->damageRate * horizon - target->biggest,
+                                choice->requiredHp);
+                }
+
+                // The members first aid has stopped choosing for, and why
+                std::vector<cardian::cure::Option> incoming;
+                for (const auto& option : measured)
+                {
+                    if (option.inFlight)
+                    {
+                        incoming.push_back(option);
+                    }
+                }
+                for (const auto& [id, cast] : m_inDanger)
+                {
+                    if (inDanger.contains(id))
+                    {
+                        continue;
+                    }
+                    const auto* PMember = Conveyor::resolve(scope, id);
+                    const auto  target  = std::ranges::find(targets, id, &cardian::cure::Target::id);
+                    double      held    = 0.0;
+                    for (const auto& previous : m_conveyor.emergencies())
+                    {
+                        if (previous.cure.target == id)
+                        {
+                            held = std::max(held, previous.heldHorizon);
+                        }
+                    }
+                    const bool stillShort = target != targets.end() && held > 0.0 && cardian::cure::margin(*target, held, incoming) < 0.0;
+                    const bool coming     = std::ranges::any_of(incoming, [&](const auto& option) { return option.target == id; });
+                    const auto name       = PMember != nullptr ? PMember->getName() : std::to_string(id);
+                    const auto hp         = PMember != nullptr ? fmt::format(" (HP {}/{})", PMember->health.hp, PMember->GetMaxHP()) : std::string();
+                    if (PMember == nullptr || PMember->isDead())
+                    {
+                        ShowInfoFmt("tactics: first aid: {} died", name);
+                    }
+                    else if (targets.empty())
+                    {
+                        ShowInfoFmt("tactics: first aid: the fight is over for {}{}", name, hp);
+                    }
+                    else if (stillShort && coming)
+                    {
+                        inDanger[id] = cast; // still in danger, a cure on its way: said when it ends
+                        continue;
+                    }
+                    else if (stillShort)
+                    {
+                        inDanger[id] = cast;
+                        if (m_noCureSaid.insert(id).second)
+                        {
+                            ShowInfoFmt("tactics: first aid: {} is still in danger, and no mage can cure now{}", name, hp);
+                        }
+                        continue;
+                    }
+                    else
+                    {
+                        ShowInfoFmt("tactics: first aid: {} is out of danger{}", name, hp);
+                    }
+                    m_noCureSaid.erase(id);
+                }
+                m_inDanger = std::move(inDanger);
             }
 
             // A cardian mage on her feet, whose next cure a kneel beside her
@@ -496,6 +616,8 @@ namespace pawn::tactics
             RestPlanner                             m_rest;
             std::unordered_map<uint32, cardian::tactics::Pace> m_pace;       // by role holder
             std::unordered_map<uint32, int32>                  m_cycleSpent; // by member, over the cycle under way
+            std::unordered_map<uint32, bool>                   m_inDanger;   // the members first aid holds in danger, and whether a cure is cast for them (sayFirstAid)
+            std::unordered_set<uint32>                         m_noCureSaid; // those it has said no mage can cure now
             bool                                    m_cycleOpen  = false;
             uint32                                  m_closedSeen = 0;
             bool                                    m_cureStarted = false; // first aid to choose again before it is read

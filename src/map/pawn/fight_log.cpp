@@ -683,7 +683,8 @@ namespace pawn::tactics
                     ShowInfoFmt("tactics: {} turns onto {}", r.mobName, PMember->getName());
                 }
             }
-            r.hitting = PMember->id;
+            r.hitting      = PMember->id;
+            r.hittingSince = seconds(timer::now());
             ++r.member(PMember->id, PMember->getName()).targeted;
         }
     }

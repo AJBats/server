@@ -408,6 +408,18 @@ xi.settings.pawn =
     -- off. Read once, at boot.
     TACTICS_FIRST_AID_FLOOR = 25,
 
+    -- How much the rate a mob is expected to deal counts in a member's
+    -- damage rate, as seconds of evidence: about two of an ordinary mob's
+    -- attack rounds. Her rate is (what she has taken + the expected rate x
+    -- this) / (the fight's seconds + this), the expected rate the spot's
+    -- record for that mob, else the formulas' guess, while it is on her;
+    -- with nothing expected, what she has taken over at least this many
+    -- seconds. A fight's first hit over the half second since it began had
+    -- read as a torrent and called false emergencies that lasted the whole
+    -- fight (the user, 2026-10-07). The biggest hit planned for, and the
+    -- floor under it, carry a spike, not the rate. Read once, at boot.
+    TACTICS_RATE_PRIOR_SECONDS = 8,
+
     -- The perimeter (RESEARCH §12.15): a Support Mage attends a fight that
     -- no Attack row of hers claims, standing outside the mob's TP reach,
     -- read off its own skill list, plus this many yalms.

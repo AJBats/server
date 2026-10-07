@@ -98,6 +98,15 @@ namespace pawn::tactics
         // A spell she knows, can use, can afford now and is not on recast
         auto usable(CBattleEntity* PCaster, SpellID id) -> bool;
         auto castRange(CBattleEntity* PCaster, CSpell* PSpell, CBattleEntity* PTarget) -> float;
+        // Whether the magic state would let her start a cast on the target
+        // for sight: where the zone blocks spells by line of sight, she must
+        // see it (CMagicState's own test). Out of sight is out of range: a
+        // cast begun blind is refused, and the refused cast holds her still
+        auto inSight(CBattleEntity* PCaster, const CBattleEntity* PTarget) -> bool;
+        // The same test from a point she might stand on (CBaseEntity::
+        // CanSeeTarget's ray, from there): a spot she could not see her
+        // patient from is no spot for a healer
+        auto inSightFrom(CBattleEntity* PCaster, const position_t& from, const CBattleEntity* PTarget) -> bool;
 
         // The effect a priced spell writes is on the target already, at its
         // tier or better: the seconds it has to go (infinite, for good).
