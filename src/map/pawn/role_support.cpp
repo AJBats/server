@@ -23,6 +23,7 @@
 
 #include "conveyor.h"
 #include "fight_log.h"
+#include "party_roster.h"
 #include "pawn.h"
 #include "pawn_spellbook.h"
 #include "spell_bank.h"
@@ -181,6 +182,14 @@ namespace pawn::tactics::role
         });
     }
 
+    void sayPace(CCharEntity* PChar, const std::string& text)
+    {
+        if (pawn::roster::roleOf(PChar) == cardian::party::Role::Healer)
+        {
+            sayParty(PChar, text);
+        }
+    }
+
     void think(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, const bool engaged, const double now)
     {
         // Her line, per member: the missing HP a cure is worth casting at --
@@ -300,13 +309,25 @@ namespace pawn::tactics::role
 
     void speakPace(CCharEntity* PHolder, Pace& pace)
     {
-        if (!pace.measured() || pace.behind() == pace.saidBehind)
+        if (!pace.measured())
         {
             return;
         }
-        pace.saidBehind = pace.behind();
-        ShowInfoFmt("tactics: pace: {}", pace.line(PHolder->getName()));
-        sayParty(PHolder, pace.behind() ? fmt::format("Behind pace: a fight here costs me ~{:.0f} MP and I net {:+.0f} between fights.", pace.spent.mean, pace.regained.mean)
-                                        : std::string("Back on pace."));
+        const bool behind = pace.behind();
+        if (behind != pace.saidBehind)
+        {
+            pace.saidBehind = behind;
+            ShowInfoFmt("tactics: pace: {}", pace.line(PHolder->getName()));
+        }
+        // The party hears it from the Healer seat only (as sayPace), once
+        // each way it turns as the party has heard it: a mage who takes the
+        // seat behind pace says so, and none says she is back on a pace she
+        // was never heard to be behind
+        if (behind != pace.toldBehind && pawn::roster::roleOf(PHolder) == cardian::party::Role::Healer)
+        {
+            pace.toldBehind = behind;
+            sayParty(PHolder, behind ? fmt::format("Behind pace: a fight here costs me ~{:.0f} MP and I net {:+.0f} between fights.", pace.spent.mean, pace.regained.mean)
+                                     : std::string("Back on pace."));
+        }
     }
 } // namespace pawn::tactics::role

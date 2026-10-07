@@ -57,11 +57,17 @@ namespace pawn::tactics::role
 
     // Her pace at the spot, one cycle per stretch of fighting: what the
     // cycle cost her against her MP's net change since the last, said
-    // once each way it turns, in the map log and to the party
+    // once each way it turns, in the map log and, from the Healer seat, to
+    // the party (sayPace)
     void cycleOpened(CCharEntity* PHolder, Pace& pace);
     void cycleClosed(CCharEntity* PHolder, int32 spent, Pace& pace);
     void speakPace(CCharEntity* PHolder, Pace& pace);
 
     // A line in her party's chat, as the game sends one
     void sayParty(CCharEntity* PChar, const std::string& text);
+    // A line about the party's MP pace -- behind it or back on it, ready in
+    // so long, her MP running out before the fight does -- said in party
+    // chat only by the cardian in the Healer seat: the pace is the Healer's
+    // to call, and every other mage's stays in the map log
+    void sayPace(CCharEntity* PChar, const std::string& text);
 } // namespace pawn::tactics::role

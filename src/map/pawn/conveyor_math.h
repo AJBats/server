@@ -412,6 +412,7 @@ namespace cardian::tactics
         Running regained;
         int32   mpAtClose  = -1;
         bool    saidBehind = false;
+        bool    toldBehind = false; // what the party last heard, from the Healer seat
 
         void opened(const int32 mp)
         {
