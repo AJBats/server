@@ -835,6 +835,13 @@ private:
     auto TowsAtStake() const -> bool;
     auto CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
     auto ResumeCampReceive() -> bool;
+    // The receive rule's step on one memory, the tank's or a mob's
+    auto ReceiveStep(cardian::stake::Receive& receive, const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
+    // The same rule as every other member asks it -- the melee waiting to
+    // join, a caster holding her spells, a mage attending -- remembered
+    // per mob, so asking about two mobs in turn (the one she attends, an
+    // add she debuffs) never starts either one's clock over
+    auto PullIn(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
     auto TowIntent(CBattleEntity* PTarget) -> Intent;
 
     // The courtesy (local_planner.h): this tick's step toward `point`,
@@ -1004,8 +1011,9 @@ private:
     // a refusal said once otherwise. True when she drew.
     auto Draw(CBattleEntity* PTarget, ApproachKind kind, std::string_view how, bool hold = false) -> bool;
     // At a camp a damage dealer joining the party's fight waits at her seat,
-    // weapon away, until the tank's receive rule (CampReceive) says the pull
-    // has come in: at the landing point, on her, or stalled outside (#253)
+    // weapon away, until the camp's receive rule, as she remembers it for
+    // that mob (PullIn), says the pull has come in: at the landing point, on
+    // her, or stopped inside the camp (#253)
     auto WaitsForThePull(const CBattleEntity* PTarget, ApproachKind kind) -> bool;
 
     // At a camp a caster holds her spells on a pull until it has come in,
@@ -1121,6 +1129,7 @@ private:
     std::optional<EntityId>     m_TowingMob;
     std::optional<EntityId>     m_ReceiveMob;
     cardian::stake::Receive     m_Receive;
+    std::unordered_map<uint32, cardian::stake::Receive> m_PullsIn; // PullIn's memory, by mob id
     bool                       m_ClosingWithoutHate = false;
 
     // NoteForSaving's book: what she last had written, and when

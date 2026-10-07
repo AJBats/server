@@ -1286,6 +1286,9 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
         m_ReceiveMob.reset();
         m_Receive = {};
     }
+    // The same for every pull she was watching come in: one already in
+    // stays in, one still on its way is measured again from the new flag
+    std::erase_if(m_PullsIn, [&](const auto& entry) { return !m_Stake.has_value() || !entry.second.joined; });
     m_ClosingWithoutHate = false;
     m_FollowHeld.has = false;
     m_LeadHeld.has   = false;
@@ -2967,10 +2970,14 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
 
 auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, const CBattleEntity* PTank) -> Intent
 {
-    const auto camp      = place.position();
-    const bool preparing = !PMob->PAI->IsEngaged();
-    // An unpulled mob is not yet an AoE source at its current position.
-    // Prepare for the camp's landing point; use live geometry once it fights.
+    const auto camp = place.position();
+    // Until the pull has come in, the mob is no AoE source where it stands and
+    // the puller is no tank to keep cure range to: she prepares for the
+    // camp's landing point, and uses live geometry once the camp's receive
+    // rule says it is in (PullIn: at the landing point, on her, or stopped
+    // inside the camp), the rule she holds her spells by. A puller running
+    // the mob in, round the back of the camp included, moves nobody
+    const bool preparing = !PMob->PAI->IsEngaged() || PullIn(PMob) != cardian::stake::ReceiveAction::Join;
     position_t mob  = preparing ? nearPosition(camp, cardian::stake::kMobAhead, 0.0f) : PMob->loc.p;
     position_t tank = PTank->loc.p;
     if (preparing)
@@ -4043,8 +4050,10 @@ auto CPawnController::SafetySpotBattle(const Place* place) -> std::optional<posi
     const auto landing = [&] { return nearPosition(place->position(), cardian::stake::kMobAhead, 0.0f); };
     if (auto* PAttended = dynamic_cast<CMobEntity*>(AttendedTarget()); PAttended != nullptr)
     {
-        // Attending: the mob, or at a camp, where it lands while it is still being pulled
-        if (place != nullptr && place->fixed() && !PAttended->PAI->IsEngaged())
+        // Attending: the mob, or at a camp, where it lands while it is still
+        // being pulled -- until the camp's receive rule says it is in, as
+        // her spot plans for it (CampAttendIntent)
+        if (place != nullptr && place->fixed() && (!PAttended->PAI->IsEngaged() || PullIn(PAttended) != cardian::stake::ReceiveAction::Join))
         {
             return landing();
         }
@@ -8252,10 +8261,11 @@ auto CPawnController::TowsAtStake() const -> bool
 
 auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
 {
-    // Held while the tank's own receive rule (CampReceive) says the pull is
-    // still on its way: not at the landing point, not on her, not stalled
+    // Held while the camp's receive rule (PullIn) says the pull is still
+    // on its way: not at the landing point, not on her, not stopped inside
+    // the camp
     if (PTarget == nullptr || PTarget->objtype != TYPE_MOB || !Staked() || TowsAtStake() || PTarget->GetBattleTarget() == POwner ||
-        CampReceive(PTarget) == cardian::stake::ReceiveAction::Join)
+        PullIn(PTarget) == cardian::stake::ReceiveAction::Join)
     {
         return false;
     }
@@ -8269,7 +8279,7 @@ auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
 
 auto CPawnController::WaitsForThePull(const CBattleEntity* PTarget, const ApproachKind kind) -> bool
 {
-    return kind == ApproachKind::Join && Staked() && !TowsAtStake() && CampReceive(PTarget) != cardian::stake::ReceiveAction::Join;
+    return kind == ApproachKind::Join && Staked() && !TowsAtStake() && PullIn(PTarget) != cardian::stake::ReceiveAction::Join;
 }
 
 auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
@@ -8281,6 +8291,19 @@ auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stak
         m_KeepCampFightSpot = false;
         m_CampSettlement = {};
     }
+    const bool joined = m_Receive.joined;
+    const auto result = ReceiveStep(m_Receive, PTarget);
+    if (!joined && m_Receive.joined)
+    {
+        ShowInfoFmt("pawn: {} receives {} ({:.1f} y from landing point, {})", POwner->getName(), PTarget->getName(),
+                    distance(PTarget->loc.p, nearPosition(m_Stake->at, cardian::stake::kMobAhead, 0.0f), true),
+                    PTarget->GetBattleTarget() == POwner ? "has hate" : "closes to help");
+    }
+    return result;
+}
+
+auto CPawnController::ReceiveStep(cardian::stake::Receive& receive, const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
+{
     const auto& stake = m_Stake->at;
     const auto home = nearPosition(stake, cardian::stake::kMobAhead, 0.0f);
     const cardian::stake::ReceiveConfig config{
@@ -8290,15 +8313,37 @@ auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stak
         settings::get<float>("pawn.CAMP_RECEIVE_PROGRESS"),
         settings::get<double>("pawn.CAMP_RECEIVE_WINDOW"),
     };
-    const bool joined = m_Receive.joined;
-    const auto result = m_Receive.update(std::chrono::duration<double>(m_Tick.time_since_epoch()).count(),
-                                        distance(PTarget->loc.p, home, true),
-                                        isWithinDistance(stake, PTarget->loc.p, settings::get<float>("pawn.HUNT_LEASH")),
-                                        PTarget->GetBattleTarget() == POwner, PTarget->PAI->IsEngaged(), config);
-    if (!joined && m_Receive.joined)
+    return receive.update(std::chrono::duration<double>(m_Tick.time_since_epoch()).count(), distance(PTarget->loc.p, home, true),
+                          isWithinDistance(stake, PTarget->loc.p, settings::get<float>("pawn.HUNT_LEASH")), PTarget->GetBattleTarget() == POwner,
+                          PTarget->PAI->IsEngaged(), config);
+}
+
+auto CPawnController::PullIn(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
+{
+    // Forget the mobs that are gone or out of the fight, this one too: a
+    // pull that came in stays in only while its fight lasts, so the same
+    // mob pulled again -- a camp's respawn keeps its id -- comes in anew
+    std::erase_if(m_PullsIn, [&](const auto& entry)
+                  {
+                      if (entry.first == PTarget->id)
+                      {
+                          return false;
+                      }
+                      const auto* PMob = dynamic_cast<CMobEntity*>(zoneutils::GetEntity(entry.first, TYPE_MOB));
+                      return PMob == nullptr || PMob->id != entry.first || PMob->isDead() || !PMob->PAI->IsEngaged();
+                  });
+    auto& receive = m_PullsIn[PTarget->id];
+    if (PTarget->isDead() || !PTarget->PAI->IsEngaged())
     {
-        ShowInfoFmt("pawn: {} receives {} ({:.1f} y from landing point, {})", POwner->getName(), PTarget->getName(),
-                    distance(PTarget->loc.p, home, true), PTarget->GetBattleTarget() == POwner ? "has hate" : "closes to help");
+        receive = {};
+    }
+    const bool joined = receive.joined;
+    const auto result = ReceiveStep(receive, PTarget);
+    if (!joined && receive.joined)
+    {
+        ShowInfoFmt("pawn: {} sees {} come in to the camp ({:.1f} y from landing point, {})", POwner->getName(), PTarget->getName(),
+                    distance(PTarget->loc.p, nearPosition(m_Stake->at, cardian::stake::kMobAhead, 0.0f), true),
+                    PTarget->GetBattleTarget() == POwner ? "on her" : "in or stopped");
     }
     return result;
 }
