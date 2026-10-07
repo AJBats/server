@@ -1255,7 +1255,8 @@ void CPawnController::SetStake(std::optional<pawn::Stake> stake)
         {
             return false;
         }
-        return !a.has_value() || (a->zone == b->zone && a->at.x == b->at.x && a->at.y == b->at.y && a->at.z == b->at.z && a->at.rotation == b->at.rotation);
+        return !a.has_value() || (a->zone == b->zone && a->at.x == b->at.x && a->at.y == b->at.y && a->at.z == b->at.z && a->at.rotation == b->at.rotation &&
+                                  a->front == b->front && a->back == b->back);
     };
     if (same(m_Stake, stake))
     {
@@ -3063,7 +3064,10 @@ auto CPawnController::CampSpot(const Place& place, const position_t& mob, const 
     const auto  camp   = place.position();
     const auto  me     = POwner->loc.p;
     const float range  = CastRange();
-    const float radius = std::clamp(ring + 1.0f - cardian::stake::kMobAhead, 3.0f, std::max(3.0f, range - 2.0f - cardian::stake::kMobAhead));
+    // The backline: as far behind the flag as the camp asks (the Stake's
+    // back), and never less than the mob's reach asks, nor more than cure
+    // range of the tank allows
+    const float radius = cardian::stake::backlineDepth(m_Stake.has_value() ? m_Stake->back : 0.0f, ring, range);
     auto*       navMesh = meshOf(POwner->loc.zone);
     const auto clipped = [&](const position_t& point) -> std::optional<position_t>
     {
@@ -4884,6 +4888,7 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
 
     if (TowsAtStake() && CampReceive(PTarget) == cardian::stake::ReceiveAction::Outside)
     {
+        m_LetGo = { PTarget->id, m_Receive.puller, m_Tick };
         Transition(IdleMode(), fmt::format("lets {} go (left camp before the receive)", PTarget->getName()));
         POwner->PAI->Internal_Disengage();
         co_return;
@@ -8388,14 +8393,25 @@ auto CPawnController::CampReceive(const CBattleEntity* PTarget) -> cardian::stak
         m_Receive = {};
         m_KeepCampFightSpot = false;
         m_CampSettlement = {};
+        // The pull she let go outside the leash, met again: its puller
+        // stands, so a turn it made out there is still seen as one
+        constexpr auto kLetGoMemory = 30s;
+        if (m_LetGo.mob == PTarget->id && PTarget->PAI->IsEngaged() && m_Tick - m_LetGo.at < kLetGoMemory)
+        {
+            m_Receive.puller = m_LetGo.puller;
+        }
+        m_LetGo = {};
     }
     const bool joined = m_Receive.joined;
     const auto result = ReceiveStep(m_Receive, PTarget);
     if (!joined && m_Receive.joined)
     {
+        const auto* POn = PTarget->GetBattleTarget();
         ShowInfoFmt("pawn: {} receives {} ({:.1f} y from landing point, {})", POwner->getName(), PTarget->getName(),
                     distance(PTarget->loc.p, nearPosition(m_Stake->at, cardian::stake::kMobAhead, 0.0f), true),
-                    PTarget->GetBattleTarget() == POwner ? "has hate" : "closes to help");
+                    m_Receive.turned ? fmt::format("it turned from its puller onto {}: she goes for it", POn != nullptr ? POn->getName() : std::string("nobody")) :
+                    POn == POwner    ? std::string("has hate") :
+                                       std::string("closes to help"));
     }
     return result;
 }
@@ -8411,9 +8427,13 @@ auto CPawnController::ReceiveStep(cardian::stake::Receive& receive, const CBattl
         settings::get<float>("pawn.CAMP_RECEIVE_PROGRESS"),
         settings::get<double>("pawn.CAMP_RECEIVE_WINDOW"),
     };
+    auto* POn = PTarget->GetBattleTarget();
+    // a mob on the party's Tank is a pull handed to her, never a turn
+    const bool onTank = POn != nullptr && POn->objtype == TYPE_PC &&
+                        pawn::roster::roleOf(static_cast<CCharEntity*>(POn)) == cardian::party::Role::Tank;
     return receive.update(std::chrono::duration<double>(m_Tick.time_since_epoch()).count(), distance(PTarget->loc.p, home, true),
-                          isWithinDistance(stake, PTarget->loc.p, settings::get<float>("pawn.HUNT_LEASH")), PTarget->GetBattleTarget() == POwner,
-                          PTarget->PAI->IsEngaged(), config);
+                          isWithinDistance(stake, PTarget->loc.p, settings::get<float>("pawn.HUNT_LEASH")), POn == POwner,
+                          PTarget->PAI->IsEngaged(), config, POn != nullptr ? POn->id : 0, onTank ? POn->id : 0);
 }
 
 auto CPawnController::PullIn(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction
@@ -8439,9 +8459,12 @@ auto CPawnController::PullIn(const CBattleEntity* PTarget) -> cardian::stake::Re
     const auto result = ReceiveStep(receive, PTarget);
     if (!joined && receive.joined)
     {
+        const auto* POn = PTarget->GetBattleTarget();
         ShowInfoFmt("pawn: {} sees {} come in to the camp ({:.1f} y from landing point, {})", POwner->getName(), PTarget->getName(),
                     distance(PTarget->loc.p, nearPosition(m_Stake->at, cardian::stake::kMobAhead, 0.0f), true),
-                    PTarget->GetBattleTarget() == POwner ? "on her" : "in or stopped");
+                    receive.turned ? fmt::format("it turned from its puller onto {}", POn != nullptr ? POn->getName() : std::string("nobody")) :
+                    POn == POwner  ? std::string("on her") :
+                                     std::string("in or stopped"));
     }
     return result;
 }
@@ -8495,11 +8518,14 @@ auto CPawnController::TowIntent(CBattleEntity* PTarget) -> Intent
         isWithinDistance(PTarget->loc.p, victim->loc.p, PTarget->GetMeleeRange(victim)) && PTarget->CanSeeTarget(victim);
     const bool settled = m_CampSettlement.observe(PTarget->PAI->getTick().time_since_epoch().count(),
         PTarget->PAI->getPrevTick().time_since_epoch().count(), PTarget->loc.p.x, PTarget->loc.p.y, PTarget->loc.p.z, meleeReady);
-    m_KeepCampFightSpot    = cardian::stake::keepsFightSpot(wasKept, settled, mobToFlag, forward);
+    // The camp's front line: how far ahead of the flag the player lets a
+    // fight settle before she tows it back (the Stake's front, or kFront)
+    const float front      = cardian::stake::frontLine(m_Stake->front);
+    m_KeepCampFightSpot    = cardian::stake::keepsFightSpot(wasKept, settled, mobToFlag, forward, front);
     // Do not start towing on the first plausible stop and thereby move the
     // mob before its confirming update. The normal walker still vets Stand.
     const bool confirming = received && hasHate && !m_KeepCampFightSpot && meleeReady &&
-        cardian::stake::keepsFightSpot(false, true, mobToFlag, forward);
+        cardian::stake::keepsFightSpot(false, true, mobToFlag, forward, front);
     m_ClosingWithoutHate  = received && !hasHate;
     // During receive, stay ready at the landing point. Once committed,
     // melee a mob on somebody else; only its actual target can tow it.

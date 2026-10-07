@@ -29,6 +29,7 @@
 #include "common/cbasetypes.h"
 #include "formation_math.h"
 
+#include <algorithm>
 #include <cmath>
 #include <numbers>
 #include <optional>
@@ -45,6 +46,7 @@ namespace cardian::stake
 
     constexpr float kSettle   = 1.5f;
     constexpr float kMobAhead = 2.0f; // settle allowance remains entirely ahead of the flag
+    constexpr float kFront    = 20.0f; // a camp's front line when the player chose none: a fight settles this far ahead of the flag untowed
 
     // A path being empty alone says nothing about arrival: it may have
     // failed. Confirm melee-ready stillness on consecutive mob updates.
@@ -78,12 +80,28 @@ namespace cardian::stake
     };
 
     // The player's pull chooses the fight's spot. A confirmed melee stop
-    // ahead of the flag and within 20 yalms is good enough, immediately.
-    // Keep that permission through hate changes and local movement; leaving
-    // this area revokes it. The controller resets it for a new mob or camp.
-    inline auto keepsFightSpot(const bool kept, const bool settled, const float flagDistance, const float forward) -> bool
+    // ahead of the flag and within the camp's front line (kFront when the
+    // player chose none) is good enough, immediately. Keep that permission
+    // through hate changes and local movement; leaving this area revokes
+    // it. The controller resets it for a new mob or camp.
+    inline auto keepsFightSpot(const bool kept, const bool settled, const float flagDistance, const float forward, const float front = kFront) -> bool
     {
-        return forward >= 0.0f && flagDistance <= 20.0f && (kept || settled);
+        return forward >= 0.0f && flagDistance <= front && (kept || settled);
+    }
+
+    // The camp's front line: the player's choice, or kFront when he made none (0)
+    inline auto frontLine(const float front) -> float
+    {
+        return front > 0.0f ? front : kFront;
+    }
+
+    // How far behind the flag the mages stand: the camp's backline (0 when
+    // the player chose none), but never inside the mob's ring -- its reach,
+    // less what the mob stands ahead of the flag -- nor so deep that the tank
+    // is out of their cast range, and never under 3 yalms
+    inline auto backlineDepth(const float back, const float ring, const float castRange) -> float
+    {
+        return std::clamp(std::max(back, ring + 1.0f - kMobAhead), 3.0f, std::max(3.0f, castRange - 2.0f - kMobAhead));
     }
 
     struct ReceiveConfig
@@ -100,6 +118,13 @@ namespace cardian::stake
     // One initial receive, independent of weapon draw and Provoke's recast.
     // The controller supplies distance to the fixed landing point and owns
     // the monster's identity. Once joined, hate changes never restart it.
+    // `target` is whom the monster is on now (0 when nobody, or unknown):
+    // the one it is on when first seen fighting is the pull's puller, and a
+    // turn onto anyone else but her -- a mage it heard, a member it passed --
+    // is a pull gone wrong (the user, 2026-10-07: almost always bad news),
+    // so it is in at once, wherever it is: she goes for it, Provokes it and
+    // tows it back. A turn onto `tank`, the party's Tank, is the pull handed
+    // to her as it comes in, not a turn
     struct Receive
     {
         bool joined = false;
@@ -107,17 +132,34 @@ namespace cardian::stake
         float sampleDistance = 0.0f;
         double sampleAt = 0.0;
         std::optional<double> deadline;
+        uint32 puller = 0;     // whom it was on when first seen fighting
+        bool   turned = false; // in because it turned off its puller
 
         auto update(const double now, const float distance, const bool inCamp,
-                    const bool hasHate, const bool fighting, const ReceiveConfig& config) -> ReceiveAction
+                    const bool hasHate, const bool fighting, const ReceiveConfig& config, const uint32 target = 0, const uint32 tank = 0) -> ReceiveAction
         {
             if (joined)
             {
                 return ReceiveAction::Join;
             }
+            if (fighting && target != 0)
+            {
+                if (puller == 0)
+                {
+                    puller = target;
+                }
+                else if (target != puller && target != tank && !hasHate)
+                {
+                    joined = true;
+                    turned = true;
+                    return ReceiveAction::Join;
+                }
+            }
             if (!inCamp)
             {
-                *this = {};
+                const uint32 keep = fighting ? puller : 0; // a pull run in from afar keeps its puller
+                *this  = {};
+                puller = keep;
                 return ReceiveAction::Outside;
             }
             if (!fighting)

@@ -261,13 +261,20 @@ namespace pawn
     {
         xi::ZoneId zone{};
         position_t at{}; // where, and facing: rotation is the heading
+        // The camp's spacing, the player's choice as he sets it (STAKE's
+        // front and back, in yalms): how far ahead of the flag a fight may
+        // settle before the tank tows it back (0: stake_math.h kFront), and
+        // how far behind it the mages stand -- never inside the mob's reach,
+        // never past cure range of the tank (0: as far as the reach asks)
+        float front = 0.0f;
+        float back  = 0.0f;
     };
     auto stakeOf(uint32 ownerCharID) -> std::optional<Stake>;
-    auto setStake(CCharEntity* POwner) -> uint16; // CL_S_OK when set or moved (the Link's outcomes); otherwise why not
+    auto setStake(CCharEntity* POwner, float front = 0.0f, float back = 0.0f) -> uint16; // CL_S_OK when set or moved (the Link's outcomes); otherwise why not
     // The camp placed as a maneuver (OPEN_ISSUES #272): at a spot within
     // pawn.STAKE_PLACE_REACH of him, set down on the zone's ground, facing
     // the way given. CL_S_OK, or why not
-    auto setStakeAt(CCharEntity* POwner, const position_t& at) -> uint16;
+    auto setStakeAt(CCharEntity* POwner, const position_t& at, float front = 0.0f, float back = 0.0f) -> uint16;
     auto clearStake(uint32 ownerCharID, std::string_view why) -> bool; // false when he had none
     void stakeSweep();
 
