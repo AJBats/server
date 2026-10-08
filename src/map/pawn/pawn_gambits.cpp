@@ -2498,14 +2498,25 @@ namespace pawn
 
             // Self-defence: a mob that has chosen her, or a member of her party,
             // whether or not anyone has swung yet -- aggro on a cardian, or on
-            // the player. Out of a party she is a party of one
+            // the player. Out of a party she is a party of one. Longest in the
+            // fight first: the mob he pulled before the one that linked to it
+            // (the user, 2026-10-07: the monks took the link)
+            std::vector<CMobEntity*> onParty;
             pawn::forEachMobNear(pawn::entitiesAround(POwner), from, leash, [&](CMobEntity* PMob)
                                  {
                                      if (PMob->PAI->IsEngaged() && !PMob->isDead() && FoeFacts(PMob, PLeader).onParty)
                                      {
-                                         add(PMob);
+                                         onParty.push_back(PMob);
                                      }
                                  });
+            std::ranges::stable_sort(onParty, [](CMobEntity* a, CMobEntity* b)
+                                     {
+                                         return a->GetBattleTime() > b->GetBattleTime();
+                                     });
+            for (auto* PMob : onParty)
+            {
+                add(PMob);
+            }
         }
 
         std::vector<CBattleEntity*> foes;
