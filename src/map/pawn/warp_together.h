@@ -52,12 +52,8 @@ class CCharEntity;
 // still waiting to is let go of it, and one whose warp has already taken lands
 // at his home point all the same. With nobody beside him, no addon to ask, a
 // warp of his already under way, or a Warp he cannot cast now, his warp is the
-// game's, as ever.
-//
-// The kit that makes it work: every body of the world in a real player's
-// party carries one Instant Warp and one Instant Reraise (the user,
-// 2026-10-07; both are rare, so one each is all she can hold), topped up
-// with her food. The Reraise is only carried: he orders its use from her bags.
+// game's, as ever. Her Instant Warp she buys at a conquest guard
+// (supplies.h).
 namespace pawn::together
 {
     // The gate's ask and the question's resolver, set once at start
@@ -70,8 +66,4 @@ namespace pawn::together
     // His warp watched to its end: gone (theirs go on), or come to nothing
     // (theirs are called off). From the zone tick
     void tick();
-
-    // A body of the world's kit topped up in her bag. How many items she was
-    // given
-    auto topUpKit(CCharEntity* PPawn) -> uint32;
 } // namespace pawn::together

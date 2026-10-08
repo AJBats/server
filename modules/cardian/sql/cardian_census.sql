@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
   `trade`     varchar(16)         NOT NULL DEFAULT '',      -- the settled: craft, gathering kind, hunt, merchant
   `charid`    int(10) unsigned    NOT NULL DEFAULT '0',     -- once minted
   `recruited` tinyint(1) unsigned NOT NULL DEFAULT '0',
+  `cp_level`  tinyint(3) unsigned NOT NULL DEFAULT '0',     -- the level up to which her conquest points have been granted (census.py grant_points)
   PRIMARY KEY (`name`),
   KEY `idx_cardian_census_charid` (`charid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

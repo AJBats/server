@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 50: a warp together's member's ring and
+// compatible, the user, 2026-09-14). 51: SUPPLIES, a cardian's conquest scrolls
+// bought, wanted or refused; 50: a warp together's member's ring and
 // cudgel, each piece's charges and recast left (cl_offer_piece); 49: the Warp
 // Ring and the Warp Cudgel among the ways home (CL_WAY_RING, CL_WAY_CUDGEL); 48:
 // a warp together's member's barred, the ways she knows but cannot use now; 47:
@@ -94,7 +95,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 50 };
+enum { CL_PROTOCOL = 51 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1385,6 +1386,7 @@ enum
     CL_T_NOTE           = 0x0508,
     CL_T_OFFER          = 0x0509,
     CL_T_OFFER_ANSWER   = 0x050A,
+    CL_T_SUPPLIES       = 0x050B,
 };
 
 enum
@@ -1555,6 +1557,30 @@ typedef struct cl_offer_answer
     uint8_t   ways[5]; // a warp together: his pick of each member's way, in the offer's order (CL_WAY_*)
     uint8_t   spare[2];
 } cl_offer_answer;
+
+// What a cardian did about her conquest supplies, the scrolls she buys at a
+// conquest guard (pawn/supplies.h)
+enum
+{
+    CL_SUPPLIES_BOUGHT  = 0, // she bought item for price conquest points
+    CL_SUPPLIES_WANTED  = 1, // arrived in a city lacking scrolls she can pay for: missing says which
+    CL_SUPPLIES_FOREIGN = 2, // a guard of another nation would not sell to her: nation is hers
+};
+
+// One-way, to the player: what a cardian of his party did about her conquest
+// supplies. The server names it; the addon words it -- a purchase as the
+// conquest exchange's own line, the rest as her line in party chat.
+typedef struct cl_supplies
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   kind;    // CL_SUPPLIES_*
+    uint8_t   nation;  // hers (xi.nation): FOREIGN's line names its consulate
+    uint8_t   missing; // WANTED: what she lacks, 1 an Instant Warp, 2 an Instant Reraise
+    uint8_t   spare;
+    uint16_t  item;    // BOUGHT: the item
+    uint16_t  price;   // BOUGHT: what it cost her, in conquest points
+} cl_supplies;
 
 // One-way, to every bound addon as the simulation is held, and to an addon
 // that binds while it is. gametime is Vana'diel's clock in seconds

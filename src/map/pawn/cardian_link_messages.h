@@ -119,6 +119,7 @@ namespace cardian::link
     X(NOTE, cl_note)             \
     X(OFFER, cl_offer)           \
     X(OFFER_ANSWER, cl_offer_answer) \
+    X(SUPPLIES, cl_supplies)     \
     X(MANEUVER_STATE, cl_maneuver_state) \
     X(WALK_TAKEN, cl_walk_taken) \
     X(PAUSE, cl_pause)           \

@@ -26,6 +26,7 @@
 #include "offers.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "pawn_items.h"
 
 #include "ai/ai_container.h"
 #include "ai/states/item_state.h"
@@ -40,7 +41,6 @@
 #include "items/item.h"
 #include "items/item_equipment.h"
 #include "items/item_usable.h"
-#include "items/transactions/item_claim.h"
 #include "packets/basic.h"
 #include "packets/c2s/0x01a_action.h"
 #include "packets/c2s/0x037_item_use.h"
@@ -49,18 +49,15 @@
 #include "spell.h"
 #include "status_effect_container.h"
 #include "utils/charutils.h"
-#include "utils/itemutils.h"
 #include "utils/zoneutils.h"
 
 #include <fmt/format.h>
 
 #include <algorithm>
-#include <array>
 #include <chrono>
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -71,14 +68,9 @@ namespace pawn::together
         using namespace std::chrono_literals;
 
         constexpr uint16 kInstantWarp    = 4181;
-        constexpr uint16 kInstantReraise = 4182;
         constexpr uint16 kWarpRing       = 28540;
         constexpr uint16 kWarpCudgel     = 17040;
 
-        // The containers gear is worn from, as the enchanted-item lane looks:
-        // her inventory and the wardrobes
-        constexpr std::array<uint8, 9> kWornFrom{ LOC_INVENTORY, LOC_WARDROBE, LOC_WARDROBE2, LOC_WARDROBE3, LOC_WARDROBE4,
-                                                  LOC_WARDROBE5, LOC_WARDROBE6, LOC_WARDROBE7, LOC_WARDROBE8 };
         constexpr auto   kPatience       = std::chrono::seconds(30); // the party's warp's own
         constexpr auto   kStartGrace     = std::chrono::seconds(1);  // his warp's start, seen before it is judged
         constexpr auto   kLandWithin     = std::chrono::seconds(60); // their warps' landings, kept this long
@@ -217,26 +209,6 @@ namespace pawn::together
             return PItem != nullptr && PItem->state() == ItemState::Equipped && PItem->getCurrentCharges() > 0 && PItem->getReuseTime() <= 0s;
         }
 
-        // A piece of hers by its item, worn or not, in her inventory or a
-        // wardrobe; nullptr when she has none
-        auto pieceOf(CCharEntity* PPawn, const uint16 itemId) -> CItemEquipment*
-        {
-            for (const uint8 location : kWornFrom)
-            {
-                auto* storage = PPawn->getStorage(location);
-                for (uint8 slot = 1; storage != nullptr && slot <= storage->GetSize(); ++slot)
-                {
-                    // busy as worn is still hers to use; busy in a trade is not
-                    if (auto* PItem = dynamic_cast<CItemEquipment*>(storage->GetItem(slot));
-                        PItem != nullptr && PItem->getID() == itemId && (!PItem->isBusy() || PItem->state() == ItemState::Equipped))
-                    {
-                        return PItem;
-                    }
-                }
-            }
-            return nullptr;
-        }
-
         // Her main job wears it, at her level as the game judges it
         // (charutils::EquipArmor: her job's own level unless gear scaling is
         // off), and her race
@@ -257,7 +229,7 @@ namespace pawn::together
         };
         auto pieceFor(CCharEntity* PPawn, const uint8 way) -> Piece
         {
-            auto* PItem = pieceOf(PPawn, itemOfWay(way));
+            auto* PItem = items::pieceOf(PPawn, itemOfWay(way));
             if (PItem == nullptr || !wears(PPawn, PItem))
             {
                 return Piece::None;
@@ -340,7 +312,7 @@ namespace pawn::together
         // or cannot wear
         auto pieceState(CCharEntity* PPawn, const uint8 way) -> offers::Offer::Piece
         {
-            auto* PItem = pieceOf(PPawn, itemOfWay(way));
+            auto* PItem = items::pieceOf(PPawn, itemOfWay(way));
             if (PItem == nullptr || !wears(PPawn, PItem))
             {
                 return {};
@@ -463,7 +435,7 @@ namespace pawn::together
                 PController->ClearQueuedOrders("she warps home with the player");
                 return PController->DoAction(keyOfWay(way), PPawn);
             }
-            const auto* PItem = pieceOf(PPawn, itemOfWay(way));
+            const auto* PItem = items::pieceOf(PPawn, itemOfWay(way));
             if (PItem == nullptr)
             {
                 return CL_S_NOT_CARRIED;
@@ -730,38 +702,5 @@ namespace pawn::together
             }
             it = going.erase(it);
         }
-    }
-
-    auto topUpKit(CCharEntity* PPawn) -> uint32
-    {
-        // A bag with no room is said once, until the kit lands again
-        static auto& full  = *new std::unordered_set<uint32>();
-        uint32       given = 0;
-        for (const uint16 itemId : std::array{ kInstantWarp, kInstantReraise })
-        {
-            // Rare: one anywhere in her bags is all she may hold
-            if (charutils::HasItem(PPawn, itemId))
-            {
-                continue;
-            }
-            auto transaction = ItemClaimTransaction::start(PPawn);
-            if (!transaction)
-            {
-                continue;
-            }
-            if (const auto landed = transaction->give(LOC_INVENTORY, itemId, 1, Silence::Yes); !landed.has_value() || !transaction->commit())
-            {
-                if (full.insert(PPawn->id).second)
-                {
-                    ShowWarningFmt("world: {} has no room in her bag for her scrolls; not topped up", PPawn->getName());
-                }
-                continue;
-            }
-            full.erase(PPawn->id);
-            ++given;
-            const auto* PKind = xi::items::lookup(itemId);
-            ShowInfoFmt("world: {} is given her {}", PPawn->getName(), PKind != nullptr ? PKind->getName() : std::to_string(itemId));
-        }
-        return given;
     }
 } // namespace pawn::together

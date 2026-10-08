@@ -28,7 +28,6 @@
 #include "pawn_controller.h"
 #include "pawn_items.h"
 #include "seats.h"
-#include "warp_together.h"
 
 #include "ai/ai_container.h"
 #include "common/database.h"
@@ -184,7 +183,9 @@ namespace pawn::redress
         // She takes it now: up, standing in her zone, in no event, and out of
         // a fight -- not engaged, nor attending the party's fight from its
         // edge -- the refusals of her player's Mog House (mog_house.cpp
-        // changeJobs), since a re-dress may change her support job
+        // changeJobs), since a re-dress may change her support job; and with
+        // no enchanted piece on her lane (StartEnchant), which puts back what
+        // that piece replaced
         auto canDress(const CCharEntity* PPawn) -> bool
         {
             if (PPawn->loc.zone == nullptr || PPawn->isDead() || PPawn->isInEvent() || PPawn->status != xi::Status::Normal || PPawn->PAI == nullptr ||
@@ -193,7 +194,7 @@ namespace pawn::redress
                 return false;
             }
             const auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
-            return PController == nullptr || PController->PartyFightTarget() == nullptr;
+            return PController == nullptr || (PController->PartyFightTarget() == nullptr && PController->QueueLine().lane.action.kind == CL_AK_NONE);
         }
 
         struct Piece
@@ -478,7 +479,6 @@ namespace pawn::redress
             pawn::food::forget(PPawn->id);
             const auto dressed = dress(PPawn, *plan, cardian::redress::parseIds(answer.issued), pawn::food::plannedIds(PPawn->getName()));
             pawn::food::topUp(PPawn);
-            pawn::together::topUpKit(PPawn);
             const auto learned = learnSpells(PPawn);
             const auto raised  = raiseSkills(PPawn, answer.skills);
             PPawn->UpdateHealth();

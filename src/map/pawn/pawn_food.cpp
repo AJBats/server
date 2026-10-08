@@ -10,7 +10,6 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "seats.h"
-#include "warp_together.h"
 
 #include "ai/ai_container.h"
 #include "ai/helpers/pathfind.h"
@@ -80,7 +79,6 @@ void CPawnController::FoodTick()
         if (pawn::seats::isWorlds(PChar->id))
         {
             pawn::food::topUp(PChar);
-            pawn::together::topUpKit(PChar);
         }
     }
 

@@ -25,6 +25,7 @@
 #include "entities/char_entity.h"
 #include "zone.h"
 
+#include <algorithm>
 #include <array>
 #include <string>
 
@@ -95,5 +96,13 @@ namespace pawn::guards
             }
         }
         return PNearest;
+    }
+
+    auto zoneHasGuard(const std::string_view zoneName) -> bool
+    {
+        return std::ranges::any_of(kGuards, [&](const Guard& guard)
+                                   {
+                                       return guard.zone == zoneName;
+                                   });
     }
 } // namespace pawn::guards
