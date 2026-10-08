@@ -21,6 +21,7 @@
 
 #include "pawn_loot.h"
 #include "pawn.h"
+#include "seats.h"
 
 #include "common/logging.h"
 #include "common/xirand.h"
@@ -143,7 +144,9 @@ namespace pawn::loot
                 continue;
             }
 
-            std::string taker = "lost, no one staying can hold it";
+            // a guest's win leaves no trace in her bag: it went into the void (voids)
+            const bool  guests = std::ranges::any_of(staying, [](const CCharEntity* PCardian) { return voids(PCardian); });
+            std::string taker  = guests ? "won by a guest, into the void" : "lost, no one staying can hold it";
             for (size_t i = 0; i < staying.size(); ++i)
             {
                 if (quantityOf(staying[i], itemID) > before[i])
@@ -154,5 +157,10 @@ namespace pawn::loot
             }
             ShowInfoFmt("pawn: loot left in {}: {} -> {}", zone, name, taker);
         }
+    }
+
+    auto voids(const CCharEntity* PWinner) -> bool
+    {
+        return PWinner != nullptr && pawn::isPawn(PWinner) && pawn::seats::isWorlds(PWinner->id);
     }
 } // namespace pawn::loot
