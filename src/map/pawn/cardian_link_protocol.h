@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 51: SUPPLIES, a cardian's conquest scrolls
+// compatible, the user, 2026-09-14). 52: a worn piece's charges and readyIn, in
+// GEAR's cl_worn and PARTY_ROLE's wornCharges and wornReadyIn, so every gear
+// tooltip shows an enchanted piece's line; 51: SUPPLIES, a cardian's conquest scrolls
 // bought, wanted or refused; 50: a warp together's member's ring and
 // cudgel, each piece's charges and recast left (cl_offer_piece); 49: the Warp
 // Ring and the Warp Cudgel among the ways home (CL_WAY_RING, CL_WAY_CUDGEL); 48:
@@ -95,7 +97,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 51 };
+enum { CL_PROTOCOL = 52 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -524,12 +526,16 @@ typedef struct cl_member_stats
 } cl_member_stats;
 
 // A piece she wears: its item, and the container and slot it is worn from
-// (the inventory, or a wardrobe); item 0 for an empty equipment slot
+// (the inventory, or a wardrobe); item 0 for an empty equipment slot. An
+// enchanted piece's charges and readyIn as cl_item's
 typedef struct cl_worn
 {
     uint16_t item;
     uint8_t  bag;
     uint8_t  slot;
+    uint8_t  charges;
+    uint8_t  spare;
+    uint16_t readyIn;
 } cl_worn;
 
 typedef struct cl_gear
@@ -1350,6 +1356,8 @@ typedef struct cl_party_role
     int16_t   total[7];  // STR, DEX, VIT, AGI, INT, MND, CHR
     int16_t   bonus[7];  // the part of each that gear and effects give
     uint16_t  worn[16];  // the item in each equipment slot, main hand to back; 0 for an empty slot
+    uint16_t  wornReadyIn[16]; // an enchanted piece's readyIn, by equipment slot, as cl_item's
+    uint8_t   wornCharges[16]; // and its charges left
 } cl_party_role;
 
 // His party's roles: each member comes as a PARTY_ROLE answer (CL_F_MORE), the

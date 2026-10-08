@@ -85,6 +85,29 @@ namespace pawn::linkapi
             return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
         }
 
+        // An enchanted piece's charges, and how long until it can be used --
+        // worn, the game's own wait (the recast, or the delay wearing it
+        // started); not worn, its recast alone, since wearing it starts the
+        // delay afresh. Every message that carries a piece of gear says it the
+        // same way (cl_item, cl_worn, PARTY_ROLE); nothing for any other item
+        struct Charge
+        {
+            uint8_t  charges = 0;
+            uint16_t readyIn = 0;
+        };
+        auto chargeOf(const CItem* PItem) -> std::optional<Charge>
+        {
+            auto* PUsable = dynamic_cast<CItemUsable*>(const_cast<CItem*>(PItem)); // upstream's getters are not const
+            if (PUsable == nullptr || !PItem->isType(ITEM_EQUIPMENT) || !PItem->isSubType(ITEM_CHARGED))
+            {
+                return std::nullopt;
+            }
+            const bool worn = PItem->state() == ItemState::Equipped;
+            const auto left = worn ? PUsable->getReuseTime() : PUsable->getLastUseTime() + PUsable->getReuseDelay() - timer::now();
+            return Charge{ PUsable->getCurrentCharges(),
+                           clamp16(std::chrono::ceil<std::chrono::seconds>(std::max(left, timer::duration::zero())).count()) }; // up: 0 only once ready
+        }
+
         // One of her containers as it stands now, as the addon lists it; `wildOnly`: only what
         // the player may use from the bags of a cardian he does not manage
         // (items::usableOnWild)
@@ -114,16 +137,10 @@ namespace pawn::linkapi
                 item.id    = PItem->getID();
                 item.qty   = PItem->getQuantity();
                 item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
-                // An enchanted piece: its charges, and how long until it can be used --
-                // worn, the game's own wait (the recast, or the delay wearing it
-                // started); not worn, its recast alone, since wearing it starts the delay
-                // afresh
-                if (auto* PUsable = dynamic_cast<CItemUsable*>(const_cast<CItem*>(PItem)); PUsable != nullptr && PItem->isType(ITEM_EQUIPMENT) && PItem->isSubType(ITEM_CHARGED))
+                if (const auto charge = chargeOf(PItem))
                 {
-                    const auto worn = PItem->state() == ItemState::Equipped;
-                    const auto left = worn ? PUsable->getReuseTime() : PUsable->getLastUseTime() + PUsable->getReuseDelay() - timer::now();
-                    item.charges    = PUsable->getCurrentCharges();
-                    item.readyIn    = clamp16(std::chrono::ceil<std::chrono::seconds>(std::max(left, timer::duration::zero())).count()); // up: 0 only once ready
+                    item.charges = charge->charges;
+                    item.readyIn = charge->readyIn;
                 }
             }
             return msg;
@@ -228,7 +245,8 @@ namespace pawn::linkapi
             {
                 if (const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
                 {
-                    gear.worn[equipSlot] = cl_worn{ PItem->getID(), PItem->getLocationID(), PItem->getSlotID() };
+                    const auto charge    = chargeOf(PItem).value_or(Charge{});
+                    gear.worn[equipSlot] = cl_worn{ PItem->getID(), PItem->getLocationID(), PItem->getSlotID(), charge.charges, 0, charge.readyIn };
                 }
             }
             return gear;
@@ -1553,6 +1571,11 @@ namespace pawn::linkapi
                     if (const auto* PItem = row.who->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
                     {
                         msg.worn[equipSlot] = PItem->getID();
+                        if (const auto charge = chargeOf(PItem))
+                        {
+                            msg.wornCharges[equipSlot] = charge->charges;
+                            msg.wornReadyIn[equipSlot] = charge->readyIn;
+                        }
                     }
                 }
                 reply.more(msg);
@@ -1993,9 +2016,10 @@ namespace pawn::linkapi
         // manage); or one of his own
         void inventory(CCharEntity* PChar, const cl_inventory& ask, Reply& reply)
         {
-            // one he commands but does not manage: her inventory, only what he may use from it
+            // one he commands but does not manage: her inventory and her
+            // wardrobes, only what he may use from them
             auto*      PPawn    = managedOrSelf(PChar, ask.cardian);
-            const bool wildOnly = PPawn == nullptr && ask.loc == LOC_INVENTORY;
+            const bool wildOnly = PPawn == nullptr && (ask.loc == LOC_INVENTORY || pawn::items::isWardrobe(ask.loc));
             if (wildOnly)
             {
                 PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
