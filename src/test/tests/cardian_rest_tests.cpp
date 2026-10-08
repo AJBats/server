@@ -1,5 +1,6 @@
 // Cardian: resting lifecycle regressions, independent of a running map/save.
 #include "pawn/rest_math.h"
+#include "pawn/tp_clock.h"
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
@@ -397,14 +398,104 @@ TEST_CASE("A wake during kneeling waits for both physical transitions", "[cardia
         CHECK_FALSE(s.canAct(10.2, true));
         facts.now = 10.9;
         CHECK(s.decide(facts) == Decision::StayDown);
-        // Once requested, waking survives even a one-shot reason disappearing.
-        REQUIRE(s.decide({.now=11, .resting=true, .want=true}) == Decision::Stand);
+        // The reason holding at the end of the kneel, she wakes
+        facts.now = 11;
+        REQUIRE(s.decide(facts) == Decision::Stand);
         CHECK_FALSE(s.standPending);
         CHECK_FALSE(s.canAct(11.2, false)); // the old early-Cure failure
         CHECK_FALSE(s.canAct(11.999, false));
         CHECK_THAT(s.readyIn(11.5, false), WithinAbs(0.5, 1e-9));
         CHECK(s.canAct(12, false));
     }
+}
+
+TEST_CASE("The TP clock: a kneeling mage stands for a mob's area move only when it comes soon, before the mob dies", "[cardian][rest][tp]")
+{
+    namespace tp = cardian::tpclock;
+    // The server's rule: the rolled threshold, 3000 at most, 1000 below 25% HP
+    CHECK(tp::firesAt(2400, 80) == 2400);
+    CHECK(tp::firesAt(2400, 20) == 1000);
+    CHECK(tp::firesAt(0, 80) == 1000);
+    // Its climb: 600 TP in 6 s is 100 a second; a move resets the climb
+    tp::Watch w;
+    for (int s = 0; s <= 6; ++s) // watched every second, as she watches it
+    {
+        w.see(7, static_cast<uint16>(100 * s), 100.0 + s);
+        if (s == 2)
+        {
+            CHECK_FALSE(w.rate(102.0).has_value()); // not yet watched long enough
+        }
+    }
+    REQUIRE(w.rate(106.0).has_value());
+    CHECK(*w.rate(106.0) == 100.0);
+    w.see(7, 50, 107.0); // the move fired: a new climb
+    CHECK_FALSE(w.rate(107.0).has_value());
+    // Unwatched a while -- the same id back for a new fight -- the climb
+    // starts afresh rather than spreading 300 TP over minutes
+    tp::Watch gap;
+    gap.see(9, 300, 0.0);
+    gap.see(9, 600, 120.0);
+    CHECK_FALSE(gap.rate(120.0).has_value());
+    gap.see(9, 700, 121.0);
+    gap.see(9, 800, 122.0);
+    gap.see(9, 900, 123.0);
+    REQUIRE(gap.rate(123.0).has_value());
+    CHECK(*gap.rate(123.0) == 100.0);
+    // The even-match goblin: rolled 2400, at 600, 50 TP/s -- 36 s away, and
+    // the party kills it in 15: she stays down
+    CHECK_FALSE(tp::standsFor(tp::secondsToMove(600, 2400, 50.0), 15.0));
+    // At 1000 of a 1000 threshold: it fires now, and it lives on
+    CHECK(tp::standsFor(tp::secondsToMove(1000, 1000, 50.0), 40.0));
+    // 4 s from its move and 30 s of life: she gets up
+    CHECK(tp::standsFor(tp::secondsToMove(800, 1000, 50.0), 30.0));
+    // 4 s from its move but dead in 2: she stays down
+    CHECK_FALSE(tp::standsFor(tp::secondsToMove(800, 1000, 50.0), 2.0));
+    // Its life unknown: the move is taken to come first
+    CHECK(tp::standsFor(tp::secondsToMove(800, 1000, 50.0), -1.0));
+    // Its rate unknown: a fast climb is assumed, so it is never late
+    CHECK(tp::secondsToMove(900, 1000, std::nullopt) == 1.0);
+    // Gaining no TP: never
+    CHECK_FALSE(tp::standsFor(tp::secondsToMove(500, 1000, 0.0), -1.0));
+}
+
+TEST_CASE("A wake asked during kneeling lapses with its reason, first aid's call excepted", "[cardian][rest][kneel]")
+{
+    // Danger, a move or the request ending for a moment while she knelt:
+    // gone by the end of the kneel, she stays down (the user, 2026-10-07)
+    for (const auto facts : {
+        Facts{.now=10.2, .resting=true, .want=true, .blocked=true},
+        Facts{.now=10.2, .resting=true, .want=true, .moving=true},
+        Facts{.now=10.2, .resting=true}})
+    {
+        State s;
+        REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+        REQUIRE(s.decide(facts) == Decision::StayDown);
+        CHECK(s.standPending);
+        CHECK(s.decide({.now=11, .resting=true, .want=true}) == Decision::StayDown);
+        CHECK_FALSE(s.standPending);
+        CHECK(s.decide({.now=15, .resting=true, .want=true}) == Decision::StayDown);
+    }
+    // First aid's call survives a flicker: the patient still needs her
+    State s;
+    REQUIRE(s.decide({.now=10, .want=true}) == Decision::Kneel);
+    REQUIRE(s.decide({.now=10.2, .resting=true, .want=true, .urgent=true}) == Decision::StayDown);
+    CHECK(s.decide({.now=11, .resting=true, .want=true}) == Decision::Stand);
+    // An outside stand during a pending one the rule asked owns it: the
+    // rule's reason lapsing does not take the outside request with it
+    State both;
+    REQUIRE(both.decide({.now=10, .want=true}) == Decision::Kneel);
+    REQUIRE(both.decide({.now=10.2, .resting=true, .want=true, .blocked=true}) == Decision::StayDown);
+    REQUIRE_FALSE(both.requestStandFromOutside(10.4));
+    CHECK(both.decide({.now=10.6, .resting=true, .want=true}) == Decision::StayDown);
+    CHECK(both.standPending);
+    CHECK(both.decide({.now=11, .resting=true, .want=true}) == Decision::Stand);
+    // A stand asked from outside (StandFromRest) holds until it is done
+    State outside;
+    REQUIRE(outside.decide({.now=10, .want=true}) == Decision::Kneel);
+    REQUIRE_FALSE(outside.requestStand(10.2));
+    CHECK(outside.decide({.now=10.5, .resting=true, .want=true}) == Decision::StayDown);
+    CHECK(outside.standPending);
+    CHECK(outside.decide({.now=11, .resting=true, .want=true}) == Decision::Stand);
 }
 
 TEST_CASE("Repeated direct wake requests preserve the original kneel deadline", "[cardian][rest][kneel]")

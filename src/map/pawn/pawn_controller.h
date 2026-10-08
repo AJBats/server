@@ -32,6 +32,7 @@
 #include "pawn_rules.h"
 #include "perimeter_math.h"
 #include "stake_math.h"
+#include "tp_clock.h"
 #include "rest_math.h"
 #include "warp_hold.h"
 
@@ -166,8 +167,17 @@ public:
     auto RestInterruptionCost() const -> double;
     auto PrepareRestAction(bool ordered = false) -> bool;
     void StandFromRest(std::string_view why);
+    void FinishPendingStand(); // a wake asked from outside during the kneel-down, done once she is down
+    auto OrderOnRecast(unsigned kind, unsigned id) const -> bool; // a spell or ability order still on its recast
     // True while the policy keeps her kneeling; defer routine positioning then.
-    auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false) -> bool;
+    // moveWhy names the move a routine one is not, for the stand's line
+    auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false, std::string_view moveWhy = {}) -> bool;
+    // Her rest's own danger test: her switches' circles, no spell cast, asked
+    // as if she already knelt; the mob it found, or nothing
+    auto RestsInDanger() -> std::optional<std::string>;
+    // The player's own rest order has her kneeling: it wins over everything
+    // but the game itself (the user, 2026-10-07: "my orders always win")
+    auto PlayersRestHolds() const -> bool;
     // The player's rest order (ComposeRest): down until her HP and MP both
     // reach N%. Only the emergency cure stands her meanwhile; any order of
     // his, or her leaving his party, ends it first. byRow: her own plain
@@ -481,6 +491,11 @@ public:
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
     auto KeepsClearOfAggro() const -> bool; // attending, or waiting at her camp spot: other mobs' detection kept out of whatever her switches say
+    auto FightSettled(const CMobEntity* PMob) -> bool; // engaged and held still for a second, not running in or on its tow
+    // The mob's next TP move, assumed the area one she keeps out of, comes
+    // within her time to stand and walk out, and before the party kills it
+    // (tp_clock.h); m_KneelWhy says the reading
+    auto AreaMoveComesSoon(CMobEntity* PMob, const cardian::perimeter::Reach& reach) -> bool;
     auto RestsWithPlayer() const -> bool;
     auto RestsByRow() const -> bool;
     auto RestRowDue() const -> bool; // her plain Rest row speaks, she is short, and no rest order is on
@@ -770,6 +785,7 @@ private:
         position_t             at{};
     };
     auto ClaimsBefore() const -> std::vector<BoardClaim>;
+    auto KneelersAfter() const -> std::vector<BoardClaim>; // the cardians after her who kneel: she gives way to them too (GiveWay)
     // The rule for one spot she proposes: crowded by a claim before hers,
     // it slides to the nearest clear point that keeps the intent's purpose
     // -- round slideRound (else the party's place) at the spot's distance,
@@ -1199,6 +1215,16 @@ private:
     uint32                  m_SaidNoSpotFor   = 0;
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
     uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change
+    bool                    m_KneelsInAoe     = false; // the fight she attends, settled where it is held, reaches her with an area move she keeps out of, and its next TP move comes soon (AreaMoveComesSoon): only then does a kneeling mage get up for it
+    std::string             m_KneelWhy;               // the TP reading that last said a move comes soon, for her stand's line
+    cardian::tpclock::Watch m_TpWatch;                // the attended mob's TP climb
+    uint32                  m_HeldMob   = 0;          // FightSettled's mob, and since when it has stood still
+    timer::time_point       m_HeldSince{};
+    std::string             m_PendingStandWhy;         // a stand asked from outside while she still knelt down, for its line once done
+    std::optional<position_t> m_PathFailedAt;          // the last spot a walk could not path to, so its line is said once
+    bool                    m_KneelByRow      = false; // the kneel her marked Rest row started: only it outlasts the row's conditions
+    bool                    m_SettledNow      = false; // FightSettled of the mob she attends, asked every tick she attends
+    timer::time_point       m_HeldAskedAt{};           // when FightSettled was last asked: a gap starts the second afresh
     bool                    m_Joining         = false; // walking to the first attending mage's side: she walks on until beside her (AttendIntent)
     // The attended mob's reach, read once per mob and skill list
     struct ReachMemo

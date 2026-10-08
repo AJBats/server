@@ -65,6 +65,7 @@
 #include <vector>
 
 #include "ai/ai_container.h"
+#include "ai/controllers/mob_controller.h"
 #include "ai/helpers/pathfind.h"
 #include "ai/states/attack_state.h"
 #include "ai/states/magic_state.h"
@@ -1765,6 +1766,21 @@ auto CPawnController::QueueRescue(CCharEntity* PPlayer) -> uint16
     return JoinLine(std::string(kRescueOrder), EntityId(PPlayer));
 }
 
+auto CPawnController::OrderOnRecast(const unsigned kind, const unsigned id) const -> bool
+{
+    auto* PRecasts = static_cast<CCharEntity*>(POwner)->PRecastContainer.get();
+    if (kind == 2)
+    {
+        return PRecasts->HasRecast(RECAST_MAGIC, static_cast<Recast>(id), 0s);
+    }
+    if (kind == 3)
+    {
+        const auto* PAbility = ability::GetAbility(static_cast<uint16>(id));
+        return PAbility != nullptr && PRecasts->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime());
+    }
+    return false;
+}
+
 auto CPawnController::QueuedOrderHoldsHer() const -> bool
 {
     if (!m_QueuedOrder.has_value())
@@ -2074,6 +2090,18 @@ void CPawnController::Note(cl_note note, const uint16 reason) const
 
 auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const unsigned id, const EntityId target) -> uint16
 {
+    // An order still on its recast waits in her line, and leaves her
+    // kneeling until it can start (the user, 2026-10-07)
+    auto* PRecasts = static_cast<CCharEntity*>(POwner)->PRecastContainer.get();
+    if (kind == 2 && mode == 2 && PRecasts->HasRecast(RECAST_MAGIC, static_cast<Recast>(id), 0s))
+    {
+        return CL_S_ON_RECAST;
+    }
+    if (const auto* PAbility = kind == 3 && mode == 2 ? ability::GetAbility(static_cast<uint16>(id)) : nullptr;
+        PAbility != nullptr && PRecasts->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()))
+    {
+        return CL_S_ON_RECAST;
+    }
     if (!PrepareRestAction(true))
     {
         return CL_S_STANDING_UP;
@@ -2096,10 +2124,6 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             {
                 return CL_S_MALFORMED;
             }
-            if (static_cast<CCharEntity*>(POwner)->PRecastContainer->HasRecast(RECAST_MAGIC, static_cast<Recast>(spellId), 0s))
-            {
-                return CL_S_ON_RECAST;
-            }
             // An order is never second-guessed: straight to the player
             // controller's cast, past the gambit engine's redundancy rule
             // (which declines a cure on a healthy friend). It waits the 2.5 s
@@ -2115,11 +2139,6 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
             if (mode != 2)
             {
                 return CL_S_MALFORMED;
-            }
-            if (const auto* PAbility = ability::GetAbility(static_cast<uint16>(id));
-                PAbility != nullptr && static_cast<CCharEntity*>(POwner)->PRecastContainer->HasRecast(RECAST_ABILITY, PAbility->getRecastId(), PAbility->getRecastTime()))
-            {
-                return CL_S_ON_RECAST;
             }
             fired = Ability(target, static_cast<uint16>(id));
             // His Berserk or Defender is never taken off by her tactician's
@@ -2302,6 +2321,12 @@ void CPawnController::FireQueuedOrder()
         return;
     }
 
+    // Kneeling, an order still on its recast waits where she kneels: she
+    // gets up to walk in only once it could start (the user, 2026-10-07)
+    if (beyond.has_value() && !m_OrderApproaching && OrderOnRecast(kind, id) && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+    {
+        return;
+    }
     // Out of the action's reach: the walk in first (OrderApproach, taken by the
     // tick's mover), the grace waiting, up to kOrderApproachMax of walking
     if (beyond.has_value() && !m_Waiting)
@@ -2754,6 +2779,11 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
         }
     };
 
+    m_KneelsInAoe = false; // until the settled fight is found to reach her (below)
+    // Watched every tick she attends, so neither the TP climb nor the settle
+    // second reads a picture with holes in it
+    m_TpWatch.see(PMob->id, PMob->health.tp, std::chrono::duration<double>(m_Tick.time_since_epoch()).count());
+    m_SettledNow = FightSettled(PMob);
     const CBattleEntity* PTank = PMob->GetBattleTarget();
     if (PTank == POwner)
     {
@@ -2789,6 +2819,7 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     // Out of the moves she avoids when it is safe to as well, while a
     // crescent in cure range clears them; else out of those she keeps out of
     const float       hardRing  = cardian::perimeter::ringOf(reach, mobToTank, PMob->GetMeleeRange(PTank));
+    m_KneelsInAoe               = m_SettledNow && distance(me, mob, true) < hardRing && AreaMoveComesSoon(PMob, reach);
     const float       softRing  = cardian::perimeter::softRingOf(reach, mobToTank, PMob->GetMeleeRange(PTank));
     const float       ring      = cardian::perimeter::ringToKeep(hardRing, softRing, mobToTank, range, 1.0f); // a yalm: the crescent's walking room (crescentInset)
     m_AttendRing                = ring;
@@ -3035,7 +3066,12 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
     }
     // If avoidance left her in front, she can walk back. Once behind the
     // line, an AoE reposition cannot route round a wall through the front.
-    const float limit   = std::max(0.0f, forward(POwner->loc.p)) + 0.05f;
+    // That is for her moves at the camp: farther from the flag than her
+    // cast range she walks the mesh's own way there -- a camp set across a
+    // maze has no route to its back that never crosses its front (the user,
+    // 2026-10-07: Zapp waited 67 yalms out)
+    const bool  atCamp  = isWithinDistance(POwner->loc.p, camp, CastRange() + 8.0f); // past the deepest spot CampSpot looks at
+    const float limit   = atCamp ? std::max(0.0f, forward(POwner->loc.p)) + 0.05f : std::numeric_limits<float>::max();
     auto*       navMesh = meshOf(POwner->loc.zone);
     if (navMesh == nullptr)
     {
@@ -3079,6 +3115,7 @@ auto CPawnController::CampAttendIntent(CMobEntity* PMob, const Place& place, con
     m_CampRing           = ring; // what the camp's next pull is planned for (CampWaitIntent)
     m_CampRingSoft       = softRing;
     m_AttendRing         = ring;
+    m_KneelsInAoe        = !preparing && m_SettledNow && distance(POwner->loc.p, PMob->loc.p, true) < ring && AreaMoveComesSoon(PMob, reach);
     return CampSpot(place, mob, tank, ring, softRing, preparing ? "arrival" : "live");
 }
 
@@ -3402,11 +3439,44 @@ auto CPawnController::ClaimsBefore() const -> std::vector<BoardClaim>
     return out;
 }
 
+auto CPawnController::KneelersAfter() const -> std::vector<BoardClaim>
+{
+    // The party's cardians after her in the party order who kneel: a rest
+    // is worth more than her choice of spot, so she gives way to them too
+    // (the user, 2026-10-07: resting is sticky). Their bodies only: the
+    // spot a kneeler means to walk to once up is no rest to keep
+    std::vector<BoardClaim> out;
+    const auto*             PParty = static_cast<const CCharEntity*>(POwner)->PParty;
+    if (PParty == nullptr)
+    {
+        return out;
+    }
+    bool after = false;
+    for (const auto* PMember : PParty->members)
+    {
+        if (PMember == POwner)
+        {
+            after = true;
+            continue;
+        }
+        const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
+        if (!after || PChar == nullptr || !pawn::isPawn(PChar) || PChar->loc.zone != POwner->loc.zone || PChar->isDead() ||
+            !PChar->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+        {
+            continue;
+        }
+        out.push_back({ PChar, PChar->loc.p });
+    }
+    return out;
+}
+
 auto CPawnController::GiveWay(const position_t& spot, const Intent& intent) -> GaveWay
 {
     namespace claims = cardian::claims;
     GaveWay    out;
-    const auto before = ClaimsBefore();
+    auto       before   = ClaimsBefore();
+    const auto kneelers = KneelersAfter();
+    before.insert(before.end(), kneelers.begin(), kneelers.end());
     if (before.empty())
     {
         return out;
@@ -3521,6 +3591,12 @@ void CPawnController::ClaimSpot(Intent& intent)
     intent.claimed    = true;
     const bool stands = intent.kind == Intent::Kind::Stand && intent.holdsSpot;
     if (!stands && intent.kind != Intent::Kind::Path)
+    {
+        return;
+    }
+    // Kneeling, she keeps the spot she kneels on: whoever claims near her
+    // gives way to her (KneelersAfter), never she to them
+    if (stands && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
     {
         return;
     }
@@ -3674,7 +3750,12 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     // (aggressive company allowed) is not vetted at all
     const bool  proposes = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
     AvoidAction action   = AvoidAction::None;
-    if (intent.vet && (IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro())) && (proposes || InsideDanger()))
+    // Kneeling with nowhere to go, danger is her rest's to judge (RestTick,
+    // RestsInDanger: her switches, as if down), never the walker's escape --
+    // and on the player's rest order nothing stands her at all: his orders
+    // always win (the user, 2026-10-07)
+    const bool kneelsHere = !proposes && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    if (intent.vet && !kneelsHere && !PlayersRestHolds() && (IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro())) && (proposes || InsideDanger()))
     {
         if (!proposes)
         {
@@ -3751,6 +3832,14 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                 {
                     if (!PathToward(point, followTarget, intent.rearBoundary.has_value() ? &*intent.rearBoundary : nullptr))
                     {
+                        // Said once a spot: where she cannot walk to, and from where
+                        if (!m_PathFailedAt.has_value() || distance(*m_PathFailedAt, point) > 1.0f)
+                        {
+                            m_PathFailedAt = point;
+                            ShowInfoFmt("pawn: {} cannot path to ({:.1f}, {:.1f}, {:.1f}) from ({:.1f}, {:.1f}, {:.1f}), {:.1f} y{}", POwner->getName(), point.x, point.y, point.z,
+                                        POwner->loc.p.x, POwner->loc.p.y, POwner->loc.p.z, distance(POwner->loc.p, point),
+                                        intent.rearBoundary.has_value() && isWithinDistance(POwner->loc.p, *intent.rearBoundary, CastRange() + 8.0f) ? ", keeping behind the camp's flag" : "");
+                        }
                         if (intent.fallback.has_value())
                         {
                             // Retry toward the spell target through the same avoidance
@@ -3771,6 +3860,10 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                 else if (PPathFind->IsFollowingPath())
                 {
                     PPathFind->Clear();
+                }
+                if (PPathFind->IsFollowingPath())
+                {
+                    m_PathFailedAt.reset(); // walking: a later failure to the same spot is said again
                 }
                 break;
             case Intent::Kind::Formation:
@@ -4287,6 +4380,51 @@ auto CPawnController::IsAvoiding() const -> bool
     return IsAvoidingAggro() || IsAvoidingLinks();
 }
 
+auto CPawnController::FightSettled(const CMobEntity* PMob) -> bool
+{
+    // Engaged and standing where it is held -- swinging, readying a move or
+    // casting -- for a second at least: not running in on a pull, following
+    // its tow, or pausing a moment as it turns on another
+    const bool still = PMob != nullptr && PMob->PAI->IsEngaged() && (PMob->PAI->PathFind == nullptr || !PMob->PAI->PathFind->IsFollowingPath());
+    const bool asked = m_Tick - m_HeldAskedAt <= 1s; // asked last time round: an unwatched while starts the second afresh
+    m_HeldAskedAt    = m_Tick;
+    if (!still)
+    {
+        m_HeldMob = 0;
+        return false;
+    }
+    if (m_HeldMob != PMob->id || !asked)
+    {
+        m_HeldMob   = PMob->id;
+        m_HeldSince = m_Tick;
+    }
+    return m_Tick - m_HeldSince >= 1s;
+}
+
+auto CPawnController::AreaMoveComesSoon(CMobEntity* PMob, const cardian::perimeter::Reach& reach) -> bool
+{
+    namespace tp = cardian::tpclock;
+    // No area move she keeps out of on its list, or it uses none: nothing comes
+    auto* PMobController = dynamic_cast<CMobController*>(PMob->PAI->GetController());
+    if ((reach.mobBy.empty() && reach.targetBy.empty()) || PMobController == nullptr || !PMobController->IsWeaponSkillEnabled())
+    {
+        return false;
+    }
+    const double now    = std::chrono::duration<double>(m_Tick.time_since_epoch()).count(); // the watch is fed by AttendIntent
+    const uint16 at     = tp::firesAt(PMobController->TpThreshold(), PMob->GetHPP());
+    const auto   rate   = m_TpWatch.rate(now);
+    const double toMove = tp::secondsToMove(PMob->health.tp, at, rate);
+    const double life   = pawn::tactics::lifeLeft(static_cast<CCharEntity*>(POwner), PMob);
+    const bool   soon   = tp::standsFor(toMove, life);
+    if (soon)
+    {
+        m_KneelWhy = fmt::format("{} at {} TP fires at {} in ~{:.1f} s{}, before it dies{}", PMob->getName(), PMob->health.tp, at, toMove,
+                                 rate.has_value() ? fmt::format(" ({:.0f} TP/s)", *rate) : std::string(" (its rate not yet seen)"),
+                                 life >= 0.0 ? fmt::format(" in ~{:.0f} s", life) : std::string(" (its life unknown)"));
+    }
+    return soon;
+}
+
 auto CPawnController::KeepsClearOfAggro() const -> bool
 {
     // A mage attending a fight, or waiting at her camp spot for the next
@@ -4340,12 +4478,17 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
 
     m_Tick = tick;
     m_Gambits->TickBehaviors();
-    m_Rest.observe(POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing),
-                   std::chrono::duration<double>(tick.time_since_epoch()).count());
-    // A one-shot wake request (such as moving camp) survives the kneel.
-    if (m_Rest.standPending)
+    const bool kneelingNow = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    if (m_Rest.observedDown && !kneelingNow)
     {
-        StandFromRest("kneeling finished after a wake request");
+        ShowInfoFmt("rest: {} stands (the game ended her rest: HP {}%{})", POwner->getName(), POwner->GetHPP(), POwner->isDead() ? ", KO'd" : "");
+    }
+    m_Rest.observe(kneelingNow, std::chrono::duration<double>(tick.time_since_epoch()).count());
+    // A one-shot wake asked from outside (such as a camp in another zone)
+    // survives the kneel; one the rest rule asked lapses with its reason
+    if (m_Rest.standPending && !m_Rest.standAsked)
+    {
+        FinishPendingStand();
     }
     // This tick's cost, for the world's load line (always) and the per-zone
     // detail under pawn.WORLD_TICK_DEBUG
@@ -5143,6 +5286,14 @@ auto CPawnController::ApproachTick(const position_t& anchor, const uint8 level, 
             // the pull comes in (WaitsForThePull, as the Draw door has it)
             if (WaitsForThePull(PMob, m_Approach->kind))
             {
+                // Kneeling, her walk to her seat waits for her rest or the
+                // pull's arrival, as a mage's does (the user, 2026-10-07); her
+                // rest still answers danger, first aid and his orders
+                if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing) &&
+                    RestTick(true, false, true, "waiting at her seat for the pull"))
+                {
+                    return true;
+                }
                 if (const auto* place = CurrentPlace(GetAnchor()); place != nullptr && POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0)
                 {
                     RefreshDangers(PMob);
@@ -5664,8 +5815,15 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         // comes in: within its ring and this many yalms more of her, the
         // seconds it takes to cover them hers to reach the spot (the user,
         // 2026-10-04: rest until topped up or a monster comes in)
+        // ...and only when the fight, settled where it is held, reaches where
+        // she kneels with an area move she keeps out of, and its next TP move
+        // comes before the party kills it (m_KneelsInAoe, tp_clock.h). A pull
+        // coming through camp or a mob on its tow is the tank's to take to
+        // safety; a spot merely bettered, out of cure range or out of sight
+        // waits for her rest, and first aid wakes her for an emergency (the
+        // user, 2026-10-07: she gets up only for real danger)
         constexpr float kComesIn = 8.0f;
-        proposal.comesIn         = m_AttendRing > 0.0f && distance(POwner->loc.p, PAttended->loc.p, true) < m_AttendRing + kComesIn;
+        proposal.comesIn         = m_KneelsInAoe && m_AttendRing > 0.0f && distance(POwner->loc.p, PAttended->loc.p, true) < m_AttendRing + kComesIn;
     }
     else if (somewhereToGo && !AwaitsArrival(*place) && !m_RestOrder.active()) // resting on his order, or her Rest row's, she stays where she kneels
     {
@@ -5705,12 +5863,18 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // keeps her down do we suppress the proposal; Move still vets her current
     // position for aggro/link danger and may escape it.
     // A kneeling mage puts a routine step off only while the party's place
-    // -- the player, or the stake -- is within her cure range: from there
-    // she still heals everyone as she rests. Farther, the party has moved
-    // on, and she gets up to follow (the user, 2026-10-04: Gabriol rested
-    // on 200 yalms behind after a new stake)
-    const bool nearPlace = place == nullptr || distance(POwner->loc.p, place->position(), true) <= std::max(CastRange(), 10.0f);
-    if (RestTick(stationary, false, !POwner->PAI->PathFind->IsFollowingPath() && !proposal.comesIn && nearPlace))
+    // -- the player, or the stake -- is within the camp's leash: the player
+    // walking out to pull is no move (the user, 2026-10-07). Farther, the
+    // party has moved on, and she gets up to follow (2026-10-04: Gabriol
+    // rested on 200 yalms behind after a new stake)
+    const float placeAway = place == nullptr ? 0.0f : distance(POwner->loc.p, place->position(), true);
+    const bool  nearPlace = placeAway <= settings::get<float>("pawn.HUNT_LEASH");
+    const bool  following = POwner->PAI->PathFind->IsFollowingPath();
+    const std::string moveWhy = following         ? std::string("a path under way") :
+                                proposal.comesIn  ? fmt::format("inside an area move she keeps out of, which comes soon: {}", m_KneelWhy) :
+                                !nearPlace        ? fmt::format("the party has moved on, {:.0f} y away", placeAway) :
+                                                    std::string("her spot moved");
+    if (RestTick(stationary, false, !following && !proposal.comesIn && nearPlace, moveWhy))
     {
         proposal.kind      = Intent::Kind::Stand;
         proposal.seat      = false;
@@ -6476,6 +6640,8 @@ void CPawnController::WalkStep()
 
 void CPawnController::TravelTick()
 {
+    // A trek is a walk she cannot put off: kneeling, she gets up for it
+    StandFromRest("travelling to the player");
     const bool narrate = m_Tick - m_LastTravelDebugTime > 5s;
     if (narrate)
     {

@@ -151,7 +151,9 @@ namespace pawn
     // she is (warp_hold.h), and follows again once they are in one zone
     void playerZoning(const CCharEntity* PPlayer, xi::ZoneId destination);
     // The zone line a real player last walked through: the zone he left, the
-    // zone it led to and where he stood as he went. His followers make for
+    // zone it led to and where he stood as he went (as his client's zone line
+    // packet came in: by the zone change the line's handler has moved him
+    // to its far side, in the next zone). His followers make for
     // the line nearest that spot (TravelTick), not the one nearest them --
     // a zone can have several lines into the next
     struct PlayerExit

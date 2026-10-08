@@ -281,6 +281,10 @@ namespace pawn
         auto OffersTools() const -> bool;
         auto OffersSpells() const -> bool;
         auto OffersRest() -> bool;
+        // Her marked Rest row is on, its conditions aside: a kneel it started
+        // lasts while she is short of MP (the user, 2026-10-07: the row's
+        // conditions force her down, never stand her)
+        auto HasRestRow() -> bool;
         // The nukes her tactician may cast for her -- learned, at her jobs
         // and level, whatever her MP and recasts say this instant -- while a
         // marked Damage spell (any) row of hers runs; none otherwise. What a

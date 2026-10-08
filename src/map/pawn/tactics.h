@@ -33,6 +33,7 @@
 
 class CBattleEntity;
 class CCharEntity;
+class CMobEntity;
 class CParty;
 class CSpell;
 enum class SpellID : uint16;
@@ -201,6 +202,9 @@ namespace pawn::tactics
         uint32      mob       = 0;    // the fight's mob, the longest-lived when more than one
     };
     auto kneelRisk(CCharEntity* PPawn) -> std::optional<KneelRisk>;
+    // Seconds of life a mob of her party's fight has left at the party's
+    // rate (the same reading as KneelRisk's fightLeft); negative: unknown
+    auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double;
     void resetRestMemory(CCharEntity* PPawn);
     // Her recovery is due, as the rest planner last said, read without
     // sampling her MP again (restAdvice samples): what her tactician's

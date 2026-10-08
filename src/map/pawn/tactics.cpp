@@ -434,6 +434,26 @@ namespace pawn::tactics
             }
 
         public:
+            // One open fight's mob: seconds of life it has left at the party's
+            // rate, as fightLeft reads it; negative when unknown
+            auto lifeLeft(const uint32 mobId, const double at) -> double
+            {
+                for (const auto& r : m_log.open())
+                {
+                    if (r.mobId != mobId || r.settling())
+                    {
+                        continue;
+                    }
+                    auto* PMob = dynamic_cast<CMobEntity*>(zoneutils::GetEntity(r.mobId, TYPE_MOB));
+                    if (PMob == nullptr || PMob->isDead())
+                    {
+                        return -1.0;
+                    }
+                    return cardian::tactics::remainingLife(PMob->health.hp, r.dealtPerSecond(at), r.seconds(at), spotAverages(r.zone, r.mobName).dealtPerSecond.mean);
+                }
+                return -1.0;
+            }
+
             // The kneel's question (tactics.h kneelRisk): the cures promised
             // to land are those in flight and each other cardian mage's
             // earliest on each member; the kneeler's own are what the kneel
@@ -1259,6 +1279,12 @@ namespace pawn::tactics
     {
         auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
         return tactician != nullptr ? tactician->kneelRisk(scopeOf(PPawn), PPawn, seconds(timer::now())) : std::nullopt;
+    }
+
+    auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double
+    {
+        auto* tactician = PPawn != nullptr && PMob != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr ? tactician->lifeLeft(PMob->id, seconds(timer::now())) : -1.0;
     }
 
     auto recoveryDue(const CCharEntity* PPawn) -> bool

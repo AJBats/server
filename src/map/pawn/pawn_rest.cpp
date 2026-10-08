@@ -100,7 +100,69 @@ void CPawnController::StandFromRest(const std::string_view why)
     if (pawn::tactics::standFromKneel(m_Rest, POwner, why))
     {
         m_RestTicks = 0;
+        m_KneelByRow = false;
+        m_PendingStandWhy.clear();
     }
+    else if (m_Rest.standPending)
+    {
+        m_PendingStandWhy = why; // done once her kneel is down (FinishPendingStand)
+    }
+}
+
+void CPawnController::FinishPendingStand()
+{
+    // A wake asked from outside while she was still kneeling down, done
+    // now: said with its own reason, once
+    if (pawn::tactics::standFromKneel(m_Rest, POwner, fmt::format("{}, once kneeling finished", m_PendingStandWhy.empty() ? std::string("a wake request") : m_PendingStandWhy)))
+    {
+        m_RestDeferredPosition = false;
+        m_RestTicks            = 0;
+        m_KneelByRow           = false;
+        m_PendingStandWhy.clear();
+    }
+}
+
+auto CPawnController::RestsInDanger() -> std::optional<std::string>
+{
+    // Her switches' circles only (an attending mage's spot rule is no rest's,
+    // KeepsClearOfAggro), with no spell cast -- a kneel casts nothing -- and
+    // asked as if she already knelt: the game sends an aggressive mob at a
+    // kneeling body whatever her level, so a mob too weak to come for her
+    // standing comes for her down, and a kneel there would only stand her
+    if (!IsAvoiding())
+    {
+        return std::nullopt;
+    }
+    m_SightMemo.clear(); // a mob walked out from behind a wall since the last look is seen now
+    auto* PPawn     = static_cast<CCharEntity*>(POwner);
+    auto  profile   = pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks());
+    profile.casting = false;
+    // The question only: her animation is put back on the way out, whatever happens
+    struct Kneels
+    {
+        CBaseEntity*  PBody;
+        xi::Animation was;
+        ~Kneels()
+        {
+            PBody->animation = was;
+        }
+    } kneels{ POwner, POwner->animation };
+    POwner->animation  = xi::Animation::Healing;
+    const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
+    const auto matter    = pawn::danger::forWalk(dangers, POwner->loc.p, POwner->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
+    for (const auto& d : matter)
+    {
+        if (cardian::formation::depthInside(d, POwner->loc.p.x, POwner->loc.p.z) > 0.0f)
+        {
+            return d.mob != nullptr ? d.mob->getName() : std::string("a mob");
+        }
+    }
+    return std::nullopt;
+}
+
+auto CPawnController::PlayersRestHolds() const -> bool
+{
+    return m_RestOrder.active() && !m_RestOrder.byRow && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
 }
 
 auto CPawnController::PrepareRestAction(const bool ordered) -> bool
@@ -117,7 +179,7 @@ auto CPawnController::PrepareRestAction(const bool ordered) -> bool
     return true;
 }
 
-auto CPawnController::RestTick(const bool stationary, const bool townKneel, const bool routinePosition) -> bool
+auto CPawnController::RestTick(const bool stationary, const bool townKneel, const bool routinePosition, const std::string_view moveWhy) -> bool
 {
     const double now = restSeconds(timer::now());
     auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
@@ -162,7 +224,14 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // Her marked Rest row, its conditions holding, is the tactician's MP
     // pacing (RESEARCH §17.13): the bank's advice on when to kneel and
     // when she is ready
-    const bool support = advice.has_value() && pawn::tactics::offersRest(POwner) && m_Gambits->MasterOn();
+    // Down on it, the row's conditions are spent: she stays while short of
+    // MP (the user, 2026-10-07: the row forces her down, never stands her)
+    if (healing == nullptr)
+    {
+        m_KneelByRow = false; // the row's kneel is over, however it ended
+    }
+    const bool support = advice.has_value() && m_Gambits->MasterOn() &&
+                         (pawn::tactics::offersRest(POwner) || (healing != nullptr && m_KneelByRow && m_Gambits->HasRestRow()));
     // MP alone decides a casting mage's own rest: her missing HP is her
     // cures' to mend, as anyone else's is (the user, 2026-09-23). Rest
     // With Player stays an explicit input beside it; neither overwrites
@@ -214,7 +283,10 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     {
         m_SaidMpShortFor = 0;
     }
-    const bool want   = !calledOff && (townKneel || kneel || (support && place != nullptr && healing != nullptr && mpMissing));
+    // Down, she stays while short of MP whether or not the party's place is
+    // to be found: the player in his Mog House, warped away or between
+    // zones changes nothing about her rest
+    const bool want   = !calledOff && (townKneel || kneel || (support && healing != nullptr && mpMissing));
     const int  ticks  = healing != nullptr ? healing->GetElapsedTickCount() : 0;
     const bool landed = ticks >= 2 && ticks > m_RestTicks;
     m_RestTicks       = ticks;
@@ -237,14 +309,22 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool mayKneel = !Acting() && !noRecovery && !POwner->isDead() && !POwner->PAI->IsEngaged() &&
                           !m_Retreat && m_Mode != Mode::Travel && !HasQueuedOrder() && !HasPlayersOrder();
     const bool rowDue   = RestRowDue() && mayKneel && !calledOff;
-    bool unsafe = false;
+    bool        unsafe = false;
+    std::string dangerWhy;
     if (want || withPlayer || healing != nullptr || rowDue || (m_RestOrder.active() && m_RestOrder.byRow))
     {
-        RefreshDangers(AttendedTarget());
-        unsafe = IsAvoiding() && InsideDanger(); // her switches', never an attending mage's spot rule (KeepsClearOfAggro)
+        if (const auto mob = RestsInDanger(); mob.has_value())
+        {
+            unsafe    = true;
+            dangerWhy = fmt::format("danger: {} would come for her", *mob);
+        }
         pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 30.0f, [&](CMobEntity* mob)
         {
-            unsafe |= !mob->isDead() && mob->GetBattleTarget() == POwner;
+            if (!unsafe && !mob->isDead() && mob->GetBattleTarget() == POwner)
+            {
+                unsafe    = true;
+                dangerWhy = fmt::format("danger: {} is on her", mob->getName());
+            }
         });
     }
     if (rowDue && !unsafe && !fightOn())
@@ -279,7 +359,11 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool deliberate = ordered && !m_RestOrder.byRow;
     const bool rowRest    = ordered && m_RestOrder.byRow;
     // The player's own Attack keeps her up until the fight it named is over
-    const bool blocked = impossible || (!deliberate && (unsafe || m_Retreat || m_Mode == Mode::Travel || HasQueuedOrder() || HasPlayersOrder() || (rowRest && fightOn())));
+    // An order of his waiting on its recast leaves her down until it can
+    // start (QueuedOrderHoldsHer); her own row's rest stands a fighter for the
+    // party's fight, never a mage, whom first aid still wakes
+    const bool fightCalls = rowRest && TakesFights() && fightOn();
+    const bool blocked = impossible || (!deliberate && (unsafe || m_Retreat || m_Mode == Mode::Travel || QueuedOrderHoldsHer() || HasPlayersOrder() || fightCalls));
     // A cookie, a Healer's or a mage's in any seat (RESEARCH §19.2 item 5,
     // §19.6): about to kneel short of MP, with the player's food on and none
     // of her own, she eats it first and kneels once it is down, so a fresh
@@ -292,7 +376,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // policy decides when to stand. So does a kneel beside the resting
     // player: it ends the moment he stands, so a seat that moved under it
     // (a camp set, moved or lifted) is not worth standing for (#254)
-    const bool deferPosition = routinePosition && ((support && place != nullptr) || ordered || (withPlayer && healing != nullptr));
+    const bool deferPosition = routinePosition && ((support && (place != nullptr || healing != nullptr)) || ordered || (withPlayer && healing != nullptr));
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
         .urgent = urgent, .blocked = blocked || eatsFirst,
@@ -319,9 +403,9 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         hold(!deliberate && unsafe, "danger");
         hold(!deliberate && m_Retreat, "the retreat");
         hold(!deliberate && m_Mode == Mode::Travel, "travelling");
-        hold(!deliberate && HasQueuedOrder(), "an order queued");
+        hold(!deliberate && QueuedOrderHoldsHer(), "an order queued");
         hold(!deliberate && HasPlayersOrder(), "the player's order");
-        hold(!deliberate && rowRest && fightOn(), "the party's fight");
+        hold(!deliberate && fightCalls, "the party's fight");
         hold(!stationary && POwner->PAI->PathFind->IsFollowingPath(), "walking a path");
         hold(!stationary && !POwner->PAI->PathFind->IsFollowingPath(), "her spot is off from where she stands");
         hold(m_Rest.standPending, "a stand pending");
@@ -344,16 +428,81 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     }
     if (decision == cardian::rest::Decision::Stand)
     {
-        StandFromRest(urgent ? advice->why : unsafe && !deliberate ? "danger" : noRecovery ? "recovery blocked" :
-            rowRest && fightOn() ? "the party's fight" :
-            HasQueuedOrder() && !m_ManeuverResting ? "the player's action order" :
-            support && place != nullptr && !mpMissing ? "her MP is within a tick of full" : "rest request ended or movement needed");
+        // Every stand says which reason it was (the user, 2026-10-07)
+        const auto noRecoveryWhy = [&]() -> std::string
+        {
+            if (POwner->getMod(xi::Mod::REGEN_DOWN) > 0)
+            {
+                return "damage over time";
+            }
+            if (pet != nullptr && pet->getPetType() == PET_TYPE::AVATAR)
+            {
+                return "an avatar out";
+            }
+            if (POwner->StatusEffectContainer->HasPreventActionEffect())
+            {
+                return "she cannot act";
+            }
+            return "Bio, Helix, Disease, Plague or Curse II";
+        };
+        const auto standWhy = [&]() -> std::string
+        {
+            if (urgent)
+            {
+                return advice->why;
+            }
+            if (!deliberate && unsafe)
+            {
+                return dangerWhy;
+            }
+            if (noRecovery)
+            {
+                return fmt::format("she cannot recover: {}", noRecoveryWhy());
+            }
+            if (impossible)
+            {
+                return POwner->isDead() ? "KO'd" : POwner->PAI->IsEngaged() ? "engaged" : "acting";
+            }
+            if (!deliberate && fightCalls)
+            {
+                return "the party's fight, hers to fight";
+            }
+            if (!deliberate && QueuedOrderHoldsHer() && !m_ManeuverResting)
+            {
+                return "the player's action order";
+            }
+            if (!deliberate && HasPlayersOrder())
+            {
+                return "the player's order";
+            }
+            if (!deliberate && m_Retreat)
+            {
+                return "the retreat";
+            }
+            if (!deliberate && m_Mode == Mode::Travel)
+            {
+                return "travelling";
+            }
+            if (!stationary && !deferPosition)
+            {
+                return fmt::format("a move she cannot put off: {}", moveWhy.empty() ? std::string_view("her spot moved") : moveWhy);
+            }
+            if (!want && !withPlayer && !ordered)
+            {
+                return support && !mpMissing ? "her MP is within a tick of full" : "nothing asks her to rest";
+            }
+            return "a wake request";
+        };
+        StandFromRest(standWhy());
     }
     else if (decision == cardian::rest::Decision::Kneel)
     {
         const auto interval = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
         POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, interval, 0s);
         m_RestTicks = 0;
+        // Her marked Rest row's own kneel, which its conditions lapsing never
+        // ends; one with the player, on an order or in town is theirs
+        m_KneelByRow = !ordered && !townKneel && !withPlayer && (kneel || campKneel);
         ShowInfoFmt("rest: {} kneels ({}, hp {}%, mp {}%)", POwner->getName(),
                     ordered ? (m_RestOrder.byRow ? "her Rest row" : "the player's rest order") : townKneel ? "town" : withPlayer ? "with the player" :
                     campKneel && !supportRecovery ? "between pulls at the camp" : "the tactician's recovery",

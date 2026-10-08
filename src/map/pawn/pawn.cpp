@@ -110,7 +110,15 @@ namespace
     std::unordered_map<uint32, realtime::time_point> lastPositionPacket;
     // A player's client walked into a zone line (packet 0x05E), when: his
     // next zone change is a walk, which his cardians follow (warp_hold.h)
-    std::unordered_map<uint32, realtime::time_point> zoneLineAt;
+    // A real player's client walking into a zone line (noteZoneLine): when,
+    // and where he stood -- read then, because by his zone change the line's
+    // handler has already moved him to its far side, in the next zone
+    struct ZoneLineSeen
+    {
+        realtime::time_point when;
+        position_t           where;
+    };
+    std::unordered_map<uint32, ZoneLineSeen> zoneLineAt;
     // A player's last walk through a zone line (playerExit)
     std::unordered_map<uint32, pawn::PlayerExit> exits;
 
@@ -2471,9 +2479,11 @@ namespace pawn
         // client sent moments before says which, and is spent on this zone
         // change, whatever it is (a Mog House's own door included)
         std::optional<std::chrono::milliseconds> sinceZoneLine;
+        position_t                               lineAt = PPlayer->loc.p;
         if (const auto it = zoneLineAt.find(PPlayer->id); it != zoneLineAt.end())
         {
-            sinceZoneLine = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second);
+            sinceZoneLine = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second.when);
+            lineAt        = it->second.where;
             zoneLineAt.erase(it);
         }
         if (PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
@@ -2483,7 +2493,7 @@ namespace pawn
         const bool walked = cardian::hold::walked(sinceZoneLine);
         if (walked)
         {
-            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, PPlayer->loc.p };
+            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, lineAt };
         }
 
         for (auto& [charid, PPawn] : pawns)
@@ -2544,7 +2554,7 @@ namespace pawn
     {
         if (PChar != nullptr && !isPawn(PChar))
         {
-            zoneLineAt.insert_or_assign(PChar->id, realtime::now());
+            zoneLineAt.insert_or_assign(PChar->id, ZoneLineSeen{ realtime::now(), PChar->loc.p });
         }
     }
 

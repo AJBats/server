@@ -296,6 +296,8 @@ namespace cardian::rest
         bool observedDown = false;
         bool wantsDown = false;
         bool standPending = false;
+        bool standAsked = false;  // the pending stand is decide's own, re-asked every tick while its reason holds
+        bool askedUrgent = false; // ...and first aid asked it: kept through a flicker
 
         auto requestStand(const double now) -> bool
         {
@@ -304,11 +306,22 @@ namespace cardian::rest
             return now >= riseAfter;
         }
 
+        // A stand asked from outside (StandFromRest): it owns the pending
+        // stand, so a reason of the rule's lapsing cannot drop it
+        auto requestStandFromOutside(const double now) -> bool
+        {
+            standAsked  = false;
+            askedUrgent = false;
+            return requestStand(now);
+        }
+
         void stood(const double now)
         {
             observedDown = false;
             wantsDown = false;
             standPending = false;
+            standAsked = false;
+            askedUrgent = false;
             // An engine interruption may remove Healing during the kneel.
             // It must not make an action ready earlier than an ordinary rise.
             actAfter = std::max(now, riseAfter) + kStandSeconds;
@@ -345,15 +358,34 @@ namespace cardian::rest
             // no reason to rise. She rises for a reason to: first aid's call
             // (urgent), danger or an order (blocked), a walk she cannot put
             // off, or the request ending (her MP full)
-            const bool up = standPending || f.urgent || f.blocked || movementRequiresStand ||
-                            (!f.want && !f.withPlayer && !f.ordered);
+            const bool reason = f.urgent || f.blocked || movementRequiresStand || (!f.want && !f.withPlayer && !f.ordered);
+            // A stand this rule asked while she was still kneeling down lapses
+            // with its reason (the user, 2026-10-07: she gets up only for a
+            // reason that still holds) -- first aid's call excepted, which a
+            // flicker must not lose. One asked from outside (StandFromRest: a
+            // camp in another zone, an order) holds until it is done
+            if (f.resting && standAsked && !askedUrgent && !reason)
+            {
+                standPending = false;
+                standAsked   = false;
+            }
+            const bool up = standPending || reason;
             wantsDown = !up;
             if (f.resting)
             {
-                if (up && requestStand(f.now))
+                if (up)
                 {
-                    stood(f.now);
-                    return Decision::Stand;
+                    const bool outside = standPending && !standAsked;
+                    if (requestStand(f.now))
+                    {
+                        stood(f.now);
+                        return Decision::Stand;
+                    }
+                    if (!outside)
+                    {
+                        standAsked  = true;
+                        askedUrgent = askedUrgent || f.urgent;
+                    }
                 }
                 return Decision::StayDown;
             }

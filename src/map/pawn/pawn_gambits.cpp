@@ -1883,6 +1883,16 @@ namespace pawn
                                    });
     }
 
+    auto CGambits::HasRestRow() -> bool
+    {
+        const auto rows = Fitted();
+        return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
+                                   {
+                                       const auto& g = p.row->gambit;
+                                       return p.on && RowState(g) == cardian::tactician::State::Tool && cardian::tactician::allowanceOf(g) == cardian::tactician::Allowance::Rest;
+                                   });
+    }
+
     auto CGambits::OffersBeforeWs(const cardian::tactician::Allowance tool) -> bool
     {
         // Her marked Boost or Sneak Attack row, on, the player's gate on it
@@ -2488,14 +2498,25 @@ namespace pawn
 
             // Self-defence: a mob that has chosen her, or a member of her party,
             // whether or not anyone has swung yet -- aggro on a cardian, or on
-            // the player. Out of a party she is a party of one
+            // the player. Out of a party she is a party of one. Longest in the
+            // fight first: the mob he pulled before the one that linked to it
+            // (the user, 2026-10-07: the monks took the link)
+            std::vector<CMobEntity*> onParty;
             pawn::forEachMobNear(pawn::entitiesAround(POwner), from, leash, [&](CMobEntity* PMob)
                                  {
                                      if (PMob->PAI->IsEngaged() && !PMob->isDead() && FoeFacts(PMob, PLeader).onParty)
                                      {
-                                         add(PMob);
+                                         onParty.push_back(PMob);
                                      }
                                  });
+            std::ranges::stable_sort(onParty, [](CMobEntity* a, CMobEntity* b)
+                                     {
+                                         return a->GetBattleTime() > b->GetBattleTime();
+                                     });
+            for (auto* PMob : onParty)
+            {
+                add(PMob);
+            }
         }
 
         std::vector<CBattleEntity*> foes;
