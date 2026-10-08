@@ -28,6 +28,7 @@
 
 #include "item_container.h"
 #include "items/transactions/item_claim.h"
+#include "pawn/pawn_loot.h" // CARDIAN
 #include "treasure_pool.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
@@ -516,6 +517,12 @@ void CTreasurePool::checkTreasureItem(timer::time_point tick, uint8 SlotID)
         {
             if (highestInfo.member->getStorage(LOC_INVENTORY)->GetFreeSlotsCount() != 0)
             {
+                // CARDIAN: a wild cardian's win goes into the void (pawn/pawn_loot.h)
+                if (pawn::loot::voids(highestInfo.member))
+                {
+                    treasureWon(highestInfo.member, SlotID);
+                    return;
+                }
                 // add item as they have room!
                 auto transaction = ItemClaimTransaction::start(highestInfo.member);
                 if (transaction && transaction->give(LOC_INVENTORY, m_PoolItems[SlotID].ID, 1, Silence::Yes) && transaction->commit())
@@ -559,6 +566,12 @@ void CTreasurePool::checkTreasureItem(timer::time_point tick, uint8 SlotID)
                 // select random member from this pool to give item to
                 CCharEntity* PChar = candidates.at(xirand::GetRandomNumber(candidates.size()));
 
+                // CARDIAN: a wild cardian's win goes into the void (pawn/pawn_loot.h)
+                if (pawn::loot::voids(PChar))
+                {
+                    treasureWon(PChar, SlotID);
+                    return;
+                }
                 auto transaction = ItemClaimTransaction::start(PChar);
                 if (transaction && transaction->give(LOC_INVENTORY, m_PoolItems[SlotID].ID, 1, Silence::Yes) && transaction->commit())
                 {

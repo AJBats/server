@@ -36,4 +36,11 @@ namespace pawn::loot
     // The pool's flush() cannot do this: it resolves only items past their
     // five minutes.
     void handOff(CCharEntity* PPawn);
+
+    // A drop the treasure pool awards a wild cardian -- a body of the world,
+    // a guest in a real player's party -- goes into the void: the pool says
+    // she obtained it, and nothing lands in her bag (the user, 2026-10-08).
+    // His own cardians, his recruits and alts, keep what it gives them.
+    // Asked by the pool at each award (treasure_pool.cpp)
+    auto voids(const CCharEntity* PWinner) -> bool;
 } // namespace pawn::loot

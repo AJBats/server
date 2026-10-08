@@ -85,15 +85,21 @@ TEST_CASE("Redress: the pieces the census had issued read as item ids", "[cardia
     CHECK(parseIds("").empty());
 }
 
-TEST_CASE("Redress: only a census piece the new plan has no place for leaves her bag", "[cardian][redress]")
+TEST_CASE("Redress: her bags keep what the plan wants, her gil and her scrolls", "[cardian][redress]")
 {
-    const std::set<uint16_t> plan{ 16535, 12576 };   // the new plan: a sword and a body piece
-    const std::set<uint16_t> issued{ 16465, 12576 }; // what the census had issued her before
+    const std::set<uint16_t> wanted{ 16535, 12576, 4578 }; // the new plan: a sword, a body piece, her food
 
-    CHECK(dropsPiece(16465, false, plan, issued));       // her old dagger: issued, out of the plan, unworn
-    CHECK_FALSE(dropsPiece(16465, true, plan, issued));  // ... but never one she still wears
-    CHECK_FALSE(dropsPiece(12576, false, plan, issued)); // a piece the new plan keeps
-    CHECK_FALSE(dropsPiece(13014, false, plan, issued)); // a piece somebody else gave her
+    // Mog Wardrobe 1 is the census's alone: the plan's pieces stay, anything else goes
+    CHECK(keepsItem(16535, false, false, false, wanted));
+    CHECK_FALSE(keepsItem(13380, false, false, false, wanted)); // a Hope Earring an older plan gave her
+    CHECK_FALSE(keepsItem(4182, false, false, true, wanted));   // even an allow-listed piece the plan dropped
+
+    // her inventory keeps her gil, the plan's food and the reraise and warp items she bought
+    CHECK(keepsItem(4578, true, false, false, wanted));
+    CHECK(keepsItem(65535, true, true, false, wanted));
+    CHECK(keepsItem(4181, true, false, true, wanted));
+    CHECK_FALSE(keepsItem(4096, true, false, false, wanted));   // a fire crystal: loot
+    CHECK_FALSE(keepsItem(13380, true, false, false, wanted));  // an old piece, worn or not
 }
 
 namespace

@@ -164,12 +164,16 @@ namespace cardian::redress
         return out;
     }
 
-    // A piece in her bag the re-dress takes away: one the census issued her,
-    // which her new plan has no place for, and which she is not wearing. A
-    // piece anyone else gave her stays
-    inline auto dropsPiece(const uint16_t itemId, const bool worn, const std::set<uint16_t>& plan, const std::set<uint16_t>& issued) -> bool
+    // What a re-dress leaves in a body of the world's bags, by the census's own
+    // rule for her character tables (census.py fill_bags): Mog Wardrobe 1
+    // holds the census's gear alone, so a piece there the plan has no place
+    // for goes, worn or not; her inventory keeps her gil, what the plan wants
+    // (her food, and her pieces where her gear lives in it) and the reraise
+    // and warp items she buys for herself (`kept`: items::usableOnWild), and
+    // nothing else -- loot, old food, a piece an older plan gave her
+    inline auto keepsItem(const uint16_t itemId, const bool inInventory, const bool gil, const bool kept, const std::set<uint16_t>& wanted) -> bool
     {
-        return !worn && issued.contains(itemId) && !plan.contains(itemId);
+        return wanted.contains(itemId) || (inInventory && (gil || kept));
     }
 
     // The census's answer is put on her only at the level it was planned

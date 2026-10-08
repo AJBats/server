@@ -38,6 +38,7 @@
 #include "enums/item_state.h"
 #include "item_container.h"
 #include "items/item.h"
+#include "items/item_equipment.h"
 #include "items/transactions/item_claim.h"
 #include "job_points.h"
 #include "latent_effect_container.h"
@@ -53,6 +54,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <optional>
 #include <set>
@@ -221,51 +223,134 @@ namespace pawn::redress
         struct Dressed
         {
             uint32 worn    = 0; // pieces put on
-            uint32 dropped = 0; // census pieces taken out of her bag
+            uint32 dropped = 0; // census pieces taken out of her bags
+            uint32 moved   = 0; // pieces carried from her inventory into Mog Wardrobe 1
         };
 
-        // Her wardrobe as the census planned it: each piece she is not
-        // wearing found in her bag, or given her, and worn. A piece that does
-        // not fit in her bag, or that she cannot wear, is left out and said;
-        // a piece that could not go on in the first pass (one under a cover
-        // still worn) is tried once more after the rest. The pieces and the
-        // food the census had issued her that the plan has no place for
-        // leave her bag first, to make room for the new, and again at the
-        // end, for the ones the new pieces took off her; the food the plan
-        // keeps stays
-        auto dress(CCharEntity* PPawn, const std::vector<Piece>& plan, const std::set<uint16>& issued, const std::set<uint16>& food) -> Dressed
+        // The container her gear lives in: Mog Wardrobe 1 when it holds at
+        // least what her inventory does (the server's default is 80 to 30),
+        // so her food and the scrolls she buys never crowd out a re-dress;
+        // her inventory on a server that gives the wardrobe less. The census
+        // writes her gear by the same rule (census.py finish)
+        auto gearLocationOf(CCharEntity* PPawn) -> uint8
         {
-            Dressed out;
-            auto*   bag = PPawn->getStorage(LOC_INVENTORY);
-            if (bag == nullptr)
+            const auto* wardrobe  = PPawn->getStorage(LOC_WARDROBE);
+            const auto* inventory = PPawn->getStorage(LOC_INVENTORY);
+            return wardrobe != nullptr && inventory != nullptr && wardrobe->GetSize() > 0 && wardrobe->GetSize() >= inventory->GetSize() ? LOC_WARDROBE
+                                                                                                                                         : LOC_INVENTORY;
+        }
+
+        // A stack taken out of the game from any of her containers, without a
+        // word: a census piece the plan has no place for
+        auto discard(CCharEntity* PPawn, const uint8 location, const uint8 slot, const uint32 quantity) -> bool
+        {
+            auto transaction = ItemClaimTransaction::start(PPawn);
+            return transaction && transaction->take(location, slot, quantity) && transaction->commit();
+        }
+
+        // Her wardrobe as the census planned it, in the container her gear
+        // lives in (gearLocationOf): each planned piece in her inventory is
+        // carried there first, worn or not (a piece moves between the
+        // inventory and a wardrobe as it is, and stays worn); then each piece
+        // she is not wearing is found there, or given her, and worn. Where
+        // that container is full, the piece she wears in the slot, which the
+        // plan has no place for, leaves first, so a re-dress swaps in place.
+        // A piece that still does not fit, or that she cannot wear, is left
+        // out and said; one that could not go on in the first pass (under a
+        // cover still worn) is tried once more after the rest. Her bags keep
+        // only what the census's own rule keeps (keepsItem): whatever else
+        // she holds -- loot, old food, a piece of an older plan, worn or not
+        // -- is taken off and out of the game first, to make room for the
+        // new, and again at the end, for what the new pieces took off her
+        auto dress(CCharEntity* PPawn, const std::vector<Piece>& plan, const std::set<uint16>& food) -> Dressed
+        {
+            Dressed     out;
+            const uint8 gearLocation = gearLocationOf(PPawn);
+            auto*       bag          = PPawn->getStorage(gearLocation);
+            auto*       inventory    = PPawn->getStorage(LOC_INVENTORY);
+            if (bag == nullptr || inventory == nullptr)
             {
                 return out;
             }
-            std::set<uint16> wanted = food;
+            std::set<uint16> pieces;
             for (const auto& piece : plan)
             {
-                wanted.insert(piece.itemId);
+                pieces.insert(piece.itemId);
             }
+            std::set<uint16> wanted = food;
+            wanted.insert(pieces.begin(), pieces.end());
 
-            const auto dropUnplanned = [&]
+            const auto keeps = [&](const CItem* PItem, const uint8 location)
             {
-                for (uint8 slot = 1; slot <= bag->GetSize(); ++slot)
+                return cardian::redress::keepsItem(PItem->getID(), location == LOC_INVENTORY, PItem->isType(ITEM_CURRENCY),
+                                                   pawn::items::usableOnWild(PItem->getID()), wanted);
+            };
+            // The equipment slot she wears a piece in, if she wears it
+            const auto wornIn = [&](const CItem* PItem) -> std::optional<uint8>
+            {
+                for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
                 {
-                    const CItem* PItem = bag->GetItem(slot);
-                    if (PItem == nullptr || PItem->getQuantity() == 0 ||
-                        !cardian::redress::dropsPiece(PItem->getID(), PItem->state() == ItemState::Equipped, wanted, issued))
+                    if (static_cast<const CItem*>(PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot))) == PItem)
                     {
-                        continue;
+                        return equipSlot;
                     }
-                    if (pawn::items::dropItem(PPawn, slot, PItem->getQuantity(), LOC_INVENTORY) == CL_S_OK)
+                }
+                return std::nullopt;
+            };
+            // A piece her bags do not keep: taken off if she wears it, and out
+            // of the game
+            const auto throwOut = [&](const CItem* PItem, const uint8 location) -> bool
+            {
+                const uint8  slot     = PItem->getSlotID();
+                const uint32 quantity = PItem->getQuantity();
+                if (const auto equipSlot = wornIn(PItem); equipSlot.has_value() && pawn::items::unequip(PPawn, *equipSlot) != CL_S_OK)
+                {
+                    return false;
+                }
+                if (!discard(PPawn, location, slot, quantity))
+                {
+                    return false;
+                }
+                ++out.dropped;
+                return true;
+            };
+            const auto clearOut = [&]
+            {
+                for (const uint8 location : std::array<uint8, 2>{ static_cast<uint8>(LOC_INVENTORY), gearLocation })
+                {
+                    auto* storage = PPawn->getStorage(location);
+                    for (uint8 slot = 1; storage != nullptr && slot <= storage->GetSize(); ++slot)
                     {
-                        ++out.dropped;
+                        const CItem* PItem = storage->GetItem(slot);
+                        if (PItem != nullptr && PItem->getQuantity() > 0 && !keeps(PItem, location))
+                        {
+                            throwOut(PItem, location);
+                        }
+                    }
+                    if (location == gearLocation)
+                    {
+                        break; // the inventory is her gear's container: looked at once
                     }
                 }
             };
-            dropUnplanned();
+            clearOut();
 
-            // A copy in her bag she is not wearing, else one given her
+            // Her planned pieces still in her inventory, worn or not, go to
+            // where her gear lives
+            if (gearLocation != LOC_INVENTORY)
+            {
+                for (uint8 slot = 1; slot <= inventory->GetSize(); ++slot)
+                {
+                    const auto* PItem = dynamic_cast<CItemEquipment*>(inventory->GetItem(slot));
+                    if (PItem != nullptr && pieces.contains(PItem->getID()) &&
+                        pawn::items::moveItem(PPawn, LOC_INVENTORY, slot, gearLocation, PItem->getQuantity()) == CL_S_OK)
+                    {
+                        ++out.moved;
+                    }
+                }
+            }
+
+            // A copy where her gear lives she is not wearing, else one given her
             const auto bagSlotFor = [&](const Piece& piece) -> std::optional<uint8>
             {
                 for (const uint8 slot : bag->SearchItems(piece.itemId))
@@ -287,12 +372,20 @@ namespace pawn::redress
                 {
                     return std::nullopt;
                 }
-                const auto landed = transaction->give(LOC_INVENTORY, piece.itemId, quantity, Silence::Yes);
+                const auto landed = transaction->give(gearLocation, piece.itemId, quantity, Silence::Yes);
                 if (!landed.has_value() || !transaction->commit())
                 {
                     return std::nullopt;
                 }
                 return *landed;
+            };
+
+            // Her container full: the piece she wears in the slot, which the
+            // plan has no place for, taken off and out of the game
+            const auto makeRoom = [&](const Piece& piece) -> bool
+            {
+                const CItem* PWorn = PPawn->getEquip(static_cast<SLOTTYPE>(piece.slot));
+                return PWorn != nullptr && !keeps(PWorn, PWorn->getLocationID()) && throwOut(PWorn, PWorn->getLocationID());
             };
 
             const auto wearing = [&](const Piece& piece)
@@ -308,13 +401,17 @@ namespace pawn::redress
                 {
                     return;
                 }
-                const auto slot = bagSlotFor(piece);
+                auto slot = bagSlotFor(piece);
+                if (!slot.has_value() && makeRoom(piece))
+                {
+                    slot = bagSlotFor(piece);
+                }
                 if (!slot.has_value())
                 {
                     ShowWarningFmt("world: {} has no room in her bag for item {} (slot {}); left out", PPawn->getName(), piece.itemId, piece.slot);
                     return;
                 }
-                if (const auto status = pawn::items::equip(PPawn, *slot, piece.slot, LOC_INVENTORY); status != CL_S_OK)
+                if (const auto status = pawn::items::equip(PPawn, *slot, piece.slot, gearLocation); status != CL_S_OK)
                 {
                     if (!last)
                     {
@@ -336,9 +433,9 @@ namespace pawn::redress
             {
                 putOn(piece, true);
             }
-            dropUnplanned();
+            clearOut();
 
-            if (out.worn > 0)
+            if (out.worn > 0 || out.moved > 0 || out.dropped > 0)
             {
                 charutils::SaveCharEquip(PPawn);
             }
@@ -477,7 +574,7 @@ namespace pawn::redress
             }
             const bool subbed  = takeSub(PPawn, answer);
             pawn::food::forget(PPawn->id);
-            const auto dressed = dress(PPawn, *plan, cardian::redress::parseIds(answer.issued), pawn::food::plannedIds(PPawn->getName()));
+            const auto dressed = dress(PPawn, *plan, pawn::food::plannedIds(PPawn->getName()));
             pawn::food::topUp(PPawn);
             const auto learned = learnSpells(PPawn);
             const auto raised  = raiseSkills(PPawn, answer.skills);
@@ -485,8 +582,9 @@ namespace pawn::redress
             PPawn->clearPacketList();
             markDone(answer);
 
-            ShowInfoFmt("world: {} is dressed for level {} at the auction house ({}{} pieces put on, {} taken off, {} spells learned, {} skills raised)",
-                        PPawn->getName(), answer.level, subbed ? "her support job set, " : "", dressed.worn, dressed.dropped, learned, raised);
+            ShowInfoFmt("world: {} is dressed for level {} at the auction house ({}{} pieces put on, {} taken off, {} moved to Mog Wardrobe 1, {} spells learned, "
+                        "{} skills raised)",
+                        PPawn->getName(), answer.level, subbed ? "her support job set, " : "", dressed.worn, dressed.dropped, dressed.moved, learned, raised);
             if (auto* PPlayer = pawn::partyPlayer(PPawn); PPlayer != nullptr)
             {
                 PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is dressed for level {}.", PPawn->getName(), answer.level));

@@ -32,6 +32,7 @@
 #include "map/pause/input_gate.h"
 #include "map/pause/pause.h"
 #include "map/pawn/pawn.h"
+#include "map/pawn/pawn_loot.h"
 #include "map/pawn/world.h"
 #include "map/utils/moduleutils.h"
 
@@ -67,6 +68,14 @@ namespace pawn::world
         return exp;
     }
 } // namespace pawn::world
+
+namespace pawn::loot
+{
+    auto voids(const CCharEntity* /* PWinner */) -> bool
+    {
+        return false;
+    }
+} // namespace pawn::loot
 
 // The bindings modules/cardian/lua calls: isCardian on the players it sees
 // (a test that wants a cardian mocks one --
