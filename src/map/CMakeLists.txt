@@ -91,6 +91,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/warp_together.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rescue_watch.h
 )
 
 set(MAP_CORE_SOURCES

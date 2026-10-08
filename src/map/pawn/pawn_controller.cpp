@@ -87,6 +87,8 @@
 #include "party.h"
 #include "pause/pause.h"
 #include "recast_container.h"
+#include "enums/chat_message_type.h"
+#include "packets/s2c/0x017_chat_std.h"
 #include "packets/s2c/0x05a_motionmes.h"
 #include "ability.h"
 #include "mobskill.h"
@@ -3785,11 +3787,14 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
         if (!RestAllowsAction())
         {
             PPathFind->Clear();
+            NoteWalk(false, point, followTarget);
             return action;
         }
     }
 
-    // The step
+    // The step; `trying` for the auto rescue: a walk toward a spot she is
+    // not at, the danger map not holding her back
+    bool trying = false;
     if (action != AvoidAction::None)
     {
         // What the vet asked for: a short hop straight to its point, a path
@@ -3830,8 +3835,12 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
             case Intent::Kind::Path:
                 if (distance(POwner->loc.p, point) > followMax)
                 {
+                    trying = true;
                     if (!PathToward(point, followTarget, intent.rearBoundary.has_value() ? &*intent.rearBoundary : nullptr))
                     {
+                        // the camp's line refusing her route keeps her where she
+                        // is on purpose: she waits, she is not caught
+                        trying = !intent.rearBoundary.has_value();
                         // Said once a spot: where she cannot walk to, and from where
                         if (!m_PathFailedAt.has_value() || distance(*m_PathFailedAt, point) > 1.0f)
                         {
@@ -3871,11 +3880,13 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                 const float currentDistance = distance(POwner->loc.p, point);
                 if (currentDistance > followMax)
                 {
+                    trying = true;
                     // Warp only when pathing genuinely fails; a pawn arriving
                     // at a zone gate runs to its player like anyone else would
                     if (!PathToward(point, followTarget) && intent.warpIfLost && currentDistance > WarpDistance)
                     {
                         PPathFind->WarpTo(point);
+                        NoteWalk(false, point, followTarget);
                         return std::nullopt;
                     }
                 }
@@ -3907,6 +3918,7 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
     {
         m_WalkTo.reset();
     }
+    NoteWalk(trying, point, followTarget);
 
     PPathFind->FollowPath(m_Tick);
 
@@ -4614,6 +4626,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     {
         co_await DoRoamTick(tick);
     }
+    RescueTick();
 
     co_return;
 }
@@ -7840,6 +7853,81 @@ void CPawnController::NotePathFailure(const AvoidAction action, const position_t
     m_LastPathFailTime = m_Tick;
     ShowInfoFmt("pawn: {} cannot path to her {} point ({:.1f}y away, at {:.1f} {:.1f} {:.1f}, on mesh: {})", POwner->getName(),
                 magic_enum::enum_name(action), away, point.x, point.y, point.z, POwner->PAI->PathFind->ValidPosition(point) ? "yes" : "no");
+}
+
+void CPawnController::NoteWalk(const bool trying, const position_t& goal, const float arrive)
+{
+    if (!trying)
+    {
+        m_Rescue.running = false; // at her spot, standing on purpose, or held back: no clock
+        return;
+    }
+    m_RescueTriedAt = m_Tick;
+    m_RescueGoal    = goal;
+    m_RescueArrive  = arrive;
+}
+
+void CPawnController::RescueTick()
+{
+    // Trying, this past second, and free to move: alive, her state letting
+    // her walk (no spell, item or ability under way; not asleep, stunned,
+    // petrified or in terror), not bound, with a speed; and a player of her
+    // party in her zone to say it to
+    auto*      PPlayer = GetLivePlayer();
+    const bool free    = !POwner->isDead() && POwner->PAI->CanFollowPath() && POwner->GetSpeed() > 0 &&
+                      !POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Bind);
+    const bool trying  = settings::get<bool>("pawn.AUTO_RESCUE") && PPlayer != nullptr && free && m_Tick - m_RescueTriedAt <= 1s;
+
+    const cardian::rescue::Rules rules{ settings::get<float>("pawn.AUTO_RESCUE_RADIUS"), settings::get<float>("pawn.AUTO_RESCUE_SECONDS") };
+    const auto                   now   = secondsOf(m_Tick);
+    const auto                   at    = cardian::rescue::Point{ POwner->loc.p.x, POwner->loc.p.y, POwner->loc.p.z };
+    // A tick that never got here -- the player steering her, her back turned
+    // on a gaze -- is a break: her clock starts again, never counting it
+    if (m_Tick - m_RescueLookedAt > 1s)
+    {
+        m_Rescue.running = false;
+    }
+    m_RescueLookedAt = m_Tick;
+    if (!cardian::rescue::caught(m_Rescue, now, at, trying, rules))
+    {
+        return;
+    }
+
+    // Where she was going: short of it by its reach, and by kSetDownShort at
+    // the least -- never on top of what she walks to, a mob or a patient --
+    // on the mesh
+    constexpr float kSetDownShort = 2.0f;
+    position_t      to            = m_RescueGoal;
+    const float     away          = distance(POwner->loc.p, m_RescueGoal);
+    if (away > 0.01f)
+    {
+        const float back = std::min(std::max(m_RescueArrive, kSetDownShort), away);
+        to.x += (POwner->loc.p.x - to.x) / away * back;
+        to.z += (POwner->loc.p.z - to.z) / away * back;
+    }
+    if (auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr; navMesh != nullptr)
+    {
+        if (const auto snapped = navMesh->findClosestValidPoint(to); snapped.has_value())
+        {
+            to = *snapped;
+        }
+    }
+    const position_t stuckAt = POwner->loc.p;
+    if (distance(stuckAt, to) <= rules.radius)
+    {
+        cardian::rescue::restart(m_Rescue, now, at);
+        return;
+    }
+    POwner->PAI->PathFind->WarpTo(to, 0.0f);
+    POwner->PAI->PathFind->LookAt(PPlayer->loc.p);
+    POwner->updatemask |= UPDATE_POS;
+
+    ShowInfoFmt("pawn: {} is caught at ({:.1f}, {:.1f}, {:.1f}) in {} and set down at her spot ({:.1f}, {:.1f}, {:.1f}), {:.1f} y on; "
+                "{} is at ({:.1f}, {:.1f}, {:.1f}); rescue {} in a row",
+                POwner->getName(), stuckAt.x, stuckAt.y, stuckAt.z, POwner->loc.zone->getName(), to.x, to.y, to.z, distance(stuckAt, to), PPlayer->getName(),
+                PPlayer->loc.p.x, PPlayer->loc.p.y, PPlayer->loc.p.z, m_Rescue.again + 1);
+    PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} rejoins you.", POwner->getName()));
+    cardian::rescue::rescued(m_Rescue, now);
 }
 
 auto CPawnController::Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, const bool fighting) -> AvoidAction

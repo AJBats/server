@@ -22,6 +22,7 @@
 #pragma once
 
 #include "cardian_link_messages.h"
+#include "rescue_watch.h"
 #include "claim_board.h"
 #include "engage_math.h"
 #include "glance_math.h"
@@ -884,6 +885,14 @@ private:
     // cardian standing still in Escape, Hold or Detour names its cause
     void NotePathFailure(AvoidAction action, const position_t& point, float away);
 
+    // The auto rescue (pawn.AUTO_RESCUE, the rule in rescue_watch.h): Walk
+    // says each time whether it sent her toward a spot she is farther from
+    // than its tolerance, with the danger map not holding her back
+    // (`trying`), and where that spot is; RescueTick, after the tick's
+    // movers, sets her down at it once the watch finds her caught
+    void NoteWalk(bool trying, const position_t& goal, float arrive);
+    void RescueTick();
+
     // The step back, off unless MELEE_STEP_BACK (the herd keeps her
     // distance now): a target that has settled on her toes (a mob walks
     // onto its target's exact coordinates) is given room. Once it has
@@ -1579,4 +1588,12 @@ private:
     timer::time_point         m_LastItchTick;
     timer::time_point m_LastAvoidDebugTime;
     timer::time_point m_LastPathFailTime;
+
+    // The auto rescue (RescueTick): the watch, and Walk's last word on
+    // where she is trying to go
+    cardian::rescue::Watch m_Rescue;
+    timer::time_point      m_RescueLookedAt{}; // RescueTick's last look: a tick that skipped it (a maneuver, a gaze) breaks her clock
+    timer::time_point      m_RescueTriedAt{}; // Walk last sent her toward a spot beyond its tolerance
+    position_t             m_RescueGoal{};    // that spot
+    float                  m_RescueArrive = 0.0f; // and how near it is there (a mob's reach: never on top of it)
 };
