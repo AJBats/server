@@ -3066,7 +3066,12 @@ auto CPawnController::RearCampRoute(const position_t& point, const position_t& c
     }
     // If avoidance left her in front, she can walk back. Once behind the
     // line, an AoE reposition cannot route round a wall through the front.
-    const float limit   = std::max(0.0f, forward(POwner->loc.p)) + 0.05f;
+    // That is for her moves at the camp: farther from the flag than her
+    // cast range she walks the mesh's own way there -- a camp set across a
+    // maze has no route to its back that never crosses its front (the user,
+    // 2026-10-07: Zapp waited 67 yalms out)
+    const bool  atCamp  = isWithinDistance(POwner->loc.p, camp, CastRange() + 8.0f); // past the deepest spot CampSpot looks at
+    const float limit   = atCamp ? std::max(0.0f, forward(POwner->loc.p)) + 0.05f : std::numeric_limits<float>::max();
     auto*       navMesh = meshOf(POwner->loc.zone);
     if (navMesh == nullptr)
     {
@@ -3827,6 +3832,14 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                 {
                     if (!PathToward(point, followTarget, intent.rearBoundary.has_value() ? &*intent.rearBoundary : nullptr))
                     {
+                        // Said once a spot: where she cannot walk to, and from where
+                        if (!m_PathFailedAt.has_value() || distance(*m_PathFailedAt, point) > 1.0f)
+                        {
+                            m_PathFailedAt = point;
+                            ShowInfoFmt("pawn: {} cannot path to ({:.1f}, {:.1f}, {:.1f}) from ({:.1f}, {:.1f}, {:.1f}), {:.1f} y{}", POwner->getName(), point.x, point.y, point.z,
+                                        POwner->loc.p.x, POwner->loc.p.y, POwner->loc.p.z, distance(POwner->loc.p, point),
+                                        intent.rearBoundary.has_value() && isWithinDistance(POwner->loc.p, *intent.rearBoundary, CastRange() + 8.0f) ? ", keeping behind the camp's flag" : "");
+                        }
                         if (intent.fallback.has_value())
                         {
                             // Retry toward the spell target through the same avoidance
@@ -3847,6 +3860,10 @@ auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
                 else if (PPathFind->IsFollowingPath())
                 {
                     PPathFind->Clear();
+                }
+                if (PPathFind->IsFollowingPath())
+                {
+                    m_PathFailedAt.reset(); // walking: a later failure to the same spot is said again
                 }
                 break;
             case Intent::Kind::Formation:

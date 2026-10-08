@@ -1221,6 +1221,7 @@ private:
     uint32                  m_HeldMob   = 0;          // FightSettled's mob, and since when it has stood still
     timer::time_point       m_HeldSince{};
     std::string             m_PendingStandWhy;         // a stand asked from outside while she still knelt down, for its line once done
+    std::optional<position_t> m_PathFailedAt;          // the last spot a walk could not path to, so its line is said once
     bool                    m_KneelByRow      = false; // the kneel her marked Rest row started: only it outlasts the row's conditions
     bool                    m_SettledNow      = false; // FightSettled of the mob she attends, asked every tick she attends
     timer::time_point       m_HeldAskedAt{};           // when FightSettled was last asked: a gap starts the second afresh
