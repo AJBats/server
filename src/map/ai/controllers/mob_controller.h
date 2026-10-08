@@ -62,6 +62,7 @@ public:
     auto         HasFollowTarget() const -> bool;
     void         ClearFollowTarget();
     auto         CheckHide(const CBattleEntity* PTarget) const -> bool;
+    auto         TpThreshold() const -> uint16 { return m_tpThreshold; } // CARDIAN: the TP its next move fires at, read by a kneeling cardian (pawn/tp_clock.h)
     void         OnCastStopped(CMagicState& state, action_t& action);
 
 protected:

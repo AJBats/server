@@ -1883,6 +1883,16 @@ namespace pawn
                                    });
     }
 
+    auto CGambits::HasRestRow() -> bool
+    {
+        const auto rows = Fitted();
+        return std::ranges::any_of(rows, [&](const cardian::layers::Placed<const GambitRow>& p)
+                                   {
+                                       const auto& g = p.row->gambit;
+                                       return p.on && RowState(g) == cardian::tactician::State::Tool && cardian::tactician::allowanceOf(g) == cardian::tactician::Allowance::Rest;
+                                   });
+    }
+
     auto CGambits::OffersBeforeWs(const cardian::tactician::Allowance tool) -> bool
     {
         // Her marked Boost or Sneak Attack row, on, the player's gate on it

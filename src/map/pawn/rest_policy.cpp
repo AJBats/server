@@ -66,7 +66,7 @@ namespace pawn::tactics
             return false;
         }
         const double now = restSeconds(timer::now());
-        if (!state.requestStand(now))
+        if (!state.requestStandFromOutside(now))
         {
             return false;
         }
