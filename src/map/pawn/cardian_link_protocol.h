@@ -34,8 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 48: a warp together's member's barred, the
-// ways she knows but cannot use now; 47: the warp together's picks, OFFER's own
+// compatible, the user, 2026-09-14). 50: a warp together's member's ring and
+// cudgel, each piece's charges and recast left (cl_offer_piece); 49: the Warp
+// Ring and the Warp Cudgel among the ways home (CL_WAY_RING, CL_WAY_CUDGEL); 48:
+// a warp together's member's barred, the ways she knows but cannot use now; 47:
+// the warp together's picks, OFFER's own
 // and each member's ways, and OFFER_ANSWER's ways, his pick for each; 46: the warp
 // together, OFFER's members and each one's way home (CL_WAY_*), and OFFER_ANSWER's
 // choice in place of its yes; 45: STAKE's front and back, the camp's front line
@@ -91,7 +94,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 48 };
+enum { CL_PROTOCOL = 50 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1498,17 +1501,31 @@ enum
     CL_WAY_NONE   = 0, // nothing: she stays behind
     CL_WAY_SCROLL = 1, // an Instant Warp from her bag
     CL_WAY_SPELL  = 2, // her own Warp
+    CL_WAY_RING   = 3, // a Warp Ring of hers, put on and used
+    CL_WAY_CUDGEL = 4, // a Warp Cudgel of hers, put on and used
 };
+
+// A piece of gear a warp together's member could warp by: its charges left,
+// and the seconds until its recast is over (the delay wearing it starts is
+// waited out after)
+typedef struct cl_offer_piece
+{
+    uint8_t  charges;
+    uint8_t  spare;
+    uint16_t readyIn;
+} cl_offer_piece;
 
 // A character a question concerns, and for a warp together her way home: the
 // server's pick, and every way she has, which he may pick from instead
 typedef struct cl_offer_member
 {
-    uint32_t character; // charid
-    uint8_t  way;       // CL_WAY_*: the server's pick
-    uint8_t  ways;      // the ways she has, a bit for each (1 << CL_WAY_*); staying behind is always one
-    uint8_t  barred;    // the ways she knows but cannot use now, the same bits: her Warp short of MP, silenced or on its recast
-    uint8_t  spare;
+    uint32_t       character; // charid
+    uint8_t        way;       // CL_WAY_*: the server's pick
+    uint8_t        ways;      // the ways she has, a bit for each (1 << CL_WAY_*); staying behind is always one
+    uint8_t        barred;    // the ways she has but cannot use now, the same bits: her Warp short of MP, silenced or on its recast; a piece on its recast or out of charges
+    uint8_t        spare;
+    cl_offer_piece ring;      // her Warp Ring, when she has one she can wear
+    cl_offer_piece cudgel;    // her Warp Cudgel, the same
 } cl_offer_member;
 
 // One-way, to the player: a question the server puts to him, which the addon

@@ -58,6 +58,12 @@ namespace pawn::offers
         std::vector<uint8>      ways;    // a warp together: each member's way home (CL_WAY_*), the server's pick, then his answer's
         std::vector<uint8>      held;    // a warp together: the ways each member has (cl_offer_member's bits)
         std::vector<uint8>      barred;  // a warp together: the ways each member knows but cannot use now (the same bits)
+        struct Piece
+        {
+            uint8  charges = 0;
+            uint16 readyIn = 0; // seconds
+        };
+        std::vector<std::array<Piece, 2>> pieces; // a warp together: each member's Warp Ring and Warp Cudgel
         uint8                   own = 0; // a warp together: his own way (CL_WAY_*)
     };
 

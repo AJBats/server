@@ -76,12 +76,17 @@ namespace
         return nullptr;
     }
 
-    // Where the piece goes on: a slot it fits that is bare, else the last one
-    // it fits -- a ring takes the second ring's place, an earring the second
-    // earring's
+    // Where the piece goes on: a weapon in the main hand, where it is wielded
+    // (the off hand takes one only with Dual Wield); anything else a slot it
+    // fits that is bare, else the last one it fits -- a ring takes the second
+    // ring's place, an earring the second earring's
     auto slotFor(CCharEntity* PChar, const CItemEquipment* PItem) -> std::optional<uint8>
     {
-        const uint16         fits = PItem->getEquipSlotId();
+        const uint16 fits = PItem->getEquipSlotId();
+        if ((fits & (1 << SLOT_MAIN)) != 0)
+        {
+            return SLOT_MAIN;
+        }
         std::optional<uint8> last;
         for (uint8 slot = 0; slot < SLOT_LINK1; ++slot)
         {
@@ -173,9 +178,16 @@ auto CPawnController::StartEnchant(const uint8 location, const uint8 slot) -> ui
         {
             lane.replacedId = PWorn->getID();
         }
+        const auto* PSub  = PChar->getEquip(SLOT_SUB);
+        const uint16 subId = *to == SLOT_MAIN && PSub != nullptr ? PSub->getID() : uint16{ 0 };
         if (const auto status = pawn::items::equip(PChar, slot, *to, location); status != CL_S_OK)
         {
             return status;
+        }
+        // a weapon wielded can take the off hand's piece off with it (a grip)
+        if (const auto* PSubNow = PChar->getEquip(SLOT_SUB); subId != 0 && (PSubNow == nullptr || PSubNow->getID() != subId))
+        {
+            lane.replacedSubId = subId;
         }
         lane.equipSlot = *to;
         lane.putOn     = true;
@@ -282,6 +294,13 @@ void CPawnController::EndEnchant(const std::string_view why)
             back = pawn::items::equip(PChar, PBack->getSlotID(), lane.equipSlot, PBack->getLocationID()) == CL_S_OK
                        ? "; the piece it replaced is back on"
                        : "; the game would not put the piece it replaced back on, so it stays on";
+        }
+        // the off hand's piece its wielding took off, back on once the main
+        // hand holds what it held
+        if (const auto* PGrip = lane.replacedSubId != 0 && PChar->getEquip(SLOT_SUB) == nullptr ? unwornPiece(PChar, lane.replacedSubId) : nullptr; PGrip != nullptr)
+        {
+            back += pawn::items::equip(PChar, PGrip->getSlotID(), SLOT_SUB, PGrip->getLocationID()) == CL_S_OK ? "; the off hand's piece is back on"
+                                                                                                                : "; the game would not put the off hand's piece back on";
         }
     }
     ShowInfoFmt("pawn: {}'s enchanted-item lane ends ({}){}", POwner->getName(), why, back);

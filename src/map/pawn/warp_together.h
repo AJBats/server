@@ -32,9 +32,14 @@ class CCharEntity;
 // casts Warp with cardians of his party beside him -- in his zone, alive --
 // and it does not start: the input gate's ask (pause/input_gate.h) holds it,
 // and his addon asks him how the party follows (offers.h,
-// CL_OFFER_WARP_TOGETHER), listing each cardian's way home: her own Warp, an
-// Instant Warp from her bag, or nothing, and she stays behind. Her Warp is
-// picked before her scroll; he may pick another way she has, or leave her.
+// CL_OFFER_WARP_TOGETHER), listing each cardian's way home: her own Warp, a
+// Warp Ring or a Warp Cudgel she can wear, an Instant Warp from her bag, or
+// nothing, and she stays behind. Picked in that order, the scroll last as the
+// one a use spends; he may pick another way she has, or leave her. A ring or
+// a cudgel goes by her enchanted-item lane (pawn_enchant.cpp): put on, its
+// delay waited out, used, and what it replaced put back. His own Warp Ring or
+// Warp Cudgel is asked about like his scroll, once the game would let him use
+// it: worn, charged, its delay over.
 //   - The party: his warp goes ahead, and each cardian with a way home uses
 //     the one picked as an order ahead of everything else in her line. Each
 //     lands at his home point, with him, whoever's home point her own is.

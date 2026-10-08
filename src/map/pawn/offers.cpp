@@ -100,6 +100,11 @@ namespace pawn::offers
             msg.members[i].way       = i < offer.ways.size() ? offer.ways[i] : uint8{ CL_WAY_NONE };
             msg.members[i].ways      = i < offer.held.size() ? offer.held[i] : uint8{ 1 << CL_WAY_NONE };
             msg.members[i].barred    = i < offer.barred.size() ? offer.barred[i] : uint8{ 0 };
+            if (i < offer.pieces.size())
+            {
+                msg.members[i].ring   = cl_offer_piece{ offer.pieces[i][0].charges, 0, offer.pieces[i][0].readyIn };
+                msg.members[i].cudgel = cl_offer_piece{ offer.pieces[i][1].charges, 0, offer.pieces[i][1].readyIn };
+            }
             msg.count                = static_cast<uint8_t>(i + 1);
         }
         if (!send(PPlayer->id, msg))
