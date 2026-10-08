@@ -53,7 +53,7 @@ namespace pawn::offers
             send(offer.player, msg, CL_S_OFFER_GONE);
         }
 
-        void resolve(CCharEntity* PPlayer, const Offer& offer, const bool yes)
+        void resolve(CCharEntity* PPlayer, const Offer& offer, const uint8 choice)
         {
             const auto it = resolvers.find(offer.kind);
             if (it == resolvers.end())
@@ -61,7 +61,7 @@ namespace pawn::offers
                 ShowErrorFmt("offer: nothing answers a question of kind {} ({}'s #{})", offer.kind, PPlayer->getName(), offer.id);
                 return;
             }
-            it->second(PPlayer, offer, yes);
+            it->second(PPlayer, offer, choice);
         }
     } // namespace
 
@@ -93,6 +93,20 @@ namespace pawn::offers
         msg.offer   = offer.id;
         msg.kind    = offer.kind;
         msg.seconds = static_cast<uint16_t>(std::clamp<int64>(patience.count(), 0, UINT16_MAX));
+        msg.own     = offer.own;
+        for (std::size_t i = 0; i < offer.members.size() && i < std::size(msg.members); ++i)
+        {
+            msg.members[i].character = offer.members[i];
+            msg.members[i].way       = i < offer.ways.size() ? offer.ways[i] : uint8{ CL_WAY_NONE };
+            msg.members[i].ways      = i < offer.held.size() ? offer.held[i] : uint8{ 1 << CL_WAY_NONE };
+            msg.members[i].barred    = i < offer.barred.size() ? offer.barred[i] : uint8{ 0 };
+            if (i < offer.pieces.size())
+            {
+                msg.members[i].ring   = cl_offer_piece{ offer.pieces[i][0].charges, 0, offer.pieces[i][0].readyIn };
+                msg.members[i].cudgel = cl_offer_piece{ offer.pieces[i][1].charges, 0, offer.pieces[i][1].readyIn };
+            }
+            msg.count                = static_cast<uint8_t>(i + 1);
+        }
         if (!send(PPlayer->id, msg))
         {
             return false;
@@ -102,25 +116,29 @@ namespace pawn::offers
         return true;
     }
 
-    auto answer(CCharEntity* PPlayer, const uint32 id, const bool yes) -> uint16
+    auto answer(CCharEntity* PPlayer, const uint32 id, const uint8 choice, const std::span<const uint8> picks) -> uint16
     {
         const auto it = PPlayer != nullptr ? open.find(PPlayer->id) : open.end();
         if (it == open.end() || it->second.id != id)
         {
             return CL_S_OFFER_GONE;
         }
-        const Offer offer = std::move(it->second);
+        Offer offer = std::move(it->second);
         open.erase(it);
+        for (std::size_t i = 0; i < offer.ways.size() && i < picks.size(); ++i)
+        {
+            offer.ways[i] = picks[i];
+        }
         // Past its time or out of its zone, the question has lapsed even when
         // the once-a-second look has not caught it yet: a no, whatever he said
         if (timer::now() >= offer.deadline || static_cast<uint16>(PPlayer->getZone()) != offer.zone)
         {
-            ShowInfoFmt("offer: {} answers #{} {} after it lapsed: a no", PPlayer->getName(), offer.id, yes ? "yes" : "no");
-            resolve(PPlayer, offer, false);
+            ShowInfoFmt("offer: {} answers #{} {} after it lapsed: a no", PPlayer->getName(), offer.id, choice);
+            resolve(PPlayer, offer, 0);
             return CL_S_OFFER_GONE;
         }
-        ShowInfoFmt("offer: {} answers #{} {}", PPlayer->getName(), offer.id, yes ? "yes" : "no");
-        resolve(PPlayer, offer, yes);
+        ShowInfoFmt("offer: {} answers #{} {}", PPlayer->getName(), offer.id, choice);
+        resolve(PPlayer, offer, choice);
         return CL_S_OK;
     }
 
@@ -176,7 +194,7 @@ namespace pawn::offers
             const bool left = static_cast<uint16>(PPlayer->getZone()) != offer.zone;
             ShowInfoFmt("offer: {}'s #{} lapses ({}): a no", PPlayer->getName(), offer.id, left ? "he left the zone" : "no answer in time");
             tellGone(offer);
-            resolve(PPlayer, offer, false);
+            resolve(PPlayer, offer, 0);
         }
     }
 } // namespace pawn::offers

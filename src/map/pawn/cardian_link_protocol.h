@@ -34,7 +34,14 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 45: STAKE's front and back, the camp's front line
+// compatible, the user, 2026-09-14). 50: a warp together's member's ring and
+// cudgel, each piece's charges and recast left (cl_offer_piece); 49: the Warp
+// Ring and the Warp Cudgel among the ways home (CL_WAY_RING, CL_WAY_CUDGEL); 48:
+// a warp together's member's barred, the ways she knows but cannot use now; 47:
+// the warp together's picks, OFFER's own
+// and each member's ways, and OFFER_ANSWER's ways, his pick for each; 46: the warp
+// together, OFFER's members and each one's way home (CL_WAY_*), and OFFER_ANSWER's
+// choice in place of its yes; 45: STAKE's front and back, the camp's front line
 // and backline spacing; 44: a PARTY_ROLE's food, what the member eats
 // in her party role (RESEARCH §19); 43: an item's charges and readyIn, an enchanted
 // piece's charges left and the seconds until it can be used; the finder's LEFT_TOWN; 42: QUEUE's lane, the enchanted item she is
@@ -87,7 +94,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 45 };
+enum { CL_PROTOCOL = 50 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1484,22 +1491,59 @@ typedef struct cl_maneuver_state
 // words it.
 enum
 {
-    CL_OFFER_PARTY_WARP = 1, // a warp he has picked, not yet bought: bought with his party on a yes, called off on a no
+    CL_OFFER_PARTY_WARP    = 1, // a warp he has picked, not yet bought: bought with his party on a yes, called off on a no
+    CL_OFFER_WARP_TOGETHER = 2, // his own warp, a scroll read or the spell cast, held before it starts: choice 1 takes the party (each member with a way home uses hers), 2 goes alone, 0 calls it off and keeps it
 };
 
-// One-way, to the player: a yes-or-no question the server puts to him, which
-// the addon asks on a screen of the Cardian menu. He answers with OFFER_ANSWER,
-// by its id; unanswered for `seconds` of the simulation's time (a pause holds
-// it), or once he leaves his zone, it lapses and counts as his no. One stands
-// for him at a time. Sent again with status OFFER_GONE, the same id, when it
-// lapses or is withdrawn before he answers: the addon takes it down.
+// A member's way home on a warp together's question: what she will use
+enum
+{
+    CL_WAY_NONE   = 0, // nothing: she stays behind
+    CL_WAY_SCROLL = 1, // an Instant Warp from her bag
+    CL_WAY_SPELL  = 2, // her own Warp
+    CL_WAY_RING   = 3, // a Warp Ring of hers, put on and used
+    CL_WAY_CUDGEL = 4, // a Warp Cudgel of hers, put on and used
+};
+
+// A piece of gear a warp together's member could warp by: its charges left,
+// and the seconds until its recast is over (the delay wearing it starts is
+// waited out after)
+typedef struct cl_offer_piece
+{
+    uint8_t  charges;
+    uint8_t  spare;
+    uint16_t readyIn;
+} cl_offer_piece;
+
+// A character a question concerns, and for a warp together her way home: the
+// server's pick, and every way she has, which he may pick from instead
+typedef struct cl_offer_member
+{
+    uint32_t       character; // charid
+    uint8_t        way;       // CL_WAY_*: the server's pick
+    uint8_t        ways;      // the ways she has, a bit for each (1 << CL_WAY_*); staying behind is always one
+    uint8_t        barred;    // the ways she has but cannot use now, the same bits: her Warp short of MP, silenced or on its recast; a piece on its recast or out of charges
+    uint8_t        spare;
+    cl_offer_piece ring;      // her Warp Ring, when she has one she can wear
+    cl_offer_piece cudgel;    // her Warp Cudgel, the same
+} cl_offer_member;
+
+// One-way, to the player: a question the server puts to him, which the addon
+// asks on a screen of the Cardian menu. He answers with OFFER_ANSWER, by its id;
+// unanswered for `seconds` of the simulation's time (a pause holds it), or once
+// he leaves his zone, it lapses and counts as his no. One stands for him at a
+// time. Sent again with status OFFER_GONE, the same id, when it lapses or is
+// withdrawn before he answers: the addon takes it down.
 typedef struct cl_offer
 {
-    cl_header h;
-    uint32_t  offer;   // its id, which his answer names
-    uint8_t   kind;    // CL_OFFER_*
-    uint8_t   spare;
-    uint16_t  seconds; // how long it stands unanswered
+    cl_header       h;
+    uint32_t        offer;      // its id, which his answer names
+    uint8_t         kind;       // CL_OFFER_*
+    uint8_t         count;      // members used
+    uint16_t        seconds;    // how long it stands unanswered
+    uint8_t         own;        // a warp together: his own way (CL_WAY_*)
+    uint8_t         spare[3];
+    cl_offer_member members[5]; // the characters it concerns: a warp's cardians
 } cl_offer;
 
 // His answer to an OFFER. Answered OK, or OFFER_GONE when it is no longer open.
@@ -1507,8 +1551,9 @@ typedef struct cl_offer_answer
 {
     cl_header h;
     uint32_t  offer;
-    uint8_t   yes;     // 1 yes, 0 no
-    uint8_t   spare[3];
+    uint8_t   choice;  // 0 no (his cancel); 1 yes, the first choice; 2 the second, for a kind that has one
+    uint8_t   ways[5]; // a warp together: his pick of each member's way, in the offer's order (CL_WAY_*)
+    uint8_t   spare[2];
 } cl_offer_answer;
 
 // One-way, to every bound addon as the simulation is held, and to an addon

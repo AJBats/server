@@ -2360,7 +2360,7 @@ namespace pawn::linkapi
         // His answer to a question the server put to him (offers.h)
         void offerAnswer(CCharEntity* PChar, const cl_offer_answer& ask, Reply& reply)
         {
-            reply.finish(ask, pawn::offers::answer(PChar, ask.offer, ask.yes != 0));
+            reply.finish(ask, pawn::offers::answer(PChar, ask.offer, ask.choice, ask.ways));
         }
     } // namespace
 

@@ -1378,6 +1378,7 @@ private:
         uint8             equipSlot  = 0;
         bool              putOn      = false;
         uint16            replacedId = 0;
+        uint16            replacedSubId = 0; // a weapon put on: what its wielding took off the off hand (a grip)
         bool              fired      = false;
         timer::time_point usedBefore;
         uint8             tries = 0;

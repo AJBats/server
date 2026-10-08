@@ -66,6 +66,9 @@ struct Waiting
 // By charid: a character's body does not outlive a zone line, his charid does.
 std::unordered_map<uint32, Waiting> waiting;
 
+Ask  ask;
+bool handingOn = false; // a claimed command on its way back in: not asked again
+
 // Everything off 0x01A is a command but these, which command nothing.
 auto isCommand(const GP_CLI_COMMAND_ACTION_ACTIONID action) -> bool
 {
@@ -182,17 +185,17 @@ void tell(const CCharEntity* PChar, const cl_action& action = {}, const uint16 t
 // The dispatcher's own two steps: the command is judged as of now, not as of when
 // it was queued.
 template <typename T>
-void deliver(CCharEntity* PChar, const CBasicPacket& packet, const Queued& what)
+void deliver(CCharEntity* PChar, const CBasicPacket& packet, const Queued& what, const std::string_view how = "queued")
 {
     const auto* typed = packet.as<T>();
     if (const auto result = typed->validate(PChar->PSession, PChar); result.valid())
     {
-        ShowInfoFmt("pause: {}'s queued {} goes ahead{}", PChar->getName(), nameOf(what), PChar->isInEvent() ? ", with him in an event" : "");
+        ShowInfoFmt("pause: {}'s {} {} goes ahead{}", PChar->getName(), how, nameOf(what), PChar->isInEvent() ? ", with him in an event" : "");
         typed->process(PChar->PSession, PChar);
     }
     else
     {
-        ShowInfoFmt("pause: {}'s queued {} is refused at the release: {}", PChar->getName(), nameOf(what), result.errorString());
+        ShowInfoFmt("pause: {}'s {} {} is refused: {}", PChar->getName(), how, nameOf(what), result.errorString());
     }
 }
 
@@ -228,6 +231,11 @@ auto startsFishing(CBasicPacket& packet) -> bool
 
 auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
 {
+    if (PChar != nullptr && ask && !handingOn && ask(PChar, packet))
+    {
+        return true;
+    }
+
     if (!timer::is_held() || PChar == nullptr)
     {
         return false;
@@ -289,6 +297,51 @@ auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool
     tell(PChar, action, what->targetIndex);
     waiting.insert_or_assign(PChar->id, Waiting{ *what, PChar->getZone(), itemId, action, packet.copy() });
     return true;
+}
+
+void setAsk(Ask fn)
+{
+    ask = std::move(fn);
+}
+
+void handOn(CCharEntity* PChar, const CBasicPacket& packet)
+{
+    const auto what = describe(*packet.copy());
+    if (PChar == nullptr || !what)
+    {
+        return;
+    }
+    if (timer::is_held())
+    {
+        // set for the one call, and let go of however it ends
+        struct HandingOn
+        {
+            HandingOn()
+            {
+                handingOn = true;
+            }
+            ~HandingOn()
+            {
+                handingOn = false;
+            }
+        } const scope;
+        std::ignore = intercept(PChar, *packet.copy());
+        return;
+    }
+    switch (static_cast<PacketC2S>(what->packetId))
+    {
+        case PacketC2S::GP_CLI_COMMAND_ACTION:
+            deliver<GP_CLI_COMMAND_ACTION>(PChar, packet, *what, "answered");
+            break;
+        case PacketC2S::GP_CLI_COMMAND_ITEM_USE:
+            deliver<GP_CLI_COMMAND_ITEM_USE>(PChar, packet, *what, "answered");
+            break;
+        case PacketC2S::GP_CLI_COMMAND_CAMP:
+            deliver<GP_CLI_COMMAND_CAMP>(PChar, packet, *what, "answered");
+            break;
+        default:
+            break;
+    }
 }
 
 auto queued(const uint32 charid) -> std::optional<Queued>

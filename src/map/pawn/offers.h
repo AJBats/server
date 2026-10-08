@@ -27,18 +27,19 @@
 #include <array>
 #include <chrono>
 #include <functional>
+#include <span>
 #include <vector>
 
 class CCharEntity;
 
-// The server's yes-or-no questions to a player (the Link's OFFER and
-// OFFER_ANSWER): something a feature holds back until he says which way it
-// goes. The addon asks it on a screen of the Cardian menu. One stands for a
-// player at a time. It ends one of four ways: his yes, his no, no answer
-// within its patience (simulation time: a pause holds it), or his leaving the
-// zone it was put in -- the last two count as his no. A player who signs out
-// takes his question with him, and nothing comes of it; so does a question
-// withdrawn for a newer one.
+// The server's questions to a player (the Link's OFFER and OFFER_ANSWER):
+// something a feature holds back until he says which way it goes. The addon
+// asks it on a screen of the Cardian menu. One stands for a player at a time.
+// It ends one of four ways: his choice -- yes, or for a kind that has one the
+// second choice --, his no, no answer within its patience (simulation time: a
+// pause holds it), or his leaving the zone it was put in -- the last two count
+// as his no. A player who signs out takes his question with him, and nothing
+// comes of it; so does a question withdrawn for a newer one.
 //
 // A feature names its question by a kind (CL_OFFER_*) and says what follows an
 // answer with a resolver for that kind. What the question is about rides with
@@ -54,11 +55,22 @@ namespace pawn::offers
         timer::time_point       deadline{};
         std::array<uint32, 4>   args{};  // the kind's own numbers: the purchase a warp's question holds
         std::vector<uint32>     members; // the characters it concerns: a warp's cardians
+        std::vector<uint8>      ways;    // a warp together: each member's way home (CL_WAY_*), the server's pick, then his answer's
+        std::vector<uint8>      held;    // a warp together: the ways each member has (cl_offer_member's bits)
+        std::vector<uint8>      barred;  // a warp together: the ways each member knows but cannot use now (the same bits)
+        struct Piece
+        {
+            uint8  charges = 0;
+            uint16 readyIn = 0; // seconds
+        };
+        std::vector<std::array<Piece, 2>> pieces; // a warp together: each member's Warp Ring and Warp Cudgel
+        uint8                   own = 0; // a warp together: his own way (CL_WAY_*)
     };
 
-    // What follows an answer to a question of this kind: yes, or no (his no,
-    // or the question lapsing). PPlayer is in the world when it is called.
-    using Resolver = std::function<void(CCharEntity* PPlayer, const Offer& offer, bool yes)>;
+    // What follows an answer to a question of this kind: his choice (the
+    // Link's: 1 yes, 2 the second choice), or 0 (his no, or the question
+    // lapsing). PPlayer is in the world when it is called.
+    using Resolver = std::function<void(CCharEntity* PPlayer, const Offer& offer, uint8 choice)>;
     void setResolver(uint8 kind, Resolver resolver);
 
     // Put the question to the player's addon. False when no addon is bound
@@ -70,8 +82,11 @@ namespace pawn::offers
     // His answer, by the question's id: CL_S_OK when it was his open question
     // (its resolver has run), CL_S_OFFER_GONE when it is not, or when it had
     // lapsed by then -- past its time, or he has left its zone -- and the
-    // look had not yet caught it (its resolver has run as a no).
-    auto answer(CCharEntity* PPlayer, uint32 id, bool yes) -> uint16;
+    // look had not yet caught it (its resolver has run as a no). picks: his
+    // pick of each member's way, in the question's order, which takes the
+    // server's place in the Offer its resolver reads (a kind without ways
+    // ignores them)
+    auto answer(CCharEntity* PPlayer, uint32 id, uint8 choice, std::span<const uint8> picks = {}) -> uint16;
 
     // Every second or so, from the zone tick: the questions that lapse, and
     // those whose player has gone
