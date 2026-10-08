@@ -85,8 +85,10 @@ namespace pawn::linkapi
             return static_cast<uint16_t>(std::clamp<int64>(value, 0, UINT16_MAX));
         }
 
-        // One of her containers as it stands now
-        auto inventoryOf(CCharEntity* PPawn, const uint8 location) -> cl_inventory
+        // One of her containers as it stands now, as the addon lists it; `wildOnly`: only what
+        // the player may use from the bags of a cardian he does not manage
+        // (items::usableOnWild)
+        auto inventoryOf(CCharEntity* PPawn, const uint8 location, const bool wildOnly = false) -> cl_inventory
         {
             auto msg     = make<cl_inventory>();
             msg.cardian  = PPawn->id;
@@ -103,7 +105,7 @@ namespace pawn::linkapi
             for (uint8 slot = 1; slot <= storage->GetSize() && msg.count < capacity; ++slot)
             {
                 const CItem* PItem = storage->GetItem(slot);
-                if (PItem == nullptr || PItem->getQuantity() == 0)
+                if (PItem == nullptr || PItem->getQuantity() == 0 || (wildOnly && !pawn::items::usableOnWild(PItem->getID())))
                 {
                     continue;
                 }
@@ -908,46 +910,6 @@ namespace pawn::linkapi
             { "finder", "./modules/cardian/lua/finder_goals.lua" },
             { "exchange", "./modules/cardian/lua/conquest_exchange.lua" },
         } };
-
-        auto libraryCall(const char* library, const char* name) -> std::optional<sol::protected_function>
-        {
-            const sol::object cardian = ::lua["xi"]["cardian"];
-            sol::object       table;
-            if (cardian.get_type() == sol::type::table)
-            {
-                table = cardian.as<sol::table>()[library];
-            }
-            if (table.get_type() != sol::type::table || table.as<sol::table>()[name].get_type() != sol::type::function)
-            {
-                static std::set<std::string> said;
-                if (said.insert(fmt::format("{}.{}", library, name)).second)
-                {
-                    ShowError("link: xi.cardian.{}.{} is not loaded (modules/cardian/lua); its answers are refused", library, name);
-                }
-                return std::nullopt;
-            }
-            return sol::protected_function(table.as<sol::table>()[name]);
-        }
-
-        // The result, or nullopt when the call failed (said once per name)
-        auto libraryTable(const char* name, const sol::protected_function_result& res) -> std::optional<sol::table>
-        {
-            if (!res.valid())
-            {
-                static std::set<std::string> said;
-                if (said.insert(name).second)
-                {
-                    sol::error err = res;
-                    ShowError("link: {} failed: {}", name, err.what());
-                }
-                return std::nullopt;
-            }
-            if (res.get_type(0) != sol::type::table)
-            {
-                return std::nullopt;
-            }
-            return res.get<sol::table>(0);
-        }
 
         // The Debug screen's spawn and despawn (pawn::spawn, pawn::despawn)
         void spawnCardian(CCharEntity* PChar, const cl_spawn& ask, Reply& reply)
@@ -1767,7 +1729,9 @@ namespace pawn::linkapi
 
         // The command window: one action now, on a target index in her zone (0 =
         // herself), or held as her queued order (pawn_controller.h, DoAction). Her
-        // items are hers to use only when she is his to manage
+        // items are his to order only when she is his to manage, but for what
+        // raises her and takes her home (items::usableOnWild); an enchanted
+        // piece goes on her enchanted-item lane
         void doAction(CCharEntity* PChar, const cl_do& ask, Reply& reply)
         {
             auto* PPawn       = pawn::findCommandablePawn(PChar, ask.cardian);
@@ -1783,7 +1747,7 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_MALFORMED);
                 return;
             }
-            if (ask.action.kind == CL_AK_ITEM && pawn::findManagedPawn(PChar, ask.cardian) == nullptr)
+            if (ask.action.kind == CL_AK_ITEM && pawn::findManagedPawn(PChar, ask.cardian) == nullptr && !pawn::items::usableOnWild(ask.action.id))
             {
                 reply.finish(ask, CL_S_NOT_MANAGED);
                 return;
@@ -1791,6 +1755,19 @@ namespace pawn::linkapi
             if (PPawn->loc.zone == nullptr)
             {
                 reply.finish(ask, CL_S_OTHER_ZONE);
+                return;
+            }
+            // An enchanted piece is worn to be used: her lane, as Use from her
+            // bags (useAsOrder)
+            if (const auto* PPiece = ask.action.kind == CL_AK_ITEM ? pawn::items::pieceOf(PPawn, ask.action.id) : nullptr;
+                PPiece != nullptr && PPiece->isSubType(ITEM_CHARGED))
+            {
+                const auto status = PController->StartEnchant(PPiece->getLocationID(), PPiece->getSlotID());
+                if (status == CL_S_OK)
+                {
+                    ShowInfoFmt("pawn: {} is ordered to use {} by {}", PPawn->getName(), PPiece->getName(), PChar->getName());
+                }
+                reply.finish(ask, status);
                 return;
             }
             auto* PTarget = ask.target == 0 ? static_cast<CBattleEntity*>(PPawn)
@@ -1985,8 +1962,9 @@ namespace pawn::linkapi
         }
 
         // The equipment screen's whole view of her: roster line, status pane,
-        // gear and, his to manage, her inventory. His own view has no roster
-        // line: his client holds that
+        // gear and her inventory -- all of it when she is his to manage, else
+        // only what he may use from it (items::usableOnWild). His own view has
+        // no roster line: his client holds that
         void sync(CCharEntity* PChar, const cl_sync& ask, Reply& reply)
         {
             if (ask.cardian == PChar->id)
@@ -2007,10 +1985,7 @@ namespace pawn::linkapi
             reply.more(memberOf(PChar, PPawn, reachOf(PChar), managed));
             reply.more(statsOf(PPawn, managed));
             reply.more(gearOf(PPawn));
-            if (managed)
-            {
-                reply.more(inventoryOf(PPawn, LOC_INVENTORY));
-            }
+            reply.more(inventoryOf(PPawn, LOC_INVENTORY, !managed));
             reply.finish(ask, CL_S_OK);
         }
 
@@ -2018,7 +1993,13 @@ namespace pawn::linkapi
         // manage); or one of his own
         void inventory(CCharEntity* PChar, const cl_inventory& ask, Reply& reply)
         {
-            auto* PPawn = managedOrSelf(PChar, ask.cardian);
+            // one he commands but does not manage: her inventory, only what he may use from it
+            auto*      PPawn    = managedOrSelf(PChar, ask.cardian);
+            const bool wildOnly = PPawn == nullptr && ask.loc == LOC_INVENTORY;
+            if (wildOnly)
+            {
+                PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            }
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
@@ -2029,7 +2010,7 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_MALFORMED);
                 return;
             }
-            reply.finish(inventoryOf(PPawn, ask.loc), CL_S_OK);
+            reply.finish(inventoryOf(PPawn, ask.loc, wildOnly), CL_S_OK);
         }
 
         void bags(CCharEntity* PChar, const cl_bags& ask, Reply& reply)
@@ -2363,6 +2344,46 @@ namespace pawn::linkapi
             reply.finish(ask, pawn::offers::answer(PChar, ask.offer, ask.choice, ask.ways));
         }
     } // namespace
+
+    auto libraryCall(const char* library, const char* name) -> std::optional<sol::protected_function>
+    {
+        const sol::object cardian = ::lua["xi"]["cardian"];
+        sol::object       table;
+        if (cardian.get_type() == sol::type::table)
+        {
+            table = cardian.as<sol::table>()[library];
+        }
+        if (table.get_type() != sol::type::table || table.as<sol::table>()[name].get_type() != sol::type::function)
+        {
+            static std::set<std::string> said;
+            if (said.insert(fmt::format("{}.{}", library, name)).second)
+            {
+                ShowError("link: xi.cardian.{}.{} is not loaded (modules/cardian/lua); its answers are refused", library, name);
+            }
+            return std::nullopt;
+        }
+        return sol::protected_function(table.as<sol::table>()[name]);
+    }
+
+    // The result, or nullopt when the call failed (said once per name)
+    auto libraryTable(const char* name, const sol::protected_function_result& res) -> std::optional<sol::table>
+    {
+        if (!res.valid())
+        {
+            static std::set<std::string> said;
+            if (said.insert(name).second)
+            {
+                sol::error err = res;
+                ShowError("link: {} failed: {}", name, err.what());
+            }
+            return std::nullopt;
+        }
+        if (res.get_type(0) != sol::type::table)
+        {
+            return std::nullopt;
+        }
+        return res.get<sol::table>(0);
+    }
 
     void loadLibraries()
     {

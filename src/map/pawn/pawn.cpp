@@ -33,6 +33,7 @@
 #include "warp_hold.h"
 #include "warp_together.h"
 #include "seats.h"
+#include "supplies.h"
 #include "tactics.h"
 #include "world.h"
 #include "pawn_controller.h"
@@ -2012,6 +2013,9 @@ namespace pawn
                 return homePoint(PPawn);
             }
 
+            // The party's home point: her summoner's, or the real player's
+            // whose party she is in (a body of the world's own lies in her
+            // home town); her own only with neither
             auto home = together::landingFor(PPawn);
             if (!home.has_value())
             {
@@ -2020,7 +2024,14 @@ namespace pawn
                 {
                     PPawn->profile.home_point = PSummoner->profile.home_point;
                 }
-                home = PPawn->profile.home_point;
+                else if (const auto* PLeader = partyPlayer(PPawn); PLeader != nullptr)
+                {
+                    home = PLeader->profile.home_point;
+                }
+                if (!home.has_value())
+                {
+                    home = PPawn->profile.home_point;
+                }
             }
 
             ShowInfoFmt("pawn: {} warps to zone {}", PPawn->getName(), static_cast<uint16>(home->destination));
@@ -3019,6 +3030,7 @@ namespace pawn
         redress::tick(PZone);
         offers::tick();
         together::tick();
+        supplies::tick(PZone);
         world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

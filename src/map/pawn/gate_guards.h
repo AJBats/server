@@ -48,4 +48,7 @@ namespace pawn::guards
     // The nearest gate guard within the player's reach (8 yalms), nullptr for
     // none -- nearest, because a consulate stands its guards together
     auto guardNear(const CCharEntity* PPlayer) -> const Guard*;
+
+    // A guard who sells stands in the zone, by its name
+    auto zoneHasGuard(std::string_view zoneName) -> bool;
 } // namespace pawn::guards

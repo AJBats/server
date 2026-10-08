@@ -28,6 +28,7 @@
 #include <vector>
 
 class CCharEntity;
+class CItemEquipment;
 
 // Item management for cardians: move stacks between the player's inventory
 // and a live pawn's, and equip/unequip gear on the session-less character.
@@ -140,4 +141,17 @@ namespace pawn::items
 
     // Her gil: the inventory's slot 0 (0 when it holds none, or not gil)
     auto gilOf(CCharEntity* PChar) -> uint32;
+
+    // The items the player may use from the bags of a cardian he commands but
+    // does not manage, a body of the world in his party (the user,
+    // 2026-10-08): what raises her and what takes her home -- reraise items and
+    // gear enchanted with Reraise, warp items and gear enchanted with Warp.
+    // Everything else of hers is hers alone, and her bags show him only these
+    auto usableOnWild(uint16 itemId) -> bool;
+
+    // A piece of gear of hers by its item, worn or not, in her inventory or a
+    // wardrobe (busy only as worn: one in a trade is not hers to use); with
+    // more than one, a copy ready to use (charged, off its recast) first, the
+    // one she wears before the rest; nullptr when she has none
+    auto pieceOf(CCharEntity* PPawn, uint16 itemId) -> CItemEquipment*;
 } // namespace pawn::items

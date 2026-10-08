@@ -16,6 +16,10 @@
 --        { option, item, price, level, rank, place } -- rank the rank in her
 --        nation it needs, place the conquest place her nation must hold for
 --        it, 0 for none.
+--   xi.cardian.exchange.common(itemId)
+--     -> { option, price }: where an item sits in the stock every guard
+--        sells, and its price there; nil when it is not in it (a cardian's
+--        conquest supplies, src/map/pawn/supplies.cpp, buy by it).
 --   xi.cardian.exchange.buy(buyer, guardNation, guardType, option)
 --     -> { refusal, cp, have, need }: refusal nil when she bought it, else
 --        its name, which the Link turns into its outcome (CL_S_<refusal>);
@@ -121,6 +125,15 @@ local function priceFor(entry, buyerNation, guardNation)
         end
     end
     return price
+end
+
+xi.cardian.exchange.common = function(itemId)
+    for option, entry in pairs(common) do
+        if entry.item == itemId then
+            return { option = option, price = entry.cp }
+        end
+    end
+    return nil
 end
 
 xi.cardian.exchange.shop = function(buyer, guardNation)

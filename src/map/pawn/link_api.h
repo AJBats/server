@@ -21,6 +21,10 @@
 
 #pragma once
 
+#include "common/lua.h"
+
+#include <optional>
+
 // The cardian API on the Cardian Link: the companion addon's messages about
 // cardians, answered from the pawn module. The transport (cardian_link.h)
 // carries them; this file turns each into the game's own calls and the game's
@@ -35,4 +39,10 @@ namespace pawn::linkapi
 
     // Loads the Lua libraries the handlers ask; the pawn module's init
     void loadLibraries();
+    // A function of one of those libraries, xi.cardian.<library>.<name>;
+    // nullopt when it is not loaded, said in the map log once
+    auto libraryCall(const char* library, const char* name) -> std::optional<sol::protected_function>;
+    // A library call's answer, its table; nullopt when the call failed (said
+    // once per name) or answered no table
+    auto libraryTable(const char* name, const sol::protected_function_result& res) -> std::optional<sol::table>;
 } // namespace pawn::linkapi

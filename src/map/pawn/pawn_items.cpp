@@ -27,6 +27,7 @@
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/timer.h"
 #include "common/utils.h"
 
 #include "ai/ai_container.h"
@@ -883,5 +884,61 @@ namespace pawn::items
     {
         const auto* PGil = PChar->getStorage(LOC_INVENTORY)->GetItem(0);
         return PGil != nullptr && PGil->isType(ITEM_CURRENCY) ? PGil->getQuantity() : 0;
+    }
+    auto usableOnWild(const uint16 itemId) -> bool
+    {
+        // by the item scripts that give Reraise or Warp (scripts/items)
+        static constexpr std::array<uint16, 19> kAllowed{
+            // what raises her: the consumables, then the gear enchanted with Reraise
+            4182,  // Scroll of Instant Reraise
+            4172,  // Reraiser
+            4173,  // Hi-Reraiser
+            5770,  // Super Reraiser
+            5436,  // Dusty Scroll of Reraise
+            5258,  // Revive Feather
+            5259,  // Rebirth Feather
+            5412,  // Scapegoat
+            14790, // Reraise Earring
+            13171, // Reraise Gorget
+            15211, // Reraise Hairpin
+            16003, // Raising Earring
+            15998, // Kocco's Earring
+            16012, // Mamool Ja Earring
+            18398, // Raphael's Rod
+            25679, // White Rarab Cap +1
+            // what takes her home
+            4181,  // Scroll of Instant Warp
+            28540, // Warp Ring
+            17040, // Warp Cudgel
+        };
+        return std::ranges::find(kAllowed, itemId) != kAllowed.end();
+    }
+
+    auto pieceOf(CCharEntity* PPawn, const uint16 itemId) -> CItemEquipment*
+    {
+        static constexpr std::array<uint8, 9> kWornFrom{ LOC_INVENTORY, LOC_WARDROBE, LOC_WARDROBE2, LOC_WARDROBE3, LOC_WARDROBE4,
+                                                         LOC_WARDROBE5, LOC_WARDROBE6, LOC_WARDROBE7, LOC_WARDROBE8 };
+        CItemEquipment* PBest = nullptr;
+        int             best  = -1;
+        for (const uint8 location : kWornFrom)
+        {
+            auto* storage = PPawn->getStorage(location);
+            for (uint8 slot = 1; storage != nullptr && slot <= storage->GetSize(); ++slot)
+            {
+                auto* PItem = dynamic_cast<CItemEquipment*>(storage->GetItem(slot));
+                if (PItem == nullptr || PItem->getID() != itemId || (PItem->isBusy() && PItem->state() != ItemState::Equipped))
+                {
+                    continue;
+                }
+                const bool ready = PItem->getCurrentCharges() > 0 && PItem->getLastUseTime() + PItem->getReuseDelay() <= timer::now();
+                const bool worn  = PItem->state() == ItemState::Equipped;
+                if (const int rank = (ready ? 2 : 0) + (worn ? 1 : 0); rank > best)
+                {
+                    PBest = PItem;
+                    best  = rank;
+                }
+            }
+        }
+        return PBest;
     }
 } // namespace pawn::items
