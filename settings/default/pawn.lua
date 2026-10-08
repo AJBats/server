@@ -83,6 +83,18 @@ xi.settings.pawn =
     RESCUE_RANGE    = 15,
     RESCUE_COOLDOWN = 300,
 
+    -- The auto rescue: a cardian of a player's party, trying to reach the
+    -- spot her walk sends her to -- her place following him, or her place
+    -- in a fight -- who stays within AUTO_RESCUE_RADIUS yalms of where she
+    -- stood for AUTO_RESCUE_SECONDS is caught on the zone's geometry, and is
+    -- set down at that spot. No range and no cooldown; the wait doubles
+    -- (to eight times) for each rescue she needs before she next walks on
+    -- her own. A stopgap while the navmesh's trouble spots are found: each
+    -- one is in the map log.
+    AUTO_RESCUE         = true,
+    AUTO_RESCUE_SECONDS = 10,
+    AUTO_RESCUE_RADIUS  = 4,
+
     -- The party finder's shout is heard by the wild cardians online in
     -- every city and town, wherever the player shouts from; one within this
     -- many levels of the player fits the goal, one outside it says why not
