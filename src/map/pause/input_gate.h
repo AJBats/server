@@ -24,6 +24,7 @@
 #include "common/cbasetypes.h"
 #include "pawn/cardian_link_messages.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 
@@ -55,9 +56,25 @@ class CCharEntity;
 // excavation are one trade with an NPC, done when answered: nothing to gate.
 //
 // His body stays where it is: a position packet while held is pinned to where the
-// server has him before its handler reads it (pause P4). Main thread only.
+// server has him before its handler reads it (pause P4).
+//
+// A feature that asks the player before a command of his starts -- the warp together
+// (pawn/warp_together.h) -- is asked first, held or not, and may claim the command:
+// it then holds it while he answers, and hands it on (handOn) as if it had just
+// arrived, or drops it. Main thread only.
 namespace cardian::pause::input
 {
+
+// A feature's ask: true when it has claimed the packet, which it copies to hand on
+// later; the gate and the handler then leave it alone.
+using Ask = std::function<bool(CCharEntity* PChar, CBasicPacket& packet)>;
+
+// The one ask, set by its feature as it starts; none in the test server.
+void setAsk(Ask ask);
+
+// A claimed command handed on, unasked: queued as his one command while held,
+// otherwise judged and run by the game's own handler now.
+void handOn(CCharEntity* PChar, const CBasicPacket& packet);
 
 struct Queued
 {
@@ -66,9 +83,10 @@ struct Queued
     uint16 targetIndex = 0;
 };
 
-// Asked of every validated client packet, before its handler. True while held for a
-// command: it has been queued and the handler must not run. A position packet is
-// pinned in place and answers false: its handler still runs.
+// Asked of every validated client packet, before its handler. True when the feature's
+// ask has claimed it, or while held for a command, which has been queued: either way
+// the handler must not run. A position packet is pinned in place and answers false:
+// its handler still runs.
 auto intercept(CCharEntity* PChar, CBasicPacket& packet) -> bool;
 
 // The command that character has waiting, if any.

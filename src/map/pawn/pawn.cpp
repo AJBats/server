@@ -31,6 +31,7 @@
 #include "pawn_loot.h"
 #include "redress.h"
 #include "warp_hold.h"
+#include "warp_together.h"
 #include "seats.h"
 #include "tactics.h"
 #include "world.h"
@@ -2001,7 +2002,8 @@ namespace pawn
             }
         };
 
-        // A warp: the party's home point, revived if it was the death timer's
+        // A warp: the party's home point, revived if it was the death timer's;
+        // his home point, warping with him on his answer (warp_together.h)
         if (PPawn->requestedWarp != WarpRequest::None)
         {
             PPawn->requestedWarp = WarpRequest::None;
@@ -2010,16 +2012,20 @@ namespace pawn
                 return homePoint(PPawn);
             }
 
-            CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
-            if (PSummoner != nullptr)
+            auto home = together::landingFor(PPawn);
+            if (!home.has_value())
             {
-                PPawn->profile.home_point = PSummoner->profile.home_point;
+                CCharEntity* PSummoner = zoneutils::GetChar(summonerOf(PPawn->id));
+                if (PSummoner != nullptr)
+                {
+                    PPawn->profile.home_point = PSummoner->profile.home_point;
+                }
+                home = PPawn->profile.home_point;
             }
-            const auto& home = PPawn->profile.home_point;
 
-            ShowInfoFmt("pawn: {} warps to zone {}", PPawn->getName(), static_cast<uint16>(home.destination));
+            ShowInfoFmt("pawn: {} warps to zone {}", PPawn->getName(), static_cast<uint16>(home->destination));
             settle();
-            requestTransfer(PPawn->id, TravelHop{ .destinationZone = home.destination, .walkTo = {}, .arriveAt = home.p });
+            requestTransfer(PPawn->id, TravelHop{ .destinationZone = home->destination, .walkTo = {}, .arriveAt = home->p });
             return true;
         }
 
@@ -3012,6 +3018,7 @@ namespace pawn
         seats::tick();
         redress::tick(PZone);
         offers::tick();
+        together::tick();
         world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

@@ -28,6 +28,7 @@
 #include "pawn_controller.h"
 #include "pawn_items.h"
 #include "seats.h"
+#include "warp_together.h"
 
 #include "ai/ai_container.h"
 #include "common/database.h"
@@ -477,6 +478,7 @@ namespace pawn::redress
             pawn::food::forget(PPawn->id);
             const auto dressed = dress(PPawn, *plan, cardian::redress::parseIds(answer.issued), pawn::food::plannedIds(PPawn->getName()));
             pawn::food::topUp(PPawn);
+            pawn::together::topUpKit(PPawn);
             const auto learned = learnSpells(PPawn);
             const auto raised  = raiseSkills(PPawn, answer.skills);
             PPawn->UpdateHealth();

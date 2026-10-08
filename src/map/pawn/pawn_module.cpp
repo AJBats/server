@@ -37,6 +37,7 @@
 #include "spell_bank.h"
 #include "tactics.h"
 #include "view.h"
+#include "warp_together.h"
 
 #include "common/logging.h"
 
@@ -636,11 +637,16 @@ class PawnModule : public CPPModule
             return pawn::offers::put(PChar, std::move(offer), std::chrono::seconds(seconds));
         };
 
-        // ...and his answer, or the question lapsing as his no
+        // His own warp, a scroll read or the spell cast, held while he says
+        // how the party follows (warp_together.h)
+        pawn::together::init();
+
+        // ...the party's warp's answer, or the question lapsing as his no
         // (xi.cardian.partyWarp.resolve): a yes buys the warp and takes the
         // cardians with him; a no buys nothing and moves nobody
-        pawn::offers::setResolver(CL_OFFER_PARTY_WARP, [](CCharEntity* PPlayer, const pawn::offers::Offer& offer, const bool yes)
+        pawn::offers::setResolver(CL_OFFER_PARTY_WARP, [](CCharEntity* PPlayer, const pawn::offers::Offer& offer, const uint8 choice)
         {
+            const bool yes = choice == 1;
             const sol::object cardian = ::lua["xi"]["cardian"];
             sol::object       resolve;
             if (cardian.get_type() == sol::type::table)
