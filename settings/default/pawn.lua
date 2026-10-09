@@ -169,6 +169,48 @@ xi.settings.pawn =
     FORMATION_FLANK_DISTANCE  = 2.5,
     FORMATION_REAR_DISTANCE   = 3.5,
 
+    -- The compass follow (the user's play test, 2026-10-08): following the
+    -- player himself out of a fight, a cardian holds a bearing from him in
+    -- the world's directions, as the fight ring holds a mob's melee -- not a
+    -- seat turning with his facing -- so his turning on the spot moves
+    -- nobody and an about-turn makes nobody cross. While he walks her
+    -- bearing blends toward her ring seat (the seats above, COMPASS_SPACING
+    -- yalms further out) at COMPASS_BLEND_DEG a second; one he walks at
+    -- (within COMPASS_AHEAD_DEG of his heading) holds her ground while
+    -- within COMPASS_HOLD_RANGE yalms of him (farther, she comes to him),
+    -- steps COMPASS_LINE_CLEAR yalms off his line if he comes within
+    -- COMPASS_PASS_RANGE, and falls in once he has passed. Standing, she
+    -- stays where she is between COMPASS_NEAR and COMPASS_FAR yalms of him,
+    -- else walks straight in or out along her bearing, and she turns to him
+    -- (give or take COMPASS_FACE_JITTER_DEG) as she comes to a stand,
+    -- unless she is kneeling to rest. Each
+    -- cardian has her own manner, the same every time: her blend pace times
+    -- 1 +- COMPASS_RATE_SPREAD, her seat turned up to
+    -- COMPASS_ANGLE_SPREAD_DEG either way, up to COMPASS_DIST_SPREAD yalms
+    -- further out, and a pause of COMPASS_REACT_MIN to _MAX seconds before
+    -- she sets off when he does. A camp's place, and holding for his strike,
+    -- keep the ring; false: the ring everywhere.
+    FORMATION_COMPASS                  = true,
+    FORMATION_COMPASS_SPACING          = 1.0,
+    FORMATION_COMPASS_BLEND_DEG        = 45,
+    FORMATION_COMPASS_AHEAD_DEG        = 60,
+    FORMATION_COMPASS_LINE_CLEAR       = 1.5,
+    FORMATION_COMPASS_PASS_RANGE       = 5.0,
+    FORMATION_COMPASS_HOLD_RANGE       = 10.0,
+    FORMATION_COMPASS_NEAR             = 2.5,
+    FORMATION_COMPASS_FAR              = 6.0,
+    FORMATION_COMPASS_FACE_JITTER_DEG  = 25,
+    FORMATION_COMPASS_RATE_SPREAD      = 0.4,
+    FORMATION_COMPASS_ANGLE_SPREAD_DEG = 10,
+    FORMATION_COMPASS_DIST_SPREAD      = 0.75,
+    FORMATION_COMPASS_REACT_MIN        = 0.2,
+    FORMATION_COMPASS_REACT_MAX        = 0.9,
+    -- How far ahead of the player the compass follow aims while he walks, as
+    -- a share of the lead's prediction (FORMATION_PREDICT_MS): the server
+    -- learns of his steps a moment late, and at 1 his followers keep up as
+    -- closely as the lead does; FORMATION_FOLLOW_PREDICT_SCALE is the ring's
+    FORMATION_COMPASS_PREDICT_SCALE    = 1.0,
+
     -- Holding for the player's strike (a weapon drawn on a mob commits the
     -- party; the first hit is the player's), the cardians walk in with
     -- them in this same formation, but no point is placed within melee

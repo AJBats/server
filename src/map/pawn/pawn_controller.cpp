@@ -5939,11 +5939,13 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
         }
     }
 
-    // Where this pawn belongs: the lead holds a point ahead of the place,
-    // everyone else a seat on the ring around it. FormationPoint sets
-    // m_HasSlot for the avoidance pass.
+    // Where this pawn belongs: the lead holds a point ahead of the place;
+    // everyone else follows him by the compass, or holds a seat on the ring
+    // round a camp or a mob he holds on. FormationPoint sets m_HasSlot for
+    // the avoidance pass; the compass point sets none.
     m_HasSlot = false;
     position_t followPoint{};
+    bool       compass = false;
 
     // No point within reach of a mob the party is holding on: pushed out
     // to the ring, and round to the place's side from behind it
@@ -5972,24 +5974,43 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
     }
     else
     {
-        // Everyone else follows the place itself, in a seat on the ring
-        // around it: the same fresh position the lead uses, with a gentle
-        // prediction, parked and held the way the lead holds its point. (A
-        // seat, not the place: a fresh position would put her right on top
-        // of the player.)
-        const auto slot   = RingSlot();
-        const auto seat   = SeatOf(slot);
+        // Everyone else: by the compass following him, or in a seat on the
+        // ring round a camp or a mob he holds on -- the same fresh position
+        // the lead uses, with a gentle prediction, parked and held the way
+        // the lead holds its point. (A seat, not the place: a fresh position
+        // would put her right on top of the player.)
         const auto anchor = place.anchor(settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
-        followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowHeld));
-        RampCatchUp(anchor.moving, followPoint);
-        FormationDebug(cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
+        // Following the player himself out of a fight: the compass follow. A
+        // camp's place, and holding for his strike, keep the ring
+        if (settings::get<bool>("pawn.FORMATION_COMPASS") && !place.fixed() && PStandOff == nullptr)
+        {
+            // aimed as far ahead as the setting has it, to keep up with him
+            const auto aim = place.anchor(settings::get<float>("pawn.FORMATION_COMPASS_PREDICT_SCALE"));
+            followPoint    = CompassPoint(aim);
+            compass        = true;
+            RampCatchUp(aim.moving, followPoint);
+            FormationDebug(m_CompassHeld ? "compass, standing" : "compass", PPlayer, aim, followPoint);
+        }
+        else
+        {
+            m_CompassLast     = {};
+            m_CompassHeld     = false;
+            const auto slot   = RingSlot();
+            const auto seat   = SeatOf(slot);
+            followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowHeld));
+            RampCatchUp(anchor.moving, followPoint);
+            FormationDebug(cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
+        }
     }
 
+    // The compass's own steps are small -- a step out of his line, back out
+    // of his way, into the band -- and are walked to the yalm; the ring's
+    // seats are arrived at loosely
     Intent intent;
     intent.kind       = Intent::Kind::Formation;
     intent.point      = followPoint;
-    intent.arrive     = 1.0f;
-    intent.tolerance  = 2.0f;
+    intent.arrive     = compass ? 0.3f : 1.0f;
+    intent.tolerance  = compass ? 0.5f : 2.0f;
     intent.warpIfLost = true;
 
     return intent;
@@ -7757,6 +7778,11 @@ auto CPawnController::WalkLength(const position_t& to) const -> std::optional<fl
 
 auto CPawnController::ReachableFormationPoint(const Anchor& a, const float offset, const float angle) -> position_t
 {
+    return ReachablePoint(a, nearPosition(a.anchor, offset, angle));
+}
+
+auto CPawnController::ReachablePoint(const Anchor& a, position_t point) -> position_t
+{
     auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
 
     // The ray from the player (where they are, not where they are
@@ -7764,9 +7790,9 @@ auto CPawnController::ReachableFormationPoint(const Anchor& a, const float offse
     // projected point, clipped where the mesh ends -- a wall, a cliff's
     // edge, a doorway's frame. Most cases end here, on the player's side
     const position_t from    = a.observed;
-    position_t       point   = nearPosition(a.anchor, offset, angle);
+    const float      offset  = distance(from, point);
     bool             clipped = false;
-    if (navMesh != nullptr && offset > 0.0f)
+    if (navMesh != nullptr && offset > 0.01f)
     {
         // Judged on the ground (planar): the mesh's height is the point's
         // whenever it has one, and a slope is no clip
@@ -8317,6 +8343,83 @@ auto CPawnController::LeadPoint(const Place& place, const CCharEntity* PPlayer) 
     const auto point = FormationPoint(a, lead, 0.0f, m_LeadHeld);
     FormationDebug("lead", PPlayer, a, point);
     return point;
+}
+
+auto CPawnController::MannerOf() const -> CompassManner
+{
+    // A number in [0, 1) of her own for each trait, from her charid
+    const auto unit = [id = static_cast<uint64>(POwner->id)](const uint64 salt)
+    {
+        uint64 z = (id << 32 | salt) + 0x9E3779B97F4A7C15ull;
+        z        = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ull;
+        z        = (z ^ (z >> 27)) * 0x94D049BB133111EBull;
+        z ^= z >> 31;
+        return static_cast<float>(z >> 40) / static_cast<float>(1u << 24);
+    };
+    constexpr float kDegree = static_cast<float>(M_PI) / 180.0f;
+    const float     react   = settings::get<float>("pawn.FORMATION_COMPASS_REACT_MIN");
+    return {
+        settings::get<float>("pawn.FORMATION_COMPASS_BLEND_DEG") * kDegree * (1.0f + settings::get<float>("pawn.FORMATION_COMPASS_RATE_SPREAD") * (2.0f * unit(1) - 1.0f)),
+        settings::get<float>("pawn.FORMATION_COMPASS_ANGLE_SPREAD_DEG") * kDegree * (2.0f * unit(2) - 1.0f),
+        settings::get<float>("pawn.FORMATION_COMPASS_SPACING") + settings::get<float>("pawn.FORMATION_COMPASS_DIST_SPREAD") * unit(3),
+        react + (settings::get<float>("pawn.FORMATION_COMPASS_REACT_MAX") - react) * unit(4),
+    };
+}
+
+auto CPawnController::CompassPoint(const Anchor& a) -> position_t
+{
+    constexpr float kDegree = static_cast<float>(M_PI) / 180.0f;
+    const auto      manner  = MannerOf();
+
+    // He sets off: she pauses a moment of her own before she follows
+    if (a.moving && !m_CompassWasMoving)
+    {
+        m_CompassGoAt = m_Tick + std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(manner.react));
+    }
+    m_CompassWasMoving = a.moving;
+    const bool  moving = a.moving && m_Tick >= m_CompassGoAt;
+    // A step after a gap -- a fight, a rest, a walk of his order -- starts
+    // afresh: no blend for the time she was away
+    const float gap    = std::chrono::duration<float>(m_Tick - m_CompassLast).count();
+    const float dt     = m_CompassLast == timer::time_point{} || gap > 1.0f ? 0.0f : std::max(gap, 0.0f);
+    m_CompassLast      = m_Tick;
+
+    // Her ring seat (RingSlot, SeatOf), turned by his heading and by her
+    // own tilt, a little further out than the ring has it
+    const auto       seat   = SeatOf(RingSlot());
+    const position_t centre = moving ? a.anchor : a.observed;
+    const position_t seatAt = nearPosition(centre, 1.0f, seat.angle + manner.tilt);
+    const position_t ahead  = nearPosition(centre, 1.0f, 0.0f);
+
+    cardian::formation::CompassRules rules;
+    rules.blend     = manner.blend;
+    rules.bandNear  = settings::get<float>("pawn.FORMATION_COMPASS_NEAR");
+    rules.bandFar   = settings::get<float>("pawn.FORMATION_COMPASS_FAR");
+    rules.aheadHalf = settings::get<float>("pawn.FORMATION_COMPASS_AHEAD_DEG") * kDegree;
+    rules.lineClear = settings::get<float>("pawn.FORMATION_COMPASS_LINE_CLEAR");
+    rules.passRange = settings::get<float>("pawn.FORMATION_COMPASS_PASS_RANGE");
+    rules.holdRange = settings::get<float>("pawn.FORMATION_COMPASS_HOLD_RANGE");
+    const auto step = cardian::formation::compassStep(centre.x, centre.z, ahead.x - centre.x, ahead.z - centre.z, moving, POwner->loc.p.x, POwner->loc.p.z,
+                                                      seatAt.x - centre.x, seatAt.z - centre.z, seat.offset + manner.extra, dt, rules);
+
+    // Coming to a stand she turns to him, give or take, not the way her
+    // last step went; kneeling, she keeps the way she knelt
+    if (step.holds && !m_CompassHeld && !Kneeling() && !Acting())
+    {
+        const int jitter = static_cast<int>(settings::get<float>("pawn.FORMATION_COMPASS_FACE_JITTER_DEG") * 256.0f / 360.0f);
+        POwner->loc.p.rotation = static_cast<uint8>(worldAngle(POwner->loc.p, a.observed) + xirand::GetRandomNumber(-jitter, jitter + 1));
+        POwner->updatemask |= UPDATE_POS;
+    }
+    m_CompassHeld = step.holds;
+    if (step.holds)
+    {
+        return POwner->loc.p;
+    }
+    position_t to = centre;
+    to.x          = step.x;
+    to.z          = step.z;
+    // Never through a wall or off a ledge: the ring's own clip
+    return ReachablePoint(a, to);
 }
 
 auto CPawnController::RingSlot() const -> pawn::Slot

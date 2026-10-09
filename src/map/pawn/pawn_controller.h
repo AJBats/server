@@ -586,6 +586,22 @@ private:
         std::chrono::milliseconds streamAge{};
     };
     static auto PlayerAnchor(const CCharEntity* PPlayer, float predictScale) -> Anchor;
+    // The compass follow (formation_math.h compassStep): her point following
+    // the player himself out of a fight -- her bearing from him held in the
+    // world's directions and blended toward her ring seat while he walks, at
+    // her own manner's pace (CompassManner)
+    auto CompassPoint(const Anchor& a) -> position_t;
+    // Her own manner in the compass follow, the same every time (from her
+    // charid): her blend pace, her seat's turn, her extra distance and her
+    // pause before she sets off when he does
+    struct CompassManner
+    {
+        float blend = 0.0f; // radians a second
+        float tilt  = 0.0f; // radians
+        float extra = 0.0f; // yalms
+        float react = 0.0f; // seconds
+    };
+    auto MannerOf() const -> CompassManner;
 
     // The place (RESEARCH §12.16): where the party is -- the origin of the
     // formation, the leash, the stand-down and the warp. Two things stand
@@ -652,6 +668,8 @@ private:
     // player a third at a time, so a lead point across a wall never sends
     // her round the maze
     auto ReachableFormationPoint(const Anchor& anchor, float offset, float angle) -> position_t;
+    // The same for any point: the compass follow's (CompassPoint)
+    auto ReachablePoint(const Anchor& anchor, position_t point) -> position_t;
 
     // The navmesh's walk from where she stands to a point, in yalms; none
     // when there is no path (or only a partial one). No mesh: the straight
@@ -1554,6 +1572,13 @@ private:
     timer::time_point m_LastSurfaceLogTime;
     HeldPoint         m_LeadHeld;
     HeldPoint         m_FollowHeld;
+    // The compass follow (CompassPoint): the tick of her last step, whether
+    // he was walking then, when she sets off after him, and whether she
+    // stood last step (she turns to him as she comes to a stand)
+    timer::time_point m_CompassLast{};
+    bool              m_CompassWasMoving = false;
+    timer::time_point m_CompassGoAt{};
+    bool              m_CompassHeld = false;
     float             m_CourtesySide = 0.0f; // her side of the line last tick, kept a little cheaper (CourtesyStep)
     timer::time_point m_LastCourtesyTime;
     timer::time_point m_LastCourtesySaid;

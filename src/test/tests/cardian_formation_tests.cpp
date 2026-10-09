@@ -495,3 +495,104 @@ TEST_CASE("worthTheWalk: a detour past the factor and slack is not", "[cardian][
     REQUIRE(worthTheWalk(30.0f, 28.0f));
     REQUIRE_FALSE(worthTheWalk(std::numeric_limits<float>::infinity(), 3.0f));
 }
+
+TEST_CASE("Compass: the shortest turn between two bearings", "[cardian][formation]")
+{
+    constexpr float kPi = std::numbers::pi_v<float>;
+    CHECK_THAT(turnFrom(0.0f, 0.5f), WithinAbs(0.5f, 1e-5));
+    CHECK_THAT(turnFrom(0.5f, 0.0f), WithinAbs(-0.5f, 1e-5));
+    CHECK_THAT(turnFrom(3.0f, -3.0f), WithinAbs(2.0f * kPi - 6.0f, 1e-4)); // across the back, not round the front
+    CHECK_THAT(turnFrom(-3.0f, 3.0f), WithinAbs(6.0f - 2.0f * kPi, 1e-4));
+}
+
+TEST_CASE("Compass: standing, she stays where she is within the band", "[cardian][formation]")
+{
+    const CompassRules r;
+    // he faces +x; her seat is straight behind (-x); she stands off to his side, four yalms out
+    const auto here = compassStep(0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, 4.0f, -1.0f, 0.0f, 3.5f, 0.4f, r);
+    CHECK(here.holds);
+    // he turned round on the spot (now facing -x): still nothing moves
+    CHECK(compassStep(0.0f, 0.0f, -1.0f, 0.0f, false, 0.0f, 4.0f, 1.0f, 0.0f, 3.5f, 0.4f, r).holds);
+    // nine yalms out: she walks straight in along her bearing, to the band's edge, not round to her seat
+    const auto in = compassStep(0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, 9.0f, -1.0f, 0.0f, 3.5f, 0.4f, r);
+    CHECK_FALSE(in.holds);
+    CHECK_THAT(in.x, WithinAbs(0.0f, 1e-4));
+    CHECK_THAT(in.z, WithinAbs(r.bandFar - r.settle, 1e-4));
+}
+
+TEST_CASE("Compass: walking at her, he passes her before she follows", "[cardian][formation]")
+{
+    const CompassRules r;
+    // he walks +x; she is eight yalms ahead, three off his line: she holds
+    CHECK(compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, 8.0f, 3.0f, -1.0f, 0.0f, 3.5f, 0.4f, r).holds);
+    // forty yalms ahead she is no one he is about to pass: she comes to him,
+    // to her seat's distance on her side of him
+    const auto far40 = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, 40.0f, 3.0f, -1.0f, 0.0f, 3.5f, 0.4f, r);
+    CHECK_FALSE(far40.holds);
+    CHECK(std::hypot(far40.x, far40.z) < 4.0f);
+    CHECK(far40.x > 0.0f);
+    // he is near and she is half a yalm off his line: she steps off it, to the side she is on
+    const auto aside = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, 3.0f, 0.5f, -1.0f, 0.0f, 3.5f, 0.4f, r);
+    CHECK_FALSE(aside.holds);
+    CHECK_THAT(aside.x, WithinAbs(3.0f, 1e-4));
+    CHECK_THAT(aside.z, WithinAbs(r.lineClear + r.settle, 1e-4));
+    // he has passed her (she is behind him now): she follows
+    CHECK_FALSE(compassStep(5.0f, 0.0f, 1.0f, 0.0f, true, 3.0f, 1.5f, -1.0f, 0.0f, 3.5f, 0.4f, r).holds);
+}
+
+TEST_CASE("Compass: walking, her bearing blends toward her seat at her pace", "[cardian][formation]")
+{
+    constexpr float kPi = std::numbers::pi_v<float>;
+    CompassRules    r;
+    r.blend = 0.5f; // radians a second
+    // he walks +x; she is straight off his left side (+z), her seat straight behind (-x)
+    float sx = 0.0f;
+    float sz = 4.0f;
+    auto  step = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, sx, sz, -1.0f, 0.0f, 4.0f, 1.0f, r);
+    // one second: half a radian of the quarter turn, at her seat's distance
+    CHECK_THAT(std::atan2(step.z, step.x), WithinAbs(kPi / 2.0f + 0.5f, 1e-4));
+    CHECK_THAT(std::hypot(step.x, step.z), WithinAbs(4.0f, 1e-4));
+    // step by step she comes round behind him, and stays there
+    for (int i = 0; i < 10; ++i)
+    {
+        sx   = step.x;
+        sz   = step.z;
+        step = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, sx, sz, -1.0f, 0.0f, 4.0f, 1.0f, r);
+    }
+    CHECK_THAT(std::abs(turnFrom(std::atan2(step.z, step.x), kPi)), WithinAbs(0.0f, 1e-4));
+}
+
+TEST_CASE("Compass: standing on her, or too near, she steps out to the band on her side", "[cardian][formation]")
+{
+    const CompassRules r;
+    // he stands on her: her seat's side, settled inside the band
+    const auto on = compassStep(0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, 0.0f, -1.0f, 0.0f, 3.5f, 0.4f, r);
+    CHECK_FALSE(on.holds);
+    CHECK_THAT(on.x, WithinAbs(-(r.bandNear + r.settle), 1e-4));
+    CHECK_THAT(on.z, WithinAbs(0.0f, 1e-4));
+    // he stops a yalm from her: out along her own bearing
+    const auto near1 = compassStep(0.0f, 0.0f, 1.0f, 0.0f, false, 0.0f, 1.0f, -1.0f, 0.0f, 3.5f, 0.4f, r);
+    CHECK_FALSE(near1.holds);
+    CHECK_THAT(near1.x, WithinAbs(0.0f, 1e-4));
+    CHECK_THAT(near1.z, WithinAbs(r.bandNear + r.settle, 1e-4));
+}
+
+TEST_CASE("Compass: with no time gone by her bearing does not blend", "[cardian][formation]")
+{
+    const CompassRules r;
+    // walking +x, she behind him at (-4, 0), her seat to his left: dt 0 keeps her bearing
+    const auto step = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, -4.0f, 0.0f, 0.0f, 1.0f, 3.5f, 0.0f, r);
+    CHECK_FALSE(step.holds);
+    CHECK_THAT(step.x, WithinAbs(-3.5f, 1e-4));
+    CHECK_THAT(step.z, WithinAbs(0.0f, 1e-4));
+}
+
+TEST_CASE("Compass: ahead of him is strictly inside the angle", "[cardian][formation]")
+{
+    const CompassRules r;
+    // six yalms out, past his pass range: just inside the angle she holds, just outside she does not
+    const float in  = r.aheadHalf - 0.05f;
+    const float out = r.aheadHalf + 0.05f;
+    CHECK(compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, 6.0f * std::cos(in), 6.0f * std::sin(in), -1.0f, 0.0f, 3.5f, 0.4f, r).holds);
+    CHECK_FALSE(compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, 6.0f * std::cos(out), 6.0f * std::sin(out), -1.0f, 0.0f, 3.5f, 0.4f, r).holds);
+}
