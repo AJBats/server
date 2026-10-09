@@ -85,6 +85,12 @@ namespace pawn::world
     bool hold(uint32 charid, uint32 playerCharID);
     bool comeBack(uint32 charid, uint32 playerCharID);
     void endHold(uint32 charid);
+    // Held for him where she stands, as a contract holds her, with no sign
+    // out: his linkshell's pearl (club.h), given in his party, and kept as
+    // she leaves it. The world's clocks leave her be, she stays the world's
+    // for the ladder, and his sign-out takes her as it takes a contract
+    // member (hold). False when she has no Body
+    bool keepFor(uint32 charid, uint32 playerCharID);
 
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued

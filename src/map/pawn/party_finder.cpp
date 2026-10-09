@@ -22,6 +22,7 @@
 #include "party_finder.h"
 
 #include "cardian_link_messages.h"
+#include "club.h"
 #include "pawn.h"
 #include "pawn_travel.h"
 #include "seats.h"
@@ -139,9 +140,12 @@ namespace pawn::finder
 
         // The shout's pool: the online -- a session row, standing or faded,
         // so search finds her -- less a body with an open contract, held for
-        // her player (his Your contract rows, never a shout's), his or another's
+        // her player (his Your contract rows, never a shout's), his or another's,
+        // or by a linkshell's pearl she wears (club.h: a pearl or a sack in a link slot)
         constexpr auto kShoutPool = " AND EXISTS (SELECT 1 FROM accounts_sessions o WHERE o.charid = x.charid)"
-                                    " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')";
+                                    " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')"
+                                    " AND NOT EXISTS (SELECT 1 FROM char_equip le JOIN char_inventory li ON li.charid = le.charid AND li.location = le.containerid AND li.slot = le.slotid"
+                                    " WHERE le.charid = x.charid AND le.equipslotid IN (16, 17) AND li.itemId IN (514, 515))";
 
         auto allFacts(const uint32 playerCharID) -> std::vector<Facts>
         {
@@ -936,12 +940,17 @@ namespace pawn::finder
         noContract.erase(charid);
         expBank.erase(charid);
         joinedShout.erase(charid);
-        if (const auto held = openContractOf(charid); held.has_value())
+        if (const auto held = openContractOf(charid); held.has_value() && !held->pearl)
         {
             db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND contract <> ''", charid);
             ShowInfoFmt("pawn: {}'s {} contract with {} ends", held->name, kindName(held->goal), pawn::seats::nameOf(held->playerCharID));
         }
-        pawn::world::endHold(charid);
+        // His linkshell's pearl keeps her for him where she stands; anyone
+        // else the world's clocks run on again
+        if (const auto pearl = pawn::club::pearlOf(charid); !pearl.has_value() || !pawn::world::keepFor(charid, pearl->playerCharID))
+        {
+            pawn::world::endHold(charid);
+        }
     }
 
     auto openContractOf(const uint32 charid) -> std::optional<OpenContract>
@@ -950,14 +959,25 @@ namespace pawn::finder
                                            "JOIN cardian_census x ON x.charid = m.pawn_charid "
                                            "WHERE m.pawn_charid = ? AND m.contract <> '' AND x.recruited = 0 ORDER BY m.last_partied DESC LIMIT 1",
                                            charid);
-        if (!rset || !rset->next())
+        if (rset && rset->next())
+        {
+            return OpenContract{ .charid       = charid,
+                                 .playerCharID = rset->get<uint32>("player_charid"),
+                                 .name         = rset->get<std::string>("charname"),
+                                 .goal         = goalFrom(rset->get<std::string>("contract"), 0) };
+        }
+        // His pearl on one of the world's holds her between contracts
+        const auto pearl = pawn::club::pearlOf(charid);
+        if (!pearl.has_value())
         {
             return std::nullopt;
         }
-        return OpenContract{ .charid       = charid,
-                             .playerCharID = rset->get<uint32>("player_charid"),
-                             .name         = rset->get<std::string>("charname"),
-                             .goal         = goalFrom(rset->get<std::string>("contract"), 0) };
+        const auto held = db::preparedStmt("SELECT c.charname FROM chars c JOIN cardian_census x ON x.charid = c.charid WHERE c.charid = ? AND x.recruited = 0", charid);
+        if (!held || !held->next())
+        {
+            return std::nullopt;
+        }
+        return OpenContract{ .charid = charid, .playerCharID = pearl->playerCharID, .name = held->get<std::string>("charname"), .goal = Goal{}, .pearl = true };
     }
 
     auto openContracts(const uint32 playerCharID) -> std::vector<OpenContract>
@@ -974,6 +994,19 @@ namespace pawn::finder
                                         .name         = rset->get<std::string>("charname"),
                                         .goal         = goalFrom(rset->get<std::string>("contract"), 0) });
         }
+        // and the world's wearing a pearl of his shell with no contract of theirs
+        for (const auto charid : pawn::club::wearersOf(playerCharID))
+        {
+            if (std::ranges::any_of(out, [&](const OpenContract& c) { return c.charid == charid; }))
+            {
+                continue;
+            }
+            if (const auto held = openContractOf(charid); held.has_value() && held->pearl)
+            {
+                out.push_back(*held);
+            }
+        }
+        std::ranges::sort(out, {}, &OpenContract::name);
         return out;
     }
 
@@ -986,6 +1019,10 @@ namespace pawn::finder
         }
         for (const auto& c : openContracts(PPlayer->id))
         {
+            if (c.pearl)
+            {
+                continue; // held by his pearl alone: the Linkshell page's, not a contract
+            }
             ContractView view{ .charid = c.charid, .name = c.name, .goal = c.goal };
             if (const auto* PPawn = pawn::findPawn(c.charid); PPawn != nullptr)
             {

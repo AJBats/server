@@ -15,7 +15,7 @@
 //     itself, 0x01 a cardian's state, 0x02 items and gear, 0x03 gambits, 0x04
 //     orders and control, 0x05 the pause and the server's other notices, 0x06
 //     the party finder, 0x07 the conquest exchange, 0x08 the Auction House,
-//     0x09 the Mog House.
+//     0x09 the Mog House, 0x0A the linkshell.
 //   - A request carries req != 0. Every answer echoes req with CL_F_REPLY; all
 //     but the last also carry CL_F_MORE. The last answer is the request's own
 //     message and carries the outcome in status. req 0 is one-way: nobody answers.
@@ -34,7 +34,12 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 52: a worn piece's charges and readyIn, in
+// compatible, the user, 2026-09-14). 54: the linkshell on the game's items --
+// CLUB's shell, pearls and vendor, CLUB_MEMBER's nation, rank and rankCap,
+// ERRAND_GOAL's rank and missions, SEND_ERRAND's rank, CL_ERRAND_RANK,
+// CL_CAN_SEND_RANK and NO_PEARL_TO_GIVE; 53: the linkshell, CLUB, CLUB_MEMBER,
+// CLUB_INVITE, PEARL, ERRANDS, ERRAND_GOAL, SEND_ERRAND and CALL_BACK, and
+// their outcomes; 52: a worn piece's charges and readyIn, in
 // GEAR's cl_worn and PARTY_ROLE's wornCharges and wornReadyIn, so every gear
 // tooltip shows an enchanted piece's line; 51: SUPPLIES, a cardian's conquest scrolls
 // bought, wanted or refused; 50: a warp together's member's ring and
@@ -97,7 +102,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 52 };
+enum { CL_PROTOCOL = 54 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -275,6 +280,19 @@ enum
 
     // The server's questions (OFFER)
     CL_S_OFFER_GONE        = 0x01D0, // the question is no longer open: answered, lapsed or withdrawn
+
+    // The linkshell (an invite's own refusals are the party finder's: CL_S_PARTY_FULL, CL_S_NOT_LEADER...)
+    CL_S_NOT_IN_CLUB       = 0x01E0, // not in his linkshell: an alt, a cardian he owns or one wearing his pearl (a pearl: also one of the world's in his party)
+    CL_S_NO_LINKSHELL      = 0x01E1, // he holds no Linkshell or Pearlsack
+    CL_S_HAS_PEARL         = 0x01E2, // she wears a pearl of his shell already
+    CL_S_NO_PEARL          = 0x01E3, // she wears no pearl of his shell
+    CL_S_PEARLED_ELSEWHERE = 0x01E4, // she wears a pearl of another shell
+    CL_S_ON_ERRAND         = 0x01E5, // she is away on an errand
+    CL_S_NO_ERRAND         = 0x01E6, // she is on no errand
+    CL_S_NOT_OFFERED       = 0x01E7, // not an errand she can be sent on: a kind not built, or not for her, a quest he has not done, a rank not between hers and the cap
+    CL_S_DONE_ALREADY      = 0x01E8, // she has done that already
+    CL_S_NOT_STANDING      = 0x01E9, // she has no body in the world now
+    CL_S_NO_PEARL_TO_GIVE  = 0x01EA, // he holds no Linkpearl of his shell to trade: he makes one from his linkshell first
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -1983,5 +2001,194 @@ typedef struct cl_job_change
     uint8_t   subJob;  // a job id, or 0
     uint16_t  spare;
 } cl_job_change;
+
+// ---- 0x0Axx: the linkshell -------------------------------------------------
+//
+// The player's club (RESEARCH §11.13, pawn/club.h), on the game's own items:
+// the Linkshell he holds (bought new from a linkshell vendor and made into
+// one), and the Linkpearls he makes from it. The characters of his own
+// account and the cardians it owns are in it with his pearl or without; one
+// of the world's adventurers is in it while she wears a pearl of his shell,
+// and stays wild. The Linkshell page lists them and what each can be asked
+// now, invites one, trades her a pearl he made -- to one of the world's in
+// his party, the recruit -- or breaks hers, and sends one on an errand or
+// calls her back (pawn/errands.h).
+
+enum
+{
+    CL_T_CLUB        = 0x0A01,
+    CL_T_CLUB_MEMBER = 0x0A02,
+    CL_T_CLUB_INVITE = 0x0A03,
+    CL_T_PEARL       = 0x0A04,
+    CL_T_ERRANDS     = 0x0A05,
+    CL_T_ERRAND_GOAL = 0x0A06,
+    CL_T_SEND_ERRAND = 0x0A07,
+    CL_T_CALL_BACK   = 0x0A08,
+};
+
+// What she is to him
+enum
+{
+    CL_CLUB_ALT   = 0, // a character of his own account
+    CL_CLUB_OWNED = 1, // a cardian his account owns
+    CL_CLUB_WILD  = 2, // one of the world's adventurers wearing a pearl of his shell
+    CL_CLUB_GUEST = 3, // one of the world's in his party, wearing none: not a member, he can trade her one
+};
+
+// A member's flags
+enum
+{
+    CL_CLUB_PEARL    = 0x01, // she wears a pearl of his shell
+    CL_CLUB_IN_PARTY = 0x02, // in his party
+    CL_CLUB_STANDING = 0x04, // she has a body in the world
+    CL_CLUB_ONLINE   = 0x08, // she is online: standing, or faded with search finding her
+};
+
+// The errands: what she is sent to do
+enum
+{
+    CL_ERRAND_NONE  = 0,
+    CL_ERRAND_GEAR  = 1, // gear up: the auction house's re-dress, and her scrolls from her nation's guard
+    CL_ERRAND_QUEST = 2, // a quest he has done, from his log
+    CL_ERRAND_LEVEL = 3, // a level on one of her jobs: reserved, not offered yet
+    CL_ERRAND_MONEY = 4, // earning money: reserved, not offered yet
+    CL_ERRAND_RANK  = 5, // her nation's missions, to a rank he picks: at most his own
+};
+
+// Where an errand stands
+enum
+{
+    CL_ERRAND_GOING = 1, // she is walking off: to a zone line, the auction house, the guard, and back
+    CL_ERRAND_AWAY  = 2, // she is gone from the world, the errand under way
+};
+
+// What the page may do with a member now, a bit each: the server's word, so
+// the page offers what works
+enum
+{
+    CL_CAN_INVITE      = 0x01,
+    CL_CAN_SEND_GEAR   = 0x02, // Gear up is hers to be sent on (now or once gearWhy clears)
+    CL_CAN_SEND_QUEST  = 0x04,
+    CL_CAN_CALL_BACK   = 0x08,
+    CL_CAN_GIVE_PEARL  = 0x10, // he can trade her a pearl of his shell (once he holds one and stands by her)
+    CL_CAN_BREAK_PEARL = 0x20,
+    CL_CAN_SEND_RANK   = 0x40, // her rank is below the catch-up's cap (rankCap)
+};
+
+// One member of his club, or one of the world's in his party who could be
+// traded a pearl: an answer to CLUB
+typedef struct cl_club_member
+{
+    cl_header h;
+    uint32_t  cardian;            // charid
+    char      name[16];
+    uint8_t   kind;               // CL_CLUB_ALT, _OWNED, _WILD or _GUEST
+    uint8_t   flags;              // CL_CLUB_PEARL and the rest
+    uint8_t   mainJob;
+    uint8_t   mainLevel;
+    uint8_t   subJob;
+    uint8_t   subLevel;
+    uint8_t   can;                // CL_CAN_*
+    uint8_t   errand;             // CL_ERRAND_*: the errand she is on, CL_ERRAND_NONE for none
+    uint8_t   errandState;        // CL_ERRAND_GOING or CL_ERRAND_AWAY
+    uint8_t   nation;             // hers
+    uint8_t   rank;               // hers, in her nation
+    uint8_t   rankCap;            // the highest rank a catch-up takes her to now: his own, as far as the errand table goes
+    uint16_t  gearWhy;            // CL_S_*: why Gear up cannot go now; 0 when it can
+    uint16_t  zone;               // where she is: her body's zone, else where she was saved
+    uint16_t  errandZone;         // away: the zone her errand has her crossing now; 0 for none
+    uint16_t  spare;
+    uint32_t  secondsLeft;        // away: seconds on the game clock until she is back; 0 off the clock
+    char      zoneName[32];       // for people
+    char      errandZoneName[32]; // for people
+    char      errandTitle[48];    // for people: the quest's title, "Rank 3"; empty for an errand the addon words
+} cl_club_member;
+
+// His club: each member a CLUB_MEMBER (CL_F_MORE), then this, with his
+// shell. Holding none, the linkshell vendor of the city he stands in
+typedef struct cl_club
+{
+    cl_header h;
+    uint8_t   count;          // answered: members sent
+    uint8_t   shell;          // answered: 1 while he holds a Linkshell or a Pearlsack
+    uint8_t   pearls;         // answered: the Linkpearls of his shell in his inventory, to trade
+    uint8_t   spare;
+    char      vendor[24];     // answered: holding no shell, in a city with a linkshell vendor: the vendor's name, for people
+    char      vendorZone[32]; // answered: where the vendor stands, for people
+} cl_club;
+
+// The party invite he would send by hand, sent for him: the alts' rule of
+// ROADMAP H -- in his zone she follows, in her own city she runs to him,
+// anywhere else she holds until "follow me". Answered with the outcome
+typedef struct cl_club_invite
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_club_invite;
+
+// A pearl traded to her (on 1): one of his shell's Linkpearls from his
+// inventory into hers, within trading reach, and she puts it on herself --
+// to one of the world's in his party, the recruit. Or hers broken (on 0),
+// as the game's holder breaks a member's pearl: the pearl is gone, and one
+// of the world's goes back to the wild
+typedef struct cl_pearl
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   on;
+    uint8_t   spare[3];
+} cl_pearl;
+
+// A quest he could send her on, or a rank she could be caught up to: an
+// answer to ERRANDS. A quest: goal CL_GOAL_QUEST, its area and id. A rank:
+// goal CL_GOAL_MISSION, her nation's log, the last mission it takes her
+// through, and the rank
+typedef struct cl_errand_goal
+{
+    cl_header h;
+    uint8_t   goal;      // CL_GOAL_MISSION or CL_GOAL_QUEST
+    uint8_t   log;       // the mission log, or the quest area
+    uint16_t  id;        // the quest's id; a rank's last mission
+    uint16_t  minutes;   // how long she is away doing it: minutes on the game clock (an Earth minute while unpaused)
+    uint8_t   unlocks;   // 1: it unlocks a job, `job` (0: the support jobs)
+    uint8_t   job;
+    uint8_t   rank;      // a rank catch-up: the rank she reaches; 0 for a quest
+    uint8_t   missions;  // a rank catch-up: how many missions it takes her through
+    uint8_t   spare[2];
+    char      title[48]; // for people
+} cl_errand_goal;
+
+// The quests of the errand table he has done and she has not, then the ranks
+// she could be caught up to: each an ERRAND_GOAL (CL_F_MORE), then this
+typedef struct cl_errands
+{
+    cl_header h;
+    uint32_t  cardian; // charid: whom for
+    uint8_t   count;   // answered
+    uint8_t   spare[3];
+} cl_errands;
+
+// Send her on an errand. CL_ERRAND_QUEST names its quest (goal, log, id);
+// CL_ERRAND_RANK the rank; level and job are CL_ERRAND_LEVEL's, reserved.
+// Answered with the outcome
+typedef struct cl_send_errand
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   errand;  // CL_ERRAND_*
+    uint8_t   goal;    // CL_ERRAND_QUEST: CL_GOAL_QUEST
+    uint8_t   log;
+    uint8_t   level;
+    uint16_t  id;
+    uint8_t   job;
+    uint8_t   rank;    // CL_ERRAND_RANK: the rank to reach
+} cl_send_errand;
+
+// Her errand ended early: what she has earned kept, and she comes back
+typedef struct cl_call_back
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+} cl_call_back;
 
 #pragma pack(pop)

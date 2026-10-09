@@ -523,6 +523,9 @@ namespace pawn
     // docs/maneuvers.md): the point before it becomes a crumb to walk through
     // on the way, every yalm or so, and the order is walked crumb by crumb
     // (routeFront / popRoute) before its point
+    // An errand's walk (errands.h) is given by kErrandWalker, no player: it
+    // lasts until the errand clears it, looked at by nobody
+    constexpr uint32 kErrandWalker = 0xFFFFFFFF;
     void setWalkOrder(uint32 pawnCharID, const position_t& point, uint32 by, bool laying = false);
     auto walkOrderOf(uint32 pawnCharID) -> std::optional<position_t>;
     auto routeFront(uint32 pawnCharID) -> std::optional<position_t>; // the next crumb, none when the point is next

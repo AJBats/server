@@ -21,6 +21,8 @@
 
 #include "pawn.h"
 #include "cardian_link.h"
+#include "club.h"
+#include "errands.h"
 #include "offers.h"
 #include "players.h"
 #include "stake_math.h"
@@ -532,6 +534,10 @@ namespace
             pawn::applyOrdersTo(PPawn);
             travelOrders[PPawn->id] = TravelOrder{ PSummoner->getZone(), PSummoner->id };
             ShowInfoFmt("pawn: {} runs to {} in {} (her own city)", PPawn->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
+            if (fromShout)
+            {
+                pawn::club::tellHeadingYourWay(PPawn, PSummoner->id); // a recruit from another zone says she is coming
+            }
         }
         else if (fromShout)
         {
@@ -541,6 +547,7 @@ namespace
             carriedFrom[PPawn->id] = static_cast<uint16>(PPawn->getZone());
             ShowInfoFmt("pawn: {} sets out from {} for {} in {} (a yes to his shout from afar: the travel code's teleport carries her)",
                         PPawn->getName(), PPawn->loc.zone->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
+            pawn::club::tellHeadingYourWay(PPawn, PSummoner->id);
         }
         else
         {
@@ -3031,6 +3038,7 @@ namespace pawn
         offers::tick();
         together::tick();
         supplies::tick(PZone);
+        errands::tick();
         world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

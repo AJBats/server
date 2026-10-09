@@ -642,6 +642,32 @@ namespace pawn::redress
                          "ADD COLUMN IF NOT EXISTS `sublevel` tinyint(3) unsigned NOT NULL DEFAULT '0' AFTER `sub`");
     }
 
+    auto askFor(const CCharEntity* PPawn) -> bool
+    {
+        if (PPawn == nullptr || !pawn::seats::isWorlds(PPawn->id))
+        {
+            return false;
+        }
+        const uint8 level  = levelOf(PPawn);
+        const auto  looked = recordOf(PPawn->id);
+        if (!looked.read)
+        {
+            return false;
+        }
+        if (cardian::redress::shouldAsk(level, looked.record))
+        {
+            ask(PPawn, level);
+            return true;
+        }
+        return looked.record.has_value() && looked.record->state != State::Done;
+    }
+
+    auto settled(const uint32 charid) -> bool
+    {
+        const auto looked = recordOf(charid);
+        return !looked.read || !looked.record.has_value() || looked.record->state == State::Done;
+    }
+
     void tick(CZone* PZone)
     {
         const auto now = timer::now();

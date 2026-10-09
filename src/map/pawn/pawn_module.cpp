@@ -21,7 +21,9 @@
 
 #include "auction.h"
 #include "cardian_link.h"
+#include "club.h"
 #include "engage_math.h"
+#include "errands.h"
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
@@ -263,9 +265,16 @@ class PawnModule : public CPPModule
         // house, likewise (redress.h)
         pawn::redress::ensureTable();
         pawn::food::ensureTable();
-        // The cardian API's messages on the Cardian Link (link_api.cpp), and
-        // the Lua libraries two of them are answered from
+        // The linkshell's errands, likewise, read into memory, and who wears
+        // which shell's pearl, off the items (club.h, errands.h)
+        pawn::club::load();
+        pawn::errands::ensureTable();
+        pawn::errands::load();
+        // The cardian API's messages on the Cardian Link (link_api.cpp, and
+        // the linkshell's), and the Lua libraries some are answered from
         pawn::linkapi::registerHandlers();
+        pawn::club::registerHandlers();
+        pawn::errands::registerHandlers();
         pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();

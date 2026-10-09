@@ -98,6 +98,46 @@ namespace pawn::guards
         return PNearest;
     }
 
+    auto guardFor(CZone* PZone, const uint8 nation, const position_t& from) -> std::optional<Standing>
+    {
+        if (PZone == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::string zoneName = PZone->getName();
+        // her own nation's first, then a guard who sells to every nation's, then any
+        const auto rankOf = [&](const Guard& guard)
+        {
+            return guard.nation == nation ? 0 : (guard.nation == kOther ? 1 : 2);
+        };
+        std::optional<Standing> best;
+        int                     bestRank = 3;
+        float                   nearest  = 0.0f;
+        for (const auto& guard : kGuards)
+        {
+            if (guard.zone != zoneName)
+            {
+                continue;
+            }
+            for (const auto* PNpc : PZone->queryEntitiesByName(std::string(guard.name)))
+            {
+                if (PNpc == nullptr)
+                {
+                    continue;
+                }
+                const int   rank = rankOf(guard);
+                const float away = distance(from, PNpc->loc.p);
+                if (rank < bestRank || (rank == bestRank && away < nearest))
+                {
+                    best     = Standing{ &guard, PNpc };
+                    bestRank = rank;
+                    nearest  = away;
+                }
+            }
+        }
+        return best;
+    }
+
     auto zoneHasGuard(const std::string_view zoneName) -> bool
     {
         return std::ranges::any_of(kGuards, [&](const Guard& guard)

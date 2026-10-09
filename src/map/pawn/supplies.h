@@ -21,6 +21,8 @@
 
 #pragma once
 
+#include "common/cbasetypes.h"
+
 class CCharEntity;
 class CZone;
 
@@ -46,10 +48,20 @@ class CZone;
 // What she does is told to the player's addon (the Link's SUPPLIES), which
 // words it: the purchase as the conquest exchange's own line, the rest as her
 // line in party chat.
+namespace pawn::guards
+{
+    struct Guard;
+} // namespace pawn::guards
+
 namespace pawn::supplies
 {
     // From each zone's module tick
     void tick(CZone* PZone);
+    // The gear-up errand's stop at a guard (errands.h): she, standing at
+    // this guard, buys the scrolls she lacks through the guard's own sale as
+    // she would at his side; the player told (his addon's SUPPLIES) when
+    // given. How many she bought
+    auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell) -> uint32;
     // A real player's zone-in (the pawn module's): an arrival, wherever from
     void zonedIn(const CCharEntity* PPlayer);
 } // namespace pawn::supplies

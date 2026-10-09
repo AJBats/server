@@ -100,6 +100,9 @@ TEST_CASE("Redress: her bags keep what the plan wants, her gil and her scrolls",
     CHECK(keepsItem(4181, true, false, true, wanted));
     CHECK_FALSE(keepsItem(4096, true, false, false, wanted));   // a fire crystal: loot
     CHECK_FALSE(keepsItem(13380, true, false, false, wanted));  // an old piece, worn or not
+    CHECK(keepsItem(515, true, false, false, wanted));          // his linkshell's pearl, worn: hers to keep
+    CHECK(keepsItem(514, true, false, false, wanted));          // a pearlsack
+    CHECK_FALSE(keepsItem(515, false, false, false, wanted));   // never out of her wardrobe: a pearl lives in the inventory
 }
 
 namespace

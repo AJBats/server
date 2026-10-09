@@ -92,6 +92,12 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rescue_watch.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errands.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errands.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errand_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club_math.h
 )
 
 set(MAP_CORE_SOURCES

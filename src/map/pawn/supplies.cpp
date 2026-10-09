@@ -205,6 +205,61 @@ namespace pawn::supplies
                    PChar->PAI->IsCurrentState<CItemState>() || PChar->PAI->IsCurrentState<CMagicState>();
         }
 
+        // What she can buy of what she lacks, through the guard's own sale:
+        // each scroll she lacks and can pay for, while her bag has room. The
+        // player told of each purchase, and of a foreign guard's refusal,
+        // when given. How many she bought, and whether the guard refused her
+        struct Bought
+        {
+            uint32 count   = 0;
+            bool   refused = false;
+        };
+        auto purchase(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell) -> Bought
+        {
+            Bought      out;
+            const uint8 lacks  = lacking(PPawn);
+            int32       points = pointsOf(PPawn);
+            for (const auto& [itemId, bit] : kScrolls)
+            {
+                const auto stock = (lacks & bit) != 0 ? stockOf(itemId) : std::nullopt;
+                if (!stock || points < static_cast<int32>(stock->price))
+                {
+                    continue; // has it, or cannot pay: nothing to ask
+                }
+                if (!hasRoom(PPawn))
+                {
+                    return out; // her bag is full: nothing she buys would fit
+                }
+                auto call = linkapi::libraryCall("exchange", "buy");
+                auto sale = call ? linkapi::libraryTable("exchange.buy", (*call)(CLuaBaseEntity(PPawn), guard.nation, guard.type, stock->option)) : std::nullopt;
+                if (!sale)
+                {
+                    out.refused = true; // the sale failed (said by the call)
+                    return out;
+                }
+                const auto* PItem = xi::items::lookup(itemId);
+                const auto  name  = PItem != nullptr ? PItem->getName() : std::to_string(itemId);
+                if (const auto refusal = sale->get<sol::optional<std::string>>("refusal"))
+                {
+                    out.refused = true;
+                    ShowInfoFmt("supplies: {} cannot buy {} from {} ({})", PPawn->getName(), name, guard.name, *refusal);
+                    if (PTell != nullptr && (*refusal == "OUTRANKED" || *refusal == "FOREIGN_PLACE"))
+                    {
+                        tell(PTell, PPawn, CL_SUPPLIES_FOREIGN);
+                    }
+                    return out;
+                }
+                points = static_cast<int32>(sale->get_or<uint32>("cp", 0));
+                ++out.count;
+                ShowInfoFmt("supplies: {} buys {} from {} for {} conquest points ({} left)", PPawn->getName(), name, guard.name, stock->price, points);
+                if (PTell != nullptr)
+                {
+                    tell(PTell, PPawn, CL_SUPPLIES_BOUGHT, 0, itemId, static_cast<uint16>(stock->price));
+                }
+            }
+            return out;
+        }
+
         // She buys what she lacks from the guard he stands by, through the
         // guard's own sale; a guard who will not sell to her is left alone
         // for kSpeakAgain, and his refusal said if it is her nation's
@@ -219,41 +274,9 @@ namespace pawn::supplies
             {
                 return;
             }
-            const uint8 lacks  = lacking(PPawn);
-            int32       points = pointsOf(PPawn);
-            for (const auto& [itemId, bit] : kScrolls)
+            if (purchase(PPawn, guard, PPlayer).refused)
             {
-                const auto stock = (lacks & bit) != 0 ? stockOf(itemId) : std::nullopt;
-                if (!stock || points < static_cast<int32>(stock->price))
-                {
-                    continue; // has it, or cannot pay: nothing to ask
-                }
-                if (!hasRoom(PPawn))
-                {
-                    return; // her bag is full: nothing she buys would fit
-                }
-                auto call = linkapi::libraryCall("exchange", "buy");
-                auto sale = call ? linkapi::libraryTable("exchange.buy", (*call)(CLuaBaseEntity(PPawn), guard.nation, guard.type, stock->option)) : std::nullopt;
-                if (!sale)
-                {
-                    refused[key] = now; // the sale failed (said by the call): not asked again at this guard for kSpeakAgain
-                    return;
-                }
-                const auto* PItem = xi::items::lookup(itemId);
-                const auto  name  = PItem != nullptr ? PItem->getName() : std::to_string(itemId);
-                if (const auto refusal = sale->get<sol::optional<std::string>>("refusal"))
-                {
-                    refused[key] = now;
-                    ShowInfoFmt("supplies: {} cannot buy {} from {} ({})", PPawn->getName(), name, guard.name, *refusal);
-                    if (*refusal == "OUTRANKED" || *refusal == "FOREIGN_PLACE")
-                    {
-                        tell(PPlayer, PPawn, CL_SUPPLIES_FOREIGN);
-                    }
-                    return;
-                }
-                points = static_cast<int32>(sale->get_or<uint32>("cp", 0));
-                ShowInfoFmt("supplies: {} buys {} from {} for {} conquest points ({} left)", PPawn->getName(), name, guard.name, stock->price, points);
-                tell(PPlayer, PPawn, CL_SUPPLIES_BOUGHT, 0, itemId, static_cast<uint16>(stock->price));
+                refused[key] = now; // not asked again at this guard for kSpeakAgain
             }
         }
 
@@ -294,6 +317,15 @@ namespace pawn::supplies
             tell(PPlayer, PPawn, CL_SUPPLIES_WANTED, lacks);
         }
     } // namespace
+
+    auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell) -> uint32
+    {
+        if (PPawn == nullptr || leaving(PPawn))
+        {
+            return 0;
+        }
+        return purchase(PPawn, guard, PTell).count;
+    }
 
     void zonedIn(const CCharEntity* PPlayer)
     {

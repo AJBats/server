@@ -22,10 +22,14 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "common/types/position.h"
 
+#include <optional>
 #include <string_view>
 
+class CBaseEntity;
 class CCharEntity;
+class CZone;
 
 // The conquest exchange by proxy: a cardian cannot talk to a gate guard, but
 // her player can stand beside one, and she buys from that guard's stock out of
@@ -51,4 +55,14 @@ namespace pawn::guards
 
     // A guard who sells stands in the zone, by its name
     auto zoneHasGuard(std::string_view zoneName) -> bool;
+
+    // The guard a cardian of this nation shops at in her zone, and the NPC
+    // standing there: her own nation's nearest her, else a guard who sells
+    // to every nation's (Jeuno's), else any; nothing when none stands there
+    struct Standing
+    {
+        const Guard*       guard = nullptr;
+        const CBaseEntity* npc   = nullptr;
+    };
+    auto guardFor(CZone* PZone, uint8 nation, const position_t& from) -> std::optional<Standing>;
 } // namespace pawn::guards
