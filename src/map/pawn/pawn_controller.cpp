@@ -6808,6 +6808,27 @@ void CPawnController::TravelTick()
         return;
     }
 
+    // Her avoid-aggro row steers her round the danger she meets on the way,
+    // as it does while she follows him: the line is her point, and the
+    // walker's vet moves her -- round a mob's detection, holding, or away --
+    // or walks her on toward the line itself, one step either way. With no
+    // path from the walker the line's own fallbacks below have their say
+    if (IsAvoiding())
+    {
+        RefreshDangers(nullptr); // the trek's own scan: the roam tick does not scan on a trek tick
+        m_HasSlot = false;       // no ring seat to re-seat on a trek
+        Intent intent;
+        intent.kind      = Intent::Kind::Path;
+        intent.point     = hop->walkTo;
+        intent.arrive    = 2.0f;
+        intent.tolerance = 2.0f;
+        intent.claimed   = true; // the line is everyone's: nobody gives way off it
+        if (Walk(intent).value_or(AvoidAction::None) != AvoidAction::None || POwner->PAI->PathFind->IsFollowingPath())
+        {
+            return;
+        }
+    }
+
     if (!PathToward(hop->walkTo, 2.0f))
     {
         // Walked as far as the mesh reaches; the mesh often ends short of
