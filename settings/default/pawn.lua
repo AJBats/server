@@ -218,6 +218,15 @@ xi.settings.pawn =
     -- mob stops at that ring, on the player's side. Wider than the follow
     -- tolerance (2 y) so the walk to the point never crosses into reach.
     FORMATION_STANDOFF = 2.5,
+    -- Free roaming, a melee holding for a pull towed to the player escorts
+    -- it in, weapon drawn: her ring seat (the seats above, and her own
+    -- compass manner) round a point TOW_ESCORT_SHARE of the way from him (a
+    -- moment ahead of him while he moves) to the mob -- a quarter: three
+    -- quarters of the way toward him -- the ring turned to face the mob, and
+    -- moving with the tow every tick. The hold's stand-off ring keeps the
+    -- spot out of the mob's reach plus FORMATION_STANDOFF as it comes, and
+    -- she closes as it reaches him
+    TOW_ESCORT_SHARE   = 0.25,
 
     -- Catch-up: the lead runs at CATCHUP_SPEED while more than
     -- CATCHUP_DISTANCE yalms from its point, PAWN_SPEED otherwise. It only
@@ -314,6 +323,11 @@ xi.settings.pawn =
     -- A stalled/flyby pull gets half a second per extra yalm (max 8 s).
     -- Provoke's gambit keeps running throughout; gaining hate ends the wait.
     CAMP_RECEIVE_IMMEDIATE       = 3.0,
+    -- A melee waiting for a camp's pull, weapon drawn, moves in for it when
+    -- it is within CAMP_RECEIVE_IMMEDIATE of the landing point plus a lead
+    -- of her own, up to this many yalms more (from her charid): the party
+    -- moves in one after another, a touch before it lands, not all at once
+    CAMP_RECEIVE_LEAD_SPREAD     = 4.0,
     CAMP_RECEIVE_SECONDS_PER_YALM = 0.5,
     CAMP_RECEIVE_MAX_WAIT        = 8.0,
     CAMP_RECEIVE_PROGRESS        = 0.5,

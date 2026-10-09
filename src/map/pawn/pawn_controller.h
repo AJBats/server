@@ -604,10 +604,11 @@ private:
     // pause before she sets off when he does
     struct CompassManner
     {
-        float blend = 0.0f; // radians a second
-        float tilt  = 0.0f; // radians
-        float extra = 0.0f; // yalms
-        float react = 0.0f; // seconds
+        float blend    = 0.0f; // radians a second
+        float tilt     = 0.0f; // radians
+        float extra    = 0.0f; // yalms
+        float react    = 0.0f; // seconds
+        float campLead = 0.0f; // yalms: how much sooner than the rule she moves in for a camp's pull (PullIn)
     };
     auto MannerOf() const -> CompassManner;
 
@@ -887,7 +888,8 @@ private:
     auto CampReceive(const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
     auto ResumeCampReceive() -> bool;
     // The receive rule's step on one memory, the tank's or a mob's
-    auto ReceiveStep(cardian::stake::Receive& receive, const CBattleEntity* PTarget) -> cardian::stake::ReceiveAction;
+    // lead: yalms added to the camp's receive distance, a melee's own (MannerOf)
+    auto ReceiveStep(cardian::stake::Receive& receive, const CBattleEntity* PTarget, float lead = 0.0f) -> cardian::stake::ReceiveAction;
     // The same rule as every other member asks it -- the melee waiting to
     // join, a caster holding her spells, a mage attending -- remembered
     // per mob, so asking about two mobs in turn (the one she attends, an
@@ -1074,13 +1076,45 @@ private:
     // that mob (PullIn), says the pull has come in: at the landing point, on
     // her, or stopped inside the camp (#253)
     auto WaitsForThePull(const CBattleEntity* PTarget, ApproachKind kind) -> bool;
+    // A melee waiting for a camp's pull draws early, at her seat (Draw), on
+    // a pull already fighting or one the player drew on, while he is here
+    // and she is not kneeling: kneeling, she rests on until it comes in (the
+    // user, 2026-10-07), and an idle mob an ally drew on is no pull yet
+    auto CampDrawsEarly(const CBattleEntity* PTarget) const -> bool;
+    uint32 m_TowWaitSaid = 0; // the tow she waits on, out of draw range, said once
 
     // At a camp a caster holds her spells on a pull until it has come in,
     // as the melee wait for it: no walk out to meet it, and no enfeeble or
-    // nuke from afar that would turn it from the puller. A cure for the
+    // nuke from afar that would turn it from the puller. Free roaming, the
+    // same for a pull towed to the player (TowedToPlayer). A cure for the
     // puller still goes; the player's own order is never held
     auto HoldsFireOn(const CBattleEntity* PTarget) -> bool;
     uint32 m_HeldFireOn = 0; // the pull her spells wait on, said once
+
+    // Free roaming (no camp), a mob fighting the player that has not yet
+    // come within his reach is his pull on its way in -- his Provoke, his
+    // shot, or one that came for him: the party holds for it (the melee
+    // in formation, HoldsForPlayer; the casters' spells, HoldsFireOn) until
+    // it reaches him or he walks in on it, so a mob that stands back to
+    // shoot is towed to where he wants the fight (the user, 2026-10-08).
+    // Once it has been within his reach the fight on it has begun, and his
+    // stepping away later holds nothing (m_TowsLanded)
+    auto TowedToPlayer(const CCharEntity* PPlayer, const CBattleEntity* PMob) const -> bool;
+    // Drawn on the player's word, she holds: until he strikes the mob he
+    // drew on, or, while it is towed to him (TowedToPlayer), until it
+    // reaches him
+    auto HoldsForPlayer(const CCharEntity* PPlayer, const CBattleEntity* PMob) const -> bool;
+    // Each tick: the towed mobs that have reached the player, kept while
+    // they fight (a mob that stops fighting is forgotten, so its next spawn
+    // is a new pull)
+    void NoteTowsLanded();
+    std::vector<EntityId> m_TowsLanded;
+    // A melee holding for a pull towed to the player escorts it in, weapon
+    // drawn and turned to it: her ring seat round a point part way along the
+    // line from him to the mob, the ring facing the mob, the spot moving with
+    // the tow every tick, so she closes on its flank as it reaches him
+    auto TowHoldIntent(const CCharEntity* PPlayer, const CBattleEntity* PMob) -> Intent;
+    std::optional<EntityId> m_Escorting; // the pull she escorts, said once
 
     // The member a healer keeps sight of in the open field (AttendIntent):
     // the one the mob she attends is on, when she is a cardian with cures to
