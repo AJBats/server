@@ -1995,6 +1995,39 @@ auto CPawnController::CancelQueuedOrder() -> bool
     return DropQueuedOrder("the player took it back");
 }
 
+auto CPawnController::CancelRunningCast() -> bool
+{
+    // His order's spell, not a gambit's that came up in the moment after it
+    unsigned    kind   = 0;
+    unsigned    mode   = 0;
+    unsigned    id     = 0;
+    const auto* PState = dynamic_cast<CMagicState*>(POwner->PAI->GetCurrentState());
+    if (!m_Running.has_value() || PState == nullptr || PState->GetSpell() == nullptr || !parseOrderKey(m_Running->first, kind, mode, id) || kind != 2 ||
+        static_cast<unsigned>(PState->GetSpell()->getID()) != id)
+    {
+        return false;
+    }
+    const auto order = m_Running->first;
+    POwner->PAI->InterruptStates();
+    if (POwner->PAI->IsCurrentState<CMagicState>())
+    {
+        return false;
+    }
+    const bool kneels = !POwner->isDead() && !POwner->PAI->IsEngaged();
+    if (kneels)
+    {
+        const auto interval = std::chrono::seconds(settings::get<uint8>("map.HEALING_TICK_DELAY"));
+        POwner->StatusEffectContainer->AddStatusEffect(xi::StatusEffect::Healing, 0, 0, interval, 0s);
+    }
+    ShowInfoFmt("pawn: {} breaks off her {}{} (the player took it back)", POwner->getName(), order, kneels ? " by kneeling" : "");
+    m_Running.reset();
+    if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+    {
+        cardian::link::send(owner, QueueLine());
+    }
+    return true;
+}
+
 auto CPawnController::ClearQueuedOrders(const std::string_view why, const uint32 formerOwner) -> bool
 {
     m_QueuedNext.clear();

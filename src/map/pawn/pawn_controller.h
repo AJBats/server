@@ -427,6 +427,14 @@ public:
     // player can take the order back.
     auto QueueLine() const -> cl_queue;
     auto CancelQueuedOrder() -> bool;
+    // The player's cancel on a spell of his she is still casting ("Executing:"
+    // on her line): she breaks it off as a player does, by kneeling -- the
+    // game's /heal ends a cast -- and her rest decides from there. Engaged,
+    // she cannot kneel, and the cast is only broken off. The kneel is the
+    // player's clean way, and it costs: mobs go for a kneeling body, and her
+    // rest may keep her down beside a fight. A player would wiggle instead;
+    // kept as a kneel for now (the user, 2026-10-08; OPEN_ISSUES #384)
+    auto CancelRunningCast() -> bool;
     // Her whole line dropped: the orders behind the first, then the first
     auto ClearQueuedOrders(std::string_view why, uint32 formerOwner = 0) -> bool;
     // The player's cancel on her queue line with nothing queued: a rest she

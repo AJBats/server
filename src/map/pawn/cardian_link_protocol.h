@@ -1274,8 +1274,9 @@ typedef struct cl_homepoint
 
 // A queued command taken back: the one a character has waiting -- the
 // player's through a pause, a cardian's through a pause or behind what she is
-// doing. The queue line that changes is told as it always is; this answers
-// with the outcome alone.
+// doing -- or, with nothing waiting, a cardian's spell of his she is still
+// casting (QUEUE's running), broken off. The queue line that changes is told
+// as it always is; this answers with the outcome alone.
 typedef struct cl_cancel
 {
     cl_header h;
