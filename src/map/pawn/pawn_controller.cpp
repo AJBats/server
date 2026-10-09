@@ -5658,11 +5658,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         how = answer.value_or(engage::How::Draw);
     }
     CBattleEntity* PPartyTarget = party.target;
-    // Walking in on the party's fight, or on the player's order round its
-    // mob to the back before she draws (TakesBackFirst): the approach has
-    // her, and the door does not draw her again every beat
-    const bool     walkingIn    = m_Approach.has_value() &&
-                              (m_Approach->kind == ApproachKind::Join || (m_Approach->kind == ApproachKind::Order && m_BackFirst.has_value()));
+    // Walking in on the party's fight or on the player's order (round its
+    // mob to the back, too): the approach has her, and the door does not
+    // draw her again every beat. A door that did would end the tick before
+    // the approach walks her, every tick, while the mob stays out of draw
+    // range (2026-10-08: his engage order on a goblin standing back to cast
+    // left the melee standing). His order is carried out whatever comes at
+    // her on the way (the user, 2026-10-08: the player meant it)
+    const bool     walkingIn    = m_Approach.has_value() && (m_Approach->kind == ApproachKind::Join || m_Approach->kind == ApproachKind::Order);
     // The door's state, once a second, while a fight is on around her and she
     // has not passed it: what stands in the way of this tick
     if (settings::get<bool>("pawn.FORMATION_DEBUG") && m_Tick - m_DoorSaidAt >= 1s)
