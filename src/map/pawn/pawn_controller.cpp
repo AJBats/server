@@ -5881,19 +5881,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // RestTick first checks urgent healing, danger and orders. Only when it
     // keeps her down do we suppress the proposal; Move still vets her current
     // position for aggro/link danger and may escape it.
-    // A kneeling mage puts a routine step off only while the party's place
-    // -- the player, or the stake -- is within the camp's leash: the player
-    // walking out to pull is no move (the user, 2026-10-07). Farther, the
-    // party has moved on, and she gets up to follow (2026-10-04: Gabriol
-    // rested on 200 yalms behind after a new stake)
-    const float placeAway = place == nullptr ? 0.0f : distance(POwner->loc.p, place->position(), true);
-    const bool  nearPlace = placeAway <= settings::get<float>("pawn.HUNT_LEASH");
+    // A kneeling mage puts a routine step off however far the party's place
+    // -- the player, or the stake -- has gone: she rests on until her rest
+    // ends, then walks to rejoin it (the user, 2026-10-08)
     const bool  following = POwner->PAI->PathFind->IsFollowingPath();
     const std::string moveWhy = following         ? std::string("a path under way") :
                                 proposal.comesIn  ? fmt::format("inside an area move she keeps out of, which comes soon: {}", m_KneelWhy) :
-                                !nearPlace        ? fmt::format("the party has moved on, {:.0f} y away", placeAway) :
                                                     std::string("her spot moved");
-    if (RestTick(stationary, false, !following && !proposal.comesIn && nearPlace, moveWhy))
+    if (RestTick(stationary, false, !following && !proposal.comesIn, moveWhy))
     {
         proposal.kind      = Intent::Kind::Stand;
         proposal.seat      = false;

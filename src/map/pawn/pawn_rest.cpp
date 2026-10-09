@@ -364,11 +364,16 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // party's fight, never a mage, whom first aid still wakes
     const bool fightCalls = rowRest && TakesFights() && fightOn();
     const bool blocked = impossible || (!deliberate && (unsafe || m_Retreat || m_Mode == Mode::Travel || QueuedOrderHoldsHer() || HasPlayersOrder() || fightCalls));
+    // Free roaming, nothing of her own starts a rest while he walks: the
+    // compass's pauses (her reaction, letting him pass) are no stop of his
+    // (the user, 2026-10-08). A rest already on goes on; his order kneels her
+    const bool walkBlocks = healing == nullptr && !deliberate && !Staked() && leader != nullptr && (want || withPlayer || ordered) &&
+                            PlayerAnchor(leader, 0.0f).moving;
     // A cookie, a Healer's or a mage's in any seat (RESEARCH §19.2 item 5,
     // §19.6): about to kneel short of MP, with the player's food on and none
     // of her own, she eats it first and kneels once it is down, so a fresh
     // cookie covers the kneel
-    const bool aboutToKneel = healing == nullptr && (want || withPlayer || ordered) && !blocked && !urgent && stationary && !m_Rest.standPending &&
+    const bool aboutToKneel = healing == nullptr && (want || withPlayer || ordered) && !blocked && !walkBlocks && !urgent && stationary && !m_Rest.standPending &&
                               m_Rest.canAct(now, false);
     const bool eatsFirst = EatCookieBeforeKneel(aboutToKneel, mpMissing);
     // An ongoing support rest, or one the player ordered, defers formation
@@ -379,7 +384,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool deferPosition = routinePosition && ((support && (place != nullptr || healing != nullptr)) || ordered || (withPlayer && healing != nullptr));
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
-        .urgent = urgent, .blocked = blocked || eatsFirst,
+        .urgent = urgent, .blocked = blocked || eatsFirst || walkBlocks,
         .moving = !stationary, .routinePosition = deferPosition,
         .ordered = ordered});
 
@@ -397,6 +402,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         };
         hold(Acting(), "acting");
         hold(eatsFirst, "eating before she kneels");
+        hold(walkBlocks, "the player is walking");
         hold(noRecovery, "she cannot recover");
         hold(POwner->PAI->IsEngaged(), "engaged");
         hold(urgent, "first aid calls her");
