@@ -28,6 +28,7 @@
 #include "pawn_controller.h"
 #include "pawn_items.h"
 #include "seats.h"
+#include "world.h"
 
 #include "ai/ai_container.h"
 #include "common/database.h"
@@ -66,11 +67,15 @@ namespace pawn::redress
 {
     namespace
     {
+        using cardian::redress::DingNow;
+        using cardian::redress::DingPlan;
+        using cardian::redress::DingState;
+        using cardian::redress::DingStep;
         using cardian::redress::Record;
         using cardian::redress::State;
 
         constexpr auto kLookEvery  = std::chrono::seconds(3); // a zone's counters
-        constexpr auto kApplyEvery = std::chrono::seconds(3); // the census's answers
+        constexpr auto kApplyEvery = std::chrono::seconds(3); // the census's answers, and its dings
         constexpr uint32 kAmmoStack = 99;                     // ammunition is issued by the stack, as the census's finish issues it
 
         std::unordered_map<uint16, timer::time_point> lookedAt; // by zone
@@ -225,6 +230,7 @@ namespace pawn::redress
             uint32 worn    = 0; // pieces put on
             uint32 dropped = 0; // census pieces taken out of her bags
             uint32 moved   = 0; // pieces carried from her inventory into Mog Wardrobe 1
+            uint32 bared   = 0; // pieces taken off a slot the plan leaves bare
         };
 
         // The container her gear lives in: Mog Wardrobe 1 when it holds at
@@ -261,7 +267,10 @@ namespace pawn::redress
         // only what the census's own rule keeps (keepsItem): whatever else
         // she holds -- loot, old food, a piece of an older plan, worn or not
         // -- is taken off and out of the game first, to make room for the
-        // new, and again at the end, for what the new pieces took off her
+        // new, and again at the end, for what the new pieces took off her.
+        // A slot the plan leaves bare is bared, as the census's finish
+        // leaves it: a second copy of a piece the plan now wants once stays
+        // in her bag, unworn
         auto dress(CCharEntity* PPawn, const std::vector<Piece>& plan, const std::set<uint16>& food) -> Dressed
         {
             Dressed     out;
@@ -433,9 +442,21 @@ namespace pawn::redress
             {
                 putOn(piece, true);
             }
+            std::set<uint8> planned;
+            for (const auto& piece : plan)
+            {
+                planned.insert(piece.slot);
+            }
+            for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
+            {
+                if (!planned.contains(equipSlot) && PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)) != nullptr && pawn::items::unequip(PPawn, equipSlot) == CL_S_OK)
+                {
+                    ++out.bared;
+                }
+            }
             clearOut();
 
-            if (out.worn > 0 || out.moved > 0 || out.dropped > 0)
+            if (out.worn > 0 || out.moved > 0 || out.dropped > 0 || out.bared > 0)
             {
                 charutils::SaveCharEquip(PPawn);
             }
@@ -584,7 +605,7 @@ namespace pawn::redress
 
             ShowInfoFmt("world: {} is dressed for level {} at the auction house ({}{} pieces put on, {} taken off, {} moved to Mog Wardrobe 1, {} spells learned, "
                         "{} skills raised)",
-                        PPawn->getName(), answer.level, subbed ? "her support job set, " : "", dressed.worn, dressed.dropped, dressed.moved, learned, raised);
+                        PPawn->getName(), answer.level, subbed ? "her support job set, " : "", dressed.worn, dressed.dropped + dressed.bared, dressed.moved, learned, raised);
             if (auto* PPlayer = pawn::partyPlayer(PPawn); PPlayer != nullptr)
             {
                 PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is dressed for level {}.", PPawn->getName(), answer.level));
@@ -620,10 +641,360 @@ namespace pawn::redress
                 apply(PPawn, answer);
             }
         }
+
+        // -- The live census: a ding out of sight (redress.h) ------------------
+
+        // The bodies the census is writing in her rows, by charid, and when the
+        // map claimed each: the clock on the wall, so a claim the watcher never
+        // finishes lapses whatever the simulation does
+        std::unordered_map<uint32, realtime::time_point> claims;
+
+        // A look's work, bounded: bodies handed to the census, about what its
+        // watcher writes in the same time (census.py CLAIMS_PER_LOOK), so a
+        // crowd of dings never keeps many bodies from standing at once; and
+        // dings put on bodies the map holds, each a few saves on its thread
+        constexpr uint32 kClaimsPerLook  = 20;
+        constexpr uint32 kAppliesPerLook = 5;
+
+        // A row of cardian_ding the map still has to act on
+        struct Ding
+        {
+            uint32      charid = 0;
+            DingPlan    plan;
+            std::string skills;
+            uint8       sub      = 0;
+            uint8       sublevel = 0;
+            DingState   state    = DingState::Planned;
+        };
+
+        auto openDings() -> std::optional<std::vector<Ding>>
+        {
+            const auto rset = db::preparedStmt("SELECT charid, kind, job, level, gear, skills, sub, sublevel, state FROM cardian_ding "
+                                               "WHERE state IN ('planned', 'claimed') ORDER BY planned_at, charid");
+            if (!rset)
+            {
+                return std::nullopt;
+            }
+            std::vector<Ding> out;
+            while (rset->next())
+            {
+                const auto state = cardian::redress::dingStateOf(rset->get<std::string>("state"));
+                if (!state.has_value())
+                {
+                    continue;
+                }
+                out.push_back({ .charid   = rset->get<uint32>("charid"),
+                                .plan     = { .dress = rset->get<std::string>("kind") == "dress",
+                                              .job   = rset->get<uint8>("job"),
+                                              .level = rset->get<uint8>("level"),
+                                              .gear  = rset->get<uint8>("gear") != 0 },
+                                .skills   = rset->get<std::string>("skills"),
+                                .sub      = rset->get<uint8>("sub"),
+                                .sublevel = rset->get<uint8>("sublevel"),
+                                .state    = *state });
+            }
+            return out;
+        }
+
+        auto inCity(const CCharEntity* PPawn) -> bool
+        {
+            return PPawn->loc.zone != nullptr && (PPawn->loc.zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
+        }
+
+        // Where she is, for the ding's rules (redress_math.h dingStep)
+        auto dingNow(const uint32 charid, const DingPlan& plan) -> DingNow
+        {
+            DingNow now{};
+            now.withPlayer    = pawn::withRealPlayer(charid) || (pawn::world::hasBody(charid) && !pawn::world::inTheWild(charid));
+            const auto* PPawn = pawn::findPawn(charid);
+            if (PPawn == nullptr)
+            {
+                return now;
+            }
+            now.standing    = true;
+            now.seen        = PPawn->loc.zone == nullptr || pawn::world::playerIn(static_cast<uint16>(PPawn->getZone()));
+            now.busy        = !canDress(PPawn);
+            now.farming     = pawn::world::isFarming(charid);
+            now.inCity      = inCity(PPawn);
+            now.mainJob     = static_cast<uint8>(PPawn->GetMJob());
+            const uint8 job = plan.job != 0 && plan.job < MAX_JOBTYPE ? plan.job : now.mainJob;
+            now.jobLevel    = PPawn->jobs.job[job];
+            return now;
+        }
+
+        // The job she plays changed, as her player's Mog House changes it
+        // (mog_house.cpp changeJobs): the job unlocked, her pet sent away, a
+        // waiting order and an enchanted piece on its way let go, then the
+        // game's own job change, which takes her gear off and rebuilds her
+        // stats, abilities and traits; her gear goes on again after it.
+        // `sub` is the support job she takes with it, 0 to keep hers
+        auto switchMain(CCharEntity* PPawn, const uint8 job, const uint8 sub) -> bool
+        {
+            if (job == 0 || job >= MAX_JOBTYPE || job == static_cast<uint8>(PPawn->GetMJob()))
+            {
+                return false;
+            }
+            PPawn->jobs.unlocked |= (1u << job);
+            PPawn->jobs.job[job] = std::max<uint8>(PPawn->jobs.job[job], 1);
+            charutils::SaveCharJob(PPawn, static_cast<xi::Job>(job));
+            if (PPawn->PPet != nullptr)
+            {
+                petutils::DespawnPet(PPawn);
+            }
+            if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()); PController != nullptr)
+            {
+                PController->EndEnchant("the job she plays changed");
+                PController->ClearQueuedOrders("the job she plays changed");
+            }
+            GP_CLI_COMMAND_MYROOM_JOB jobChange{};
+            jobChange.MainJobIndex    = job;
+            jobChange.SupportJobIndex = sub < MAX_JOBTYPE && sub != job ? sub : 0;
+            jobChange.process(nullptr, PPawn);
+            return true;
+        }
+
+        // Her main job raised to the level, as the game's own ding raises it
+        // (charutils::AddExperiencePoints): the level, her support job's shown
+        // level under it, her stats, abilities, traits and weapon skills; her
+        // experience starts the level from nothing
+        auto raiseLevel(CCharEntity* PPawn, const uint8 level) -> bool
+        {
+            const auto mjob = static_cast<uint8>(PPawn->GetMJob());
+            if (level == 0 || PPawn->jobs.job[mjob] >= level)
+            {
+                return false;
+            }
+            PPawn->jobs.job[mjob] = level;
+            PPawn->jobs.exp[mjob] = 0;
+            PPawn->SetMLevel(level);
+            PPawn->SetSLevel(PPawn->jobs.job[static_cast<uint8>(PPawn->GetSJob())]);
+            jobpointutils::RefreshGiftMods(PPawn);
+            charutils::BuildingCharSkillsTable(PPawn);
+            charutils::CalculateStats(PPawn);
+            charutils::BuildingCharAbilityTable(PPawn);
+            charutils::BuildingCharTraitsTable(PPawn);
+            charutils::BuildingCharWeaponSkills(PPawn);
+            puppetutils::LoadAutomaton(PPawn);
+            PPawn->PLatentEffectContainer->CheckLatentsJobLevel();
+            if (PPawn->PParty != nullptr)
+            {
+                PPawn->PParty->ReloadParty();
+            }
+            charutils::SaveCharStats(PPawn);
+            charutils::SaveCharJob(PPawn, PPawn->GetMJob());
+            charutils::SaveCharExp(PPawn, PPawn->GetMJob());
+            return true;
+        }
+
+        // The ding put on a body the map holds, out of sight: the job she
+        // plays (a city's change), her level, her support job and her skills
+        // for it, and where it was planned and she stands in a city her gear,
+        // food and spells as the census planned them -- the census's own rule
+        // for her, as at the auction house. The row says whether her gear went
+        // on (`dressed`), for the census's bookkeeping
+        void applyDing(CCharEntity* PPawn, const Ding& ding, const bool gear)
+        {
+            const auto   before   = fmt::format("{} {}", magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel());
+            const bool   switched = switchMain(PPawn, ding.plan.job, ding.sub);
+            const bool   raised   = !ding.plan.dress && raiseLevel(PPawn, ding.plan.level);
+            const Answer answer{ ding.charid, ding.plan.level, ding.skills, "", ding.sub, ding.sublevel };
+            const bool   subbed  = takeSub(PPawn, answer);
+            Dressed      dressed{};
+            uint32       learned = 0;
+            if (gear)
+            {
+                if (const auto plan = planOf(PPawn->getName()); plan.has_value())
+                {
+                    pawn::food::forget(PPawn->id);
+                    dressed = dress(PPawn, *plan, pawn::food::plannedIds(PPawn->getName()));
+                    pawn::food::topUp(PPawn);
+                    learned = learnSpells(PPawn);
+                }
+            }
+            const auto skills = raiseSkills(PPawn, ding.skills);
+            PPawn->UpdateHealth();
+            PPawn->health.hp = PPawn->GetMaxHP();
+            PPawn->health.mp = PPawn->GetMaxMP();
+            PPawn->updatemask |= UPDATE_HP;
+            PPawn->clearPacketList();
+            if (raised || switched)
+            {
+                pawn::world::noteLevel(PPawn->id, PPawn->GetMLevel());
+            }
+
+            db::preparedStmt("UPDATE cardian_ding SET state = 'applied', dressed = ?, done_at = NOW() WHERE charid = ? AND state = 'planned'", gear ? 1 : 0,
+                             ding.charid);
+            if (gear)
+            {
+                // Dressed for this level out of sight: a re-dress at a counter
+                // is asked again only once she rises past it
+                db::preparedStmt("UPDATE cardian_redress SET state = 'done', level = ?, done_at = NOW() WHERE charid = ?", PPawn->GetMLevel(), ding.charid);
+            }
+            const auto zone = PPawn->loc.zone != nullptr ? std::string(PPawn->loc.zone->getName()) : std::string("nowhere");
+            if (ding.plan.dress)
+            {
+                ShowInfoFmt("world: {} changes her gear out of sight in {} at level {} ({} pieces put on, {} taken off, {} spells learned{})", PPawn->getName(),
+                            zone, PPawn->GetMLevel(), dressed.worn, dressed.dropped + dressed.bared, learned, subbed ? ", her support job set" : "");
+                return;
+            }
+            ShowInfoFmt("world: {} dings out of sight in {}: {} -> {} {} ({} skills raised{}{})", PPawn->getName(), zone, before,
+                        magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel(), skills, subbed ? ", her support job set" : "",
+                        gear ? fmt::format(", her gear changed: {} pieces put on, {} taken off, {} spells learned", dressed.worn, dressed.dropped + dressed.bared, learned)
+                             : std::string(", her gear as it was"));
+        }
+
+        // A ding set aside goes back to the census unworn, its reason in the
+        // note: a plan of gear written for it is still owed her
+        void setAsideDing(const Ding& ding, const std::string& why)
+        {
+            db::preparedStmt("UPDATE cardian_ding SET state = 'applied', dressed = 0, note = ?, done_at = NOW() WHERE charid = ? AND state = 'planned'", why,
+                             ding.charid);
+            ShowInfoFmt("world: {}'s ding to level {} is set aside: {}", pawn::seats::nameOf(ding.charid), ding.plan.level, why);
+        }
+
+        // A body the map does not hold, claimed for the census: it writes her
+        // rows, and she stands for nobody until it is done
+        void claim(const Ding& ding)
+        {
+            const auto rset = db::preparedStmt("UPDATE cardian_ding SET state = 'claimed', claimed_at = NOW() WHERE charid = ? AND state = 'planned'", ding.charid);
+            if (rset && rset->rowsAffected() > 0)
+            {
+                claims[ding.charid] = realtime::now();
+            }
+        }
+
+        // A claim held past its time is taken back, unless the census has
+        // finished it meanwhile: the census's write is one transaction that
+        // ends by marking the row done only while it is still claimed
+        void lapse(const uint32 charid)
+        {
+            const auto rset = db::preparedStmt("UPDATE cardian_ding SET state = 'planned', claimed_at = NULL WHERE charid = ? AND state = 'claimed'", charid);
+            if (rset && rset->rowsAffected() > 0)
+            {
+                ShowWarningFmt("world: the census has not written {}'s ding in {} s; she may stand again, and the ding waits", pawn::seats::nameOf(charid),
+                               cardian::redress::kClaimLapseSeconds);
+            }
+            claims.erase(charid);
+        }
+
+        // Every ding the census has planned, acted on where she is: put on a
+        // body out of sight and free, claimed for the census where the map
+        // holds no body of hers, set aside where she has the level already,
+        // or left for a later look. A claim the census has finished is let
+        // go, so she may stand
+        void applyDings()
+        {
+            const auto dings = openDings();
+            if (!dings.has_value())
+            {
+                return;
+            }
+            std::set<uint32> stillClaimed;
+            for (const auto& ding : *dings)
+            {
+                if (ding.state == DingState::Claimed)
+                {
+                    stillClaimed.insert(ding.charid);
+                }
+            }
+            for (auto it = claims.begin(); it != claims.end();)
+            {
+                if (!stillClaimed.contains(it->first))
+                {
+                    it = claims.erase(it);
+                    continue;
+                }
+                ++it;
+            }
+            const auto now     = realtime::now();
+            uint32     claimed = 0;
+            uint32     applied = 0;
+            for (const auto& ding : *dings)
+            {
+                if (ding.state == DingState::Claimed)
+                {
+                    const auto it = claims.find(ding.charid);
+                    if (it == claims.end())
+                    {
+                        claims[ding.charid] = now; // claimed before this map started: she waits for the census as much
+                    }
+                    else if (cardian::redress::claimLapsed(static_cast<uint32>(std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count())))
+                    {
+                        lapse(ding.charid);
+                    }
+                    continue;
+                }
+                const auto where = dingNow(ding.charid, ding.plan);
+                switch (cardian::redress::dingStep(ding.plan, where))
+                {
+                    case DingStep::Wait:
+                        break;
+                    case DingStep::Claim:
+                        if (claimed < kClaimsPerLook && claims.size() < 3 * kClaimsPerLook)
+                        {
+                            claim(ding);
+                            ++claimed;
+                        }
+                        break;
+                    case DingStep::SetAside:
+                        setAsideDing(ding, fmt::format("she is level {} already", where.jobLevel));
+                        break;
+                    case DingStep::Apply:
+                    {
+                        auto* PPawn = pawn::findPawn(ding.charid);
+                        if (PPawn == nullptr || applied >= kAppliesPerLook)
+                        {
+                            break;
+                        }
+                        ++applied;
+                        if (!pawn::seats::isWorlds(ding.charid))
+                        {
+                            setAsideDing(ding, "she is no longer one of the world's");
+                            break;
+                        }
+                        applyDing(PPawn, ding, cardian::redress::dressesNow(ding.plan, where));
+                        break;
+                    }
+                }
+            }
+        }
     } // namespace
 
     void ensureTable()
     {
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_ding` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`kind` enum('ding','dress') NOT NULL DEFAULT 'ding', "
+                         "`job` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`level` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`gear` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`dressed` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`skills` varchar(1024) NOT NULL DEFAULT '', "
+                         "`sub` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`sublevel` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`state` enum('planned','claimed','applied','done') NOT NULL DEFAULT 'planned', "
+                         "`note` varchar(128) NOT NULL DEFAULT '', "
+                         "`planned_at` datetime DEFAULT NULL, "
+                         "`claimed_at` datetime DEFAULT NULL, "
+                         "`done_at` datetime DEFAULT NULL, "
+                         "PRIMARY KEY (`charid`), KEY `state` (`state`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        // Her career's jobs after her first on a census table made before careers
+        // (census.py CAREER_COLUMNS, which the watcher adds too): the world
+        // reads her target on the job she plays (world.cpp readCensus)
+        db::preparedStmt("ALTER TABLE IF EXISTS `cardian_census` "
+                         "ADD COLUMN IF NOT EXISTS `job2` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "ADD COLUMN IF NOT EXISTS `cohort2` int(10) unsigned NOT NULL DEFAULT '0', "
+                         "ADD COLUMN IF NOT EXISTS `target2` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "ADD COLUMN IF NOT EXISTS `later_jobs` varchar(64) NOT NULL DEFAULT ''");
+        // A census write under way when the map last stopped: she stands for
+        // nobody until the census says it is done
+        if (const auto rset = db::preparedStmt("SELECT charid FROM cardian_ding WHERE state = 'claimed'"); rset)
+        {
+            while (rset->next())
+            {
+                claims[rset->get<uint32>("charid")] = realtime::now();
+            }
+        }
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_redress` ("
                          "`charid` int(10) unsigned NOT NULL, "
                          "`level` tinyint(3) unsigned NOT NULL, "
@@ -658,6 +1029,12 @@ namespace pawn::redress
         {
             appliedAt = now;
             applyReady();
+            applyDings();
         }
+    }
+
+    auto isClaimed(const uint32 charid) -> bool
+    {
+        return claims.contains(charid);
     }
 } // namespace pawn::redress

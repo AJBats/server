@@ -54,7 +54,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Graine
   - activity: stand
     band: [1, 75]
@@ -65,7 +64,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Celestina
   - activity: stand
     band: [1, 75]
@@ -76,7 +74,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Mololo
   - activity: stand
     band: [1, 75]
@@ -87,7 +84,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Pikini-Mikini
   - activity: stand
     band: [1, 75]
@@ -98,4 +94,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

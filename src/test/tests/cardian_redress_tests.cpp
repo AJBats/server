@@ -160,9 +160,115 @@ TEST_CASE("Redress: no plan, her main, or no real job leaves her support job alo
 TEST_CASE("Redress: an answer is put on her only at the level it was planned for", "[cardian][redress]")
 {
     CHECK(answerFits(29, 29));
-    // a Warrior asked at 29 on her Monk support; the catch-up dinged her to 31 on
+    // a Warrior asked at 29 on her Monk support; the live census dinged her to 31 on
     // Ninja before her next stand: the stale answer would switch her back to Monk
     CHECK_FALSE(answerFits(29, 31));
     CHECK_FALSE(answerFits(31, 30)); // a level lost to death since
     CHECK_FALSE(answerFits(0, 0));
+}
+
+TEST_CASE("Live census: a ding's state reads by its four words", "[cardian][redress][live]")
+{
+    CHECK(dingStateOf("planned") == DingState::Planned);
+    CHECK(dingStateOf("claimed") == DingState::Claimed);
+    CHECK(dingStateOf("applied") == DingState::Applied);
+    CHECK(dingStateOf("done") == DingState::Done);
+    CHECK_FALSE(dingStateOf("asked").has_value());
+}
+
+namespace
+{
+    // A Warrior 20 standing out of sight in a city, free: the ding to 21 goes on now
+    auto standingFree() -> DingNow
+    {
+        return { .standing = true, .inCity = true, .mainJob = kWAR, .jobLevel = 20 };
+    }
+} // namespace
+
+TEST_CASE("Live census: a body the map does not hold is the census's to write", "[cardian][redress][live]")
+{
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, {}) == DingStep::Claim);
+    CHECK(dingStep({ .dress = true, .job = kWAR, .level = 20, .gear = true }, {}) == DingStep::Claim);
+    // in a real player's party, or held for him, never: she levels as his party does
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, { .withPlayer = true }) == DingStep::Wait);
+}
+
+TEST_CASE("Live census: a body standing takes a ding only out of sight, free and not farming", "[cardian][redress][live]")
+{
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, standingFree()) == DingStep::Apply);
+
+    auto seen = standingFree();
+    seen.seen = true;
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, seen) == DingStep::Wait);
+
+    auto busy = standingFree();
+    busy.busy = true;
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, busy) == DingStep::Wait);
+
+    // her seat farms: she earns her own experience while she stands, and keeps it
+    auto farming = standingFree();
+    farming.farming = true;
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, farming) == DingStep::Wait);
+
+    auto partied = standingFree();
+    partied.withPlayer = true;
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, partied) == DingStep::Wait);
+}
+
+TEST_CASE("Live census: a level she has already is set aside", "[cardian][redress][live]")
+{
+    auto risen = standingFree();
+    risen.jobLevel = 21; // she dinged on her own before it reached her
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, risen) == DingStep::SetAside);
+    risen.jobLevel = 22;
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, risen) == DingStep::SetAside);
+}
+
+TEST_CASE("Live census: a level goes on in the field, her gear only in a city", "[cardian][redress][live]")
+{
+    auto field   = standingFree();
+    field.inCity = false;
+    const DingPlan planned{ .job = kWAR, .level = 21, .gear = true };
+    CHECK(dingStep(planned, field) == DingStep::Apply);
+    CHECK_FALSE(dressesNow(planned, field));
+    CHECK(dressesNow(planned, standingFree()));
+    CHECK_FALSE(dressesNow({ .job = kWAR, .level = 21 }, standingFree())); // no gear planned with it
+
+    // a dress alone waits for a city
+    CHECK(dingStep({ .dress = true, .job = kWAR, .level = 20, .gear = true }, field) == DingStep::Wait);
+    CHECK(dingStep({ .dress = true, .job = kWAR, .level = 20, .gear = true }, standingFree()) == DingStep::Apply);
+}
+
+TEST_CASE("Live census: a change of the job she plays waits for a city", "[cardian][redress][live]")
+{
+    auto field     = standingFree();
+    field.inCity   = false;
+    field.jobLevel = 9; // her Monk, the job her session goes to
+    CHECK(dingStep({ .job = kMNK, .level = 10, .gear = true }, field) == DingStep::Wait);
+    auto city     = standingFree();
+    city.jobLevel = 9;
+    CHECK(dingStep({ .job = kMNK, .level = 10, .gear = true }, city) == DingStep::Apply);
+}
+
+TEST_CASE("Live census: a claim lapses after two minutes", "[cardian][redress][live]")
+{
+    CHECK_FALSE(claimLapsed(0));
+    CHECK_FALSE(claimLapsed(kClaimLapseSeconds - 1));
+    CHECK(claimLapsed(kClaimLapseSeconds));
+}
+
+TEST_CASE("Careers: her target is the one of the job she plays", "[cardian][redress][careers]")
+{
+    constexpr uint8_t kRNG = 11;
+    constexpr uint8_t kSAM = 12;
+    // a Ranger 40 with her Warrior to 20, and a Ninja and a Samurai taken up later for their support
+    const CareerTargets row{ .job = kRNG, .target = 40, .job2 = kWAR, .target2 = 20, .later = "13:20,12:25" };
+    CHECK(targetOn(row, kRNG) == 40);
+    CHECK(targetOn(row, kWAR) == 20);
+    CHECK(targetOn(row, kNIN) == 20);
+    CHECK(targetOn(row, kSAM) == 25);
+    CHECK(targetOn(row, kWHM) == 40); // a job not of her career: her first job's
+    CHECK(targetOn(row, 0) == 40);
+    CHECK(targetOn({ .job = kWAR, .target = 30 }, kMNK) == 30); // no second job yet
+    CHECK(targetOn({ .job = kWAR, .target = 30, .later = "x:1,,13:" }, kNIN) == 30); // a broken pair is passed over
 }

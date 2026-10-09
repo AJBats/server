@@ -30,7 +30,6 @@ slots:
     dwell: [10, 25]
     enter: any
     exit: west_sarutabaruta
-    hours: [6, 22]
   # -- Through traffic from windurst_waters: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -97,7 +96,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Hohbiba-Mubiba, Taniko-Maniko
   - activity: stand
     band: [1, 75]
@@ -108,7 +106,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Guruna-Maguruna, Kumama
   - activity: stand
     band: [1, 75]
@@ -119,7 +116,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Posso Ruhbini
   - activity: stand
     band: [1, 75]
@@ -130,7 +126,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Sheia Pohrichamaha
   - activity: stand
     band: [1, 75]
@@ -141,7 +136,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Zoreen
   - activity: stand
     band: [1, 75]
@@ -152,7 +146,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Alizabe
   - activity: stand
     band: [1, 75]
@@ -163,7 +156,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Uli Pehkowa
   - activity: stand
     band: [1, 75]
@@ -174,7 +166,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Ryan
   - activity: stand
     band: [1, 75]
@@ -185,7 +176,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Lebondur
   - activity: stand
     band: [1, 75]
@@ -196,7 +186,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Sattsuh Ahkanpari
   - activity: stand
     band: [1, 75]
@@ -207,7 +196,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Kucha Malkobhi
   - activity: stand
     band: [1, 75]
@@ -218,4 +206,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

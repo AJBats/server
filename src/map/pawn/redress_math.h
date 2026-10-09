@@ -1,6 +1,8 @@
 // Cardian: re-dressing a wild cardian at the auction house (pawn/redress.h),
 // its decisions as plain rules: when to ask the census, what its answer
-// raises, which pieces leave her bag, and what her support job takes.
+// raises, which pieces leave her bag, and what her support job takes. And
+// the live census's dings out of sight (redress.h, cardian_ding): what the
+// map does with a ding the census has planned.
 #pragma once
 
 #include <algorithm>
@@ -178,10 +180,10 @@ namespace cardian::redress
 
     // The census's answer is put on her only at the level it was planned
     // for. One planned for another level -- she dinged after asking, or the
-    // catch-up moved her on while it waited for her next stand -- is set
-    // aside, gear, spells, skills and support job alike, and she asks again
-    // at the next counter: its support job could take back the one the
-    // catch-up gave her
+    // live census dinged her out of sight while it waited for her next
+    // stand -- is set aside, gear, spells, skills and support job alike, and
+    // she asks again at the next counter: its support job could take back
+    // the one the census gave her
     inline auto answerFits(const uint8_t answerLevel, const uint8_t levelNow) -> bool
     {
         return answerLevel != 0 && answerLevel == levelNow;
@@ -242,5 +244,173 @@ namespace cardian::redress
             return std::nullopt;
         }
         return change;
+    }
+    // -- The live census (RESEARCH §11.11): a body of the world levels out of sight
+
+    // cardian_ding.state: the census has planned a ding for her (or, in a
+    // city, her gear at the level she has); the map has claimed a body it
+    // does not hold, for the census to write in her rows; the map has put
+    // the ding on a body it holds; it is over
+    enum class DingState
+    {
+        Planned,
+        Claimed,
+        Applied,
+        Done,
+    };
+
+    inline auto dingStateOf(const std::string_view text) -> std::optional<DingState>
+    {
+        if (text == "planned")
+        {
+            return DingState::Planned;
+        }
+        if (text == "claimed")
+        {
+            return DingState::Claimed;
+        }
+        if (text == "applied")
+        {
+            return DingState::Applied;
+        }
+        if (text == "done")
+        {
+            return DingState::Done;
+        }
+        return std::nullopt;
+    }
+
+    // What the census planned: a level on `job` (her main after it), or a
+    // dress at the level she has (`dress`); `gear` when her wardrobe, spells
+    // and food for it are planned too, which go on only in a city
+    struct DingPlan
+    {
+        bool    dress = false;
+        uint8_t job   = 0;
+        uint8_t level = 0;
+        bool    gear  = false;
+    };
+
+    // Where she is now, as the map sees her
+    struct DingNow
+    {
+        bool    standing   = false; // the map holds her body
+        bool    withPlayer = false; // in a real player's party, or held for one by her contract
+        bool    seen       = false; // standing in a zone a real player is in
+        bool    busy       = false; // down, fighting, in an event, or carrying out an order: not now
+        bool    farming    = false; // her seat farms: standing, she earns the experience she kills for
+        bool    inCity     = false; // standing in a city
+        uint8_t mainJob    = 0;     // the job she plays now
+        uint8_t jobLevel   = 0;     // her level on the plan's job
+    };
+
+    enum class DingStep
+    {
+        Wait,     // not now: she is seen, with a player, busy, farming, or out of a city for a city's change
+        Apply,    // the map puts it on the body it holds
+        Claim,    // the map holds no body of hers: the census writes it in her rows, and she stands for nobody until then
+        SetAside, // she has the level already: nothing to do
+    };
+
+    // A ding reaches her only out of sight: never in a real player's party
+    // or held for him, never standing where a real player is. Standing out
+    // of sight she takes it when she is free, unless her seat farms -- she
+    // earns her own experience then, and keeps it -- and a dress, or a
+    // change of the job she plays, waits for a city; a level she already
+    // has is set aside. A body the map does not hold is the census's to
+    // write
+    inline auto dingStep(const DingPlan& plan, const DingNow& now) -> DingStep
+    {
+        if (now.withPlayer)
+        {
+            return DingStep::Wait;
+        }
+        if (!now.standing)
+        {
+            return DingStep::Claim;
+        }
+        if (now.seen || now.busy || now.farming)
+        {
+            return DingStep::Wait;
+        }
+        const bool switches = plan.job != 0 && plan.job != now.mainJob;
+        if (!plan.dress && now.jobLevel >= plan.level)
+        {
+            return DingStep::SetAside;
+        }
+        if ((plan.dress || switches) && !now.inCity)
+        {
+            return DingStep::Wait;
+        }
+        return DingStep::Apply;
+    }
+
+    // Her gear, spells and food go on with a ding only where it was planned
+    // and in a city
+    inline auto dressesNow(const DingPlan& plan, const DingNow& now) -> bool
+    {
+        return plan.gear && now.inCity;
+    }
+
+    // A claim the census has not finished in this long is taken back: the
+    // watcher is down or stuck, and she may stand again. Her ding waits for
+    // the next look
+    constexpr uint32_t kClaimLapseSeconds = 120;
+
+    inline auto claimLapsed(const uint32_t secondsHeld) -> bool
+    {
+        return secondsHeld >= kClaimLapseSeconds;
+    }
+
+    // A body's census row as far as her target goes (cardian_census): her
+    // first job's, her second's, and the later jobs her support windows had
+    // her take up, "job:target" pairs joined by commas (census.py take_up)
+    struct CareerTargets
+    {
+        uint8_t          job     = 0;
+        uint8_t          target  = 0;
+        uint8_t          job2    = 0;
+        uint8_t          target2 = 0;
+        std::string_view later;
+    };
+
+    // Her target on the job she plays (census.py target_on): her cap while a
+    // player is near. A job not of her career reads her first job's
+    inline auto targetOn(const CareerTargets& row, const uint8_t playing) -> uint8_t
+    {
+        if (playing == row.job || playing == 0)
+        {
+            return row.target;
+        }
+        if (row.job2 != 0 && playing == row.job2)
+        {
+            return row.target2;
+        }
+        std::string_view rest = row.later;
+        while (!rest.empty())
+        {
+            const auto comma = rest.find(',');
+            const auto piece = rest.substr(0, comma);
+            rest             = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+            const auto colon = piece.find(':');
+            if (colon == std::string_view::npos)
+            {
+                continue;
+            }
+            unsigned job    = 0;
+            unsigned target = 0;
+            const auto jobText    = piece.substr(0, colon);
+            const auto targetText = piece.substr(colon + 1);
+            if (std::from_chars(jobText.data(), jobText.data() + jobText.size(), job).ec != std::errc{} ||
+                std::from_chars(targetText.data(), targetText.data() + targetText.size(), target).ec != std::errc{})
+            {
+                continue;
+            }
+            if (job == playing)
+            {
+                return static_cast<uint8_t>(std::min(target, 255u));
+            }
+        }
+        return row.target;
     }
 } // namespace cardian::redress
