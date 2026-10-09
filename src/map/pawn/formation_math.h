@@ -335,6 +335,93 @@ namespace cardian::formation
         }
         return result;
     }
+
+    // ------------------------------------------------------------------
+    // The compass follow (the user's play test, 2026-10-08): a follower
+    // holds a bearing from the player in the world's directions, as the
+    // fight ring holds a mob's melee, not a seat turning with his facing --
+    // so his turning on the spot moves nobody, and an about-turn makes nobody
+    // cross. While he walks, her bearing blends toward her ring seat
+    // (measured from his heading) at her own pace; one he walks at holds her
+    // ground, steps off his line if he would run into her, and falls in once
+    // he has passed. Standing, she stays where she is within a band round
+    // him, else walks straight in or out along her bearing.
+    // ------------------------------------------------------------------
+
+    // The shortest signed turn from bearing b to bearing a, in (-pi, pi]
+    inline auto turnFrom(const float b, const float a) -> float
+    {
+        constexpr float kPi = std::numbers::pi_v<float>;
+        float           d   = std::fmod(a - b, 2.0f * kPi);
+        if (d <= -kPi)
+        {
+            d += 2.0f * kPi;
+        }
+        if (d > kPi)
+        {
+            d -= 2.0f * kPi;
+        }
+        return d;
+    }
+
+    struct CompassRules
+    {
+        float blend     = 0.785f; // radians a second her bearing drifts toward her seat while he walks
+        float bandNear  = 2.5f;   // standing: nearer than this, she steps out along her bearing
+        float bandFar   = 6.0f;   // standing: farther than this, she walks in along it
+        float aheadHalf = 1.047f; // radians either side of his heading where she is ahead of him, and lets him pass
+        float lineClear = 1.5f;   // yalms off his line she keeps while he passes her
+        float passRange = 5.0f;   // ... once he is this near
+        float holdRange = 10.0f;  // she lets him pass only this near; farther ahead, she comes to him
+        float settle    = 0.5f;   // yalms past the line she steps to -- inside the band, beyond his line -- so a walk that arrives a little short still lands
+    };
+
+    struct CompassStep
+    {
+        float x     = 0.0f; // where she goes
+        float z     = 0.0f;
+        bool  holds = false; // she stands where she is: settled in the band, or letting him pass
+    };
+
+    // One step of her follow. (px, pz): the player; (hx, hz): his heading, a
+    // unit vector; (sx, sz): her; (seatX, seatZ): her seat's direction from
+    // him, a unit vector (the ring's seat turned by his heading); seatDist:
+    // how far out it is; dt: seconds since her last step
+    inline auto compassStep(const float px, const float pz, const float hx, const float hz, const bool moving, const float sx, const float sz,
+                            const float seatX, const float seatZ, const float seatDist, const float dt, const CompassRules& r) -> CompassStep
+    {
+        const float dx          = sx - px;
+        const float dz          = sz - pz;
+        const float d           = std::hypot(dx, dz);
+        const float seatBearing = std::atan2(seatZ, seatX);
+        const float bearing     = d > 0.01f ? std::atan2(dz, dx) : seatBearing;
+        if (!moving)
+        {
+            if (d >= r.bandNear && d <= r.bandFar)
+            {
+                return { sx, sz, true };
+            }
+            const float to = std::clamp(d, r.bandNear + r.settle, r.bandFar - r.settle);
+            return { px + to * std::cos(bearing), pz + to * std::sin(bearing), false };
+        }
+        // Ahead of him and near: she holds her ground and lets him pass, a
+        // step off his line if he would run into her
+        if (d > 0.01f && d < r.holdRange && std::abs(turnFrom(std::atan2(hz, hx), bearing)) < r.aheadHalf)
+        {
+            const float lateral = -dx * hz + dz * hx; // yalms off his line, positive to the side (-hz, hx)
+            if (d < r.passRange && std::abs(lateral) < r.lineClear)
+            {
+                const float push = (r.lineClear + r.settle - std::abs(lateral)) * (lateral >= 0.0f ? 1.0f : -1.0f);
+                return { sx - push * hz, sz + push * hx, false };
+            }
+            return { sx, sz, true };
+        }
+        // Behind or beside him: her bearing drifts toward her seat, at her pace
+        const float most = r.blend * std::max(dt, 0.0f);
+        const float b    = bearing + std::clamp(turnFrom(bearing, seatBearing), -most, most);
+        return { px + seatDist * std::cos(b), pz + seatDist * std::sin(b), false };
+    }
+
     // ------------------------------------------------------------------
     // Aggro avoidance geometry (M3.87). Every detection type is a circle of
     // that type's range plus a buffer; a cardian moves on the server with

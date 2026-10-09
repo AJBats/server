@@ -1746,8 +1746,10 @@ namespace pawn::linkapi
                 return;
             }
             // from the bottom of her line as the addon shows it up: the orders, her
-            // rest, then her enchanted item, last
-            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() || PController->CancelEnchant() ? CL_S_OK : CL_S_NOTHING_QUEUED);
+            // rest, the spell of his she is still casting, then her enchanted item, last
+            reply.finish(ask, PController->CancelQueuedOrder() || PController->CallOffRest() || PController->CancelRunningCast() || PController->CancelEnchant()
+                                  ? CL_S_OK
+                                  : CL_S_NOTHING_QUEUED);
         }
 
         // The command window: one action now, on a target index in her zone (0 =
