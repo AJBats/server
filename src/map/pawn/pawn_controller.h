@@ -338,6 +338,9 @@ public:
 
     // Mid-action: casting, readying a weapon skill or ability, or shooting
     auto Acting() const -> bool;
+    // Kneeling to rest: she keeps the way she knelt, with no turn to the
+    // player and no glance at him
+    auto Kneeling() const -> bool;
     // The pacer: the server's own test for a new action -- she can act (the
     // player controller's canAct: 2.5 s after her last spell finished) and
     // her state lets go (an ability once it has landed, not its animation;

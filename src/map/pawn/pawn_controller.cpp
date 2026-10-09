@@ -1495,6 +1495,11 @@ auto CPawnController::Acting() const -> bool
            POwner->PAI->IsCurrentState<CAbilityState>() || POwner->PAI->IsCurrentState<CRangeState>() || POwner->PAI->IsCurrentState<CItemState>();
 }
 
+auto CPawnController::Kneeling() const -> bool
+{
+    return POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+}
+
 auto CPawnController::ReadyToAct() -> bool
 {
     return pawn::readyToAct(static_cast<CCharEntity*>(POwner));
@@ -4168,8 +4173,9 @@ void CPawnController::IdleLook(const CCharEntity* PPlayer)
         return;
     }
 
-    // The player now and then, for a few seconds; ahead otherwise
-    const bool inSight = PPlayer != nullptr && PPlayer->loc.zone == POwner->loc.zone &&
+    // The player now and then, for a few seconds; ahead otherwise, and
+    // always ahead while she kneels
+    const bool inSight = !Kneeling() && PPlayer != nullptr && PPlayer->loc.zone == POwner->loc.zone &&
                          distance(POwner->loc.p, PPlayer->loc.p) < settings::get<float>("pawn.GLANCE_RANGE");
     const bool glances = cardian::glance::step(m_Glances, secondsOf(m_Tick), inSight, glanceTiming(), roll);
     HeadLook(glances ? PPlayer : nullptr);
@@ -4314,7 +4320,7 @@ void CPawnController::FaceBattleOnArrival(const std::optional<position_t>& battl
     // short of it by a cast or a kneel -- she turns round to the battle,
     // once; nothing turns her again until she moves
     const bool there = planned.kind != Intent::Kind::Path || distance(POwner->loc.p, planned.point) <= planned.tolerance;
-    if (!m_SpotWalk || !there || Acting())
+    if (!m_SpotWalk || !there || Acting() || Kneeling())
     {
         return;
     }
