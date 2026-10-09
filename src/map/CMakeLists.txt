@@ -92,6 +92,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rescue_watch.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/conquest_sim.cpp
 )
 
 set(MAP_CORE_SOURCES

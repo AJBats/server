@@ -3344,6 +3344,47 @@ namespace pawn::world
         return lines;
     }
 
+    auto authoredSlots() -> std::vector<AuthoredSlot>
+    {
+        struct TableRead
+        {
+            std::filesystem::file_time_type written{};
+            std::vector<AuthoredSlot>       slots;
+        };
+        static std::unordered_map<uint16, TableRead> reads;
+
+        std::vector<AuthoredSlot> out;
+        zoneutils::ForEachZone([&](CZone* PZone)
+        {
+            const auto      zoneId = static_cast<uint16>(PZone->GetID());
+            const auto      path   = slotPath(PZone);
+            std::error_code ec;
+            const auto      written = std::filesystem::last_write_time(path, ec);
+            if (ec)
+            {
+                return; // no table
+            }
+            auto& cached = reads[zoneId];
+            if (cached.written != written)
+            {
+                cached.written = written;
+                if (const auto file = parseSlots(path); file.has_value())
+                {
+                    cached.slots.clear();
+                    for (const auto& spec : file->slots)
+                    {
+                        cached.slots.push_back(AuthoredSlot{ .zone  = zoneId,
+                                                             .low   = static_cast<uint8>(std::clamp(spec.band[0], 1, 255)),
+                                                             .high  = static_cast<uint8>(std::clamp(spec.band[1], 1, 255)),
+                                                             .seats = spec.seats() });
+                    }
+                }
+            }
+            out.insert(out.end(), cached.slots.begin(), cached.slots.end());
+        });
+        return out;
+    }
+
     auto fill(CZone* PZone) -> uint32
     {
         if (!isEnabled() || PZone == nullptr)
