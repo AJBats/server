@@ -108,6 +108,14 @@ xi.settings.pawn =
     -- affinity with her player per this much exp she gains in the party
     AFFINITY_EXP = 500,
 
+    -- The linkpearl's lock: one of the world's adventurers is a recruit for
+    -- the player's linkshell -- listed on its page, asked to join, and
+    -- willing to take his linkpearl in a trade -- only once her affinity
+    -- with him is at least PEARL_AFFINITY and the two have completed at
+    -- least PEARL_MISSIONS story missions together (cardian_party_memory)
+    PEARL_AFFINITY = 6,
+    PEARL_MISSIONS = 2,
+
     -- The mission trace in the player's chat log: every mission added,
     -- completed or moved along and what each cardian's contract made of
     -- it (the map log carries it always, as '[mission]')

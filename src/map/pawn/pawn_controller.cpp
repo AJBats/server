@@ -6730,7 +6730,9 @@ void CPawnController::WalkTick()
 // reach is dropped -- unless she is all but on it (the walker refuses a
 // route with no forward step), which is arrival too. The order lives as
 // long as its giver looks through her: his camera off her, his addon
-// gone, his logout all end it here. Called from the logic tick and, every
+// gone, his logout all end it here; an errand's walk (pawn::kErrandWalker)
+// is nobody's to look away from, and lasts until the errand clears it.
+// Called from the logic tick and, every
 // kSteerPeriodMs, from the steer tick.
 void CPawnController::WalkOrderTick(const timer::time_point now)
 {
@@ -6739,8 +6741,9 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
     {
         return;
     }
-    const auto* PBy = zoneutils::GetChar(pawn::walkOrderedBy(POwner->id));
-    if (!m_ManeuverComposed && (PBy == nullptr || cardian::view::origin(PBy) != POwner))
+    const uint32 by  = pawn::walkOrderedBy(POwner->id);
+    const auto*  PBy = by != pawn::kErrandWalker ? zoneutils::GetChar(by) : nullptr;
+    if (!m_ManeuverComposed && by != pawn::kErrandWalker && (PBy == nullptr || cardian::view::origin(PBy) != POwner))
     {
         ShowInfoFmt("pawn: walk {}: the player looks away, order ends", POwner->getName());
         pawn::clearWalkOrder(POwner->id);

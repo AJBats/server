@@ -129,7 +129,16 @@ namespace cardian::link
     X(AH_SHELF, cl_ah_shelf)     \
     X(AH_HISTORY, cl_ah_history) \
     X(AH_BID, cl_ah_bid)         \
-    X(JOB_CHANGE, cl_job_change)
+    X(JOB_CHANGE, cl_job_change) \
+    X(CLUB, cl_club)             \
+    X(CLUB_MEMBER, cl_club_member) \
+    X(CLUB_INVITE, cl_club_invite) \
+    X(PEARL, cl_pearl)           \
+    X(ERRANDS, cl_errands)       \
+    X(ERRAND_GOAL, cl_errand_goal) \
+    X(SEND_ERRAND, cl_send_errand) \
+    X(CALL_BACK, cl_call_back)   \
+    X(CLUB_RECRUIT, cl_club_recruit)
 
     template <typename T>
     struct MessageType;

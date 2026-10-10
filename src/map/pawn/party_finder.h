@@ -137,6 +137,7 @@ namespace pawn::finder
         uint8                  rank     = 1;
         bool                   standing = false;
         uint32                 affinity = 0;
+        uint32                 missions = 0;   // story missions completed with him
         std::array<uint16, 16> items{};        // what she wears, by equipment slot
         bool                   known   = false; // the numbers below are hers
         uint32                 hp      = 0;
@@ -200,13 +201,18 @@ namespace pawn::finder
 
     // An open contract: a wild cardian held for her player. Out of the
     // world's pool and every shout while it lasts; she signs in with him
-    // and waits to be invited, and his invite needs no shout
+    // and waits to be invited, and his invite needs no shout. His
+    // linkshell's pearl on one of the world's holds her the same way for as
+    // long as she wears it, between contracts too (club.h): `pearl` says it
+    // is the pearl alone that holds her, with no contract of hers, and the
+    // goal is then experience, what his invite asks of her
     struct OpenContract
     {
         uint32      charid       = 0;
         uint32      playerCharID = 0;
         std::string name;
         Goal        goal;
+        bool        pearl = false;
     };
     auto openContractOf(uint32 charid) -> std::optional<OpenContract>;
     auto openContracts(uint32 playerCharID) -> std::vector<OpenContract>; // his, by name

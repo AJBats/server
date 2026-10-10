@@ -28,9 +28,10 @@
 // The cardian API on the Cardian Link: the companion addon's messages about
 // cardians, answered from the pawn module. The transport (cardian_link.h)
 // carries them; this file turns each into the game's own calls and the game's
-// state back into messages. Two of them are answered from Lua, where the
-// game's own tables are: the party finder's goals and the conquest exchange
-// (modules/cardian/lua/finder_goals.lua and conquest_exchange.lua).
+// state back into messages. Some are answered from Lua, where the game's own
+// tables are: the party finder's goals, the conquest exchange and the
+// linkshell's errand table (modules/cardian/lua/finder_goals.lua,
+// conquest_exchange.lua and errand_quests.lua).
 
 namespace pawn::linkapi
 {

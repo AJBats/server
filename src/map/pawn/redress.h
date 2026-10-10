@@ -23,6 +23,7 @@
 
 #include "common/cbasetypes.h"
 
+class CCharEntity;
 class CZone;
 
 // A wild cardian re-dressed at the auction house. When the player stands by
@@ -61,4 +62,11 @@ namespace pawn::redress
 
     // The census is writing her rows: she does not stand until it is done
     auto isClaimed(uint32 charid) -> bool;
+    // The gear-up errand at a counter (errands.h): she asks the census for
+    // her level as she would at the counter beside him -- when she has risen
+    // past the level she was last dressed for, and nothing is on its way.
+    // True when a request is on its way now (hers just asked, or one before)
+    auto askFor(const CCharEntity* PPawn) -> bool;
+    // Nothing of hers waits on the census: never asked, or her answer put on her
+    auto settled(uint32 charid) -> bool;
 } // namespace pawn::redress

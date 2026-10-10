@@ -410,7 +410,7 @@ namespace
         uint8  target = 1; // what her ladder says she should be now on the job she plays (D6): her cap while the player is online
         uint32 seed   = 0;
         bool   finished = false; // the census tool wrote her kit, skills, gear and spells (cardian_pawns.kitted)
-        bool   claimed  = false; // recruited, or held for a player by an open contract: no world seat deals her
+        bool   claimed  = false; // recruited, or held for a player by an open contract or his pearl: no world seat deals her
     };
 
     // Her target on the job she plays, from her census row's career columns
@@ -427,13 +427,19 @@ namespace
                                           rset->get<uint8>("mjob"));
     }
 
+    // A body of the census (c) wearing a linkshell item -- a pearl or a sack
+    // in a link slot -- is held by its shell's holder (club.h), as a body
+    // held by a contract is: no world seat deals her
+    constexpr const char* kWearsPearl = "EXISTS (SELECT 1 FROM char_equip le JOIN char_inventory li ON li.charid = le.charid AND li.location = le.containerid "
+                                        "AND li.slot = le.slotid WHERE le.charid = c.charid AND le.equipslotid IN (16, 17) AND li.itemId IN (514, 515))";
+
     // Her census row. `target` is her target on the job she plays (careerTarget)
     auto readCensus(const std::string& name) -> std::optional<CensusRow>
     {
         const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, "
                                            "c.target, c.job2, c.target2, c.later_jobs, COALESCE(s.mjob, 0) AS mjob, c.seed, "
                                            "COALESCE(p.kitted, 0) AS finished, (c.recruited <> 0 OR EXISTS (SELECT 1 FROM cardian_party_memory h "
-                                           "WHERE h.pawn_charid = c.charid AND h.contract <> '')) AS claimed "
+                                           "WHERE h.pawn_charid = c.charid AND h.contract <> '') OR " + std::string(kWearsPearl) + ") AS claimed "
                                            "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid "
                                            "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.name = ?",
                                            name);
@@ -1925,7 +1931,7 @@ namespace
         return pawn::players::online(cohort / 100) || (cohort2 != 0 && pawn::players::online(cohort2 / 100));
     }
 
-    // The census's dealable names -- minted, unrecruited, not held by a contract -- read once and shared
+    // The census's dealable names -- minted, unrecruited, not held by a contract or a pearl -- read once and shared
     // by every slot that deals in the next few seconds, so a fill costs one query however many slots it
     // deals. A name minted since shows up at the next read; one placed since is known to the bodies and
     // the queue; one recruited or contracted since is refused at placement (placePresence), and its
@@ -1960,7 +1966,8 @@ namespace
         if (const auto rset = db::preparedStmt("SELECT c.name, c.anchor, c.cohort, c.cohort2, c.seed, s.mjob AS job, s.mlvl FROM cardian_census c "
                                                "JOIN char_stats s ON s.charid = c.charid "
                                                "WHERE c.recruited = 0 AND c.anchor <> 'bank' " // a census cut before the name bank was retired keeps its unused names as 'bank' rows
-                                               "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '')");
+                                               "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '') "
+                                               "AND NOT " + std::string(kWearsPearl)); // held for a player by his linkshell's pearl (club.h)
             rset)
         {
             while (rset->next())
@@ -3060,6 +3067,79 @@ namespace pawn::world
                                      : "she stands next at her seat");
     }
 
+    bool keepFor(const uint32 charid, const uint32 playerCharID)
+    {
+        forgetDealable();
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || playerCharID == 0)
+        {
+            return false;
+        }
+        Body& body    = it->second;
+        body.holder   = playerCharID;
+        body.homeward = false;
+        body.toPool   = false;
+        body.downSince.reset();
+        body.returnAt.reset();
+        if (const auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && PPawn->loc.zone != nullptr)
+        {
+            body.leftAt = Spot{ static_cast<uint16>(PPawn->getZone()), PPawn->loc.p };
+        }
+        ShowInfoFmt("world: {} is kept for {} where she stands", body.name, pawn::seats::nameOf(playerCharID));
+        return true;
+    }
+
+    auto holderOf(const uint32 charid) -> uint32
+    {
+        const auto it = bodies.find(charid);
+        return it != bodies.end() ? it->second.holder : 0;
+    }
+
+    bool bringTo(const uint32 charid, const uint32 playerCharID, const uint16 zone, const position_t& at)
+    {
+        forgetDealable();
+        if (playerCharID == 0)
+        {
+            return false;
+        }
+        auto it = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            const auto name = pawn::seats::nameOf(charid);
+            const auto row  = readCensus(name);
+            if (!row.has_value() || row->charid != charid)
+            {
+                return false;
+            }
+            Body& body         = bodies[charid];
+            body.charid        = charid;
+            body.name          = name;
+            body.zone          = zone;
+            body.point         = at;
+            body.target        = row->target;
+            body.seed          = row->seed;
+            charidByName[name] = charid;
+            it                 = bodies.find(charid);
+            ShowInfoFmt("world: {} holds no seat: a seatless body comes to {}", name, pawn::seats::nameOf(playerCharID));
+        }
+        if (it->second.present)
+        {
+            return false;
+        }
+        Body& body    = it->second;
+        body.holder   = playerCharID;
+        body.homeward = false;
+        body.toPool   = false;
+        body.downSince.reset();
+        body.returnAt.reset();
+        body.leftAt = Spot{ zone, at };
+        pawn::seats::offerWorld(charid, zone);
+        pawn::seats::touch(charid);
+        ShowInfoFmt("world: {} comes to {} out of sight, to stand at ({:.1f}, {:.1f}, {:.1f}) in zone {}", body.name, pawn::seats::nameOf(playerCharID),
+                    at.x, at.y, at.z, zone);
+        return true;
+    }
+
     auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
     {
         if (!isEnabled() || PZone == nullptr || count == 0)
@@ -3278,6 +3358,34 @@ namespace pawn::world
             }
         }
         return order;
+    }
+
+    auto loiterSpots(CZone* PZone) -> std::vector<Loiter>
+    {
+        std::vector<Loiter> out;
+        if (PZone == nullptr)
+        {
+            return out;
+        }
+        const auto& table   = loadSlots(PZone);
+        const auto* navMesh = PZone->navMesh();
+        for (const auto& spec : table.specs)
+        {
+            if (spec.activity != "stand" || !spec.clustered())
+            {
+                continue;
+            }
+            position_t at(spec.at[0], spec.at[1], spec.at[2], 0, 0);
+            if (navMesh != nullptr)
+            {
+                if (const std::optional<position_t> snapped = navMesh->findClosestValidPoint(at); snapped.has_value())
+                {
+                    at = *snapped;
+                }
+            }
+            out.push_back(Loiter{ at, spec.spread });
+        }
+        return out;
     }
 
     auto laneOf(const uint32 charid) -> float

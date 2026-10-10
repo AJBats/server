@@ -5,6 +5,8 @@
 // map does with a ding the census has planned.
 #pragma once
 
+#include "club_math.h"
+
 #include <algorithm>
 #include <charconv>
 #include <cstdint>
@@ -170,12 +172,14 @@ namespace cardian::redress
     // rule for her character tables (census.py fill_bags): Mog Wardrobe 1
     // holds the census's gear alone, so a piece there the plan has no place
     // for goes, worn or not; her inventory keeps her gil, what the plan wants
-    // (her food, and her pieces where her gear lives in it) and the reraise
-    // and warp items she buys for herself (`kept`: items::usableOnWild), and
-    // nothing else -- loot, old food, a piece an older plan gave her
+    // (her food, and her pieces where her gear lives in it), the reraise
+    // and warp items she buys for herself (`kept`: items::usableOnWild) and
+    // a linkshell's items, the pearl she wears for her linkshell above all
+    // (club.h; worn, a re-dress never takes it off), and nothing else --
+    // loot, old food, a piece an older plan gave her
     inline auto keepsItem(const uint16_t itemId, const bool inInventory, const bool gil, const bool kept, const std::set<uint16_t>& wanted) -> bool
     {
-        return wanted.contains(itemId) || (inInventory && (gil || kept));
+        return wanted.contains(itemId) || (inInventory && (gil || kept || cardian::club::isLinkshellItem(itemId)));
     }
 
     // The census's answer is put on her only at the level it was planned

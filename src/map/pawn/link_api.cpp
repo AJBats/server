@@ -24,6 +24,7 @@
 #include "action_keys.h"
 #include "auction.h"
 #include "cardian_link.h"
+#include "club.h"
 #include "engage_math.h"
 #include "food.h"
 #include "gambit_wire.h"
@@ -405,11 +406,21 @@ namespace pawn::linkapi
             reply.finish(ask, status);
         }
 
-        // A stack from his inventory to hers, or back
+        // A stack from his inventory to hers, or back. A linkpearl given her
+        // she puts on herself, as one traded from the Linkshell page (club.h)
         void give(CCharEntity* PChar, const cl_give& ask, Reply& reply)
         {
             changeItems(
-                PChar, ask, reply, std::nullopt, [&](CCharEntity* PPawn, bool&) { return pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty); },
+                PChar, ask, reply, std::nullopt,
+                [&](CCharEntity* PPawn, bool&)
+                {
+                    const auto status = pawn::items::giveToPawn(PChar, PPawn, ask.slot, ask.qty);
+                    if (status == CL_S_OK)
+                    {
+                        pawn::club::wearGiven(PPawn);
+                    }
+                    return status;
+                },
                 [&](CCharEntity* PPawn) { reply.more(inventoryOf(PPawn, LOC_INVENTORY)); });
         }
 
@@ -921,12 +932,14 @@ namespace pawn::linkapi
         }
 
         // The Lua libraries some answers come from (modules/cardian/lua), by
-        // their table under xi.cardian: a library that did not load, or a
+        // their table under xi.cardian -- the finder's goals, the conquest
+        // exchange, the linkshell's errand table (errands.h): a library that did not load, or a
         // function that failed, says so in the map log once and answers
         // CL_S_REFUSED
-        constexpr std::array<std::pair<const char*, const char*>, 2> kLibraries{ {
+        constexpr std::array<std::pair<const char*, const char*>, 3> kLibraries{ {
             { "finder", "./modules/cardian/lua/finder_goals.lua" },
             { "exchange", "./modules/cardian/lua/conquest_exchange.lua" },
+            { "errands", "./modules/cardian/lua/errand_quests.lua" },
         } };
 
         // The Debug screen's spawn and despawn (pawn::spawn, pawn::despawn)
@@ -1082,6 +1095,7 @@ namespace pawn::linkapi
             answer.standing = p->standing ? 1 : 0;
             answer.known    = p->known ? 1 : 0;
             answer.affinity = p->affinity;
+            answer.missions = static_cast<uint16_t>(std::min<uint32>(p->missions, UINT16_MAX));
             answer.hp       = clamp16(p->hp);
             answer.maxHp    = clamp16(p->maxhp);
             answer.mp       = clamp16(p->mp);
