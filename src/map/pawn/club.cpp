@@ -30,6 +30,7 @@
 #include "pawn_items.h"
 #include "pawn_travel.h"
 #include "players.h"
+#include "professions.h"
 #include "seats.h"
 #include "world.h"
 
@@ -356,7 +357,7 @@ namespace pawn::club
             if (errand.has_value())
             {
                 row.errand       = static_cast<uint8_t>(errand->kind);
-                row.errandState  = static_cast<uint8_t>(errand->state);
+                row.errandState  = static_cast<uint8_t>(errand->state == cardian::errand::State::Back ? cardian::errand::State::Returning : errand->state);
                 row.secondsLeft  = errand->secondsLeft;
                 row.secondsTotal = errand->secondsTotal;
                 row.missionsDone = errand->missionsDone;
@@ -377,11 +378,26 @@ namespace pawn::club
             }
 
             using cardian::errand::Kind;
+            if (kind == Member::Alt || kind == Member::Owned)
+            {
+                row.can2 |= CL_CAN2_PROFESSIONS;
+                if (!errand.has_value() && pawn::professions::hasProfession(charid, CL_PROF_FISHING))
+                {
+                    row.can2 |= CL_CAN2_SEND_FISHING;
+                }
+                if (pawn::professions::hasReport(charid))
+                {
+                    row.can2 |= CL_CAN2_REPORT;
+                }
+            }
             if (kind != Member::Recruit)
             {
                 if (errand.has_value())
                 {
-                    row.can |= CL_CAN_CALL_BACK;
+                    if (errand->state == cardian::errand::State::Going || errand->state == cardian::errand::State::Away)
+                    {
+                        row.can |= CL_CAN_CALL_BACK;
+                    }
                 }
                 else
                 {

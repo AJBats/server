@@ -33,7 +33,8 @@
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 
-#include "charswap.h" // CARDIAN
+#include "charswap.h"     // CARDIAN
+#include "pawn/errands.h" // CARDIAN
 #include "ipc_client.h"
 #include "latent_effect_container.h"
 #include "map_session.h"
@@ -329,6 +330,8 @@ int32 MapNetworking::recv_parse(uint8* buff, size_t* buffsize, MapSession* PSess
                 return -1;
             }
 
+            // CARDIAN: logging in as a member away on an errand ends it first
+            pawn::errands::endForLogin(packetCharID);
             // CARDIAN: a staged swap may hand over a live entity instead of loading one
             PSession->PChar = charswap::adopt(packetCharID);
             if (PSession->PChar == nullptr)

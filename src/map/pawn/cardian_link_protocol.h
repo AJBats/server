@@ -34,7 +34,20 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 55: the linkshell page's ventures,
+// compatible, the user, 2026-09-14). 59: a venture's spots by zone, nearest
+// first -- VENTURE_SPOT's hops, its length 1 or 2 hours; 58: the profession
+// set filled by hand --
+// PROFESSION's rank, PROFESSION_TOOLS' slot and CL_TOOLS_SLOT, CL_TOOL_GEAR,
+// PROFESSION_SLOT; 57: the fishing set and its kit chosen
+// on the venture -- PROFESSION's set, PROFESSION_TOOLS' which, zone and area,
+// PROFESSION_TOOL's kind and gilHour, VENTURE_BAITS' rod, SEND_ERRAND's rod,
+// VENTURE_PAID's quantity and both purses, VENTURE_NEWS, START_PROFESSION
+// without a tool; 56: professions and the fishing
+// venture -- PROFESSIONS, PROFESSION, PROFESSION_TOOLS, PROFESSION_TOOL,
+// START_PROFESSION, VENTURE_SPOTS, VENTURE_SPOT, VENTURE_BAITS, VENTURE_BAIT,
+// VENTURE_PAID, VENTURE_REPORT and VENTURE_ITEM, SEND_ERRAND's zone, area,
+// bait and hours, CLUB_MEMBER's can2, CL_ERRAND_RETURNING and the
+// profession outcomes; 55: the linkshell page's ventures,
 // recruits and the game's own trade -- CLUB_MEMBER's levels (her career),
 // secondsTotal, missionsDone, missions, affinity and missionsTogether, and
 // CL_CLUB_RECRUIT in CL_CLUB_GUEST's place; CLUB_RECRUIT and NOT_QUALIFIED;
@@ -107,7 +120,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 55 };
+enum { CL_PROTOCOL = 59 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -299,6 +312,11 @@ enum
     CL_S_NOT_STANDING      = 0x01E9, // she has no body in the world now
     CL_S_NO_PEARL_TO_GIVE  = 0x01EA, // he holds no Linkpearl of his shell to trade: he makes one from his linkshell first
     CL_S_NOT_QUALIFIED     = 0x01EB, // not a recruit for his linkshell: her affinity with him or their missions together short of the pearl's lock
+    CL_S_NO_PROFESSION     = 0x01EC, // she has not taken up that profession
+    CL_S_ONE_PROFESSION    = 0x01ED, // she has a profession already: one each, for now
+    CL_S_NOT_SAFE          = 0x01EE, // the spot is not safe at her level, or is no spot of hers
+    CL_S_KEEPER_DOWN       = 0x01EF, // the venture keeper (the census watcher, xi_census) is not running: a money venture cannot go
+    CL_S_NOT_A_TOOL        = 0x01F0, // not a tool that profession takes
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -2034,6 +2052,21 @@ enum
     CL_T_SEND_ERRAND  = 0x0A07,
     CL_T_CALL_BACK    = 0x0A08,
     CL_T_CLUB_RECRUIT = 0x0A09,
+
+    CL_T_PROFESSIONS      = 0x0A0A,
+    CL_T_PROFESSION       = 0x0A0B,
+    CL_T_PROFESSION_TOOLS = 0x0A0C,
+    CL_T_PROFESSION_TOOL  = 0x0A0D,
+    CL_T_START_PROFESSION = 0x0A0E,
+    CL_T_VENTURE_SPOTS    = 0x0A0F,
+    CL_T_VENTURE_SPOT     = 0x0A10,
+    CL_T_VENTURE_BAITS    = 0x0A11,
+    CL_T_VENTURE_BAIT     = 0x0A12,
+    CL_T_VENTURE_PAID     = 0x0A13,
+    CL_T_VENTURE_REPORT   = 0x0A14,
+    CL_T_VENTURE_ITEM     = 0x0A15,
+    CL_T_VENTURE_NEWS     = 0x0A16,
+    CL_T_PROFESSION_SLOT  = 0x0A17,
 };
 
 // What she is to him
@@ -2061,15 +2094,16 @@ enum
     CL_ERRAND_GEAR  = 1, // gear up: the auction house's re-dress, and her scrolls from her nation's guard
     CL_ERRAND_QUEST = 2, // a quest he has done, from his log
     CL_ERRAND_LEVEL = 3, // a level on one of her jobs: reserved, not offered yet
-    CL_ERRAND_MONEY = 4, // earning money: reserved, not offered yet
+    CL_ERRAND_MONEY = 4, // earning money at a profession of hers: a fishing venture, for now
     CL_ERRAND_RANK  = 5, // her nation's missions, to a rank he picks: at most his own
 };
 
 // Where an errand stands
 enum
 {
-    CL_ERRAND_GOING = 1, // she is walking off: to a zone line, the auction house, the guard, and back
-    CL_ERRAND_AWAY  = 2, // she is gone from the world, the errand under way
+    CL_ERRAND_GOING     = 1, // she is walking off: to a zone line, the auction house, the guard, and back
+    CL_ERRAND_AWAY      = 2, // she is gone from the world, the errand under way
+    CL_ERRAND_RETURNING = 3, // a money venture over: her takings are being counted, and she is back once they are
 };
 
 // What the page may do with a member now, a bit each: the server's word, so
@@ -2083,6 +2117,14 @@ enum
     CL_CAN_GIVE_PEARL  = 0x10, // she takes a pearl of his shell from him by the game's own trade (once he holds one and stands by her)
     CL_CAN_BREAK_PEARL = 0x20,
     CL_CAN_SEND_RANK   = 0x40, // her rank is below the catch-up's cap (rankCap)
+};
+
+// More of what the page may do with a member now: CLUB_MEMBER's can2
+enum
+{
+    CL_CAN2_PROFESSIONS  = 0x01, // she may take up professions: an alt, or a cardian he owns
+    CL_CAN2_REPORT       = 0x02, // she has a venture report: a money venture under way, its leftovers selling, or its last one done
+    CL_CAN2_SEND_FISHING = 0x04, // her fishing is set up: a fishing venture is hers to be sent on
 };
 
 // One member of his club, or one of the world's who qualifies to be his
@@ -2118,7 +2160,8 @@ typedef struct cl_club_member
     uint8_t   missions;           // a rank catch-up: the missions it takes her through
     uint16_t  affinity;           // one of the world's: her affinity with him (cardian_party_memory)
     uint16_t  missionsTogether;   // one of the world's: the story missions the two have completed together
-    uint8_t   spare2[2];
+    uint8_t   can2;               // CL_CAN2_*
+    uint8_t   spare2;
 } cl_club_member;
 
 // His club: each member a CLUB_MEMBER (CL_F_MORE), then each recruit, then
@@ -2184,19 +2227,27 @@ typedef struct cl_errands
 } cl_errands;
 
 // Send her on an errand. CL_ERRAND_QUEST names its quest (goal, log, id);
-// CL_ERRAND_RANK the rank; level and job are CL_ERRAND_LEVEL's, reserved.
-// Answered with the outcome
+// CL_ERRAND_RANK the rank; CL_ERRAND_MONEY the profession, the spot (zone and
+// area, one of VENTURE_SPOTS'), the rod (one of PROFESSION_TOOLS'), the bait
+// (one of VENTURE_BAITS') and the hours; level and job are CL_ERRAND_LEVEL's,
+// reserved. Answered with the outcome
 typedef struct cl_send_errand
 {
     cl_header h;
-    uint32_t  cardian; // charid
-    uint8_t   errand;  // CL_ERRAND_*
-    uint8_t   goal;    // CL_ERRAND_QUEST: CL_GOAL_QUEST
+    uint32_t  cardian;    // charid
+    uint8_t   errand;     // CL_ERRAND_*
+    uint8_t   goal;       // CL_ERRAND_QUEST: CL_GOAL_QUEST
     uint8_t   log;
     uint8_t   level;
     uint16_t  id;
     uint8_t   job;
-    uint8_t   rank;    // CL_ERRAND_RANK: the rank to reach
+    uint8_t   rank;       // CL_ERRAND_RANK: the rank to reach
+    uint8_t   profession; // CL_ERRAND_MONEY: CL_PROF_*
+    uint8_t   hours;      // CL_ERRAND_MONEY: 1 or 2, hours of the game clock (Earth hours, held by a pause)
+    uint16_t  zone;       // CL_ERRAND_MONEY: the spot's zone
+    uint16_t  area;       // CL_ERRAND_MONEY: the spot's fishing area in the zone
+    uint16_t  bait;       // CL_ERRAND_MONEY: the bait's item id
+    uint16_t  rod;        // CL_ERRAND_MONEY: the rod's item id: one she holds, or a starter rod bought as it starts
 } cl_send_errand;
 
 // Her errand ended early: what she has earned kept, and she comes back
@@ -2219,5 +2270,268 @@ typedef struct cl_club_recruit
     uint32_t  decideMs; // answered: how long she thinks it over
     char      line[96]; // answered: her words, for people
 } cl_club_recruit;
+
+// -- Professions and the money venture (RESEARCH §11.13, "Professions") --------------
+// A profession is taken up on an alt or a cardian he owns from her Linkshell
+// submenu; its ventures go under Assign Venture (SEND_ERRAND,
+// CL_ERRAND_MONEY), each with its kit -- fishing: a rod and a bait, each one
+// she holds or one bought at the auction house as the venture starts -- and
+// the kit sent becomes her profession's set. While one is under way the
+// census watcher (xi_census) works it on the game clock, and pays from her
+// purse, then from his (VENTURE_PAID).
+
+// The professions, by the game's own skills
+enum
+{
+    CL_PROF_NONE         = 0,
+    CL_PROF_FISHING      = 1,
+    CL_PROF_MINING       = 2,
+    CL_PROF_LOGGING      = 3,
+    CL_PROF_HARVESTING   = 4,
+    CL_PROF_EXCAVATION   = 5,
+    CL_PROF_WOODWORKING  = 6,
+    CL_PROF_SMITHING     = 7,
+    CL_PROF_GOLDSMITHING = 8,
+    CL_PROF_CLOTHCRAFT   = 9,
+    CL_PROF_LEATHERCRAFT = 10,
+    CL_PROF_BONECRAFT    = 11,
+    CL_PROF_ALCHEMY      = 12,
+    CL_PROF_COOKING      = 13,
+};
+
+// Where a profession stands with her
+enum
+{
+    CL_PROF_TAKEN  = 1, // she has taken it up: its ventures are offered
+    CL_PROF_OPEN   = 2, // she may take it up now
+    CL_PROF_LOCKED = 3, // not now: not built yet, or she has a profession already
+};
+
+// One profession, an answer to PROFESSIONS: every profession in CL_PROF_
+// order, each with where it stands with her, and for one taken up its set:
+// what she wears on its ventures, by the game's equipment slots (SLOT_MAIN 0
+// to SLOT_BACK 15) -- fishing's rod in the ranged slot (2), its bait in the
+// ammo slot (3) -- each slot an item id, 0 for empty. The set is what she was
+// last sent with
+typedef struct cl_profession
+{
+    cl_header h;
+    uint8_t   profession; // CL_PROF_*
+    uint8_t   state;      // CL_PROF_TAKEN, _OPEN or _LOCKED
+    uint16_t  skill;      // her skill in it, in tenths of a level (the game's char_skills value)
+    uint8_t   rank;       // her guild rank in it, the game's craft rank: 0 Amateur, 1 Recruit, 2 Initiate, 3 Novice ...
+    uint8_t   spare[3];
+    uint16_t  set[16];    // taken: her set, by equipment slot
+} cl_profession;
+
+// Her professions: each a PROFESSION (CL_F_MORE), then this
+typedef struct cl_professions
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   count;   // answered
+    uint8_t   spare[3];
+} cl_professions;
+
+// What a profession's kit is
+enum
+{
+    CL_TOOL_ROD  = 1, // a fishing rod
+    CL_TOOL_BAIT = 2, // a bait or a lure
+    CL_TOOL_GEAR = 3, // a piece of the profession's gear: fishing's, one with the game's fishing skill bonus
+};
+
+// Which kit PROFESSION_TOOLS asks for
+enum
+{
+    CL_TOOLS_VENTURE = 1, // the rods a venture at a spot may take: the starter rods, bought at the auction house, and every rod she holds
+    CL_TOOLS_SLOT    = 3, // what she holds that may go in one slot of her set: rods for the ranged slot, baits for the ammo slot, the profession's gear for the rest
+};
+
+// A piece of a profession's kit, an answer to PROFESSION_TOOLS
+typedef struct cl_profession_tool
+{
+    cl_header h;
+    uint16_t  item;    // the item id
+    uint8_t   owned;   // how many she holds, to 255; 0: bought at the auction house as the venture starts
+    uint8_t   kind;    // CL_TOOL_*
+    uint32_t  price;   // the auction house's price for one, by the price book; 0 unknown
+    uint32_t  gilHour; // CL_TOOLS_VENTURE: estimated gil an hour at the spot with this rod and its best bait; 0 unknown
+} cl_profession_tool;
+
+// A profession's kit: each a PROFESSION_TOOL (CL_F_MORE), then this.
+// CL_TOOLS_VENTURE names its spot (zone and area); the starter rods first,
+// cheapest first, then those she holds
+typedef struct cl_profession_tools
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint8_t   profession; // CL_PROF_*
+    uint8_t   which;      // CL_TOOLS_*
+    uint8_t   count;      // answered
+    uint8_t   slot;       // CL_TOOLS_SLOT: the equipment slot
+    uint16_t  zone;       // CL_TOOLS_VENTURE: the spot
+    uint16_t  area;
+} cl_profession_tools;
+
+// One slot of her profession's set filled by hand, with something she holds
+// that may go there (one of PROFESSION_TOOLS' CL_TOOLS_SLOT), or emptied
+// (item 0). Answered with the outcome
+typedef struct cl_profession_slot
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint8_t   profession; // CL_PROF_*
+    uint8_t   slot;       // the equipment slot, SLOT_MAIN 0 to SLOT_BACK 15
+    uint16_t  item;       // the item id; 0 empties the slot
+} cl_profession_slot;
+
+// Take up a profession: its set starts empty, and fills from the kit she is
+// sent with. Answered with the outcome
+typedef struct cl_start_profession
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint8_t   profession; // CL_PROF_*
+    uint8_t   spare[3];
+} cl_start_profession;
+
+// A spot she may work at, an answer to VENTURE_SPOTS: fishing, one a zone she
+// can walk to from where she stands at her level -- through zones whose usual
+// monster is at her level or below (tools/economy/sites.py walkable; a
+// stand-in until cardians travel, OPEN_ISSUES #431) -- the zone's best water
+// hers to pick
+typedef struct cl_venture_spot
+{
+    cl_header h;
+    uint16_t  zone;
+    uint16_t  area;     // the fishing area she works, in the zone
+    uint8_t   level;    // unused: 0
+    uint8_t   hops;     // zone lines from where she stands
+    uint16_t  spare2;
+    uint32_t  gilHour;  // estimated: gil an hour of the game clock, at her skill, with her rod and the best bait
+    char      name[32]; // the area's own name, for people ("South Landing", "Whole Zone")
+} cl_venture_spot;
+
+// The spots of a profession of hers, a zone each, nearest first: each a
+// VENTURE_SPOT (CL_F_MORE), then this. None yet while the watcher first works
+// them out
+typedef struct cl_venture_spots
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint8_t   profession; // CL_PROF_*
+    uint8_t   count;      // answered
+    uint8_t   spare[2];
+} cl_venture_spots;
+
+// A bait for a spot with a rod, an answer to VENTURE_BAITS
+typedef struct cl_venture_bait
+{
+    cl_header h;
+    uint16_t  item;    // the bait's item id
+    uint8_t   owned;   // how many she holds, to 255; 0: bought at the auction house as the venture starts
+    uint8_t   spare;
+    uint32_t  price;   // the auction house's price for one, by the price book
+    uint32_t  gilHour; // estimated: gil an hour at this spot with this rod and this bait
+} cl_venture_bait;
+
+// The baits for one spot of hers with one rod: each a VENTURE_BAIT
+// (CL_F_MORE), best first, then this
+typedef struct cl_venture_baits
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint16_t  zone;
+    uint16_t  area;
+    uint16_t  rod;     // the rod chosen for the venture
+    uint8_t   count;   // answered
+    uint8_t   spare;
+} cl_venture_baits;
+
+// Pushed, one way: on a venture she bought a piece of her kit at the auction
+// house, her gil short, his paying the rest. The addon words the line for
+// his log, both purses' shares in it
+typedef struct cl_venture_paid
+{
+    cl_header h;
+    uint32_t  cardian;    // charid
+    uint16_t  item;       // what she bought
+    uint8_t   profession; // CL_PROF_*: whose venture
+    uint8_t   spare;
+    uint16_t  quantity;   // how many
+    uint16_t  spare2;
+    uint32_t  herGil;     // what her gil paid
+    uint32_t  hisGil;     // what his gil paid
+} cl_venture_paid;
+
+// What a venture's news is
+enum
+{
+    CL_NEWS_ROD_BROKE = 1, // her rod broke and she held no spare: the venture is cut short
+    CL_NEWS_ROD_SPARE = 2, // her rod broke, and she goes on with a spare of it
+};
+
+// Pushed, one way: news from her venture for his log
+typedef struct cl_venture_news
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   news;    // CL_NEWS_*
+    uint8_t   spare;
+    uint16_t  item;    // the rod
+} cl_venture_news;
+
+// Where a thing of her trip is
+enum
+{
+    CL_VENTURE_LISTED  = 1, // on the auction house, her listing
+    CL_VENTURE_CARRIED = 2, // in her bags, to be sold
+    CL_VENTURE_SOLD    = 3, // sold: what it fetched
+};
+
+// Where her venture stands
+enum
+{
+    CL_VENTURE_NONE    = 0, // no venture to report
+    CL_VENTURE_WORKING = 1, // away, working
+    CL_VENTURE_SELLING = 2, // back: her leftovers selling
+    CL_VENTURE_DONE    = 3, // back, all sold
+};
+
+// A thing of her trip, an answer to VENTURE_REPORT: what she caught, by item
+// and where it is now
+typedef struct cl_venture_item
+{
+    cl_header h;
+    uint16_t  item;     // the item id
+    uint16_t  quantity;
+    uint8_t   where;    // CL_VENTURE_LISTED, _CARRIED or _SOLD
+    uint8_t   spare;
+    uint16_t  spare2;
+    uint32_t  value;    // sold: what it fetched; else what it should fetch, estimated
+} cl_venture_item;
+
+// Her last money venture: each thing of it a VENTURE_ITEM (CL_F_MORE), then
+// this with the trip's sums
+typedef struct cl_venture_report
+{
+    cl_header h;
+    uint32_t  cardian;     // charid
+    uint8_t   profession;  // answered: CL_PROF_*
+    uint8_t   phase;       // answered: CL_VENTURE_*
+    uint8_t   waiting;     // answered: 1 while she waits for gil, hers and his both short
+    uint8_t   count;       // answered: things sent
+    uint16_t  zone;        // answered: where she works or worked
+    uint16_t  area;
+    uint32_t  minutes;     // answered: minutes worked, on the game clock
+    uint32_t  catches;     // answered: what she caught or found
+    uint16_t  skillFrom;   // answered: her skill at the start, in tenths of a level
+    uint16_t  skillTo;     // answered: her skill now
+    int32_t   gilEarned;   // answered: her purse now less at the start: sales, less what she spent
+    uint32_t  unsoldValue; // answered: what she still has to sell should fetch, estimated
+    uint32_t  hisGil;      // answered: what she has taken from his gil on this trip
+    char      areaName[32]; // answered: for people
+} cl_venture_report;
 
 #pragma pack(pop)

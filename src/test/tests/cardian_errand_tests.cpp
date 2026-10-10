@@ -23,6 +23,7 @@ TEST_CASE("Errands: the enums are the Link's numbers", "[cardian][errands]")
     STATIC_REQUIRE(static_cast<uint8_t>(Kind::Rank) == CL_ERRAND_RANK);
     STATIC_REQUIRE(static_cast<uint8_t>(State::Going) == CL_ERRAND_GOING);
     STATIC_REQUIRE(static_cast<uint8_t>(State::Away) == CL_ERRAND_AWAY);
+    STATIC_REQUIRE(static_cast<uint8_t>(State::Returning) == CL_ERRAND_RETURNING);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Alt) == CL_CLUB_ALT);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Owned) == CL_CLUB_OWNED);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Wild) == CL_CLUB_WILD);
@@ -40,7 +41,29 @@ TEST_CASE("Errands: the row's words read back as the kind and the state", "[card
     CHECK(stateOf("going") == State::Going);
     CHECK(stateOf("away") == State::Away);
     CHECK(stateOf(stateName(State::Away)) == State::Away);
+    CHECK(stateOf("returning") == State::Returning);
+    CHECK(stateOf("back") == State::Back);
+    for (const auto state : { State::Going, State::Away, State::Returning, State::Back })
+    {
+        CHECK(stateOf(stateName(state)) == state);
+    }
     CHECK_FALSE(stateOf("done").has_value());
+}
+
+TEST_CASE("Errands: a money venture is out of the world until the keeper has counted it, for 1 or 2 hours", "[cardian][errands]")
+{
+    CHECK_FALSE(gone(State::Going));
+    CHECK(gone(State::Away));
+    CHECK(gone(State::Returning));
+    CHECK(gone(State::Back));
+    for (const uint32_t hours : { 1u, 2u })
+    {
+        CHECK(ventureHours(hours));
+    }
+    for (const uint32_t hours : { 0u, 3u, 4u, 24u })
+    {
+        CHECK_FALSE(ventureHours(hours));
+    }
 }
 
 TEST_CASE("Errands: the menu offers what is built and hers", "[cardian][errands]")
@@ -60,15 +83,16 @@ TEST_CASE("Errands: the menu offers what is built and hers", "[cardian][errands]
     // a recruit is no member: nothing until she wears his pearl
     CHECK_FALSE(offered(Kind::Quest, Member::Recruit));
     CHECK_FALSE(offered(Kind::Gear, Member::Recruit));
-    // level and money keep their shape and are never offered until built
+    // level keeps its shape and is never offered until built
     CHECK_FALSE(built(Kind::Level));
-    CHECK_FALSE(built(Kind::Money));
     CHECK_FALSE(offered(Kind::Level, Member::Alt));
-    CHECK_FALSE(offered(Kind::Money, Member::Alt));
-    // whom they will be for: money never for the world's
     CHECK(forMember(Kind::Level, Member::Wild));
-    CHECK(forMember(Kind::Money, Member::Owned));
-    CHECK_FALSE(forMember(Kind::Money, Member::Wild));
+    // money, a venture at a profession: his alts and owned cardians, never the world's
+    CHECK(built(Kind::Money));
+    CHECK(offered(Kind::Money, Member::Alt));
+    CHECK(offered(Kind::Money, Member::Owned));
+    CHECK_FALSE(offered(Kind::Money, Member::Wild));
+    CHECK_FALSE(offered(Kind::Money, Member::Recruit));
 }
 
 TEST_CASE("Errands: the clock starts as she leaves the world, not as she is sent", "[cardian][errands]")

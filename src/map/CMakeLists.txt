@@ -100,6 +100,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errand_math.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club_math.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club_trade.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/professions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/professions.h
 )
 
 set(MAP_CORE_SOURCES

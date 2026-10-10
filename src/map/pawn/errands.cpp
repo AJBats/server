@@ -28,6 +28,7 @@
 #include "link_api.h"
 #include "pawn.h"
 #include "pawn_travel.h"
+#include "professions.h"
 #include "redress.h"
 #include "seats.h"
 #include "supplies.h"
@@ -48,6 +49,7 @@
 #include "utils/zoneutils.h"
 #include "zone.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
@@ -106,6 +108,9 @@ namespace pawn::errands
         };
 
         std::unordered_map<uint32, Record> records;
+        // The errands that ended as her player logged in as her, by kind, to
+        // tell him once she is in (endForLogin, zonedIn)
+        std::unordered_map<uint32, Kind> endedAtLogin;
         timer::time_point                  tickedAt{};
 
         auto gameNow() -> uint32
@@ -671,6 +676,19 @@ namespace pawn::errands
             {
                 line = fmt::format("{} is back from the auction house.", name);
             }
+            else if (r.errand.kind == Kind::Money)
+            {
+                // where she left, saved again before the ladder stands her by it
+                if (r.args.contains("placed") && r.args.at("placed") == "1" && r.fromZone != 0)
+                {
+                    db::preparedStmt("UPDATE chars SET pos_zone = ?, pos_x = ?, pos_y = ?, pos_z = ?, pos_rot = ? WHERE charid = ?", r.fromZone, r.from.x, r.from.y,
+                                     r.from.z, r.from.rotation, charid);
+                }
+                const bool recalled = r.args.contains("recalled") && r.args.at("recalled") == "1";
+                line                = r.errand.state == State::Going ? fmt::format("{} is recalled.", name)
+                                      : recalled                     ? fmt::format("{} is recalled from fishing.", name)
+                                                                     : fmt::format("{} is back from fishing.", name);
+            }
             else
             {
                 line = fmt::format("{} is recalled.", name);
@@ -684,6 +702,83 @@ namespace pawn::errands
             if (say)
             {
                 tell(r.playerCharID, line);
+            }
+        }
+
+        // ---- a money venture --------------------------------------------------
+
+        // Her saved place moved to the spot she works, so search finds her
+        // there while she is faded. Where she left is the row's: read from
+        // her saved place first when she left with no body
+        void place(Record& r)
+        {
+            if (r.fromZone == 0)
+            {
+                if (const auto rset = db::preparedStmt("SELECT pos_zone, pos_x, pos_y, pos_z, pos_rot FROM chars WHERE charid = ?", r.charid); rset && rset->next())
+                {
+                    r.fromZone = rset->get<uint16>("pos_zone");
+                    r.from     = position_t(rset->get<float>("pos_x"), rset->get<float>("pos_y"), rset->get<float>("pos_z"), 0, rset->get<uint8>("pos_rot"));
+                }
+            }
+            const auto profession = static_cast<uint8>(cardian::errand::numberArg(r.args, "profession").value_or(0));
+            const auto zone       = static_cast<uint16>(cardian::errand::numberArg(r.args, "zone").value_or(0));
+            const auto area       = static_cast<uint16>(cardian::errand::numberArg(r.args, "area").value_or(0));
+            const auto spot       = pawn::professions::spotOf(r.charid, profession, zone, area);
+            const auto at         = spot.has_value() ? spot->centre : position_t{};
+            save(r); // where she left, kept before her saved place moves
+            db::preparedStmt("UPDATE chars SET pos_zone = ?, pos_x = ?, pos_y = ?, pos_z = ? WHERE charid = ?", zone, at.x, at.y, at.z, r.charid);
+            r.args["placed"] = "1";
+            save(r);
+            pawn::seats::touch(r.charid);
+            ShowInfoFmt("errands: {} is faded at {} (zone {}, area {}) while she works", nameOf(r.charid), r.title, zone, area);
+        }
+
+        // The venture over, recalled or due: the keeper counts her takings and
+        // marks the row back, and she stands only then. Only a row still away
+        // is moved: the keeper may have ended the trip itself (a rod broken)
+        void returning(Record& r, const bool recalled)
+        {
+            if (recalled)
+            {
+                r.args["recalled"] = "1";
+            }
+            const auto moved = db::preparedStmt("UPDATE cardian_errands SET state = 'returning', args = ? WHERE charid = ? AND state = 'away'",
+                                                cardian::errand::argsText(r.args), r.charid);
+            r.errand.state = moved && moved->rowsAffected() == 1 ? State::Returning : State::Back;
+            ShowInfoFmt("errands: {}'s venture at {} is over{}; {}", nameOf(r.charid), r.title, recalled ? " (called back)" : "",
+                        r.errand.state == State::Returning ? "the venture keeper counts her takings" : "the keeper ended it already");
+        }
+
+        // The keeper has counted her takings: its word is the row's state
+        auto markedBack(const uint32 charid) -> bool
+        {
+            const auto rset = db::preparedStmt("SELECT state FROM cardian_errands WHERE charid = ?", charid);
+            return rset && rset->next() && rset->get<std::string>("state") == "back";
+        }
+
+        void tickMoney(Record& r, const uint32 clock)
+        {
+            const auto charid = r.charid;
+            if (r.errand.state == State::Away)
+            {
+                if ((!r.args.contains("placed") || r.args.at("placed") != "1") && pawn::findPawn(charid) == nullptr)
+                {
+                    place(r);
+                }
+                if (cardian::errand::due(r.errand, clock))
+                {
+                    returning(r, false);
+                }
+                else if (markedBack(charid)) // the keeper ended the trip itself: a rod broke
+                {
+                    r.errand.state = State::Back;
+                }
+                return;
+            }
+            if (r.errand.state == State::Back || markedBack(charid))
+            {
+                r.errand.state = State::Back;
+                finish(charid, cardian::errand::Kept::Whole, false);
             }
         }
 
@@ -858,7 +953,7 @@ namespace pawn::errands
         // party and walks to the zone line toward her route's first other
         // zone (where she stands when none leads there); with no body she is
         // away at once
-        auto setOut(CCharEntity* PPlayer, Record r) -> uint16
+        auto setOut(CCharEntity* PPlayer, Record r, const std::string& setsOut = {}) -> uint16
         {
             const auto title  = r.title;
             const auto charid = r.charid;
@@ -889,7 +984,7 @@ namespace pawn::errands
             {
                 leaveWorld(kept, "as she was, with no body,");
             }
-            tell(PPlayer->id, fmt::format("{} sets out: {}.", nameOf(charid), title));
+            tell(PPlayer->id, setsOut.empty() ? fmt::format("{} sets out: {}.", nameOf(charid), title) : setsOut);
             return CL_S_OK;
         }
 
@@ -982,6 +1077,63 @@ namespace pawn::errands
             return setOut(PPlayer, std::move(r));
         }
 
+        // A money venture at a profession of hers (professions.h): fishing, at
+        // a spot of the venture keeper's, with a bait of the catalog, for 1 or
+        // 2 hours of the game clock. Out of his party and to her zone line
+        // toward the spot, as a quest; the keeper works it once she is away
+        auto sendMoney(CCharEntity* PPlayer, Record r, const cl_send_errand& ask) -> uint16
+        {
+            if (ask.profession != CL_PROF_FISHING)
+            {
+                return CL_S_NOT_OFFERED;
+            }
+            if (!pawn::professions::hasProfession(r.charid, ask.profession))
+            {
+                return CL_S_NO_PROFESSION;
+            }
+            if (!cardian::errand::ventureHours(ask.hours))
+            {
+                return CL_S_NOT_OFFERED;
+            }
+            const auto spot = pawn::professions::spotOf(r.charid, ask.profession, ask.zone, ask.area);
+            if (!spot.has_value())
+            {
+                return CL_S_NOT_SAFE;
+            }
+            if (!pawn::professions::isBait(ask.bait) || !pawn::professions::rodTakeable(r.charid, ask.rod))
+            {
+                return CL_S_NOT_A_TOOL;
+            }
+            if (!pawn::professions::keeperAlive())
+            {
+                return CL_S_KEEPER_DOWN;
+            }
+            if (const auto* PPawn = pawn::findPawn(r.charid); PPawn != nullptr && PPawn->isDead())
+            {
+                return CL_S_KNOCKED_OUT;
+            }
+            r.args["profession"] = std::to_string(ask.profession);
+            r.args["zone"]       = std::to_string(ask.zone);
+            r.args["area"]       = std::to_string(ask.area);
+            r.args["bait"]       = std::to_string(ask.bait);
+            r.args["rod"]        = std::to_string(ask.rod);
+            r.args["hours"]      = std::to_string(ask.hours);
+            r.args["minutes"]    = std::to_string(static_cast<uint32>(ask.hours) * 60);
+            r.args["placed"]     = "0";
+            r.args["route"]      = cardian::errand::routeText({ ask.zone });
+            r.errand.route       = { ask.zone };
+            std::string zone; // her zone's name, as the game names it
+            if (auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(ask.zone)); PZone != nullptr)
+            {
+                zone = PZone->getName();
+                std::ranges::replace(zone, '_', ' ');
+            }
+            r.title         = zone;
+            const auto line = fmt::format("{} sets out to fish in {}.", nameOf(r.charid), zone);
+            pawn::professions::saveSet(r.charid, ask.profession, ask.rod, ask.bait);
+            return setOut(PPlayer, std::move(r), line);
+        }
+
         void sendErrand(CCharEntity* PChar, const cl_send_errand& ask, Reply& reply)
         {
             const auto member = pawn::club::memberOf(PChar, ask.cardian);
@@ -1008,7 +1160,10 @@ namespace pawn::errands
             r.errand.kind    = kind;
             r.errand.state   = State::Going;
             r.errand.started = gameNow();
-            reply.finish(ask, kind == Kind::Gear ? sendGear(PChar, std::move(r)) : kind == Kind::Rank ? sendRank(PChar, std::move(r), ask) : sendQuest(PChar, std::move(r), ask));
+            reply.finish(ask, kind == Kind::Gear    ? sendGear(PChar, std::move(r))
+                              : kind == Kind::Rank  ? sendRank(PChar, std::move(r), ask)
+                              : kind == Kind::Money ? sendMoney(PChar, std::move(r), ask)
+                                                    : sendQuest(PChar, std::move(r), ask));
         }
 
         void callBack(CCharEntity* PChar, const cl_call_back& ask, Reply& reply)
@@ -1024,8 +1179,17 @@ namespace pawn::errands
                 reply.finish(ask, CL_S_NO_ERRAND);
                 return;
             }
-            const auto kept = cardian::errand::keptOnCallBack(it->second.errand, gameNow());
             ShowInfoFmt("errands: {} calls {} back", PChar->getName(), nameOf(ask.cardian));
+            if (it->second.errand.kind == Kind::Money && cardian::errand::gone(it->second.errand.state))
+            {
+                if (it->second.errand.state == State::Away)
+                {
+                    returning(it->second, true);
+                }
+                reply.finish(ask, CL_S_OK);
+                return;
+            }
+            const auto kept = cardian::errand::keptOnCallBack(it->second.errand, gameNow());
             finish(ask.cardian, kept, true);
             reply.finish(ask, CL_S_OK);
         }
@@ -1110,7 +1274,7 @@ namespace pawn::errands
                          "`kind` varchar(16) NOT NULL, "
                          "`args` varchar(255) NOT NULL DEFAULT '', "
                          "`title` varchar(64) NOT NULL DEFAULT '', "
-                         "`state` enum('going','away') NOT NULL DEFAULT 'going', "
+                         "`state` enum('going','away','returning','back') NOT NULL DEFAULT 'going', "
                          "`started` int(10) unsigned NOT NULL DEFAULT '0', "
                          "`left_at` int(10) unsigned NOT NULL DEFAULT '0', "
                          "`ends` int(10) unsigned NOT NULL DEFAULT '0', "
@@ -1122,6 +1286,8 @@ namespace pawn::errands
                          "`from_z` float NOT NULL DEFAULT '0', "
                          "`from_rot` tinyint(3) unsigned NOT NULL DEFAULT '0', "
                          "PRIMARY KEY (`charid`), KEY `accid` (`accid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        // an older table: a money venture's returning and back
+        db::preparedStmt("ALTER TABLE `cardian_errands` MODIFY `state` enum('going','away','returning','back') NOT NULL DEFAULT 'going'");
     }
 
     // Every row into memory. A walk off was the map's and ended with it: an
@@ -1216,6 +1382,11 @@ namespace pawn::errands
                 continue;
             }
             auto& r = it->second;
+            if (r.errand.kind == Kind::Money && cardian::errand::gone(r.errand.state))
+            {
+                tickMoney(r, clock);
+                continue;
+            }
             if (r.errand.state == State::Away)
             {
                 if (cardian::errand::due(r.errand, clock))
@@ -1264,7 +1435,7 @@ namespace pawn::errands
     auto isAway(const uint32 charid) -> bool
     {
         const auto it = records.find(charid);
-        return it != records.end() && it->second.errand.state == State::Away;
+        return it != records.end() && cardian::errand::gone(it->second.errand.state);
     }
 
     auto viewOf(const uint32 charid) -> std::optional<View>
@@ -1281,7 +1452,7 @@ namespace pawn::errands
                            .state        = e.state,
                            .secondsLeft  = cardian::errand::secondsLeft(e, clock),
                            .secondsTotal = e.state == State::Away && e.ends > e.left ? e.ends - e.left : 0,
-                           .zone         = e.state == State::Away ? cardian::errand::legAt(e, clock) : static_cast<uint16>(0),
+                           .zone         = cardian::errand::gone(e.state) ? cardian::errand::legAt(e, clock) : static_cast<uint16>(0),
                            .title        = r.title };
         if (e.kind == Kind::Rank)
         {
@@ -1356,5 +1527,36 @@ namespace pawn::errands
         }
         ShowInfoFmt("errands: {}'s errand ends: {}", nameOf(charid), why);
         finish(charid, cardian::errand::Kept::Nothing, true, false);
+    }
+
+    void endForLogin(const uint32 charid)
+    {
+        const auto it = records.find(charid);
+        if (it == records.end())
+        {
+            return;
+        }
+        const auto kind = it->second.errand.kind;
+        const auto kept = kind == Kind::Money ? cardian::errand::Kept::Nothing : cardian::errand::keptOnCallBack(it->second.errand, gameNow());
+        ShowInfoFmt("errands: {} is logged in as, and her errand ends", nameOf(charid));
+        endedAtLogin[charid] = kind;
+        finish(charid, kept, true, false);
+    }
+
+    void zonedIn(CCharEntity* PChar)
+    {
+        if (PChar == nullptr || pawn::isPawn(PChar) || PChar->PSession == nullptr)
+        {
+            return;
+        }
+        const auto it = endedAtLogin.find(PChar->id);
+        if (it == endedAtLogin.end())
+        {
+            return;
+        }
+        const auto line = it->second == Kind::Money ? fmt::format("{}'s fishing venture is cancelled.", PChar->getName())
+                                                    : fmt::format("{}'s venture is cancelled.", PChar->getName());
+        endedAtLogin.erase(it);
+        PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PChar, MESSAGE_SYSTEM_3, line);
     }
 } // namespace pawn::errands
