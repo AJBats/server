@@ -41,7 +41,8 @@
 // experience under Signet, and one Vana'diel hour of it becomes what the game's own
 // conquest messages carry: influence for each nation in each region, Signet kills and
 // deaths for the beastmen. Each seat's nation is drawn every hour from the dials'
-// shares for its region, never from the census. Everything here is pure, so the sum
+// shares for its region, never from the census, and the period's campaigns -- the thumb
+// round Jeuno and each nation's focus -- move those shares. Everything here is pure, so the sum
 // is tested with seats and dials in and influence out; the module that reads the
 // tables and sends is conquest_sim.cpp.
 //
@@ -115,10 +116,41 @@ namespace cardian::conquest::files
         std::string region;
         double      times = 1.0;
     };
+    // The thumb round Jeuno: one nation favoured in these regions for `tallies` tallies, then
+    // the next, the nation holding the fewest regions
+    struct Thumb
+    {
+        std::vector<std::string> regions;
+        double                   pull    = 1.0;
+        uint32                   tallies = 4;
+    };
+    // Each nation's focus: `share` of the open outer regions, drawn anew every tally, each
+    // pulled `pull` times, give or take `jitter` of it, growing from nothing at the tally to
+    // its full pull at `ramp` of the period
+    struct Focus
+    {
+        double share  = 0.0;
+        double pull   = 1.0;
+        double jitter = 0.0;
+        double ramp   = 0.0;
+    };
+    // A crowd for the far regions, whose slot tables seat few or none: `seats` in each once
+    // it is open, at the world's top level, on top of what its tables seat
+    struct FarCrowd
+    {
+        std::vector<std::string> regions;
+        uint32                   seats = 0;
+    };
     struct DialFile
     {
         std::map<std::string, double>                   strength;           // by nation; a nation not named is 1
         double                                          home_bonus      = 2.0;
+        double                                          next_pull       = 1.0;  // in the regions next to a nation's home
+        std::map<std::string, std::vector<std::string>> next_regions;           // by nation: the regions next to its home
+        std::map<std::string, uint32>                   outer;                  // the regions past them, by the world level that opens each
+        Thumb                                           thumb;
+        Focus                                           focus;
+        FarCrowd                                        far_crowd;
         double                                          neighbour_bonus = 0.10; // for each bordering region the nation holds
         double                                          neighbour_cap   = 0.30;
         std::vector<Hand>                               hands;
@@ -140,7 +172,20 @@ namespace cardian::conquest
 struct Dials
 {
     std::array<double, kNations>                       strength{ 1.0, 1.0, 1.0 };
-    double                                             homeBonus      = 2.0;
+    double                                             homeBonus = 2.0;
+    double                                             nextPull  = 1.0;
+    std::array<std::array<bool, kRegions>, kNations>   nextRegion{}; // the regions next to each nation's home
+    std::vector<uint8>                                 outer;        // the regions past them, in region order
+    std::array<uint8, kRegions>                        opensAt{};    // an outer region's: the world level the nations start fighting there at
+    std::array<bool, kRegions>                         thumbRegion{};
+    double                                             thumbPull    = 1.0;
+    uint32                                             thumbTallies = 4;
+    double                                             focusShare   = 0.0; // of the open outer regions, each nation's picks a tally
+    double                                             focusPull    = 1.0;
+    double                                             focusJitter  = 0.0;
+    double                                             focusRamp    = 0.0;
+    std::vector<uint8>                                 farRegions;
+    uint32                                             farSeats       = 0;
     double                                             neighbourBonus = 0.10;
     double                                             neighbourCap   = 0.30;
     std::array<std::array<double, kRegions>, kNations> hand{};     // 1 where no hand is set
@@ -181,6 +226,10 @@ inline void addBorder(Dials& dials, const uint8 a, const uint8 b)
         dials.borders[b].push_back(a);
     }
 }
+
+// The most seats the far crowd may set in a region: each is a draw every hour, and the file
+// is edited on a running server
+constexpr uint32 kMostFarSeats = 1000;
 
 // The file's text as the file's shape; nullopt, and why, when it does not parse
 inline auto parseDials(const std::string_view text, std::string& error) -> std::optional<files::DialFile>
@@ -231,12 +280,96 @@ inline auto toDials(const files::DialFile& file, std::string& error) -> std::opt
         }
         dials.pressure[*region] = value;
     }
-    if (file.pressure < 0.0 || file.home_bonus < 0.0 || file.neighbour_bonus < 0.0 || file.neighbour_cap < 0.0 || file.kills_per_seat_hour < 0.0 ||
-        file.cp_rate < 0.0 || file.influence_share < 0.0 || file.tide.amplitude < 0.0 || file.tide.period_hours < 0.0)
+    // A list of region names as regions; nullopt, and why, at the first that is not one
+    const auto regionsOf = [&error](const std::string_view key, const std::vector<std::string>& names) -> std::optional<std::vector<uint8>>
     {
-        error = "a rate, a bonus or the tide is below 0";
+        std::vector<uint8> out;
+        for (const auto& name : names)
+        {
+            const auto region = regionByName(name);
+            if (!region.has_value())
+            {
+                error = std::string(key) + ": '" + name + "' is not a region";
+                return std::nullopt;
+            }
+            if (std::ranges::find(out, *region) == out.end())
+            {
+                out.push_back(*region);
+            }
+        }
+        return out;
+    };
+    for (const auto& [name, regions] : file.next_regions)
+    {
+        const auto nation = nationByName(name);
+        if (!nation.has_value())
+        {
+            error = "next_regions: '" + name + "' is not a nation";
+            return std::nullopt;
+        }
+        const auto listed = regionsOf("next_regions", regions);
+        if (!listed.has_value())
+        {
+            return std::nullopt;
+        }
+        for (const auto region : *listed)
+        {
+            dials.nextRegion[*nation][region] = true;
+        }
+    }
+    for (const auto& [name, level] : file.outer)
+    {
+        const auto region = regionByName(name);
+        if (!region.has_value() || level > 255)
+        {
+            error = "outer: '" + name + "' is not a region opening at a level from 0 to 255";
+            return std::nullopt;
+        }
+        dials.outer.push_back(*region);
+        dials.opensAt[*region] = static_cast<uint8>(level);
+    }
+    std::ranges::sort(dials.outer);
+    const auto thumbed = regionsOf("thumb", file.thumb.regions);
+    if (!thumbed.has_value())
+    {
         return std::nullopt;
     }
+    const auto farCrowds = regionsOf("far_crowd", file.far_crowd.regions);
+    if (!farCrowds.has_value())
+    {
+        return std::nullopt;
+    }
+    if (file.pressure < 0.0 || file.home_bonus < 0.0 || file.next_pull < 0.0 || file.thumb.pull < 0.0 || file.neighbour_bonus < 0.0 ||
+        file.neighbour_cap < 0.0 || file.kills_per_seat_hour < 0.0 || file.cp_rate < 0.0 || file.influence_share < 0.0 || file.tide.amplitude < 0.0 ||
+        file.tide.period_hours < 0.0)
+    {
+        error = "a rate, a bonus, a pull or the tide is below 0";
+        return std::nullopt;
+    }
+    if (file.focus.share < 0.0 || file.focus.share > 1.0 || file.focus.pull <= 0.0 || file.focus.jitter < 0.0 || file.focus.jitter >= 1.0 ||
+        file.focus.ramp < 0.0 || file.focus.ramp > 1.0)
+    {
+        error = "focus: share and ramp run from 0 to 1, jitter from 0 to under 1, and the pull is above 0";
+        return std::nullopt;
+    }
+    if (file.thumb.tallies == 0 || file.far_crowd.seats > kMostFarSeats)
+    {
+        error = "thumb: tallies at least 1; far_crowd: seats at most " + std::to_string(kMostFarSeats);
+        return std::nullopt;
+    }
+    dials.nextPull     = file.next_pull;
+    dials.thumbPull    = file.thumb.pull;
+    dials.thumbTallies = file.thumb.tallies;
+    for (const auto region : *thumbed)
+    {
+        dials.thumbRegion[region] = true;
+    }
+    dials.focusShare       = file.focus.share;
+    dials.focusPull        = file.focus.pull;
+    dials.focusJitter      = file.focus.jitter;
+    dials.focusRamp        = file.focus.ramp;
+    dials.farRegions       = *farCrowds;
+    dials.farSeats         = file.far_crowd.seats;
     dials.homeBonus        = file.home_bonus;
     dials.neighbourBonus   = file.neighbour_bonus;
     dials.neighbourCap     = file.neighbour_cap;
@@ -346,6 +479,31 @@ inline auto crowd(const std::vector<Slot>& slots, const uint8 top) -> std::vecto
     return seats;
 }
 
+// Whether the nations fight over a region with the world at `top`: an outer region once the
+// world's top level reaches the level that opens it; any other -- a home region and the region
+// next to one -- always, from a fresh server's first day. A region not open has no crowd, so
+// it is the beastmen's
+inline auto inPlay(const Dials& dials, const uint8 region, const uint8 top) -> bool
+{
+    return std::ranges::find(dials.outer, region) == dials.outer.end() || top >= dials.opensAt[region];
+}
+
+// The crowd the nations field with the world at `top`: the seats of the slots it has reached
+// in the regions open, and in each far region open, the far crowd at the world's top level
+inline auto fieldCrowd(const std::vector<Slot>& slots, const Dials& dials, const uint8 top) -> std::vector<Seat>
+{
+    auto seats = crowd(slots, top);
+    std::erase_if(seats, [&](const Seat& seat) { return !inPlay(dials, seat.region, top); });
+    for (const auto region : dials.farRegions)
+    {
+        if (inPlay(dials, region, top))
+        {
+            seats.insert(seats.end(), dials.farSeats, Seat{ .region = region, .level = top });
+        }
+    }
+    return seats;
+}
+
 // The experience one member of an even party at this level earns in a real hour, from the
 // dials' table: straight lines between its rows, its first and last rows beyond them
 inline auto expPerHour(const Dials& dials, const uint8 level) -> double
@@ -372,16 +530,167 @@ inline auto expPerHour(const Dials& dials, const uint8 level) -> double
     return table.back().second;
 }
 
-// A nation's weight in a region (§20.7): its strength, drifted by the tide; the home bonus
-// in its own home region; the neighbour bonus for each bordering region it holds (as of the
-// last tally), to the cap; and any hand on the scale
+// A period's campaigns (§20.12): the nation the thumb favours round Jeuno, each nation's
+// focus -- the full pull of each outer region it picked this tally, 0 where it picked none
+// -- and how far the focus has grown into the period, from 0 at the tally to 1. The
+// default is no campaign at all
+struct Campaign
+{
+    uint8                                              favoured = kNations; // none
+    std::array<std::array<double, kRegions>, kNations> focus{};
+    double                                             grown = 1.0;
+};
+
+// How far the focus has grown, hours into a period of periodHours: from nothing at the tally
+// to its full pull at the ramp's fraction of the period, then held. A ramp of 0 is full at once
+inline auto focusGrown(const int64 hoursInto, const int64 periodHours, const double ramp) -> double
+{
+    if (ramp <= 0.0 || periodHours <= 0)
+    {
+        return 1.0;
+    }
+    return std::clamp(static_cast<double>(hoursInto) / (ramp * static_cast<double>(periodHours)), 0.0, 1.0);
+}
+
+// How many open outer regions each nation focuses on: the dials' share of them, rounded, and
+// at least one while any is open
+inline auto focusPicks(const Dials& dials, const uint8 top) -> size_t
+{
+    const auto open = static_cast<size_t>(std::ranges::count_if(dials.outer, [&](const uint8 region) { return inPlay(dials, region, top); }));
+    if (open == 0 || dials.focusShare <= 0.0)
+    {
+        return 0;
+    }
+    return std::clamp<size_t>(static_cast<size_t>(std::lround(dials.focusShare * static_cast<double>(open))), 1, open);
+}
+
+// Each nation's focus for a tally with the world at `top`: focusPicks of the open outer
+// regions, apart from the other nations -- they may pick the same region or leave one to
+// nobody -- each at the focus pull, give or take its jitter. Each nation ranks every outer
+// region, open or not, in a random order of its own and takes the first open ones, so the
+// same draws give the same picks, and a region the world opens mid-period takes its place
+// in that order without reshuffling the rest. draw() answers a uniform number in [0, 1)
+template <typename Draw>
+inline auto drawFocus(const Dials& dials, const uint8 top, Draw&& draw) -> std::array<std::array<double, kRegions>, kNations>
+{
+    std::array<std::array<double, kRegions>, kNations> focus{};
+    const auto                                         picks = focusPicks(dials, top);
+    for (uint8 n = 0; n < kNations; ++n)
+    {
+        auto                         order = dials.outer;
+        std::array<double, kRegions> jitter{};
+        for (size_t i = 0; i < order.size(); ++i)
+        {
+            const auto left = order.size() - i;
+            const auto j    = i + std::min(left - 1, static_cast<size_t>(draw() * static_cast<double>(left)));
+            std::swap(order[i], order[j]);
+            jitter[order[i]] = 1.0 + dials.focusJitter * (2.0 * draw() - 1.0);
+        }
+        size_t taken = 0;
+        for (const auto region : order)
+        {
+            if (taken < picks && inPlay(dials, region, top))
+            {
+                focus[n][region] = dials.focusPull * jitter[region];
+                ++taken;
+            }
+        }
+    }
+    return focus;
+}
+
+// Who the thumb favours next: of the nations it does not favour now, the one holding the
+// fewest regions as of the last tally, a draw between equals. draw() answers [0, 1)
+template <typename Draw>
+inline auto nextFavoured(const uint8 favoured, const std::array<uint8, kRegions>& owners, Draw&& draw) -> uint8
+{
+    std::array<uint32, kNations> held{};
+    for (const auto owner : owners)
+    {
+        if (owner < kNations)
+        {
+            ++held[owner];
+        }
+    }
+    std::vector<uint8> fewest;
+    for (uint8 n = 0; n < kNations; ++n)
+    {
+        if (n == favoured)
+        {
+            continue;
+        }
+        if (!fewest.empty() && held[n] < held[fewest.front()])
+        {
+            fewest.clear();
+        }
+        if (fewest.empty() || held[n] == held[fewest.front()])
+        {
+            fewest.push_back(n);
+        }
+    }
+    return fewest[std::min(fewest.size() - 1, static_cast<size_t>(draw() * static_cast<double>(fewest.size())))];
+}
+
+// The thumb round Jeuno across tallies: the nation it favours (kNations: nobody yet), the
+// period it last counted -- the tally closing it, as milliseconds of game clock -- and the
+// tallies it has favoured that nation
+struct Thumb
+{
+    uint8                favoured = kNations;
+    std::optional<int64> period;
+    uint32               held = 0;
+};
+
+// The thumb at a step `hoursInto` the period closing at `period`: a period it has not counted
+// counts once, and after the dials' tallies the thumb passes on (nextFavoured), as a thumb
+// that favours nobody yet takes its first. Only from the period's second hour: the owners
+// it reads must be the tally's that opened the period, and xi_world's result can land a
+// little after the map's first step. Answers whether it changed, so the caller saves it
+template <typename Draw>
+inline auto advanceThumb(Thumb& thumb, const int64 period, const int64 hoursInto, const uint32 tallies, const std::array<uint8, kRegions>& owners,
+                         Draw&& draw) -> bool
+{
+    if (hoursInto < 1 || thumb.period == period)
+    {
+        return false;
+    }
+    if (thumb.favoured < kNations)
+    {
+        ++thumb.held;
+    }
+    if (thumb.favoured >= kNations || thumb.held >= tallies)
+    {
+        thumb.favoured = nextFavoured(thumb.favoured, owners, draw);
+        thumb.held     = 0;
+    }
+    thumb.period = period;
+    return true;
+}
+
+// A nation's weight in a region (§20.7, §20.12): its strength, drifted by the tide; the home
+// bonus in its own home region, the next pull in a region next to it; the thumb's pull in
+// a region round Jeuno while it favours the nation; its focus as far as it has grown; the
+// neighbour bonus for each bordering region it holds (as of the last tally), to the cap;
+// and any hand on the scale
 inline auto weight(const Dials& dials, const uint8 nation, const uint8 region, const std::array<uint8, kRegions>& owners,
-                   const std::array<double, kNations>& tide) -> double
+                   const std::array<double, kNations>& tide, const Campaign& campaign = {}) -> double
 {
     double times = dials.strength[nation] * (1.0 + tide[nation]);
     if (kHomeRegion[nation] == region)
     {
         times *= dials.homeBonus;
+    }
+    if (dials.nextRegion[nation][region])
+    {
+        times *= dials.nextPull;
+    }
+    if (dials.thumbRegion[region] && campaign.favoured == nation)
+    {
+        times *= dials.thumbPull;
+    }
+    if (const double full = campaign.focus[nation][region]; full > 0.0)
+    {
+        times *= 1.0 + (full - 1.0) * campaign.grown;
     }
     uint32 held = 0;
     for (const auto other : dials.borders[region])
@@ -397,14 +706,14 @@ inline auto weight(const Dials& dials, const uint8 nation, const uint8 region, c
 
 // The odds a seat of the region's crowd is of each nation this hour: each nation's weight
 // over the three's sum. Even thirds when no nation has any weight
-inline auto shares(const Dials& dials, const uint8 region, const std::array<uint8, kRegions>& owners, const std::array<double, kNations>& tide)
-    -> std::array<double, kNations>
+inline auto shares(const Dials& dials, const uint8 region, const std::array<uint8, kRegions>& owners, const std::array<double, kNations>& tide,
+                   const Campaign& campaign = {}) -> std::array<double, kNations>
 {
     std::array<double, kNations> out{};
     double                       total = 0.0;
     for (uint8 n = 0; n < kNations; ++n)
     {
-        out[n] = weight(dials, n, region, owners, tide);
+        out[n] = weight(dials, n, region, owners, tide, campaign);
         total += out[n];
     }
     for (auto& share : out)
@@ -449,12 +758,12 @@ struct Hour
 // the dials' rates. draw() answers a uniform number in [0, 1), one per seat
 template <typename Draw>
 inline auto sumHour(const std::vector<Seat>& seats, const Dials& dials, const std::array<uint8, kRegions>& owners,
-                    const std::array<double, kNations>& tide, Draw&& draw) -> Hour
+                    const std::array<double, kNations>& tide, Draw&& draw, const Campaign& campaign = {}) -> Hour
 {
     Hour hour{};
     for (uint8 r = 0; r < kRegions; ++r)
     {
-        hour.odds[r] = shares(dials, r, owners, tide);
+        hour.odds[r] = shares(dials, r, owners, tide, campaign);
     }
     for (const auto& seat : seats)
     {

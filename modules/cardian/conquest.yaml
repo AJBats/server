@@ -9,22 +9,30 @@
 # seat earns at the middle of its band, as far as the world has reached it.
 #
 # Each seat's nation is drawn anew every hour from its region's shares, which
-# these dials alone set. A nation's weight in a region is
-#     strength x (1 + tide) x home_bonus (in its own home region)
+# these dials alone set (RESEARCH.md §20.12, the heat map and the campaigns).
+# A nation's weight in a region is
+#     strength x (1 + tide)
+#       x home_bonus (in its own home region)
+#       x next_pull (in the region next to its home)
+#       x thumb's pull (round Jeuno, while the thumb favours it)
+#       x its focus, as far as it has grown (in an open outer region it picked)
 #       x (1 + neighbour_bonus for each bordering region it holds, to the cap)
 #       x any hand on the scale
-# and its share is its weight over the three nations' sum. With nothing held
-# and the tide still: a home region's crowd is 50 % its nation and 25 % each
-# other, any other region a third each. The map log names every region's
-# shares and how the hour's draw fell.
+# and its share is its weight over the three nations' sum. With no campaign
+# and the tide still: a home region's crowd is 80 % its nation and 10 % each
+# other, any other region about a third each. The map log names every
+# region's shares and how the hour's draw fell, and at each tally the
+# period's campaigns.
 #
 # The map sends what the game already understands: influence for each nation
 # in each region, and Signet kills and deaths for the beastmen. The game's own
 # tally decides, with xi_world's own catch-up: a nation under the leader gets
-# twice what it is sent, under half the leader three times. So a nation needs
-# twice a rival's share to hold a region surely: the home bonus of 2 does
-# that; a smaller edge wins more often, not always. The world bodies' and the
-# player's own Signet kills count on top, as the game counts them.
+# twice what it is sent, under half the leader three times. So any steady edge
+# wins a region at the tally nearly always, while the client's arrows -- a
+# nation's band of the three's influence: 25 %, 50 %, 65 % -- show a nation
+# up only with half of it, which against the catch-up takes about eight times
+# a rival's weight (dry runs, 2026-10-10). The world bodies' and the player's
+# own Signet kills count on top, as the game counts them.
 #
 # The map reads this file again whenever it changes, so a dial turns on a
 # running server; a file that does not parse leaves the last good dials.
@@ -39,14 +47,78 @@
 strength: { sandoria: 1.0, bastok: 1.0, windurst: 1.0 }
 
 # The home nation's weight in its own home region (Ronfaure, Gustaberg,
-# Sarutabaruta): 2 makes half the crowd there its own, which holds the region
-# against xi_world's catch-up (a scratch simulation, 2026-10-09: about 95 %
-# of tallies with 5 seats, all of them from 20)
-home_bonus: 2.0
+# Sarutabaruta): 8 holds the region every tally and keeps the home nation's
+# arrow up all the time (about 58 % of the influence)
+home_bonus: 8.0
+
+# The region next to a nation's home, where its new adventurers go next: a
+# gentle lean, since the catch-up turns any steady edge into wins. At 1.1
+# Windurst takes Kolshushu about 45 % of tallies, and San d'Oria and Bastok
+# about 40 % of Zulkheim each, Windurst still about 17 %
+next_pull: 1.1
+next_regions:
+  sandoria: [zulkheim]
+  bastok: [zulkheim]
+  windurst: [kolshushu]
+
+# The outer regions, everything past a nation's home and the region next to
+# it -- the four round Jeuno and the far ones -- each by the level that opens
+# it. The home regions and the regions next to them are fought over from a
+# fresh server's first day; an outer region only once the world's top level
+# (the census's highest target, never under 18) reaches its level. Until then
+# it has no crowd, its tables' and the far crowd alike, so it is the
+# beastmen's. Each nation's focus picks from the open ones.
+outer:
+  norvallen: 20
+  derfland: 20
+  aragoneu: 20
+  qufim: 25
+  elshimo_lowlands: 30
+  fauregandi: 35
+  kuzotz: 37
+  elshimo_uplands: 40
+  litelor: 45
+  valdeaunia: 45
+  movalpolos: 55
+  tavnazia: 55
+  vollbow: 60
+  tulia: 70
+
+# The thumb round Jeuno: one nation's weight there times `pull` for
+# `tallies` tallies, then the thumb passes to the other nation holding the
+# fewest regions. Gentle: on its own it tilts who wins (about 80 % of
+# tallies at 1.5), and moves no arrow. Kept in cardian_conquest_thumb.
+thumb:
+  regions: [norvallen, derfland, aragoneu, qufim]
+  pull: 1.5
+  tallies: 4
+
+# Each nation's focus: `share` of the open outer regions (rounded, at least
+# one while any is open), drawn anew every tally, each nation's apart from the
+# others' -- they may fight over one region, or spread over different ones --
+# each pulled `pull` times, give or take `jitter` of it. A focus grows from nothing at the tally to its full pull at
+# `ramp` of the period, so its arrow rises through the window: at 8 and
+# half the period, a region one nation alone focuses on shows its up arrow
+# about 11 % of the time an hour into a three-day period, 70 % at two hours,
+# and nearly 90 % by the tally.
+focus:
+  share: 0.3333
+  pull: 8.0
+  jitter: 0.25
+  ramp: 0.5
+
+# The far regions, whose slot tables seat few or none: a crowd of `seats` in
+# each once it is open, at the world's top level, on top of what its tables
+# seat (at most 1000). The beastmen still take Movalpolos often: the game
+# counts its deaths heavily.
+far_crowd:
+  regions: [fauregandi, valdeaunia, litelor, kuzotz, vollbow, elshimo_lowlands, elshimo_uplands, tulia, movalpolos, tavnazia]
+  seats: 12
 
 # A nation's weight in a region rises this much for each bordering region it
-# holds (as of the last tally), up to the cap
-neighbour_bonus: 0.10
+# holds (as of the last tally), up to the cap. Off: it made fronts that
+# snowballed one nation across the middle of the map
+neighbour_bonus: 0.0
 neighbour_cap: 0.30
 
 # A hand on the scale: one nation's weight in one region, for an authored
@@ -62,8 +134,8 @@ hands: []
 # Zulkheim and Kolshushu, 50 Qufim, 100 Norvallen, Derfland and Aragoneu,
 # 150 Fauregandi and Valdeaunia (§20.6). At 30 kills an hour, 0.05 is 600
 # kills a death: a region's crowd holds against them on average, and the
-# frontier is where the reached seats end. A region with no seat the world
-# has reached gets one death a period whatever this says.
+# frontier is the world's level: a region not yet open, or with no seat at
+# all, gets one death a period whatever this says.
 pressure: 0.05
 pressure_by_region: {}
 

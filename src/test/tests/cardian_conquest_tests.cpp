@@ -23,7 +23,8 @@
 // (common/cardian_conquest_clock.h) -- its boundaries at Vana'diel midnight, the
 // client's countdown, the trigger xi_world fires by, a pause holding it -- and the
 // crowd's sum (map/pawn/conquest_math.h): seats and dials in, influence, kills and
-// deaths out, the tide, and the dials file with its borders checked against the zone
+// deaths out, the tide, the period's campaigns (the thumb round Jeuno, each nation's
+// focus, the far crowd), and the dials file with its borders checked against the zone
 // lines.
 
 #include <catch2/catch_test_macros.hpp>
@@ -111,14 +112,21 @@ auto nobodyHolds() -> std::array<uint8, cq::kRegions>
 
 constexpr std::array<double, cq::kNations> kStillTide{ 0.0, 0.0, 0.0 };
 
-constexpr uint8 kRonfaure  = 0;
-constexpr uint8 kZulkheim  = 1;
-constexpr uint8 kNorvallen = 2;
-constexpr uint8 kGustaberg = 3;
-constexpr uint8 kDerfland  = 4;
-constexpr uint8 kSandoria  = 0;
-constexpr uint8 kBastok    = 1;
-constexpr uint8 kWindurst  = 2;
+constexpr uint8 kRonfaure   = 0;
+constexpr uint8 kZulkheim   = 1;
+constexpr uint8 kNorvallen  = 2;
+constexpr uint8 kGustaberg  = 3;
+constexpr uint8 kDerfland   = 4;
+constexpr uint8 kSaruta     = 5;
+constexpr uint8 kKolshushu  = 6;
+constexpr uint8 kAragoneu   = 7;
+constexpr uint8 kFauregandi = 8;
+constexpr uint8 kQufim      = 10;
+constexpr uint8 kLitelor    = 11;
+constexpr uint8 kElshimoLow = 14;
+constexpr uint8 kSandoria   = 0;
+constexpr uint8 kBastok     = 1;
+constexpr uint8 kWindurst   = 2;
 
 // A draw at the bottom of the odds: the first nation
 constexpr auto alwaysFirst = [] { return 0.0; };
@@ -177,6 +185,44 @@ auto homeWins(const cq::Dials& dials, const uint8 region, const uint8 nation, co
         wins += first ? 1 : 0;
     }
     return wins;
+}
+
+// Of `periods` periods of 72 Vana'diel hours of a region's crowd, with San d'Oria alone
+// focusing on it at `pull`, growing over the first half of the period, how many show San
+// d'Oria's up arrow -- half the three's influence or more, the client's band 2 -- at
+// `checkHour` of the period
+auto focusArrows(const cq::Dials& dials, const uint8 region, const double pull, const uint32 seatCount, const uint32 periods, const int64 checkHour,
+                 const uint32 seed) -> uint32
+{
+    std::mt19937                           rng(seed);
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    const std::vector<cq::Seat>            seats(seatCount, cq::Seat{ .region = region, .level = 20 });
+    cq::Campaign                           campaign{};
+    campaign.focus[kSandoria][region] = pull;
+    uint32 arrows                     = 0;
+    for (uint32 p = 0; p < periods; ++p)
+    {
+        std::array<int32, cq::kNations> influence{};
+        cq::Carry                       carry{};
+        for (int64 h = 0; h <= checkHour; ++h)
+        {
+            campaign.grown   = cq::focusGrown(h, 72, 0.5);
+            const auto hour  = cq::sumHour(seats, dials, nobodyHolds(), kStillTide, [&] { return uniform(rng); }, campaign);
+            const auto sends = cq::settle(hour, carry);
+            std::array<uint8, cq::kNations> order{ 0, 1, 2 };
+            std::shuffle(order.begin(), order.end(), rng);
+            for (const auto n : order)
+            {
+                if (sends.points[region][n] > 0)
+                {
+                    worldAdds(influence, n, sends.points[region][n]);
+                }
+            }
+        }
+        const int64 total = static_cast<int64>(influence[0]) + influence[1] + influence[2];
+        arrows += total > 0 && 2 * static_cast<int64>(influence[kSandoria]) >= total ? 1 : 0;
+    }
+    return arrows;
 }
 
 auto readDialsFile() -> cq::files::DialFile
@@ -343,38 +389,327 @@ TEST_CASE("conquest shares: the dials weigh each nation -- strength, tide, home,
     REQUIRE(dials.has_value());
     const auto owners = nobodyHolds();
 
-    // Home: San d'Oria weighs twice in Ronfaure, so half its crowd is San d'Orian
-    CHECK_THAT(cq::weight(*dials, kSandoria, kRonfaure, owners, kStillTide), WithinAbs(2.0, 1e-9));
+    // Home: San d'Oria weighs eight times in Ronfaure, so four in five of its crowd are San d'Orian
+    CHECK_THAT(cq::weight(*dials, kSandoria, kRonfaure, owners, kStillTide), WithinAbs(8.0, 1e-9));
     CHECK_THAT(cq::weight(*dials, kBastok, kRonfaure, owners, kStillTide), WithinAbs(1.0, 1e-9));
     const auto ronfaure = cq::shares(*dials, kRonfaure, owners, kStillTide);
-    CHECK_THAT(ronfaure[kSandoria], WithinAbs(0.50, 1e-9));
-    CHECK_THAT(ronfaure[kBastok], WithinAbs(0.25, 1e-9));
-    CHECK_THAT(ronfaure[kWindurst], WithinAbs(0.25, 1e-9));
-    const auto zulkheim = cq::shares(*dials, kZulkheim, owners, kStillTide);
-    CHECK_THAT(zulkheim[kBastok], WithinAbs(1.0 / 3.0, 1e-9));
+    CHECK_THAT(ronfaure[kSandoria], WithinAbs(0.80, 1e-9));
+    CHECK_THAT(ronfaure[kBastok], WithinAbs(0.10, 1e-9));
+    CHECK_THAT(ronfaure[kWindurst], WithinAbs(0.10, 1e-9));
+    const auto norvallen = cq::shares(*dials, kNorvallen, owners, kStillTide);
+    CHECK_THAT(norvallen[kBastok], WithinAbs(1.0 / 3.0, 1e-9));
 
-    // Neighbours: Zulkheim borders Ronfaure, Norvallen, Gustaberg, Derfland, Movalpolos, Vollbow and, by sea, Kolshushu
-    auto held        = owners;
-    held[kRonfaure]  = kSandoria;
-    held[kNorvallen] = kSandoria;
-    CHECK_THAT(cq::weight(*dials, kSandoria, kZulkheim, held, kStillTide), WithinAbs(1.2, 1e-9));
-    held[kGustaberg] = kSandoria;
-    held[kDerfland]  = kSandoria;
-    CHECK_THAT(cq::weight(*dials, kSandoria, kZulkheim, held, kStillTide), WithinAbs(1.3, 1e-9)); // four held, capped at +30 %
-    CHECK_THAT(cq::shares(*dials, kZulkheim, held, kStillTide)[kSandoria], WithinAbs(1.3 / 3.3, 1e-9));
+    // Neighbours, off in the file, still weigh by their dial. Norvallen borders Ronfaure,
+    // Zulkheim, Derfland and Fauregandi
+    CHECK(dials->neighbourBonus == 0.0);
+    dials->neighbourBonus = 0.10;
+    auto held             = owners;
+    held[kRonfaure]       = kSandoria;
+    held[kZulkheim]       = kSandoria;
+    CHECK_THAT(cq::weight(*dials, kSandoria, kNorvallen, held, kStillTide), WithinAbs(1.2, 1e-9));
+    held[kDerfland] = kSandoria;
+    held[kFauregandi] = kSandoria;
+    CHECK_THAT(cq::weight(*dials, kSandoria, kNorvallen, held, kStillTide), WithinAbs(1.3, 1e-9)); // four held, capped at +30 %
+    CHECK_THAT(cq::shares(*dials, kNorvallen, held, kStillTide)[kSandoria], WithinAbs(1.3 / 3.3, 1e-9));
 
     // Strength, tide and a hand on the scale, each a factor
-    dials->strength[kSandoria]        = 1.5;
-    dials->hand[kSandoria][kZulkheim] = 2.0;
+    dials->strength[kSandoria]         = 1.5;
+    dials->hand[kSandoria][kNorvallen] = 2.0;
     const std::array<double, cq::kNations> rising{ 0.1, 0.0, 0.0 };
-    CHECK_THAT(cq::weight(*dials, kSandoria, kZulkheim, owners, rising), WithinAbs(1.5 * 1.1 * 2.0, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kSandoria, kNorvallen, owners, rising), WithinAbs(1.5 * 1.1 * 2.0, 1e-9));
 
     // A draw picks by the shares, in nation order
     CHECK(cq::pick(ronfaure, 0.0) == kSandoria);
-    CHECK(cq::pick(ronfaure, 0.49) == kSandoria);
-    CHECK(cq::pick(ronfaure, 0.51) == kBastok);
-    CHECK(cq::pick(ronfaure, 0.76) == kWindurst);
+    CHECK(cq::pick(ronfaure, 0.79) == kSandoria);
+    CHECK(cq::pick(ronfaure, 0.81) == kBastok);
+    CHECK(cq::pick(ronfaure, 0.91) == kWindurst);
     CHECK(cq::pick(ronfaure, 0.9999) == kWindurst);
+}
+
+TEST_CASE("conquest heat map: the region next to a nation's home leans its way, gently", "[cardian][conquest]")
+{
+    std::string error;
+    const auto  dials = cq::toDials(readDialsFile(), error);
+    REQUIRE(dials.has_value());
+    const auto owners = nobodyHolds();
+
+    // San d'Oria and Bastok go on to Zulkheim, Windurst to Kolshushu
+    CHECK_THAT(cq::weight(*dials, kSandoria, kZulkheim, owners, kStillTide), WithinAbs(1.1, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kBastok, kZulkheim, owners, kStillTide), WithinAbs(1.1, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kWindurst, kZulkheim, owners, kStillTide), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kWindurst, kKolshushu, owners, kStillTide), WithinAbs(1.1, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kSandoria, kKolshushu, owners, kStillTide), WithinAbs(1.0, 1e-9));
+
+    // Past them, with no campaign, every outer region is even
+    for (const auto region : dials->outer)
+    {
+        const auto odds = cq::shares(*dials, region, owners, kStillTide);
+        CHECK_THAT(odds[kSandoria], WithinAbs(1.0 / 3.0, 1e-9));
+        CHECK_THAT(odds[kWindurst], WithinAbs(1.0 / 3.0, 1e-9));
+    }
+}
+
+TEST_CASE("conquest focus: each nation picks a third of the open outer regions, apart from the others, its pull jittered round the dial", "[cardian][conquest]")
+{
+    // The world past every outer region's level: all fourteen open
+    std::string error;
+    const auto  dials = cq::toDials(readDialsFile(), error);
+    REQUIRE(dials.has_value());
+    REQUIRE(dials->outer.size() == 14);
+    REQUIRE(cq::focusPicks(*dials, 99) == 5);
+    double lowest  = 99.0;
+    double highest = 0.0;
+
+    std::mt19937                                           rng(5u);
+    std::uniform_real_distribution<double>                 uniform(0.0, 1.0);
+    std::array<std::array<uint32, cq::kRegions>, cq::kNations> pickedTimes{};
+    uint32                                                 shared    = 0; // tallies two nations focused on one region
+    uint32                                                 untouched = 0; // tallies some outer region drew no nation
+    for (int tally = 0; tally < 300; ++tally)
+    {
+        const auto focus = cq::drawFocus(*dials, 99, [&] { return uniform(rng); });
+        std::array<uint32, cq::kRegions> pickers{};
+        for (uint8 n = 0; n < cq::kNations; ++n)
+        {
+            uint32 picks = 0;
+            for (uint8 r = 0; r < cq::kRegions; ++r)
+            {
+                if (focus[n][r] <= 0.0)
+                {
+                    continue;
+                }
+                ++picks;
+                ++pickers[r];
+                ++pickedTimes[n][r];
+                CHECK(std::ranges::find(dials->outer, r) != dials->outer.end());
+                CHECK(focus[n][r] >= 8.0 * 0.75 - 1e-9);
+                CHECK(focus[n][r] <= 8.0 * 1.25 + 1e-9);
+                lowest  = std::min(lowest, focus[n][r]);
+                highest = std::max(highest, focus[n][r]);
+            }
+            CHECK(picks == 5);
+        }
+        shared += std::ranges::any_of(pickers, [](const uint32 count) { return count >= 2; }) ? 1 : 0;
+        untouched += std::ranges::any_of(dials->outer, [&](const uint8 region) { return pickers[region] == 0; }) ? 1 : 0;
+    }
+    // Every nation reaches every outer region in time; the nations fight over some regions
+    // and leave others to nobody
+    for (uint8 n = 0; n < cq::kNations; ++n)
+    {
+        for (const auto region : dials->outer)
+        {
+            CHECK(pickedTimes[n][region] > 0);
+        }
+    }
+    CHECK(shared > 0);
+    CHECK(untouched > 0);
+    // The jitter reaches across its range
+    CHECK(lowest < 6.5);
+    CHECK(highest > 9.5);
+}
+
+TEST_CASE("conquest focus: the nations pick only open regions, and one the world opens takes its place without reshuffling the rest", "[cardian][conquest]")
+{
+    std::string error;
+    const auto  dials = cq::toDials(readDialsFile(), error);
+    REQUIRE(dials.has_value());
+    const std::array<uint8, 4> jeuno{ kNorvallen, kDerfland, kAragoneu, kQufim };
+    for (uint32 seed = 0; seed < 100; ++seed)
+    {
+        // The world at 27: the four round Jeuno open, one pick each. At 30 Elshimo Lowlands
+        // opens too: two picks each, the first still among them, at the same pull
+        std::mt19937                           first(seed);
+        std::mt19937                           second(seed);
+        std::uniform_real_distribution<double> uniform(0.0, 1.0);
+        const auto                             at27 = cq::drawFocus(*dials, 27, [&] { return uniform(first); });
+        const auto                             at30 = cq::drawFocus(*dials, 30, [&] { return uniform(second); });
+        for (uint8 n = 0; n < cq::kNations; ++n)
+        {
+            uint32 picks27 = 0;
+            uint32 picks30 = 0;
+            for (uint8 r = 0; r < cq::kRegions; ++r)
+            {
+                if (at27[n][r] > 0.0)
+                {
+                    ++picks27;
+                    CHECK(std::ranges::find(jeuno, r) != jeuno.end());
+                    CHECK(at30[n][r] == at27[n][r]);
+                }
+                if (at30[n][r] > 0.0)
+                {
+                    ++picks30;
+                    CHECK((std::ranges::find(jeuno, r) != jeuno.end() || r == kElshimoLow));
+                }
+            }
+            CHECK(picks27 == 1);
+            CHECK(picks30 == 2);
+        }
+    }
+
+    // A fresh server, the world at its floor of 18: nothing past the next regions to pick
+    CHECK(cq::focusPicks(*dials, 18) == 0);
+    std::mt19937                           rng(3u);
+    std::uniform_real_distribution<double> uniform(0.0, 1.0);
+    const auto                             fresh = cq::drawFocus(*dials, 18, [&] { return uniform(rng); });
+    for (const auto& row : fresh)
+    {
+        CHECK(std::ranges::all_of(row, [](const double pull) { return pull == 0.0; }));
+    }
+
+    // The same draws give the same picks: a restart within a period draws them again
+    std::mt19937 again(9u);
+    std::mt19937 twice(9u);
+    CHECK(cq::drawFocus(*dials, 99, [&] { return uniform(again); }) == cq::drawFocus(*dials, 99, [&] { return uniform(twice); }));
+}
+
+TEST_CASE("conquest focus: the pull grows from nothing at the tally to its full by the ramp, then holds", "[cardian][conquest]")
+{
+    CHECK(cq::focusGrown(0, 72, 0.5) == 0.0);
+    CHECK_THAT(cq::focusGrown(18, 72, 0.5), WithinAbs(0.5, 1e-9));
+    CHECK(cq::focusGrown(36, 72, 0.5) == 1.0);
+    CHECK(cq::focusGrown(71, 72, 0.5) == 1.0);
+    CHECK(cq::focusGrown(0, 72, 0.0) == 1.0); // no ramp: full at once
+
+    auto dials = cq::evenDials();
+    cq::Campaign campaign{};
+    campaign.focus[kSandoria][kLitelor] = 8.0;
+    campaign.grown                      = 0.0;
+    CHECK_THAT(cq::weight(dials, kSandoria, kLitelor, nobodyHolds(), kStillTide, campaign), WithinAbs(1.0, 1e-9));
+    campaign.grown = 0.5;
+    CHECK_THAT(cq::weight(dials, kSandoria, kLitelor, nobodyHolds(), kStillTide, campaign), WithinAbs(4.5, 1e-9));
+    campaign.grown = 1.0;
+    CHECK_THAT(cq::weight(dials, kSandoria, kLitelor, nobodyHolds(), kStillTide, campaign), WithinAbs(8.0, 1e-9));
+    CHECK_THAT(cq::weight(dials, kBastok, kLitelor, nobodyHolds(), kStillTide, campaign), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(cq::weight(dials, kSandoria, kAragoneu, nobodyHolds(), kStillTide, campaign), WithinAbs(1.0, 1e-9));
+}
+
+TEST_CASE("conquest focus: a region one nation alone focuses on shows its up arrow by the tally, not at the start", "[cardian][conquest]")
+{
+    // 20 seats through xi_world's own catch-up: the arrow is earned through the window
+    auto dials       = cq::evenDials();
+    dials.expPerHour = { { 1, 2500.0 }, { 75, 2500.0 } };
+    CHECK(focusArrows(dials, kLitelor, 8.0, 20, 20, 6, 21u) <= 2);   // a quarter of a real hour in
+    CHECK(focusArrows(dials, kLitelor, 8.0, 20, 20, 71, 22u) >= 16); // by the tally
+    CHECK(focusArrows(dials, kLitelor, 1.0, 20, 20, 71, 23u) == 0);  // with no focus, nobody's up
+}
+
+TEST_CASE("conquest thumb: the favour passes to the nation holding the fewest regions, never back to the one it leaves", "[cardian][conquest]")
+{
+    auto owners       = nobodyHolds();
+    owners[0]         = kSandoria;
+    owners[1]         = kSandoria;
+    owners[2]         = kSandoria;
+    owners[3]         = kBastok;
+    owners[5]         = kWindurst;
+    owners[6]         = kWindurst;
+    const auto bottom = [] { return 0.0; };
+    const auto top    = [] { return 0.999; };
+    CHECK(cq::nextFavoured(kSandoria, owners, bottom) == kBastok);   // Bastok holds one, Windurst two
+    CHECK(cq::nextFavoured(kBastok, owners, bottom) == kWindurst);   // never back to Bastok: Windurst, two, before San d'Oria's three
+    CHECK(cq::nextFavoured(cq::kNations, owners, bottom) == kBastok); // nobody favoured yet: all three asked
+    owners[4] = kBastok;                                             // Bastok two, Windurst two
+    CHECK(cq::nextFavoured(kSandoria, owners, bottom) == kBastok);   // a draw between equals
+    CHECK(cq::nextFavoured(kSandoria, owners, top) == kWindurst);
+
+    // The thumb weighs only round Jeuno, only for the nation it favours
+    std::string error;
+    const auto  dials = cq::toDials(readDialsFile(), error);
+    REQUIRE(dials.has_value());
+    cq::Campaign campaign{};
+    campaign.favoured = kBastok;
+    CHECK_THAT(cq::weight(*dials, kBastok, kDerfland, nobodyHolds(), kStillTide, campaign), WithinAbs(1.5, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kSandoria, kDerfland, nobodyHolds(), kStillTide, campaign), WithinAbs(1.0, 1e-9));
+    CHECK_THAT(cq::weight(*dials, kBastok, kLitelor, nobodyHolds(), kStillTide, campaign), WithinAbs(1.0, 1e-9));
+}
+
+TEST_CASE("conquest thumb: it counts each tally once, from the period's second hour, and passes on after its tallies", "[cardian][conquest]")
+{
+    // San d'Oria holds one region, Bastok two, Windurst three
+    auto owners       = nobodyHolds();
+    owners[0]         = kSandoria;
+    owners[2]         = kBastok;
+    owners[3]         = kBastok;
+    owners[5]         = kWindurst;
+    owners[6]         = kWindurst;
+    owners[7]         = kWindurst;
+    const auto bottom = [] { return 0.0; };
+
+    // A fresh table: nobody favoured, and the period's first hour waits for the tally's owners
+    cq::Thumb thumb{};
+    CHECK_FALSE(cq::advanceThumb(thumb, 100, 0, 4, owners, bottom));
+    CHECK(thumb.favoured == cq::kNations);
+    CHECK(cq::advanceThumb(thumb, 100, 1, 4, owners, bottom));
+    CHECK(thumb.favoured == kSandoria);
+    CHECK(thumb.held == 0);
+
+    // The same period again -- a later step, or a restart -- counts nothing
+    CHECK_FALSE(cq::advanceThumb(thumb, 100, 30, 4, owners, bottom));
+    CHECK(thumb.held == 0);
+
+    // Three more tallies: San d'Oria keeps it
+    for (int64 period = 200; period <= 400; period += 100)
+    {
+        CHECK(cq::advanceThumb(thumb, period, 1, 4, owners, bottom));
+        CHECK(thumb.favoured == kSandoria);
+    }
+    CHECK(thumb.held == 3);
+
+    // The fifth: on to the other nation holding the fewest regions
+    CHECK(cq::advanceThumb(thumb, 500, 1, 4, owners, bottom));
+    CHECK(thumb.favoured == kBastok);
+    CHECK(thumb.held == 0);
+    CHECK(thumb.period == 500);
+}
+
+TEST_CASE("conquest open regions: home and the next region from a fresh server's first day, the outer regions with the world's level", "[cardian][conquest]")
+{
+    std::string error;
+    const auto  dials = cq::toDials(readDialsFile(), error);
+    REQUIRE(dials.has_value());
+
+    // A fresh server, the world at its floor of 18: each nation's home and the region next to it
+    for (uint8 r = 0; r < cq::kRegions; ++r)
+    {
+        const bool homeOrNext = r == kRonfaure || r == kGustaberg || r == kSaruta || r == kZulkheim || r == kKolshushu;
+        INFO(cq::kRegionNames[r]);
+        CHECK(cq::inPlay(*dials, r, 18) == homeOrNext);
+    }
+    // The world at 27: the four round Jeuno too, nothing past them
+    CHECK(cq::inPlay(*dials, kNorvallen, 27));
+    CHECK(cq::inPlay(*dials, kQufim, 27));
+    CHECK_FALSE(cq::inPlay(*dials, kFauregandi, 27));
+    CHECK_FALSE(cq::inPlay(*dials, kLitelor, 27));
+    CHECK(cq::focusPicks(*dials, 27) == 1);
+
+    // The crowd: a slot in a region not open seats nobody, whatever its band, and the far
+    // crowd comes with its region, at the world's level, on top of its tables
+    const std::vector<cq::Slot> slots{
+        cq::Slot{ .region = kRonfaure, .low = 1, .high = 2, .seats = 1 },
+        cq::Slot{ .region = kNorvallen, .low = 15, .high = 29, .seats = 8 },
+        cq::Slot{ .region = kFauregandi, .low = 3, .high = 18, .seats = 4 },
+    };
+    const auto seatsIn = [](const std::vector<cq::Seat>& seats, const uint8 region)
+    {
+        return std::ranges::count_if(seats, [&](const cq::Seat& seat) { return seat.region == region; });
+    };
+    const auto fresh = cq::fieldCrowd(slots, *dials, 18);
+    CHECK(fresh.size() == 1);
+    CHECK(seatsIn(fresh, kRonfaure) == 1);
+    const auto at27 = cq::fieldCrowd(slots, *dials, 27);
+    CHECK(at27.size() == 9);
+    CHECK(seatsIn(at27, kNorvallen) == 8);
+    CHECK(seatsIn(at27, kFauregandi) == 0);
+    const auto at35 = cq::fieldCrowd(slots, *dials, 35);
+    CHECK(seatsIn(at35, kFauregandi) == 4 + 12);
+    CHECK(seatsIn(at35, kElshimoLow) == 12);
+    CHECK(seatsIn(at35, kLitelor) == 0);
+    for (const auto& seat : at35)
+    {
+        if (seat.region == kElshimoLow)
+        {
+            CHECK(seat.level == 35);
+        }
+    }
 }
 
 TEST_CASE("conquest shares: a nation with no adventurers of its own still holds its home region", "[cardian][conquest]")
@@ -463,7 +798,18 @@ TEST_CASE("conquest dials: the file reads, and a name that is not a region or a 
     const auto  dials = cq::toDials(readDialsFile(), error);
     INFO(error);
     REQUIRE(dials.has_value());
-    CHECK(dials->homeBonus == 2.0);
+    CHECK(dials->homeBonus == 8.0);
+    CHECK(dials->nextPull == 1.1);
+    CHECK(dials->nextRegion[kWindurst][kKolshushu]);
+    CHECK_FALSE(dials->nextRegion[kWindurst][kZulkheim]);
+    CHECK(dials->thumbRegion[kNorvallen]);
+    CHECK_FALSE(dials->thumbRegion[kLitelor]);
+    CHECK(dials->thumbTallies == 4);
+    CHECK(dials->focusPull == 8.0);
+    CHECK(dials->focusRamp == 0.5);
+    CHECK(dials->opensAt[kNorvallen] == 20);
+    CHECK(dials->opensAt[kRonfaure] == 0);
+    CHECK(dials->farSeats == 12);
     CHECK(dials->cpRate == 0.125);
     CHECK_FALSE(dials->expPerHour.empty());
 
@@ -476,6 +822,28 @@ TEST_CASE("conquest dials: the file reads, and a name that is not a region or a 
     cq::files::DialFile badTable{};
     badTable.exp_per_hour = { { 10.0, 100.0 }, { 5.0, 200.0 } };
     CHECK_FALSE(cq::toDials(badTable, error).has_value());
+
+    // The new keys, each refused on its own: a file of defaults reads, so each refusal is its key's
+    CHECK(cq::toDials(cq::files::DialFile{}, error).has_value());
+    const auto refused = [&error](const auto& spoil)
+    {
+        cq::files::DialFile file{};
+        spoil(file);
+        return !cq::toDials(file, error).has_value();
+    };
+    CHECK(refused([](auto& file) { file.outer = { { "norvallen", 20 }, { "jeuno", 20 } }; }));
+    CHECK(refused([](auto& file) { file.outer = { { "norvallen", 300 } }; }));
+    CHECK(refused([](auto& file) { file.next_regions["jeuno"] = { "zulkheim" }; }));
+    CHECK(refused([](auto& file) { file.next_regions["bastok"] = { "atlantis" }; }));
+    CHECK(refused([](auto& file) { file.next_pull = -1.0; }));
+    CHECK(refused([](auto& file) { file.thumb.regions = { "jeuno" }; }));
+    CHECK(refused([](auto& file) { file.thumb.tallies = 0; }));
+    CHECK(refused([](auto& file) { file.focus.share = 1.5; }));
+    CHECK(refused([](auto& file) { file.focus.pull = 0.0; }));
+    CHECK(refused([](auto& file) { file.focus.jitter = 1.0; }));
+    CHECK(refused([](auto& file) { file.focus.ramp = 1.5; }));
+    CHECK(refused([](auto& file) { file.far_crowd.regions = { "jeuno" }; }));
+    CHECK(refused([](auto& file) { file.far_crowd.seats = cq::kMostFarSeats + 1; }));
 }
 
 TEST_CASE("conquest dials: the land borders are the zone lines between the regions", "[cardian][conquest]")
