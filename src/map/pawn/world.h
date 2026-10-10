@@ -128,6 +128,10 @@ namespace pawn::world
     // touches her exp
     auto capExp(const CCharEntity* PChar, uint32 exp) -> uint32;
 
+    // The live census has put a level on her out of sight (redress.h): the
+    // slow checks' word for a ding of her own leaves it unsaid
+    void noteLevel(uint32 charid, uint8 level);
+
     // Her lane: a sideways offset in yalms she walks the mesh's route at,
     // drawn from her name, so a crowd sent down one street spreads across
     // it instead of walking it in single file (the user, 2026-09-07)

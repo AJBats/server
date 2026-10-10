@@ -32,7 +32,6 @@ slots:
     dwell: [10, 25]
     enter: any
     exit: west_ronfaure
-    hours: [6, 22]
   # -- The gate to west_ronfaure_2: loitering inside the arch, a long while
   - activity: stand
     band: [1, 75]
@@ -138,7 +137,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Lucretia
   - activity: stand
     band: [1, 75]
@@ -149,7 +147,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Arlenne, Tavourine
   - activity: stand
     band: [1, 75]
@@ -160,7 +157,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Boncort
   - activity: stand
     band: [1, 75]
@@ -171,7 +167,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Justi
   - activity: stand
     band: [1, 75]
@@ -182,7 +177,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Pirvidiauce
   - activity: stand
     band: [1, 75]
@@ -193,7 +187,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Vichuel
   - activity: stand
     band: [1, 75]
@@ -204,7 +197,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Palguevion
   - activity: stand
     band: [1, 75]
@@ -215,7 +207,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Antonian
   - activity: stand
     band: [1, 75]
@@ -226,7 +217,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Eugballion
   - activity: stand
     band: [1, 75]
@@ -237,7 +227,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Attarena
   - activity: stand
     band: [1, 75]
@@ -248,7 +237,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Millechuca
   - activity: stand
     band: [1, 75]
@@ -259,7 +247,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Arachagnon
   - activity: stand
     band: [1, 75]
@@ -270,4 +257,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

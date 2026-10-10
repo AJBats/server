@@ -12,11 +12,13 @@
 #include "gambit_defaults.h"
 #include "pawn.h"
 #include "party_finder.h"
+#include "players.h"
+#include "redress.h"
+#include "redress_math.h"
 #include "seats.h"
 #include "tactician_line.h"
 
 #include "common/database.h"
-#include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/timer.h"
@@ -405,15 +407,31 @@ namespace
         uint8  nation = 0;
         uint8  job    = 1;
         uint8  level  = 1; // what she is: her character row's (char_stats.mlvl) once minted, her target before -- the census keeps no copy
-        uint8  target = 1; // what her ladder says she should be now (D6): her cap while the player is online
+        uint8  target = 1; // what her ladder says she should be now on the job she plays (D6): her cap while the player is online
         uint32 seed   = 0;
         bool   finished = false; // the census tool wrote her kit, skills, gear and spells (cardian_pawns.kitted)
         bool   claimed  = false; // recruited, or held for a player by an open contract: no world seat deals her
     };
 
+    // Her target on the job she plays, from her census row's career columns
+    // (a career, RESEARCH §11.12): her first job's, her second's or a later
+    // one's (cardian::redress::targetOn)
+    auto careerTarget(const std::unique_ptr<db::ResultSet>& rset) -> uint8
+    {
+        const auto later = rset->get<std::string>("later_jobs");
+        return cardian::redress::targetOn({ .job     = rset->get<uint8>("job"),
+                                            .target  = rset->get<uint8>("target"),
+                                            .job2    = rset->get<uint8>("job2"),
+                                            .target2 = rset->get<uint8>("target2"),
+                                            .later   = later },
+                                          rset->get<uint8>("mjob"));
+    }
+
+    // Her census row. `target` is her target on the job she plays (careerTarget)
     auto readCensus(const std::string& name) -> std::optional<CensusRow>
     {
-        const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, c.target, c.seed, "
+        const auto rset = db::preparedStmt("SELECT c.charid, c.race, c.face, c.size, c.nation, c.job, COALESCE(s.mlvl, c.target) AS level, "
+                                           "c.target, c.job2, c.target2, c.later_jobs, COALESCE(s.mjob, 0) AS mjob, c.seed, "
                                            "COALESCE(p.kitted, 0) AS finished, (c.recruited <> 0 OR EXISTS (SELECT 1 FROM cardian_party_memory h "
                                            "WHERE h.pawn_charid = c.charid AND h.contract <> '')) AS claimed "
                                            "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid "
@@ -431,7 +449,7 @@ namespace
             .nation = rset->get<uint8>("nation"),
             .job    = rset->get<uint8>("job"),
             .level  = rset->get<uint8>("level"),
-            .target = rset->get<uint8>("target"),
+            .target = careerTarget(rset),
             .seed   = rset->get<uint32>("seed"),
             .finished = rset->get<uint8>("finished") != 0,
             .claimed  = rset->get<uint8>("claimed") != 0,
@@ -576,15 +594,19 @@ namespace
         {
             return;
         }
-        // Her census target, re-read now and then so a raise reaches a
-        // standing body: the cap moves and her next kills carry her over.
+        // Her census target on the job she plays, re-read now and then so a
+        // raise reaches a standing body: the cap moves and her next kills
+        // carry her over.
         // Her level is her own (the game's, in her character row); a ding
         // of hers is said here, nothing more (D6)
         if (body.sweepTick % 75 == 0)
         {
-            if (const auto rset = db::preparedStmt("SELECT target FROM cardian_census WHERE charid = ?", body.charid); rset && rset->next())
+            if (const auto rset = db::preparedStmt("SELECT c.job, c.target, c.job2, c.target2, c.later_jobs, COALESCE(s.mjob, 0) AS mjob "
+                                                   "FROM cardian_census c LEFT JOIN char_stats s ON s.charid = c.charid WHERE c.charid = ?",
+                                                   body.charid);
+                rset && rset->next())
             {
-                if (const auto target = rset->get<uint8>("target"); target != body.target)
+                if (const auto target = careerTarget(rset); target != body.target)
                 {
                     body.target = target;
                     ShowInfoFmt("world: {}'s cap is {:.2f} now (level {}, target {})", body.name, capOf(body), PPawn->GetMLevel(), target);
@@ -1084,6 +1106,14 @@ namespace
 
     bool fadeIn(Body& body)
     {
+        // The census is writing her rows (the live census's ding, redress.h):
+        // a body loaded now would carry the rows as they were, and save them
+        // back over its write. The ladder asks again later
+        if (pawn::redress::isClaimed(body.charid))
+        {
+            ShowInfoFmt("world: {} waits for the census to write her rows before she stands", body.name);
+            return false;
+        }
         // Held by her contract she stands where her player left her, as she
         // was there: KO'd if she fell, so he can raise her (ROADMAP H)
         const bool held  = body.holder != 0 && body.leftAt.has_value();
@@ -1218,16 +1248,16 @@ namespace pawn::world::files
         // it that long, walks to an exit and fades, and the seat refills
         // with another face after a gap. `enter` and `exit` name the
         // zone's exits she arrives from and leaves by -- "nearest" (the
-        // default) and "any" are words too. `hours` is the player's local
-        // clock, `vhours` Vana'diel's (the guilds keep it), `holiday` a
-        // Vana'diel weekday the seat stands empty. `prefer: sellers` fills
+        // default) and "any" are words too. `vhours` are hours on
+        // Vana'diel's clock (the guilds keep it), `holiday` a Vana'diel
+        // weekday the seat stands empty; the player's own clock opens and
+        // closes nothing, so every other seat is filled round the clock. `prefer: sellers` fills
         // the seat from the names in the player's own auction history.
         // `pose: kneel` kneels her at her seat
         std::optional<std::array<float, 3>> face;
         std::array<uint32, 2>               dwell{};
         std::string                         enter;
         std::string                         exit;
-        std::optional<std::array<int32, 2>> hours;
         std::optional<std::array<int32, 2>> vhours;
         std::string                         holiday;
         std::string                         prefer;
@@ -1262,10 +1292,10 @@ namespace pawn::world::files
         {
             return dwell[1] > 0;
         }
-        // On the town's clock: a dwell that runs out, or hours that close
+        // On the town's clock: a dwell that runs out, or Vana'diel's hours that close
         auto timed() const -> bool
         {
-            return turnstile() || hours.has_value() || vhours.has_value() || !holiday.empty();
+            return turnstile() || vhours.has_value() || !holiday.empty();
         }
         // Anything the controller's town walk must know about
         auto town() const -> bool
@@ -1507,13 +1537,9 @@ namespace
         return from < to ? (hour >= from && hour < to) : (hour >= from || hour < to);
     }
 
-    // Is the seat held at this hour: the player's clock, Vana'diel's, the holiday
+    // Is the seat held at this hour: Vana'diel's clock and the holiday
     auto seatOpen(const SlotSpec& spec) -> bool
     {
-        if (spec.hours.has_value() && !inWindow(static_cast<int32>(earth_time::local::get_hour()), (*spec.hours)[0], (*spec.hours)[1]))
-        {
-            return false;
-        }
         if (spec.vhours.has_value() && !inWindow(static_cast<int32>(vanadiel_time::get_hour()), (*spec.vhours)[0], (*spec.vhours)[1]))
         {
             return false;
@@ -1725,9 +1751,9 @@ namespace
             {
                 return bad(fmt::format("activity {} is not farm, stand or camp", spec.activity));
             }
-            if (spec.activity != "stand" && (spec.town() || !spec.enter.empty() || !spec.exit.empty() || spec.hours.has_value() || spec.vhours.has_value() || !spec.holiday.empty() || !spec.prefer.empty()))
+            if (spec.activity != "stand" && (spec.town() || !spec.enter.empty() || !spec.exit.empty() || spec.vhours.has_value() || !spec.holiday.empty() || !spec.prefer.empty()))
             {
-                return bad(fmt::format("a {} slot takes no town keys (face, dwell, enter, exit, hours, vhours, holiday, prefer, pose, cliques, via)", spec.activity));
+                return bad(fmt::format("a {} slot takes no town keys (face, dwell, enter, exit, vhours, holiday, prefer, pose, cliques, via)", spec.activity));
             }
             if (spec.dwell[0] > spec.dwell[1])
             {
@@ -1741,9 +1767,9 @@ namespace
             {
                 return bad("a turnstile (a dwell) needs the zone's exits: where she comes from and goes");
             }
-            if (!goodHours(spec.hours) || !goodHours(spec.vhours))
+            if (!goodHours(spec.vhours))
             {
-                return bad("hours are [from, to] on a 24-hour clock");
+                return bad("vhours are [from, to] on a 24-hour clock");
             }
             if (!spec.holiday.empty() && !weekdayByName(spec.holiday).has_value())
             {
@@ -1885,6 +1911,20 @@ namespace
         return names;
     }
 
+    // A body of a cohort whose character is not being played is not stood up
+    // until he plays it (the user, 2026-10-09: his alts are as co-op friends
+    // are; census.py in_play holds back her mint the same way): a shared
+    // pool's always is, a peer's or a rival's while the character of one of
+    // her cohorts (charid * 100 + job) is online
+    auto inPlay(const std::string& anchor, const uint32 cohort, const uint32 cohort2) -> bool
+    {
+        if ((anchor != "peer" && anchor != "rival") || cohort == 0)
+        {
+            return true;
+        }
+        return pawn::players::online(cohort / 100) || (cohort2 != 0 && pawn::players::online(cohort2 / 100));
+    }
+
     // The census's dealable names -- minted, unrecruited, not held by a contract -- read once and shared
     // by every slot that deals in the next few seconds, so a fill costs one query however many slots it
     // deals. A name minted since shows up at the next read; one placed since is known to the bodies and
@@ -1897,9 +1937,11 @@ namespace
         uint32      seed   = 0;
         uint8       job    = 0;
         uint8       level  = 0;
+        bool        played = true; // a shared pool's, or a cohort's whose character is being played (inPlay)
     };
     std::vector<Dealable>                  dealable;
-    std::unordered_map<std::string, uint8> dealableLevel; // the same read by name, for the seats' band check
+    std::unordered_map<std::string, uint8> dealableLevel;    // the same read by name, for the seats' band check
+    std::unordered_set<std::string>        dealableUnplayed; // the names of the same read not in play
     realtime::time_point                   dealableAt{};
     constexpr auto                         kDealableFor = std::chrono::seconds(5);
 
@@ -1912,23 +1954,40 @@ namespace
         }
         dealable.clear();
         dealableLevel.clear();
+        dealableUnplayed.clear();
         dealableAt = now;
-        if (const auto rset = db::preparedStmt("SELECT c.name, c.cohort, c.seed, c.job, s.mlvl FROM cardian_census c JOIN char_stats s ON s.charid = c.charid "
+        // her job is the one she plays (a career's second job is her main while she plays it)
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.anchor, c.cohort, c.cohort2, c.seed, s.mjob AS job, s.mlvl FROM cardian_census c "
+                                               "JOIN char_stats s ON s.charid = c.charid "
                                                "WHERE c.recruited = 0 AND c.anchor <> 'bank' " // a census cut before the name bank was retired keeps its unused names as 'bank' rows
                                                "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '')");
             rset)
         {
             while (rset->next())
             {
+                const auto anchor = rset->get<std::string>("anchor");
+                const auto cohort = rset->get<uint32>("cohort");
                 dealable.push_back(Dealable{ .name   = rset->get<std::string>("name"),
-                                             .cohort = rset->get<uint32>("cohort"),
+                                             .cohort = cohort,
                                              .seed   = rset->get<uint32>("seed"),
                                              .job    = rset->get<uint8>("job"),
-                                             .level  = rset->get<uint8>("mlvl") });
+                                             .level  = rset->get<uint8>("mlvl"),
+                                             .played = inPlay(anchor, cohort, rset->get<uint32>("cohort2")) });
                 dealableLevel.emplace(dealable.back().name, dealable.back().level);
+                if (!dealable.back().played)
+                {
+                    dealableUnplayed.insert(dealable.back().name);
+                }
             }
         }
         return dealable;
+    }
+
+    // A dealable body not in play as of the last census read: her cohorts' characters are not being played
+    auto dealableUnplayedNow(const std::string& name) -> bool
+    {
+        dealableNames();
+        return dealableUnplayed.contains(name);
     }
 
     // A dealable body's level as of the last census read; 0 for one it did not list (recruited, or held by a contract)
@@ -1976,7 +2035,7 @@ namespace
         }
         for (const auto& d : dealableNames())
         {
-            if (d.level < spec.band[0] || d.level > spec.band[1] || charidByName.contains(d.name) || queued.contains(d.name))
+            if (!d.played || d.level < spec.band[0] || d.level > spec.band[1] || charidByName.contains(d.name) || queued.contains(d.name))
             {
                 continue;
             }
@@ -2588,7 +2647,8 @@ namespace
     }
 
     // The census moves (a recut, the player levelled): a seated body whose
-    // level has left her slot's band gives the seat up, and the seat refills.
+    // level has left her slot's band gives the seat up, and the seat refills;
+    // so does one whose cohorts' characters are not being played (inPlay).
     // A standing body keeps it until she fades, so nobody watches her vanish
     // -- one a player has just let go of has often outgrown hers with him
     auto reseatOutgrown(CZone* PZone) -> uint32
@@ -2618,6 +2678,11 @@ namespace
                 ShowInfoFmt("world: {} is level {} now, outside slot {}'s band {}-{}; gives the seat up", body.name, level, body.slot, band[0], band[1]);
                 outgrown.push_back(charid);
             }
+            else if (dealableUnplayedNow(body.name))
+            {
+                ShowInfoFmt("world: {}'s cohort is not being played; gives slot {}'s seat up", body.name, body.slot);
+                outgrown.push_back(charid);
+            }
         }
         std::unordered_set<uint32> seats;
         for (const auto charid : outgrown)
@@ -2625,7 +2690,7 @@ namespace
             if (const auto it = bodies.find(charid); it != bodies.end())
             {
                 seats.insert(static_cast<uint32>(it->second.slot));
-                unseat(it->second, "she has outgrown the seat");
+                unseat(it->second, "she has outgrown the seat, or her cohort is not being played");
             }
         }
         uint32 queued = 0;
@@ -3007,13 +3072,17 @@ namespace pawn::world
         // left out of the pool, said once here. Names in the bank are not in
         // the world.
         std::vector<std::string> names;
-        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, COALESCE(p.kitted, 0) AS finished FROM cardian_census c "
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, c.anchor, c.cohort, COALESCE(p.kitted, 0) AS finished FROM cardian_census c "
                                                "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.anchor <> 'bank' ORDER BY c.seed");
             rset)
         {
             while (rset->next())
             {
                 const auto name = rset->get<std::string>("name");
+                if (rset->get<uint32>("charid") == 0 && !inPlay(rset->get<std::string>("anchor"), rset->get<uint32>("cohort"), 0))
+                {
+                    continue; // a cohort's body is minted once its character is played
+                }
                 if (rset->get<uint32>("charid") == 0)
                 {
                     ShowErrorFmt("world: {} is in the census with no body; stop the servers and run census.py mint", name);
@@ -3217,6 +3286,14 @@ namespace pawn::world
         return it != bodies.end() ? ::laneOf(it->second.name) : 0.0f;
     }
 
+    void noteLevel(const uint32 charid, const uint8 level)
+    {
+        if (const auto it = bodies.find(charid); it != bodies.end())
+        {
+            it->second.levelSeen = level;
+        }
+    }
+
     auto capExp(const CCharEntity* PChar, const uint32 exp) -> uint32
     {
         if (PChar == nullptr || exp == 0)
@@ -3323,10 +3400,6 @@ namespace pawn::world
             if (spec.turnstile())
             {
                 town += fmt::format(" dwell {}-{}s turn {}", spec.dwell[0], spec.dwell[1], table.turns[i]);
-            }
-            if (spec.hours.has_value())
-            {
-                town += fmt::format(" hours {}-{}", (*spec.hours)[0], (*spec.hours)[1]);
             }
             if (spec.vhours.has_value())
             {

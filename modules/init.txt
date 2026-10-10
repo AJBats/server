@@ -48,6 +48,7 @@ cardian/sql/cardian_party_memory.sql
 cardian/sql/cardian_snapshot.sql
 cardian/sql/cardian_clock.sql
 cardian/sql/cardian_redress.sql
+cardian/sql/cardian_ding.sql
 # CARDIAN: the party progresses together (quests, missions, battlefields)
 cardian/lua/party_progress.lua
 # CARDIAN: the club signs in with the player (ROADMAP H)

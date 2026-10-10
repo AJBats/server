@@ -47,8 +47,7 @@ slots:
     dwell: [20, 90]           # seconds, min and max; a dwell makes the seat a turnstile
     enter: any                # the exit she walks in from: a name, nearest (default), any
     exit: west_gate           # the exit she leaves by, the same words (any avoids the one she came in by)
-    hours: [12, 2]            # the player's local clock, [from, to); to before from wraps midnight
-    vhours: [3, 18]           # Vana'diel's clock (the guilds keep it)
+    vhours: [3, 18]           # Vana'diel's clock (the guilds keep it), [from, to); to before from wraps midnight
     holiday: iceday           # a Vana'diel weekday the seat stands empty
     prefer: sellers           # the names in the player's own auction history first
     pose: kneel               # she kneels at her seat
@@ -94,7 +93,7 @@ warning naming both ends: that is the route to fix, not her. A turnstile
 mixes its turn into the fill's hash and passes over the last six faces it
 showed, so the next one differs. Town keys are for `stand` only; a
 turnstile needs the zone's exits. `!pawnworld slots` shows each seat's
-dwell, hours, turn and whether it is closed now.
+dwell, Vana'diel hours, turn and whether it is closed now.
 
 Author by walking: stand where the slot is, `!pos`, and write the line (the
 user's way, 2026-09-07), or `!pawnworld slot farm 2-6 3 30` to append and
