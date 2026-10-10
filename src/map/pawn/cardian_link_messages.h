@@ -138,7 +138,21 @@ namespace cardian::link
     X(ERRAND_GOAL, cl_errand_goal) \
     X(SEND_ERRAND, cl_send_errand) \
     X(CALL_BACK, cl_call_back)   \
-    X(CLUB_RECRUIT, cl_club_recruit)
+    X(CLUB_RECRUIT, cl_club_recruit) \
+    X(PROFESSIONS, cl_professions)   \
+    X(PROFESSION, cl_profession)     \
+    X(PROFESSION_TOOLS, cl_profession_tools) \
+    X(PROFESSION_TOOL, cl_profession_tool)   \
+    X(START_PROFESSION, cl_start_profession) \
+    X(VENTURE_SPOTS, cl_venture_spots)       \
+    X(VENTURE_SPOT, cl_venture_spot)         \
+    X(VENTURE_BAITS, cl_venture_baits)       \
+    X(VENTURE_BAIT, cl_venture_bait)         \
+    X(VENTURE_PAID, cl_venture_paid)         \
+    X(VENTURE_REPORT, cl_venture_report)     \
+    X(VENTURE_ITEM, cl_venture_item)         \
+    X(VENTURE_NEWS, cl_venture_news)         \
+    X(PROFESSION_SLOT, cl_profession_slot)
 
     template <typename T>
     struct MessageType;

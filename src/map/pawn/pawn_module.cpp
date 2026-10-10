@@ -24,6 +24,7 @@
 #include "club.h"
 #include "engage_math.h"
 #include "errands.h"
+#include "professions.h"
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
@@ -270,11 +271,14 @@ class PawnModule : public CPPModule
         pawn::club::load();
         pawn::errands::ensureTable();
         pawn::errands::load();
+        // Professions and the money venture's tables, both its sides' (professions.h)
+        pawn::professions::ensureTables();
         // The cardian API's messages on the Cardian Link (link_api.cpp, and
         // the linkshell's), and the Lua libraries some are answered from
         pawn::linkapi::registerHandlers();
         pawn::club::registerHandlers();
         pawn::errands::registerHandlers();
+        pawn::professions::registerHandlers();
         pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
@@ -723,12 +727,16 @@ class PawnModule : public CPPModule
     // A played character gets his gambits (live_controller.h): the zone
     // loaded him afresh with upstream's player controller, and this one is
     // that controller and his gambit engine. A player's zone-in is also an
-    // arrival his cardians may speak of their conquest supplies at
+    // arrival his cardians may speak of their conquest supplies at, and marks
+    // the character his account plays now (professions.h), and where he is
+    // told that logging in as a member ended her errand (errands.h)
     void OnCharZoneIn(CCharEntity* PChar) override
     {
         pawn::tactics::zoneIn(PChar);
         CLiveController::InstallOn(PChar);
         pawn::supplies::zonedIn(PChar);
+        pawn::professions::zonedIn(PChar);
+        pawn::errands::zonedIn(PChar);
     }
 
     // A held simulation (pause/pause.h) takes no step here either: the world's

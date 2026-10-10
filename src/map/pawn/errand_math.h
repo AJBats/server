@@ -18,9 +18,9 @@
 namespace cardian::errand
 {
     // What she is sent to do: the Link's CL_ERRAND_* by value, and the row's
-    // kind by name. Level and Money keep their place in the row and on the
-    // Link for the kinds still to be built (the live census's levelling, the
-    // money simulation); nothing offers them until they are
+    // kind by name. Level keeps its place in the row and on the Link for the
+    // live census's levelling, still to be built; nothing offers it until it
+    // is. Money is a venture at a profession of hers (professions.h)
     enum class Kind : uint8_t
     {
         None  = 0,
@@ -32,12 +32,16 @@ namespace cardian::errand
     };
 
     // Where it stands: she is walking off (to a zone line, the auction house,
-    // the guard, and back), or she is gone from the world. The Link's
-    // CL_ERRAND_GOING and CL_ERRAND_AWAY by value
+    // the guard, and back), or she is gone from the world. A money venture
+    // over is returning while the venture keeper counts her takings, and back
+    // once it has: only then does she stand again. The Link's CL_ERRAND_GOING,
+    // CL_ERRAND_AWAY and CL_ERRAND_RETURNING by value (back shows as returning)
     enum class State : uint8_t
     {
-        Going = 1,
-        Away  = 2,
+        Going     = 1,
+        Away      = 2,
+        Returning = 3,
+        Back      = 4,
     };
 
     // What she is to the player: the Link's CL_CLUB_* by value
@@ -82,26 +86,47 @@ namespace cardian::errand
 
     inline auto stateName(const State state) -> std::string_view
     {
-        return state == State::Away ? "away" : "going";
+        switch (state)
+        {
+            case State::Away:
+                return "away";
+            case State::Returning:
+                return "returning";
+            case State::Back:
+                return "back";
+            default:
+                return "going";
+        }
     }
-
     inline auto stateOf(const std::string_view text) -> std::optional<State>
     {
-        if (text == "going")
+        for (const auto state : { State::Going, State::Away, State::Returning, State::Back })
         {
-            return State::Going;
-        }
-        if (text == "away")
-        {
-            return State::Away;
+            if (stateName(state) == text)
+            {
+                return state;
+            }
         }
         return std::nullopt;
+    }
+
+    // Out of the world: away, or a money venture's takings being counted
+    constexpr auto gone(const State state) -> bool
+    {
+        return state != State::Going;
+    }
+
+    // A money venture's lengths: hours of the game clock, an Earth hour each
+    // while unpaused (the user, 2026-10-10: the hourly rate a player thinks in)
+    constexpr auto ventureHours(const uint32_t hours) -> bool
+    {
+        return hours == 1 || hours == 2;
     }
 
     // The kinds with behaviour behind them
     constexpr auto built(const Kind kind) -> bool
     {
-        return kind == Kind::Gear || kind == Kind::Quest || kind == Kind::Rank;
+        return kind == Kind::Gear || kind == Kind::Quest || kind == Kind::Rank || kind == Kind::Money;
     }
 
     // Whom a kind is for (the user, 2026-10-09, RESEARCH §11.13). Gear up is

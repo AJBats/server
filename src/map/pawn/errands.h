@@ -62,7 +62,14 @@ class CCharEntity;
 //     done in her log and her rank and rank bar are what the game holds after
 //     them, so a battlefield's or a city's gate reads her as anyone. Called
 //     back early she keeps the missions her time away covered.
-// Level and money are kept in the row's shape and on the Link, not built.
+//   - A money venture at a profession of hers (professions.h): fishing at a
+//     spot of the venture keeper's, set out on the same way. Away, her saved
+//     place is moved to the spot, so search finds her there faded, and the
+//     keeper (the census watcher's Python) works it on the game clock. Due or
+//     called back it is returning: the keeper counts her takings into her
+//     rows and marks it back, and only then does she stand again, where she
+//     left -- the map never loads her while the keeper writes her.
+// Level is kept in the row's shape and on the Link, not built.
 namespace pawn::errands
 {
     void ensureTable();
@@ -108,4 +115,10 @@ namespace pawn::errands
     // leaves his club (a pearl broken, she released). She is back where she
     // left the world
     void drop(uint32 charid, const char* why);
+
+    // Her player logging in as her: her errand ends as his call back ends it,
+    // before the map loads her, so she comes in where she left the world
+    void endForLogin(uint32 charid);
+    // ... and once she is in, he is told it ended
+    void zonedIn(CCharEntity* PChar);
 } // namespace pawn::errands

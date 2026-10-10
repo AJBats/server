@@ -31,6 +31,7 @@
 #include "map/lua/lua_base_entity.h"
 #include "map/pause/input_gate.h"
 #include "map/pause/pause.h"
+#include "map/pawn/errands.h"
 #include "map/pawn/pawn.h"
 #include "map/pawn/pawn_loot.h"
 #include "map/pawn/world.h"
@@ -55,6 +56,13 @@ namespace pawn
     {
     }
 } // namespace pawn
+
+namespace pawn::errands
+{
+    void endForLogin(const uint32 /* charid */)
+    {
+    }
+} // namespace pawn::errands
 
 namespace pawn::world
 {
