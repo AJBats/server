@@ -94,8 +94,13 @@ describe('Cardian exp spread', function()
             members[i] = member
         end
 
+        -- The rabbit is up before the party gathers on it: it shares a spawn
+        -- slot with a Ding_Bats that may hold the slot at night, and a rabbit
+        -- that never spawned stands at 0,0,0 and respawns anywhere in its region
         local leader = members[1]
-        local mob    = leader.entities:moveTo('Wild_Rabbit')
+        local mob    = leader.entities:get('Wild_Rabbit')
+        mob:respawn()
+        leader.entities:moveTo(mob)
         for i = 2, #members do
             members[i]:setPos(leader:getXPos(), leader:getYPos(), leader:getZPos())
             leader.actions:inviteToParty(members[i])
