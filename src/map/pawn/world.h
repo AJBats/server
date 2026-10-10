@@ -171,6 +171,19 @@ namespace pawn::world
     // the pool first); append a slot at a point to the file and fill it
     auto slots(CZone* PZone) -> std::vector<std::string>;
     auto fill(CZone* PZone) -> uint32;
+
+    // The conquest simulation's crowd (RESEARCH §20.11): every slot the zones'
+    // slot tables author -- its zone, its level band, its seats -- read from
+    // the files, whoever sits in it or not. A file is read again when it
+    // changes; one that does not parse keeps its last good read
+    struct AuthoredSlot
+    {
+        uint16 zone  = 0;
+        uint8  low   = 1;
+        uint8  high  = 1;
+        uint32 seats = 0;
+    };
+    auto authoredSlots() -> std::vector<AuthoredSlot>;
     auto addSlot(CZone* PZone, const std::string& activity, uint8 low, uint8 high, uint8 count, float spread, const position_t& at) -> bool;
 
     // Once per zone tick: where the players are (for the ladder), the slot

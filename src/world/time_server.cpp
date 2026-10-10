@@ -21,7 +21,8 @@
 
 #include "time_server.h"
 
-#include "common/cardian_clock_row.h" // CARDIAN
+#include "common/cardian_clock_row.h"       // CARDIAN
+#include "common/cardian_conquest_clock.h" // CARDIAN
 #include "common/cbasetypes.h"
 #include "common/tracy.h"
 #include "common/vana_time.h"
@@ -60,7 +61,7 @@ auto time_server(const WorldEngine* worldServer) -> Task<void>
         {
             // Daily tick (midnight JST)
             ShowDebugFmt("Daily tick... (current tick: {})", tickNum);
-            if (jstWeekday == 1)
+            if (jstWeekday == 1 && cardian::conquest_clock::tallyDays() == 0) // CARDIAN: retail's Monday tally, unless the short tally is set
             {
                 // Weekly tick (Monday JST)
                 ShowDebugFmt("Weekly tick... (current tick: {})", tickNum);
@@ -107,6 +108,14 @@ auto time_server(const WorldEngine* worldServer) -> Task<void>
     // Static variables for the next tick
     static auto nextVHourlyUpdate = std::chrono::ceil<xi::vanadiel_clock::hours>(vanaTime);
     static auto prevTotd          = vanaTotd;
+
+    // CARDIAN: the short tally, every cardian.CONQUEST_TALLY_DAYS Vana'diel days of the game clock (common/cardian_conquest_clock.h)
+    static cardian::conquest_clock::TallyWatch tallyWatch;
+    if (const auto days = cardian::conquest_clock::tallyDays(); tallyWatch.due(jstTime, days))
+    {
+        ShowInfoFmt("Conquest tally, every {} Vana'diel day(s)... (current tick: {})", days, tickNum);
+        worldServer->conquestSystem_->updateWeekConquest();
+    }
 
     if (vanaTime >= nextVHourlyUpdate)
     {
