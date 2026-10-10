@@ -655,11 +655,52 @@ namespace pawn::club
             PPawn->clearPacketList();
         }
 
-        // She cancels the request or the open window, and tells him why
+        // Her word to him: in his party she says it in party chat, which every
+        // real player of the party hears; else in a tell to him
+        void speak(CCharEntity* PPlayer, const CCharEntity* PPawn, const std::string_view line)
+        {
+            if (!inPartyWith(PPawn, PPlayer))
+            {
+                PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPawn, MESSAGE_TELL, std::string(line));
+                return;
+            }
+            for (auto* PMember : PPlayer->PParty->members)
+            {
+                if (auto* PChar = dynamic_cast<CCharEntity*>(PMember); PChar != nullptr && !pawn::isPawn(PChar))
+                {
+                    PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPawn, MESSAGE_PARTY, std::string(line));
+                }
+            }
+        }
+
+        // His shells for a trade with her: the ones he holds, and the one whose
+        // pearl she wears when another character of his account holds it --
+        // a member of his linkshell all the same (memberOf)
+        auto shellsHere(CCharEntity* PPlayer, const uint32 charid) -> std::set<uint32>
+        {
+            auto mine = shellsOf(PPlayer);
+            if (const auto pearl = pearlOf(charid); pearl.has_value() && pearl->accid == pawn::ownerAccountOf(PPlayer))
+            {
+                mine.insert(pearl->lsid);
+            }
+            return mine;
+        }
+
+        // How many trades of his she has declined for no reason of the
+        // trade's own (a stranger's, one short of the lock): by his charid
+        // and hers, so his next try hears another line
+        std::unordered_map<uint64, uint32> brushedOff;
+
+        // She cancels the request or the open window, and says why
         void declineTrade(CCharEntity* PPawn, CCharEntity* PPlayer, const rules::Verdict verdict)
         {
             answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Cancell);
-            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPawn, MESSAGE_TELL, std::string(rules::declineLine(verdict)));
+            uint32 tries = 0;
+            if (verdict == rules::Verdict::NotTrading || verdict == rules::Verdict::TooSoon)
+            {
+                tries = brushedOff[(static_cast<uint64>(PPlayer->id) << 32) | PPawn->id]++;
+            }
+            speak(PPlayer, PPawn, rules::declineLine(verdict, PPawn->id, tries));
             ShowInfoFmt("club: {} declines {}'s trade ({})", PPawn->getName(), PPlayer->getName(), std::to_underlying(verdict));
         }
 
@@ -1720,14 +1761,22 @@ namespace pawn::club
             const auto trade = it->second; // her answer below can end it
 
             // His request: a member of his club, or one of the world's who
-            // qualifies as his recruit, accepts at once; one of the world's
-            // short of the pearl's lock, or a stranger, declines
+            // qualifies as his recruit, accepts at once while a pearl could
+            // change hands; wearing one already she declines, and so does one
+            // of the world's short of the pearl's lock, or a stranger
             if (!trade.open)
             {
                 if (!memberOf(PPlayer, charid).has_value() && !isRecruit(PPlayer, charid))
                 {
                     trades.erase(charid);
                     declineTrade(PPawn, PPlayer, pawn::seats::isWorlds(charid) ? rules::Verdict::TooSoon : rules::Verdict::NotTrading);
+                    continue;
+                }
+                auto* PWorn = wornItem(PPawn);
+                if (const auto verdict = rules::judgeRequest(shellsHere(PPlayer, charid), PWorn != nullptr ? PWorn->GetLSID() : 0); verdict != rules::Verdict::Take)
+                {
+                    trades.erase(charid);
+                    declineTrade(PPawn, PPlayer, verdict);
                     continue;
                 }
                 answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Start);
@@ -1745,7 +1794,7 @@ namespace pawn::club
             // He pressed Trade: one Linkpearl of his shell and nothing else,
             // or she declines
             auto*      PWorn   = wornItem(PPawn);
-            const auto verdict = rules::judgeOffer(trade.slots, shellsOf(PPlayer), PWorn != nullptr ? PWorn->GetLSID() : 0);
+            const auto verdict = rules::judgeOffer(trade.slots, shellsHere(PPlayer, charid), PWorn != nullptr ? PWorn->GetLSID() : 0);
             trades.erase(charid);
             if (verdict != rules::Verdict::Take)
             {
@@ -1773,6 +1822,6 @@ namespace pawn::club
         {
             return;
         }
-        PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPawn, MESSAGE_TELL, std::string(rules::headingYourWay(PPawn->id)));
+        speak(PPlayer, PPawn, rules::headingYourWay(PPawn->id));
     }
 } // namespace pawn::club

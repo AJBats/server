@@ -243,6 +243,21 @@ namespace cardian::club
         PearledElsewhere, // she wears a pearl of a shell he does not hold
     };
 
+    // His trade request, from one she would trade with: every trade but the
+    // pearl's handover is refused (the user, 2026-10-10), so wearing a pearl
+    // already -- his shell's or another's -- she turns the request itself
+    // down, with the reason she would give the trade. `his` and `wornLsid`
+    // as for judgeOffer
+    template <typename Shells>
+    auto judgeRequest(const Shells& his, const uint32_t wornLsid) -> Verdict
+    {
+        if (wornLsid != 0)
+        {
+            return his.contains(wornLsid) ? Verdict::HasHisPearl : Verdict::PearledElsewhere;
+        }
+        return Verdict::Take;
+    }
+
     // `his` answers whether he holds a shell (a set's contains); `wornLsid`
     // is the shell of the pearl she wears, 0 for none
     template <typename Shells>
@@ -277,15 +292,35 @@ namespace cardian::club
         return Verdict::Take;
     }
 
-    // Her tell when she declines a trade
-    inline auto declineLine(const Verdict verdict) -> std::string_view
+    // Her word to one she has no reason to trade with -- a stranger, or one of
+    // the world's short of the pearl's lock -- neutral, never cold: he may have
+    // adventured with her a good while (the user, 2026-10-10). By her charid
+    // and how many times he has tried, so a second try hears another line
+    constexpr std::array<std::string_view, 8> kNoThanks{
+        "Um, no thanks, I don't want any.",
+        "Huh?",
+        "No thanks...",
+        "Oh! I'm alright, thanks.",
+        "Hm? No, I'm good.",
+        "That's okay, you keep it.",
+        "Ah, no need, really.",
+        "Thanks, but I'll pass.",
+    };
+
+    inline auto noThanks(const uint32_t charid, const uint32_t tries) -> std::string_view
+    {
+        return kNoThanks[(charid + tries) % kNoThanks.size()];
+    }
+
+    // Her word when she declines a trade (`tries`: how many he has had
+    // declined by her for no reason of the trade's own)
+    inline auto declineLine(const Verdict verdict, const uint32_t charid = 0, const uint32_t tries = 0) -> std::string_view
     {
         switch (verdict)
         {
             case Verdict::NotTrading:
-                return "Sorry, I'm not trading right now.";
             case Verdict::TooSoon:
-                return "Let's adventure together a while longer first.";
+                return noThanks(charid, tries);
             case Verdict::NothingOffered:
             case Verdict::NotOnlyAPearl:
                 return "Thanks, but I'll only take a linkpearl of your linkshell.";

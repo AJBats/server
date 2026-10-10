@@ -105,11 +105,14 @@ namespace pawn::club
     auto isRecruit(const CCharEntity* PPlayer, uint32 charid) -> bool;
 
     // The game's own trade, her side played by the server with her own
-    // client packets (0x033): she accepts his request at once if she is in
-    // his club or one of his recruits, and confirms when he does if he
-    // offers exactly one Linkpearl of a shell he holds, then puts it on;
-    // anything else she cancels, with a tell to him saying why (club_math.h
-    // judgeOffer). The pawn module hands her the trade packets the game
+    // client packets (0x033): every trade but the pearl's handover is
+    // refused. A member of his club or one of his recruits wearing no pearl
+    // accepts his request at once, and confirms when he does if he offers
+    // exactly one Linkpearl of a shell of his account, then puts it on;
+    // wearing a pearl already she turns the request down (judgeRequest), and
+    // anything else offered she cancels (judgeOffer), saying why -- in party
+    // chat in his party, else in a tell; a stranger, or one of the world's
+    // short of the pearl's lock, hears a neutral no (club_math.h kNoThanks). The pawn module hands her the trade packets the game
     // pushes her (noteTradePacket, from OnPushPacket) and plays her side on
     // her zone's tick (tick, which also carries out a recruit's yes once she
     // has thought it over, and steps her visit): no upstream line

@@ -192,6 +192,14 @@ TEST_CASE("Club: a slot of his trade offer read off the game's own packet", "[ca
     }
 }
 
+TEST_CASE("Club: wearing a pearl already, she turns his trade request down", "[cardian][club]")
+{
+    const std::set<uint32_t> his{ 100, 200 };
+    CHECK(judgeRequest(his, 0) == Verdict::Take);                // no pearl: the window opens for the handover
+    CHECK(judgeRequest(his, 200) == Verdict::HasHisPearl);       // his already
+    CHECK(judgeRequest(his, 300) == Verdict::PearledElsewhere);  // another shell's
+}
+
 TEST_CASE("Club: she takes one Linkpearl of his shell by trade, and nothing else", "[cardian][club]")
 {
     const std::set<uint32_t>         his{ 100, 200 };
@@ -256,6 +264,26 @@ TEST_CASE("Club: her tell when she declines a trade names no one", "[cardian][cl
         checkNamesNoOne(declineLine(verdict));
     }
     CHECK(declineLine(Verdict::Take).empty());
+}
+
+TEST_CASE("Club: a stranger's trade is turned down with a neutral word, another each try", "[cardian][club]")
+{
+    std::set<std::string_view> said;
+    for (const auto line : kNoThanks)
+    {
+        checkNamesNoOne(line);
+        said.insert(line);
+    }
+    CHECK(said.size() == kNoThanks.size());
+    // the stranger and the one short of the lock hear the same kind of word
+    CHECK(declineLine(Verdict::NotTrading, 40, 2) == noThanks(40, 2));
+    CHECK(declineLine(Verdict::TooSoon, 40, 2) == noThanks(40, 2));
+    // the same try, the same word; the next try, another
+    CHECK(noThanks(40, 0) == noThanks(40, 0));
+    CHECK(noThanks(40, 0) != noThanks(40, 1));
+    CHECK(noThanks(40, static_cast<uint32_t>(kNoThanks.size())) == noThanks(40, 0));
+    // the rest say what is wrong with the trade
+    CHECK(declineLine(Verdict::HasHisPearl, 40, 2) == "I already have your linkpearl!");
 }
 
 TEST_CASE("Club: a recruit is one of the world's at the pearl's lock", "[cardian][club]")
