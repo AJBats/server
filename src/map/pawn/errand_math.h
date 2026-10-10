@@ -43,10 +43,10 @@ namespace cardian::errand
     // What she is to the player: the Link's CL_CLUB_* by value
     enum class Member : uint8_t
     {
-        Alt   = 0, // a character of his own account
-        Owned = 1, // a cardian his account owns
-        Wild  = 2, // one of the world's wearing his pearl
-        Guest = 3, // one of the world's in his party, no pearl: not a member
+        Alt     = 0, // a character of his own account
+        Owned   = 1, // a cardian his account owns
+        Wild    = 2, // one of the world's wearing his pearl
+        Recruit = 3, // one of the world's at the pearl's lock with him, no pearl: not a member
     };
 
     inline auto kindName(const Kind kind) -> std::string_view
@@ -110,10 +110,10 @@ namespace cardian::errand
     // she gears and funds herself. A quest, a rank catch-up through her
     // nation's missions and a level are for every member. Earning money is
     // for his alts and owned cardians: the world's never earn him gil. A
-    // guest is no member
+    // recruit is no member
     constexpr auto forMember(const Kind kind, const Member member) -> bool
     {
-        if (member == Member::Guest)
+        if (member == Member::Recruit)
         {
             return false;
         }
@@ -400,8 +400,9 @@ namespace cardian::errand
         bool arrived  = false; // the step's walk is over: its end reached
         bool timedOut = false; // the step has run past its time
         bool dressed  = false; // the census's answer is on her, or none was needed
-        bool hasGuard = false; // a guard who sells stands in her zone
-        bool returns  = false; // she walks back to where she started (else she rejoins him)
+        bool hasGuard    = false; // a guard who sells stands in her zone
+        bool returns     = false; // she walks back to where she started (else she rejoins him)
+        bool toConsulate = false; // the guard turned her away, and her nation's consulate stands elsewhere in her city
     };
 
     inline auto nextGearStep(const GearStep step, const GearFacts& facts) -> GearStep
@@ -416,7 +417,7 @@ namespace cardian::errand
             case GearStep::ToGuard:
                 return facts.arrived ? GearStep::AtGuard : (facts.timedOut ? (facts.returns ? GearStep::Back : GearStep::Done) : step);
             case GearStep::AtGuard:
-                return facts.returns ? GearStep::Back : GearStep::Done;
+                return facts.toConsulate ? GearStep::ToGuard : (facts.returns ? GearStep::Back : GearStep::Done);
             case GearStep::Back:
                 return facts.arrived || facts.timedOut ? GearStep::Done : step;
             default:

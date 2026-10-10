@@ -59,6 +59,9 @@
 #include "ai/helpers/pathfind.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "items/item_linkshell.h"
+#include "items/transactions/player_trade.h"
+#include "linkshell.h"
 #include "status_effect_container.h"
 #include "map_session.h"
 #include "navmesh/navmesh.h"
@@ -1360,11 +1363,26 @@ namespace pawn
         }
     }
 
+    namespace
+    {
+        // Her session row's linkshell, as search reads it, while she is online
+        // with no body: the pearl of a player's shell she wears (club.h).
+        // Standing, the game's own equip writes it
+        void writeSessionShell(const uint32 charid)
+        {
+            if (const auto pearl = pawn::club::pearlOf(charid); pearl.has_value())
+            {
+                db::preparedStmt("UPDATE accounts_sessions SET linkshellid1 = ?, linkshellrank1 = ? WHERE charid = ?", pearl->lsid, static_cast<uint8>(LSTYPE_LINKPEARL), charid);
+            }
+        }
+    } // namespace
+
     void markPresent(const uint32 charid, const uint16 zoneId, const position_t& point)
     {
         db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, 0, 0) "
                          "ON DUPLICATE KEY UPDATE accid = VALUES(accid), client_addr = 0",
                          kPawnAccidBase + charid, charid);
+        writeSessionShell(charid);
         db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", charid);
         db::preparedStmt("UPDATE chars SET pos_zone = ?, pos_prevzone = ?, pos_rot = ?, pos_x = ?, pos_y = ?, pos_z = ? WHERE charid = ?",
                          zoneId, zoneId, point.rotation, point.x, point.y, point.z, charid);
@@ -1382,6 +1400,7 @@ namespace pawn
         db::preparedStmt("INSERT INTO accounts_sessions (accid, charid, targid, client_addr) VALUES (?, ?, 0, 0) "
                          "ON DUPLICATE KEY UPDATE accid = VALUES(accid), client_addr = 0",
                          kPawnAccidBase + charid, charid);
+        writeSessionShell(charid);
         db::preparedStmt("UPDATE char_flags SET disconnecting = 0 WHERE charid = ?", charid);
     }
 
@@ -2303,6 +2322,10 @@ namespace pawn
             PPawn->PAI->Internal_Disengage();
         }
 
+        // A trade window open with her closes on his side as she goes, his
+        // offer handed back, as it does when a player leaves mid-trade
+        PlayerTradeTransaction::cancel(PPawn);
+
         // Out of the party before the save, so a level sync's HP is not the
         // HP written for her
         if (PPawn->PParty != nullptr)
@@ -2324,6 +2347,29 @@ namespace pawn
             db::preparedStmt("DELETE FROM accounts_sessions WHERE charid = ?", targetCharID);
         }
 
+        // Online out of sight, she stays on the lists of the linkshells she
+        // wears, as search reads them off her session row: the entity's
+        // teardown below takes her off them, and they are written back after.
+        // The game keeps a worn linkshell as a piece of equipment, read back
+        // as the item it is (club.cpp linkshellIn)
+        struct Shell
+        {
+            uint32 id   = 0;
+            uint8  rank = 0;
+        };
+        std::array<Shell, 2> shells{};
+        if (keepOnline)
+        {
+            const std::array<std::pair<SLOTTYPE, const CLinkshell*>, 2> worn{ { { SLOT_LINK1, PPawn->PLinkshell1 }, { SLOT_LINK2, PPawn->PLinkshell2 } } };
+            for (std::size_t i = 0; i < worn.size(); ++i)
+            {
+                if (auto* PItem = dynamic_cast<CItemLinkshell*>(reinterpret_cast<CItem*>(PPawn->getEquip(worn[i].first))); PItem != nullptr && worn[i].second != nullptr)
+                {
+                    shells[i] = Shell{ worn[i].second->getID(), static_cast<uint8>(PItem->GetLSType()) };
+                }
+            }
+        }
+
         ShowInfoFmt("pawn: despawned {} ({}){}", PPawn->getName(), targetCharID, keepOnline ? ", still online" : "");
 
         summonerByPawn.erase(targetCharID);
@@ -2332,6 +2378,11 @@ namespace pawn
         travelOrders.erase(targetCharID);
         carriedFrom.erase(targetCharID);
         pawns.erase(it);
+        if (shells[0].id != 0 || shells[1].id != 0)
+        {
+            db::preparedStmt("UPDATE accounts_sessions SET linkshellid1 = ?, linkshellrank1 = ?, linkshellid2 = ?, linkshellrank2 = ? WHERE charid = ?",
+                             shells[0].id, shells[0].rank, shells[1].id, shells[1].rank, targetCharID);
+        }
         return true;
     }
 

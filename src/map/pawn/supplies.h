@@ -60,8 +60,10 @@ namespace pawn::supplies
     // The gear-up errand's stop at a guard (errands.h): she, standing at
     // this guard, buys the scrolls she lacks through the guard's own sale as
     // she would at his side; the player told (his addon's SUPPLIES) when
-    // given. How many she bought
-    auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell) -> uint32;
+    // given. How many she bought; `refusal`, when given, the guard's reason
+    // for turning her away in the exchange's terms (OUTRANKED: another
+    // nation's guard, his nation outranking hers), empty when none
+    auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell, std::string* refusal = nullptr) -> uint32;
     // A real player's zone-in (the pawn module's): an arrival, wherever from
     void zonedIn(const CCharEntity* PPlayer);
 } // namespace pawn::supplies

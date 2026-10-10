@@ -91,6 +91,15 @@ namespace pawn::world
     // for the ladder, and his sign-out takes her as it takes a contract
     // member (hold). False when she has no Body
     bool keepFor(uint32 charid, uint32 playerCharID);
+    // A faded body coming to a player out of sight (a recruit's visit,
+    // club.h): held for him as keepFor holds her, her next stand the spot
+    // given, offered to the ladder there; the caller asks her to stand
+    // (seats::inviteStand). One out of the world's seats -- in the pool --
+    // is given a seatless Body there, as comeBack gives one. False when she
+    // is not a census body, or stands already
+    bool bringTo(uint32 charid, uint32 playerCharID, uint16 zone, const position_t& at);
+    // The player her contract or his linkshell holds her for, 0 for none
+    auto holderOf(uint32 charid) -> uint32;
 
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued
@@ -125,6 +134,16 @@ namespace pawn::world
     };
     auto townOrder(uint32 charid) -> std::optional<TownOrder>;
     void noteReached(uint32 charid);
+
+    // Where people loiter in a zone: the clustered stand slots of its table
+    // (`cliques`), each its centre on the mesh and its spread; none in the
+    // field. A player's idle linkshell members gather at one (club.h)
+    struct Loiter
+    {
+        position_t at{};
+        float      spread = 0.0f;
+    };
+    auto loiterSpots(CZone* PZone) -> std::vector<Loiter>;
 
     // The exp cap at the grant (D6): the exp a world body may take of a
     // grant, the room under her cap -- her census target plus her seeded

@@ -65,4 +65,21 @@ namespace pawn::guards
         const CBaseEntity* npc   = nullptr;
     };
     auto guardFor(CZone* PZone, uint8 nation, const position_t& from) -> std::optional<Standing>;
+
+    // Her own nation's guard in another zone of her city -- a consulate:
+    // San d'Oria's Bastok and Windurst guards stand in Northern San d'Oria
+    // -- and the zone it stands in; nothing when her zone has one of hers,
+    // or her city none
+    struct Elsewhere
+    {
+        const Guard* guard = nullptr;
+        uint16       zone  = 0;
+    };
+    auto consulateFor(CZone* PZone, uint8 nation) -> std::optional<Elsewhere>;
+
+    // Whether this guard sells to one of this nation: her own nation's, one
+    // who sells to every nation's (Jeuno's), or another nation's while hers
+    // outranks his in the conquest tally -- the exchange's own rule
+    // (conquest_exchange.lua refusalOf), asked before she sets out
+    auto sellsTo(const Guard& guard, uint8 nation) -> bool;
 } // namespace pawn::guards

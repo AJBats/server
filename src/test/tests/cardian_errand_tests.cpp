@@ -26,7 +26,7 @@ TEST_CASE("Errands: the enums are the Link's numbers", "[cardian][errands]")
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Alt) == CL_CLUB_ALT);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Owned) == CL_CLUB_OWNED);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Wild) == CL_CLUB_WILD);
-    STATIC_REQUIRE(static_cast<uint8_t>(Member::Guest) == CL_CLUB_GUEST);
+    STATIC_REQUIRE(static_cast<uint8_t>(Member::Recruit) == CL_CLUB_RECRUIT);
 }
 
 TEST_CASE("Errands: the row's words read back as the kind and the state", "[cardian][errands]")
@@ -53,13 +53,13 @@ TEST_CASE("Errands: the menu offers what is built and hers", "[cardian][errands]
     CHECK(offered(Kind::Rank, Member::Alt));
     CHECK(offered(Kind::Rank, Member::Owned));
     CHECK(offered(Kind::Rank, Member::Wild));
-    CHECK_FALSE(offered(Kind::Rank, Member::Guest));
+    CHECK_FALSE(offered(Kind::Rank, Member::Recruit));
     CHECK(offered(Kind::Quest, Member::Alt));
     CHECK(offered(Kind::Quest, Member::Owned));
     CHECK(offered(Kind::Quest, Member::Wild));
-    // a guest is no member: nothing until she wears his pearl
-    CHECK_FALSE(offered(Kind::Quest, Member::Guest));
-    CHECK_FALSE(offered(Kind::Gear, Member::Guest));
+    // a recruit is no member: nothing until she wears his pearl
+    CHECK_FALSE(offered(Kind::Quest, Member::Recruit));
+    CHECK_FALSE(offered(Kind::Gear, Member::Recruit));
     // level and money keep their shape and are never offered until built
     CHECK_FALSE(built(Kind::Level));
     CHECK_FALSE(built(Kind::Money));
@@ -187,6 +187,10 @@ TEST_CASE("Errands: gearing up walks to the counter, waits for the census, then 
     CHECK(nextGearStep(GearStep::ToGuard, f) == GearStep::AtGuard);
     CHECK(nextGearStep(GearStep::AtGuard, f) == GearStep::Back);
     CHECK(nextGearStep(GearStep::Back, f) == GearStep::Done);
+    // turned away by another nation's guard, she walks on to her own consulate
+    f.toConsulate = true;
+    CHECK(nextGearStep(GearStep::AtGuard, f) == GearStep::ToGuard);
+    f.toConsulate = false;
     CHECK(walks(GearStep::ToCounter));
     CHECK(walks(GearStep::ToGuard));
     CHECK(walks(GearStep::Back));

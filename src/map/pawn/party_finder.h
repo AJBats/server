@@ -137,6 +137,7 @@ namespace pawn::finder
         uint8                  rank     = 1;
         bool                   standing = false;
         uint32                 affinity = 0;
+        uint32                 missions = 0;   // story missions completed with him
         std::array<uint16, 16> items{};        // what she wears, by equipment slot
         bool                   known   = false; // the numbers below are hers
         uint32                 hp      = 0;

@@ -211,8 +211,9 @@ namespace pawn::supplies
         // when given. How many she bought, and whether the guard refused her
         struct Bought
         {
-            uint32 count   = 0;
-            bool   refused = false;
+            uint32      count   = 0;
+            bool        refused = false;
+            std::string refusal; // the guard's reason, in the exchange's terms
         };
         auto purchase(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell) -> Bought
         {
@@ -235,6 +236,7 @@ namespace pawn::supplies
                 if (!sale)
                 {
                     out.refused = true; // the sale failed (said by the call)
+                    out.refusal = "FAILED";
                     return out;
                 }
                 const auto* PItem = xi::items::lookup(itemId);
@@ -242,6 +244,7 @@ namespace pawn::supplies
                 if (const auto refusal = sale->get<sol::optional<std::string>>("refusal"))
                 {
                     out.refused = true;
+                    out.refusal = *refusal;
                     ShowInfoFmt("supplies: {} cannot buy {} from {} ({})", PPawn->getName(), name, guard.name, *refusal);
                     if (PTell != nullptr && (*refusal == "OUTRANKED" || *refusal == "FOREIGN_PLACE"))
                     {
@@ -318,13 +321,18 @@ namespace pawn::supplies
         }
     } // namespace
 
-    auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell) -> uint32
+    auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell, std::string* refusal) -> uint32
     {
         if (PPawn == nullptr || leaving(PPawn))
         {
             return 0;
         }
-        return purchase(PPawn, guard, PTell).count;
+        const auto bought = purchase(PPawn, guard, PTell);
+        if (refusal != nullptr)
+        {
+            *refusal = bought.refusal;
+        }
+        return bought.count;
     }
 
     void zonedIn(const CCharEntity* PPlayer)

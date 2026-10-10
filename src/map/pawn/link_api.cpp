@@ -1095,6 +1095,7 @@ namespace pawn::linkapi
             answer.standing = p->standing ? 1 : 0;
             answer.known    = p->known ? 1 : 0;
             answer.affinity = p->affinity;
+            answer.missions = static_cast<uint16_t>(std::min<uint32>(p->missions, UINT16_MAX));
             answer.hp       = clamp16(p->hp);
             answer.maxHp    = clamp16(p->maxhp);
             answer.mp       = clamp16(p->mp);

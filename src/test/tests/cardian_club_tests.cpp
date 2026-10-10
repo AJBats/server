@@ -1,15 +1,23 @@
 // Cardian: the linkshell club's rules (pawn/club_math.h): the game's linkshell
 // items and the shell a pearl belongs to, where a linkshell is sold, what a
-// recruit tells him on her way, and a rank catch-up through her nation's
-// missions.
+// recruit tells him on her way, a rank catch-up through her nation's
+// missions, and a pearl given by the game's own trade (pawn/club_trade.h):
+// the offer read off the game's own trade packet, and what she makes of it.
 #include "map/pawn/club_math.h"
+#include "map/pawn/club_trade.h"
+
+#include "map/items/item.h"
+#include "map/items/item_linkshell.h"
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <set>
 #include <string>
+#include <string_view>
 #include <vector>
 
 using namespace cardian::club;
@@ -136,4 +144,182 @@ TEST_CASE("Club: a catch-up goes as far as his rank and the ladder's top", "[car
     CHECK(rankCap(ladder(), 10) == 4); // the ladder ends at 4
     CHECK(rankCap(ladder(), 1) == 1);
     CHECK(rankCap({}, 5) == 0);
+}
+
+TEST_CASE("Club: a slot of his trade offer read off the game's own packet", "[cardian][club]")
+{
+    SECTION("a Linkpearl carries its shell and its kind")
+    {
+        CItemLinkshell pearl(kLinkpearl);
+        pearl.SetLSID(0x00012345);
+        pearl.SetLSType(LSTYPE_LINKPEARL);
+        GP_SERV_COMMAND_ITEM_TRADE_LIST packet(&pearl, 3, 1);
+        const auto                      read = offeredSlot(packet);
+        CHECK(read.slot == 3);
+        CHECK(read.offered.item == kLinkpearl);
+        CHECK(read.offered.qty == 1);
+        CHECK(read.offered.lsid == 0x00012345u);
+        CHECK(read.offered.lsType == kLsTypeLinkpearl);
+    }
+
+    SECTION("a broken pearl says so")
+    {
+        CItemLinkshell pearl(kLinkpearl);
+        pearl.SetLSID(77);
+        pearl.SetLSType(LSTYPE_BROKEN);
+        GP_SERV_COMMAND_ITEM_TRADE_LIST packet(&pearl, 1, 1);
+        CHECK(offeredSlot(packet).offered.lsType == kLsTypeBroken);
+    }
+
+    SECTION("any other item: its id and how many, no shell")
+    {
+        CItem water(4509);
+        GP_SERV_COMMAND_ITEM_TRADE_LIST packet(&water, 2, 12);
+        const auto                      read = offeredSlot(packet);
+        CHECK(read.slot == 2);
+        CHECK(read.offered.item == 4509);
+        CHECK(read.offered.qty == 12);
+        CHECK(read.offered.lsid == 0);
+    }
+
+    SECTION("a slot emptied")
+    {
+        GP_SERV_COMMAND_ITEM_TRADE_LIST packet(nullptr, 4, 0);
+        const auto                      read = offeredSlot(packet);
+        CHECK(read.slot == 4);
+        CHECK(read.offered.qty == 0);
+        CHECK(read.offered.item == 0);
+    }
+}
+
+TEST_CASE("Club: she takes one Linkpearl of his shell by trade, and nothing else", "[cardian][club]")
+{
+    const std::set<uint32_t>         his{ 100, 200 };
+    std::array<Offered, kTradeSlots> slots{};
+    const Offered                    pearl{ kLinkpearl, 1, 100, kLsTypeLinkpearl };
+
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NothingOffered);
+
+    slots[1] = pearl;
+    CHECK(judgeOffer(slots, his, 0) == Verdict::Take);
+    slots[5] = pearl; // in any slot
+    slots[1] = {};
+    CHECK(judgeOffer(slots, his, 0) == Verdict::Take);
+
+    // already wearing one: his, or another shell's
+    CHECK(judgeOffer(slots, his, 200) == Verdict::HasHisPearl);
+    CHECK(judgeOffer(slots, his, 999) == Verdict::PearledElsewhere);
+
+    // something beside the pearl: gil (slot 0) or an item
+    slots[0] = Offered{ 0xFFFF, 500 };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotOnlyAPearl);
+    slots[0] = {};
+    slots[2] = Offered{ 4509, 1 };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotOnlyAPearl);
+    slots[2] = {};
+
+    // two pearls in one slot, or a sack, or the shell itself
+    slots[5] = Offered{ kLinkpearl, 2, 100, kLsTypeLinkpearl };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotOnlyAPearl);
+    slots[5] = Offered{ kPearlsack, 1, 100, 2 };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotOnlyAPearl);
+    slots[5] = Offered{ kLinkshell, 1, 100, 1 };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotOnlyAPearl);
+
+    // a pearl of a shell he does not hold, or a broken one
+    slots[5] = Offered{ kLinkpearl, 1, 300, kLsTypeLinkpearl };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotHisShell);
+    slots[5] = Offered{ kLinkpearl, 1, 100, kLsTypeBroken };
+    CHECK(judgeOffer(slots, his, 0) == Verdict::NotHisShell);
+}
+
+namespace
+{
+    // A line the player reads names no one: no "she", no "her", no codename
+    void checkNamesNoOne(const std::string_view text)
+    {
+        CHECK_FALSE(text.empty());
+        std::string lower(text);
+        std::ranges::transform(lower, lower.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        lower = " " + lower + " ";
+        CHECK(lower.find("cardian") == std::string::npos);
+        CHECK(lower.find(" she ") == std::string::npos);
+        CHECK(lower.find(" her ") == std::string::npos);
+    }
+} // namespace
+
+TEST_CASE("Club: her tell when she declines a trade names no one", "[cardian][club]")
+{
+    for (const auto verdict : { Verdict::NotTrading, Verdict::TooSoon, Verdict::NothingOffered, Verdict::NotOnlyAPearl, Verdict::NotHisShell,
+                                Verdict::HasHisPearl, Verdict::PearledElsewhere })
+    {
+        checkNamesNoOne(declineLine(verdict));
+    }
+    CHECK(declineLine(Verdict::Take).empty());
+}
+
+TEST_CASE("Club: a recruit is one of the world's at the pearl's lock", "[cardian][club]")
+{
+    // the defaults: affinity 6 and two story missions together
+    CHECK(qualifies(6, 2, 6, 2));
+    CHECK(qualifies(9, 5, 6, 2));
+    CHECK_FALSE(qualifies(5, 2, 6, 2)); // affinity short
+    CHECK_FALSE(qualifies(6, 1, 6, 2)); // a mission short
+    CHECK_FALSE(qualifies(0, 0, 6, 2));
+    CHECK(qualifies(0, 0, 0, 0)); // a lock set open lets anyone the two have partied with through
+}
+
+TEST_CASE("Club: a recruit's answer to joining, in her own words", "[cardian][club]")
+{
+    CHECK(kDecideMinMs < kDecideMaxMs);
+    for (uint32_t charid = 1; charid <= kJoinYes.size(); ++charid)
+    {
+        checkNamesNoOne(joinYes(charid));
+    }
+    CHECK(joinYes(7) == joinYes(7 + static_cast<uint32_t>(kJoinYes.size()))); // the same recruit says the same thing
+    checkNamesNoOne(joinLater());
+}
+
+TEST_CASE("Club: a recruit comes for her pearl, out of sight from afar", "[cardian][club]")
+{
+    // a zone line or three takes a little longer each; past three, or with
+    // no route, it counts as three; the same zone as one
+    CHECK(tripSeconds(1) == kTripSecondsPerZone);
+    CHECK(tripSeconds(3) == 3 * kTripSecondsPerZone);
+    CHECK(tripSeconds(7) == tripSeconds(kTrekZones));
+    CHECK(tripSeconds(UINT32_MAX) == tripSeconds(kTrekZones));
+    CHECK(tripSeconds(0) == kTripSecondsPerZone);
+    // she waits at his side closer than she comes in, and fades farther off
+    CHECK(kVisitRingFar < kVisitArrive);
+    CHECK(kVisitArrive < kVisitLeaveTo);
+    CHECK(kVisitLeaveTo < kVisitFadeAt);
+    CHECK(kVisitWaitSeconds < kVisitGiveUpSeconds);
+    // her distance from him is hers, within the ring, and recruits differ
+    std::set<float> rings;
+    for (uint32_t charid = 100; charid < 108; ++charid)
+    {
+        CHECK(visitRing(charid) >= kVisitRingNear);
+        CHECK(visitRing(charid) <= kVisitRingFar);
+        CHECK(visitRing(charid) == visitRing(charid + 8));
+        rings.insert(visitRing(charid));
+    }
+    CHECK(rings.size() == 8);
+    // she greets him with one of the emotes, and says she is here
+    std::set<uint8_t> emotes;
+    for (uint32_t charid = 0; charid < kGreetEmotes.size(); ++charid)
+    {
+        emotes.insert(greetEmote(charid));
+        checkNamesNoOne(imHere(charid * static_cast<uint32_t>(kGreetEmotes.size())));
+    }
+    CHECK(emotes.size() == kGreetEmotes.size());
+    CHECK(emotes.contains(8));  // wave
+    CHECK(emotes.contains(43)); // hurray
+    std::set<std::string_view> said;
+    for (uint32_t charid = 1; charid <= kCatchYouLater.size(); ++charid)
+    {
+        checkNamesNoOne(catchYouLater(charid));
+        said.insert(catchYouLater(charid));
+    }
+    CHECK(said.size() == kCatchYouLater.size());
+    CHECK(catchYouLater(5) == catchYouLater(5 + static_cast<uint32_t>(kCatchYouLater.size())));
 }

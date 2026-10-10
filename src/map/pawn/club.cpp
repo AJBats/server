@@ -21,17 +21,25 @@
 
 #include "club.h"
 #include "club_math.h"
+#include "club_trade.h"
 
 #include "cardian_link.h"
 #include "errands.h"
 #include "party_finder.h"
 #include "pawn.h"
 #include "pawn_items.h"
+#include "pawn_travel.h"
+#include "players.h"
 #include "seats.h"
 #include "world.h"
 
+#include "ai/ai_container.h"
 #include "common/database.h"
 #include "common/logging.h"
+#include "common/settings.h"
+#include "common/timer.h"
+#include "common/utils.h"
+#include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "enums/item_state.h"
 #include "enums/chat_message_type.h"
@@ -40,19 +48,33 @@
 #include "items/item_linkshell.h"
 #include "items/transactions/item_claim.h"
 #include "linkshell.h"
+#include "navmesh/navmesh.h"
+#include "packets/c2s/0x033_trade_res.h"
 #include "packets/c2s/0x0c4_group_comlink_active.h"
+#include "packets/c2s/validation.h"
 #include "packets/s2c/0x017_chat_std.h"
+#include "packets/s2c/0x05a_motionmes.h"
 #include "packets/s2c/0x0dc_group_solicit_req.h"
 #include "party.h"
+#include "pause/pause.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <limits>
+#include <numbers>
+#include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace pawn::club
 {
@@ -63,6 +85,10 @@ namespace pawn::club
 
         // Who wears which shell's pearl, off the items (read): by the wearer
         std::unordered_map<uint32, Pearl> worn;
+
+        // char_jobs' level columns, by job id
+        constexpr std::array<std::string_view, 23> kJobColumns{ "",    "war", "mnk", "whm", "blm", "rdm", "thf", "pld", "drk", "bst", "brd", "rng",
+                                                                "sam", "nin", "drg", "smn", "blu", "cor", "pup", "dnc", "sch", "geo", "run" };
 
         auto nameOf(const uint32 charid) -> std::string
         {
@@ -200,11 +226,52 @@ namespace pawn::club
             PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, text);
         }
 
-        // One of the world's in his party, wearing no pearl: he can trade her one
-        auto isGuest(const CCharEntity* PPlayer, const uint32 charid) -> bool
+        // Her affinity with him and the story missions the two have completed
+        // together (cardian_party_memory), for one of the world's
+        struct Together
         {
-            const auto* PPawn = pawn::findPawn(charid);
-            return inPartyWith(PPawn, PPlayer) && pawn::world::hasBody(charid) && !worn.contains(charid);
+            uint32 affinity = 0;
+            uint32 missions = 0;
+        };
+
+        auto togetherWith(const CCharEntity* PPlayer, const uint32 charid) -> std::optional<Together>
+        {
+            const auto rset = db::preparedStmt("SELECT m.affinity, m.missions FROM cardian_party_memory m JOIN cardian_census x ON x.charid = m.pawn_charid "
+                                               "WHERE m.player_charid = ? AND m.pawn_charid = ? AND x.recruited = 0",
+                                               PPlayer->id, charid);
+            if (!rset || !rset->next())
+            {
+                return std::nullopt;
+            }
+            return Together{ rset->get<uint32>("affinity"), rset->get<uint32>("missions") };
+        }
+
+        auto lockAffinity() -> uint32
+        {
+            return settings::get<uint32>("pawn.PEARL_AFFINITY");
+        }
+
+        auto lockMissions() -> uint32
+        {
+            return settings::get<uint32>("pawn.PEARL_MISSIONS");
+        }
+
+        // The world's who qualify as his recruits, wearing no pearl: by charid
+        auto recruitsOf(const CCharEntity* PPlayer) -> std::vector<uint32>
+        {
+            std::vector<uint32> out;
+            const auto          rset = db::preparedStmt("SELECT m.pawn_charid FROM cardian_party_memory m JOIN cardian_census x ON x.charid = m.pawn_charid "
+                                                        "JOIN chars c ON c.charid = m.pawn_charid "
+                                                        "WHERE m.player_charid = ? AND x.recruited = 0 AND m.affinity >= ? AND m.missions >= ? ORDER BY c.charname",
+                                                        PPlayer->id, lockAffinity(), lockMissions());
+            while (rset && rset->next())
+            {
+                if (const auto charid = rset->get<uint32>("pawn_charid"); !worn.contains(charid))
+                {
+                    out.push_back(charid);
+                }
+            }
+            return out;
         }
 
         auto zoneName(const uint16 zoneId) -> std::string
@@ -233,6 +300,10 @@ namespace pawn::club
                 row.subJob    = static_cast<uint8_t>(PPawn->GetSJob());
                 row.subLevel  = PPawn->GetSLevel();
                 row.zone      = static_cast<uint16_t>(PPawn->getZone());
+                for (std::size_t job = 1; job < std::min<std::size_t>(MAX_JOBTYPE, std::size(row.levels)); ++job)
+                {
+                    row.levels[job] = PPawn->jobs.job[job];
+                }
                 row.flags |= CL_CLUB_STANDING | CL_CLUB_ONLINE;
                 if (inPartyWith(PPawn, PPlayer))
                 {
@@ -259,6 +330,13 @@ namespace pawn::club
                 {
                     row.flags |= CL_CLUB_ONLINE;
                 }
+                if (const auto jobs = db::preparedStmt("SELECT * FROM char_jobs WHERE charid = ?", charid); jobs && jobs->next())
+                {
+                    for (std::size_t job = 1; job < kJobColumns.size() && job < std::size(row.levels); ++job)
+                    {
+                        row.levels[job] = jobs->get<uint8>(std::string(kJobColumns[job]));
+                    }
+                }
             }
             setText(row.zoneName, zoneName(row.zone));
 
@@ -277,16 +355,29 @@ namespace pawn::club
             const auto errand = pawn::errands::viewOf(charid);
             if (errand.has_value())
             {
-                row.errand      = static_cast<uint8_t>(errand->kind);
-                row.errandState = static_cast<uint8_t>(errand->state);
-                row.secondsLeft = errand->secondsLeft;
-                row.errandZone  = errand->zone;
+                row.errand       = static_cast<uint8_t>(errand->kind);
+                row.errandState  = static_cast<uint8_t>(errand->state);
+                row.secondsLeft  = errand->secondsLeft;
+                row.secondsTotal = errand->secondsTotal;
+                row.missionsDone = errand->missionsDone;
+                row.missions     = errand->missions;
+                row.errandZone   = errand->zone;
                 setText(row.errandZoneName, zoneName(errand->zone));
                 setText(row.errandTitle, errand->title);
             }
 
+            // one of the world's: what the two have done together
+            if (kind == Member::Wild || kind == Member::Recruit)
+            {
+                if (const auto together = togetherWith(PPlayer, charid); together.has_value())
+                {
+                    row.affinity         = static_cast<uint16_t>(std::min<uint32>(together->affinity, UINT16_MAX));
+                    row.missionsTogether = static_cast<uint16_t>(std::min<uint32>(together->missions, UINT16_MAX));
+                }
+            }
+
             using cardian::errand::Kind;
-            if (kind != Member::Guest)
+            if (kind != Member::Recruit)
             {
                 if (errand.has_value())
                 {
@@ -324,8 +415,8 @@ namespace pawn::club
             return row;
         }
 
-        // His club, then the world's in his party who could be traded a
-        // pearl; his shell, and with none the vendor of the city he stands in
+        // His club, then the world's who qualify as his recruits; his shell,
+        // and with none the vendor of the city he stands in
         void club(CCharEntity* PChar, const cl_club& ask, Reply& reply)
         {
             read();
@@ -358,74 +449,234 @@ namespace pawn::club
             {
                 send(charid, kind);
             }
-            if (PChar->PParty != nullptr)
+            for (const auto charid : recruitsOf(PChar))
             {
-                for (auto* PMember : PChar->PParty->members)
-                {
-                    if (PMember != nullptr && PMember != PChar && isGuest(PChar, PMember->id))
-                    {
-                        send(PMember->id, Member::Guest);
-                    }
-                }
+                send(charid, Member::Recruit);
             }
             reply.finish(answer, CL_S_OK);
         }
 
+        // ---- a recruit comes for her pearl (OPEN_ISSUES #415) ----------------------
+
+        // Her yes carried out: she comes to him for the pearl in no party --
+        // a trade needs none -- and goes back to what she was doing once it
+        // is hers, or once she has waited long enough. While she comes the
+        // crowd's clocks leave her be (the world's hold: keepFor, bringTo)
+        enum class Leg : uint8
+        {
+            Free,    // not set out: her fight first, or a KO
+            Trek,    // walking the zone lines to him (a travel order meeting him)
+            Trip,    // out of sight, to come in near him at `due`
+            Here,    // in his zone: walking up to him, then waiting there
+            Leaving, // one from elsewhere walking off, to fade
+        };
+
+        struct Visit
+        {
+            uint32                    playerCharID = 0;
+            Leg                       leg          = Leg::Free;
+            bool                      local        = false; // standing in his zone when she set out: she goes back on foot
+            timer::time_point         since{};              // when she set out
+            timer::time_point         due{};                // Trip: when she comes in; Here, waiting: when she gives up; Leaving: when she fades regardless
+            std::optional<position_t> spot;                 // Here: the point she waits at; Leaving: where she walks off to
+            bool                      waiting = false;      // Here: at her point, facing him
+            bool                      greeted = false;      // Here: she has said she is here
+            uint16                    from    = 0;          // the zone she set out from, which she leaves toward
+            timer::time_point         hereSince{};          // Here: when her walk up to him began, for its deadline
+            position_t                himAt{};              // Here: where he stood when her point was laid
+            std::optional<bool>       tookHold;             // the visit put the world's hold on her (else one held her already)
+            bool                      pearlTaken = false;   // his pearl is hers: she goes back on the next step
+        };
+        std::unordered_map<uint32, Visit> visits; // by her charid
+
+        // A tell from her by name, so one out of sight can speak too
+        void tellFrom(CCharEntity* PPlayer, const uint32 charid, const std::string_view line)
+        {
+            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(nameOf(charid), PPlayer->getZone(), MESSAGE_TELL, std::string(line));
+        }
+
+        // The world's hold on her while she comes (the crowd's clocks leave
+        // her be), noting whether the visit took it: one a contract of his
+        // held already stays held after
+        void holdHer(const uint32 charid, Visit& visit, const CCharEntity* PPlayer)
+        {
+            if (!visit.tookHold.has_value())
+            {
+                visit.tookHold = pawn::world::holderOf(charid) == 0;
+            }
+            pawn::world::keepFor(charid, PPlayer->id);
+        }
+
+        auto bringHer(const uint32 charid, Visit& visit, const CCharEntity* PPlayer, const position_t& at) -> bool
+        {
+            if (!visit.tookHold.has_value())
+            {
+                visit.tookHold = pawn::world::holderOf(charid) == 0;
+            }
+            return pawn::world::bringTo(charid, PPlayer->id, static_cast<uint16>(PPlayer->getZone()), at);
+        }
+
+        // The visit over: her orders let go, one from elsewhere faded to
+        // stand next at her seat, and the world's again unless a hold of
+        // his held her before the visit
+        void endVisit(const uint32 charid, const Visit& visit)
+        {
+            pawn::clearWalkOrder(charid);
+            pawn::clearTravelOrder(charid);
+            if (!visit.local)
+            {
+                pawn::world::fadeBody(charid);
+            }
+            if (visit.tookHold.value_or(false))
+            {
+                pawn::world::endHold(charid);
+            }
+        }
+
+        // A point on his zone's mesh `yalms` from `from` toward `toward`, the
+        // way walkable in a line; nullopt when the mesh gives none
+        auto meshPointToward(CZone* PZone, const position_t& from, const position_t& toward, const float yalms) -> std::optional<position_t>
+        {
+            auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
+            const float dx = toward.x - from.x;
+            const float dz = toward.z - from.z;
+            const float d  = std::sqrt(dx * dx + dz * dz);
+            if (navMesh == nullptr || d < 0.01f)
+            {
+                return std::nullopt;
+            }
+            position_t aim = from;
+            aim.x          = from.x + dx / d * yalms;
+            aim.z          = from.z + dz / d * yalms;
+            const std::optional<position_t> reach = navMesh->findFurthestValidPoint(from, aim);
+            if (!reach.has_value())
+            {
+                return std::nullopt;
+            }
+            const std::optional<position_t> ground = navMesh->findClosestValidPoint(*reach);
+            return ground.has_value() ? ground : reach;
+        }
+
+        // She goes back: one standing in his zone when she set out is the
+        // world's again where she stands, her seat's pulls taking her home;
+        // one from elsewhere walks off toward the zone line on her way home,
+        // or straight away from him with none, to fade once out of his sight
+        // (Leaving). False when the visit is over
+        auto leave(const uint32 charid, Visit& visit, const CCharEntity* PPlayer, const std::string_view why) -> bool
+        {
+            pawn::clearTravelOrder(charid);
+            const auto* PPawn = pawn::findPawn(charid);
+            if (!visit.local && PPawn != nullptr && PPawn->loc.zone == PPlayer->loc.zone && !PPawn->isDead())
+            {
+                std::optional<position_t> away;
+                if (visit.from != 0 && visit.from != static_cast<uint16>(PPawn->getZone()))
+                {
+                    if (const auto hop = pawn::travel::nextHop(PPawn->getZone(), static_cast<xi::ZoneId>(visit.from), PPawn->loc.p); hop.has_value())
+                    {
+                        away = hop->walkTo;
+                    }
+                }
+                if (!away.has_value())
+                {
+                    away = meshPointToward(PPawn->loc.zone, PPawn->loc.p,
+                                           position_t(2 * PPawn->loc.p.x - PPlayer->loc.p.x, PPawn->loc.p.y, 2 * PPawn->loc.p.z - PPlayer->loc.p.z, 0, 0),
+                                           rules::kVisitLeaveTo);
+                }
+                if (away.has_value())
+                {
+                    ShowInfoFmt("club: {} goes back from {} ({}), walking off to ({:.1f}, {:.1f}, {:.1f}) {}", nameOf(charid), PPlayer->getName(), why, away->x, away->y, away->z,
+                                visit.from != 0 && visit.from != static_cast<uint16>(PPawn->getZone()) ? fmt::format("toward zone {}", visit.from) : std::string("away from him"));
+                    pawn::setWalkOrder(charid, *away, pawn::kErrandWalker);
+                    visit.leg  = Leg::Leaving;
+                    visit.spot = away;
+                    visit.due  = timer::now() + std::chrono::seconds(rules::kVisitLeaveSeconds);
+                    return true;
+                }
+            }
+            ShowInfoFmt("club: {} goes back from {} ({})", nameOf(charid), PPlayer->getName(), why);
+            endVisit(charid, visit);
+            return false;
+        }
+
         // ---- the pearl ---------------------------------------------------------
 
-        // A Linkpearl of his shell traded to her from his inventory, within
-        // trading reach, and put on by her
-        auto give(CCharEntity* PPlayer, const uint32 charid) -> uint16
+        // She puts on the pearl he traded her. One of the world's -- the
+        // recruit -- is held for him from then on, where she stands, and
+        // stays wild
+        void putOn(CCharEntity* PPlayer, CCharEntity* PPawn, const uint8 slot, const bool joining)
         {
-            const auto shells = shellsOf(PPlayer);
-            if (shells.empty())
-            {
-                return CL_S_NO_LINKSHELL;
-            }
-            const auto member = memberOf(PPlayer, charid);
-            const bool guest  = !member.has_value() && isGuest(PPlayer, charid);
-            if (!member.has_value() && !guest)
-            {
-                return CL_S_NOT_IN_CLUB;
-            }
-            auto* PPawn = pawn::findPawn(charid);
-            if (PPawn == nullptr || PPawn->loc.zone == nullptr)
-            {
-                return CL_S_NOT_STANDING;
-            }
-            if (auto* PWorn = wornItem(PPawn); PWorn != nullptr)
-            {
-                return shells.contains(PWorn->GetLSID()) ? CL_S_HAS_PEARL : CL_S_PEARLED_ELSEWHERE;
-            }
-            const auto slots = pearlToTrade(PPlayer, shells);
-            if (slots.empty())
-            {
-                return CL_S_NO_PEARL_TO_GIVE;
-            }
-            uint8 landed = 0;
-            if (const auto status = pawn::items::giveToPawn(PPlayer, PPawn, slots.front(), 1, &landed); status != CL_S_OK)
-            {
-                return status;
-            }
             const auto name = PPawn->getName();
-            if (!wear(PPawn, landed))
+            if (!wear(PPawn, slot))
             {
-                ShowErrorFmt("club: {} took {}'s linkpearl but the game would not let her put it on (slot {})", name, PPlayer->getName(), landed);
+                ShowErrorFmt("club: {} took {}'s linkpearl but the game would not let her put it on (slot {})", name, PPlayer->getName(), slot);
                 say(PPlayer, fmt::format("{} takes the linkpearl.", name));
                 read();
-                return CL_S_OK;
+                return;
             }
             read();
-            // The recruit: one of the world's is held for him from now on,
-            // where she stands, and stays wild
-            if (guest)
+            // Come for it, she goes back to what she was doing; given in his
+            // party, his linkshell's pearl keeps her for him where she stands
+            if (const auto visit = visits.find(PPawn->id); visit != visits.end())
             {
-                pawn::world::keepFor(charid, PPlayer->id);
+                visit->second.pearlTaken = true; // her visit's next step takes her back (advance)
             }
-            ShowInfoFmt("club: {} trades {} ({}) a linkpearl, and she puts it on{}", PPlayer->getName(), name, charid,
-                        guest ? ": she joins his linkshell, wild as ever" : "");
-            say(PPlayer, guest ? fmt::format("{} puts on the linkpearl and joins the linkshell.", name) : fmt::format("{} puts on the linkpearl.", name));
-            return CL_S_OK;
+            else if (joining)
+            {
+                pawn::world::keepFor(PPawn->id, PPlayer->id);
+            }
+            ShowInfoFmt("club: {} trades {} ({}) a linkpearl, and she puts it on{}", PPlayer->getName(), name, PPawn->id,
+                        joining ? ": she joins his linkshell, wild as ever" : "");
+            say(PPlayer, joining ? fmt::format("{} puts on the linkpearl and joins the linkshell.", name) : fmt::format("{} puts on the linkpearl.", name));
+        }
+
+        // ---- the game's own trade ------------------------------------------------
+
+        // A trade window he opened with her, as the game shows it her: the
+        // trade packets it pushes her (0x021 to 0x023), read as her client
+        // would read them
+        struct Trade
+        {
+            uint32                                         partner   = 0;     // his charid
+            bool                                           open      = false; // she accepted: the window is open
+            bool                                           confirmed = false; // he pressed Trade on what he offers now
+            std::array<rules::Offered, rules::kTradeSlots> slots{};
+        };
+        std::unordered_map<uint32, Trade> trades; // by her charid
+
+        // Her answer, as her client would send it (packet 0x033)
+        void answerTrade(CCharEntity* PPawn, const GP_CLI_COMMAND_TRADE_RES_KIND kind)
+        {
+            GP_CLI_COMMAND_TRADE_RES answer{};
+            answer.Kind = std::to_underlying(kind);
+            if (answer.validate(nullptr, PPawn).valid())
+            {
+                answer.process(nullptr, PPawn);
+            }
+            PPawn->clearPacketList();
+        }
+
+        // She cancels the request or the open window, and tells him why
+        void declineTrade(CCharEntity* PPawn, CCharEntity* PPlayer, const rules::Verdict verdict)
+        {
+            answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Cancell);
+            PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPawn, MESSAGE_TELL, std::string(rules::declineLine(verdict)));
+            ShowInfoFmt("club: {} declines {}'s trade ({})", PPawn->getName(), PPlayer->getName(), std::to_underlying(verdict));
+        }
+
+        // The slot of her inventory holding a Linkpearl of this shell, not worn
+        auto pearlIn(CCharEntity* PPawn, const uint32 lsid) -> std::optional<uint8>
+        {
+            const auto* storage = PPawn->getStorage(LOC_INVENTORY);
+            for (uint8 slot = 1; storage != nullptr && slot <= storage->GetSize(); ++slot)
+            {
+                auto* PPearl = dynamic_cast<CItemLinkshell*>(storage->GetItem(slot));
+                if (PPearl != nullptr && PPearl->getID() == rules::kLinkpearl && PPearl->GetLSID() == lsid && PPearl->GetLSType() == LSTYPE_LINKPEARL &&
+                    PPearl->state() != ItemState::Equipped)
+                {
+                    return slot;
+                }
+            }
+            return std::nullopt;
         }
 
         // Her pearl of this shell broken as the holder breaks a member's
@@ -493,6 +744,8 @@ namespace pawn::club
                                  rules::kLinkSlot1, rules::kLinkSlot2);
                 db::preparedStmt("DELETE FROM char_inventory WHERE charid = ? AND location = ? AND slot = ? LIMIT 1", charid, location, slot);
             }
+            db::preparedStmt("UPDATE accounts_sessions SET linkshellid1 = 0, linkshellrank1 = 0 WHERE charid = ? AND linkshellid1 = ?", charid, lsid);
+            db::preparedStmt("UPDATE accounts_sessions SET linkshellid2 = 0, linkshellrank2 = 0 WHERE charid = ? AND linkshellid2 = ?", charid, lsid);
             ShowInfoFmt("club: {}'s pearl of linkshell {} is broken where she is saved; {} thrown away", nameOf(charid), lsid, gone.size());
         }
 
@@ -528,7 +781,650 @@ namespace pawn::club
 
         void pearl(CCharEntity* PChar, const cl_pearl& ask, Reply& reply)
         {
-            reply.finish(ask, ask.on != 0 ? give(PChar, ask.cardian) : breakPearl(PChar, ask.cardian));
+            reply.finish(ask, breakPearl(PChar, ask.cardian));
+        }
+
+        // ---- a recruit asked to join ---------------------------------------------
+
+        // A yes given, carried out once she has thought it over: by her charid
+        struct Asked
+        {
+            uint32               playerCharID = 0;
+            realtime::time_point due{};
+        };
+        std::unordered_map<uint32, Asked> asked;
+
+        void askRecruit(CCharEntity* PChar, const cl_club_recruit& ask, Reply& reply)
+        {
+            auto answer = ask;
+            if (!isRecruit(PChar, ask.cardian))
+            {
+                reply.finish(answer, CL_S_NOT_QUALIFIED);
+                return;
+            }
+            // Nothing to come for without a linkpearl of his in his bags
+            if (const auto shells = shellsOf(PChar); shells.empty())
+            {
+                reply.finish(answer, CL_S_NO_LINKSHELL);
+                return;
+            }
+            else if (pearlToTrade(PChar, shells).empty())
+            {
+                reply.finish(answer, CL_S_NO_PEARL_TO_GIVE);
+                return;
+            }
+            // One who qualifies says yes, whatever she is doing, and comes for
+            // the pearl once she has thought it over (a visit); in his party
+            // already, or on her way, there is nothing more to carry out
+            const bool withHim = inPartyWith(pawn::findPawn(ask.cardian), PChar);
+            const bool coming  = visits.contains(ask.cardian);
+            answer.decideMs    = static_cast<uint32_t>(xirand::GetRandomNumber(static_cast<int>(rules::kDecideMinMs), static_cast<int>(rules::kDecideMaxMs) + 1));
+            setText(answer.line, std::string(rules::joinYes(ask.cardian)));
+            if (!withHim && !coming)
+            {
+                asked[ask.cardian] = Asked{ PChar->id, realtime::now() + std::chrono::milliseconds(answer.decideMs) };
+            }
+            ShowInfoFmt("club: {} asks {} to join his linkshell: yes{}", PChar->getName(), nameOf(ask.cardian),
+                        withHim ? ", with him already" : coming ? ", on her way already" : "");
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // Her yes carried out, once its beat is over: she sets out to him for
+        // the pearl (a visit), whatever she was doing
+        void carryOutYeses(CZone* PZone)
+        {
+            std::vector<std::pair<uint32, Asked>> due;
+            for (const auto& [charid, a] : asked)
+            {
+                if (realtime::now() >= a.due)
+                {
+                    due.emplace_back(charid, a);
+                }
+            }
+            for (const auto& [charid, a] : due)
+            {
+                auto* PPlayer = zoneutils::GetChar(a.playerCharID);
+                if (PPlayer == nullptr)
+                {
+                    if (!pawn::players::online(a.playerCharID))
+                    {
+                        asked.erase(charid); // he has left the world; loading between zones, he is waited for
+                    }
+                    continue;
+                }
+                if (PPlayer->loc.zone != PZone)
+                {
+                    continue;
+                }
+                asked.erase(charid);
+                const auto* PPawn = pawn::findPawn(charid);
+                if (!isRecruit(PPlayer, charid) || inPartyWith(PPawn, PPlayer))
+                {
+                    continue; // his pearl given meanwhile, or in his party already: nothing to come for
+                }
+                const bool  here  = PPawn != nullptr && PPawn->loc.zone == PPlayer->loc.zone;
+                visits[charid]    = Visit{ .playerCharID = PPlayer->id, .local = here, .since = timer::now() };
+                ShowInfoFmt("club: {} sets out to {} for his linkpearl ({})", nameOf(charid), PPlayer->getName(),
+                            PPawn == nullptr ? std::string("faded") : here ? std::string("in his zone") : fmt::format("in zone {}", static_cast<uint16>(PPawn->getZone())));
+            }
+        }
+
+        // Zone lines between two zones; max for no route
+        auto zonesBetween(const uint16 from, const uint16 to) -> uint32
+        {
+            if (from == to)
+            {
+                return 0;
+            }
+            const auto hops = pawn::travel::hops({ static_cast<xi::ZoneId>(to) });
+            const auto it   = hops.find(from);
+            return it != hops.end() ? it->second : std::numeric_limits<uint32>::max();
+        }
+
+        // Where a faded body was saved: her zone while out of sight
+        auto savedZoneOf(const uint32 charid) -> uint16
+        {
+            const auto rset = db::preparedStmt("SELECT pos_zone FROM chars WHERE charid = ?", charid);
+            return rset && rset->next() ? rset->get<uint16>("pos_zone") : 0;
+        }
+
+        // Where one out of sight comes in: kVisitArrive yalms from him, behind
+        // him first and round him after, on his zone's mesh; beside him when
+        // the mesh gives nowhere
+        auto arrivalNear(const CCharEntity* PPlayer) -> position_t
+        {
+            for (const float turn : { 1.0f, 0.75f, 1.25f, 0.5f, 1.5f, 0.0f })
+            {
+                const auto aim   = nearPosition(PPlayer->loc.p, rules::kVisitArrive, turn * std::numbers::pi_v<float>);
+                const auto reach = meshPointToward(PPlayer->loc.zone, PPlayer->loc.p, aim, rules::kVisitArrive);
+                if (reach.has_value() && distance(PPlayer->loc.p, *reach) >= rules::kVisitArrive / 2)
+                {
+                    return *reach;
+                }
+            }
+            return PPlayer->loc.p;
+        }
+
+        // Her point beside him: her ring's distance from him (visitRing), on
+        // her side of him, turned round him a step at a time off any point
+        // another who comes to him waits at, so no two stand on one spot
+        auto spotBeside(const uint32 charid, const CCharEntity* PPawn, const CCharEntity* PPlayer) -> position_t
+        {
+            const position_t& him  = PPlayer->loc.p;
+            const float       ring = rules::visitRing(charid);
+            const float       dx   = PPawn->loc.p.x - him.x;
+            const float       dz   = PPawn->loc.p.z - him.z;
+            const float       base = dx * dx + dz * dz > 0.25f ? std::atan2(dz, dx) : static_cast<float>(charid % 8) * std::numbers::pi_v<float> / 4;
+            for (const int step : { 0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6 })
+            {
+                const float angle = base + static_cast<float>(step) * rules::kVisitSpread;
+                position_t  aim   = him;
+                aim.x             = him.x + std::cos(angle) * ring;
+                aim.z             = him.z + std::sin(angle) * ring;
+                const auto at     = meshPointToward(PPlayer->loc.zone, him, aim, ring);
+                if (!at.has_value() || distance(him, *at) < ring * 0.6f)
+                {
+                    continue; // the mesh cuts it short: a wall that way
+                }
+                const bool taken = std::ranges::any_of(visits, [&](const auto& entry)
+                                                       { return entry.first != charid && entry.second.playerCharID == PPlayer->id && entry.second.leg == Leg::Here &&
+                                                                entry.second.spot.has_value() && distance(*entry.second.spot, *at) < rules::kVisitApart; });
+                if (!taken)
+                {
+                    return *at;
+                }
+            }
+            return meshPointToward(PPlayer->loc.zone, him, PPawn->loc.p, ring).value_or(PPawn->loc.p);
+        }
+
+        // At his side: an emote at him, text and all, and a tell
+        void greet(const uint32 charid, CCharEntity* PPawn, CCharEntity* PPlayer)
+        {
+            const auto emote = static_cast<Emote>(rules::greetEmote(charid));
+            PPawn->loc.zone->PushPacket(PPawn, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(PPawn, PPlayer->id, PPlayer->targid, emote, EmoteMode::All, 0));
+            tellFrom(PPlayer, charid, rules::imHere(charid));
+            ShowInfoFmt("club: {} waits at {}'s side for his linkpearl, and greets him (emote {})", nameOf(charid), PPlayer->getName(), static_cast<uint8>(emote));
+        }
+
+        // One visit, a step on his zone's tick (paused, none). False once it
+        // is over
+        auto advance(const uint32 charid, Visit& visit, CCharEntity* PPlayer) -> bool
+        {
+            const auto now   = timer::now();
+            auto*      PPawn = pawn::findPawn(charid);
+
+            // In his party now -- invited on the way, or after the pearl --
+            // the party has her: the visit's own walk and trek let go, nothing
+            // faded, the hold left to the party's end (party_finder noteLeft)
+            if (inPartyWith(PPawn, PPlayer))
+            {
+                if (pawn::walkOrderedBy(charid) == pawn::kErrandWalker)
+                {
+                    pawn::clearWalkOrder(charid);
+                }
+                pawn::clearTravelOrder(charid);
+                ShowInfoFmt("club: {}'s visit ends: she is in {}'s party", nameOf(charid), PPlayer->getName());
+                return false;
+            }
+            if (visit.pearlTaken && visit.leg != Leg::Leaving)
+            {
+                return leave(charid, visit, PPlayer, "the pearl is hers");
+            }
+
+            if (visit.leg == Leg::Leaving)
+            {
+                const bool gone    = PPawn == nullptr || PPawn->loc.zone != PPlayer->loc.zone;
+                const bool unseen  = !gone && distance(PPawn->loc.p, PPlayer->loc.p) >= rules::kVisitFadeAt;
+                const bool there   = !gone && visit.spot.has_value() && distance(PPawn->loc.p, *visit.spot) < 3.0f;
+                const bool stopped = !gone && !pawn::walkOrderOf(charid).has_value(); // the walk found no way
+                if (gone || unseen || there || stopped || now >= visit.due)
+                {
+                    ShowInfoFmt("club: {} fades on her way home ({})", nameOf(charid),
+                                gone ? "out of the zone" : unseen ? "out of his sight" : there ? "at the zone line" : stopped ? "no way on" : "on the clock");
+                    endVisit(charid, visit);
+                    return false;
+                }
+                return true;
+            }
+            if (visit.leg != Leg::Here && now - visit.since >= std::chrono::seconds(rules::kVisitGiveUpSeconds))
+            {
+                tellFrom(PPlayer, charid, rules::joinLater());
+                return leave(charid, visit, PPlayer, "too long on the way");
+            }
+
+            switch (visit.leg)
+            {
+                case Leg::Free:
+                {
+                    if (PPawn != nullptr && (PPawn->isDead() || (PPawn->PAI != nullptr && PPawn->PAI->IsEngaged())))
+                    {
+                        return true; // her fight first
+                    }
+                    if (PPawn != nullptr && PPawn->loc.zone == PPlayer->loc.zone)
+                    {
+                        holdHer(charid, visit, PPlayer);
+                        visit.leg = Leg::Here;
+                        return true;
+                    }
+                    const uint16 from  = PPawn != nullptr ? static_cast<uint16>(PPawn->getZone()) : savedZoneOf(charid);
+                    const uint32 zones = zonesBetween(from, static_cast<uint16>(PPlayer->getZone()));
+                    visit.from         = from;
+                    tellFrom(PPlayer, charid, rules::headingYourWay(charid));
+                    if (PPawn != nullptr && zones <= rules::kTrekZones && pawn::orderTravel(charid, static_cast<uint16>(PPlayer->getZone()), PPlayer->id))
+                    {
+                        holdHer(charid, visit, PPlayer);
+                        visit.leg = Leg::Trek;
+                        ShowInfoFmt("club: {} walks to {} from zone {}, {} zone lines away", nameOf(charid), PPlayer->getName(), from, zones);
+                        return true;
+                    }
+                    visit.leg = Leg::Trip;
+                    visit.due = now + std::chrono::seconds(rules::tripSeconds(zones));
+                    ShowInfoFmt("club: {} comes to {} out of sight from zone {} ({} zone lines away), in {} s", nameOf(charid), PPlayer->getName(), from,
+                                zones == std::numeric_limits<uint32>::max() ? std::string("no route") : std::to_string(zones), rules::tripSeconds(zones));
+                    return true;
+                }
+                case Leg::Trek:
+                {
+                    if (PPawn != nullptr && PPawn->loc.zone == PPlayer->loc.zone)
+                    {
+                        pawn::clearTravelOrder(charid);
+                        visit.leg = Leg::Here;
+                        return true;
+                    }
+                    // Faded on the way, or a trek that found no way: out of sight from here
+                    if (PPawn == nullptr || !pawn::travelOrderOf(charid).has_value())
+                    {
+                        ShowInfoFmt("club: {}'s walk to {} ends out of sight ({})", nameOf(charid), PPlayer->getName(), PPawn == nullptr ? "she faded" : "no way on");
+                        pawn::clearTravelOrder(charid);
+                        visit.leg = Leg::Trip;
+                        visit.due = now + std::chrono::seconds(rules::tripSeconds(rules::kTrekZones));
+                    }
+                    return true;
+                }
+                case Leg::Trip:
+                {
+                    if (now < visit.due)
+                    {
+                        return true;
+                    }
+                    if (PPawn != nullptr && PPawn->loc.zone == PPlayer->loc.zone)
+                    {
+                        holdHer(charid, visit, PPlayer);
+                        visit.leg = Leg::Here;
+                        return true;
+                    }
+                    if (PPawn != nullptr)
+                    {
+                        pawn::world::fadeBody(charid); // stood elsewhere meanwhile: unseen there, she leaves
+                    }
+                    const auto at = arrivalNear(PPlayer);
+                    if (bringHer(charid, visit, PPlayer, at) && pawn::seats::inviteStand(charid))
+                    {
+                        visit.leg = Leg::Here;
+                        return true;
+                    }
+                    visit.due = now + std::chrono::seconds(5); // the ladder could not stand her now: again shortly, the give-up clock running
+                    return true;
+                }
+                case Leg::Here:
+                {
+                    if (PPawn == nullptr)
+                    {
+                        visit.leg = Leg::Trip; // faded under her: in again out of sight
+                        visit.due = now;
+                        visit.spot.reset();
+                        visit.waiting   = false;
+                        visit.hereSince = {};
+                        return true;
+                    }
+                    if (PPawn->loc.zone != PPlayer->loc.zone)
+                    {
+                        pawn::clearWalkOrder(charid); // he moved on: after him again
+                        visit.leg   = Leg::Free;
+                        visit.local = false;
+                        visit.spot.reset();
+                        visit.waiting   = false;
+                        visit.hereSince = {};
+                        return true;
+                    }
+                    if (PPawn->isDead())
+                    {
+                        return leave(charid, visit, PPlayer, "knocked out");
+                    }
+                    if (PPawn->PAI != nullptr && PPawn->PAI->IsEngaged())
+                    {
+                        return true;
+                    }
+                    // Her point beside him (spotBeside), laid again whenever he
+                    // has moved on from where he stood
+                    if (!visit.spot.has_value() || distance(visit.himAt, PPlayer->loc.p) > 3.0f)
+                    {
+                        visit.spot      = spotBeside(charid, PPawn, PPlayer);
+                        visit.himAt     = PPlayer->loc.p;
+                        visit.hereSince = now;
+                        visit.waiting   = false;
+                        pawn::setWalkOrder(charid, *visit.spot, pawn::kErrandWalker);
+                    }
+                    // At her point -- or as near as she gets: a point the walker
+                    // dropped, or a minute and a half walking up -- she waits there
+                    const bool atSpot = distance(PPawn->loc.p, *visit.spot) < 0.6f;
+                    const bool stuck  = !pawn::walkOrderOf(charid).has_value() || now - visit.hereSince >= std::chrono::seconds(90);
+                    if (!visit.waiting && (atSpot || stuck))
+                    {
+                        if (!atSpot)
+                        {
+                            pawn::clearWalkOrder(charid);
+                            visit.spot = PPawn->loc.p;
+                        }
+                        visit.waiting = true;
+                        visit.due     = now + std::chrono::seconds(rules::kVisitWaitSeconds);
+                        PPawn->loc.p.rotation = worldAngle(PPawn->loc.p, PPlayer->loc.p);
+                        PPawn->updatemask |= UPDATE_POS;
+                        if (!visit.greeted)
+                        {
+                            visit.greeted = true;
+                            greet(charid, PPawn, PPlayer);
+                        }
+                    }
+                    if (!visit.waiting)
+                    {
+                        return true;
+                    }
+                    if (const uint8 toward = worldAngle(PPawn->loc.p, PPlayer->loc.p); std::abs(angleDifference(toward, PPawn->loc.p.rotation)) > 8)
+                    {
+                        PPawn->loc.p.rotation = toward;
+                        PPawn->updatemask |= UPDATE_POS;
+                    }
+                    if (now >= visit.due && !trades.contains(charid))
+                    {
+                        tellFrom(PPlayer, charid, rules::catchYouLater(charid));
+                        return leave(charid, visit, PPlayer, "he did not trade her the pearl in time");
+                    }
+                    return true;
+                }
+                case Leg::Leaving:
+                    break;
+            }
+            return true;
+        }
+
+        // ---- his idle members loiter ----------------------------------------------
+
+        // His club's members standing in his zone with nothing to do -- not
+        // in a party, on a venture, coming for a pearl, walked by him or on
+        // a trek, fighting or down, and not one of the world's out in the
+        // wild, whom the world's own seats keep -- gather at one of the
+        // town's loitering spots (world.h loiterSpots), in a ring facing its
+        // middle, and emote at each other as the world's cliques do
+        // (WORLD_CHAT_GAP_MIN to _MAX seconds apart, one in three turning to
+        // the one she emotes at), until he puts them in a party. In the
+        // field they stand where they are. A stopgap until the world's own
+        // life reaches them (the user, 2026-10-09)
+        struct Lounge
+        {
+            uint16                                         zone = 0;
+            std::optional<position_t>                      centre; // the spot, chosen once while he is in the zone
+            float                                          spread = 0.0f;
+            std::vector<uint32>                            idle;   // by charid, as last read
+            std::unordered_map<uint32, position_t>         seats;  // by her charid: where she stands
+            std::unordered_map<uint32, timer::time_point>  faceBackAt;
+            timer::time_point                              readAt{};
+            timer::time_point                              chatAt{};
+        };
+        std::unordered_map<uint32, Lounge> lounges; // by his charid
+
+        constexpr auto kLoungeRead = std::chrono::seconds(2);
+
+        // The walk order the lounge gave her, and none other's: an errand's
+        // walk or his own is never taken off her
+        auto seatedThere(const uint32 charid, const position_t& seat) -> bool
+        {
+            const auto walk = pawn::walkOrderOf(charid);
+            return walk.has_value() && pawn::walkOrderedBy(charid) == pawn::kErrandWalker && distance(*walk, seat) < 0.1f;
+        }
+
+        auto loiters(const uint32 charid, const CCharEntity* PPlayer, const Lounge& lounge) -> bool
+        {
+            const auto* PPawn = pawn::findPawn(charid);
+            if (PPawn == nullptr || PPawn->loc.zone != PPlayer->loc.zone || PPawn->isDead() || PPawn->PParty != nullptr ||
+                (PPawn->PAI != nullptr && PPawn->PAI->IsEngaged()))
+            {
+                return false;
+            }
+            if (visits.contains(charid) || pawn::errands::viewOf(charid).has_value() || pawn::travelOrderOf(charid).has_value() ||
+                (pawn::world::isBody(charid) && pawn::world::inTheWild(charid)))
+            {
+                return false;
+            }
+            const uint32 by   = pawn::walkOrderedBy(charid);
+            const auto   seat = lounge.seats.find(charid);
+            return by == 0 || (seat != lounge.seats.end() && seatedThere(charid, seat->second));
+        }
+
+        // Let go of her seat: the lounge's walk taken off her, if it is still hers
+        void unseat(Lounge& lounge, const uint32 charid)
+        {
+            if (const auto seat = lounge.seats.find(charid); seat != lounge.seats.end())
+            {
+                if (seatedThere(charid, seat->second))
+                {
+                    pawn::clearWalkOrder(charid);
+                }
+                lounge.seats.erase(seat);
+            }
+            lounge.faceBackAt.erase(charid);
+        }
+
+        void faceToward(CCharEntity* PPawn, const position_t& at)
+        {
+            if (const uint8 toward = worldAngle(PPawn->loc.p, at); std::abs(angleDifference(toward, PPawn->loc.p.rotation)) > 8)
+            {
+                PPawn->loc.p.rotation = toward;
+                PPawn->updatemask |= UPDATE_POS;
+            }
+        }
+
+        void loungeTick(CCharEntity* PPlayer)
+        {
+            const auto now    = timer::now();
+            const auto zoneId = static_cast<uint16>(PPlayer->getZone());
+            Lounge&    lounge = lounges[PPlayer->id];
+
+            // A new zone, a new spot: the last zone's seats let go where they stand
+            if (lounge.zone != zoneId)
+            {
+                for (const auto charid : std::vector<uint32>(lounge.idle))
+                {
+                    unseat(lounge, charid);
+                }
+                lounge = Lounge{ .zone = zoneId };
+            }
+
+            if (now >= lounge.readAt)
+            {
+                lounge.readAt = now + kLoungeRead;
+                std::vector<uint32> idle;
+                for (const auto& [charid, kind] : pawn::club::membersOf(PPlayer))
+                {
+                    if (loiters(charid, PPlayer, lounge))
+                    {
+                        idle.push_back(charid);
+                    }
+                }
+                for (const auto charid : lounge.idle)
+                {
+                    if (std::ranges::find(idle, charid) == idle.end())
+                    {
+                        unseat(lounge, charid);
+                    }
+                }
+                std::ranges::sort(idle);
+                const bool changed = idle != lounge.idle;
+                lounge.idle        = std::move(idle);
+
+                // The spot nearest where they stand, chosen once
+                if (!lounge.centre.has_value() && !lounge.idle.empty())
+                {
+                    const auto spots = pawn::world::loiterSpots(PPlayer->loc.zone);
+                    if (spots.empty())
+                    {
+                        lounge.readAt = now + std::chrono::seconds(30); // the field: nowhere to go
+                        return;
+                    }
+                    const auto* PFirst = pawn::findPawn(lounge.idle.front());
+                    const auto  where  = PFirst != nullptr ? PFirst->loc.p : PPlayer->loc.p;
+                    const auto  best   = std::ranges::min_element(spots, {}, [&](const pawn::world::Loiter& l) { return distance(l.at, where); });
+                    lounge.centre      = best->at;
+                    lounge.spread      = best->spread;
+                    ShowInfoFmt("club: {}'s idle linkshell members gather at ({:.1f}, {:.1f}, {:.1f}) in {}", PPlayer->getName(), best->at.x, best->at.y, best->at.z,
+                                PPlayer->loc.zone->getName());
+                }
+
+                // A ring round the spot's middle, one seat each, laid again as
+                // the ring changes
+                if (changed && lounge.centre.has_value())
+                {
+                    const auto   n      = lounge.idle.size();
+                    const float  radius = n <= 1 ? 0.0f : std::clamp(0.9f + 0.3f * static_cast<float>(n), 1.3f, std::max(1.6f, lounge.spread));
+                    const float  turn   = static_cast<float>(PPlayer->id % 16) * std::numbers::pi_v<float> / 8;
+                    for (std::size_t i = 0; i < n; ++i)
+                    {
+                        const float angle = turn + 2 * std::numbers::pi_v<float> * static_cast<float>(i) / static_cast<float>(std::max<std::size_t>(n, 1));
+                        position_t  aim   = *lounge.centre;
+                        aim.x += std::cos(angle) * radius;
+                        aim.z += std::sin(angle) * radius;
+                        const auto seat   = radius > 0.0f ? meshPointToward(PPlayer->loc.zone, *lounge.centre, aim, radius).value_or(*lounge.centre) : *lounge.centre;
+                        const auto charid = lounge.idle[i];
+                        if (const auto had = lounge.seats.find(charid); had != lounge.seats.end() && seatedThere(charid, had->second))
+                        {
+                            pawn::clearWalkOrder(charid);
+                        }
+                        lounge.seats[charid] = seat;
+                        pawn::setWalkOrder(charid, seat, pawn::kErrandWalker);
+                    }
+                }
+            }
+            if (!lounge.centre.has_value())
+            {
+                return;
+            }
+
+            // At her seat she faces the middle -- alone, him -- or the one she
+            // turned to, until it is time to turn back
+            std::vector<uint32> seated;
+            for (const auto charid : lounge.idle)
+            {
+                auto*      PPawn = pawn::findPawn(charid);
+                const auto seat  = lounge.seats.find(charid);
+                if (PPawn == nullptr || seat == lounge.seats.end() || distance(PPawn->loc.p, seat->second) > 0.6f)
+                {
+                    continue;
+                }
+                seated.push_back(charid);
+                if (const auto back = lounge.faceBackAt.find(charid); back != lounge.faceBackAt.end())
+                {
+                    if (now < back->second)
+                    {
+                        continue;
+                    }
+                    lounge.faceBackAt.erase(back);
+                }
+                faceToward(PPawn, lounge.idle.size() >= 2 ? *lounge.centre : PPlayer->loc.p);
+            }
+
+            // One speaker at a time, at another of the ring
+            const auto gapMin = settings::get<uint32>("pawn.WORLD_CHAT_GAP_MIN");
+            const auto gapMax = settings::get<uint32>("pawn.WORLD_CHAT_GAP_MAX");
+            if (seated.size() < 2 || gapMax == 0 || now < lounge.chatAt)
+            {
+                return;
+            }
+            lounge.chatAt = now + std::chrono::seconds(xirand::GetRandomNumber(std::min(gapMin, gapMax), gapMax + 1));
+            const auto speaker  = seated[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(seated.size())))];
+            auto       listener = seated[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(seated.size()) - 1))];
+            if (listener == speaker)
+            {
+                listener = seated.back();
+            }
+            auto*       PSpeaker  = pawn::findPawn(speaker);
+            const auto* PListener = pawn::findPawn(listener);
+            if (PSpeaker == nullptr || PListener == nullptr)
+            {
+                return;
+            }
+            static constexpr std::array<Emote, 18> kTalk{ Emote::Wave, Emote::Bow, Emote::Salute, Emote::Laugh, Emote::No, Emote::Yes, Emote::Joy, Emote::Cheer, Emote::Clap,
+                                                         Emote::Praise, Emote::Smile, Emote::Sigh, Emote::Comfort, Emote::Surprised, Emote::Amazed, Emote::Grin, Emote::Doubt, Emote::Huh };
+            const Emote emote = kTalk[static_cast<std::size_t>(xirand::GetRandomNumber(0, static_cast<int>(kTalk.size())))];
+            if (xirand::GetRandomNumber(0, 3) == 0)
+            {
+                faceToward(PSpeaker, PListener->loc.p);
+                lounge.faceBackAt[speaker] = now + std::chrono::seconds(xirand::GetRandomNumber(4, 10));
+            }
+            PSpeaker->loc.zone->PushPacket(PSpeaker, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_MOTIONMES>(PSpeaker, PListener->id, PListener->targid, emote, EmoteMode::Motion, 0));
+        }
+
+        // Every real player in this zone: his idle members loiter (paused, none)
+        void loungeAll(CZone* PZone)
+        {
+            if (cardian::pause::isHeld())
+            {
+                return;
+            }
+            std::vector<CCharEntity*> players;
+            PZone->ForEachChar([&](CCharEntity* PChar)
+                               {
+                                   if (PChar != nullptr && !pawn::isPawn(PChar))
+                                   {
+                                       players.push_back(PChar);
+                                   }
+                               });
+            for (auto* PPlayer : players)
+            {
+                loungeTick(PPlayer);
+            }
+        }
+
+        // Every visit to a player in this zone, a step each; one whose player
+        // has left the world ends where she is
+        void advanceVisits(CZone* PZone)
+        {
+            if (cardian::pause::isHeld())
+            {
+                return;
+            }
+            std::vector<uint32> coming;
+            for (const auto& entry : visits)
+            {
+                coming.push_back(entry.first);
+            }
+            for (const auto charid : coming)
+            {
+                const auto it = visits.find(charid);
+                if (it == visits.end())
+                {
+                    continue;
+                }
+                auto* PPlayer = zoneutils::GetChar(it->second.playerCharID);
+                if (PPlayer == nullptr)
+                {
+                    if (pawn::players::online(it->second.playerCharID))
+                    {
+                        continue; // loading between zones: in no zone for a moment
+                    }
+                    ShowInfoFmt("club: {}'s visit ends: {} has left the world", nameOf(charid), pawn::seats::nameOf(it->second.playerCharID));
+                    endVisit(charid, it->second);
+                    visits.erase(it);
+                    continue;
+                }
+                if (PPlayer->loc.zone != PZone)
+                {
+                    continue;
+                }
+                if (!advance(charid, it->second, PPlayer))
+                {
+                    visits.erase(charid);
+                }
+            }
         }
 
         // ---- the invite --------------------------------------------------------
@@ -625,6 +1521,7 @@ namespace pawn::club
         cardian::link::handle<cl_club>(club);
         cardian::link::handle<cl_club_invite>(invite);
         cardian::link::handle<cl_pearl>(pearl);
+        cardian::link::handle<cl_club_recruit>(askRecruit);
     }
 
     auto pearlOf(const uint32 charid) -> std::optional<Pearl>
@@ -636,6 +1533,16 @@ namespace pawn::club
     auto isPearled(const uint32 charid) -> bool
     {
         return worn.contains(charid);
+    }
+
+    auto isRecruit(const CCharEntity* PPlayer, const uint32 charid) -> bool
+    {
+        if (PPlayer == nullptr || charid == 0 || worn.contains(charid))
+        {
+            return false;
+        }
+        const auto together = togetherWith(PPlayer, charid);
+        return together.has_value() && rules::qualifies(together->affinity, together->missions, lockAffinity(), lockMissions());
     }
 
     auto wearersOf(const uint32 playerCharID) -> std::vector<uint32>
@@ -734,6 +1641,127 @@ namespace pawn::club
                 }
                 read();
                 return;
+            }
+        }
+    }
+
+    void noteTradePacket(CCharEntity* PPawn, CBasicPacket& packet)
+    {
+        const auto type = packet.getType();
+        if (type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_REQ))
+        {
+            trades[PPawn->id] = Trade{ .partner = rules::tradeAsker(packet) };
+            return;
+        }
+        const auto it = trades.find(PPawn->id);
+        if (it == trades.end())
+        {
+            return;
+        }
+        if (type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_RES))
+        {
+            switch (rules::tradeResult(packet))
+            {
+                case GP_ITEM_TRADE_RES_KIND::Start:
+                    it->second.open = true;
+                    break;
+                case GP_ITEM_TRADE_RES_KIND::Make:
+                    it->second.confirmed = true;
+                    break;
+                default:
+                    trades.erase(it); // cancelled, refused or done
+                    break;
+            }
+        }
+        else if (type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_LIST))
+        {
+            if (const auto offered = rules::offeredSlot(packet); offered.slot < rules::kTradeSlots)
+            {
+                it->second.slots[offered.slot] = offered.offered;
+                it->second.confirmed           = false; // a changed offer takes back his Trade, as the game does
+            }
+        }
+    }
+
+    void tick(CZone* PZone)
+    {
+        carryOutYeses(PZone);
+        advanceVisits(PZone);
+        loungeAll(PZone);
+
+        std::vector<uint32> trading;
+        for (const auto& entry : trades)
+        {
+            trading.push_back(entry.first);
+        }
+        for (const auto charid : trading)
+        {
+            const auto it = trades.find(charid);
+            if (it == trades.end())
+            {
+                continue;
+            }
+            auto* PPawn = pawn::findPawn(charid);
+            if (PPawn == nullptr)
+            {
+                trades.erase(it);
+                continue;
+            }
+            if (PPawn->loc.zone != PZone)
+            {
+                continue;
+            }
+            auto* PPlayer = PPawn->tradePartner();
+            if (PPlayer == nullptr || PPlayer->id != it->second.partner)
+            {
+                trades.erase(it);
+                continue;
+            }
+            const auto trade = it->second; // her answer below can end it
+
+            // His request: a member of his club, or one of the world's who
+            // qualifies as his recruit, accepts at once; one of the world's
+            // short of the pearl's lock, or a stranger, declines
+            if (!trade.open)
+            {
+                if (!memberOf(PPlayer, charid).has_value() && !isRecruit(PPlayer, charid))
+                {
+                    trades.erase(charid);
+                    declineTrade(PPawn, PPlayer, pawn::seats::isWorlds(charid) ? rules::Verdict::TooSoon : rules::Verdict::NotTrading);
+                    continue;
+                }
+                answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Start);
+                if (const auto opened = trades.find(charid); opened != trades.end() && !opened->second.open)
+                {
+                    trades.erase(opened); // the game refused the window (out of reach)
+                }
+                continue;
+            }
+            if (!trade.confirmed)
+            {
+                continue;
+            }
+
+            // He pressed Trade: one Linkpearl of his shell and nothing else,
+            // or she declines
+            auto*      PWorn   = wornItem(PPawn);
+            const auto verdict = rules::judgeOffer(trade.slots, shellsOf(PPlayer), PWorn != nullptr ? PWorn->GetLSID() : 0);
+            trades.erase(charid);
+            if (verdict != rules::Verdict::Take)
+            {
+                declineTrade(PPawn, PPlayer, verdict);
+                continue;
+            }
+            const auto lsid    = std::ranges::find_if(trade.slots, [](const rules::Offered& slot) { return slot.qty > 0; })->lsid;
+            const bool joining = isRecruit(PPlayer, charid);
+            answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Make);
+            if (const auto slot = pearlIn(PPawn, lsid); slot.has_value())
+            {
+                putOn(PPlayer, PPawn, *slot, joining);
+            }
+            else
+            {
+                ShowInfoFmt("club: {}'s trade of a linkpearl to {} did not go through", PPlayer->getName(), PPawn->getName());
             }
         }
     }

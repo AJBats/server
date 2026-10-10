@@ -734,9 +734,12 @@ class PawnModule : public CPPModule
     // A held simulation (pause/pause.h) takes no step here either: the world's
     // bodies, the seat ladder and the tacticians wait, and only the outboxes drain.
     // A played character whose controller upstream swapped back to its own
-    // mid-session (a charm ending, a jail) gets his gambits back on the next tick
+    // mid-session (a charm ending, a jail) gets his gambits back on the next tick.
+    // A trade he opened with one of them, and a recruit's yes to his
+    // linkshell, go on either way, as his own trade window does through a pause
     void OnZoneTick(CZone* PZone) override
     {
+        pawn::club::tick(PZone);
         if (cardian::pause::isHeld())
         {
             pawn::onZoneTickHeld(PZone);
@@ -807,6 +810,16 @@ class PawnModule : public CPPModule
         if (packet->getType() == std::to_underlying(PacketS2C::GP_SERV_COMMAND_BATTLE_MESSAGE))
         {
             pawn::noteBattleMessage(PChar, packet->ref<uint16>(0x18), packet->ref<uint16>(0x16));
+            return;
+        }
+
+        // A trade he opens with her, what he offers in it and his Trade: her
+        // side is played on her zone's tick (club.h)
+        if (const auto type = packet->getType(); type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_REQ) ||
+                                                 type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_RES) ||
+                                                 type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_LIST))
+        {
+            pawn::club::noteTradePacket(PChar, *packet);
             return;
         }
 

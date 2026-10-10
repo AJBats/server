@@ -3024,6 +3024,57 @@ namespace pawn::world
         return true;
     }
 
+    auto holderOf(const uint32 charid) -> uint32
+    {
+        const auto it = bodies.find(charid);
+        return it != bodies.end() ? it->second.holder : 0;
+    }
+
+    bool bringTo(const uint32 charid, const uint32 playerCharID, const uint16 zone, const position_t& at)
+    {
+        forgetDealable();
+        if (playerCharID == 0)
+        {
+            return false;
+        }
+        auto it = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            const auto name = pawn::seats::nameOf(charid);
+            const auto row  = readCensus(name);
+            if (!row.has_value() || row->charid != charid)
+            {
+                return false;
+            }
+            Body& body         = bodies[charid];
+            body.charid        = charid;
+            body.name          = name;
+            body.zone          = zone;
+            body.point         = at;
+            body.target        = row->target;
+            body.seed          = row->seed;
+            charidByName[name] = charid;
+            it                 = bodies.find(charid);
+            ShowInfoFmt("world: {} holds no seat: a seatless body comes to {}", name, pawn::seats::nameOf(playerCharID));
+        }
+        if (it->second.present)
+        {
+            return false;
+        }
+        Body& body    = it->second;
+        body.holder   = playerCharID;
+        body.homeward = false;
+        body.toPool   = false;
+        body.downSince.reset();
+        body.returnAt.reset();
+        body.leftAt = Spot{ zone, at };
+        pawn::seats::offerWorld(charid, zone);
+        pawn::seats::touch(charid);
+        ShowInfoFmt("world: {} comes to {} out of sight, to stand at ({:.1f}, {:.1f}, {:.1f}) in zone {}", body.name, pawn::seats::nameOf(playerCharID),
+                    at.x, at.y, at.z, zone);
+        return true;
+    }
+
     auto ring(CZone* PZone, const position_t& centre, const uint32 count, const bool farming) -> uint32
     {
         if (!isEnabled() || PZone == nullptr || count == 0)
@@ -3238,6 +3289,34 @@ namespace pawn::world
             }
         }
         return order;
+    }
+
+    auto loiterSpots(CZone* PZone) -> std::vector<Loiter>
+    {
+        std::vector<Loiter> out;
+        if (PZone == nullptr)
+        {
+            return out;
+        }
+        const auto& table   = loadSlots(PZone);
+        const auto* navMesh = PZone->navMesh();
+        for (const auto& spec : table.specs)
+        {
+            if (spec.activity != "stand" || !spec.clustered())
+            {
+                continue;
+            }
+            position_t at(spec.at[0], spec.at[1], spec.at[2], 0, 0);
+            if (navMesh != nullptr)
+            {
+                if (const std::optional<position_t> snapped = navMesh->findClosestValidPoint(at); snapped.has_value())
+                {
+                    at = *snapped;
+                }
+            }
+            out.push_back(Loiter{ at, spec.spread });
+        }
+        return out;
     }
 
     auto laneOf(const uint32 charid) -> float

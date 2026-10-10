@@ -80,9 +80,12 @@ namespace pawn::errands
     {
         cardian::errand::Kind  kind        = cardian::errand::Kind::None;
         cardian::errand::State state       = cardian::errand::State::Going;
-        uint32                 secondsLeft = 0;
-        uint16                 zone        = 0; // away: the zone of her route she is crossing now
-        std::string            title;           // a quest's or a mission's
+        uint32                 secondsLeft  = 0;
+        uint32                 secondsTotal = 0; // away on the clock: the whole of it
+        uint16                 zone         = 0; // away: the zone of her route she is crossing now
+        uint8                  missionsDone = 0; // a rank catch-up away: the missions her time away has covered
+        uint8                  missions     = 0; // a rank catch-up: the missions it takes her through
+        std::string            title;            // a quest's or a mission's
     };
     auto viewOf(uint32 charid) -> std::optional<View>;
 

@@ -34,7 +34,12 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 54: the linkshell on the game's items --
+// compatible, the user, 2026-09-14). 55: the linkshell page's ventures,
+// recruits and the game's own trade -- CLUB_MEMBER's levels (her career),
+// secondsTotal, missionsDone, missions, affinity and missionsTogether, and
+// CL_CLUB_RECRUIT in CL_CLUB_GUEST's place; CLUB_RECRUIT and NOT_QUALIFIED;
+// PEEK's missions; PEARL only breaks (a pearl is given by the game's own
+// trade window); 54: the linkshell on the game's items --
 // CLUB's shell, pearls and vendor, CLUB_MEMBER's nation, rank and rankCap,
 // ERRAND_GOAL's rank and missions, SEND_ERRAND's rank, CL_ERRAND_RANK,
 // CL_CAN_SEND_RANK and NO_PEARL_TO_GIVE; 53: the linkshell, CLUB, CLUB_MEMBER,
@@ -102,7 +107,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 54 };
+enum { CL_PROTOCOL = 55 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -293,6 +298,7 @@ enum
     CL_S_DONE_ALREADY      = 0x01E8, // she has done that already
     CL_S_NOT_STANDING      = 0x01E9, // she has no body in the world now
     CL_S_NO_PEARL_TO_GIVE  = 0x01EA, // he holds no Linkpearl of his shell to trade: he makes one from his linkshell first
+    CL_S_NOT_QUALIFIED     = 0x01EB, // not a recruit for his linkshell: her affinity with him or their missions together short of the pearl's lock
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -1721,7 +1727,8 @@ typedef struct cl_shout
     uint32_t  waitMs;  // answered: until he may shout again
 } cl_shout;
 
-// A look at one who answered his shout, or whom his contract holds: her jobs,
+// A look at one who answered his shout, whom his contract holds, or who
+// qualifies as his linkshell's recruit (pawn/club.h): her jobs,
 // nation and rank, her affinity, what she wears -- as she stands, or as the
 // census dressed her while faded -- and her numbers as she stands, or as she
 // last stood at this level (known 0: never seen)
@@ -1747,6 +1754,8 @@ typedef struct cl_peek
     uint16_t  attack;
     uint16_t  defence;
     uint16_t  items[16]; // what she wears, by equipment slot; 0 for none
+    uint16_t  missions;  // the story missions she and he have completed together
+    uint16_t  spare;
 } cl_peek;
 
 // The party invite he would send by hand, sent for him, for the goal she was
@@ -2016,23 +2025,24 @@ typedef struct cl_job_change
 
 enum
 {
-    CL_T_CLUB        = 0x0A01,
-    CL_T_CLUB_MEMBER = 0x0A02,
-    CL_T_CLUB_INVITE = 0x0A03,
-    CL_T_PEARL       = 0x0A04,
-    CL_T_ERRANDS     = 0x0A05,
-    CL_T_ERRAND_GOAL = 0x0A06,
-    CL_T_SEND_ERRAND = 0x0A07,
-    CL_T_CALL_BACK   = 0x0A08,
+    CL_T_CLUB         = 0x0A01,
+    CL_T_CLUB_MEMBER  = 0x0A02,
+    CL_T_CLUB_INVITE  = 0x0A03,
+    CL_T_PEARL        = 0x0A04,
+    CL_T_ERRANDS      = 0x0A05,
+    CL_T_ERRAND_GOAL  = 0x0A06,
+    CL_T_SEND_ERRAND  = 0x0A07,
+    CL_T_CALL_BACK    = 0x0A08,
+    CL_T_CLUB_RECRUIT = 0x0A09,
 };
 
 // What she is to him
 enum
 {
-    CL_CLUB_ALT   = 0, // a character of his own account
-    CL_CLUB_OWNED = 1, // a cardian his account owns
-    CL_CLUB_WILD  = 2, // one of the world's adventurers wearing a pearl of his shell
-    CL_CLUB_GUEST = 3, // one of the world's in his party, wearing none: not a member, he can trade her one
+    CL_CLUB_ALT     = 0, // a character of his own account
+    CL_CLUB_OWNED   = 1, // a cardian his account owns
+    CL_CLUB_WILD    = 2, // one of the world's adventurers wearing a pearl of his shell
+    CL_CLUB_RECRUIT = 3, // one of the world's wearing no pearl whose affinity and missions with him reach the pearl's lock (pawn.PEARL_AFFINITY, PEARL_MISSIONS): not a member, he can recruit her
 };
 
 // A member's flags
@@ -2070,19 +2080,19 @@ enum
     CL_CAN_SEND_GEAR   = 0x02, // Gear up is hers to be sent on (now or once gearWhy clears)
     CL_CAN_SEND_QUEST  = 0x04,
     CL_CAN_CALL_BACK   = 0x08,
-    CL_CAN_GIVE_PEARL  = 0x10, // he can trade her a pearl of his shell (once he holds one and stands by her)
+    CL_CAN_GIVE_PEARL  = 0x10, // she takes a pearl of his shell from him by the game's own trade (once he holds one and stands by her)
     CL_CAN_BREAK_PEARL = 0x20,
     CL_CAN_SEND_RANK   = 0x40, // her rank is below the catch-up's cap (rankCap)
 };
 
-// One member of his club, or one of the world's in his party who could be
-// traded a pearl: an answer to CLUB
+// One member of his club, or one of the world's who qualifies to be his
+// recruit: an answer to CLUB
 typedef struct cl_club_member
 {
     cl_header h;
     uint32_t  cardian;            // charid
     char      name[16];
-    uint8_t   kind;               // CL_CLUB_ALT, _OWNED, _WILD or _GUEST
+    uint8_t   kind;               // CL_CLUB_ALT, _OWNED, _WILD or _RECRUIT
     uint8_t   flags;              // CL_CLUB_PEARL and the rest
     uint8_t   mainJob;
     uint8_t   mainLevel;
@@ -2102,10 +2112,18 @@ typedef struct cl_club_member
     char      zoneName[32];       // for people
     char      errandZoneName[32]; // for people
     char      errandTitle[48];    // for people: the quest's title, "Rank 3"; empty for an errand the addon words
+    uint8_t   levels[24];         // her level in each job, by job id (0 unused): her career
+    uint32_t  secondsTotal;       // away on the clock: the errand's whole length, for its progress; 0 off the clock
+    uint8_t   missionsDone;       // a rank catch-up away: the missions her time away has covered
+    uint8_t   missions;           // a rank catch-up: the missions it takes her through
+    uint16_t  affinity;           // one of the world's: her affinity with him (cardian_party_memory)
+    uint16_t  missionsTogether;   // one of the world's: the story missions the two have completed together
+    uint8_t   spare2[2];
 } cl_club_member;
 
-// His club: each member a CLUB_MEMBER (CL_F_MORE), then this, with his
-// shell. Holding none, the linkshell vendor of the city he stands in
+// His club: each member a CLUB_MEMBER (CL_F_MORE), then each recruit, then
+// this, with his shell. Holding none, the linkshell vendor of the city he
+// stands in
 typedef struct cl_club
 {
     cl_header h;
@@ -2126,17 +2144,14 @@ typedef struct cl_club_invite
     uint32_t  cardian; // charid
 } cl_club_invite;
 
-// A pearl traded to her (on 1): one of his shell's Linkpearls from his
-// inventory into hers, within trading reach, and she puts it on herself --
-// to one of the world's in his party, the recruit. Or hers broken (on 0),
-// as the game's holder breaks a member's pearl: the pearl is gone, and one
-// of the world's goes back to the wild
+// Her pearl of his shell broken, as the game's holder breaks a member's
+// pearl: the pearl is gone, and one of the world's goes back to the wild.
+// A pearl is given by the game's own trade window, never by the Link: he
+// trades her one, and the server plays her side (pawn/club.h)
 typedef struct cl_pearl
 {
     cl_header h;
     uint32_t  cardian; // charid
-    uint8_t   on;
-    uint8_t   spare[3];
 } cl_pearl;
 
 // A quest he could send her on, or a rank she could be caught up to: an
@@ -2190,5 +2205,19 @@ typedef struct cl_call_back
     cl_header h;
     uint32_t  cardian; // charid
 } cl_call_back;
+
+// A recruit asked to join his linkshell. She thinks it over for decideMs and
+// answers CL_S_OK, a yes in her words: one who qualifies never says no, and
+// once the time is up she comes to him for the pearl, in no party. Any other
+// outcome is the server's (CL_S_NOT_QUALIFIED, CL_S_NO_LINKSHELL,
+// CL_S_NO_PEARL_TO_GIVE). The pearl itself he gives her with the game's own
+// trade
+typedef struct cl_club_recruit
+{
+    cl_header h;
+    uint32_t  cardian;  // charid
+    uint32_t  decideMs; // answered: how long she thinks it over
+    char      line[96]; // answered: her words, for people
+} cl_club_recruit;
 
 #pragma pack(pop)

@@ -137,7 +137,8 @@ namespace cardian::link
     X(ERRANDS, cl_errands)       \
     X(ERRAND_GOAL, cl_errand_goal) \
     X(SEND_ERRAND, cl_send_errand) \
-    X(CALL_BACK, cl_call_back)
+    X(CALL_BACK, cl_call_back)   \
+    X(CLUB_RECRUIT, cl_club_recruit)
 
     template <typename T>
     struct MessageType;

@@ -21,8 +21,12 @@
 
 #include "gate_guards.h"
 
+#include "pawn.h"
+
 #include "common/utils.h"
 #include "entities/char_entity.h"
+#include "lua/luautils.h"
+#include "utils/zoneutils.h"
 #include "zone.h"
 
 #include <algorithm>
@@ -136,6 +140,42 @@ namespace pawn::guards
             }
         }
         return best;
+    }
+
+    auto consulateFor(CZone* PZone, const uint8 nation) -> std::optional<Elsewhere>
+    {
+        if (PZone == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::string here = PZone->getName();
+        if (std::ranges::any_of(kGuards, [&](const Guard& guard) { return guard.nation == nation && guard.zone == here; }))
+        {
+            return std::nullopt; // one of hers stands in her zone
+        }
+        std::optional<Elsewhere> found;
+        zoneutils::ForEachZone([&](CZone* POther)
+                               {
+                                   if (found.has_value() || POther == nullptr || POther == PZone || !pawn::sameCity(PZone, POther))
+                                   {
+                                       return;
+                                   }
+                                   const std::string there = POther->getName();
+                                   for (const auto& guard : kGuards)
+                                   {
+                                       if (guard.nation == nation && guard.zone == there)
+                                       {
+                                           found = Elsewhere{ &guard, static_cast<uint16>(POther->GetID()) };
+                                           return;
+                                       }
+                                   }
+                               });
+        return found;
+    }
+
+    auto sellsTo(const Guard& guard, const uint8 nation) -> bool
+    {
+        return guard.nation == nation || guard.nation == kOther || luautils::GetNationRank(guard.nation) > luautils::GetNationRank(nation);
     }
 
     auto zoneHasGuard(const std::string_view zoneName) -> bool

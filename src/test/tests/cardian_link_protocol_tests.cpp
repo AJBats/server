@@ -134,7 +134,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_despawn) == 20);
     STATIC_REQUIRE(sizeof(cl_shout_responder) == 192);
     STATIC_REQUIRE(sizeof(cl_shout) == 28);
-    STATIC_REQUIRE(sizeof(cl_peek) == 104);
+    STATIC_REQUIRE(sizeof(cl_peek) == 108);
     STATIC_REQUIRE(sizeof(cl_invite) == 120);
     STATIC_REQUIRE(sizeof(cl_contract) == 28);
     STATIC_REQUIRE(sizeof(cl_contracts) == 468);
@@ -146,10 +146,11 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_cp_shop) == 56);
     STATIC_REQUIRE(sizeof(cl_cp_buy) == 36);
     STATIC_REQUIRE(sizeof(cl_job_change) == 24);
-    STATIC_REQUIRE(sizeof(cl_club_member) == 172);
+    STATIC_REQUIRE(sizeof(cl_club_member) == 208);
     STATIC_REQUIRE(sizeof(cl_club) == 76);
     STATIC_REQUIRE(sizeof(cl_club_invite) == 20);
-    STATIC_REQUIRE(sizeof(cl_pearl) == 24);
+    STATIC_REQUIRE(sizeof(cl_club_recruit) == 120);
+    STATIC_REQUIRE(sizeof(cl_pearl) == 20);
     STATIC_REQUIRE(sizeof(cl_errand_goal) == 76);
     STATIC_REQUIRE(sizeof(cl_errands) == 24);
     STATIC_REQUIRE(sizeof(cl_send_errand) == 28);

@@ -1,7 +1,9 @@
 // Cardian: the linkshell club's rules as plain functions (pawn/club.h,
 // pawn/errands.h): the game's linkshell items and the shell a pearl belongs
 // to, where a player buys a linkshell, what a recruit says on her way to him,
-// and which of her nation's missions a rank catch-up takes her through.
+// who may be recruited (the pearl's lock) and what she answers, what she
+// takes in the game's own trade window, and which of her nation's missions
+// a rank catch-up takes her through.
 #pragma once
 
 #include <algorithm>
@@ -94,6 +96,209 @@ namespace cardian::club
     inline auto headingYourWay(const uint32_t charid) -> std::string_view
     {
         return kHeadingYourWay[charid % kHeadingYourWay.size()];
+    }
+
+    // ---- the pearl's lock: who may be recruited ---------------------------------
+
+    // One of the world's is a recruit for his linkshell once her affinity
+    // with him and the story missions the two have completed together reach
+    // the lock (pawn.PEARL_AFFINITY, pawn.PEARL_MISSIONS)
+    constexpr auto qualifies(const uint32_t affinity, const uint32_t missions, const uint32_t needAffinity, const uint32_t needMissions) -> bool
+    {
+        return affinity >= needAffinity && missions >= needMissions;
+    }
+
+    // Asked to join his linkshell, she thinks it over a beat, as one who
+    // heard his shout does (milliseconds), then says yes in words of her
+    // own, by her charid (the same recruit says the same thing): one who
+    // qualifies never says no, whatever she is doing (OPEN_ISSUES #415)
+    constexpr uint32_t kDecideMinMs = 1500;
+    constexpr uint32_t kDecideMaxMs = 5200;
+
+    constexpr std::array<std::string_view, 4> kJoinYes{
+        "I'd be glad to!",
+        "Count me in!",
+        "I was hoping you'd ask!",
+        "Of course! Let's do this.",
+    };
+
+    inline auto joinYes(const uint32_t charid) -> std::string_view
+    {
+        return kJoinYes[charid % kJoinYes.size()];
+    }
+
+    // Her tell when she never reaches him for the pearl: too long on the way
+    inline auto joinLater() -> std::string_view
+    {
+        return "Something came up. Ask me again later!";
+    }
+
+    // ---- a recruit comes for her pearl (OPEN_ISSUES #415) -----------------------
+
+    // Her yes carried out: she comes to him for the pearl in no party, a
+    // trade needing none, once her fight is over. Standing within
+    // kTrekZones zone lines of him she walks the way; faded, or farther,
+    // her trip is out of sight and she comes in near him after
+    // kTripSecondsPerZone a zone line, kTrekZones counted at most, until
+    // travel between zones is built (#233)
+    constexpr uint32_t kTrekZones          = 3;
+    constexpr uint32_t kTripSecondsPerZone = 10;
+    constexpr float    kVisitArrive        = 12.0f; // yalms from him one out of sight comes in at, behind him if the mesh allows
+    constexpr float    kVisitRingNear      = 2.0f;  // yalms from him she waits at, by her charid,
+    constexpr float    kVisitRingFar       = 3.4f;  //   on her side of him
+    constexpr float    kVisitSpread        = 0.5f;  // radians round him a spot taken by another moves her
+    constexpr float    kVisitApart         = 1.6f;  // yalms between two who wait at his side
+    constexpr uint32_t kVisitWaitSeconds   = 180;   // at his side, how long she waits for his trade
+    constexpr uint32_t kVisitGiveUpSeconds = 600;   // on her way, how long before something has come up
+    constexpr float    kVisitLeaveTo       = 25.0f; // yalms from him one with no zone line to leave by walks off straight
+    constexpr float    kVisitFadeAt        = 45.0f; // yalms from him one from elsewhere fades at, out of his sight
+    constexpr uint32_t kVisitLeaveSeconds  = 90;    // or how long she walks off, whichever comes first
+
+    // How far from him she waits, by her charid: the same recruit at the
+    // same distance, each a little apart from the next
+    inline auto visitRing(const uint32_t charid) -> float
+    {
+        constexpr uint32_t steps = 8;
+        return kVisitRingNear + (kVisitRingFar - kVisitRingNear) * static_cast<float>(charid % steps) / static_cast<float>(steps - 1);
+    }
+
+    // At his side she greets him once: an emote at him, as the game shows
+    // it, text and all (Emote's ids, enums/emote.h), and a tell, by her
+    // charid (the same recruit greets the same way)
+    constexpr std::array<uint8_t, 7> kGreetEmotes{
+        8,  // wave
+        12, // cheer
+        43, // hurray
+        11, // joy
+        2,  // salute
+        1,  // bow
+        15, // smile
+    };
+
+    inline auto greetEmote(const uint32_t charid) -> uint8_t
+    {
+        return kGreetEmotes[charid % kGreetEmotes.size()];
+    }
+
+    constexpr std::array<std::string_view, 4> kImHere{
+        "I'm here!",
+        "Made it! Here I am.",
+        "Here I am!",
+        "There you are!",
+    };
+
+    inline auto imHere(const uint32_t charid) -> std::string_view
+    {
+        return kImHere[(charid / kGreetEmotes.size()) % kImHere.size()];
+    }
+
+    // Seconds her trip out of sight takes, by the zone lines between them
+    // (0: the same zone; past kTrekZones, or no route, counts kTrekZones)
+    inline auto tripSeconds(const uint32_t zones) -> uint32_t
+    {
+        return kTripSecondsPerZone * std::max<uint32_t>(1, std::min(zones, kTrekZones));
+    }
+
+    // Her goodbye when he has not traded her the pearl in time, by her
+    // charid (the same recruit says the same thing)
+    constexpr std::array<std::string_view, 3> kCatchYouLater{
+        "I'll catch you later!",
+        "Have to run. Ask me again sometime!",
+        "Gotta go now. Catch you later!",
+    };
+
+    inline auto catchYouLater(const uint32_t charid) -> std::string_view
+    {
+        return kCatchYouLater[charid % kCatchYouLater.size()];
+    }
+
+    // ---- a pearl by the game's own trade -----------------------------------------
+
+    constexpr uint8_t     kLsTypeLinkpearl = 3;
+    constexpr std::size_t kTradeSlots      = 9; // the trade window's slots, gil's first
+
+    // One slot of what he offers in the trade window, as the game shows it
+    // to her (packet 0x023): the item, how many, and for a linkshell item its
+    // shell and its kind
+    struct Offered
+    {
+        uint16_t item   = 0;
+        uint32_t qty    = 0;
+        uint32_t lsid   = 0;
+        uint8_t  lsType = 0;
+    };
+
+    // What she makes of his offer once he presses Trade: she takes exactly
+    // one Linkpearl of a shell he holds, with nothing beside it, while she
+    // wears no pearl; anything else she declines, saying why
+    enum class Verdict : uint8_t
+    {
+        Take,
+        NotTrading,       // not his to trade with: no member of his club and none of the world's
+        TooSoon,          // one of the world's short of the pearl's lock with him
+        NothingOffered,   // an empty window
+        NotOnlyAPearl,    // something other than one Linkpearl, or something beside it
+        NotHisShell,      // a Linkpearl of a shell he does not hold, or a broken one
+        HasHisPearl,      // she wears a pearl of his shell already
+        PearledElsewhere, // she wears a pearl of a shell he does not hold
+    };
+
+    // `his` answers whether he holds a shell (a set's contains); `wornLsid`
+    // is the shell of the pearl she wears, 0 for none
+    template <typename Shells>
+    auto judgeOffer(const std::array<Offered, kTradeSlots>& slots, const Shells& his, const uint32_t wornLsid) -> Verdict
+    {
+        if (wornLsid != 0)
+        {
+            return his.contains(wornLsid) ? Verdict::HasHisPearl : Verdict::PearledElsewhere;
+        }
+        const Offered* only    = nullptr;
+        std::size_t    offered = 0;
+        for (const auto& slot : slots)
+        {
+            if (slot.qty > 0)
+            {
+                only = &slot;
+                ++offered;
+            }
+        }
+        if (offered == 0)
+        {
+            return Verdict::NothingOffered;
+        }
+        if (offered > 1 || only->item != kLinkpearl || only->qty != 1)
+        {
+            return Verdict::NotOnlyAPearl;
+        }
+        if (only->lsType != kLsTypeLinkpearl || only->lsid == 0 || !his.contains(only->lsid))
+        {
+            return Verdict::NotHisShell;
+        }
+        return Verdict::Take;
+    }
+
+    // Her tell when she declines a trade
+    inline auto declineLine(const Verdict verdict) -> std::string_view
+    {
+        switch (verdict)
+        {
+            case Verdict::NotTrading:
+                return "Sorry, I'm not trading right now.";
+            case Verdict::TooSoon:
+                return "Let's adventure together a while longer first.";
+            case Verdict::NothingOffered:
+            case Verdict::NotOnlyAPearl:
+                return "Thanks, but I'll only take a linkpearl of your linkshell.";
+            case Verdict::NotHisShell:
+                return "That linkpearl isn't from your linkshell.";
+            case Verdict::HasHisPearl:
+                return "I already have your linkpearl!";
+            case Verdict::PearledElsewhere:
+                return "Sorry, I'm already in another linkshell.";
+            case Verdict::Take:
+                break;
+        }
+        return {};
     }
 
     // ---- a rank catch-up --------------------------------------------------------

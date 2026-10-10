@@ -87,6 +87,9 @@ namespace pawn::errands
             float                      within = kAtSpot;           // how close to `there` counts as there
             bool                       asked = false;              // the census was asked at the counter
             const pawn::guards::Guard* guard = nullptr;            // the guard she buys from
+            bool                       refused   = false;          // another nation's guard turned her away
+            bool                       consulate = false;          // on to her nation's consulate in another zone of her city
+            uint16                     guardZone = 0;              // the consulate's zone
         };
 
         struct Record
@@ -629,6 +632,7 @@ namespace pawn::errands
             if (r.errand.state == State::Going)
             {
                 pawn::clearWalkOrder(charid);
+                pawn::clearTravelOrder(charid); // a gear-up on its way to her consulate, or back
             }
 
             std::string line;
@@ -651,7 +655,7 @@ namespace pawn::errands
                 const auto reached  = applyRank(r, count);
                 if (count == 0)
                 {
-                    line = fmt::format("{} is called back before the first mission is done.", name);
+                    line = fmt::format("{} is recalled before the first mission is done.", name);
                 }
                 else if (kept == cardian::errand::Kept::Whole)
                 {
@@ -659,7 +663,7 @@ namespace pawn::errands
                 }
                 else
                 {
-                    line = fmt::format("{} is called back with {} mission{} done{}.", name, count, count == 1 ? "" : "s",
+                    line = fmt::format("{} is recalled with {} mission{} done{}.", name, count, count == 1 ? "" : "s",
                                        reached > 0 ? fmt::format(", at rank {}", reached) : std::string{});
                 }
             }
@@ -669,7 +673,7 @@ namespace pawn::errands
             }
             else
             {
-                line = fmt::format("{} is called back.", name);
+                line = fmt::format("{} is recalled.", name);
             }
 
             erase(charid);
@@ -698,11 +702,31 @@ namespace pawn::errands
                     break;
                 case GearStep::ToGuard:
                 {
-                    const auto guard = pawn::guards::guardFor(PPawn->loc.zone, PPawn->profile.nation, PPawn->loc.p);
-                    r.walk.guard     = guard.has_value() ? guard->guard : nullptr;
-                    if (guard.has_value() && guard->npc != nullptr)
+                    // No guard in her zone sells to her -- another nation's,
+                    // outranking hers -- or one turned her away: straight to
+                    // her nation's consulate in another zone of her city, by
+                    // the zone line, and the walk to its guard once she is
+                    // there (tickGear)
+                    const auto local      = pawn::guards::guardFor(PPawn->loc.zone, PPawn->profile.nation, PPawn->loc.p);
+                    const bool localSells = local.has_value() && local->guard != nullptr && pawn::guards::sellsTo(*local->guard, PPawn->profile.nation);
+                    if (!r.walk.consulate && (r.walk.refused || !localSells))
                     {
-                        walkTo(r, guard->npc->loc.p, shortOf(PPawn->loc.zone, guard->npc->loc.p, PPawn->loc.p), kAtNpc);
+                        if (const auto consulate = pawn::guards::consulateFor(PPawn->loc.zone, PPawn->profile.nation);
+                            consulate.has_value() && pawn::orderTravel(r.charid, consulate->zone, 0))
+                        {
+                            r.walk.consulate = true;
+                            r.walk.guard     = consulate->guard;
+                            r.walk.guardZone = consulate->zone;
+                            walkTo(r, PPawn->loc.p, std::nullopt, kAtNpc);
+                            ShowInfoFmt("errands: {} goes to her nation's consulate, {} in zone {} ({})", PPawn->getName(), consulate->guard->name, consulate->zone,
+                                        r.walk.refused ? "turned away here" : "no guard here sells to her");
+                            break;
+                        }
+                    }
+                    r.walk.guard = local.has_value() ? local->guard : nullptr;
+                    if (local.has_value() && local->npc != nullptr)
+                    {
+                        walkTo(r, local->npc->loc.p, shortOf(PPawn->loc.zone, local->npc->loc.p, PPawn->loc.p), kAtNpc);
                     }
                     else
                     {
@@ -713,12 +737,22 @@ namespace pawn::errands
                 case GearStep::AtGuard:
                 {
                     walkTo(r, PPawn->loc.p, std::nullopt, kAtNpc);
-                    const uint32 bought = r.walk.guard != nullptr ? pawn::supplies::buyAt(PPawn, *r.walk.guard, zoneutils::GetChar(r.playerCharID)) : 0;
+                    // Only another nation's guard's refusal sends her on to her
+                    // consulate, whose stock is the same
+                    std::string  refusal;
+                    const uint32 bought = r.walk.guard != nullptr ? pawn::supplies::buyAt(PPawn, *r.walk.guard, zoneutils::GetChar(r.playerCharID), &refusal) : 0;
+                    r.walk.refused      = bought == 0 && (refusal == "OUTRANKED" || refusal == "FOREIGN_PLACE");
                     ShowInfoFmt("errands: {} is at {}: {} scroll{} bought", PPawn->getName(), r.walk.guard != nullptr ? r.walk.guard->name : "no guard", bought,
                                 bought == 1 ? "" : "s");
                     break;
                 }
                 case GearStep::Back:
+                    if (static_cast<uint16>(PPawn->getZone()) != r.fromZone)
+                    {
+                        pawn::orderTravel(r.charid, r.fromZone, 0); // back from her consulate: the walk to her spot once there (tickGear)
+                        walkTo(r, PPawn->loc.p, std::nullopt, kAtSpot);
+                        break;
+                    }
                     walkTo(r, r.from, snap(PPawn->loc.zone, r.from, kAtNpc), kAtSpot);
                     break;
                 default:
@@ -729,7 +763,12 @@ namespace pawn::errands
         void tickGear(Record& r)
         {
             auto* PPawn = pawn::findPawn(r.charid);
-            if (PPawn == nullptr || PPawn->loc.zone == nullptr || PPawn->isDead() || static_cast<uint16>(PPawn->getZone()) != r.fromZone)
+            // Her own zone, or on the way to her consulate and back: another
+            // zone of her city, or the zone line between
+            const bool trekking = pawn::travelOrderOf(r.charid).has_value();
+            const auto zoneNow  = PPawn != nullptr && PPawn->loc.zone != nullptr ? static_cast<uint16>(PPawn->getZone()) : 0;
+            const bool inPlace  = zoneNow == r.fromZone || (r.walk.consulate && (trekking || zoneNow == r.walk.guardZone));
+            if (PPawn == nullptr || PPawn->loc.zone == nullptr || PPawn->isDead() || !inPlace)
             {
                 const auto   name   = nameOf(r.charid);
                 const uint32 player = r.playerCharID;
@@ -741,14 +780,36 @@ namespace pawn::errands
             const auto* PPlayer = zoneutils::GetChar(r.playerCharID);
             const bool  withHim = PPlayer != nullptr && PPlayer->loc.zone == PPawn->loc.zone && PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty;
             const auto  step    = r.walk.step;
-            const auto  timeFor = step == GearStep::AtCounter ? std::chrono::duration_cast<timer::duration>(kCensusWait) : std::chrono::duration_cast<timer::duration>(kStepWalk);
+            const auto  timeFor = step == GearStep::AtCounter ? std::chrono::duration_cast<timer::duration>(kCensusWait)
+                                  : r.walk.consulate      ? std::chrono::duration_cast<timer::duration>(kStepWalk * 4)
+                                                          : std::chrono::duration_cast<timer::duration>(kStepWalk);
+
+            // Off the zone line, in the zone she was going to: the walk there
+            if (r.walk.consulate && !trekking && !r.walk.goal.has_value() && cardian::errand::walks(step))
+            {
+                if (step == GearStep::ToGuard && zoneNow == r.walk.guardZone && r.walk.guard != nullptr)
+                {
+                    const auto npcs = PPawn->loc.zone->queryEntitiesByName(std::string(r.walk.guard->name));
+                    if (!npcs.empty() && npcs.front() != nullptr)
+                    {
+                        walkTo(r, npcs.front()->loc.p, shortOf(PPawn->loc.zone, npcs.front()->loc.p, PPawn->loc.p), kAtNpc);
+                    }
+                }
+                else if (step == GearStep::Back && zoneNow == r.fromZone)
+                {
+                    walkTo(r, r.from, snap(PPawn->loc.zone, r.from, kAtNpc), kAtSpot);
+                }
+            }
 
             cardian::errand::GearFacts facts;
-            facts.arrived  = distance(PPawn->loc.p, r.walk.there) <= r.walk.within;
-            facts.timedOut = timer::now() - r.walk.since >= timeFor || (cardian::errand::walks(step) && !r.walk.goal.has_value());
-            facts.dressed  = !r.walk.asked || pawn::redress::settled(r.charid);
-            facts.hasGuard = pawn::guards::guardFor(PPawn->loc.zone, PPawn->profile.nation, PPawn->loc.p).has_value();
-            facts.returns  = !withHim;
+            const bool walkingThere = !trekking && (!r.walk.consulate || zoneNow == (step == GearStep::Back ? r.fromZone : r.walk.guardZone) || !cardian::errand::walks(step));
+            facts.arrived     = walkingThere && distance(PPawn->loc.p, r.walk.there) <= r.walk.within;
+            facts.timedOut    = timer::now() - r.walk.since >= timeFor || (cardian::errand::walks(step) && !trekking && !r.walk.goal.has_value());
+            facts.dressed     = !r.walk.asked || pawn::redress::settled(r.charid);
+            facts.hasGuard    = pawn::guards::guardFor(PPawn->loc.zone, PPawn->profile.nation, PPawn->loc.p).has_value() ||
+                             pawn::guards::consulateFor(PPawn->loc.zone, PPawn->profile.nation).has_value();
+            facts.returns     = !withHim;
+            facts.toConsulate = r.walk.refused && !r.walk.consulate && pawn::guards::consulateFor(PPawn->loc.zone, PPawn->profile.nation).has_value();
 
             const auto next = cardian::errand::nextGearStep(step, facts);
             if (next == GearStep::Done)
@@ -1213,13 +1274,24 @@ namespace pawn::errands
         {
             return std::nullopt;
         }
-        const auto&  e     = it->second.errand;
+        const auto&  r     = it->second;
+        const auto&  e     = r.errand;
         const uint32 clock = gameNow();
-        return View{ .kind        = e.kind,
-                     .state       = e.state,
-                     .secondsLeft = cardian::errand::secondsLeft(e, clock),
-                     .zone        = e.state == State::Away ? cardian::errand::legAt(e, clock) : static_cast<uint16>(0),
-                     .title       = it->second.title };
+        View         view{ .kind         = e.kind,
+                           .state        = e.state,
+                           .secondsLeft  = cardian::errand::secondsLeft(e, clock),
+                           .secondsTotal = e.state == State::Away && e.ends > e.left ? e.ends - e.left : 0,
+                           .zone         = e.state == State::Away ? cardian::errand::legAt(e, clock) : static_cast<uint16>(0),
+                           .title        = r.title };
+        if (e.kind == Kind::Rank)
+        {
+            const auto missions = cardian::errand::numbersOf(r.args.contains("missions") ? r.args.at("missions") : std::string{});
+            const auto minutes  = cardian::errand::numbersOf(r.args.contains("mins") ? r.args.at("mins") : std::string{});
+            const auto away     = e.state == State::Away && clock > e.left ? static_cast<uint64_t>(clock - e.left) : 0;
+            view.missions       = static_cast<uint8>(std::min<std::size_t>(missions.size(), UINT8_MAX));
+            view.missionsDone   = static_cast<uint8>(std::min<std::size_t>(cardian::errand::missionsDone(minutes, away), view.missions));
+        }
+        return view;
     }
 
     auto rankOf(const uint32 charid) -> Rank
