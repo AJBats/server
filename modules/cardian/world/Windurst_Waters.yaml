@@ -30,7 +30,6 @@ slots:
     dwell: [10, 25]
     enter: any
     exit: west_sarutabaruta
-    hours: [6, 22]
   # -- Through traffic from port_windurst: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -126,7 +125,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Shohrun-Tuhrun, Hilkomu-Makimu
   - activity: stand
     band: [1, 75]
@@ -137,7 +135,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Ensasa, Upih Khachla
   - activity: stand
     band: [1, 75]
@@ -148,7 +145,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Taajiji
   - activity: stand
     band: [1, 75]
@@ -159,7 +155,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Ness Rugetomal
   - activity: stand
     band: [1, 75]
@@ -170,7 +165,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Maqu Molpih
   - activity: stand
     band: [1, 75]
@@ -181,7 +175,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Ahyeekih
   - activity: stand
     band: [1, 75]
@@ -192,7 +185,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Baehu-Faehu
   - activity: stand
     band: [1, 75]
@@ -203,7 +195,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Fomina
   - activity: stand
     band: [1, 75]
@@ -214,7 +205,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Otete
   - activity: stand
     band: [1, 75]
@@ -225,7 +215,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Jourille
   - activity: stand
     band: [1, 75]
@@ -236,7 +225,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Prestapiq
   - activity: stand
     band: [1, 75]
@@ -247,7 +235,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Chomo Jinjahl
   - activity: stand
     band: [1, 75]
@@ -258,4 +245,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

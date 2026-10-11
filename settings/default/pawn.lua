@@ -108,6 +108,14 @@ xi.settings.pawn =
     -- affinity with her player per this much exp she gains in the party
     AFFINITY_EXP = 500,
 
+    -- The linkpearl's lock: one of the world's adventurers is a recruit for
+    -- the player's linkshell -- listed on its page, asked to join, and
+    -- willing to take his linkpearl in a trade -- only once her affinity
+    -- with him is at least PEARL_AFFINITY and the two have completed at
+    -- least PEARL_MISSIONS story missions together (cardian_party_memory)
+    PEARL_AFFINITY = 6,
+    PEARL_MISSIONS = 2,
+
     -- The mission trace in the player's chat log: every mission added,
     -- completed or moved along and what each cardian's contract made of
     -- it (the map log carries it always, as '[mission]')
@@ -638,4 +646,34 @@ xi.settings.pawn =
     -- carries her a second). The census moving moves the cap.
     WORLD_EXP_CAP_MIN   = 50,
     WORLD_EXP_CAP_MAX   = 95,
+
+    -- A fishing venture's fight is timed, not played (pawn/fish_fight.h): a
+    -- right arrow every VENTURE_ARROW_SECONDS wears the fish down, and each
+    -- point of the server's recovery rate past neutral -- a fish 24 levels or
+    -- more over her skill -- slows her by VENTURE_FISH_SLOWDOWN of her pace.
+    -- A fight that cannot end inside the fish's time limit gets away.
+    VENTURE_ARROW_SECONDS = 2.0,
+    VENTURE_FISH_SLOWDOWN = 0.15,
+    -- The casting and reeling animations a person's client plays each cast,
+    -- which the server never waits on: she spends them all the same, so she
+    -- fishes no faster than a person could.
+    VENTURE_CAST_SECONDS  = 10,
+    -- Her catch goes on the auction house only in a form the crowd has bought
+    -- within this many days: the crowd's listing window (listing_days in
+    -- tools/economy/settings.yaml), inside which a listing at the next
+    -- buyer's price is all but sure to sell (pawn/venture_sales.h).
+    VENTURE_SALE_WINDOW_DAYS = 3,
+    -- The zones a venture never goes to or through, whatever her level, by
+    -- zone id: Gusgen Mines (196), always dangerous (the user, 2026-10-09,
+    -- whatever its monsters' levels would allow); and Abyssea -
+    -- Tahrongi (45), entered with its own key item, its monsters level 80 and
+    -- up (pawn/venture_spots.h)
+    VENTURE_NEVER_ZONES = "196,45",
+    -- The rods a fishing venture buys when she holds none, by item id: the
+    -- Willow, Yew and Bamboo Fishing Rods. Any rod she holds she may take
+    VENTURE_STARTER_RODS = "17391,17390,17389",
+    -- The dev profile's debug venture: a third length, one minute, which
+    -- casts an hour's worth through the server's own fishing code at once
+    -- (pawn/angler.h). Off here; profiles/dev.lua turns it on.
+    VENTURE_DEBUG = false,
 }

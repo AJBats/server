@@ -21,7 +21,11 @@
 
 #include "auction.h"
 #include "cardian_link.h"
+#include "club.h"
 #include "engage_math.h"
+#include "errands.h"
+#include "professions.h"
+#include "venture_sales.h"
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
@@ -263,9 +267,20 @@ class PawnModule : public CPPModule
         // house, likewise (redress.h)
         pawn::redress::ensureTable();
         pawn::food::ensureTable();
-        // The cardian API's messages on the Cardian Link (link_api.cpp), and
-        // the Lua libraries two of them are answered from
+        // The linkshell's errands, likewise, read into memory, and who wears
+        // which shell's pearl, off the items (club.h, errands.h)
+        pawn::club::load();
+        pawn::errands::ensureTable();
+        pawn::errands::load();
+        // Professions and the money venture's tables, both its sides' (professions.h)
+        pawn::professions::ensureTables();
+        pawn::sales::ensureTables();
+        // The cardian API's messages on the Cardian Link (link_api.cpp, and
+        // the linkshell's), and the Lua libraries some are answered from
         pawn::linkapi::registerHandlers();
+        pawn::club::registerHandlers();
+        pawn::errands::registerHandlers();
+        pawn::professions::registerHandlers();
         pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
@@ -714,20 +729,27 @@ class PawnModule : public CPPModule
     // A played character gets his gambits (live_controller.h): the zone
     // loaded him afresh with upstream's player controller, and this one is
     // that controller and his gambit engine. A player's zone-in is also an
-    // arrival his cardians may speak of their conquest supplies at
+    // arrival his cardians may speak of their conquest supplies at, and marks
+    // the character his account plays now (professions.h), and where he is
+    // told that logging in as a member ended her errand (errands.h)
     void OnCharZoneIn(CCharEntity* PChar) override
     {
         pawn::tactics::zoneIn(PChar);
         CLiveController::InstallOn(PChar);
         pawn::supplies::zonedIn(PChar);
+        pawn::professions::zonedIn(PChar);
+        pawn::errands::zonedIn(PChar);
     }
 
     // A held simulation (pause/pause.h) takes no step here either: the world's
     // bodies, the seat ladder and the tacticians wait, and only the outboxes drain.
     // A played character whose controller upstream swapped back to its own
-    // mid-session (a charm ending, a jail) gets his gambits back on the next tick
+    // mid-session (a charm ending, a jail) gets his gambits back on the next tick.
+    // A trade he opened with one of them, and a recruit's yes to his
+    // linkshell, go on either way, as his own trade window does through a pause
     void OnZoneTick(CZone* PZone) override
     {
+        pawn::club::tick(PZone);
         if (cardian::pause::isHeld())
         {
             pawn::onZoneTickHeld(PZone);
@@ -798,6 +820,16 @@ class PawnModule : public CPPModule
         if (packet->getType() == std::to_underlying(PacketS2C::GP_SERV_COMMAND_BATTLE_MESSAGE))
         {
             pawn::noteBattleMessage(PChar, packet->ref<uint16>(0x18), packet->ref<uint16>(0x16));
+            return;
+        }
+
+        // A trade he opens with her, what he offers in it and his Trade: her
+        // side is played on her zone's tick (club.h)
+        if (const auto type = packet->getType(); type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_REQ) ||
+                                                 type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_RES) ||
+                                                 type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_ITEM_TRADE_LIST))
+        {
+            pawn::club::noteTradePacket(PChar, *packet);
             return;
         }
 

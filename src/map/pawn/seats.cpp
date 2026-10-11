@@ -10,6 +10,7 @@
 
 #include "seat_ladder.h"
 
+#include "errands.h"
 #include "pawn.h"
 #include "world.h"
 
@@ -168,6 +169,7 @@ namespace pawn::seats
                            [](const uint16 zone) { return pawn::world::zoneWarm(zone); },
                            [](const uint16 zone) { return pawn::world::playerIn(zone); },
                            [](const uint32 charid) { return invitedNow(charid) || pawn::withRealPlayer(charid); },
+                           [](const uint32 charid) { return pawn::errands::isAway(charid); },
                        },
                        Engine{ stand, fade, signIn, signOut },
                        std::max<uint32>(1, settings::get<uint32>("pawn.WORLD_STANDS_PER_RUN")));

@@ -22,10 +22,14 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "common/types/position.h"
 
+#include <optional>
 #include <string_view>
 
+class CBaseEntity;
 class CCharEntity;
+class CZone;
 
 // The conquest exchange by proxy: a cardian cannot talk to a gate guard, but
 // her player can stand beside one, and she buys from that guard's stock out of
@@ -51,4 +55,31 @@ namespace pawn::guards
 
     // A guard who sells stands in the zone, by its name
     auto zoneHasGuard(std::string_view zoneName) -> bool;
+
+    // The guard a cardian of this nation shops at in her zone, and the NPC
+    // standing there: her own nation's nearest her, else a guard who sells
+    // to every nation's (Jeuno's), else any; nothing when none stands there
+    struct Standing
+    {
+        const Guard*       guard = nullptr;
+        const CBaseEntity* npc   = nullptr;
+    };
+    auto guardFor(CZone* PZone, uint8 nation, const position_t& from) -> std::optional<Standing>;
+
+    // Her own nation's guard in another zone of her city -- a consulate:
+    // San d'Oria's Bastok and Windurst guards stand in Northern San d'Oria
+    // -- and the zone it stands in; nothing when her zone has one of hers,
+    // or her city none
+    struct Elsewhere
+    {
+        const Guard* guard = nullptr;
+        uint16       zone  = 0;
+    };
+    auto consulateFor(CZone* PZone, uint8 nation) -> std::optional<Elsewhere>;
+
+    // Whether this guard sells to one of this nation: her own nation's, one
+    // who sells to every nation's (Jeuno's), or another nation's while hers
+    // outranks his in the conquest tally -- the exchange's own rule
+    // (conquest_exchange.lua refusalOf), asked before she sets out
+    auto sellsTo(const Guard& guard, uint8 nation) -> bool;
 } // namespace pawn::guards

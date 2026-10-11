@@ -78,7 +78,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Challoux
   - activity: stand
     band: [1, 75]
@@ -89,4 +88,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

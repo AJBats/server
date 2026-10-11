@@ -21,8 +21,12 @@
 
 #include "gate_guards.h"
 
+#include "pawn.h"
+
 #include "common/utils.h"
 #include "entities/char_entity.h"
+#include "lua/luautils.h"
+#include "utils/zoneutils.h"
 #include "zone.h"
 
 #include <algorithm>
@@ -96,6 +100,82 @@ namespace pawn::guards
             }
         }
         return PNearest;
+    }
+
+    auto guardFor(CZone* PZone, const uint8 nation, const position_t& from) -> std::optional<Standing>
+    {
+        if (PZone == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::string zoneName = PZone->getName();
+        // her own nation's first, then a guard who sells to every nation's, then any
+        const auto rankOf = [&](const Guard& guard)
+        {
+            return guard.nation == nation ? 0 : (guard.nation == kOther ? 1 : 2);
+        };
+        std::optional<Standing> best;
+        int                     bestRank = 3;
+        float                   nearest  = 0.0f;
+        for (const auto& guard : kGuards)
+        {
+            if (guard.zone != zoneName)
+            {
+                continue;
+            }
+            for (const auto* PNpc : PZone->queryEntitiesByName(std::string(guard.name)))
+            {
+                if (PNpc == nullptr)
+                {
+                    continue;
+                }
+                const int   rank = rankOf(guard);
+                const float away = distance(from, PNpc->loc.p);
+                if (rank < bestRank || (rank == bestRank && away < nearest))
+                {
+                    best     = Standing{ &guard, PNpc };
+                    bestRank = rank;
+                    nearest  = away;
+                }
+            }
+        }
+        return best;
+    }
+
+    auto consulateFor(CZone* PZone, const uint8 nation) -> std::optional<Elsewhere>
+    {
+        if (PZone == nullptr)
+        {
+            return std::nullopt;
+        }
+        const std::string here = PZone->getName();
+        if (std::ranges::any_of(kGuards, [&](const Guard& guard) { return guard.nation == nation && guard.zone == here; }))
+        {
+            return std::nullopt; // one of hers stands in her zone
+        }
+        std::optional<Elsewhere> found;
+        zoneutils::ForEachZone([&](CZone* POther)
+                               {
+                                   if (found.has_value() || POther == nullptr || POther == PZone || !pawn::sameCity(PZone, POther))
+                                   {
+                                       return;
+                                   }
+                                   const std::string there = POther->getName();
+                                   for (const auto& guard : kGuards)
+                                   {
+                                       if (guard.nation == nation && guard.zone == there)
+                                       {
+                                           found = Elsewhere{ &guard, static_cast<uint16>(POther->GetID()) };
+                                           return;
+                                       }
+                                   }
+                               });
+        return found;
+    }
+
+    auto sellsTo(const Guard& guard, const uint8 nation) -> bool
+    {
+        return guard.nation == nation || guard.nation == kOther || luautils::GetNationRank(guard.nation) > luautils::GetNationRank(nation);
     }
 
     auto zoneHasGuard(const std::string_view zoneName) -> bool

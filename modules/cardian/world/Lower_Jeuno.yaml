@@ -98,7 +98,6 @@ slots:
     dwell: [300, 900]
     enter: any
     exit: rolanberry_fields
-    hours: [12, 2]
     cliques: [1, 2]
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand
@@ -149,7 +148,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Pawkrix
   - activity: stand
     band: [1, 75]
@@ -160,7 +158,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Stinknix, Creepstix
   - activity: stand
     band: [1, 75]
@@ -171,7 +168,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Yoskolo
   - activity: stand
     band: [1, 75]
@@ -182,7 +178,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Akamafula, Amalasanda
   - activity: stand
     band: [1, 75]
@@ -193,7 +188,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Adelflete, Morefie, Matoaka
   - activity: stand
     band: [1, 75]
@@ -204,7 +198,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Chetak, Chenokih, Hasim
   - activity: stand
     band: [1, 75]
@@ -215,7 +208,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Susu
   - activity: stand
     band: [1, 75]
@@ -226,7 +218,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Rhimonne
   - activity: stand
     band: [1, 75]
@@ -237,4 +228,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

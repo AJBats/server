@@ -98,7 +98,6 @@ slots:
     dwell: [300, 900]
     enter: any
     exit: toraimarai_canal
-    hours: [12, 2]
     cliques: [1, 2]
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand

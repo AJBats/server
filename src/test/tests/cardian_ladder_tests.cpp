@@ -46,6 +46,7 @@ namespace
         std::set<uint16>         playerIn{ 1 };
         std::set<uint16>         playerNear{ 1, 2 };
         std::set<uint32>         party;
+        std::set<uint32>         away;
         std::set<uint32>         cannotStand;
         std::vector<std::string> log;
         Ladder                   ladder;
@@ -56,6 +57,7 @@ namespace
                      [this](const uint16 zone) { return playerNear.contains(zone); },
                      [this](const uint16 zone) { return playerIn.contains(zone); },
                      [this](const uint32 charid) { return party.contains(charid); },
+                     [this](const uint32 charid) { return away.contains(charid); },
                  },
                  Engine{
                      [this](const uint32 charid)
@@ -451,4 +453,56 @@ TEST_CASE("Ladder: a run with nothing changed does nothing", "[cardian][ladder]"
     rig.run();
     CHECK(rig.run().empty());
     CHECK(rig.run(60s).empty());
+}
+
+TEST_CASE("Ladder: a member away on an errand is online with no body, and stands again once back", "[cardian][ladder]")
+{
+    Rig rig(10, 10);
+    rig.owned(1, Tier::Alt);
+    rig.owned(2, Tier::Owned);
+    rig.crowd(3);
+    rig.run();
+    REQUIRE(rig.stood(1));
+    REQUIRE(rig.stood(2));
+    REQUIRE(rig.stood(3));
+
+    // gone on her errand: her body goes, her row stays (search finds her)
+    rig.away.insert(2);
+    rig.away.insert(3);
+    auto log = rig.run();
+    CHECK(log == std::vector<std::string>{ "fade 3", "fade 2" });
+    CHECK(rig.ladder.stepOf(2) == Step::Faded);
+    CHECK(rig.ladder.stepOf(3) == Step::Faded);
+    CHECK(rig.stood(1));
+
+    // in his party or not, nothing stands her while she is away
+    rig.party.insert(2);
+    CHECK(rig.run().empty());
+    CHECK(rig.ladder.stepOf(2) == Step::Faded);
+
+    // back: she stands where she would
+    rig.away.clear();
+    log = rig.run();
+    CHECK(rig.stood(2));
+    CHECK(rig.stood(3));
+}
+
+TEST_CASE("Ladder: with no errand lookup, nobody is away", "[cardian][ladder]")
+{
+    Ladder ladder(Ladder::defaultOrder,
+                  Lookup{
+                      [](const uint16) { return true; },
+                      [](const uint16) { return true; },
+                      [](const uint32) { return false; },
+                  },
+                  Engine{
+                      [](const uint32) { return true; },
+                      [](const uint32) {},
+                      [](const uint32) {},
+                      [](const uint32) {},
+                  });
+    ladder.setCaps(5, 5);
+    ladder.offer(1, Facts{ .zone = 1, .tier = Tier::Crowd });
+    ladder.run(t0);
+    CHECK(ladder.stepOf(1) == Step::Standing);
 }

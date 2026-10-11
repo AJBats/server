@@ -85,6 +85,21 @@ namespace pawn::world
     bool hold(uint32 charid, uint32 playerCharID);
     bool comeBack(uint32 charid, uint32 playerCharID);
     void endHold(uint32 charid);
+    // Held for him where she stands, as a contract holds her, with no sign
+    // out: his linkshell's pearl (club.h), given in his party, and kept as
+    // she leaves it. The world's clocks leave her be, she stays the world's
+    // for the ladder, and his sign-out takes her as it takes a contract
+    // member (hold). False when she has no Body
+    bool keepFor(uint32 charid, uint32 playerCharID);
+    // A faded body coming to a player out of sight (a recruit's visit,
+    // club.h): held for him as keepFor holds her, her next stand the spot
+    // given, offered to the ladder there; the caller asks her to stand
+    // (seats::inviteStand). One out of the world's seats -- in the pool --
+    // is given a seatless Body there, as comeBack gives one. False when she
+    // is not a census body, or stands already
+    bool bringTo(uint32 charid, uint32 playerCharID, uint16 zone, const position_t& at);
+    // The player her contract or his linkshell holds her for, 0 for none
+    auto holderOf(uint32 charid) -> uint32;
 
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued
@@ -120,6 +135,16 @@ namespace pawn::world
     auto townOrder(uint32 charid) -> std::optional<TownOrder>;
     void noteReached(uint32 charid);
 
+    // Where people loiter in a zone: the clustered stand slots of its table
+    // (`cliques`), each its centre on the mesh and its spread; none in the
+    // field. A player's idle linkshell members gather at one (club.h)
+    struct Loiter
+    {
+        position_t at{};
+        float      spread = 0.0f;
+    };
+    auto loiterSpots(CZone* PZone) -> std::vector<Loiter>;
+
     // The exp cap at the grant (D6): the exp a world body may take of a
     // grant, the room under her cap -- her census target plus her seeded
     // fraction -- in her level's exp. Anyone who is not a world body takes
@@ -127,6 +152,10 @@ namespace pawn::world
     // road exp arrives by, so she never crosses her target; nothing else
     // touches her exp
     auto capExp(const CCharEntity* PChar, uint32 exp) -> uint32;
+
+    // The live census has put a level on her out of sight (redress.h): the
+    // slow checks' word for a ding of her own leaves it unsaid
+    void noteLevel(uint32 charid, uint8 level);
 
     // Her lane: a sideways offset in yalms she walks the mesh's route at,
     // drawn from her name, so a crowd sent down one street spreads across
@@ -171,6 +200,19 @@ namespace pawn::world
     // the pool first); append a slot at a point to the file and fill it
     auto slots(CZone* PZone) -> std::vector<std::string>;
     auto fill(CZone* PZone) -> uint32;
+
+    // The conquest simulation's crowd (RESEARCH §20.11): every slot the zones'
+    // slot tables author -- its zone, its level band, its seats -- read from
+    // the files, whoever sits in it or not. A file is read again when it
+    // changes; one that does not parse keeps its last good read
+    struct AuthoredSlot
+    {
+        uint16 zone  = 0;
+        uint8  low   = 1;
+        uint8  high  = 1;
+        uint32 seats = 0;
+    };
+    auto authoredSlots() -> std::vector<AuthoredSlot>;
     auto addSlot(CZone* PZone, const std::string& activity, uint8 low, uint8 high, uint8 count, float spread, const position_t& at) -> bool;
 
     // Once per zone tick: where the players are (for the ladder), the slot

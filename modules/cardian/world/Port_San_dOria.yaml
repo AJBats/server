@@ -75,7 +75,6 @@ slots:
     dwell: [300, 900]
     enter: any
     exit: northern_san_doria
-    hours: [12, 2]
     cliques: [1, 2]
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand
@@ -135,7 +134,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Regine
   - activity: stand
     band: [1, 75]
@@ -146,7 +144,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Coullave
   - activity: stand
     band: [1, 75]
@@ -157,7 +154,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Fiva
   - activity: stand
     band: [1, 75]
@@ -168,7 +164,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Milva
   - activity: stand
     band: [1, 75]
@@ -179,7 +174,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Vendavoq
   - activity: stand
     band: [1, 75]
@@ -190,7 +184,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Deguerendars
   - activity: stand
     band: [1, 75]
@@ -201,7 +194,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Nimia
   - activity: stand
     band: [1, 75]
@@ -212,7 +204,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Patolle
   - activity: stand
     band: [1, 75]
@@ -223,7 +214,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Bonmaurieut
   - activity: stand
     band: [1, 75]
@@ -234,4 +224,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

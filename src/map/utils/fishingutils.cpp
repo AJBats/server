@@ -1551,6 +1551,12 @@ int32 CatchFish(CCharEntity* PChar, uint16 FishID, BigFish bigFish, uint16 lengt
             return 0;
         }
 
+        // CARDIAN: a venture's fisher stands in no zone, with no one near to tell
+        if (PChar->loc.zone == nullptr)
+        {
+            return 1;
+        }
+
         if (Count > 1)
         {
             PChar->loc.zone->PushPacket(PChar, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_TALKNUMWORK2>(PChar, FishID, MessageOffset + FISHMESSAGEOFFSET_CATCH_MULTI, Count));
@@ -1562,7 +1568,7 @@ int32 CatchFish(CCharEntity* PChar, uint16 FishID, BigFish bigFish, uint16 lengt
 
         return 1;
     }
-    else
+    else if (PChar->loc.zone != nullptr) // CARDIAN: a venture's fisher, in no zone, is not told
     {
         PChar->loc.zone->PushPacket(PChar, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_TALKNUMWORK2>(PChar, FishID, MessageOffset + FISHMESSAGEOFFSET_CATCH_INV_FULL, Count));
     }
@@ -1594,6 +1600,12 @@ int32 CatchItem(CCharEntity* PChar, uint16 ItemID, uint8 Count = 1)
             return 0;
         }
 
+        // CARDIAN: a venture's fisher stands in no zone, with no one near to tell
+        if (PChar->loc.zone == nullptr)
+        {
+            return 1;
+        }
+
         if (Count > 1)
         {
             PChar->loc.zone->PushPacket(PChar, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_TALKNUMWORK2>(PChar, ItemID, MessageOffset + FISHMESSAGEOFFSET_CATCH_MULTI, Count));
@@ -1605,7 +1617,7 @@ int32 CatchItem(CCharEntity* PChar, uint16 ItemID, uint8 Count = 1)
 
         return 1;
     }
-    else
+    else if (PChar->loc.zone != nullptr) // CARDIAN: a venture's fisher, in no zone, is not told
     {
         PChar->loc.zone->PushPacket(PChar, CHAR_INRANGE_SELF, std::make_unique<GP_SERV_COMMAND_TALKNUMWORK2>(PChar, ItemID, MessageOffset + FISHMESSAGEOFFSET_CATCH_INV_FULL, Count));
     }
@@ -2746,7 +2758,8 @@ void FishingAction(CCharEntity* PChar, const GP_CLI_COMMAND_FISHING_2_MODE mode,
     uint16 MessageOffset = GetMessageOffset(PChar->getZone());
     uint32 vanaTime      = earth_time::vanadiel_timestamp();
 
-    if (PChar->fishingToken == 0)
+    // CARDIAN: the release follows the fight's end, which clears the token: it still unhooks and skills up
+    if (PChar->fishingToken == 0 && (mode != GP_CLI_COMMAND_FISHING_2_MODE::RequestRelease || PChar->hookedFish == nullptr))
     {
         PChar->animation = xi::Animation::NewFishingStop;
         return;

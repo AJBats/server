@@ -92,6 +92,26 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/supplies.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/rescue_watch.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/conquest_sim.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errands.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errands.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/errand_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club_trade.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/professions.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/professions.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/angler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/angler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/fish_fight.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_sales.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_sales.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/bodies.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_shop.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_shop.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_spots.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_spots.h
 )
 
 set(MAP_CORE_SOURCES

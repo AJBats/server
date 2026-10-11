@@ -34,7 +34,6 @@ slots:
     dwell: [10, 25]
     enter: any
     exit: south_gustaberg
-    hours: [6, 22]
   # -- Through traffic from bastok_mines: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -132,7 +131,6 @@ slots:
     dwell: [300, 900]
     enter: any
     exit: south_gustaberg
-    hours: [12, 2]
     cliques: [1, 2]
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand
@@ -211,7 +209,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Zhikkom, Peritrage
   - activity: stand
     band: [1, 75]
@@ -222,7 +219,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Ciqala
   - activity: stand
     band: [1, 75]
@@ -233,7 +229,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Brunhilde, Charging Chocobo
   - activity: stand
     band: [1, 75]
@@ -244,7 +239,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Mjoll
   - activity: stand
     band: [1, 75]
@@ -255,7 +249,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Olwyn
   - activity: stand
     band: [1, 75]
@@ -266,7 +259,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Zaira, Sororo
   - activity: stand
     band: [1, 75]
@@ -277,7 +269,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Harmodios, Hortense
   - activity: stand
     band: [1, 75]
@@ -288,7 +279,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Carmelide, Raghd
   - activity: stand
     band: [1, 75]
@@ -299,7 +289,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Oggodett, Somn-Paemn
   - activity: stand
     band: [1, 75]
@@ -310,7 +299,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Yafafa
   - activity: stand
     band: [1, 75]
@@ -321,4 +309,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

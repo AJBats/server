@@ -22,6 +22,7 @@
 #include "party_finder.h"
 
 #include "cardian_link_messages.h"
+#include "club.h"
 #include "pawn.h"
 #include "pawn_travel.h"
 #include "seats.h"
@@ -83,6 +84,7 @@ namespace pawn::finder
             uint8       rank[3]  = { 1, 1, 1 };
             bool        partied  = false;
             uint32      affinity = 0;
+            uint32      together = 0; // story missions completed with him (cardian_party_memory.missions)
             // Her mission log as the census placed it (chars.missions); a
             // nation log with nothing on it reads 0xFFFF, the game's own "none"
             missionlog_t missions[MAX_MISSIONAREA]{};
@@ -91,7 +93,8 @@ namespace pawn::finder
         constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, c.missions, s.mjob, s.mlvl, x.seed, x.nation, l.race, "
                                      "p.rank_sandoria, p.rank_bastok, p.rank_windurst, "
                                      "CAST(m.last_partied IS NOT NULL AS UNSIGNED) AS partied, "
-                                     "CAST(COALESCE(m.affinity, 0) AS UNSIGNED) AS affinity "
+                                     "CAST(COALESCE(m.affinity, 0) AS UNSIGNED) AS affinity, "
+                                     "CAST(COALESCE(m.missions, 0) AS UNSIGNED) AS together "
                                      "FROM cardian_census x "
                                      "JOIN chars c ON c.charid = x.charid "
                                      "JOIN char_stats s ON s.charid = x.charid "
@@ -116,6 +119,7 @@ namespace pawn::finder
             f.rank[2]  = rset->template get<uint8>("rank_windurst");
             f.partied  = rset->template get<uint32>("partied") != 0;
             f.affinity = rset->template get<uint32>("affinity");
+            f.together = rset->template get<uint32>("together");
             for (uint8 log = 0; log < MAX_MISSIONAREA; ++log)
             {
                 f.missions[log].current = noMission(log);
@@ -139,9 +143,12 @@ namespace pawn::finder
 
         // The shout's pool: the online -- a session row, standing or faded,
         // so search finds her -- less a body with an open contract, held for
-        // her player (his Your contract rows, never a shout's), his or another's
+        // her player (his Your contract rows, never a shout's), his or another's,
+        // or by a linkshell's pearl she wears (club.h: a pearl or a sack in a link slot)
         constexpr auto kShoutPool = " AND EXISTS (SELECT 1 FROM accounts_sessions o WHERE o.charid = x.charid)"
-                                    " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')";
+                                    " AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = x.charid AND h.contract <> '')"
+                                    " AND NOT EXISTS (SELECT 1 FROM char_equip le JOIN char_inventory li ON li.charid = le.charid AND li.location = le.containerid AND li.slot = le.slotid"
+                                    " WHERE le.charid = x.charid AND le.equipslotid IN (16, 17) AND li.itemId IN (514, 515))";
 
         auto allFacts(const uint32 playerCharID) -> std::vector<Facts>
         {
@@ -255,22 +262,32 @@ namespace pawn::finder
 
         // What stops her whatever her mood: a party, a fight, a camp, the
         // level band, a mission she has not reached. nullopt when nothing does
-        auto hardNo(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const MissionFit fit) -> std::optional<Answer>
+        // What keeps her from coming whoever asks: another party, a fight, a camp
+        auto busyNo(const Facts& f, const CCharEntity* PPawn) -> std::optional<std::string>
         {
             if (PPawn != nullptr)
             {
                 if (PPawn->PParty != nullptr)
                 {
-                    return Answer{ false, fit, "I'm with a party already." };
+                    return "I'm with a party already.";
                 }
                 if (PPawn->PAI != nullptr && PPawn->PAI->IsEngaged())
                 {
-                    return Answer{ false, fit, "I'm in the middle of something!" };
+                    return "I'm in the middle of something!";
                 }
             }
             else if (pawn::world::campLeaderOf(f.charid) != 0)
             {
-                return Answer{ false, fit, "I'm out camping with friends." };
+                return "I'm out camping with friends.";
+            }
+            return std::nullopt;
+        }
+
+        auto hardNo(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const MissionFit fit) -> std::optional<Answer>
+        {
+            if (const auto busy = busyNo(f, PPawn); busy.has_value())
+            {
+                return Answer{ false, fit, *busy };
             }
 
             const int side = rules::bandSide(PPlayer->GetMLevel(), levelOf(PPawn, f.level), settings::get<uint8>("pawn.FINDER_BAND"));
@@ -669,37 +686,18 @@ namespace pawn::finder
                          numbers.attack, numbers.defence);
     }
 
-    auto peek(const CCharEntity* PPlayer, const uint32 charid) -> std::optional<Peek>
+    namespace
     {
-        if (PPlayer == nullptr)
-        {
-            return std::nullopt;
-        }
-        const auto facts = charid != 0 ? factsOf(PPlayer->id, charid) : std::nullopt;
-        if (!facts.has_value())
-        {
-            return std::nullopt;
-        }
-        // Someone in his current shout, or held by his own open contract
-        const auto* held       = currentShout(PPlayer->id);
-        const bool  shouted    = held != nullptr && std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.charid == charid; });
-        const auto  contracted = openContractOf(charid);
-        if (!shouted && !(contracted.has_value() && contracted->playerCharID == PPlayer->id))
-        {
-            return std::nullopt;
-        }
-        Peek p;
-        p.nation   = facts->nation;
-        p.rank     = facts->rank[facts->nation];
-        p.affinity = facts->affinity;
-        if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
+        // What her body says: her jobs, her rank in her nation, what she
+        // wears, her numbers as she stands
+        void fromBody(Peek& p, CCharEntity* PPawn)
         {
             p.standing = true;
             p.job      = static_cast<uint8>(PPawn->GetMJob());
             p.level    = PPawn->GetMLevel();
             p.sjob     = static_cast<uint8>(PPawn->GetSJob());
             p.slvl     = PPawn->GetSLevel();
-            p.rank     = PPawn->profile.rank[facts->nation];
+            p.rank     = p.nation < 3 ? PPawn->profile.rank[p.nation] : p.rank;
             for (uint8 equipSlot = SLOT_MAIN; equipSlot <= SLOT_BACK; ++equipSlot)
             {
                 if (const auto* PItem = PPawn->getEquip(static_cast<SLOTTYPE>(equipSlot)); PItem != nullptr)
@@ -713,6 +711,78 @@ namespace pawn::finder
             p.mp      = static_cast<uint32>(std::max(0, PPawn->health.mp));
             p.maxmp   = static_cast<uint32>(std::max(0, PPawn->GetMaxMP()));
             p.numbers = pawn::statusNumbers(PPawn);
+        }
+
+        // One of his own -- his alt, a cardian his account owns -- has no
+        // census row: her nation, ranks and jobs off her character's rows,
+        // the rest off her body when she stands, else what she wears off
+        // her rows
+        auto peekOwn(const uint32 charid) -> std::optional<Peek>
+        {
+            const auto rset = db::preparedStmt("SELECT c.nation, s.mjob, s.mlvl, s.sjob, s.slvl, p.rank_sandoria, p.rank_bastok, p.rank_windurst "
+                                               "FROM chars c JOIN char_stats s ON s.charid = c.charid JOIN char_profile p ON p.charid = c.charid WHERE c.charid = ?",
+                                               charid);
+            if (!rset || !rset->next())
+            {
+                return std::nullopt;
+            }
+            Peek                       p;
+            const std::array<uint8, 3> ranks{ rset->get<uint8>("rank_sandoria"), rset->get<uint8>("rank_bastok"), rset->get<uint8>("rank_windurst") };
+            p.nation = rset->get<uint8>("nation");
+            p.rank   = p.nation < ranks.size() ? ranks[p.nation] : 1;
+            p.job    = rset->get<uint8>("mjob");
+            p.level  = rset->get<uint8>("mlvl");
+            p.sjob   = rset->get<uint8>("sjob");
+            p.slvl   = rset->get<uint8>("slvl");
+            if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
+            {
+                fromBody(p, PPawn);
+                return p;
+            }
+            const auto gear = db::preparedStmt("SELECT e.equipslotid, i.itemId FROM char_equip e JOIN char_inventory i "
+                                               "ON i.charid = e.charid AND i.location = e.containerid AND i.slot = e.slotid WHERE e.charid = ?",
+                                               charid);
+            while (gear && gear->next())
+            {
+                if (const auto slot = gear->get<uint8>("equipslotid"); slot < p.items.size())
+                {
+                    p.items[slot] = gear->get<uint16>("itemId");
+                }
+            }
+            return p;
+        }
+    } // namespace
+
+    auto peek(const CCharEntity* PPlayer, const uint32 charid) -> std::optional<Peek>
+    {
+        if (PPlayer == nullptr || charid == 0)
+        {
+            return std::nullopt;
+        }
+        // Someone in his current shout, held by his own open contract, a
+        // recruit of his linkshell, or a member of it (the Linkshell page's
+        // Examine); one of his own has no census row
+        const bool member = pawn::club::memberOf(PPlayer, charid).has_value();
+        const auto facts  = factsOf(PPlayer->id, charid);
+        if (!facts.has_value())
+        {
+            return member ? peekOwn(charid) : std::nullopt;
+        }
+        const auto* held       = currentShout(PPlayer->id);
+        const bool  shouted    = held != nullptr && std::ranges::any_of(held->shout.rows, [&](const Responder& r) { return r.c.charid == charid; });
+        const auto  contracted = openContractOf(charid);
+        if (!member && !shouted && !(contracted.has_value() && contracted->playerCharID == PPlayer->id) && !pawn::club::isRecruit(PPlayer, charid))
+        {
+            return std::nullopt;
+        }
+        Peek p;
+        p.nation   = facts->nation;
+        p.rank     = facts->rank[facts->nation];
+        p.affinity = facts->affinity;
+        p.missions = facts->together;
+        if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
+        {
+            fromBody(p, PPawn);
             return p;
         }
         p.job   = facts->job;
@@ -936,12 +1006,17 @@ namespace pawn::finder
         noContract.erase(charid);
         expBank.erase(charid);
         joinedShout.erase(charid);
-        if (const auto held = openContractOf(charid); held.has_value())
+        if (const auto held = openContractOf(charid); held.has_value() && !held->pearl)
         {
             db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND contract <> ''", charid);
             ShowInfoFmt("pawn: {}'s {} contract with {} ends", held->name, kindName(held->goal), pawn::seats::nameOf(held->playerCharID));
         }
-        pawn::world::endHold(charid);
+        // His linkshell's pearl keeps her for him where she stands; anyone
+        // else the world's clocks run on again
+        if (const auto pearl = pawn::club::pearlOf(charid); !pearl.has_value() || !pawn::world::keepFor(charid, pearl->playerCharID))
+        {
+            pawn::world::endHold(charid);
+        }
     }
 
     auto openContractOf(const uint32 charid) -> std::optional<OpenContract>
@@ -950,14 +1025,25 @@ namespace pawn::finder
                                            "JOIN cardian_census x ON x.charid = m.pawn_charid "
                                            "WHERE m.pawn_charid = ? AND m.contract <> '' AND x.recruited = 0 ORDER BY m.last_partied DESC LIMIT 1",
                                            charid);
-        if (!rset || !rset->next())
+        if (rset && rset->next())
+        {
+            return OpenContract{ .charid       = charid,
+                                 .playerCharID = rset->get<uint32>("player_charid"),
+                                 .name         = rset->get<std::string>("charname"),
+                                 .goal         = goalFrom(rset->get<std::string>("contract"), 0) };
+        }
+        // His pearl on one of the world's holds her between contracts
+        const auto pearl = pawn::club::pearlOf(charid);
+        if (!pearl.has_value())
         {
             return std::nullopt;
         }
-        return OpenContract{ .charid       = charid,
-                             .playerCharID = rset->get<uint32>("player_charid"),
-                             .name         = rset->get<std::string>("charname"),
-                             .goal         = goalFrom(rset->get<std::string>("contract"), 0) };
+        const auto held = db::preparedStmt("SELECT c.charname FROM chars c JOIN cardian_census x ON x.charid = c.charid WHERE c.charid = ? AND x.recruited = 0", charid);
+        if (!held || !held->next())
+        {
+            return std::nullopt;
+        }
+        return OpenContract{ .charid = charid, .playerCharID = pearl->playerCharID, .name = held->get<std::string>("charname"), .goal = Goal{}, .pearl = true };
     }
 
     auto openContracts(const uint32 playerCharID) -> std::vector<OpenContract>
@@ -974,6 +1060,19 @@ namespace pawn::finder
                                         .name         = rset->get<std::string>("charname"),
                                         .goal         = goalFrom(rset->get<std::string>("contract"), 0) });
         }
+        // and the world's wearing a pearl of his shell with no contract of theirs
+        for (const auto charid : pawn::club::wearersOf(playerCharID))
+        {
+            if (std::ranges::any_of(out, [&](const OpenContract& c) { return c.charid == charid; }))
+            {
+                continue;
+            }
+            if (const auto held = openContractOf(charid); held.has_value() && held->pearl)
+            {
+                out.push_back(*held);
+            }
+        }
+        std::ranges::sort(out, {}, &OpenContract::name);
         return out;
     }
 
@@ -986,6 +1085,10 @@ namespace pawn::finder
         }
         for (const auto& c : openContracts(PPlayer->id))
         {
+            if (c.pearl)
+            {
+                continue; // held by his pearl alone: the Linkshell page's, not a contract
+            }
             ContractView view{ .charid = c.charid, .name = c.name, .goal = c.goal };
             if (const auto* PPawn = pawn::findPawn(c.charid); PPawn != nullptr)
             {

@@ -30,7 +30,6 @@ slots:
     dwell: [10, 25]
     enter: any
     exit: east_sarutabaruta
-    hours: [6, 22]
   # -- Through traffic from port_windurst: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -109,7 +108,6 @@ slots:
     dwell: [300, 900]
     enter: any
     exit: east_sarutabaruta
-    hours: [12, 2]
     cliques: [1, 2]
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand
@@ -217,7 +215,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Retto-Marutto
   - activity: stand
     band: [1, 75]
@@ -228,7 +225,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Quesse
   - activity: stand
     band: [1, 75]
@@ -239,7 +235,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Mono Nchaa, Manyny
   - activity: stand
     band: [1, 75]
@@ -250,7 +245,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Wije Tiren
   - activity: stand
     band: [1, 75]
@@ -261,7 +255,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Nya Labiccio
   - activity: stand
     band: [1, 75]
@@ -272,7 +265,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Bin Stejihna
   - activity: stand
     band: [1, 75]
@@ -283,7 +275,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Taraihi-Perunhi
   - activity: stand
     band: [1, 75]
@@ -294,7 +285,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Nhobi Zalkia
   - activity: stand
     band: [1, 75]
@@ -305,7 +295,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Millerovieunet
   - activity: stand
     band: [1, 75]
@@ -316,4 +305,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]

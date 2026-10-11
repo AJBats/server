@@ -1,0 +1,197 @@
+# The conquest simulation's dials (RESEARCH.md §20.5-§20.7; the map's
+# src/map/pawn/conquest_sim.cpp, its arithmetic in conquest_math.h).
+#
+# An invisible crowd, nobody in the world, not even faded: every Vana'diel
+# hour the map counts every seat the slot tables author in the field and the
+# dungeons (town seats earn nothing) whose level band the world has reached
+# -- the world's top level, the census's highest target (never under 18), at
+# or above the band's floor -- filled or not. No census body is looked at. A
+# seat earns at the middle of its band, as far as the world has reached it.
+#
+# Each seat's nation is drawn anew every hour from its region's shares, which
+# these dials alone set (RESEARCH.md §20.12, the heat map and the campaigns).
+# A nation's weight in a region is
+#     strength x (1 + tide)
+#       x home_bonus (in its own home region)
+#       x next_pull (in the region next to its home)
+#       x thumb's pull (round Jeuno, while the thumb favours it)
+#       x its focus, as far as it has grown (in an open outer region it picked)
+#       x (1 + neighbour_bonus for each bordering region it holds, to the cap)
+#       x any hand on the scale
+# and its share is its weight over the three nations' sum. With no campaign
+# and the tide still: a home region's crowd is 80 % its nation and 10 % each
+# other, any other region about a third each. The map log names every
+# region's shares and how the hour's draw fell, and at each tally the
+# period's campaigns.
+#
+# The map sends what the game already understands: influence for each nation
+# in each region, and Signet kills and deaths for the beastmen. The game's own
+# tally decides, with xi_world's own catch-up: a nation under the leader gets
+# twice what it is sent, under half the leader three times. So any steady edge
+# wins a region at the tally nearly always, while the client's arrows -- a
+# nation's band of the three's influence: 25 %, 50 %, 65 % -- show a nation
+# up only with half of it, which against the catch-up takes about eight times
+# a rival's weight (dry runs, 2026-10-10). The world bodies' and the player's
+# own Signet kills count on top, as the game counts them.
+#
+# The map reads this file again whenever it changes, so a dial turns on a
+# running server; a file that does not parse leaves the last good dials.
+#
+# Rates are per real hour (25 Vana'diel hours). Regions and nations by these
+# names: ronfaure zulkheim norvallen gustaberg derfland sarutabaruta
+# kolshushu aragoneu fauregandi valdeaunia qufim litelor kuzotz vollbow
+# elshimo_lowlands elshimo_uplands tulia movalpolos tavnazia;
+# sandoria bastok windurst.
+
+# Each nation's weight, everywhere (the tide drifts round it)
+strength: { sandoria: 1.0, bastok: 1.0, windurst: 1.0 }
+
+# The home nation's weight in its own home region (Ronfaure, Gustaberg,
+# Sarutabaruta): 8 holds the region every tally and keeps the home nation's
+# arrow up all the time (about 58 % of the influence)
+home_bonus: 8.0
+
+# The region next to a nation's home, where its new adventurers go next: a
+# gentle lean, since the catch-up turns any steady edge into wins. At 1.1
+# Windurst takes Kolshushu about 45 % of tallies, and San d'Oria and Bastok
+# about 40 % of Zulkheim each, Windurst still about 17 %
+next_pull: 1.1
+next_regions:
+  sandoria: [zulkheim]
+  bastok: [zulkheim]
+  windurst: [kolshushu]
+
+# The outer regions, everything past a nation's home and the region next to
+# it -- the four round Jeuno and the far ones -- each by the level that opens
+# it. The home regions and the regions next to them are fought over from a
+# fresh server's first day; an outer region only once the world's top level
+# (the census's highest target, never under 18) reaches its level. Until then
+# it has no crowd, its tables' and the far crowd alike, so it is the
+# beastmen's. Each nation's focus picks from the open ones.
+outer:
+  norvallen: 20
+  derfland: 20
+  aragoneu: 20
+  qufim: 25
+  elshimo_lowlands: 30
+  fauregandi: 35
+  kuzotz: 37
+  elshimo_uplands: 40
+  litelor: 45
+  valdeaunia: 45
+  movalpolos: 55
+  tavnazia: 55
+  vollbow: 60
+  tulia: 70
+
+# The thumb round Jeuno: one nation's weight there times `pull` for
+# `tallies` tallies, then the thumb passes to the other nation holding the
+# fewest regions. Gentle: on its own it tilts who wins (about 80 % of
+# tallies at 1.5), and moves no arrow. Kept in cardian_conquest_thumb.
+thumb:
+  regions: [norvallen, derfland, aragoneu, qufim]
+  pull: 1.5
+  tallies: 4
+
+# Each nation's focus: `share` of the open outer regions (rounded, at least
+# one while any is open), drawn anew every tally, each nation's apart from the
+# others' -- they may fight over one region, or spread over different ones --
+# each pulled `pull` times, give or take `jitter` of it. A focus grows from nothing at the tally to its full pull at
+# `ramp` of the period, so its arrow rises through the window: at 8 and
+# half the period, a region one nation alone focuses on shows its up arrow
+# about 11 % of the time an hour into a three-day period, 70 % at two hours,
+# and nearly 90 % by the tally.
+focus:
+  share: 0.3333
+  pull: 8.0
+  jitter: 0.25
+  ramp: 0.5
+
+# The far regions, whose slot tables seat few or none: a crowd of `seats` in
+# each once it is open, at the world's top level, on top of what its tables
+# seat (at most 1000). The beastmen still take Movalpolos often: the game
+# counts its deaths heavily.
+far_crowd:
+  regions: [fauregandi, valdeaunia, litelor, kuzotz, vollbow, elshimo_lowlands, elshimo_uplands, tulia, movalpolos, tavnazia]
+  seats: 12
+
+# A nation's weight in a region rises this much for each bordering region it
+# holds (as of the last tally), up to the cap. Off: it made fronts that
+# snowballed one nation across the middle of the map
+neighbour_bonus: 0.0
+neighbour_cap: 0.30
+
+# A hand on the scale: one nation's weight in one region, for an authored
+# situation. None set. For example:
+#   hands:
+#     - { nation: bastok, region: zulkheim, times: 1.5 }
+hands: []
+
+# The beastmen's pressure: simulated deaths per seat per real hour. A seat
+# kills at kills_per_seat_hour everywhere, so this is the beastmen's dial.
+# A region falls to them when kills per death drop below its weight times
+# (total influence / the leader's) -- weight 10 in the home regions, 25
+# Zulkheim and Kolshushu, 50 Qufim, 100 Norvallen, Derfland and Aragoneu,
+# 150 Fauregandi and Valdeaunia (§20.6). At 30 kills an hour, 0.05 is 600
+# kills a death: a region's crowd holds against them on average, and the
+# frontier is the world's level: a region not yet open, or with no seat at
+# all, gets one death a period whatever this says.
+pressure: 0.05
+pressure_by_region: {}
+
+kills_per_seat_hour: 30
+
+# The seats' conquest points, one flat rate of their experience (decision 3),
+# and the share of them that is influence. The player keeps the game's own.
+cp_rate: 0.125
+influence_share: 0.5
+
+# A slow random drift of each nation's strength round its dial, pulled back
+# toward it: amplitude, the furthest it drifts (0 holds it still); period,
+# how slowly, in real hours of game clock. Kept in cardian_conquest_tide.
+tide: { amplitude: 0.20, period_hours: 24 }
+
+# What one member of an even party at a level earns in a real hour: a first
+# cut from the exp formula's model (§15: an even party of four, 30 kills an
+# hour, dev's base table), between the rows by straight lines. Every nation's
+# crowd earns by the same table, so it sets only how much the crowd weighs
+# against the player's own kills. Correct it in play against his rate.
+exp_per_hour:
+  - [1, 600]
+  - [5, 1200]
+  - [10, 2000]
+  - [15, 2500]
+  - [20, 2700]
+  - [30, 3000]
+  - [40, 3600]
+  - [50, 4200]
+  - [60, 6000]
+  - [75, 8000]
+
+# The borders the neighbour bonus reads: from the zone lines between the
+# regions' zones (a Catch2 test checks them against data/zones), each listed
+# both ways. The cities and Jeuno hold no region and are left out.
+borders:
+  ronfaure: [zulkheim, norvallen, fauregandi]
+  zulkheim: [ronfaure, gustaberg, norvallen, derfland, movalpolos, vollbow]
+  norvallen: [ronfaure, zulkheim, derfland, fauregandi]
+  gustaberg: [zulkheim, kuzotz, movalpolos]
+  derfland: [zulkheim, norvallen, aragoneu]
+  sarutabaruta: [kolshushu]
+  kolshushu: [sarutabaruta, aragoneu]
+  aragoneu: [kolshushu, derfland, litelor]
+  fauregandi: [ronfaure, norvallen, valdeaunia]
+  valdeaunia: [fauregandi]
+  qufim: []
+  litelor: [aragoneu, tulia]
+  kuzotz: [gustaberg, vollbow]
+  vollbow: [zulkheim, kuzotz]
+  elshimo_lowlands: [elshimo_uplands]
+  elshimo_uplands: [elshimo_lowlands]
+  tulia: [litelor]
+  movalpolos: [gustaberg, zulkheim]
+  tavnazia: []
+
+# Borders by sea: the Selbina-Mhaura ferry
+sea:
+  - [zulkheim, kolshushu]

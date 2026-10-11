@@ -134,7 +134,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_despawn) == 20);
     STATIC_REQUIRE(sizeof(cl_shout_responder) == 192);
     STATIC_REQUIRE(sizeof(cl_shout) == 28);
-    STATIC_REQUIRE(sizeof(cl_peek) == 104);
+    STATIC_REQUIRE(sizeof(cl_peek) == 108);
     STATIC_REQUIRE(sizeof(cl_invite) == 120);
     STATIC_REQUIRE(sizeof(cl_contract) == 28);
     STATIC_REQUIRE(sizeof(cl_contracts) == 468);
@@ -146,6 +146,29 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_cp_shop) == 56);
     STATIC_REQUIRE(sizeof(cl_cp_buy) == 36);
     STATIC_REQUIRE(sizeof(cl_job_change) == 24);
+    STATIC_REQUIRE(sizeof(cl_club_member) == 208);
+    STATIC_REQUIRE(sizeof(cl_club) == 76);
+    STATIC_REQUIRE(sizeof(cl_club_invite) == 20);
+    STATIC_REQUIRE(sizeof(cl_club_recruit) == 120);
+    STATIC_REQUIRE(sizeof(cl_pearl) == 20);
+    STATIC_REQUIRE(sizeof(cl_errand_goal) == 76);
+    STATIC_REQUIRE(sizeof(cl_errands) == 24);
+    STATIC_REQUIRE(sizeof(cl_send_errand) == 40);
+    STATIC_REQUIRE(sizeof(cl_call_back) == 20);
+    STATIC_REQUIRE(sizeof(cl_profession) == 56);
+    STATIC_REQUIRE(sizeof(cl_profession_slot) == 24);
+    STATIC_REQUIRE(sizeof(cl_professions) == 24);
+    STATIC_REQUIRE(sizeof(cl_profession_tool) == 24);
+    STATIC_REQUIRE(sizeof(cl_profession_tools) == 28);
+    STATIC_REQUIRE(sizeof(cl_start_profession) == 24);
+    STATIC_REQUIRE(sizeof(cl_venture_spot) == 72);
+    STATIC_REQUIRE(sizeof(cl_venture_spots) == 24);
+    STATIC_REQUIRE(sizeof(cl_venture_bait) == 24);
+    STATIC_REQUIRE(sizeof(cl_venture_baits) == 28);
+    STATIC_REQUIRE(sizeof(cl_venture_paid) == 36);
+    STATIC_REQUIRE(sizeof(cl_venture_news) == 28);
+    STATIC_REQUIRE(sizeof(cl_venture_item) == 28);
+    STATIC_REQUIRE(sizeof(cl_venture_report) == 108);
 }
 
 TEST_CASE("Cardian link: a cardian's order key and its action fields cross both ways", "[cardian][link]")

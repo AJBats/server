@@ -21,6 +21,7 @@
 
 #include "conquest_system.h"
 
+#include "common/cardian_conquest_clock.h" // CARDIAN
 #include "common/vana_time.h"
 
 #include "entities/char_entity.h"
@@ -522,8 +523,8 @@ bool IsAlliance()
 
 uint8 GetNextTally()
 {
-    auto nextWeek   = earth_time::get_next_game_week(earth_time::game_now()); // CARDIAN: the game clock, as Lua's NextConquestTally()
-    auto untilTally = nextWeek - earth_time::game_now();                      // CARDIAN: both ends on the game clock
+    auto nextWeek   = cardian::conquest_clock::nextTally(earth_time::game_now(), cardian::conquest_clock::tallyDays()); // CARDIAN: the game clock's tally, short or the JST week
+    auto untilTally = nextWeek - earth_time::game_now();                                                              // CARDIAN: both ends on the game clock
 
     auto vanaDaysUntilTally = std::chrono::ceil<xi::vanadiel_clock::days>(untilTally).count();
 

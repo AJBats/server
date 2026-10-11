@@ -28,7 +28,6 @@ slots:
     dwell: [10, 25]
     enter: any
     exit: north_gustaberg
-    hours: [6, 22]
   # -- Through traffic from bastok_markets: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -86,7 +85,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Melloa
   - activity: stand
     band: [1, 75]
@@ -97,7 +95,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Evelyn, Zoby Quhyo
   - activity: stand
     band: [1, 75]
@@ -108,7 +105,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Galvin
   - activity: stand
     band: [1, 75]
@@ -119,7 +115,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Numa, Belka
   - activity: stand
     band: [1, 75]
@@ -130,7 +125,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Vattian
   - activity: stand
     band: [1, 75]
@@ -141,7 +135,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Rosswald
   - activity: stand
     band: [1, 75]
@@ -152,7 +145,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Denvihr
   - activity: stand
     band: [1, 75]
@@ -163,7 +155,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Sugandhi
   - activity: stand
     band: [1, 75]
@@ -174,7 +165,6 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
   # -- Shopping at Dhen Tevryukoh
   - activity: stand
     band: [1, 75]
@@ -185,4 +175,3 @@ slots:
     dwell: [20, 60]
     enter: any
     exit: any
-    hours: [6, 20]
