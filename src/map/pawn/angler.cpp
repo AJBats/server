@@ -24,6 +24,7 @@
 #include "bodies.h"
 #include "cardian_link_protocol.h"
 #include "fish_fight.h"
+#include "kit_loss.h"
 #include "pawn.h"
 #include "pawn_items.h"
 #include "professions.h"
@@ -87,6 +88,7 @@ namespace pawn::angler
             uint16                       catchId = 0;    // what is on the line
             uint32                       rodsHeld = 0;   // her rods of the trip's kind as the cast began: one fewer after it, one broke
             uint32                       baitHeld = 0;   // ... her bait: what is gone after it was used up
+            bool                         lure     = false; // her bait is a lure: kept through a catch, lost to a snapped line or a broken rod
         };
 
         // Leaked on purpose: a body still held as the process exits would be
@@ -301,6 +303,7 @@ namespace pawn::angler
                              t.charid, t.profession, static_cast<uint8>(CL_VENTURE_WORKING), t.zone, t.area, t.areaName, t.leftAt, t.minutes, skill, skill,
                              realNow());
             db::preparedStmt("DELETE FROM cardian_venture_catches WHERE charid = ?", t.charid);
+            db::preparedStmt("DELETE FROM cardian_venture_supplies WHERE charid = ?", t.charid);
             pawn::sales::newVenture(t.charid);
         }
 
@@ -330,6 +333,17 @@ namespace pawn::angler
             db::preparedStmt("UPDATE cardian_venture_report SET spent = spent + ?, updated = ? WHERE charid = ?", gil, realNow(), charid);
         }
 
+        // Her supplies by kind: so many used up, or bought
+        void reportSupply(const uint32 charid, const uint16 item, const uint32 used, const uint32 bought)
+        {
+            if (used > 0 || bought > 0)
+            {
+                db::preparedStmt("INSERT INTO cardian_venture_supplies (charid, item, used, bought) VALUES (?, ?, ?, ?) "
+                                 "ON DUPLICATE KEY UPDATE used = used + VALUES(used), bought = bought + VALUES(bought)",
+                                 charid, item, used, bought);
+            }
+        }
+
         // What `count` of a piece of her kit is worth: its share of what a
         // venture's purchase of it costs now, else what a vendor would give
         auto worth(const uint16 item, const uint32 count) -> uint32
@@ -347,22 +361,29 @@ namespace pawn::angler
         }
 
         // A cast's supplies used up: the bait gone and a rod broken, at their
-        // worth, whoever bought them
-        void reportUsed(const Angler& a)
+        // worth, whoever bought them. Answers what the loss means for the
+        // venture (kit_loss.h)
+        auto reportUsed(const Angler& a) -> cardian::kitloss::Outcome
         {
             auto*        PBody = a.body.get();
             const uint32 rods  = countHeld(PBody, a.trip.rod);
             const uint32 bait  = countHeld(PBody, a.trip.bait);
-            const uint32 used  = worth(a.trip.rod, a.rodsHeld > rods ? a.rodsHeld - rods : 0) + worth(a.trip.bait, a.baitHeld > bait ? a.baitHeld - bait : 0);
+            const uint32 rodsGone = a.rodsHeld > rods ? a.rodsHeld - rods : 0;
+            const uint32 baitGone = a.baitHeld > bait ? a.baitHeld - bait : 0;
+            reportSupply(a.trip.charid, a.trip.rod, rodsGone, 0);
+            reportSupply(a.trip.charid, a.trip.bait, baitGone, 0);
+            const uint32 used = worth(a.trip.rod, rodsGone) + worth(a.trip.bait, baitGone);
             if (used > 0)
             {
                 db::preparedStmt("UPDATE cardian_venture_report SET supplies = supplies + ?, updated = ? WHERE charid = ?", used, realNow(), a.trip.charid);
             }
+            return cardian::kitloss::judge({ .rodsBefore = a.rodsHeld, .rodsAfter = rods, .baitBefore = a.baitHeld, .baitAfter = bait }, a.lure,
+                                           a.trip.endOnSnap);
         }
 
-        void news(const Angler& a, const uint8 what, const uint16 item)
+        void news(const Angler& a, const uint8 what, const uint16 item, const uint16 lure = 0)
         {
-            pawn::professions::recordNews(a.trip.charid, a.trip.accid, what, item);
+            pawn::professions::recordNews(a.trip.charid, a.trip.accid, what, item, lure);
         }
 
         // ---- her kit ----------------------------------------------------------
@@ -451,6 +472,7 @@ namespace pawn::angler
                                                         .payer      = payer });
                 }
                 reportSpent(a.trip.charid, cost);
+                reportSupply(a.trip.charid, item, 0, quantity);
                 ShowInfoFmt("angler: {} buys item {} x{} for {} gil at {} ({} hers, {} her player's)", nameOf(a.trip.charid), item, quantity, cost,
                             pawn::ventureshop::whereOf(offer), hers, his);
                 return Bought::Yes;
@@ -522,24 +544,70 @@ namespace pawn::angler
 
         // ---- a cast -----------------------------------------------------------
 
+        // A cast's loss acted on and told in his log the moment it happens
+        // (kit_loss.h): the venture ended, or a broken rod replaced by a
+        // spare of hers, and a lure it took by another of hers or one bought
+        auto afterLoss(Angler& a, const cardian::kitloss::Outcome outcome) -> Stop
+        {
+            using cardian::kitloss::Outcome;
+            switch (outcome)
+            {
+                case Outcome::FishOn:
+                    return Stop::None;
+                case Outcome::LureSnapped:
+                    news(a, CL_NEWS_LURE_LOST, a.trip.bait);
+                    return Stop::LureLost;
+                case Outcome::RodAndLure:
+                    news(a, CL_NEWS_ROD_LURE_LOST, a.trip.rod, a.trip.bait);
+                    return Stop::RodAndLure;
+                case Outcome::RodBroke:
+                    news(a, CL_NEWS_ROD_BROKE, a.trip.rod);
+                    return Stop::RodBroke;
+                case Outcome::SpareRod:
+                case Outcome::SpareRodAndLure:
+                    break;
+            }
+            auto*      PBody   = a.body.get();
+            const bool lureToo = outcome == Outcome::SpareRodAndLure;
+            if (!wear(PBody, a.trip.rod, SLOT_RANGED, true))
+            {
+                news(a, lureToo ? CL_NEWS_ROD_LURE_LOST : CL_NEWS_ROD_BROKE, a.trip.rod, lureToo ? a.trip.bait : 0);
+                return lureToo ? Stop::RodAndLure : Stop::RodBroke;
+            }
+            PBody->clearPacketList();
+            if (lureToo)
+            {
+                if (const auto stop = kitBait(a); stop != Stop::None)
+                {
+                    return stop;
+                }
+            }
+            ShowInfoFmt("angler: {}'s rod {} broke{}; she goes on with a spare{}", nameOf(a.trip.charid), a.trip.rod, lureToo ? " and took her lure" : "",
+                        lureToo ? fmt::format(" and lure {}", a.trip.bait) : std::string{});
+            news(a, CL_NEWS_ROD_SPARE, a.trip.rod, lureToo ? a.trip.bait : 0);
+            return Stop::None;
+        }
+
         // The cast is over: the release, which is where the server raises her
-        // skill, her body saved, the cast in the report, and she casts again
-        // once a person would have: the casting and reeling animations, the
-        // client's, take pawn.VENTURE_CAST_SECONDS of every cast
-        void release(Angler& a, const uint32 now, const uint16 item, const uint32 landed)
+        // skill, her body saved, the cast in the report and its loss acted on,
+        // and she casts again once a person would have: the casting and
+        // reeling animations, the client's, take pawn.VENTURE_CAST_SECONDS of
+        // every cast
+        auto release(Angler& a, const uint32 now, const uint16 item, const uint32 landed) -> Stop
         {
             auto* PBody = a.body.get();
             fishingutils::FishingAction(PBody, Mode::RequestRelease, 0, 0);
             PBody->clearPacketList();
             save(PBody);
             reportCast(a, item, landed);
-            reportUsed(a);
             a.step = Step::Ready;
             a.at   = now + settings::get<uint32>("pawn.VENTURE_CAST_SECONDS");
+            return afterLoss(a, reportUsed(a));
         }
 
-        // Ready: room for a catch, her rod (a spare of hers after a break),
-        // her bait, and the server's leave to cast again
+        // Ready: room for a catch, her rod, her bait, and the server's leave
+        // to cast again. A rod lost to a break is replaced at the release
+        // (afterLoss); one missing here is put on from her bags all the same
         auto cast(Angler& a, const uint32 now) -> Stop
         {
             auto* PBody = a.body.get();
@@ -585,7 +653,7 @@ namespace pawn::angler
         // The bite's wait over: what the hook check hooks. Nothing, and the
         // cast is over; a monster or a chest, let go, and an item where the
         // player chose so; a fish or a thing, the fight timed
-        void bite(Angler& a, const uint32 now)
+        auto bite(Angler& a, const uint32 now) -> Stop
         {
             auto* PBody = a.body.get();
             fishingutils::FishingAction(PBody, Mode::RequestCheckHook, 0, 0);
@@ -593,8 +661,7 @@ namespace pawn::angler
             const auto* PHooked = PBody->hookedFish;
             if (PBody->animation != xi::Animation::NewFishingFish || PHooked == nullptr || !PHooked->hooked)
             {
-                release(a, now, 0, 0);
-                return;
+                return release(a, now, 0, 0);
             }
             if (PHooked->catchtype == FISHINGCATCHTYPE_MOB || PHooked->catchtype == FISHINGCATCHTYPE_CHEST ||
                 (PHooked->catchtype == FISHINGCATCHTYPE_ITEM && a.trip.letItemsGo))
@@ -605,8 +672,7 @@ namespace pawn::angler
                                                                            : fmt::format("item {}", PHooked->catchid));
                 fishingutils::FishingAction(PBody, Mode::RequestEndMiniGame, kGaveUp, 0);
                 PBody->clearPacketList();
-                release(a, now, 0, 0);
-                return;
+                return release(a, now, 0, 0);
             }
             const auto fought = cardian::fishfight::fight({ .stamina   = PHooked->stamina,
                                                             .attack    = PHooked->attackdmg,
@@ -621,9 +687,10 @@ namespace pawn::angler
             a.catchId = static_cast<uint16>(PHooked->catchid);
             a.step    = Step::Fighting;
             a.at      = now + fought.seconds;
+            return Stop::None;
         }
 
-        void land(Angler& a, uint32 now);
+        auto land(Angler& a, uint32 now) -> Stop;
 
         // The dev profile's debug venture: a whole cast at once. The server's
         // own waits -- its gap between casts, the bite's wait -- are taken out
@@ -639,18 +706,18 @@ namespace pawn::angler
                 return stop;
             }
             PBody->lastCastTime = now > PBody->hookDelay ? now - PBody->hookDelay : 0;
-            bite(a, now);
-            if (a.step == Step::Fighting)
+            auto stop = bite(a, now);
+            if (stop == Stop::None && a.step == Step::Fighting)
             {
-                land(a, now);
+                stop = land(a, now);
             }
             a.at = now;
-            return Stop::None;
+            return stop;
         }
 
         // The fight's end as her client would tell it: landed, or got away.
         // The server's own reel check still decides a landed fish's fate
-        void land(Angler& a, const uint32 now)
+        auto land(Angler& a, const uint32 now) -> Stop
         {
             auto*        PBody   = a.body.get();
             const auto*  PHooked = PBody->hookedFish;
@@ -663,7 +730,7 @@ namespace pawn::angler
             const auto   successType = PHooked != nullptr ? PHooked->successtype : 0;
             const auto   catchLevel  = PHooked != nullptr ? PHooked->catchlevel : 0;
             const auto   skillBefore = fishingSkill(PBody);
-            release(a, now, a.catchId, after > before ? after - before : 0);
+            const auto   stop        = release(a, now, a.catchId, after > before ? after - before : 0);
             // each catch lands in a slot of its own: her bag sorted, as a
             // client's auto-sort would, so her catch keeps to whole stacks
             if (pawn::items::tidyStacks(PBody) > 0)
@@ -672,6 +739,7 @@ namespace pawn::angler
             }
             ShowInfoFmt("angler: {}'s catch of item {} ends (catch type {}, outcome {}, level {}): {} landed, skill {}.{} -> {}", nameOf(a.trip.charid),
                         a.catchId, catchType, successType, catchLevel, after > before ? after - before : 0, skillBefore / 10, skillBefore % 10, skillText(PBody));
+            return stop;
         }
     } // namespace
 
@@ -694,6 +762,7 @@ namespace pawn::angler
 
         auto& a = list[trip.charid];
         a.trip  = trip;
+        a.lure  = pawn::professions::isLure(trip.bait);
         a.body  = std::move(PBody);
         auto* PHer = a.body.get();
         pawn::bodies::hold(trip.charid, PHer);
@@ -766,11 +835,9 @@ namespace pawn::angler
             case Step::Ready:
                 return cast(a, now);
             case Step::Biting:
-                bite(a, now);
-                break;
+                return bite(a, now);
             case Step::Fighting:
-                land(a, now);
-                break;
+                return land(a, now);
         }
         return Stop::None;
     }
@@ -799,6 +866,11 @@ namespace pawn::angler
             if (PBody->hookedFish != nullptr || PBody->animation != xi::Animation::None)
             {
                 fishingutils::InterruptFishing(PBody);
+            }
+            // a cast cut off before its release: the bait the interruption took
+            if (it != list.end() && it->second.step != Step::Ready)
+            {
+                reportUsed(it->second);
             }
             if (worn.known)
             {

@@ -775,6 +775,7 @@ namespace pawn::errands
                      .leftAt     = r.errand.left,
                      .minutes    = static_cast<uint32>(cardian::errand::numberArg(r.args, "minutes").value_or(0)),
                      .letItemsGo = r.args.contains("items") && r.args.at("items") == "go",
+                     .endOnSnap  = r.args.contains("snap") && r.args.at("snap") == "end",
                      .turbo      = r.args.contains("debug") && r.args.at("debug") == "1" };
         }
 
@@ -784,6 +785,10 @@ namespace pawn::errands
             {
                 case pawn::angler::Stop::RodBroke:
                     return "her rod broke, and she held no spare";
+                case pawn::angler::Stop::LureLost:
+                    return "her lure was lost to a snapped line, and her player chose that it end the venture";
+                case pawn::angler::Stop::RodAndLure:
+                    return "her rod broke and took her lure, and her player chose that a lost lure end the venture, or she held no spare rod";
                 case pawn::angler::Stop::BagsFull:
                     return "her inventory is full";
                 case pawn::angler::Stop::NoGil:
@@ -1172,6 +1177,7 @@ namespace pawn::errands
             r.args["bait"]       = std::to_string(ask.bait);
             r.args["rod"]        = std::to_string(ask.rod);
             r.args["items"]      = ask.letItemsGo != 0 ? "go" : "keep";
+            r.args["snap"]       = ask.endOnSnap != 0 ? "end" : "replace";
             r.args["hours"]      = std::to_string(ask.hours);
             r.args["minutes"]    = std::to_string(debug ? 1u : static_cast<uint32>(ask.hours) * 60);
             r.args["debug"]      = debug ? "1" : "0";
@@ -1186,7 +1192,7 @@ namespace pawn::errands
             }
             r.title         = zone;
             const auto line = fmt::format("{} sets out to fish in {}.", nameOf(r.charid), zone);
-            pawn::professions::saveSet(r.charid, ask.profession, ask.rod, ask.bait, ask.letItemsGo != 0);
+            pawn::professions::saveSet(r.charid, ask.profession, ask.rod, ask.bait, ask.letItemsGo != 0, ask.endOnSnap != 0);
             return setOut(PPlayer, std::move(r), line);
         }
 

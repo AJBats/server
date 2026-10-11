@@ -67,13 +67,16 @@ namespace pawn::professions
 
     // Her profession's set: the kit she was last sent with, and whether she
     // let items go
-    void saveSet(uint32 charid, uint8 profession, uint16 rod, uint16 bait, bool letItemsGo);
+    void saveSet(uint32 charid, uint8 profession, uint16 rod, uint16 bait, bool letItemsGo, bool endOnSnap);
 
     // She has taken up a profession, any
     auto hasAnyProfession(uint32 charid) -> bool;
 
     // One of the game's baits and lures (fishing_bait)
     auto isBait(uint16 item) -> bool;
+    // One of its lures: a bait that does not stack, which the game keeps
+    // through a catch and loses to a snapped line or a broken rod
+    auto isLure(uint16 item) -> bool;
 
     // She has a venture report to show: any but one her player has read
     // since it was done (over, and nothing left to sell)
@@ -109,6 +112,7 @@ namespace pawn::professions
     };
     void recordPurchase(const Purchase& purchase);
 
-    // A venture's news for his log (CL_NEWS_*)
-    void recordNews(uint32 cardian, uint32 accid, uint8 news, uint16 item);
+    // A venture's news for his log (CL_NEWS_*): its item, and a lure lost
+    // with a broken rod
+    void recordNews(uint32 cardian, uint32 accid, uint8 news, uint16 item, uint16 lure = 0);
 } // namespace pawn::professions

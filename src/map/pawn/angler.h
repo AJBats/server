@@ -59,6 +59,7 @@ namespace pawn::angler
         uint32      leftAt = 0; // the game clock as she left the world
         uint32      minutes    = 0; // how long she was sent for
         bool        letItemsGo = false; // an item that bites is let go, as a monster is (the bait goes with it)
+        bool        endOnSnap  = false; // a lost lure ends the venture, not bought again (the player's Line snap choice)
         bool        turbo      = false; // the dev profile's debug venture: an hour's casts in its minute, the waits taken out
     };
 
@@ -81,6 +82,8 @@ namespace pawn::angler
         BagsFull,   // her inventory has no room for a catch
         NoGil,      // neither purse could buy her more bait
         CannotFish, // the server would not let her cast, or she could not be kitted (his log says which; the map log why)
+        LureLost,   // her lure was lost to a snapped line, and the player chose that it end the venture
+        RodAndLure, // her rod broke and took her lure, and the player chose that a lost lure end the venture, or she holds no spare rod
     };
 
     // Her body loaded and kitted, her rod and bait worn from a wardrobe: on

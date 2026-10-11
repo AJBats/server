@@ -107,6 +107,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_errand_tests.cpp # CARDIAN: the linkshell errands: kinds, clock, route, call back, gear-up steps, her log
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_club_tests.cpp # CARDIAN: the linkshell club: its items, the vendors, the recruit on her way, the rank catch-up
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_fish_fight_tests.cpp # CARDIAN: a venture's fish fight, timed and not played
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_kit_loss_tests.cpp # CARDIAN: a venture cast's kit loss
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

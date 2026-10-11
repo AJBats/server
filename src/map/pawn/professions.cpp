@@ -41,6 +41,7 @@
 #include "items/item_equipment.h"
 #include "items/transactions/item_claim.h"
 #include "map_session.h"
+#include "utils/itemutils.h"
 #include "utils/zoneutils.h"
 
 #include <algorithm>
@@ -238,15 +239,17 @@ namespace pawn::professions
             }
             std::array<bool, kLastProfession + 1>                    taken{};
             std::array<bool, kLastProfession + 1>                    letItemsGo{};
+            std::array<bool, kLastProfession + 1>                    endOnSnap{};
             std::array<std::array<uint16, 16>, kLastProfession + 1> sets{};
             bool                                                    any = false;
-            const auto rset = db::preparedStmt("SELECT profession, items_go FROM cardian_professions WHERE charid = ?", ask.cardian);
+            const auto rset = db::preparedStmt("SELECT profession, items_go, snap_ends FROM cardian_professions WHERE charid = ?", ask.cardian);
             while (rset && rset->next())
             {
                 if (const auto profession = rset->get<uint8>("profession"); profession >= CL_PROF_FISHING && profession <= kLastProfession)
                 {
                     taken[profession]      = true;
                     letItemsGo[profession] = rset->get<uint8>("items_go") != 0;
+                    endOnSnap[profession]  = rset->get<uint8>("snap_ends") != 0;
                     any                    = true;
                 }
             }
@@ -272,6 +275,7 @@ namespace pawn::professions
                 {
                     std::copy(sets[profession].begin(), sets[profession].end(), row.set);
                     row.letItemsGo = letItemsGo[profession] ? 1 : 0;
+                    row.endOnSnap  = endOnSnap[profession] ? 1 : 0;
                 }
                 reply.more(row);
                 ++count;
@@ -475,6 +479,14 @@ namespace pawn::professions
             reply.finish(done, CL_S_OK);
         }
 
+        // A bait the game keeps through a catch, a lure: one that does not
+        // stack (fishingutils' BaitLoss)
+        auto keptThroughCatch(const uint16 item) -> bool
+        {
+            const auto* PKind = xi::items::lookup(item);
+            return PKind != nullptr && PKind->getStackSize() == 1;
+        }
+
         // Every bait and lure the game has (fishing_bait), whatever the spot and
         // the rod: which works where is the player's to find (the user,
         // 2026-10-10). What she holds first, then what is for sale -- the
@@ -494,13 +506,14 @@ namespace pawn::professions
                 uint32      price = 0;
                 uint32      owned = 0;
                 std::string name;
+                bool        lure  = false;
             };
             std::vector<Bait> all;
             const auto rset = db::preparedStmt("SELECT baitid, name FROM fishing_bait");
             while (rset && rset->next())
             {
                 const auto item = rset->get<uint16>("baitid");
-                all.push_back({ .item = item, .owned = heldCount(ask.cardian, item), .name = rset->get<std::string>("name") });
+                all.push_back({ .item = item, .owned = heldCount(ask.cardian, item), .name = rset->get<std::string>("name"), .lure = keptThroughCatch(item) });
             }
             std::vector<uint16> items;
             for (const auto& b : all)
@@ -536,6 +549,7 @@ namespace pawn::professions
                 row.item  = b.item;
                 row.price = b.price;
                 row.owned = static_cast<uint8>(std::min<uint32>(b.owned, UINT8_MAX));
+                row.lure  = b.lure ? 1 : 0;
                 reply.more(row);
                 ++count;
             }
@@ -597,6 +611,23 @@ namespace pawn::professions
                 row.quantity = static_cast<uint16>(std::min<uint32>(caught->get<uint32>("quantity"), UINT16_MAX));
                 reply.more(row);
                 ++count;
+            }
+            // its supplies by kind: what it used up, and what it bought
+            const auto supplies = db::preparedStmt("SELECT item, used, bought FROM cardian_venture_supplies WHERE charid = ? ORDER BY item", ask.cardian);
+            while (supplies && supplies->next())
+            {
+                for (const auto& [where, column] : { std::pair<uint8, const char*>{ CL_VENTURE_USED, "used" }, std::pair<uint8, const char*>{ CL_VENTURE_BOUGHT, "bought" } })
+                {
+                    if (const auto n = supplies->get<uint32>(column); n > 0 && count < UINT8_MAX)
+                    {
+                        auto row     = make<cl_venture_item>();
+                        row.item     = supplies->get<uint16>("item");
+                        row.where    = where;
+                        row.quantity = static_cast<uint16>(std::min<uint32>(n, UINT16_MAX));
+                        reply.more(row);
+                        ++count;
+                    }
+                }
             }
             const auto items = db::preparedStmt("SELECT earlier, item, `where`, quantity, value FROM cardian_venture_items WHERE charid = ? "
                                                 "ORDER BY earlier, `where`, value DESC",
@@ -660,7 +691,7 @@ namespace pawn::professions
         // once it is bound; held until then
         void tellNews()
         {
-            const auto rset = db::preparedStmt("SELECT id, cardian, accid, news, item FROM cardian_venture_news WHERE told = 0 ORDER BY id");
+            const auto rset = db::preparedStmt("SELECT id, cardian, accid, news, item, lure FROM cardian_venture_news WHERE told = 0 ORDER BY id");
             while (rset && rset->next())
             {
                 const auto* PPlayer = playingNow(rset->get<uint32>("accid"));
@@ -672,6 +703,7 @@ namespace pawn::professions
                 news.cardian = rset->get<uint32>("cardian");
                 news.news    = rset->get<uint8>("news");
                 news.item    = rset->get<uint16>("item");
+                news.lure    = rset->get<uint16>("lure");
                 if (cardian::link::send(PPlayer->id, news))
                 {
                     db::preparedStmt("UPDATE cardian_venture_news SET told = 1 WHERE id = ?", rset->get<uint32>("id"));
@@ -752,9 +784,10 @@ namespace pawn::professions
                          p.cardian, p.accid, p.profession, p.item, p.hisGil, p.payer, p.quantity, p.herGil, realNow());
     }
 
-    void recordNews(const uint32 cardian, const uint32 accid, const uint8 news, const uint16 item)
+    void recordNews(const uint32 cardian, const uint32 accid, const uint8 news, const uint16 item, const uint16 lure)
     {
-        db::preparedStmt("INSERT INTO cardian_venture_news (cardian, accid, news, item, at) VALUES (?, ?, ?, ?, ?)", cardian, accid, news, item, realNow());
+        db::preparedStmt("INSERT INTO cardian_venture_news (cardian, accid, news, item, lure, at) VALUES (?, ?, ?, ?, ?, ?)", cardian, accid, news, item, lure,
+                         realNow());
     }
 
     void ensureTables()
@@ -765,6 +798,7 @@ namespace pawn::professions
                          "`tool` smallint(5) unsigned NOT NULL DEFAULT 0, " // her set's tool: fishing, the rod
                          "`bait` smallint(5) unsigned NOT NULL DEFAULT 0, " // her set's bait
                          "`items_go` tinyint(3) unsigned NOT NULL DEFAULT 0, " // her last venture let items go
+                         "`snap_ends` tinyint(3) unsigned NOT NULL DEFAULT 0, " // her last venture's Line snap choice: 1, a lost lure ends it
                          "`started` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`charid`, `profession`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_pay` ("
@@ -827,6 +861,12 @@ namespace pawn::professions
         {
             db::preparedStmt("ALTER TABLE `cardian_venture_items` DROP PRIMARY KEY, ADD PRIMARY KEY (`charid`, `earlier`, `item`, `where`)");
         }
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_supplies` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`item` smallint(5) unsigned NOT NULL, "
+                         "`used` int(10) unsigned NOT NULL DEFAULT 0, "   // used up: bait gone, rods broken
+                         "`bought` int(10) unsigned NOT NULL DEFAULT 0, " // bought for it
+                         "PRIMARY KEY (`charid`, `item`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_catches` ("
                          "`charid` int(10) unsigned NOT NULL, "
                          "`item` smallint(5) unsigned NOT NULL, "
@@ -844,12 +884,15 @@ namespace pawn::professions
                          "`accid` int(10) unsigned NOT NULL, "
                          "`news` tinyint(3) unsigned NOT NULL, "
                          "`item` smallint(5) unsigned NOT NULL DEFAULT 0, "
+                         "`lure` smallint(5) unsigned NOT NULL DEFAULT 0, " // a lure lost with the rod (CL_NEWS_ROD_SPARE, CL_NEWS_ROD_LURE_LOST)
                          "`told` tinyint(3) unsigned NOT NULL DEFAULT 0, "
                          "`at` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`id`), KEY (`told`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        db::preparedStmt("ALTER TABLE `cardian_venture_news` ADD COLUMN IF NOT EXISTS `lure` smallint(5) unsigned NOT NULL DEFAULT 0 AFTER `item`");
         // an older table: her set's bait, the starter rods, a purchase's shares
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `bait` smallint(5) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `items_go` tinyint(3) unsigned NOT NULL DEFAULT 0");
+        db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `snap_ends` tinyint(3) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `quantity` smallint(5) unsigned NOT NULL DEFAULT 1");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `her_gil` int(10) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_last_played` ("
@@ -902,10 +945,10 @@ namespace pawn::professions
         return isRod(rod) && (isStarter(rod) || heldCount(charid, rod) > 0);
     }
 
-    void saveSet(const uint32 charid, const uint8 profession, const uint16 rod, const uint16 bait, const bool letItemsGo)
+    void saveSet(const uint32 charid, const uint8 profession, const uint16 rod, const uint16 bait, const bool letItemsGo, const bool endOnSnap)
     {
-        db::preparedStmt("UPDATE cardian_professions SET tool = ?, bait = ?, items_go = ? WHERE charid = ? AND profession = ?", rod, bait,
-                         static_cast<uint8>(letItemsGo ? 1 : 0), charid, profession);
+        db::preparedStmt("UPDATE cardian_professions SET tool = ?, bait = ?, items_go = ?, snap_ends = ? WHERE charid = ? AND profession = ?", rod, bait,
+                         static_cast<uint8>(letItemsGo ? 1 : 0), static_cast<uint8>(endOnSnap ? 1 : 0), charid, profession);
         db::preparedStmt("REPLACE INTO cardian_profession_set (charid, profession, slot, item) VALUES (?, ?, ?, ?), (?, ?, ?, ?)", charid, profession,
                          static_cast<uint8>(SLOT_RANGED), rod, charid, profession, static_cast<uint8>(SLOT_AMMO), bait);
     }
@@ -914,6 +957,11 @@ namespace pawn::professions
     {
         const auto rset = db::preparedStmt("SELECT 1 FROM cardian_professions WHERE charid = ? LIMIT 1", charid);
         return rset && rset->next();
+    }
+
+    auto isLure(const uint16 item) -> bool
+    {
+        return isBait(item) && keptThroughCatch(item);
     }
 
     auto isBait(const uint16 item) -> bool

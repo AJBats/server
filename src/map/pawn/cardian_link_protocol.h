@@ -34,7 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 70: CL_S_KEEPER_DOWN gone (0x01EF is not
+// compatible, the user, 2026-09-14). 73: a broken rod that takes the lure --
+// VENTURE_NEWS's lure, CL_NEWS_ROD_LURE_LOST; 72: a venture's supplies by item --
+// CL_VENTURE_USED and CL_VENTURE_BOUGHT; 71: a lure lost to a snapped line --
+// SEND_ERRAND's and PROFESSION's endOnSnap, VENTURE_BAIT's lure,
+// CL_NEWS_LURE_LOST; 70: CL_S_KEEPER_DOWN gone (0x01EF is not
 // used again), the venture keeper retired; 69: VENTURE_SPOT's name and
 // VENTURE_REPORT's areaName 48 long, a water's whole name; 68: PROFESSION_TOOL's and VENTURE_BAIT's
 // price the whole purchase's (a rod, or a stack of bait); 67: a venture's supplies bought where
@@ -137,7 +141,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 70 };
+enum { CL_PROTOCOL = 73 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2264,7 +2268,7 @@ typedef struct cl_send_errand
     uint16_t  bait;       // CL_ERRAND_MONEY: the bait's item id
     uint16_t  rod;        // CL_ERRAND_MONEY: the rod's item id: one she holds, or a starter rod bought as it starts
     uint8_t   letItemsGo; // CL_ERRAND_MONEY: 1: an item that bites is let go, as a monster is
-    uint8_t   spare;
+    uint8_t   endOnSnap;  // CL_ERRAND_MONEY: 1: a lost lure (a snapped line, or a broken rod that took it) ends the venture; 0: another replaces it
 } cl_send_errand;
 
 // Her errand ended early: what she has earned kept, and she comes back
@@ -2339,7 +2343,8 @@ typedef struct cl_profession
     uint16_t  skill;      // her skill in it, in tenths of a level (the game's char_skills value)
     uint8_t   rank;       // her guild rank in it, the game's craft rank: 0 Amateur, 1 Recruit, 2 Initiate, 3 Novice ...
     uint8_t   letItemsGo; // taken: her last venture let items go (SEND_ERRAND's)
-    uint8_t   spare[2];
+    uint8_t   endOnSnap;  // taken: her last venture's Line snap choice, 1 when a lost lure ended it (SEND_ERRAND's)
+    uint8_t   spare;
     uint16_t  set[16];    // taken: her set, by equipment slot
 } cl_profession;
 
@@ -2448,7 +2453,7 @@ typedef struct cl_venture_bait
     cl_header h;
     uint16_t  item;    // the bait's item id
     uint8_t   owned;   // how many she holds, to 255; 0: bought as the venture starts
-    uint8_t   spare;
+    uint8_t   lure;    // 1: a lure: it does not stack, and the game keeps it through a catch (a snapped line or a broken rod takes it)
     uint32_t  price;   // a venture's purchase of it (a whole stack; a lure, one), where it costs least now; 0 nobody sells it
 } cl_venture_bait;
 
@@ -2486,11 +2491,13 @@ typedef struct cl_venture_paid
 enum
 {
     CL_NEWS_ROD_BROKE = 1, // her rod broke and she held no spare: the venture is cut short
-    CL_NEWS_ROD_SPARE = 2, // her rod broke, and she goes on with a spare of it
+    CL_NEWS_ROD_SPARE = 2, // her rod broke, and she goes on with a spare of it, and another of the lure the break took, if any
     CL_NEWS_BAGS_FULL = 3, // her inventory is full: the venture is cut short
     CL_NEWS_NO_GIL    = 4, // neither her gil nor his could buy more of the item (her bait): the venture is cut short
     CL_NEWS_NO_KIT    = 5, // she has none of the item left (her rod or her bait) and nobody sells it: the venture is cut short
     CL_NEWS_CANNOT_FISH = 6, // the server would not let her fish there: the venture is cut short
+    CL_NEWS_LURE_LOST = 7,   // her lure (the item) was lost to a snapped line, and the venture ends, as the player chose
+    CL_NEWS_ROD_LURE_LOST = 8, // her rod broke and took her lure, and the venture ends: a lost lure ends it, as the player chose, or she held no spare rod
 };
 
 // Pushed, one way: news from her venture for his log
@@ -2500,7 +2507,9 @@ typedef struct cl_venture_news
     uint32_t  cardian; // charid
     uint8_t   news;    // CL_NEWS_*
     uint8_t   spare;
-    uint16_t  item;    // the rod
+    uint16_t  item;    // what it is about: her rod, or her bait or lure
+    uint16_t  lure;    // CL_NEWS_ROD_SPARE and CL_NEWS_ROD_LURE_LOST: the lure the broken rod took; 0 none
+    uint16_t  spare2;
 } cl_venture_news;
 
 // Where a thing of her trip is
@@ -2512,6 +2521,8 @@ enum
     CL_VENTURE_RETURNED = 4, // listed and sent home unsold, to her delivery box
     CL_VENTURE_CAUGHT   = 5, // caught on this venture, by kind: the count alone, wherever it is now
     CL_VENTURE_KEPT     = 6, // in her bags, out of her line: no vendor and no buyer would take it once the venture was over
+    CL_VENTURE_USED     = 7, // a supply this venture used up, by kind: bait gone, rods broken, the count alone
+    CL_VENTURE_BOUGHT   = 8, // a supply this venture bought, by kind: the count alone
 };
 
 // Where her venture stands
@@ -2524,13 +2535,14 @@ enum
 };
 
 // A thing of her venture, an answer to VENTURE_REPORT: what she caught, by
-// item, and each part of her catch by where it is now
+// item, each part of her catch by where it is now, and her supplies used up
+// and bought, by item
 typedef struct cl_venture_item
 {
     cl_header h;
     uint16_t  item;     // the item id
     uint16_t  quantity;
-    uint8_t   where;    // CL_VENTURE_*: LISTED, CARRIED, SOLD, RETURNED, KEPT, or CAUGHT
+    uint8_t   where;    // CL_VENTURE_*: LISTED, CARRIED, SOLD, RETURNED, KEPT, CAUGHT, USED or BOUGHT
     uint8_t   earlier;  // 1: left from an earlier venture, still her line to sell
     uint16_t  spare;
     uint32_t  value;    // sold: what it fetched; else what it should fetch, estimated
