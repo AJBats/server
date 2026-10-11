@@ -34,6 +34,7 @@
 #include "redress.h"
 #include "seats.h"
 #include "supplies.h"
+#include "venture_spots.h"
 
 #include "ai/ai_container.h"
 #include "common/database.h"
@@ -743,11 +744,10 @@ namespace pawn::errands
                     r.from     = position_t(rset->get<float>("pos_x"), rset->get<float>("pos_y"), rset->get<float>("pos_z"), 0, rset->get<uint8>("pos_rot"));
                 }
             }
-            const auto profession = static_cast<uint8>(cardian::errand::numberArg(r.args, "profession").value_or(0));
-            const auto zone       = static_cast<uint16>(cardian::errand::numberArg(r.args, "zone").value_or(0));
-            const auto area       = static_cast<uint16>(cardian::errand::numberArg(r.args, "area").value_or(0));
-            const auto spot       = pawn::professions::spotOf(r.charid, profession, zone, area);
-            const auto at         = spot.has_value() ? spot->centre : position_t{};
+            const auto zone = static_cast<uint16>(cardian::errand::numberArg(r.args, "zone").value_or(0));
+            const auto area = static_cast<uint16>(cardian::errand::numberArg(r.args, "area").value_or(0));
+            const auto spot = pawn::venturespots::waterOf(zone, area);
+            const auto at   = spot.has_value() ? spot->centre : position_t{};
             save(r); // where she left, kept before her saved place moves
             db::preparedStmt("UPDATE chars SET pos_zone = ?, pos_x = ?, pos_y = ?, pos_z = ? WHERE charid = ?", zone, at.x, at.y, at.z, r.charid);
             r.args["placed"] = "1";
@@ -762,7 +762,7 @@ namespace pawn::errands
             const auto profession = static_cast<uint8>(cardian::errand::numberArg(r.args, "profession").value_or(0));
             const auto zone       = static_cast<uint16>(cardian::errand::numberArg(r.args, "zone").value_or(0));
             const auto area       = static_cast<uint16>(cardian::errand::numberArg(r.args, "area").value_or(0));
-            const auto spot       = pawn::professions::spotOf(r.charid, profession, zone, area);
+            const auto spot       = pawn::venturespots::waterOf(zone, area);
             return { .charid     = r.charid,
                      .accid      = r.accid,
                      .profession = profession,
@@ -1154,8 +1154,7 @@ namespace pawn::errands
             {
                 return CL_S_NOT_OFFERED;
             }
-            const auto spot = pawn::professions::spotOf(r.charid, ask.profession, ask.zone, ask.area);
-            if (!spot.has_value())
+            if (!pawn::venturespots::reaches(r.charid, ask.zone, ask.area))
             {
                 return CL_S_NOT_SAFE;
             }

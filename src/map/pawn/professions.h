@@ -75,16 +75,6 @@ namespace pawn::professions
     // She has taken up a profession, any
     auto hasAnyProfession(uint32 charid) -> bool;
 
-    // A spot of hers, from the keeper's rows: safe at her level, by its area
-    struct Spot
-    {
-        uint16      zone = 0;
-        uint16      area = 0;
-        std::string name;     // the area's own name
-        position_t  centre{}; // fishing_area's centre: where she is saved while she works there
-    };
-    auto spotOf(uint32 charid, uint8 profession, uint16 zone, uint16 area) -> std::optional<Spot>;
-
     // One of the game's baits and lures (fishing_bait)
     auto isBait(uint16 item) -> bool;
 

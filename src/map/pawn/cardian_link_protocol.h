@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 68: PROFESSION_TOOL's and VENTURE_BAIT's
+// compatible, the user, 2026-09-14). 69: VENTURE_SPOT's name and
+// VENTURE_REPORT's areaName 48 long, a water's whole name; 68: PROFESSION_TOOL's and VENTURE_BAIT's
 // price the whole purchase's (a rod, or a stack of bait); 67: a venture's supplies bought where
 // they cost least, and no estimates -- PROFESSION_TOOL's, VENTURE_SPOT's and
 // VENTURE_BAIT's gilHour gone; 66: CLUB_MEMBER's ventureDone, a
@@ -135,7 +136,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 68 };
+enum { CL_PROTOCOL = 69 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2415,11 +2416,10 @@ typedef struct cl_start_profession
     uint8_t   spare[3];
 } cl_start_profession;
 
-// A spot she may work at, an answer to VENTURE_SPOTS: fishing, one a zone she
-// can walk to from where she stands at her level -- through zones whose usual
-// monster is at her level or below (tools/economy/sites.py walkable; a
-// stand-in until cardians travel, OPEN_ISSUES #431) -- the zone's best water
-// hers to pick
+// A spot she may work at, an answer to VENTURE_SPOTS: fishing, each water
+// (fishing area) of every zone she can walk to from where she stands at her
+// level -- through zones whose usual monster is at her level or below
+// (pawn/venture_spots.h; a stand-in until cardians travel, OPEN_ISSUES #431)
 typedef struct cl_venture_spot
 {
     cl_header h;
@@ -2428,12 +2428,11 @@ typedef struct cl_venture_spot
     uint8_t   level;    // unused: 0
     uint8_t   hops;     // zone lines from where she stands
     uint16_t  spare2;
-    char      name[32]; // the area's own name, for people ("South Landing", "Whole Zone")
+    char      name[48]; // the water's own name when its zone has several, for people ("Purgonorgo Isle - South Beach"); empty else
 } cl_venture_spot;
 
-// The spots of a profession of hers, a zone each, nearest first: each a
-// VENTURE_SPOT (CL_F_MORE), then this. None yet while the watcher first works
-// them out
+// The spots of a profession of hers, nearest first: each a VENTURE_SPOT
+// (CL_F_MORE), then this
 typedef struct cl_venture_spots
 {
     cl_header h;
@@ -2558,7 +2557,7 @@ typedef struct cl_venture_report
     uint32_t  pending;     // answered: what its catch still to sell should fetch, estimated
     uint32_t  supplies;    // answered: what it used up -- bait gone, rods broken -- at their prices
     uint32_t  spent;       // answered: the gil paid for its supplies, hers and his
-    char      areaName[32]; // answered: for people
+    char      areaName[48]; // answered: the water's own name when its zone has several, for people; empty else
 } cl_venture_report;
 
 #pragma pack(pop)

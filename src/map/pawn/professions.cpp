@@ -28,6 +28,7 @@
 #include "pawn.h"
 #include "seats.h"
 #include "venture_shop.h"
+#include "venture_spots.h"
 
 #include "common/database.h"
 #include "common/settings.h"
@@ -441,7 +442,7 @@ namespace pawn::professions
             reply.finish(ask, CL_S_OK);
         }
 
-        // Her spots, the keeper's rows: none yet while it first works them out
+        // Her waters, worked out as asked (venture_spots.h), nearest first
         void spots(CCharEntity* PChar, const cl_venture_spots& ask, Reply& reply)
         {
             if (!mayTakeUp(PChar, ask.cardian))
@@ -454,18 +455,18 @@ namespace pawn::professions
                 reply.finish(ask, CL_S_NO_PROFESSION);
                 return;
             }
-            uint8      count = 0;
-            const auto rset  = db::preparedStmt("SELECT zone, area, name, level, hops FROM cardian_venture_spots WHERE charid = ? AND profession = ? "
-                                                "ORDER BY hops, zone, area",
-                                                ask.cardian, ask.profession);
-            while (rset && rset->next() && count < UINT8_MAX)
+            uint8 count = 0;
+            for (const auto& spot : pawn::venturespots::spotsOf(ask.cardian))
             {
-                auto row  = make<cl_venture_spot>();
-                row.zone  = rset->get<uint16>("zone");
-                row.area  = rset->get<uint16>("area");
-                row.level = rset->get<uint8>("level");
-                row.hops  = rset->get<uint8>("hops");
-                setText(row.name, rset->get<std::string>("name"));
+                if (count == UINT8_MAX)
+                {
+                    break;
+                }
+                auto row = make<cl_venture_spot>();
+                row.zone = spot.zone;
+                row.area = spot.area;
+                row.hops = spot.hops;
+                setText(row.name, spot.name);
                 reply.more(row);
                 ++count;
             }
@@ -819,6 +820,8 @@ namespace pawn::professions
                          "`spent` int(10) unsigned NOT NULL DEFAULT 0, "    // the gil paid for its supplies, hers and his
                          "`seen` tinyint(3) unsigned NOT NULL DEFAULT 0, "  // the furthest phase her player has read it at (CL_VENTURE_*)
                          "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        // a water's whole name, the longest 33 ("Interior of Hidden Door - Mythril")
+        db::preparedStmt("ALTER TABLE `cardian_venture_report` MODIFY `area_name` varchar(64) NOT NULL DEFAULT ''");
         for (const auto* column : { "`left_at` int(10) unsigned NOT NULL DEFAULT 0", "`length` int(10) unsigned NOT NULL DEFAULT 0",
                                     "`supplies` int(10) unsigned NOT NULL DEFAULT 0", "`spent` int(10) unsigned NOT NULL DEFAULT 0",
                                     "`seen` tinyint(3) unsigned NOT NULL DEFAULT 0" })
@@ -940,22 +943,6 @@ namespace pawn::professions
     {
         const auto rset = db::preparedStmt("SELECT 1 FROM cardian_professions WHERE charid = ? LIMIT 1", charid);
         return rset && rset->next();
-    }
-
-    auto spotOf(const uint32 charid, const uint8 profession, const uint16 zone, const uint16 area) -> std::optional<Spot>
-    {
-        const auto rset = db::preparedStmt("SELECT s.name, COALESCE(a.center_x, 0) AS x, COALESCE(a.center_y, 0) AS y, COALESCE(a.center_z, 0) AS z "
-                                           "FROM cardian_venture_spots s LEFT JOIN fishing_area a ON a.zoneid = s.zone AND a.areaid = s.area "
-                                           "WHERE s.charid = ? AND s.profession = ? AND s.zone = ? AND s.area = ?",
-                                           charid, profession, zone, area);
-        if (!rset || !rset->next())
-        {
-            return std::nullopt;
-        }
-        return Spot{ .zone   = zone,
-                     .area   = area,
-                     .name   = rset->get<std::string>("name"),
-                     .centre = position_t(rset->get<float>("x"), rset->get<float>("y"), rset->get<float>("z"), 0, 0) };
     }
 
     auto isBait(const uint16 item) -> bool
