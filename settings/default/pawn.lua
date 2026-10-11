@@ -663,6 +663,12 @@ xi.settings.pawn =
     -- tools/economy/settings.yaml), inside which a listing at the next
     -- buyer's price is all but sure to sell (pawn/venture_sales.h).
     VENTURE_SALE_WINDOW_DAYS = 3,
+    -- The zones a venture never goes to or through, whatever her level, by
+    -- zone id: Gusgen Mines (196), always dangerous (the user, 2026-10-09,
+    -- whatever its monsters' levels would allow); and Abyssea -
+    -- Tahrongi (45), entered with its own key item, its monsters level 80 and
+    -- up (pawn/venture_spots.h)
+    VENTURE_NEVER_ZONES = "196,45",
     -- The rods a fishing venture buys when she holds none, by item id: the
     -- Willow, Yew and Bamboo Fishing Rods. Any rod she holds she may take
     VENTURE_STARTER_RODS = "17391,17390,17389",

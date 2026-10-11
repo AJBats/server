@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 69: VENTURE_SPOT's name and
+// compatible, the user, 2026-09-14). 70: CL_S_KEEPER_DOWN gone (0x01EF is not
+// used again), the venture keeper retired; 69: VENTURE_SPOT's name and
 // VENTURE_REPORT's areaName 48 long, a water's whole name; 68: PROFESSION_TOOL's and VENTURE_BAIT's
 // price the whole purchase's (a rod, or a stack of bait); 67: a venture's supplies bought where
 // they cost least, and no estimates -- PROFESSION_TOOL's, VENTURE_SPOT's and
@@ -136,7 +137,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 69 };
+enum { CL_PROTOCOL = 70 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -331,7 +332,6 @@ enum
     CL_S_NO_PROFESSION     = 0x01EC, // she has not taken up that profession
     CL_S_ONE_PROFESSION    = 0x01ED, // she has a profession already: one each, for now
     CL_S_NOT_SAFE          = 0x01EE, // the spot is not safe at her level, or is no spot of hers
-    CL_S_KEEPER_DOWN       = 0x01EF, // the venture keeper (the census watcher, xi_census) is not running: a money venture cannot go
     CL_S_NOT_A_TOOL        = 0x01F0, // not a tool that profession takes
 };
 

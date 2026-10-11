@@ -1134,10 +1134,10 @@ namespace pawn::errands
         }
 
         // A money venture at a profession of hers (professions.h): fishing, at
-        // a spot of the venture keeper's, with a bait of the catalog, for 1 or
-        // 2 hours of the game clock. Out of his party and to her zone line
-        // toward the spot, as a quest; the map fishes it once she is away
-        // (angler.h)
+        // one of her waters (venture_spots.h), with any bait of the game, for
+        // 1 or 2 hours of the game clock. Out of his party and to her zone
+        // line toward the water, as a quest; the map fishes it once she is
+        // away (angler.h)
         auto sendMoney(CCharEntity* PPlayer, Record r, const cl_send_errand& ask) -> uint16
         {
             if (ask.profession != CL_PROF_FISHING)

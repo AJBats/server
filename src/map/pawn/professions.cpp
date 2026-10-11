@@ -98,8 +98,8 @@ namespace pawn::professions
         }
 
         // How many of an item she holds free to take on a venture -- in any of
-        // her bags, neither worn nor up in her bazaar, as the venture keeper
-        // takes her kit: her body's when she stands, her saved rows when not
+        // her bags, neither worn nor up in her bazaar: her body's when she
+        // stands, her saved rows when not
         auto heldCount(const uint32 charid, const uint16 item) -> uint32
         {
             if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
@@ -767,22 +767,6 @@ namespace pawn::professions
                          "`items_go` tinyint(3) unsigned NOT NULL DEFAULT 0, " // her last venture let items go
                          "`started` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`charid`, `profession`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_spots` ("
-                         "`charid` int(10) unsigned NOT NULL, "
-                         "`profession` tinyint(3) unsigned NOT NULL, "
-                         "`zone` smallint(5) unsigned NOT NULL, "
-                         "`area` smallint(5) unsigned NOT NULL, "
-                         "`name` varchar(32) NOT NULL DEFAULT '', "
-                         "`level` tinyint(3) unsigned NOT NULL DEFAULT 0, "
-                         "`gil_hour` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "`hops` tinyint(3) unsigned NOT NULL DEFAULT 0, " // zone lines from where she stands
-                         "PRIMARY KEY (`charid`, `profession`, `zone`, `area`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_state` ("
-                         "`charid` int(10) unsigned NOT NULL, "
-                         "`state` mediumtext NOT NULL, "
-                         "`phase` enum('trip','after','done') NOT NULL, "
-                         "`updated` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_pay` ("
                          "`id` int(10) unsigned NOT NULL AUTO_INCREMENT, "
                          "`cardian` int(10) unsigned NOT NULL, "
@@ -848,24 +832,12 @@ namespace pawn::professions
                          "`item` smallint(5) unsigned NOT NULL, "
                          "`quantity` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`charid`, `item`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_keeper` ("
-                         "`id` tinyint(3) unsigned NOT NULL, "
-                         "`beat` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "PRIMARY KEY (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_profession_set` ("
                          "`charid` int(10) unsigned NOT NULL, "
                          "`profession` tinyint(3) unsigned NOT NULL, "
                          "`slot` tinyint(3) unsigned NOT NULL, " // the equipment slot, SLOT_MAIN 0 to SLOT_BACK 15
                          "`item` smallint(5) unsigned NOT NULL, "
                          "PRIMARY KEY (`charid`, `profession`, `slot`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_combos` ("
-                         "`charid` int(10) unsigned NOT NULL, "
-                         "`zone` smallint(5) unsigned NOT NULL, "
-                         "`area` smallint(5) unsigned NOT NULL, "
-                         "`rod` smallint(5) unsigned NOT NULL, "
-                         "`bait` smallint(5) unsigned NOT NULL, "
-                         "`gil_hour` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "PRIMARY KEY (`charid`, `zone`, `area`, `rod`, `bait`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_news` ("
                          "`id` int(10) unsigned NOT NULL AUTO_INCREMENT, "
                          "`cardian` int(10) unsigned NOT NULL, "
@@ -880,7 +852,6 @@ namespace pawn::professions
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `items_go` tinyint(3) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `quantity` smallint(5) unsigned NOT NULL DEFAULT 1");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `her_gil` int(10) unsigned NOT NULL DEFAULT 0");
-        db::preparedStmt("ALTER TABLE `cardian_venture_spots` ADD COLUMN IF NOT EXISTS `hops` tinyint(3) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_last_played` ("
                          "`accid` int(10) unsigned NOT NULL, " // the account
                          "`charid` int(10) unsigned NOT NULL, " // the character it played last, a client of its own

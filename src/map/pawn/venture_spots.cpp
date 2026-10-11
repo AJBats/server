@@ -25,6 +25,8 @@
 
 #include "common/database.h"
 #include "common/logging.h"
+#include "common/settings.h"
+#include "common/utils.h"
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
 #include "entities/char_entity.h"
@@ -129,10 +131,25 @@ namespace pawn::venturespots
             return std::pair(rset->get<uint16>("pos_zone"), rset->get<uint8>("mlvl"));
         }
 
+        // The zones a venture never goes to or through (pawn.VENTURE_NEVER_ZONES)
+        auto neverZones() -> std::vector<uint16>
+        {
+            std::vector<uint16> out;
+            for (const auto& part : split(settings::get<std::string>("pawn.VENTURE_NEVER_ZONES"), ","))
+            {
+                if (const auto zone = static_cast<uint16>(std::strtoul(part.c_str(), nullptr, 10)); zone != 0)
+                {
+                    out.push_back(zone);
+                }
+            }
+            return out;
+        }
+
         // The zones she can walk to from `start` at her level, each with the
         // zone lines it lies away
         auto walkable(const uint16 start, const uint8 level) -> std::unordered_map<uint16, uint8>
         {
+            const auto never = neverZones();
             std::unordered_map<uint16, uint8> hops{ { start, 0 } };
             std::vector<uint16>               frontier{ start };
             while (!frontier.empty())
@@ -147,7 +164,7 @@ namespace pawn::venturespots
                     }
                     for (const auto to : it->second)
                     {
-                        if (hops.contains(to))
+                        if (hops.contains(to) || std::ranges::find(never, to) != never.end())
                         {
                             continue;
                         }
@@ -229,9 +246,14 @@ namespace pawn::venturespots
         {
             return out;
         }
-        const auto hops = walkable(here->first, here->second);
+        const auto hops  = walkable(here->first, here->second);
+        const auto never = neverZones();
         for (const auto& w : waters())
         {
+            if (std::ranges::find(never, w.zone) != never.end())
+            {
+                continue; // the zone she stands in too
+            }
             if (const auto it = hops.find(w.zone); it != hops.end())
             {
                 auto spot = w;

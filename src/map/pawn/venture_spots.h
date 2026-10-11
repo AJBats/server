@@ -35,9 +35,10 @@
 // notorious and scripted ones left out; a zone with none, a town, always
 // passable -- and the zone she stands in whatever its monsters. The zone
 // lines are each zone's own (its settings file, read by upstream's loader).
-// A stand-in until cardians travel (OPEN_ISSUES #431). The player picks the
-// water: a zone with several lists each by its own name (the user,
-// 2026-10-11).
+// A zone the user has judged always dangerous is never gone to or through
+// (pawn.VENTURE_NEVER_ZONES). A stand-in until cardians travel (OPEN_ISSUES
+// #431). The player picks the water: a zone with several lists each by its
+// own name (the user, 2026-10-11).
 namespace pawn::venturespots
 {
     struct Spot

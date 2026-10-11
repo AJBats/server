@@ -33,13 +33,11 @@ class CCharEntity;
 // "Professions"). A profession is set up on an alt or a cardian his account
 // owns from her Linkshell submenu (the Link's PROFESSIONS, START_PROFESSION).
 // Its ventures go out as errands of kind money (errands.h), each with its kit
-// -- fishing: a rod and a bait, each one she holds or one bought at the
-// auction house as it starts (only the starter rods are ever bought) -- and
-// the kit sent becomes her set. The map fishes one itself (angler.h). The
-// venture keeper, the census watcher's Python
-// (tools/economy/venture_keeper.py), still writes the menus' tables: the
-// catalog of rods and baits with the price book's prices, and each fishing
-// cardian's zones (#432 moves them to the map).
+// -- fishing: a rod and a bait, each one she holds or one bought where it
+// costs least as it starts (venture_shop.h; only the starter rods are ever
+// bought) -- and the kit sent becomes her set. Her waters are the map's
+// (venture_spots.h); the map fishes the venture itself (angler.h) and sells
+// her catch (venture_sales.h).
 //
 // She pays for her kit from her own purse, then from his: the character the
 // player plays now (his gil in memory), or offline the one he played last
@@ -48,8 +46,7 @@ class CCharEntity;
 // at once or once it binds.
 namespace pawn::professions
 {
-    // The tables the map reads and writes, made at boot; the keeper makes the
-    // ones it works from as it starts
+    // The tables the map reads and writes, made at boot
     void ensureTables();
     void registerHandlers();
 

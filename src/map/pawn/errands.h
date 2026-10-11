@@ -62,13 +62,13 @@ class CCharEntity;
 //     done in her log and her rank and rank bar are what the game holds after
 //     them, so a battlefield's or a city's gate reads her as anyone. Called
 //     back early she keeps the missions her time away covered.
-//   - A money venture at a profession of hers (professions.h): fishing at a
-//     spot of the venture keeper's, set out on the same way. Away, her saved
-//     place is moved to the spot, so search finds her there faded, and the
-//     keeper (the census watcher's Python) works it on the game clock. Due or
-//     called back it is returning: the keeper counts her takings into her
-//     rows and marks it back, and only then does she stand again, where she
-//     left -- the map never loads her while the keeper writes her.
+//   - A money venture at a profession of hers (professions.h): fishing at
+//     one of her waters (venture_spots.h), set out on the same way. Away, her
+//     saved place is moved to the water, so search finds her there faded,
+//     and the map fishes it on the game clock with her body in no zone
+//     (angler.h). Due or called back, the fishing stops, her kit comes off
+//     and she stands again where she left; what she caught sells on
+//     (venture_sales.h).
 // Level is kept in the row's shape and on the Link, not built.
 namespace pawn::errands
 {
