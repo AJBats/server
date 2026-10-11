@@ -25,6 +25,7 @@
 #include "engage_math.h"
 #include "errands.h"
 #include "professions.h"
+#include "venture_sales.h"
 #include "pawn.h"
 #include "party_finder.h"
 #include "seats.h"
@@ -273,6 +274,7 @@ class PawnModule : public CPPModule
         pawn::errands::load();
         // Professions and the money venture's tables, both its sides' (professions.h)
         pawn::professions::ensureTables();
+        pawn::sales::ensureTables();
         // The cardian API's messages on the Cardian Link (link_api.cpp, and
         // the linkshell's), and the Lua libraries some are answered from
         pawn::linkapi::registerHandlers();

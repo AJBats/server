@@ -22,6 +22,7 @@
 #include "club.h"
 #include "club_math.h"
 #include "club_trade.h"
+#include "angler.h"
 
 #include "cardian_link.h"
 #include "errands.h"
@@ -357,7 +358,7 @@ namespace pawn::club
             if (errand.has_value())
             {
                 row.errand       = static_cast<uint8_t>(errand->kind);
-                row.errandState  = static_cast<uint8_t>(errand->state == cardian::errand::State::Back ? cardian::errand::State::Returning : errand->state);
+                row.errandState  = static_cast<uint8_t>(errand->state);
                 row.secondsLeft  = errand->secondsLeft;
                 row.secondsTotal = errand->secondsTotal;
                 row.missionsDone = errand->missionsDone;
@@ -389,15 +390,13 @@ namespace pawn::club
                 {
                     row.can2 |= CL_CAN2_REPORT;
                 }
+                row.ventureDone = pawn::professions::ventureDone(charid);
             }
             if (kind != Member::Recruit)
             {
                 if (errand.has_value())
                 {
-                    if (errand->state == cardian::errand::State::Going || errand->state == cardian::errand::State::Away)
-                    {
-                        row.can |= CL_CAN_CALL_BACK;
-                    }
+                    row.can |= CL_CAN_CALL_BACK;
                 }
                 else
                 {
@@ -743,7 +742,13 @@ namespace pawn::club
         // bags. Not standing, the same on her rows
         void breakHers(const uint32 charid, const uint32 lsid)
         {
-            if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr)
+            // her character in memory: her stand, or her venture's body in no zone
+            auto* PPawn = pawn::findPawn(charid);
+            if (PPawn == nullptr)
+            {
+                PPawn = pawn::angler::bodyOf(charid);
+            }
+            if (PPawn != nullptr)
             {
                 if (auto* PShell = linkshell::GetLinkshell(lsid); PShell != nullptr)
                 {

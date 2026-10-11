@@ -153,7 +153,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_pearl) == 20);
     STATIC_REQUIRE(sizeof(cl_errand_goal) == 76);
     STATIC_REQUIRE(sizeof(cl_errands) == 24);
-    STATIC_REQUIRE(sizeof(cl_send_errand) == 38);
+    STATIC_REQUIRE(sizeof(cl_send_errand) == 40);
     STATIC_REQUIRE(sizeof(cl_call_back) == 20);
     STATIC_REQUIRE(sizeof(cl_profession) == 56);
     STATIC_REQUIRE(sizeof(cl_profession_slot) == 24);
@@ -168,7 +168,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_venture_paid) == 36);
     STATIC_REQUIRE(sizeof(cl_venture_news) == 24);
     STATIC_REQUIRE(sizeof(cl_venture_item) == 28);
-    STATIC_REQUIRE(sizeof(cl_venture_report) == 84);
+    STATIC_REQUIRE(sizeof(cl_venture_report) == 92);
 }
 
 TEST_CASE("Cardian link: a cardian's order key and its action fields cross both ways", "[cardian][link]")

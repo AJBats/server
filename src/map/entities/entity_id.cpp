@@ -23,6 +23,7 @@
 
 #include "base_entity.h"
 #include "instance.h"
+#include "pawn/bodies.h" // CARDIAN
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -73,6 +74,13 @@ auto EntityId::operator==(const CBaseEntity* PEntity) const -> bool
 
 auto EntityId::resolveEntity() const -> CBaseEntity*
 {
+    // CARDIAN: a character the map holds in no zone (a venture's body) is found by its id
+    if (zoneId == xi::ZoneId::Unknown && objtype == TYPE_PC)
+    {
+        auto* PBody = pawn::bodies::find(UniqueNo);
+        return PBody != nullptr && PBody->serial() == serial ? PBody : nullptr;
+    }
+
     if (ActIndex == 0 || serial == 0)
     {
         return nullptr;

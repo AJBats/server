@@ -23,7 +23,6 @@ TEST_CASE("Errands: the enums are the Link's numbers", "[cardian][errands]")
     STATIC_REQUIRE(static_cast<uint8_t>(Kind::Rank) == CL_ERRAND_RANK);
     STATIC_REQUIRE(static_cast<uint8_t>(State::Going) == CL_ERRAND_GOING);
     STATIC_REQUIRE(static_cast<uint8_t>(State::Away) == CL_ERRAND_AWAY);
-    STATIC_REQUIRE(static_cast<uint8_t>(State::Returning) == CL_ERRAND_RETURNING);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Alt) == CL_CLUB_ALT);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Owned) == CL_CLUB_OWNED);
     STATIC_REQUIRE(static_cast<uint8_t>(Member::Wild) == CL_CLUB_WILD);
@@ -41,21 +40,19 @@ TEST_CASE("Errands: the row's words read back as the kind and the state", "[card
     CHECK(stateOf("going") == State::Going);
     CHECK(stateOf("away") == State::Away);
     CHECK(stateOf(stateName(State::Away)) == State::Away);
-    CHECK(stateOf("returning") == State::Returning);
-    CHECK(stateOf("back") == State::Back);
-    for (const auto state : { State::Going, State::Away, State::Returning, State::Back })
+    CHECK_FALSE(stateOf("returning").has_value()); // the venture keeper's, gone with it
+    CHECK_FALSE(stateOf("back").has_value());
+    for (const auto state : { State::Going, State::Away })
     {
         CHECK(stateOf(stateName(state)) == state);
     }
     CHECK_FALSE(stateOf("done").has_value());
 }
 
-TEST_CASE("Errands: a money venture is out of the world until the keeper has counted it, for 1 or 2 hours", "[cardian][errands]")
+TEST_CASE("Errands: a money venture is out of the world while away, for 1 or 2 hours", "[cardian][errands]")
 {
     CHECK_FALSE(gone(State::Going));
     CHECK(gone(State::Away));
-    CHECK(gone(State::Returning));
-    CHECK(gone(State::Back));
     for (const uint32_t hours : { 1u, 2u })
     {
         CHECK(ventureHours(hours));

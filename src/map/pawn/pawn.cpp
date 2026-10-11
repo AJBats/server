@@ -24,6 +24,7 @@
 #include "club.h"
 #include "errands.h"
 #include "professions.h"
+#include "venture_sales.h"
 #include "offers.h"
 #include "players.h"
 #include "stake_math.h"
@@ -3092,6 +3093,7 @@ namespace pawn
         supplies::tick(PZone);
         errands::tick();
         professions::tick();
+        sales::tick();
         world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);
     }
 } // namespace pawn

@@ -21,6 +21,7 @@
 
 #include "professions.h"
 
+#include "angler.h"
 #include "cardian_link.h"
 #include "club.h"
 #include "errands.h"
@@ -28,6 +29,7 @@
 #include "seats.h"
 
 #include "common/database.h"
+#include "common/settings.h"
 #include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/timer.h"
@@ -57,7 +59,6 @@ namespace pawn::professions
         using Member = cardian::errand::Member;
 
         constexpr auto   kTickEvery      = std::chrono::seconds(3);
-        constexpr uint32 kKeeperSilence  = 120; // real seconds since the keeper's last beat: past it, it is not running
         constexpr uint8  kLastProfession = CL_PROF_COOKING;
 
         // The game's skill for a profession (char_skills' skillid); HELM has none
@@ -124,6 +125,28 @@ namespace pawn::professions
                                                "(SELECT 1 FROM char_equip e WHERE e.charid = i.charid AND e.containerid = i.location AND e.slotid = i.slot)",
                                                charid, item);
             return rset && rset->next() ? rset->get<uint32>("held") : 0;
+        }
+
+        // Her open inventory spaces: her character's where it is in memory,
+        // else her saved bag's size less what it holds
+        auto freeInventory(const uint32 charid) -> uint8
+        {
+            const CCharEntity* PChar = pawn::angler::bodyOf(charid);
+            PChar                    = PChar != nullptr ? PChar : pawn::findPawn(charid);
+            PChar                    = PChar != nullptr ? PChar : zoneutils::GetChar(charid);
+            if (PChar != nullptr)
+            {
+                return PChar->getStorage(LOC_INVENTORY)->GetFreeSlotsCount();
+            }
+            const auto size = db::preparedStmt("SELECT inventory FROM char_storage WHERE charid = ?", charid);
+            const auto used = db::preparedStmt("SELECT COUNT(*) AS used FROM char_inventory WHERE charid = ? AND location = 0 AND slot > 0", charid);
+            if (!size || !size->next() || !used || !used->next())
+            {
+                return 0;
+            }
+            const auto total = size->get<uint32>("inventory");
+            const auto held  = used->get<uint32>("used");
+            return static_cast<uint8>(total > held ? std::min<uint32>(total - held, UINT8_MAX) : 0);
         }
 
         // Her skill in a profession, in the game's tenths: her body's when she stands
@@ -207,15 +230,17 @@ namespace pawn::professions
                 return;
             }
             std::array<bool, kLastProfession + 1>                    taken{};
+            std::array<bool, kLastProfession + 1>                    letItemsGo{};
             std::array<std::array<uint16, 16>, kLastProfession + 1> sets{};
             bool                                                    any = false;
-            const auto rset = db::preparedStmt("SELECT profession FROM cardian_professions WHERE charid = ?", ask.cardian);
+            const auto rset = db::preparedStmt("SELECT profession, items_go FROM cardian_professions WHERE charid = ?", ask.cardian);
             while (rset && rset->next())
             {
                 if (const auto profession = rset->get<uint8>("profession"); profession >= CL_PROF_FISHING && profession <= kLastProfession)
                 {
-                    taken[profession] = true;
-                    any               = true;
+                    taken[profession]      = true;
+                    letItemsGo[profession] = rset->get<uint8>("items_go") != 0;
+                    any                    = true;
                 }
             }
             const auto slots = db::preparedStmt("SELECT profession, slot, item FROM cardian_profession_set WHERE charid = ?", ask.cardian);
@@ -239,12 +264,15 @@ namespace pawn::professions
                 if (taken[profession])
                 {
                     std::copy(sets[profession].begin(), sets[profession].end(), row.set);
+                    row.letItemsGo = letItemsGo[profession] ? 1 : 0;
                 }
                 reply.more(row);
                 ++count;
             }
-            auto done  = ask;
-            done.count = count;
+            auto done      = ask;
+            done.count     = count;
+            done.freeSlots   = freeInventory(ask.cardian);
+            done.debugLength = settings::get<bool>("pawn.VENTURE_DEBUG") ? 1 : 0;
             reply.finish(done, CL_S_OK);
         }
 
@@ -443,7 +471,10 @@ namespace pawn::professions
             reply.finish(done, CL_S_OK);
         }
 
-        // The baits for one spot of hers with one rod, the best first
+        // Every bait and lure the game has (fishing_bait), whatever the spot and
+        // the rod: which works where is the player's to find (the user,
+        // 2026-10-10). What she holds first, then what the auction house sells,
+        // cheapest first, then the rest, which nobody sells
         void baits(CCharEntity* PChar, const cl_venture_baits& ask, Reply& reply)
         {
             if (!mayTakeUp(PChar, ask.cardian))
@@ -451,18 +482,45 @@ namespace pawn::professions
                 reply.finish(ask, CL_S_NOT_IN_CLUB);
                 return;
             }
-            uint8      count = 0;
-            const auto rset  = db::preparedStmt("SELECT b.bait, b.gil_hour, COALESCE(c.price, 0) AS price FROM cardian_venture_combos b "
-                                                "LEFT JOIN cardian_venture_catalog c ON c.item = b.bait "
-                                                "WHERE b.charid = ? AND b.zone = ? AND b.area = ? AND b.rod = ? ORDER BY b.gil_hour DESC, b.bait",
-                                                ask.cardian, ask.zone, ask.area, ask.rod);
-            while (rset && rset->next() && count < UINT8_MAX)
+            struct Bait
             {
-                auto row    = make<cl_venture_bait>();
-                row.item    = rset->get<uint16>("bait");
-                row.gilHour = rset->get<uint32>("gil_hour");
-                row.price   = rset->get<uint32>("price");
-                row.owned   = static_cast<uint8>(std::min<uint32>(heldCount(ask.cardian, row.item), UINT8_MAX));
+                uint16      item  = 0;
+                uint32      price = 0;
+                uint32      owned = 0;
+                std::string name;
+            };
+            std::vector<Bait> all;
+            const auto rset = db::preparedStmt("SELECT b.baitid, b.name, COALESCE(c.price, 0) AS price FROM fishing_bait b "
+                                               "LEFT JOIN cardian_venture_catalog c ON c.item = b.baitid");
+            while (rset && rset->next())
+            {
+                const auto item = rset->get<uint16>("baitid");
+                all.push_back({ .item = item, .price = rset->get<uint32>("price"), .owned = heldCount(ask.cardian, item), .name = rset->get<std::string>("name") });
+            }
+            const auto rank = [](const Bait& b) { return b.owned > 0 ? 0 : (b.price > 0 ? 1 : 2); };
+            std::ranges::sort(all, [&](const Bait& x, const Bait& y)
+                              {
+                                  if (rank(x) != rank(y))
+                                  {
+                                      return rank(x) < rank(y);
+                                  }
+                                  if (rank(x) == 1 && x.price != y.price)
+                                  {
+                                      return x.price < y.price;
+                                  }
+                                  return x.name < y.name;
+                              });
+            uint8 count = 0;
+            for (const auto& b : all)
+            {
+                if (count == UINT8_MAX)
+                {
+                    break;
+                }
+                auto row  = make<cl_venture_bait>();
+                row.item  = b.item;
+                row.price = b.price;
+                row.owned = static_cast<uint8>(std::min<uint32>(b.owned, UINT8_MAX));
                 reply.more(row);
                 ++count;
             }
@@ -471,7 +529,12 @@ namespace pawn::professions
             reply.finish(done, CL_S_OK);
         }
 
-        // Her last money venture, as the keeper last wrote it
+        // Her last money venture, its own: its sums, its catch by kind, and
+        // each part of her line to sell, an earlier venture's marked. Each
+        // answer marks the furthest phase her player has read it at (`seen`):
+        // read once she is back, the page stops saying the venture completed
+        // (ventureDone); read once it is done -- over, and nothing left to
+        // sell -- it is cleared (hasReport)
         void report(CCharEntity* PChar, const cl_venture_report& ask, Reply& reply)
         {
             if (!mayTakeUp(PChar, ask.cardian))
@@ -480,33 +543,55 @@ namespace pawn::professions
                 return;
             }
             auto done = ask;
-            if (const auto rset = db::preparedStmt("SELECT profession, phase, waiting, zone, area, area_name, minutes, catches, skill_from, skill_to, "
-                                                   "gil_earned, unsold_value, his_gil FROM cardian_venture_report WHERE charid = ?",
+            if (const auto rset = db::preparedStmt("SELECT profession, phase, zone, area, area_name, left_at, length, minutes, catches, skill_from, skill_to, "
+                                                   "gil_earned, supplies, spent FROM cardian_venture_report WHERE charid = ?",
                                                    ask.cardian);
                 rset && rset->next())
             {
-                done.profession  = rset->get<uint8>("profession");
-                done.phase       = rset->get<uint8>("phase");
-                done.waiting     = rset->get<uint8>("waiting");
-                done.zone        = rset->get<uint16>("zone");
-                done.area        = rset->get<uint16>("area");
-                done.minutes     = rset->get<uint32>("minutes");
-                done.catches     = rset->get<uint32>("catches");
-                done.skillFrom   = rset->get<uint16>("skill_from");
-                done.skillTo     = rset->get<uint16>("skill_to");
-                done.gilEarned   = rset->get<int32>("gil_earned");
-                done.unsoldValue = rset->get<uint32>("unsold_value");
-                done.hisGil      = rset->get<uint32>("his_gil");
+                const uint32 now    = earth_time::game_timestamp();
+                const uint32 leftAt = rset->get<uint32>("left_at");
+                done.profession     = rset->get<uint8>("profession");
+                done.phase          = rset->get<uint8>("phase");
+                done.zone           = rset->get<uint16>("zone");
+                done.area           = rset->get<uint16>("area");
+                done.length         = rset->get<uint32>("length");
+                // away: how long so far
+                done.minutes   = done.phase == CL_VENTURE_WORKING ? std::min(done.length, now > leftAt ? (now - leftAt) / 60 : 0) : rset->get<uint32>("minutes");
+                done.catches   = rset->get<uint32>("catches");
+                done.skillFrom = rset->get<uint16>("skill_from");
+                done.skillTo   = rset->get<uint16>("skill_to");
+                done.earned    = rset->get<int32>("gil_earned");
+                done.supplies  = rset->get<uint32>("supplies");
+                done.spent     = rset->get<uint32>("spent");
                 setText(done.areaName, rset->get<std::string>("area_name"));
             }
-            uint8      count = 0;
-            const auto items = db::preparedStmt("SELECT item, `where`, quantity, value FROM cardian_venture_items WHERE charid = ? ORDER BY `where`, value DESC",
+            if (const auto rset = db::preparedStmt("SELECT COALESCE(SUM(value), 0) AS pending FROM cardian_venture_items WHERE charid = ? AND earlier = 0 "
+                                                   "AND `where` IN (?, ?)",
+                                                   ask.cardian, static_cast<uint8>(CL_VENTURE_CARRIED), static_cast<uint8>(CL_VENTURE_LISTED));
+                rset && rset->next())
+            {
+                done.pending = rset->get<uint32>("pending");
+            }
+            uint8      count   = 0;
+            const auto caught  = db::preparedStmt("SELECT item, quantity FROM cardian_venture_catches WHERE charid = ? ORDER BY quantity DESC, item", ask.cardian);
+            while (caught && caught->next() && count < UINT8_MAX)
+            {
+                auto row     = make<cl_venture_item>();
+                row.item     = caught->get<uint16>("item");
+                row.where    = CL_VENTURE_CAUGHT;
+                row.quantity = static_cast<uint16>(std::min<uint32>(caught->get<uint32>("quantity"), UINT16_MAX));
+                reply.more(row);
+                ++count;
+            }
+            const auto items = db::preparedStmt("SELECT earlier, item, `where`, quantity, value FROM cardian_venture_items WHERE charid = ? "
+                                                "ORDER BY earlier, `where`, value DESC",
                                                 ask.cardian);
             while (items && items->next() && count < UINT8_MAX)
             {
                 auto row     = make<cl_venture_item>();
                 row.item     = items->get<uint16>("item");
                 row.where    = items->get<uint8>("where");
+                row.earlier  = items->get<uint8>("earlier");
                 row.quantity = static_cast<uint16>(std::min<uint32>(items->get<uint32>("quantity"), UINT16_MAX));
                 row.value    = items->get<uint32>("value");
                 reply.more(row);
@@ -514,6 +599,10 @@ namespace pawn::professions
             }
             done.count = count;
             reply.finish(done, CL_S_OK);
+            if (done.phase != CL_VENTURE_NONE)
+            {
+                db::preparedStmt("UPDATE cardian_venture_report SET seen = GREATEST(seen, ?) WHERE charid = ?", done.phase, ask.cardian);
+            }
         }
 
         // ---- his gil -----------------------------------------------------------
@@ -530,60 +619,6 @@ namespace pawn::professions
                 }
             }
             return nullptr;
-        }
-
-        // A shortfall paid from his gil: the character he plays now, in memory;
-        // offline, the one he played last, in its saved row (its body is not
-        // loaded, so the row is the gil). Answers the payer, 0 when he is short
-        auto payFromHim(const uint32 accid, const uint32 gil) -> uint32
-        {
-            if (auto* PPlayer = playingNow(accid); PPlayer != nullptr)
-            {
-                const auto* PGil = PPlayer->getStorage(LOC_INVENTORY)->GetItem(0);
-                if (PGil == nullptr || !PGil->isType(ITEM_CURRENCY) || PGil->getQuantity() < gil)
-                {
-                    return 0;
-                }
-                auto transaction = ItemClaimTransaction::start(PPlayer);
-                return transaction && transaction->pay(gil) && transaction->commit() ? PPlayer->id : 0;
-            }
-            const auto last = db::preparedStmt("SELECT charid FROM cardian_last_played WHERE accid = ?", accid);
-            if (!last || !last->next())
-            {
-                return 0;
-            }
-            const auto payer = last->get<uint32>("charid");
-            if (zoneutils::GetChar(payer) != nullptr)
-            {
-                return 0; // standing as a cardian: its body holds the gil, not the row
-            }
-            const auto paid = db::preparedStmt("UPDATE char_inventory SET quantity = quantity - ? WHERE charid = ? AND location = 0 AND slot = 0 "
-                                               "AND quantity >= ?",
-                                               gil, payer, gil);
-            return paid && paid->rowsAffected() == 1 ? payer : 0;
-        }
-
-        // Her money venture is under way: an ask after it is over moves no gil
-        auto workingNow(const uint32 charid) -> bool
-        {
-            const auto rset = db::preparedStmt("SELECT 1 FROM cardian_errands WHERE charid = ? AND kind = 'money' AND state = 'away'", charid);
-            return rset && rset->next();
-        }
-
-        // The keeper's asks answered: paid from his gil, or short
-        void answerAsks()
-        {
-            const auto rset = db::preparedStmt("SELECT id, cardian, accid, item, gil FROM cardian_venture_pay WHERE state = 'asked' ORDER BY id");
-            while (rset && rset->next())
-            {
-                const auto id    = rset->get<uint32>("id");
-                const auto gil   = rset->get<uint32>("gil");
-                const auto payer = workingNow(rset->get<uint32>("cardian")) ? payFromHim(rset->get<uint32>("accid"), gil) : 0;
-                db::preparedStmt("UPDATE cardian_venture_pay SET state = ?, payer = ? WHERE id = ? AND state = 'asked'", std::string(payer != 0 ? "paid" : "short"),
-                                 payer, id);
-                ShowInfoFmt("professions: {} asks {} gil of her player for item {}: {}", pawn::seats::nameOf(rset->get<uint32>("cardian")), gil,
-                            rset->get<uint16>("item"), payer != 0 ? fmt::format("paid by {}", payer) : std::string("he is short"));
-            }
         }
 
         // A payment's line to the payer's addon, once it is bound
@@ -630,6 +665,76 @@ namespace pawn::professions
         }
     } // namespace
 
+    auto payFromHim(const uint32 accid, const uint32 gil) -> uint32
+    {
+        if (auto* PPlayer = playingNow(accid); PPlayer != nullptr)
+        {
+            const auto* PGil = PPlayer->getStorage(LOC_INVENTORY)->GetItem(0);
+            if (PGil == nullptr || !PGil->isType(ITEM_CURRENCY) || PGil->getQuantity() < gil)
+            {
+                return 0;
+            }
+            auto transaction = ItemClaimTransaction::start(PPlayer);
+            return transaction && transaction->pay(gil) && transaction->commit() ? PPlayer->id : 0;
+        }
+        const auto last = db::preparedStmt("SELECT charid FROM cardian_last_played WHERE accid = ?", accid);
+        if (!last || !last->next())
+        {
+            return 0;
+        }
+        const auto payer = last->get<uint32>("charid");
+        if (zoneutils::GetChar(payer) != nullptr)
+        {
+            return 0; // standing as a cardian: its body holds the gil, not the row
+        }
+        const auto paid = db::preparedStmt("UPDATE char_inventory SET quantity = quantity - ? WHERE charid = ? AND location = 0 AND slot = 0 "
+                                           "AND quantity >= ?",
+                                           gil, payer, gil);
+        return paid && paid->rowsAffected() == 1 ? payer : 0;
+    }
+
+    void refundHim(const uint32 payer, const uint32 gil)
+    {
+        if (auto* PPayer = zoneutils::GetChar(payer); PPayer != nullptr)
+        {
+            auto transaction = ItemClaimTransaction::start(PPayer);
+            if (transaction && transaction->earn(gil) && transaction->commit())
+            {
+                return;
+            }
+        }
+        else if (const auto back = db::preparedStmt("UPDATE char_inventory SET quantity = quantity + ? WHERE charid = ? AND location = 0 AND slot = 0", gil, payer);
+                 back && back->rowsAffected() == 1)
+        {
+            return;
+        }
+        ShowErrorFmt("professions: {} gil could not be handed back to {}", gil, payer);
+    }
+
+    auto priceOf(const uint16 item) -> std::optional<uint32>
+    {
+        const auto rset = db::preparedStmt("SELECT price FROM cardian_venture_catalog WHERE item = ? AND price > 0", item);
+        return rset && rset->next() ? std::optional(rset->get<uint32>("price")) : std::nullopt;
+    }
+
+    auto isStarter(const uint16 rod) -> bool
+    {
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_catalog WHERE item = ? AND kind = 'rod' AND starter <> 0", rod);
+        return rset && rset->next();
+    }
+
+    void recordPurchase(const Purchase& p)
+    {
+        db::preparedStmt("INSERT INTO cardian_venture_pay (cardian, accid, profession, item, gil, state, payer, quantity, her_gil, asked_at) "
+                         "VALUES (?, ?, ?, ?, ?, 'paid', ?, ?, ?, ?)",
+                         p.cardian, p.accid, p.profession, p.item, p.hisGil, p.payer, p.quantity, p.herGil, realNow());
+    }
+
+    void recordNews(const uint32 cardian, const uint32 accid, const uint8 news, const uint16 item)
+    {
+        db::preparedStmt("INSERT INTO cardian_venture_news (cardian, accid, news, item, at) VALUES (?, ?, ?, ?, ?)", cardian, accid, news, item, realNow());
+    }
+
     void ensureTables()
     {
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_professions` ("
@@ -637,6 +742,7 @@ namespace pawn::professions
                          "`profession` tinyint(3) unsigned NOT NULL, "
                          "`tool` smallint(5) unsigned NOT NULL DEFAULT 0, " // her set's tool: fishing, the rod
                          "`bait` smallint(5) unsigned NOT NULL DEFAULT 0, " // her set's bait
+                         "`items_go` tinyint(3) unsigned NOT NULL DEFAULT 0, " // her last venture let items go
                          "`started` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`charid`, `profession`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_catalog` ("
@@ -689,18 +795,42 @@ namespace pawn::professions
                          "`catches` int(10) unsigned NOT NULL DEFAULT 0, "
                          "`skill_from` smallint(5) unsigned NOT NULL DEFAULT 0, "
                          "`skill_to` smallint(5) unsigned NOT NULL DEFAULT 0, "
-                         "`gil_earned` int(11) NOT NULL DEFAULT 0, "
+                         "`gil_earned` int(11) NOT NULL DEFAULT 0, " // what this venture's catch has fetched, less the auction house's fees
                          "`unsold_value` int(10) unsigned NOT NULL DEFAULT 0, "
                          "`his_gil` int(10) unsigned NOT NULL DEFAULT 0, "
                          "`updated` int(10) unsigned NOT NULL DEFAULT 0, "
+                         "`left_at` int(10) unsigned NOT NULL DEFAULT 0, "  // the game clock as she left
+                         "`length` int(10) unsigned NOT NULL DEFAULT 0, "   // the minutes she was sent for
+                         "`supplies` int(10) unsigned NOT NULL DEFAULT 0, " // what the venture used up, at its worth
+                         "`spent` int(10) unsigned NOT NULL DEFAULT 0, "    // the gil paid for its supplies, hers and his
+                         "`seen` tinyint(3) unsigned NOT NULL DEFAULT 0, "  // the furthest phase her player has read it at (CL_VENTURE_*)
                          "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        for (const auto* column : { "`left_at` int(10) unsigned NOT NULL DEFAULT 0", "`length` int(10) unsigned NOT NULL DEFAULT 0",
+                                    "`supplies` int(10) unsigned NOT NULL DEFAULT 0", "`spent` int(10) unsigned NOT NULL DEFAULT 0",
+                                    "`seen` tinyint(3) unsigned NOT NULL DEFAULT 0" })
+        {
+            db::preparedStmt(fmt::format("ALTER TABLE `cardian_venture_report` ADD COLUMN IF NOT EXISTS {}", column));
+        }
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_items` ("
                          "`charid` int(10) unsigned NOT NULL, "
+                         "`earlier` tinyint(3) unsigned NOT NULL DEFAULT 0, " // 1: left from an earlier venture
                          "`item` smallint(5) unsigned NOT NULL, "
                          "`where` tinyint(3) unsigned NOT NULL, "
                          "`quantity` int(10) unsigned NOT NULL DEFAULT 0, "
                          "`value` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "PRIMARY KEY (`charid`, `item`, `where`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+                         "PRIMARY KEY (`charid`, `earlier`, `item`, `where`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        db::preparedStmt("ALTER TABLE `cardian_venture_items` ADD COLUMN IF NOT EXISTS `earlier` tinyint(3) unsigned NOT NULL DEFAULT 0 AFTER `charid`");
+        if (const auto rset = db::preparedStmt("SELECT COUNT(*) AS keyed FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA = DATABASE() "
+                                               "AND TABLE_NAME = 'cardian_venture_items' AND CONSTRAINT_NAME = 'PRIMARY' AND COLUMN_NAME = 'earlier'");
+            rset && rset->next() && rset->get<uint32>("keyed") == 0)
+        {
+            db::preparedStmt("ALTER TABLE `cardian_venture_items` DROP PRIMARY KEY, ADD PRIMARY KEY (`charid`, `earlier`, `item`, `where`)");
+        }
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_catches` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`item` smallint(5) unsigned NOT NULL, "
+                         "`quantity` int(10) unsigned NOT NULL DEFAULT 0, "
+                         "PRIMARY KEY (`charid`, `item`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_keeper` ("
                          "`id` tinyint(3) unsigned NOT NULL, "
                          "`beat` int(10) unsigned NOT NULL DEFAULT 0, "
@@ -730,6 +860,7 @@ namespace pawn::professions
                          "PRIMARY KEY (`id`), KEY (`told`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         // an older table: her set's bait, the starter rods, a purchase's shares
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `bait` smallint(5) unsigned NOT NULL DEFAULT 0");
+        db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `items_go` tinyint(3) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_venture_catalog` ADD COLUMN IF NOT EXISTS `starter` tinyint(3) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `quantity` smallint(5) unsigned NOT NULL DEFAULT 1");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `her_gil` int(10) unsigned NOT NULL DEFAULT 0");
@@ -760,7 +891,6 @@ namespace pawn::professions
             return;
         }
         tickedAt = now;
-        answerAsks();
         tellPaid();
         tellNews();
     }
@@ -772,12 +902,6 @@ namespace pawn::professions
             return;
         }
         db::preparedStmt("REPLACE INTO cardian_last_played (accid, charid, at) VALUES (?, ?, ?)", pawn::ownerAccountOf(PChar), PChar->id, realNow());
-    }
-
-    auto keeperAlive() -> bool
-    {
-        const auto rset = db::preparedStmt("SELECT beat FROM cardian_venture_keeper WHERE id = 1");
-        return rset && rset->next() && realNow() <= rset->get<uint32>("beat") + kKeeperSilence;
     }
 
     auto hasProfession(const uint32 charid, const uint8 profession) -> bool
@@ -792,9 +916,10 @@ namespace pawn::professions
         return rset && rset->next() && (rset->get<uint8>("starter") != 0 || heldCount(charid, rod) > 0);
     }
 
-    void saveSet(const uint32 charid, const uint8 profession, const uint16 rod, const uint16 bait)
+    void saveSet(const uint32 charid, const uint8 profession, const uint16 rod, const uint16 bait, const bool letItemsGo)
     {
-        db::preparedStmt("UPDATE cardian_professions SET tool = ?, bait = ? WHERE charid = ? AND profession = ?", rod, bait, charid, profession);
+        db::preparedStmt("UPDATE cardian_professions SET tool = ?, bait = ?, items_go = ? WHERE charid = ? AND profession = ?", rod, bait,
+                         static_cast<uint8>(letItemsGo ? 1 : 0), charid, profession);
         db::preparedStmt("REPLACE INTO cardian_profession_set (charid, profession, slot, item) VALUES (?, ?, ?, ?), (?, ?, ?, ?)", charid, profession,
                          static_cast<uint8>(SLOT_RANGED), rod, charid, profession, static_cast<uint8>(SLOT_AMMO), bait);
     }
@@ -823,13 +948,20 @@ namespace pawn::professions
 
     auto isBait(const uint16 item) -> bool
     {
-        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_catalog WHERE item = ? AND kind = 'bait'", item);
+        const auto rset = db::preparedStmt("SELECT 1 FROM fishing_bait WHERE baitid = ?", item);
         return rset && rset->next();
     }
 
     auto hasReport(const uint32 charid) -> bool
     {
-        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_report WHERE charid = ?", charid);
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_report WHERE charid = ? AND seen < ?", charid, static_cast<uint8>(CL_VENTURE_DONE));
         return rset && rset->next();
+    }
+
+    auto ventureDone(const uint32 charid) -> uint8
+    {
+        const auto rset = db::preparedStmt("SELECT profession FROM cardian_venture_report WHERE charid = ? AND phase IN (?, ?) AND seen < ?", charid,
+                                           static_cast<uint8>(CL_VENTURE_SELLING), static_cast<uint8>(CL_VENTURE_DONE), static_cast<uint8>(CL_VENTURE_SELLING));
+        return rset && rset->next() ? rset->get<uint8>("profession") : 0;
     }
 } // namespace pawn::professions

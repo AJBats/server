@@ -102,6 +102,12 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/club_trade.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/professions.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/professions.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/angler.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/angler.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/fish_fight.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_sales.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_sales.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/bodies.h
 )
 
 set(MAP_CORE_SOURCES

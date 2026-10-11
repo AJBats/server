@@ -34,7 +34,19 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 59: a venture's spots by zone, nearest
+// compatible, the user, 2026-09-14). 66: CLUB_MEMBER's ventureDone, a
+// venture over and its report unread; CL_VENTURE_KEPT; CL_NEWS_NO_KIT and
+// CL_NEWS_CANNOT_FISH; 65: a report per venture --
+// VENTURE_REPORT's length, earned, pending, supplies and spent in place of
+// waiting, gilEarned, unsoldValue and hisGil, VENTURE_ITEM's earlier, and
+// CL_VENTURE_CAUGHT; 64: PROFESSIONS' debugLength, the dev
+// profile's one-minute venture; every bait and lure of the game in
+// VENTURE_BAITS; 63: PROFESSIONS' freeSlots, her open
+// inventory spaces; 62: items let go on a fishing venture --
+// SEND_ERRAND's letItemsGo, PROFESSION's; 61: a venture's catch sold --
+// CL_VENTURE_RETURNED; 60: the map fishes a venture itself --
+// CL_NEWS_BAGS_FULL and CL_NEWS_NO_GIL, and CL_ERRAND_RETURNING gone (3 is
+// not used again); 59: a venture's spots by zone, nearest
 // first -- VENTURE_SPOT's hops, its length 1 or 2 hours; 58: the profession
 // set filled by hand --
 // PROFESSION's rank, PROFESSION_TOOLS' slot and CL_TOOLS_SLOT, CL_TOOL_GEAR,
@@ -120,7 +132,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 59 };
+enum { CL_PROTOCOL = 66 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2101,9 +2113,8 @@ enum
 // Where an errand stands
 enum
 {
-    CL_ERRAND_GOING     = 1, // she is walking off: to a zone line, the auction house, the guard, and back
-    CL_ERRAND_AWAY      = 2, // she is gone from the world, the errand under way
-    CL_ERRAND_RETURNING = 3, // a money venture over: her takings are being counted, and she is back once they are
+    CL_ERRAND_GOING = 1, // she is walking off: to a zone line, the auction house, the guard, and back
+    CL_ERRAND_AWAY  = 2, // she is gone from the world, the errand under way
 };
 
 // What the page may do with a member now, a bit each: the server's word, so
@@ -2161,7 +2172,7 @@ typedef struct cl_club_member
     uint16_t  affinity;           // one of the world's: her affinity with him (cardian_party_memory)
     uint16_t  missionsTogether;   // one of the world's: the story missions the two have completed together
     uint8_t   can2;               // CL_CAN2_*
-    uint8_t   spare2;
+    uint8_t   ventureDone;        // CL_PROF_*: her last venture's, over and its report unread since; 0 none
 } cl_club_member;
 
 // His club: each member a CLUB_MEMBER (CL_F_MORE), then each recruit, then
@@ -2248,6 +2259,8 @@ typedef struct cl_send_errand
     uint16_t  area;       // CL_ERRAND_MONEY: the spot's fishing area in the zone
     uint16_t  bait;       // CL_ERRAND_MONEY: the bait's item id
     uint16_t  rod;        // CL_ERRAND_MONEY: the rod's item id: one she holds, or a starter rod bought as it starts
+    uint8_t   letItemsGo; // CL_ERRAND_MONEY: 1: an item that bites is let go, as a monster is
+    uint8_t   spare;
 } cl_send_errand;
 
 // Her errand ended early: what she has earned kept, and she comes back
@@ -2320,7 +2333,8 @@ typedef struct cl_profession
     uint8_t   state;      // CL_PROF_TAKEN, _OPEN or _LOCKED
     uint16_t  skill;      // her skill in it, in tenths of a level (the game's char_skills value)
     uint8_t   rank;       // her guild rank in it, the game's craft rank: 0 Amateur, 1 Recruit, 2 Initiate, 3 Novice ...
-    uint8_t   spare[3];
+    uint8_t   letItemsGo; // taken: her last venture let items go (SEND_ERRAND's)
+    uint8_t   spare[2];
     uint16_t  set[16];    // taken: her set, by equipment slot
 } cl_profession;
 
@@ -2328,9 +2342,11 @@ typedef struct cl_profession
 typedef struct cl_professions
 {
     cl_header h;
-    uint32_t  cardian; // charid
-    uint8_t   count;   // answered
-    uint8_t   spare[3];
+    uint32_t  cardian;   // charid
+    uint8_t   count;     // answered
+    uint8_t   freeSlots;   // her open inventory spaces, where a venture's catch lands
+    uint8_t   debugLength; // 1: SEND_ERRAND's hours 0 is offered, a one-minute venture that casts its hour at once (pawn.VENTURE_DEBUG)
+    uint8_t   spare;
 } cl_professions;
 
 // What a profession's kit is
@@ -2470,6 +2486,10 @@ enum
 {
     CL_NEWS_ROD_BROKE = 1, // her rod broke and she held no spare: the venture is cut short
     CL_NEWS_ROD_SPARE = 2, // her rod broke, and she goes on with a spare of it
+    CL_NEWS_BAGS_FULL = 3, // her inventory is full: the venture is cut short
+    CL_NEWS_NO_GIL    = 4, // neither her gil nor his could buy more of the item (her bait): the venture is cut short
+    CL_NEWS_NO_KIT    = 5, // she has none of the item left (her rod or her bait) and nobody sells it: the venture is cut short
+    CL_NEWS_CANNOT_FISH = 6, // the server would not let her fish there: the venture is cut short
 };
 
 // Pushed, one way: news from her venture for his log
@@ -2485,9 +2505,12 @@ typedef struct cl_venture_news
 // Where a thing of her trip is
 enum
 {
-    CL_VENTURE_LISTED  = 1, // on the auction house, her listing
-    CL_VENTURE_CARRIED = 2, // in her bags, to be sold
-    CL_VENTURE_SOLD    = 3, // sold: what it fetched
+    CL_VENTURE_LISTED   = 1, // on the auction house, her listing
+    CL_VENTURE_CARRIED  = 2, // in her bags, to be sold
+    CL_VENTURE_SOLD     = 3, // sold: what it fetched
+    CL_VENTURE_RETURNED = 4, // listed and sent home unsold, to her delivery box
+    CL_VENTURE_CAUGHT   = 5, // caught on this venture, by kind: the count alone, wherever it is now
+    CL_VENTURE_KEPT     = 6, // in her bags, out of her line: no vendor and no buyer would take it once the venture was over
 };
 
 // Where her venture stands
@@ -2499,38 +2522,40 @@ enum
     CL_VENTURE_DONE    = 3, // back, all sold
 };
 
-// A thing of her trip, an answer to VENTURE_REPORT: what she caught, by item
-// and where it is now
+// A thing of her venture, an answer to VENTURE_REPORT: what she caught, by
+// item, and each part of her catch by where it is now
 typedef struct cl_venture_item
 {
     cl_header h;
     uint16_t  item;     // the item id
     uint16_t  quantity;
-    uint8_t   where;    // CL_VENTURE_LISTED, _CARRIED or _SOLD
-    uint8_t   spare;
-    uint16_t  spare2;
+    uint8_t   where;    // CL_VENTURE_*: LISTED, CARRIED, SOLD, RETURNED, KEPT, or CAUGHT
+    uint8_t   earlier;  // 1: left from an earlier venture, still her line to sell
+    uint16_t  spare;
     uint32_t  value;    // sold: what it fetched; else what it should fetch, estimated
 } cl_venture_item;
 
-// Her last money venture: each thing of it a VENTURE_ITEM (CL_F_MORE), then
-// this with the trip's sums
+// Her last money venture, and nothing of an earlier one: each thing of it a
+// VENTURE_ITEM (CL_F_MORE), then this with the venture's sums
 typedef struct cl_venture_report
 {
     cl_header h;
     uint32_t  cardian;     // charid
     uint8_t   profession;  // answered: CL_PROF_*
     uint8_t   phase;       // answered: CL_VENTURE_*
-    uint8_t   waiting;     // answered: 1 while she waits for gil, hers and his both short
     uint8_t   count;       // answered: things sent
+    uint8_t   spare;
     uint16_t  zone;        // answered: where she works or worked
     uint16_t  area;
-    uint32_t  minutes;     // answered: minutes worked, on the game clock
+    uint32_t  minutes;     // answered: how long the venture lasted, or has so far, on the game clock
+    uint32_t  length;      // answered: the minutes it was sent for
     uint32_t  catches;     // answered: what she caught or found
     uint16_t  skillFrom;   // answered: her skill at the start, in tenths of a level
     uint16_t  skillTo;     // answered: her skill now
-    int32_t   gilEarned;   // answered: her purse now less at the start: sales, less what she spent
-    uint32_t  unsoldValue; // answered: what she still has to sell should fetch, estimated
-    uint32_t  hisGil;      // answered: what she has taken from his gil on this trip
+    int32_t   earned;      // answered: what its catch has fetched, less the auction house's fees
+    uint32_t  pending;     // answered: what its catch still to sell should fetch, estimated
+    uint32_t  supplies;    // answered: what it used up -- bait gone, rods broken -- at their prices
+    uint32_t  spent;       // answered: the gil paid for its supplies, hers and his
     char      areaName[32]; // answered: for people
 } cl_venture_report;
 

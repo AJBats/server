@@ -32,16 +32,12 @@ namespace cardian::errand
     };
 
     // Where it stands: she is walking off (to a zone line, the auction house,
-    // the guard, and back), or she is gone from the world. A money venture
-    // over is returning while the venture keeper counts her takings, and back
-    // once it has: only then does she stand again. The Link's CL_ERRAND_GOING,
-    // CL_ERRAND_AWAY and CL_ERRAND_RETURNING by value (back shows as returning)
+    // the guard, and back), or she is gone from the world. The Link's
+    // CL_ERRAND_GOING and CL_ERRAND_AWAY by value
     enum class State : uint8_t
     {
-        Going     = 1,
-        Away      = 2,
-        Returning = 3,
-        Back      = 4,
+        Going = 1,
+        Away  = 2,
     };
 
     // What she is to the player: the Link's CL_CLUB_* by value
@@ -86,21 +82,11 @@ namespace cardian::errand
 
     inline auto stateName(const State state) -> std::string_view
     {
-        switch (state)
-        {
-            case State::Away:
-                return "away";
-            case State::Returning:
-                return "returning";
-            case State::Back:
-                return "back";
-            default:
-                return "going";
-        }
+        return state == State::Away ? "away" : "going";
     }
     inline auto stateOf(const std::string_view text) -> std::optional<State>
     {
-        for (const auto state : { State::Going, State::Away, State::Returning, State::Back })
+        for (const auto state : { State::Going, State::Away })
         {
             if (stateName(state) == text)
             {
@@ -110,10 +96,10 @@ namespace cardian::errand
         return std::nullopt;
     }
 
-    // Out of the world: away, or a money venture's takings being counted
+    // Out of the world: away
     constexpr auto gone(const State state) -> bool
     {
-        return state != State::Going;
+        return state == State::Away;
     }
 
     // A money venture's lengths: hours of the game clock, an Earth hour each

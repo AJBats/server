@@ -21,6 +21,8 @@
 
 #include "errands.h"
 
+#include "angler.h"
+
 #include "cardian_link.h"
 #include "club.h"
 #include "club_math.h"
@@ -37,6 +39,7 @@
 #include "common/database.h"
 #include "common/earth_time.h"
 #include "common/logging.h"
+#include "common/settings.h"
 #include "common/mmo.h"
 #include "common/timer.h"
 #include "entities/char_entity.h"
@@ -604,6 +607,21 @@ namespace pawn::errands
 
         // ---- the rabbit hole -----------------------------------------------------
 
+        // A money venture has her out at her spot: her saved place moved there
+        auto placedOut(const Record& r) -> bool
+        {
+            return r.args.contains("placed") && r.args.at("placed") == "1";
+        }
+
+        // What she wore in the ranged and ammo slots before her fishing kit
+        // went on, kept in the row so a restart finds it
+        auto wornOf(const Record& r) -> pawn::angler::Worn
+        {
+            return { .known  = r.args.contains("worn_ranged"),
+                     .ranged = static_cast<uint16>(cardian::errand::numberArg(r.args, "worn_ranged").value_or(0)),
+                     .ammo   = static_cast<uint16>(cardian::errand::numberArg(r.args, "worn_ammo").value_or(0)) };
+        }
+
         // Gone from the world: off the clock no more, out of any party, and
         // the ladder takes her body, keeping her online
         void leaveWorld(Record& r, const char* how)
@@ -678,6 +696,11 @@ namespace pawn::errands
             }
             else if (r.errand.kind == Kind::Money)
             {
+                // her fishing over (angler.h): her kit off, her body released
+                if (placedOut(r))
+                {
+                    pawn::angler::stop(charid, wornOf(r));
+                }
                 // where she left, saved again before the ladder stands her by it
                 if (r.args.contains("placed") && r.args.at("placed") == "1" && r.fromZone != 0)
                 {
@@ -733,51 +756,84 @@ namespace pawn::errands
             ShowInfoFmt("errands: {} is faded at {} (zone {}, area {}) while she works", nameOf(r.charid), r.title, zone, area);
         }
 
-        // The venture over, recalled or due: the keeper counts her takings and
-        // marks the row back, and she stands only then. Only a row still away
-        // is moved: the keeper may have ended the trip itself (a rod broken)
-        void returning(Record& r, const bool recalled)
+        // Where and with what she fishes: the row's choices, her spot's point
+        auto tripOf(const Record& r) -> pawn::angler::Trip
         {
-            if (recalled)
+            const auto profession = static_cast<uint8>(cardian::errand::numberArg(r.args, "profession").value_or(0));
+            const auto zone       = static_cast<uint16>(cardian::errand::numberArg(r.args, "zone").value_or(0));
+            const auto area       = static_cast<uint16>(cardian::errand::numberArg(r.args, "area").value_or(0));
+            const auto spot       = pawn::professions::spotOf(r.charid, profession, zone, area);
+            return { .charid     = r.charid,
+                     .accid      = r.accid,
+                     .profession = profession,
+                     .zone       = zone,
+                     .area       = area,
+                     .areaName   = spot.has_value() ? spot->name : std::string{},
+                     .spot       = spot.has_value() ? spot->centre : position_t{},
+                     .rod        = static_cast<uint16>(cardian::errand::numberArg(r.args, "rod").value_or(0)),
+                     .bait       = static_cast<uint16>(cardian::errand::numberArg(r.args, "bait").value_or(0)),
+                     .leftAt     = r.errand.left,
+                     .minutes    = static_cast<uint32>(cardian::errand::numberArg(r.args, "minutes").value_or(0)),
+                     .letItemsGo = r.args.contains("items") && r.args.at("items") == "go",
+                     .turbo      = r.args.contains("debug") && r.args.at("debug") == "1" };
+        }
+
+        auto stopWhy(const pawn::angler::Stop stop) -> std::string_view
+        {
+            switch (stop)
             {
-                r.args["recalled"] = "1";
+                case pawn::angler::Stop::RodBroke:
+                    return "her rod broke, and she held no spare";
+                case pawn::angler::Stop::BagsFull:
+                    return "her inventory is full";
+                case pawn::angler::Stop::NoGil:
+                    return "neither purse could buy her kit";
+                case pawn::angler::Stop::CannotFish:
+                    return "she could not fish there";
+                default:
+                    return "";
             }
-            const auto moved = db::preparedStmt("UPDATE cardian_errands SET state = 'returning', args = ? WHERE charid = ? AND state = 'away'",
-                                                cardian::errand::argsText(r.args), r.charid);
-            r.errand.state = moved && moved->rowsAffected() == 1 ? State::Returning : State::Back;
-            ShowInfoFmt("errands: {}'s venture at {} is over{}; {}", nameOf(r.charid), r.title, recalled ? " (called back)" : "",
-                        r.errand.state == State::Returning ? "the venture keeper counts her takings" : "the keeper ended it already");
         }
 
-        // The keeper has counted her takings: its word is the row's state
-        auto markedBack(const uint32 charid) -> bool
-        {
-            const auto rset = db::preparedStmt("SELECT state FROM cardian_errands WHERE charid = ?", charid);
-            return rset && rset->next() && rset->get<std::string>("state") == "back";
-        }
-
+        // Away: placed at her spot once the ladder has taken her body, then
+        // fishing (angler.h) until her time is up or something stops her
         void tickMoney(Record& r, const uint32 clock)
         {
             const auto charid = r.charid;
-            if (r.errand.state == State::Away)
+            if (!placedOut(r))
             {
-                if ((!r.args.contains("placed") || r.args.at("placed") != "1") && pawn::findPawn(charid) == nullptr)
+                if (pawn::findPawn(charid) != nullptr)
                 {
-                    place(r);
+                    return; // the ladder has not taken her body yet
                 }
-                if (cardian::errand::due(r.errand, clock))
-                {
-                    returning(r, false);
-                }
-                else if (markedBack(charid)) // the keeper ended the trip itself: a rod broke
-                {
-                    r.errand.state = State::Back;
-                }
+                place(r);
+            }
+            if (cardian::errand::due(r.errand, clock))
+            {
+                finish(charid, cardian::errand::Kept::Whole, false);
                 return;
             }
-            if (r.errand.state == State::Back || markedBack(charid))
+            auto stop = pawn::angler::Stop::None;
+            if (pawn::angler::fishing(charid))
             {
-                r.errand.state = State::Back;
+                stop = pawn::angler::tick(charid);
+            }
+            else
+            {
+                // what she wore is kept before her kit goes on: a restart
+                // between the two would take the kit for what she wore
+                auto worn = wornOf(r);
+                stop      = pawn::angler::start(tripOf(r), worn,
+                                                [&](const pawn::angler::Worn& w)
+                                                {
+                                                    r.args["worn_ranged"] = std::to_string(w.ranged);
+                                                    r.args["worn_ammo"]   = std::to_string(w.ammo);
+                                                    save(r);
+                                                });
+            }
+            if (stop != pawn::angler::Stop::None)
+            {
+                ShowInfoFmt("errands: {}'s fishing venture is cut short: {}", nameOf(charid), stopWhy(stop));
                 finish(charid, cardian::errand::Kept::Whole, false);
             }
         }
@@ -1080,7 +1136,8 @@ namespace pawn::errands
         // A money venture at a profession of hers (professions.h): fishing, at
         // a spot of the venture keeper's, with a bait of the catalog, for 1 or
         // 2 hours of the game clock. Out of his party and to her zone line
-        // toward the spot, as a quest; the keeper works it once she is away
+        // toward the spot, as a quest; the map fishes it once she is away
+        // (angler.h)
         auto sendMoney(CCharEntity* PPlayer, Record r, const cl_send_errand& ask) -> uint16
         {
             if (ask.profession != CL_PROF_FISHING)
@@ -1091,7 +1148,9 @@ namespace pawn::errands
             {
                 return CL_S_NO_PROFESSION;
             }
-            if (!cardian::errand::ventureHours(ask.hours))
+            // hours 0: the dev profile's one-minute venture, casting its hour at once
+            const bool debug = ask.hours == 0 && settings::get<bool>("pawn.VENTURE_DEBUG");
+            if (!cardian::errand::ventureHours(ask.hours) && !debug)
             {
                 return CL_S_NOT_OFFERED;
             }
@@ -1104,10 +1163,6 @@ namespace pawn::errands
             {
                 return CL_S_NOT_A_TOOL;
             }
-            if (!pawn::professions::keeperAlive())
-            {
-                return CL_S_KEEPER_DOWN;
-            }
             if (const auto* PPawn = pawn::findPawn(r.charid); PPawn != nullptr && PPawn->isDead())
             {
                 return CL_S_KNOCKED_OUT;
@@ -1117,8 +1172,10 @@ namespace pawn::errands
             r.args["area"]       = std::to_string(ask.area);
             r.args["bait"]       = std::to_string(ask.bait);
             r.args["rod"]        = std::to_string(ask.rod);
+            r.args["items"]      = ask.letItemsGo != 0 ? "go" : "keep";
             r.args["hours"]      = std::to_string(ask.hours);
-            r.args["minutes"]    = std::to_string(static_cast<uint32>(ask.hours) * 60);
+            r.args["minutes"]    = std::to_string(debug ? 1u : static_cast<uint32>(ask.hours) * 60);
+            r.args["debug"]      = debug ? "1" : "0";
             r.args["placed"]     = "0";
             r.args["route"]      = cardian::errand::routeText({ ask.zone });
             r.errand.route       = { ask.zone };
@@ -1130,7 +1187,7 @@ namespace pawn::errands
             }
             r.title         = zone;
             const auto line = fmt::format("{} sets out to fish in {}.", nameOf(r.charid), zone);
-            pawn::professions::saveSet(r.charid, ask.profession, ask.rod, ask.bait);
+            pawn::professions::saveSet(r.charid, ask.profession, ask.rod, ask.bait, ask.letItemsGo != 0);
             return setOut(PPlayer, std::move(r), line);
         }
 
@@ -1182,10 +1239,8 @@ namespace pawn::errands
             ShowInfoFmt("errands: {} calls {} back", PChar->getName(), nameOf(ask.cardian));
             if (it->second.errand.kind == Kind::Money && cardian::errand::gone(it->second.errand.state))
             {
-                if (it->second.errand.state == State::Away)
-                {
-                    returning(it->second, true);
-                }
+                it->second.args["recalled"] = "1";
+                finish(ask.cardian, cardian::errand::Kept::Whole, true);
                 reply.finish(ask, CL_S_OK);
                 return;
             }
@@ -1274,7 +1329,7 @@ namespace pawn::errands
                          "`kind` varchar(16) NOT NULL, "
                          "`args` varchar(255) NOT NULL DEFAULT '', "
                          "`title` varchar(64) NOT NULL DEFAULT '', "
-                         "`state` enum('going','away','returning','back') NOT NULL DEFAULT 'going', "
+                         "`state` enum('going','away') NOT NULL DEFAULT 'going', "
                          "`started` int(10) unsigned NOT NULL DEFAULT '0', "
                          "`left_at` int(10) unsigned NOT NULL DEFAULT '0', "
                          "`ends` int(10) unsigned NOT NULL DEFAULT '0', "
@@ -1286,8 +1341,6 @@ namespace pawn::errands
                          "`from_z` float NOT NULL DEFAULT '0', "
                          "`from_rot` tinyint(3) unsigned NOT NULL DEFAULT '0', "
                          "PRIMARY KEY (`charid`), KEY `accid` (`accid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        // an older table: a money venture's returning and back
-        db::preparedStmt("ALTER TABLE `cardian_errands` MODIFY `state` enum('going','away','returning','back') NOT NULL DEFAULT 'going'");
     }
 
     // Every row into memory. A walk off was the map's and ended with it: an
@@ -1306,8 +1359,16 @@ namespace pawn::errands
             r.charid       = rset->get<uint32>("charid");
             r.accid        = rset->get<uint32>("accid");
             r.playerCharID = rset->get<uint32>("player_charid");
-            const auto kind  = cardian::errand::kindOf(rset->get<std::string>("kind"));
-            const auto state = cardian::errand::stateOf(rset->get<std::string>("state"));
+            const auto kind      = cardian::errand::kindOf(rset->get<std::string>("kind"));
+            const auto stateText = rset->get<std::string>("state");
+            auto       state     = cardian::errand::stateOf(stateText);
+            // a fishing venture the old venture keeper left on its way home:
+            // over, and finished at the first tick as any venture is
+            const bool keeperDone = !state.has_value() && kind == Kind::Money && (stateText == "returning" || stateText == "back");
+            if (keeperDone)
+            {
+                state = State::Away;
+            }
             if (!kind.has_value() || !state.has_value())
             {
                 ShowWarningFmt("errands: the row of {} does not read (kind '{}', state '{}'); it is let go", r.charid, rset->get<std::string>("kind"),
@@ -1321,7 +1382,7 @@ namespace pawn::errands
             r.errand.state    = *state;
             r.errand.started  = rset->get<uint32>("started");
             r.errand.left     = rset->get<uint32>("left_at");
-            r.errand.ends     = rset->get<uint32>("ends");
+            r.errand.ends     = keeperDone ? 1 : rset->get<uint32>("ends");
             r.errand.target   = rset->get<uint32>("target");
             r.errand.progress = rset->get<uint32>("progress");
             r.errand.route    = cardian::errand::routeOf(r.args.contains("route") ? r.args.at("route") : std::string{});
