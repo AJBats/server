@@ -29,6 +29,7 @@
 #include "professions.h"
 #include "seats.h"
 #include "venture_sales.h"
+#include "venture_shop.h"
 
 #include "common/database.h"
 #include "common/earth_time.h"
@@ -329,16 +330,20 @@ namespace pawn::angler
             db::preparedStmt("UPDATE cardian_venture_report SET spent = spent + ?, updated = ? WHERE charid = ?", gil, realNow(), charid);
         }
 
-        // What a piece of her kit is worth: the catalog's price, else what a
-        // vendor would give for it
-        auto worth(const uint16 item) -> uint32
+        // What `count` of a piece of her kit is worth: its share of what a
+        // venture's purchase of it costs now, else what a vendor would give
+        auto worth(const uint16 item, const uint32 count) -> uint32
         {
-            if (const auto price = pawn::professions::priceOf(item); price.has_value())
+            if (count == 0)
             {
-                return *price;
+                return 0;
+            }
+            if (const auto price = pawn::ventureshop::purchasePrice(item); price.has_value())
+            {
+                return static_cast<uint32>(static_cast<uint64>(*price) * count / pawn::ventureshop::purchaseQuantity(item));
             }
             const auto* PKind = xi::items::lookup(item);
-            return PKind != nullptr ? PKind->getBasePrice() : 0;
+            return PKind != nullptr ? PKind->getBasePrice() * count : 0;
         }
 
         // A cast's supplies used up: the bait gone and a rod broken, at their
@@ -348,7 +353,7 @@ namespace pawn::angler
             auto*        PBody = a.body.get();
             const uint32 rods  = countHeld(PBody, a.trip.rod);
             const uint32 bait  = countHeld(PBody, a.trip.bait);
-            const uint32 used  = (a.rodsHeld > rods ? (a.rodsHeld - rods) * worth(a.trip.rod) : 0) + (a.baitHeld > bait ? (a.baitHeld - bait) * worth(a.trip.bait) : 0);
+            const uint32 used  = worth(a.trip.rod, a.rodsHeld > rods ? a.rodsHeld - rods : 0) + worth(a.trip.bait, a.baitHeld > bait ? a.baitHeld - bait : 0);
             if (used > 0)
             {
                 db::preparedStmt("UPDATE cardian_venture_report SET supplies = supplies + ?, updated = ? WHERE charid = ?", used, realNow(), a.trip.charid);
@@ -362,48 +367,124 @@ namespace pawn::angler
 
         // ---- her kit ----------------------------------------------------------
 
-        // Bought at the catalog's price into her kit bags, her gil first and
-        // then his. False when the two purses cannot pay
-        auto buy(Angler& a, const uint16 item, const uint32 price, const uint32 quantity) -> bool
+        // Gil into her purse, or out of it
+        auto purse(CCharEntity* PBody, const uint32 gil, const bool in) -> bool
         {
-            auto*        PBody = a.body.get();
-            const uint32 cost  = price * quantity;
-            const uint32 hers  = std::min(gilOf(PBody), cost);
-            const uint32 his   = cost - hers;
-            uint32       payer = 0;
-            if (his > 0 && (payer = pawn::professions::payFromHim(a.trip.accid, his)) == 0)
-            {
-                ShowInfoFmt("angler: {} cannot buy item {} x{} ({} gil): hers holds {}, and her player's is short", nameOf(a.trip.charid), item, quantity, cost,
-                            hers);
-                return false;
-            }
             auto       transaction = ItemClaimTransaction::start(PBody);
-            const bool bought      = transaction && (hers == 0 || transaction->pay(hers)) && transaction->give(homeOf(PBody), item, quantity).has_value() &&
-                                transaction->commit();
+            const bool moved       = transaction && (in ? transaction->earn(gil) : transaction->pay(gil)) && transaction->commit();
             PBody->clearPacketList();
-            if (!bought)
+            return moved;
+        }
+
+        // What a purchase came to
+        enum class Bought : uint8
+        {
+            Yes,
+            NobodySells, // nobody sells it now, or every sale fell through
+            CannotPay,   // her gil and his together fall short of the cheapest
+            BagsFull,    // no room in her inventory, where a purchase lands
+            Failed,      // his gil could not be moved for it (the map log says why)
+        };
+
+        // A venture's purchase of an item (a rod, or a whole stack of bait)
+        // where it costs least, the auction house or a guild shop open now
+        // (venture_shop.h), her gil first and then his: his share goes into
+        // her purse for the sale, and back to him when it does not go
+        // through. A sale that falls through (sold meanwhile, the shop
+        // short) tries the next cheapest. It lands in her inventory; her kit
+        // is tidied into a wardrobe as it is worn
+        auto buy(Angler& a, const uint16 item) -> Bought
+        {
+            auto* PBody = a.body.get();
+            if (PBody->getStorage(LOC_INVENTORY)->GetFreeSlotsCount() == 0)
             {
-                ShowErrorFmt("angler: {}'s purchase of item {} x{} did not go through", nameOf(a.trip.charid), item, quantity);
-                if (payer != 0)
+                return Bought::BagsFull;
+            }
+            const uint32 quantity = pawn::ventureshop::purchaseQuantity(item);
+            for (const auto& offer : pawn::ventureshop::offers(item))
+            {
+                const uint32 cost  = offer.total;
+                const uint32 hers  = std::min(gilOf(PBody), cost);
+                const uint32 his   = cost - hers;
+                uint32       payer = 0;
+                if (his > 0)
                 {
-                    pawn::professions::refundHim(payer, his);
+                    if ((payer = pawn::professions::payFromHim(a.trip.accid, his)) == 0)
+                    {
+                        ShowInfoFmt("angler: {} cannot buy item {} x{} ({} gil at {}): hers holds {}, and her player's is short", nameOf(a.trip.charid), item,
+                                    quantity, cost, pawn::ventureshop::whereOf(offer), hers);
+                        return Bought::CannotPay;
+                    }
+                    if (!purse(PBody, his, true))
+                    {
+                        pawn::professions::refundHim(payer, his);
+                        ShowErrorFmt("angler: {} could not take her player's {} gil into her purse", nameOf(a.trip.charid), his);
+                        return Bought::Failed;
+                    }
                 }
-                return false;
+                const bool bought = pawn::ventureshop::take(PBody, item, offer);
+                PBody->clearPacketList();
+                if (!bought)
+                {
+                    if (his > 0)
+                    {
+                        if (!purse(PBody, his, false))
+                        {
+                            ShowErrorFmt("angler: {} could not hand her player's {} gil back out of her purse; it stays in hers", nameOf(a.trip.charid), his);
+                            return Bought::Failed;
+                        }
+                        pawn::professions::refundHim(payer, his);
+                    }
+                    ShowInfoFmt("angler: {}'s purchase of item {} x{} at {} did not go through", nameOf(a.trip.charid), item, quantity,
+                                pawn::ventureshop::whereOf(offer));
+                    continue;
+                }
+                if (his > 0)
+                {
+                    pawn::professions::recordPurchase({ .cardian    = a.trip.charid,
+                                                        .accid      = a.trip.accid,
+                                                        .profession = a.trip.profession,
+                                                        .item       = item,
+                                                        .quantity   = static_cast<uint16>(quantity),
+                                                        .herGil     = hers,
+                                                        .hisGil     = his,
+                                                        .payer      = payer });
+                }
+                reportSpent(a.trip.charid, cost);
+                ShowInfoFmt("angler: {} buys item {} x{} for {} gil at {} ({} hers, {} her player's)", nameOf(a.trip.charid), item, quantity, cost,
+                            pawn::ventureshop::whereOf(offer), hers, his);
+                return Bought::Yes;
             }
-            if (his > 0)
+            return Bought::NobodySells;
+        }
+
+        // A piece of her kit just bought worn, or why she cannot fish on
+        auto kitWith(Angler& a, const uint16 item, const uint8 equipSlot, const Bought bought) -> Stop
+        {
+            switch (bought)
             {
-                pawn::professions::recordPurchase({ .cardian    = a.trip.charid,
-                                                    .accid      = a.trip.accid,
-                                                    .profession = a.trip.profession,
-                                                    .item       = item,
-                                                    .quantity   = static_cast<uint16>(quantity),
-                                                    .herGil     = hers,
-                                                    .hisGil     = his,
-                                                    .payer      = payer });
+                case Bought::Yes:
+                    if (wear(a.body.get(), item, equipSlot, true))
+                    {
+                        return Stop::None;
+                    }
+                    ShowWarningFmt("angler: {} bought item {} and could not wear it", nameOf(a.trip.charid), item);
+                    return Stop::CannotFish;
+                case Bought::NobodySells:
+                    ShowWarningFmt("angler: {} has no item {} left, and nobody sells it now", nameOf(a.trip.charid), item);
+                    news(a, CL_NEWS_NO_KIT, item);
+                    return Stop::CannotFish;
+                case Bought::BagsFull:
+                    news(a, CL_NEWS_BAGS_FULL, 0);
+                    return Stop::BagsFull;
+                case Bought::Failed:
+                    news(a, CL_NEWS_CANNOT_FISH, 0);
+                    return Stop::CannotFish;
+                case Bought::CannotPay:
+                    break;
             }
-            reportSpent(a.trip.charid, cost);
-            ShowInfoFmt("angler: {} buys item {} x{} for {} gil ({} hers, {} her player's)", nameOf(a.trip.charid), item, quantity, cost, hers, his);
-            return true;
+            news(a, CL_NEWS_NO_GIL, item);
+            return Stop::NoGil;
         }
 
         // Her rod worn as she sets out: the one she wears, one of hers, or a
@@ -417,23 +498,17 @@ namespace pawn::angler
             {
                 return Stop::None;
             }
-            const auto price = pawn::professions::priceOf(rod);
-            if (!pawn::professions::isStarter(rod) || !price.has_value())
+            if (!pawn::professions::isStarter(rod))
             {
                 ShowWarningFmt("angler: {} holds no rod {} and it is not one a venture buys", nameOf(a.trip.charid), rod);
                 news(a, CL_NEWS_NO_KIT, rod);
                 return Stop::CannotFish;
             }
-            if (buy(a, rod, *price, 1) && wear(PBody, rod, SLOT_RANGED, true))
-            {
-                return Stop::None;
-            }
-            news(a, CL_NEWS_NO_GIL, rod);
-            return Stop::NoGil;
+            return kitWith(a, rod, SLOT_RANGED, buy(a, rod));
         }
 
         // Her bait worn: the stack she wears, more of hers, or a whole stack
-        // bought, as the auction house sells it (a lure, one)
+        // bought where it costs least (a lure, one)
         auto kitBait(Angler& a) -> Stop
         {
             auto*        PBody = a.body.get();
@@ -442,20 +517,7 @@ namespace pawn::angler
             {
                 return Stop::None;
             }
-            const auto  price = pawn::professions::priceOf(bait);
-            const auto* PKind = xi::items::lookup(bait);
-            if (!price.has_value() || PKind == nullptr)
-            {
-                ShowWarningFmt("angler: {} has no bait {} left, and the auction house sells none", nameOf(a.trip.charid), bait);
-                news(a, CL_NEWS_NO_KIT, bait);
-                return Stop::CannotFish;
-            }
-            if (buy(a, bait, *price, std::max<uint32>(PKind->getStackSize(), 1)) && wear(PBody, bait, SLOT_AMMO, true))
-            {
-                return Stop::None;
-            }
-            news(a, CL_NEWS_NO_GIL, bait);
-            return Stop::NoGil;
+            return kitWith(a, bait, SLOT_AMMO, buy(a, bait));
         }
 
         // ---- a cast -----------------------------------------------------------

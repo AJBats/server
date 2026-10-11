@@ -34,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 66: CLUB_MEMBER's ventureDone, a
+// compatible, the user, 2026-09-14). 68: PROFESSION_TOOL's and VENTURE_BAIT's
+// price the whole purchase's (a rod, or a stack of bait); 67: a venture's supplies bought where
+// they cost least, and no estimates -- PROFESSION_TOOL's, VENTURE_SPOT's and
+// VENTURE_BAIT's gilHour gone; 66: CLUB_MEMBER's ventureDone, a
 // venture over and its report unread; CL_VENTURE_KEPT; CL_NEWS_NO_KIT and
 // CL_NEWS_CANNOT_FISH; 65: a report per venture --
 // VENTURE_REPORT's length, earned, pending, supplies and spent in place of
@@ -132,7 +135,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 66 };
+enum { CL_PROTOCOL = 68 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2288,10 +2291,11 @@ typedef struct cl_club_recruit
 // A profession is taken up on an alt or a cardian he owns from her Linkshell
 // submenu; its ventures go under Assign Venture (SEND_ERRAND,
 // CL_ERRAND_MONEY), each with its kit -- fishing: a rod and a bait, each one
-// she holds or one bought at the auction house as the venture starts -- and
-// the kit sent becomes her profession's set. While one is under way the
-// census watcher (xi_census) works it on the game clock, and pays from her
-// purse, then from his (VENTURE_PAID).
+// she holds or one bought as the venture starts, where it costs least (the
+// auction house or a guild shop) -- and the kit sent becomes her
+// profession's set. While one is under way the map fishes it on the game
+// clock (pawn/angler.h), and pays from her purse, then from his
+// (VENTURE_PAID).
 
 // The professions, by the game's own skills
 enum
@@ -2360,7 +2364,7 @@ enum
 // Which kit PROFESSION_TOOLS asks for
 enum
 {
-    CL_TOOLS_VENTURE = 1, // the rods a venture at a spot may take: the starter rods, bought at the auction house, and every rod she holds
+    CL_TOOLS_VENTURE = 1, // the rods a venture may take: the starter rods, bought where they cost least, and every rod she holds
     CL_TOOLS_SLOT    = 3, // what she holds that may go in one slot of her set: rods for the ranged slot, baits for the ammo slot, the profession's gear for the rest
 };
 
@@ -2369,15 +2373,14 @@ typedef struct cl_profession_tool
 {
     cl_header h;
     uint16_t  item;    // the item id
-    uint8_t   owned;   // how many she holds, to 255; 0: bought at the auction house as the venture starts
+    uint8_t   owned;   // how many she holds, to 255; 0: bought as the venture starts
     uint8_t   kind;    // CL_TOOL_*
-    uint32_t  price;   // the auction house's price for one, by the price book; 0 unknown
-    uint32_t  gilHour; // CL_TOOLS_VENTURE: estimated gil an hour at the spot with this rod and its best bait; 0 unknown
+    uint32_t  price;   // a venture's purchase of it (one rod, or a whole stack of bait), where it costs least now; 0 nobody sells it
 } cl_profession_tool;
 
 // A profession's kit: each a PROFESSION_TOOL (CL_F_MORE), then this.
-// CL_TOOLS_VENTURE names its spot (zone and area); the starter rods first,
-// cheapest first, then those she holds
+// CL_TOOLS_VENTURE: the starter rods first, cheapest first, then those she
+// holds (zone and area are not read)
 typedef struct cl_profession_tools
 {
     cl_header h;
@@ -2425,7 +2428,6 @@ typedef struct cl_venture_spot
     uint8_t   level;    // unused: 0
     uint8_t   hops;     // zone lines from where she stands
     uint16_t  spare2;
-    uint32_t  gilHour;  // estimated: gil an hour of the game clock, at her skill, with her rod and the best bait
     char      name[32]; // the area's own name, for people ("South Landing", "Whole Zone")
 } cl_venture_spot;
 
@@ -2446,14 +2448,14 @@ typedef struct cl_venture_bait
 {
     cl_header h;
     uint16_t  item;    // the bait's item id
-    uint8_t   owned;   // how many she holds, to 255; 0: bought at the auction house as the venture starts
+    uint8_t   owned;   // how many she holds, to 255; 0: bought as the venture starts
     uint8_t   spare;
-    uint32_t  price;   // the auction house's price for one, by the price book
-    uint32_t  gilHour; // estimated: gil an hour at this spot with this rod and this bait
+    uint32_t  price;   // a venture's purchase of it (a whole stack; a lure, one), where it costs least now; 0 nobody sells it
 } cl_venture_bait;
 
-// The baits for one spot of hers with one rod: each a VENTURE_BAIT
-// (CL_F_MORE), best first, then this
+// Every bait and lure of the game: each a VENTURE_BAIT (CL_F_MORE) -- what
+// she holds, then what is for sale, cheapest first, then the rest -- then
+// this
 typedef struct cl_venture_baits
 {
     cl_header h;
@@ -2465,9 +2467,9 @@ typedef struct cl_venture_baits
     uint8_t   spare;
 } cl_venture_baits;
 
-// Pushed, one way: on a venture she bought a piece of her kit at the auction
-// house, her gil short, his paying the rest. The addon words the line for
-// his log, both purses' shares in it
+// Pushed, one way: on a venture she bought a piece of her kit, her gil
+// short, his paying the rest. The addon words the line for his log, both
+// purses' shares in it
 typedef struct cl_venture_paid
 {
     cl_header h;

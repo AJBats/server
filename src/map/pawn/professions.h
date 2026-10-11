@@ -104,9 +104,8 @@ namespace pawn::professions
     auto payFromHim(uint32 accid, uint32 gil) -> uint32;
     void refundHim(uint32 payer, uint32 gil);
 
-    // The catalog's price for one, nullopt where the auction house sells none
-    auto priceOf(uint16 item) -> std::optional<uint32>;
-    // A starter rod: the only rods a venture buys
+    // The starter rods, the only rods a venture buys (pawn.VENTURE_STARTER_RODS)
+    auto starterRods() -> std::vector<uint16>;
     auto isStarter(uint16 rod) -> bool;
 
     // A purchase his gil helped pay for: the purchase line his addon is told

@@ -108,6 +108,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_sales.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_sales.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/bodies.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_shop.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_shop.h
 )
 
 set(MAP_CORE_SOURCES

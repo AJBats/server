@@ -158,12 +158,12 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_profession) == 56);
     STATIC_REQUIRE(sizeof(cl_profession_slot) == 24);
     STATIC_REQUIRE(sizeof(cl_professions) == 24);
-    STATIC_REQUIRE(sizeof(cl_profession_tool) == 28);
+    STATIC_REQUIRE(sizeof(cl_profession_tool) == 24);
     STATIC_REQUIRE(sizeof(cl_profession_tools) == 28);
     STATIC_REQUIRE(sizeof(cl_start_profession) == 24);
-    STATIC_REQUIRE(sizeof(cl_venture_spot) == 60);
+    STATIC_REQUIRE(sizeof(cl_venture_spot) == 56);
     STATIC_REQUIRE(sizeof(cl_venture_spots) == 24);
-    STATIC_REQUIRE(sizeof(cl_venture_bait) == 28);
+    STATIC_REQUIRE(sizeof(cl_venture_bait) == 24);
     STATIC_REQUIRE(sizeof(cl_venture_baits) == 28);
     STATIC_REQUIRE(sizeof(cl_venture_paid) == 36);
     STATIC_REQUIRE(sizeof(cl_venture_news) == 24);

@@ -936,10 +936,11 @@ namespace pawn::linkapi
         // exchange, the linkshell's errand table (errands.h): a library that did not load, or a
         // function that failed, says so in the map log once and answers
         // CL_S_REFUSED
-        constexpr std::array<std::pair<const char*, const char*>, 3> kLibraries{ {
+        constexpr std::array<std::pair<const char*, const char*>, 4> kLibraries{ {
             { "finder", "./modules/cardian/lua/finder_goals.lua" },
             { "exchange", "./modules/cardian/lua/conquest_exchange.lua" },
             { "errands", "./modules/cardian/lua/errand_quests.lua" },
+            { "ventureShops", "./modules/cardian/lua/venture_shops.lua" },
         } };
 
         // The Debug screen's spawn and despawn (pawn::spawn, pawn::despawn)

@@ -663,6 +663,9 @@ xi.settings.pawn =
     -- tools/economy/settings.yaml), inside which a listing at the next
     -- buyer's price is all but sure to sell (pawn/venture_sales.h).
     VENTURE_SALE_WINDOW_DAYS = 3,
+    -- The rods a fishing venture buys when she holds none, by item id: the
+    -- Willow, Yew and Bamboo Fishing Rods. Any rod she holds she may take
+    VENTURE_STARTER_RODS = "17391,17390,17389",
     -- The dev profile's debug venture: a third length, one minute, which
     -- casts an hour's worth through the server's own fishing code at once
     -- (pawn/angler.h). Off here; profiles/dev.lua turns it on.

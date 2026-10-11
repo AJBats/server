@@ -27,6 +27,7 @@
 #include "errands.h"
 #include "pawn.h"
 #include "seats.h"
+#include "venture_shop.h"
 
 #include "common/database.h"
 #include "common/settings.h"
@@ -203,15 +204,20 @@ namespace pawn::professions
             return gear;
         }
 
-        // A catalog kind's items, or fishing's gear for a slot: what may go in
-        // one slot of her fishing set
+        auto isRod(const uint16 item) -> bool
+        {
+            const auto rset = db::preparedStmt("SELECT 1 FROM fishing_rod WHERE rodid = ?", item);
+            return rset && rset->next();
+        }
+
+        // A rod of the game's (fishing_rod) in the ranged slot, a bait or
+        // lure (fishing_bait) in the ammo slot, fishing's gear in the rest:
+        // what may go in one slot of her fishing set
         auto fitsSlot(const uint16 item, const uint8 slot) -> bool
         {
             if (slot == SLOT_RANGED || slot == SLOT_AMMO)
             {
-                const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_catalog WHERE item = ? AND kind = ?", item,
-                                                   std::string(slot == SLOT_RANGED ? "rod" : "bait"));
-                return rset && rset->next();
+                return slot == SLOT_RANGED ? isRod(item) : isBait(item);
             }
             const auto it = fishingGear().find(item);
             return it != fishingGear().end() && (it->second & (1u << slot)) != 0;
@@ -276,28 +282,22 @@ namespace pawn::professions
             reply.finish(done, CL_S_OK);
         }
 
-        // A rod of the catalog row, its price, how many she holds and its best
-        // estimate at a spot
-        auto rodRow(const uint32 charid, const uint16 item, const uint32 price, const uint16 zone, const uint16 area) -> cl_profession_tool
+        // A piece of her kit's row: what a venture's purchase of it costs now
+        // where it costs least (`prices`, venture_shop.h; 0 when nobody sells
+        // it), and how many she holds
+        auto toolRow(const uint32 charid, const uint16 item, const uint8 kind, const std::unordered_map<uint16, uint32>& prices) -> cl_profession_tool
         {
             auto row  = make<cl_profession_tool>();
             row.item  = item;
-            row.kind  = CL_TOOL_ROD;
-            row.price = price;
+            row.kind  = kind;
+            row.price = prices.contains(item) ? prices.at(item) : 0;
             row.owned = static_cast<uint8>(std::min<uint32>(heldCount(charid, item), UINT8_MAX));
-            if (const auto best = db::preparedStmt("SELECT COALESCE(MAX(gil_hour), 0) AS best FROM cardian_venture_combos "
-                                                   "WHERE charid = ? AND zone = ? AND area = ? AND rod = ?",
-                                                   charid, zone, area, item);
-                best && best->next())
-            {
-                row.gilHour = best->get<uint32>("best");
-            }
             return row;
         }
 
-        // A profession's kit. For a venture at a spot: the starter rods,
-        // cheapest first, then every other rod she holds. For a slot of her
-        // set: what she holds that may go there
+        // A profession's kit. For a venture: the starter rods, cheapest first,
+        // then every other rod she holds. For a slot of her set: what she
+        // holds that may go there
         void tools(CCharEntity* PChar, const cl_profession_tools& ask, Reply& reply)
         {
             if (!mayTakeUp(PChar, ask.cardian))
@@ -343,33 +343,37 @@ namespace pawn::professions
                 reply.finish(done, CL_S_OK);
                 return;
             }
-            const auto rset = db::preparedStmt("SELECT item, kind, price, starter FROM cardian_venture_catalog ORDER BY kind, starter DESC, price, item");
+            // the starter rods, for a venture; then what she holds that may go
+            const auto starters = ask.which == CL_TOOLS_VENTURE ? starterRods() : std::vector<uint16>{};
+            const bool rods     = ask.which == CL_TOOLS_VENTURE || ask.slot == SLOT_RANGED;
+            std::vector<uint16> held;
+            const auto rset = db::preparedStmt(rods ? "SELECT rodid AS item FROM fishing_rod ORDER BY rodid" : "SELECT baitid AS item FROM fishing_bait ORDER BY baitid");
             while (rset && rset->next())
             {
-                const auto item  = rset->get<uint16>("item");
-                const bool rod   = rset->get<std::string>("kind") == "rod";
-                const auto price = rset->get<uint32>("price");
-                if (ask.which == CL_TOOLS_VENTURE)
+                const auto item = rset->get<uint16>("item");
+                if (std::ranges::find(starters, item) == starters.end() && heldCount(ask.cardian, item) > 0)
                 {
-                    if (rod && (rset->get<uint8>("starter") != 0 || heldCount(ask.cardian, item) > 0))
-                    {
-                        send(rodRow(ask.cardian, item, price, ask.zone, ask.area));
-                    }
-                    continue;
+                    held.push_back(item);
                 }
-                if (ask.which == CL_TOOLS_SLOT && rod != (ask.slot == SLOT_RANGED))
-                {
-                    continue; // the ranged slot takes rods, the ammo slot baits
-                }
-                if (const auto held = heldCount(ask.cardian, item); held > 0)
-                {
-                    auto row  = make<cl_profession_tool>();
-                    row.item  = item;
-                    row.kind  = rod ? CL_TOOL_ROD : CL_TOOL_BAIT;
-                    row.price = price;
-                    row.owned = static_cast<uint8>(std::min<uint32>(held, UINT8_MAX));
-                    send(row);
-                }
+            }
+            std::vector<uint16> all = starters;
+            all.insert(all.end(), held.begin(), held.end());
+            const auto prices = pawn::ventureshop::purchasePrices(all);
+
+            // the starter rods cheapest first (one nobody sells last)
+            std::vector<cl_profession_tool> first;
+            for (const auto rod : starters)
+            {
+                first.push_back(toolRow(ask.cardian, rod, CL_TOOL_ROD, prices));
+            }
+            std::ranges::stable_sort(first, {}, [](const cl_profession_tool& r) { return std::pair(r.price == 0, r.price); });
+            for (const auto& row : first)
+            {
+                send(row);
+            }
+            for (const auto item : held)
+            {
+                send(toolRow(ask.cardian, item, rods ? CL_TOOL_ROD : CL_TOOL_BAIT, prices));
             }
             auto done  = ask;
             done.count = count;
@@ -451,17 +455,16 @@ namespace pawn::professions
                 return;
             }
             uint8      count = 0;
-            const auto rset  = db::preparedStmt("SELECT zone, area, name, level, gil_hour, hops FROM cardian_venture_spots WHERE charid = ? AND profession = ? "
+            const auto rset  = db::preparedStmt("SELECT zone, area, name, level, hops FROM cardian_venture_spots WHERE charid = ? AND profession = ? "
                                                 "ORDER BY hops, zone, area",
                                                 ask.cardian, ask.profession);
             while (rset && rset->next() && count < UINT8_MAX)
             {
-                auto row    = make<cl_venture_spot>();
-                row.zone    = rset->get<uint16>("zone");
-                row.area    = rset->get<uint16>("area");
-                row.level   = rset->get<uint8>("level");
-                row.hops    = rset->get<uint8>("hops");
-                row.gilHour = rset->get<uint32>("gil_hour");
+                auto row  = make<cl_venture_spot>();
+                row.zone  = rset->get<uint16>("zone");
+                row.area  = rset->get<uint16>("area");
+                row.level = rset->get<uint8>("level");
+                row.hops  = rset->get<uint8>("hops");
                 setText(row.name, rset->get<std::string>("name"));
                 reply.more(row);
                 ++count;
@@ -473,8 +476,10 @@ namespace pawn::professions
 
         // Every bait and lure the game has (fishing_bait), whatever the spot and
         // the rod: which works where is the player's to find (the user,
-        // 2026-10-10). What she holds first, then what the auction house sells,
-        // cheapest first, then the rest, which nobody sells
+        // 2026-10-10). What she holds first, then what is for sale -- the
+        // auction house or a guild shop, wherever it costs least
+        // (venture_shop.h) -- cheapest first, then the rest, which nobody
+        // sells now
         void baits(CCharEntity* PChar, const cl_venture_baits& ask, Reply& reply)
         {
             if (!mayTakeUp(PChar, ask.cardian))
@@ -490,12 +495,21 @@ namespace pawn::professions
                 std::string name;
             };
             std::vector<Bait> all;
-            const auto rset = db::preparedStmt("SELECT b.baitid, b.name, COALESCE(c.price, 0) AS price FROM fishing_bait b "
-                                               "LEFT JOIN cardian_venture_catalog c ON c.item = b.baitid");
+            const auto rset = db::preparedStmt("SELECT baitid, name FROM fishing_bait");
             while (rset && rset->next())
             {
                 const auto item = rset->get<uint16>("baitid");
-                all.push_back({ .item = item, .price = rset->get<uint32>("price"), .owned = heldCount(ask.cardian, item), .name = rset->get<std::string>("name") });
+                all.push_back({ .item = item, .owned = heldCount(ask.cardian, item), .name = rset->get<std::string>("name") });
+            }
+            std::vector<uint16> items;
+            for (const auto& b : all)
+            {
+                items.push_back(b.item);
+            }
+            const auto prices = pawn::ventureshop::purchasePrices(items);
+            for (auto& b : all)
+            {
+                b.price = prices.contains(b.item) ? prices.at(b.item) : 0;
             }
             const auto rank = [](const Bait& b) { return b.owned > 0 ? 0 : (b.price > 0 ? 1 : 2); };
             std::ranges::sort(all, [&](const Bait& x, const Bait& y)
@@ -711,16 +725,23 @@ namespace pawn::professions
         ShowErrorFmt("professions: {} gil could not be handed back to {}", gil, payer);
     }
 
-    auto priceOf(const uint16 item) -> std::optional<uint32>
+    auto starterRods() -> std::vector<uint16>
     {
-        const auto rset = db::preparedStmt("SELECT price FROM cardian_venture_catalog WHERE item = ? AND price > 0", item);
-        return rset && rset->next() ? std::optional(rset->get<uint32>("price")) : std::nullopt;
+        std::vector<uint16> rods;
+        for (const auto& part : split(settings::get<std::string>("pawn.VENTURE_STARTER_RODS"), ","))
+        {
+            if (const auto rod = static_cast<uint16>(std::strtoul(part.c_str(), nullptr, 10)); rod != 0)
+            {
+                rods.push_back(rod);
+            }
+        }
+        return rods;
     }
 
     auto isStarter(const uint16 rod) -> bool
     {
-        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_catalog WHERE item = ? AND kind = 'rod' AND starter <> 0", rod);
-        return rset && rset->next();
+        const auto rods = starterRods();
+        return std::ranges::find(rods, rod) != rods.end();
     }
 
     void recordPurchase(const Purchase& p)
@@ -745,13 +766,6 @@ namespace pawn::professions
                          "`items_go` tinyint(3) unsigned NOT NULL DEFAULT 0, " // her last venture let items go
                          "`started` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`charid`, `profession`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_catalog` ("
-                         "`item` smallint(5) unsigned NOT NULL, "
-                         "`kind` enum('rod','bait') NOT NULL, "
-                         "`price` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "`name` varchar(64) NOT NULL DEFAULT '', "
-                         "`starter` tinyint(3) unsigned NOT NULL DEFAULT 0, " // a starter rod, bought for a venture
-                         "PRIMARY KEY (`item`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture_spots` ("
                          "`charid` int(10) unsigned NOT NULL, "
                          "`profession` tinyint(3) unsigned NOT NULL, "
@@ -861,7 +875,6 @@ namespace pawn::professions
         // an older table: her set's bait, the starter rods, a purchase's shares
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `bait` smallint(5) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `items_go` tinyint(3) unsigned NOT NULL DEFAULT 0");
-        db::preparedStmt("ALTER TABLE `cardian_venture_catalog` ADD COLUMN IF NOT EXISTS `starter` tinyint(3) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `quantity` smallint(5) unsigned NOT NULL DEFAULT 1");
         db::preparedStmt("ALTER TABLE `cardian_venture_pay` ADD COLUMN IF NOT EXISTS `her_gil` int(10) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_venture_spots` ADD COLUMN IF NOT EXISTS `hops` tinyint(3) unsigned NOT NULL DEFAULT 0");
@@ -912,8 +925,7 @@ namespace pawn::professions
 
     auto rodTakeable(const uint32 charid, const uint16 rod) -> bool
     {
-        const auto rset = db::preparedStmt("SELECT starter FROM cardian_venture_catalog WHERE item = ? AND kind = 'rod'", rod);
-        return rset && rset->next() && (rset->get<uint8>("starter") != 0 || heldCount(charid, rod) > 0);
+        return isRod(rod) && (isStarter(rod) || heldCount(charid, rod) > 0);
     }
 
     void saveSet(const uint32 charid, const uint8 profession, const uint16 rod, const uint16 bait, const bool letItemsGo)
