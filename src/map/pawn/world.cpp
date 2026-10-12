@@ -1277,6 +1277,10 @@ namespace pawn::world::files
         // way out -- a doorway the mesh's shortest line would miss (the
         // Tanners' Guild: the mesh leaks through a wall)
         std::vector<std::array<float, 3>>   via;
+        // `lounge: true`: the player's idle linkshell members gather here
+        // (club.cpp's lounge). Only a slot so marked is one: a zone with
+        // none -- every field zone -- leaves them where they stand
+        bool                                lounge = false;
 
         auto seats() const -> uint32
         {
@@ -3371,7 +3375,7 @@ namespace pawn::world
         const auto* navMesh = PZone->navMesh();
         for (const auto& spec : table.specs)
         {
-            if (spec.activity != "stand" || !spec.clustered())
+            if (spec.activity != "stand" || !spec.lounge)
             {
                 continue;
             }

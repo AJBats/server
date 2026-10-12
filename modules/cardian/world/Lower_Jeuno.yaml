@@ -20,6 +20,7 @@ slots:
     enter: any
     exit: rolanberry_fields
     cliques: [1, 4]
+    lounge: true
   # -- Through traffic from upper_jeuno: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -89,6 +90,7 @@ slots:
     enter: any
     exit: any
     cliques: [1, 4]
+    lounge: true
   # Seeking party: off to the side, afternoons and evenings
   - activity: stand
     band: [1, 75]
@@ -99,6 +101,7 @@ slots:
     enter: any
     exit: rolanberry_fields
     cliques: [1, 2]
+    lounge: true
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand
     band: [1, 75]
@@ -109,6 +112,7 @@ slots:
     enter: rolanberry_fields
     exit: mog_house
     cliques: [1, 2]
+    lounge: true
   # -- AFK: one kneeler at each home point
   - activity: stand
     band: [1, 75]
@@ -138,6 +142,7 @@ slots:
     enter: mog_house
     exit: any
     cliques: [1, 3]
+    lounge: true
   # -- Shopping at Ghebi Damomohe
   - activity: stand
     band: [1, 75]

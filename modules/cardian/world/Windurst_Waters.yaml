@@ -20,6 +20,7 @@ slots:
     enter: any
     exit: west_sarutabaruta
     cliques: [1, 4]
+    lounge: true
   # Signet and out: a beat before Puroiko-Maiko, W.W., then through the gate
   - activity: stand
     band: [1, 75]
@@ -95,6 +96,7 @@ slots:
     enter: mog_house
     exit: any
     cliques: [1, 3]
+    lounge: true
   # -- Culinarians' Guild: at the door (TODO its hours: vhours and holiday by hand)
   - activity: stand
     band: [1, 75]

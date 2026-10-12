@@ -135,9 +135,10 @@ namespace pawn::world
     auto townOrder(uint32 charid) -> std::optional<TownOrder>;
     void noteReached(uint32 charid);
 
-    // Where people loiter in a zone: the clustered stand slots of its table
-    // (`cliques`), each its centre on the mesh and its spread; none in the
-    // field. A player's idle linkshell members gather at one (club.h)
+    // Where a player's idle linkshell members gather in a zone (club.h): the
+    // stand slots its table marks `lounge: true`, each its centre on the
+    // mesh and its spread. A zone that marks none has none, and they stand
+    // where they are
     struct Loiter
     {
         position_t at{};
