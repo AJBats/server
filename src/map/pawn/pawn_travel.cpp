@@ -344,6 +344,22 @@ namespace pawn::travel
         return std::move(route->points);
     }
 
+    auto routeToSafeGround(const xi::ZoneId zone, const position_t& from, const std::vector<cardian::route::Hazard>& hazards,
+                           const cardian::route::HazardSight& sight, const float within) -> std::optional<cardian::route::Route>
+    {
+        const auto* zm = meshOf(static_cast<uint16>(zone));
+        if (zm == nullptr)
+        {
+            return std::nullopt;
+        }
+        auto route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kBodyExtents, hazards, sight, within);
+        if (!route.has_value())
+        {
+            route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kLineExtents, hazards, sight, within);
+        }
+        return route;
+    }
+
     auto routeAvoiding(const xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                        const cardian::route::HazardSight& sight, const float reach) -> std::optional<cardian::route::Route>
     {

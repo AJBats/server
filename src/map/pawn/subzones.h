@@ -32,9 +32,12 @@
 // out of South Gustaberg to reach the high ground; a dungeon's floors are
 // pieces joined only by the drops between them. Polygons share a piece when
 // a link joins them both ways: the ground's own edges and the mesh's
-// two-way off-mesh links. A one-way off-mesh link (a ledge dropped from) is
-// a drop: from one piece into another, never back. Every polygon's piece is
-// kept in four bytes: the world's meshes hold millions.
+// off-mesh links walked both ways. An off-mesh link (a ledge, a step) is
+// climbed only where it rises no more than the mesh's own climb (its
+// walkableClimb, 1 yalm): a taller one is dropped down and never climbed,
+// whatever the mesh marks it, as is a one-way link -- a drop, from one piece
+// into another, never back. Every polygon's piece is kept in four bytes: the
+// world's meshes hold millions.
 namespace cardian::subzones
 {
     using Piece = uint32_t; // 1 and up; 0 is none (off the mesh, or a zone no mesh knows)
@@ -174,14 +177,27 @@ namespace cardian::subzones
                 {
                     continue;
                 }
-                const dtOffMeshConnection& con = tile->offMeshCons[p - tile->header->offMeshBase];
-                if (con.flags & DT_OFFMESH_CON_BIDIR)
+                // walked start to end unless that climbs past the mesh's
+                // climb; end to start only on a two-way link, and the same.
+                // Its ends as the route search reads them: the link's own
+                // vertices, which Detour snaps to the ground it lands on
+                const dtOffMeshConnection& con     = tile->offMeshCons[p - tile->header->offMeshBase];
+                const float*               atStart = &tile->verts[poly.verts[0] * 3];
+                const float*               atEnd   = &tile->verts[poly.verts[1] * 3];
+                const float                climb   = tile->header->walkableClimb;
+                const bool                 forward = atEnd[1] - atStart[1] <= climb; // Detour's y is up
+                const bool                 back    = (con.flags & DT_OFFMESH_CON_BIDIR) != 0 && atStart[1] - atEnd[1] <= climb;
+                if (forward && back)
                 {
                     parent[detail::root(parent, start)] = detail::root(parent, end);
                 }
-                else
+                else if (forward)
                 {
-                    oneWays.push_back({ start, end, route::fromDetour(&con.pos[0]), route::fromDetour(&con.pos[3]) });
+                    oneWays.push_back({ start, end, route::fromDetour(atStart), route::fromDetour(atEnd) });
+                }
+                else if (back)
+                {
+                    oneWays.push_back({ end, start, route::fromDetour(atEnd), route::fromDetour(atStart) });
                 }
             }
         }

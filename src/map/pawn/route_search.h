@@ -315,6 +315,7 @@ namespace cardian::route
             dtPolyRef via    = 0; // the polygon the step to it from its parent crosses
             int       parent = -1;
             float     g      = std::numeric_limits<float>::max();
+            float     walk   = 0.0f; // the yalms walked to it, danger's cost left out
             bool      closed = false;
             bool      danger = false; // the step to it from its parent passes through danger
             bool      link   = false; // the step to it from its parent crosses an off-mesh link
@@ -429,6 +430,28 @@ namespace cardian::route
             return holder(toDetour(a), toDetour(b));
         }
 
+        // The hazard whose reach holds the point -- inside its sphere where
+        // its mob sees the point, or inside its unseen sphere -- or -1
+        auto exposes(const detail::Vec& p) const -> int
+        {
+            int found = -1;
+            grid_.any(p, p, [&](const uint32_t h)
+            {
+                const float d = detail::apart(p, centres_[h]);
+                if (d >= hazards_[h].radius)
+                {
+                    return false;
+                }
+                if (d < hazards_[h].unseen || !sight_ || sight_(h, fromDetour(p.data())))
+                {
+                    found = static_cast<int>(h);
+                    return true;
+                }
+                return false;
+            });
+            return found;
+        }
+
         // Whether a hazard's sphere comes within `margin` of the box lo-hi
         // (Detour's coordinates), seen or not
         auto reaches(const detail::Vec& lo, const detail::Vec& hi, const float margin) const -> bool
@@ -479,7 +502,9 @@ namespace cardian::route
     // own over points along the edges the mesh's polygons share, every step
     // a straight walk inside one polygon -- so on the game's walkable ground
     // -- or across one of the mesh's off-mesh links (a ledge, a step) from
-    // the end it lands on to the other, never back along a one-way link, and
+    // the end it lands on to the other, never back along a one-way link nor up
+    // one that rises more than the mesh's own climb (dropped off, never
+    // climbed: the meshes mark ledges of up to 5 yalms two-way), and
     // every step tested as a segment against the hazards' spheres, a
     // wall between a mob and the step hiding it but for its unseen sphere.
     // A step through danger costs kDangerCost more, so the route takes a
@@ -495,8 +520,12 @@ namespace cardian::route
     // ellipse round them -- so a stretch of a route is planned again for
     // the cost of the stretch. Detour's own search takes no such rule here
     // (its filter is not virtual in this build), so the search is ours
-    inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
-                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f) -> std::optional<Route>
+    //
+    // The search behind searchAvoiding and searchSafeGround: to `to` when
+    // given; without one, to the nearest point out of every reach, walking at
+    // most `within` yalms (Dijkstra, the greed off)
+    inline auto searchCore(const dtNavMesh& mesh, const position_t& from, const std::optional<position_t>& to, const float* fromExtents, const float* toExtents,
+                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within) -> std::optional<Route>
     {
         using detail::apart;
         using detail::Node;
@@ -510,21 +539,42 @@ namespace cardian::route
         dtQueryFilter filter;
         filter.setIncludeFlags(0xFFFF);
         filter.setExcludeFlags(kPolyDisabled);
-        const auto start = toDetour(from);
-        const auto goal  = toDetour(to);
+        const bool safeGround = !to.has_value();
+        const auto start      = toDetour(from);
+        const auto goal       = toDetour(to.value_or(from));
         dtPolyRef  startRef{};
         dtPolyRef  goalRef{};
         float      startAt[3]{};
         float      goalAt[3]{};
-        if (dtStatusFailed(query.findNearestPoly(start.data(), fromExtents, &filter, &startRef, startAt)) || !startRef ||
-            dtStatusFailed(query.findNearestPoly(goal.data(), toExtents, &filter, &goalRef, goalAt)) || !goalRef)
+        if (dtStatusFailed(query.findNearestPoly(start.data(), fromExtents, &filter, &startRef, startAt)) || !startRef)
         {
             return std::nullopt;
         }
-        const Vec origin{ startAt[0], startAt[1], startAt[2] };
-        const Vec target{ goalAt[0], goalAt[1], goalAt[2] };
+        if (!safeGround && (dtStatusFailed(query.findNearestPoly(goal.data(), toExtents, &filter, &goalRef, goalAt)) || !goalRef))
+        {
+            return std::nullopt;
+        }
+        const Vec   origin{ startAt[0], startAt[1], startAt[2] };
+        const Vec   target = safeGround ? origin : Vec{ goalAt[0], goalAt[1], goalAt[2] };
+        const float greed  = safeGround ? 0.0f : kGreed;
+
+        // The highest step the mesh's ground takes (its walkableClimb): an
+        // off-mesh link rising more is a ledge, dropped off and never climbed
+        float climb = 1.0f;
+        {
+            const dtMeshTile* tile = nullptr;
+            const dtPoly*     poly = nullptr;
+            mesh.getTileAndPolyByRefUnsafe(startRef, &tile, &poly);
+            climb = tile->header->walkableClimb;
+        }
 
         const DangerTest inDanger(hazards, origin, sight);
+        if (safeGround && inDanger.exposes(origin) < 0)
+        {
+            Route here;
+            here.complete = true;
+            return here; // out of every reach where she stands
+        }
 
         // The tables, indexed by polygon tile by tile, grown to this mesh
         auto& ws = detail::workspace();
@@ -738,9 +788,10 @@ namespace cardian::route
             std::push_heap(open.begin(), open.end(), std::greater<>{});
         };
         open.clear();
-        push(kGreed * apart(origin, target), 0);
+        push(greed * apart(origin, target), 0);
         int  expanded = 0;
         bool reached  = false;
+        int  endsAt   = kGoal; // the point the route ends at
         while (!open.empty())
         {
             std::pop_heap(open.begin(), open.end(), std::greater<>{});
@@ -751,9 +802,10 @@ namespace cardian::route
                 continue;
             }
             nodes[here].closed = true;
-            if (here == kGoal)
+            if (here == kGoal || (safeGround && here != 0 && inDanger.exposes(nodes[here].at) < 0))
             {
                 reached = true;
+                endsAt  = here;
                 break;
             }
             if (++expanded > kAvoidNodes || static_cast<int>(nodes.size()) > kAvoidNodes * 4)
@@ -779,14 +831,20 @@ namespace cardian::route
                 {
                     return;
                 }
+                if (viaLink && next.at[1] > at[1] + climb)
+                {
+                    return; // up a ledge: never climbed
+                }
                 if (reach > 0.0f && there != kGoal && apart(next.at, origin) + apart(next.at, target) > reach)
                 {
                     return; // past the ground the stretch is planned on
                 }
-                const float walked = g + apart(at, next.at);
-                if (walked >= next.g)
+                const float step   = apart(at, next.at);
+                const float walk   = nodes[here].walk + step;
+                const float walked = g + step;
+                if (walked >= next.g || (within > 0.0f && walk > within))
                 {
-                    return; // danger only adds
+                    return; // danger only adds; past the yalms safe ground is looked for within
                 }
                 const bool  danger = inDanger(at, next.at);
                 const float cost   = walked + (danger ? kDangerCost : 0.0f);
@@ -797,7 +855,8 @@ namespace cardian::route
                     next.via    = via;
                     next.danger = danger;
                     next.link   = viaLink;
-                    push(cost + kGreed * apart(next.at, target), there);
+                    next.walk   = walk;
+                    push(cost + greed * apart(next.at, target), there);
                 }
             };
             for (const dtPolyRef ref : polys)
@@ -831,7 +890,7 @@ namespace cardian::route
             return route; // not complete: no walk joins them
         }
         std::vector<int> raw;
-        for (int at = kGoal; at != -1; at = nodes[at].parent)
+        for (int at = endsAt; at != -1; at = nodes[at].parent)
         {
             raw.push_back(at);
         }
@@ -904,5 +963,23 @@ namespace cardian::route
         }
         detail::trim(ws);
         return route;
+    }
+
+    // The route from `from` to `to` that keeps out of danger (searchCore)
+    inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
+                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f) -> std::optional<Route>
+    {
+        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f);
+    }
+
+    // The way from `from` to the nearest ground out of every reach, walking
+    // at most `within` yalms: the same points and steps, the first point out
+    // of every reach the goal, a way through no danger before one through
+    // the fewest steps of it. Complete and empty when `from` is out of every
+    // reach already; not complete when no such ground lies within
+    inline auto searchSafeGround(const dtNavMesh& mesh, const position_t& from, const float* fromExtents, const std::vector<Hazard>& hazards,
+                                 const HazardSight& sight, const float within) -> std::optional<Route>
+    {
+        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within);
     }
 } // namespace cardian::route

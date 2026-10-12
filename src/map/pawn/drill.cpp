@@ -98,8 +98,6 @@ namespace
         double                    planMs          = 0.0;
         double                    planMsMax       = 0.0;
         int64                     points          = 0;
-        int64                     sightTests      = 0; // in her plans
-        int64                     checkSightTests = 0; // in the once-a-second checks of her route
         int                       holds           = 0;
         int                       blocked         = 0; // stuck by aggro at a choke
         int                       chases          = 0;
@@ -173,10 +171,9 @@ namespace
         }
         writeLine(fmt::format("{{\"run\":{},\"name\":{},\"character\":{},\"level\":{},\"result\":{},\"seconds\":{:.1f},\"walked\":{:.1f},\"zones\":[{}],"
                               "\"hits\":{},\"hpLost\":{},\"maxHp\":{},\"chases\":{},\"holds\":{},\"blocked\":{},\"stuck\":{},\"rests\":{},\"plans\":{},"
-                              "\"stretches\":{},\"planMsTotal\":{:.2f},\"planMsMax\":{:.2f},\"points\":{},\"sightTests\":{},\"checkSightTests\":{}}}",
+                              "\"stretches\":{},\"planMsTotal\":{:.2f},\"planMsMax\":{:.2f},\"points\":{}}}",
                               jsonText(runId), jsonText(w.spec.name), jsonText(w.spec.character), w.spec.level, jsonText(result), seconds, w.walked, zones,
-                              w.hits, w.hpLost, w.maxHp, w.chases, w.holds, w.blocked, w.stuck, w.rests, w.plans, w.stretches, w.planMs, w.planMsMax, w.points,
-                              w.sightTests, w.checkSightTests));
+                              w.hits, w.hpLost, w.maxHp, w.chases, w.holds, w.blocked, w.stuck, w.rests, w.plans, w.stretches, w.planMs, w.planMsMax, w.points));
         ShowInfoFmt("drill {}: {} -- {} after {:.0f} s, {:.0f}y walked, {} plans, the worst {:.2f} ms", w.spec.name, result, w.spec.character, seconds, w.walked,
                     w.plans, w.planMsMax);
         if (w.charid != 0)
@@ -434,7 +431,7 @@ namespace pawn::drill
         }
     }
 
-    void notePlan(const uint32 charid, const std::chrono::microseconds took, const int searched, const int sightTests, const bool stretch)
+    void notePlan(const uint32 charid, const std::chrono::microseconds took, const int searched, const bool stretch)
     {
         if (auto* w = watchOf(charid); w != nullptr)
         {
@@ -444,15 +441,6 @@ namespace pawn::drill
             w->planMs += ms;
             w->planMsMax = std::max(w->planMsMax, ms);
             w->points += searched;
-            w->sightTests += sightTests;
-        }
-    }
-
-    void noteCheck(const uint32 charid, const int sightTests)
-    {
-        if (auto* w = watchOf(charid); w != nullptr)
-        {
-            w->checkSightTests += sightTests;
         }
     }
 

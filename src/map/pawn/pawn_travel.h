@@ -88,6 +88,13 @@ namespace pawn
         auto routeAvoiding(xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                            const cardian::route::HazardSight& sight, float reach = 0.0f) -> std::optional<cardian::route::Route>;
 
+        // The way from a body at `from` in `zone` to the nearest ground out
+        // of every reach, `within` yalms of walk at most
+        // (pawn/route_search.h searchSafeGround); nullopt when the zone has
+        // no mesh or she stands off it
+        auto routeToSafeGround(xi::ZoneId zone, const position_t& from, const std::vector<cardian::route::Hazard>& hazards,
+                               const cardian::route::HazardSight& sight, float within) -> std::optional<cardian::route::Route>;
+
         // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
         // at 0 (BFS from all of them at once); a zone no line reaches is absent
         auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>;

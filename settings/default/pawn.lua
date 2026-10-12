@@ -419,8 +419,8 @@ xi.settings.pawn =
     -- mobs' patrols is to tell the margin a trek wants)
     TREK_AVOID_EXTRA = 2.0,
     -- Where the mobs hold every way on her trek (a choke), she waits out of
-    -- their reach for one to roam off, backing off the way she came when no
-    -- spot short of it is out of reach, and never goes through on her own.
+    -- their reach for one to roam off, backing off to the nearest ground
+    -- that is when no spot short of it is, and never goes through on her own.
     -- Once the way has stayed held this many seconds, and the whole zone's
     -- plan finds no way round, she says in party chat that she is stuck by
     -- aggro; past it later, that she got by (the user, 2026-10-12)

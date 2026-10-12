@@ -410,6 +410,26 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
         CHECK((!tight->complete || tight->firstDanger >= 0));
     }
 
+    SECTION("the nearest ground out of every reach: just outside a mob's, and none where one holds all the ground near")
+    {
+        const Hazard h    = { .at = from, .radius = 10.0f };
+        const auto   safe = cardian::route::searchSafeGround(*mesh, from, sz::kBodyExtents, { h }, {}, 150.0f);
+        REQUIRE(safe.has_value());
+        REQUIRE(safe->complete);
+        REQUIRE_FALSE(safe->points.empty());
+        CHECK(yalms(safe->points.back(), from) >= h.radius - 0.01f);
+        CHECK(safe->length < h.radius + 10.0f); // the nearest, not any
+
+        const auto here = cardian::route::searchSafeGround(*mesh, to, sz::kLineExtents, { h }, {}, 150.0f);
+        REQUIRE(here.has_value());
+        CHECK(here->complete);
+        CHECK(here->points.empty()); // out of every reach where she stands
+
+        const auto none = cardian::route::searchSafeGround(*mesh, from, sz::kBodyExtents, { Hazard{ .at = from, .radius = 400.0f } }, {}, 150.0f);
+        REQUIRE(none.has_value());
+        CHECK_FALSE(none->complete);
+    }
+
     SECTION("setting out inside a mob's reach, she walks out of it")
     {
         const Hazard h   = { .at = from, .radius = 10.0f };
@@ -439,10 +459,11 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
     }
 }
 
-TEST_CASE("Route kept out of danger: crosses the mesh's off-mesh links where the way needs them", "[cardian][route]")
+TEST_CASE("Route kept out of danger: La Theine Plateau end to end, as short as the game's own route", "[cardian][route]")
 {
-    // La Theine Plateau's mesh holds some 13,000 off-mesh links: end to end,
-    // from the West Ronfaure line to the Valkurm Dunes line
+    // La Theine Plateau's mesh holds some 13,000 off-mesh links, half of them
+    // disabled and the rest ledges dropped down only: end to end, from the
+    // West Ronfaure line to the Valkurm Dunes line
     const auto mesh = loadMesh("La_Theine_Plateau");
     if (!mesh)
     {
@@ -459,7 +480,6 @@ TEST_CASE("Route kept out of danger: crosses the mesh's off-mesh links where the
     REQUIRE(clear.has_value());
     REQUIRE(clear->complete);
     CHECK(clear->firstDanger == -1);
-    CHECK(clear->links > 0);
     CHECK(clear->length < plain->length * 1.1f + 5.0f);
 
     const Hazard h    = { .at = to, .radius = 25.0f };
@@ -541,4 +561,79 @@ TEST_CASE("Route kept out of danger: timings (opt-in, CARDIAN_BENCH=1)", "[cardi
         WARN(c.zone << " stretch: " << us / 1000.0 << " ms, " << stretch->searched << " points searched, " << stretch->length << "y, complete "
                     << stretch->complete << ", danger at " << stretch->firstDanger);
     }
+}
+
+TEST_CASE("Route kept out of danger: a ledge taller than the mesh's climb is dropped off, never climbed", "[cardian][route]")
+{
+    const auto mesh = loadMesh("Valkurm_Dunes");
+    if (!mesh)
+    {
+        SKIP("no navmesh for Valkurm_Dunes");
+    }
+
+    // an enabled two-way link of the mesh rising 3 to 5 yalms -- the meshes
+    // mark their ledges so, and the game's own paths climb them -- its foot
+    // and its top
+    std::optional<std::pair<position_t, position_t>> ledge;
+    float                                            climb = 0.0f;
+    for (int t = 0; t < mesh->getMaxTiles() && !ledge.has_value(); ++t)
+    {
+        const dtMeshTile* tile = static_cast<const dtNavMesh&>(*mesh).getTile(t);
+        if (tile == nullptr || tile->header == nullptr)
+        {
+            continue;
+        }
+        climb = tile->header->walkableClimb;
+        for (int c = 0; c < tile->header->offMeshConCount && !ledge.has_value(); ++c)
+        {
+            // its ends as the search reads them: the link's own vertices,
+            // snapped to the ground
+            const auto&  con     = tile->offMeshCons[c];
+            const auto&  poly    = tile->polys[con.poly];
+            const float* atStart = &tile->verts[poly.verts[0] * 3];
+            const float* atEnd   = &tile->verts[poly.verts[1] * 3];
+            const float  rise    = atEnd[1] - atStart[1]; // Detour's y is up
+
+            // one walked at all (the meshes disable most of their links) and
+            // joined to the ground at both ends
+            if (poly.flags & cardian::route::kPolyDisabled)
+            {
+                continue;
+            }
+            bool landsAtStart = false;
+            bool landsAtEnd   = false;
+            for (unsigned int l = poly.firstLink; l != DT_NULL_LINK; l = tile->links[l].next)
+            {
+                landsAtStart = landsAtStart || tile->links[l].edge == 0;
+                landsAtEnd   = landsAtEnd || tile->links[l].edge == 1;
+            }
+            if ((con.flags & DT_OFFMESH_CON_BIDIR) && landsAtStart && landsAtEnd && std::fabs(rise) > 3.0f && std::fabs(rise) <= 5.0f)
+            {
+                const auto a = cardian::route::fromDetour(atStart);
+                const auto b = cardian::route::fromDetour(atEnd);
+                ledge        = rise > 0.0f ? std::pair{ a, b } : std::pair{ b, a };
+            }
+        }
+    }
+    REQUIRE(ledge.has_value());
+    const auto [foot, top] = *ledge;
+    REQUIRE(climb < 3.0f);
+
+    const auto near_ = [](const position_t& p, const position_t& q) { return yalms(p, q) < 0.5f; };
+
+    // up: never straight from the foot to the top
+    const auto up = cardian::route::searchAvoiding(*mesh, foot, top, sz::kBodyExtents, sz::kBodyExtents, {}, {});
+    REQUIRE(up.has_value());
+    position_t a = foot;
+    for (const auto& b : up->points)
+    {
+        CHECK_FALSE((near_(a, foot) && near_(b, top)));
+        a = b;
+    }
+
+    // down: straight off the ledge
+    const auto down = cardian::route::searchAvoiding(*mesh, top, foot, sz::kBodyExtents, sz::kBodyExtents, {}, {});
+    REQUIRE(down.has_value());
+    REQUIRE(down->complete);
+    CHECK(down->length < yalms(top, foot) + 2.0f);
 }
