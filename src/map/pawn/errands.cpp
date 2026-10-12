@@ -561,7 +561,7 @@ namespace pawn::errands
                 {
                     continue;
                 }
-                if (const auto hop = pawn::travel::nextHop(here, static_cast<xi::ZoneId>(zone), PPawn->loc.p); hop.has_value())
+                if (const auto hop = pawn::travel::nextHop(here, PPawn->loc.p, static_cast<xi::ZoneId>(zone)); hop.has_value())
                 {
                     return snap(PPawn->loc.zone, hop->walkTo, kLineSnap);
                 }

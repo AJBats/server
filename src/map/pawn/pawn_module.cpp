@@ -284,6 +284,9 @@ class PawnModule : public CPPModule
         pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
+        // Travel's sub-zones, cut from the zones' meshes before the watchdog
+        // watches (pawn_travel.h)
+        pawn::travel::prepare();
         // The MP bank's samplers, a Lua library (RESEARCH §12.13)
         pawn::tactics::bank::load();
 

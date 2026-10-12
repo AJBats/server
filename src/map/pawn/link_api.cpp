@@ -670,7 +670,9 @@ namespace pawn::linkapi
                 msg.state   = static_cast<uint8_t>(shown.state);
                 msg.fits    = pawn::wire::toWire(shown.row->gambit, msg.gambit) ? 1 : 0;
                 msg.origin  = static_cast<uint8_t>(shown.origin);
-                msg.lender  = shown.origin == cardian::layers::Origin::Own ? CL_ROLE_NONE : static_cast<uint8_t>(set.LentBy());
+                msg.lender  = shown.origin == cardian::layers::Origin::Own ? CL_ROLE_NONE
+                              : shown.trek                                 ? CL_LENDER_TREK
+                                                                           : static_cast<uint8_t>(set.LentBy());
                 const auto label = pawn::labelGambit(shown.row->gambit);
                 setText(msg.head, label.head);
                 setText(msg.action, label.action);

@@ -250,11 +250,13 @@ namespace cardian::rest
     // an order, not a policy: it ends there, or at the player's next order.
     // A plain Rest row of hers starts the same order at 100% when its
     // conditions hold and no fight is on (RESEARCH §17.13: predictable and
-    // no judgement -- down until full, the player's command the way out)
+    // no judgement -- down until full, the player's command the way out).
+    // A trek starts the same order across each zone line it crosses with HP
+    // or MP missing (ROADMAP T)
     struct Order
     {
         int  percent = 0;     // 0: none
-        bool byRow   = false; // her Rest row's, not the player's: nothing is said to him when it cannot be kept
+        bool byRow   = false; // her own, not the player's: nothing is said to him when it cannot be kept
 
         auto active() const -> bool
         {

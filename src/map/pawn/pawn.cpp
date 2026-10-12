@@ -2612,7 +2612,7 @@ namespace pawn
             {
                 continue;
             }
-            if (!travel::nextHop(PPawn->getZone(), destination).has_value())
+            if (!travel::nextHop(PPawn->getZone(), PPawn->loc.p, destination).has_value())
             {
                 continue;
             }

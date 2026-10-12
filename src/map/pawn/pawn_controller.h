@@ -502,6 +502,7 @@ public:
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
+    auto Trekking() const -> bool { return m_Mode == Mode::Travel || m_TrekResting; } // on a trek between zones, or resting on one: the trek lends her its rows (ROADMAP T)
     auto KeepsClearOfAggro() const -> bool; // attending, or waiting at her camp spot: other mobs' detection kept out of whatever her switches say
     auto FightSettled(const CMobEntity* PMob) -> bool; // engaged and held still for a second, not running in or on its tow
     // The mob's next TP move, assumed the area one she keeps out of, comes
@@ -525,8 +526,31 @@ private:
     auto DoRoamTick(timer::time_point tick) -> Task<void>;
 
     // A travel order's zone, or the player in another zone and her party:
-    // walk the zone graph toward it, requesting a transfer at each zone line.
+    // walk the sub-zones toward it, requesting a transfer at each zone line.
     void TravelTick();
+
+    // No walk reaches where her trek goes (TravelTick): she stands, says so
+    // once in party chat, and her trek looks for a way again in a while
+    void TravelStuck(std::string_view why);
+
+    // He is in her zone on a piece of its mesh no walk joins to hers
+    // (pawn::travel::cutOff), asked every few seconds
+    auto CutOffFrom(const CCharEntity* PPlayer) -> bool;
+
+    // A chase on her trek is over: said with what it cost her (TravelTick)
+    void EndChase(std::string_view how);
+
+    // Her trek's walk to `goal` kept out of danger (TravelTick; the Avoid
+    // aggro and Avoid links rows a trek lends): the route round every mob in
+    // her zone that would
+    // come for her (pawn::travel::routeAvoiding), checked against where the
+    // mobs stand now and planned again when one crosses it, or at once when
+    // one's reach takes her in. Where the mobs hold every way she walks up
+    // to the choke and holds there, out of every reach, for it to open,
+    // pawn.TREK_CHOKE_WAIT at most; racing, she never holds.
+    // False when no route could be planned: the trek's other ways have
+    // their say
+    auto TrekSafeWalk(const position_t& goal, bool racing) -> bool;
 
     // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
     // bookkeeping (WalkOrderTick) and, with no steer timer, her step
@@ -1195,9 +1219,39 @@ private:
     // nearest line could change under her mid-walk. Let go once TravelTick
     // has not run for a while, so the next journey chooses again
     std::optional<pawn::TravelHop>    m_TravelHop;
+    bool                              m_TravelHopKnown = false; // m_TravelHop chosen, a hop or none
     xi::ZoneId                        m_TravelHopFrom{};
     xi::ZoneId                        m_TravelHopTarget{};
     timer::time_point                 m_TravelHopAt;
+    timer::time_point                 m_TravelHopChosenAt; // when the hop, or none, was chosen: none is asked again in a while
+    bool                              m_TravelLegPlanned = false; // walking the whole-zone route to the line (pawn::travel::routeTo)
+    timer::time_point                 m_TravelRouteTriedAt;       // ... last looked for
+    bool                              m_TravelStuckSaid  = false; // "I'm stuck!" said for this trek's standstill
+    std::optional<xi::ZoneId>         m_TrekCrossedFrom;          // the zone her trek asked to cross out of: landed elsewhere, she rests her HP up
+    bool                              m_TrekResting = false;      // resting her HP up across a zone line on her trek: her trek's rows stay lent
+    int32                             m_TrekLastHp  = -1;         // her HP as last seen on her trek: a drop is a hit
+    timer::time_point                 m_TrekHitAt;                // her last hit on her trek: she races for her line a while after
+    timer::time_point                 m_TrekKneltAt;              // her rest across a line: when she was last down, or it began
+    int32                             m_TrekChaseFromHp = -1;     // her HP as the chase under way began, -1 for none
+    timer::time_point                 m_TrekChaseAt;              // ... and when
+    timer::time_point                 m_CutOffCheckedAt;          // CutOffFrom's last look
+    xi::ZoneId                        m_CutOffZone{};             // ... the zone she was in: a new zone looks again at once
+    bool                              m_CutOff = false;           // ... what it saw
+    // Her trek's route kept out of danger (TrekSafeWalk)
+    std::vector<position_t>           m_TrekRoute;                // its waypoints
+    size_t                            m_TrekRouteNext   = 0;      // ... the next she walks to
+    int                               m_TrekRouteDanger = -1;     // ... the first reached through danger, -1 for none
+    int                               m_TrekRouteHold   = -1;     // ... the end of her walk while she holds for it, -1 for no spot out of every reach
+    std::vector<uint32>               m_TrekRouteInside;          // ... the mobs whose reach she stood in as it was planned
+    bool                              m_TrekRouteKnown  = false;
+    bool                              m_TrekRouteFailed = false;  // ... none could be planned to m_TrekRouteGoal: asked again in a while
+    position_t                        m_TrekRouteGoal{};          // ... where it goes
+    xi::ZoneId                        m_TrekRouteZone{};
+    timer::time_point                 m_TrekRoutePlannedAt;
+    timer::time_point                 m_TrekRouteCheckedAt;       // ... last held against where the mobs stand
+    bool                              m_TrekRouteWalking = false; // ... handed to her walker
+    size_t                            m_TrekRouteEnd     = 0;     // ... up to here
+    std::optional<timer::time_point>  m_TrekHeldSince;            // holding at a choke since
 
     bool              m_Hunting    = false;
     bool              m_World      = false;
