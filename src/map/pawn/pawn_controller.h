@@ -480,7 +480,7 @@ public:
     // The attack order, fired once her beat is served: the front row draws
     // first, the back line a touch later
     void FireOrderedEngage();
-    auto HatedByAnyMob() const -> bool;     // some mob nearby holds enmity on her
+    auto HatedByAnyMob() const -> bool;     // some mob nearby is on her: engaged with her as its target, or her on its hate list
 
     // The behaviour layer (M3.85): what the gambit rows assert this think,
     // by pawn::Behavior. Cleared at the start of every think; the first row,
@@ -502,6 +502,7 @@ public:
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
+    auto Trekking() const -> bool { return m_Mode == Mode::Travel || m_TrekResting; } // on a trek between zones, or resting on one: the trek lends her its rows (ROADMAP T)
     auto KeepsClearOfAggro() const -> bool; // attending, or waiting at her camp spot: other mobs' detection kept out of whatever her switches say
     auto FightSettled(const CMobEntity* PMob) -> bool; // engaged and held still for a second, not running in or on its tow
     // The mob's next TP move, assumed the area one she keeps out of, comes
@@ -525,8 +526,50 @@ private:
     auto DoRoamTick(timer::time_point tick) -> Task<void>;
 
     // A travel order's zone, or the player in another zone and her party:
-    // walk the zone graph toward it, requesting a transfer at each zone line.
+    // walk the sub-zones toward it, requesting a transfer at each zone line.
     void TravelTick();
+
+    // No walk reaches where her trek goes (TravelTick): she stands, says so
+    // once in party chat, and her trek looks for a way again in a while
+    void TravelStuck(std::string_view why);
+
+    // He is in her zone on a piece of its mesh no walk joins to hers
+    // (pawn::travel::cutOff), asked every few seconds
+    auto CutOffFrom(const CCharEntity* PPlayer) -> bool;
+
+    // A chase on her trek is over: said with what it cost her (TravelTick)
+    void EndChase(std::string_view how);
+
+    // Out of a trek (Transition): its chase, hold, route and watch cleared,
+    // so the next -- or the same trek going on after her rest across a
+    // line -- starts clean
+    void EndTrek();
+
+    // A line of hers in party chat, to the real players in her party
+    void TrekSay(std::string_view text);
+
+    // Past the choke she said she was stuck at: one of her "got by" lines
+    void TrekGotBy(std::string_view where);
+
+    // Her trek's watch for a mob on her (HatedByAnyMob), true while one is:
+    // from none to one, the chase begins -- she races for her line -- with
+    // one of her "got aggro" lines, and no "got by" for the choke she was
+    // stuck at; from one to none, it is over (TravelTick)
+    auto TrekWatchHate() -> bool;
+
+    // Her trek's walk to `goal` kept out of danger (TravelTick; the Avoid
+    // aggro and Avoid links rows a trek lends): the route round every mob in
+    // her zone that would come for her (pawn::travel::routeAvoiding),
+    // checked against where the mobs stand now -- the stretch round the
+    // trouble planned again when one crosses it near ahead, and at every tick
+    // she stands in a reach, and the whole route as she sets out and every
+    // 15 s. Where the mobs hold every way she walks up to the choke and
+    // holds there, out of every reach, for it to open -- or, with no such
+    // spot ahead, on the nearest ground that is --
+    // and says she is stuck by aggro once sure, never going through on her
+    // own; racing (a mob on her), she never holds. False when no route could
+    // be planned: the trek's other ways have their say
+    auto TrekSafeWalk(const position_t& goal, bool racing) -> bool;
 
     // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
     // bookkeeping (WalkOrderTick) and, with no steer timer, her step
@@ -1195,9 +1238,54 @@ private:
     // nearest line could change under her mid-walk. Let go once TravelTick
     // has not run for a while, so the next journey chooses again
     std::optional<pawn::TravelHop>    m_TravelHop;
+    bool                              m_TravelHopKnown = false; // m_TravelHop chosen, a hop or none
     xi::ZoneId                        m_TravelHopFrom{};
     xi::ZoneId                        m_TravelHopTarget{};
     timer::time_point                 m_TravelHopAt;
+    timer::time_point                 m_TravelHopChosenAt; // when the hop, or none, was chosen: none is asked again in a while
+    bool                              m_TravelLegPlanned = false; // walking the whole-zone route to the line (pawn::travel::routeTo)
+    timer::time_point                 m_TravelRouteTriedAt;       // ... last looked for
+    bool                              m_TravelStuckSaid  = false; // "I'm stuck!" said for this trek's standstill
+    std::optional<xi::ZoneId>         m_TrekCrossedFrom;          // the zone her trek asked to cross out of: landed elsewhere, she rests her HP up
+    bool                              m_TrekResting = false;      // resting her HP up across a zone line on her trek: her trek's rows stay lent
+    timer::time_point                 m_TrekKneltAt;              // her rest across a line: when she was last down, or it began
+    int32                             m_TrekChaseFromHp = -1;     // her HP as the chase under way began, -1 for none
+    timer::time_point                 m_TrekChaseAt;              // ... and when
+    timer::time_point                 m_CutOffCheckedAt;          // CutOffFrom's last look
+    xi::ZoneId                        m_CutOffZone{};             // ... the zone she was in: a new zone looks again at once
+    bool                              m_CutOff = false;           // ... what it saw
+    // Her trek's route kept out of danger (TrekSafeWalk)
+    std::vector<position_t>           m_TrekRoute;                // its waypoints
+    size_t                            m_TrekRouteNext   = 0;      // ... the next she walks to
+    int                               m_TrekRouteDanger = -1;     // ... the first reached through danger, -1 for none
+    int                               m_TrekRouteHold   = -1;     // ... the end of her walk while she holds for it, -1 for no spot out of every reach
+    timer::time_point                 m_TrekCaughtLogAt;          // ... last planned again for a mob's reach on her, as logged: once a second
+    bool                              m_TrekRouteKnown  = false;
+    bool                              m_TrekRouteFailed = false;  // ... none could be planned to m_TrekRouteGoal: asked again in a while
+    position_t                        m_TrekRouteGoal{};          // ... where it goes
+    xi::ZoneId                        m_TrekRouteZone{};
+    timer::time_point                 m_TrekRoutePlannedAt;
+    timer::time_point                 m_TrekRouteCheckedAt;       // ... last held against where the mobs stand
+    bool                              m_TrekRouteWalking = false; // ... handed to her walker
+    size_t                            m_TrekRouteEnd     = 0;     // ... up to here
+    std::optional<timer::time_point>  m_TrekHeldSince;            // holding at a choke since
+    std::vector<position_t>           m_TrekBackOff;              // the way to the nearest ground out of every reach, with no spot short of a choke that is
+    bool                              m_TrekWholeHeld = false;    // the last whole-zone plan found the way held
+    timer::time_point                 m_TrekWholeAt;              // ... and when it was made
+    bool                              m_TrekStuckSaid = false;    // she said she was stuck by aggro at this choke
+    position_t                        m_TrekStuckAt{};            // ... where it held her
+    bool                              m_TrekHated     = false;    // a mob on her at her trek's last look (TrekWatchHate)
+
+    // The rings of the mobs near her at her trek's last look, for the log
+    // alone: the moment one turns on her, how far inside its ring she stood
+    // (NoteAggro). Nothing she does reads it
+    struct TrekRing
+    {
+        uint32 mob    = 0;
+        float  radius = 0.0f;
+        float  off    = 0.0f; // how far the mob stood from her
+    };
+    std::vector<TrekRing> m_TrekRingsNear;
 
     bool              m_Hunting    = false;
     bool              m_World      = false;

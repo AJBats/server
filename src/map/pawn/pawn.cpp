@@ -75,6 +75,7 @@
 #include "enums/char_persist.h"
 #include "enums/msg_basic.h"
 #include "persist_batch.h"
+#include "job_points.h"
 #include "utils/charutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
@@ -1454,6 +1455,58 @@ namespace pawn
         return true;
     }
 
+    bool standForDrill(const uint32 charid, CZone* PZone, const position_t& point)
+    {
+        if (const auto rset = db::preparedStmt("SELECT charid FROM accounts_sessions WHERE charid = ?", charid); rset && rset->next())
+        {
+            ShowWarningFmt("pawn: character {} has a session, refusing to stand her for a drill", charid);
+            return false;
+        }
+        if (!spawnAt(charid, PZone, point, 0))
+        {
+            return false;
+        }
+        if (const auto it = pawns.find(charid); it != pawns.end())
+        {
+            if (auto* PController = dynamic_cast<CPawnController*>(it->second->PAI->GetController()); PController != nullptr)
+            {
+                PController->SetWorld(false);
+            }
+        }
+        return true;
+    }
+
+    bool setDrillLevel(const uint32 charid, const uint8 level, const bool save)
+    {
+        const auto it = pawns.find(charid);
+        if (it == pawns.end() || level == 0)
+        {
+            return false;
+        }
+        auto*      PPawn = it->second.get();
+        const auto mjob  = static_cast<uint8>(PPawn->GetMJob());
+        charutils::RemoveAllEquipMods(PPawn);
+        PPawn->SetMLevel(level);
+        PPawn->jobs.job[mjob] = level;
+        PPawn->SetSLevel(PPawn->jobs.job[static_cast<uint8>(PPawn->GetSJob())]);
+        charutils::ApplyAllEquipMods(PPawn);
+        jobpointutils::RefreshGiftMods(PPawn);
+        charutils::CalculateStats(PPawn);
+        charutils::BuildingCharSkillsTable(PPawn);
+        charutils::BuildingCharAbilityTable(PPawn);
+        charutils::BuildingCharWeaponSkills(PPawn);
+        charutils::BuildingCharTraitsTable(PPawn);
+        PPawn->UpdateHealth();
+        PPawn->health.hp = PPawn->GetMaxHP();
+        PPawn->health.mp = PPawn->GetMaxMP();
+        if (save)
+        {
+            charutils::SaveCharStats(PPawn);
+            charutils::SaveCharJob(PPawn, PPawn->GetMJob());
+        }
+        return true;
+    }
+
     bool setBehaviorRow(CCharEntity* PPawn, const Behavior behavior, const uint16 arg)
     {
         if (PPawn == nullptr)
@@ -2612,7 +2665,7 @@ namespace pawn
             {
                 continue;
             }
-            if (!travel::nextHop(PPawn->getZone(), destination).has_value())
+            if (!travel::nextHop(PPawn->getZone(), PPawn->loc.p, destination).has_value())
             {
                 continue;
             }

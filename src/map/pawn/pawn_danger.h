@@ -144,6 +144,11 @@ namespace pawn::danger
         bool aggro = true;
         bool links = true;
 
+        // Yalms more than pawn.AVOID_BUFFER round every circle: a trek's
+        // wider berth (pawn.TREK_AVOID_EXTRA, ROADMAP T), with no camp spot
+        // to keep her near the edge
+        float extraBuffer = 0.0f;
+
         // A cardian's own profile, with her Avoid aggro and Avoid links rows
         static auto of(CCharEntity* PPawn, bool avoidAggro, bool avoidLinks) -> Profile;
         static auto party(CCharEntity* PPawn) -> Profile; // worst case, asked about every party member in her zone
@@ -227,6 +232,25 @@ namespace pawn::danger
     // each circle being the mob's detection sphere sliced at center's height
     // (unordered).
     auto around(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile, const CBaseEntity* exclude = nullptr) -> std::vector<Danger>;
+
+    // A danger as a route planned ahead reads it (pawn::travel's route kept
+    // out of danger): its mob, where it stands, and the whole sphere it
+    // detects in -- not cut flat at one height, since a route climbs and
+    // drops -- with the ambush's sphere that needs no sight (0 when none)
+    struct Sphere
+    {
+        CMobEntity* mob    = nullptr;
+        position_t  at{};
+        float       radius = 0.0f;
+        float       unseen = 0.0f;
+    };
+
+    // Every danger within `scan` (3D, sphere's edge) of `center`: the same
+    // mobs, the same ranges and the same buffer as around
+    auto spheres(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile) -> std::vector<Sphere>;
+
+    // Line of sight from a sphere's mob to a point, the test sees() makes
+    auto sees(const Sphere& sphere, const position_t& point) -> bool;
 } // namespace pawn::danger
 
 // The zone's proximity grid, queried for mobs: the same set a sweep of the

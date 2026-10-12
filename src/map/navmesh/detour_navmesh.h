@@ -54,6 +54,9 @@ public:
 
     [[nodiscard]] static auto detourStatusString(const uint32 status) -> std::string;
 
+    // CARDIAN: read-only, for travel's sub-zones and whole-zone route search (pawn/route_search.h)
+    auto detourMesh() const -> const dtNavMesh* { return navMesh_; }
+
 private:
     // Traversal filter: walk all flags, skip DISABLED, and skip links when asked to.
     auto makeFilter(AvoidLinks avoidLinks) const -> dtQueryFilter;

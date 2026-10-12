@@ -586,7 +586,7 @@ namespace pawn::club
                 std::optional<position_t> away;
                 if (visit.from != 0 && visit.from != static_cast<uint16>(PPawn->getZone()))
                 {
-                    if (const auto hop = pawn::travel::nextHop(PPawn->getZone(), static_cast<xi::ZoneId>(visit.from), PPawn->loc.p); hop.has_value())
+                    if (const auto hop = pawn::travel::nextHop(PPawn->getZone(), PPawn->loc.p, static_cast<xi::ZoneId>(visit.from)); hop.has_value())
                     {
                         away = hop->walkTo;
                     }

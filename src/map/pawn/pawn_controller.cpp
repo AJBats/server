@@ -35,6 +35,7 @@
 #include "spell_movement.h"
 #include "move_harm.h"
 #include "stake_math.h"
+#include "drill.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 #include "pawn_rules.h"
@@ -234,6 +235,10 @@ namespace
         auto PartyFightTarget() const -> CBattleEntity* override
         {
             return m_controller.PartyFightTarget();
+        }
+        auto Trekking() const -> bool override
+        {
+            return m_controller.Trekking();
         }
 
     private:
@@ -582,6 +587,12 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         TellManeuver(CL_MS_ENDED);
         m_ManeuverBy       = 0;
         m_ManeuverComposed = false;
+    }
+    // Out of a trek, its state goes (EndTrek): a trek that goes on after her
+    // rest across a line plans its new zone afresh anyway
+    if (from == Mode::Travel && to != Mode::Travel)
+    {
+        EndTrek();
     }
     // KO'd, her line goes: nothing he queued outlives her fall to fire stale
     // at her raise
@@ -2829,6 +2840,8 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // were casting, so the walk takes her clear of them before she does.
     // So do an attending mage's: she will cast from the spot she picks
     profile.casting = profile.casting || m_Tick < m_MagicHoldUntil || KeepsClearOfAggro();
+    // On a trek, with no camp spot to keep her near the edge, a wider berth
+    profile.extraBuffer = Trekking() ? settings::get<float>("pawn.TREK_AVOID_EXTRA") : 0.0f;
     m_Dangers       = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, PIgnore);
 }
 
@@ -4524,12 +4537,20 @@ void CPawnController::TidyBag()
 
 auto CPawnController::HatedByAnyMob() const -> bool
 {
+    // On her, as the game has it: a mob engaged with her as its target -- a
+    // mob that aggroes by sight or sound targets her and puts nothing on its
+    // hate list until she acts on it -- or one with her on its hate list
     bool        hated = false;
     const float reach = settings::get<float>("pawn.HUNT_LEASH");
     const auto  hates = [&](CMobEntity* PMob)
     {
         if (hated || !PMob->isAlive() || !isWithinDistance(POwner->loc.p, PMob->loc.p, reach))
         {
+            return;
+        }
+        if (PMob->PAI->IsEngaged() && PMob->GetBattleTarget() == POwner)
+        {
+            hated = true;
             return;
         }
         const auto* enmityList = PMob->PEnmityContainer->GetEnmityList();
@@ -4920,11 +4941,24 @@ void CPawnController::NoteAggro()
         add(xi::Detects::Hearing, "hearing");
         add(xi::Detects::Magic, "magic");
         add(xi::Detects::Lowhp, "low HP");
-        const bool counted = std::any_of(m_Dangers.begin(), m_Dangers.end(), [&](const auto& d) { return d.mob == PMob; });
+        // Her danger map's word on it -- on a trek, her trek's own rings, as
+        // its last look found them (an engaged mob has no ring)
+        std::string map;
+        if (m_Mode == Mode::Travel)
+        {
+            const auto ring = std::find_if(m_TrekRingsNear.begin(), m_TrekRingsNear.end(), [&](const TrekRing& r) { return r.mob == PMob->id; });
+            map             = ring == m_TrekRingsNear.end() ? std::string("her trek's last look had no ring for it")
+                              : ring->off < ring->radius    ? fmt::format("her trek's last look had her {:.1f} y inside its {:.1f} y ring", ring->radius - ring->off, ring->radius)
+                                                            : fmt::format("her trek's last look had her {:.1f} y outside its {:.1f} y ring", ring->off - ring->radius, ring->radius);
+        }
+        else
+        {
+            const bool counted = std::any_of(m_Dangers.begin(), m_Dangers.end(), [&](const auto& d) { return d.mob == PMob; });
+            map                = !IsAvoidingAggro() && !KeepsClearOfAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it";
+        }
         ShowInfoFmt("pawn: {}: {} comes for her, {:.1f} y off ({}; she {}; it detects by {}; {})", POwner->getName(), PMob->getName(),
                     distance(POwner->loc.p, PMob->loc.p), PMob->PAI->PathFind != nullptr && PMob->PAI->PathFind->IsFollowingPath() ? "it was walking" : "it was standing",
-                    POwner->PAI->IsCurrentState<CMagicState>() ? "was casting, rooted" : "was free to move", by.empty() ? "nothing" : by,
-                    !IsAvoidingAggro() && !KeepsClearOfAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it");
+                    POwner->PAI->IsCurrentState<CMagicState>() ? "was casting, rooted" : "was free to move", by.empty() ? "nothing" : by, map);
     });
     m_MobsOnHer = std::move(onHer);
 }
@@ -5617,6 +5651,54 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 {
     TracyZoneScoped;
 
+    // Across a zone line on her trek the chase is over -- every zone line is
+    // safe -- so with HP or MP missing she rests to full right there, before
+    // her trek goes on or as she meets the player (the user, 2026-10-11)
+    if (m_TrekCrossedFrom.has_value() && POwner->loc.zone != nullptr && *m_TrekCrossedFrom != POwner->getZone())
+    {
+        m_TrekCrossedFrom.reset();
+        if (m_TrekStuckSaid && !m_TrekHated)
+        {
+            TrekGotBy("across the line");
+        }
+        EndChase("left behind at the zone line");
+        m_TrekHated = false; // the mobs of the zone she left are on her no more
+        if (POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP())
+        {
+            m_TrekResting = true;
+            m_TrekKneltAt = m_Tick;
+            m_RestOrder   = cardian::rest::Order{ .percent = 100, .byRow = true };
+            ShowInfoFmt("rest: {} rests to full across the line on her trek ({} of {} HP, {} of {} MP)", POwner->getName(), POwner->health.hp,
+                        POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP());
+            pawn::drill::noteRest(POwner->id);
+        }
+    }
+    // Her rest across a zone line on her trek: a mob on her ends it, and so
+    // does danger by the line that keeps her up for long (a mob that would
+    // come for her as she kneels); ended or met, her trek goes on, and with a
+    // mob on her it is a chase from its first tick (TrekWatchHate)
+    if (m_TrekResting)
+    {
+        constexpr auto kKeptUp = 10s;
+        if (m_RestOrder.active() && HatedByAnyMob())
+        {
+            EndRestOrder("a mob on her as she rests on her trek");
+            StandFromRest("a mob on her as she rests on her trek");
+        }
+        if (POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing))
+        {
+            m_TrekKneltAt = m_Tick;
+        }
+        else if (m_RestOrder.active() && m_Tick - m_TrekKneltAt > kKeptUp)
+        {
+            EndRestOrder("kept up by the line for 10 s: her trek goes on");
+        }
+        if (!m_RestOrder.active())
+        {
+            m_TrekResting = false;
+        }
+    }
+
     if (!POwner->PAI->CanFollowPath())
     {
         m_IdleLookAt = m_Tick; // a cast or an item's use is idle time to her glance and emote clocks (IdleLook)
@@ -5729,6 +5811,19 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             Transition(IdleMode(), "nowhere to go");
         }
+    }
+    // In her zone on a piece of its mesh no walk joins to hers (North
+    // Gustaberg's lowlands and its high ground), he is elsewhere all the
+    // same: her trek goes round by the zones that join them
+    else if (Treks() && !m_RestOrder.active() && CutOffFrom(PPlayer))
+    {
+        if (m_Mode != Mode::Travel)
+        {
+            Transition(Mode::Travel, "the player is cut off from her in his zone");
+        }
+        LookAhead();
+        TravelTick();
+        co_return;
     }
     else
     {
@@ -6886,6 +6981,15 @@ void CPawnController::WalkStep()
 
 void CPawnController::TravelTick()
 {
+    const pawn::travel::TrekClock clock(POwner->getName());
+
+    // With a mob on her she races for her line past everything and never
+    // stops to fight: most treks cross country where a fight is deadly (the
+    // user, 2026-10-11). Racing, she still goes round every mob she can --
+    // the one on her is no ring, an engaged mob never is -- but never stops
+    // to hold at a choke
+    const bool racing = TrekWatchHate();
+
     // A trek is a walk she cannot put off: kneeling, she gets up for it
     StandFromRest("travelling to the player");
     const bool narrate = m_Tick - m_LastTravelDebugTime > 5s;
@@ -6893,6 +6997,13 @@ void CPawnController::TravelTick()
     {
         m_LastTravelDebugTime = m_Tick;
     }
+
+    // Her crossings: she rests on the far side (DoRoamTick)
+    const auto cross = [&](const pawn::TravelHop& line)
+    {
+        m_TrekCrossedFrom = POwner->getZone();
+        pawn::requestTransfer(POwner->id, line);
+    };
 
     const auto order = pawn::travelOrderOf(POwner->id);
 
@@ -6947,19 +7058,35 @@ void CPawnController::TravelTick()
         }
     }
 
-    // The line chosen as she sets out, and kept while she walks it: of the
-    // lines that lead the way, the one nearest where her player walked
-    // through, when she follows him out of the zone he left; else the one
-    // nearest her
+    // The line chosen as she sets out, and kept while she walks it: the
+    // first of the shortest walk across the sub-zones -- to the piece her
+    // player stands on, when she follows him -- and of the lines that land
+    // the same way, the one nearest where he walked through, when she
+    // follows him out of the zone he left. With no walk at all, the way is
+    // looked for again every kNoWayRetry
     constexpr auto kHopForgotten = 10s;
-    if (!(m_TravelHop.has_value() && m_TravelHopFrom == POwner->getZone() && m_TravelHopTarget == targetZone && m_Tick - m_TravelHopAt < kHopForgotten))
+    constexpr auto kNoWayRetry   = 15s;
+    const bool     sameLeg       = m_TravelHopKnown && m_TravelHopFrom == POwner->getZone() && m_TravelHopTarget == targetZone && m_Tick - m_TravelHopAt < kHopForgotten;
+    if (!sameLeg || (!m_TravelHop.has_value() && m_Tick - m_TravelHopChosenAt > kNoWayRetry))
     {
-        const auto*      PLeader = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
-        const auto       left    = PLeader != nullptr ? pawn::playerExit(PLeader->id) : std::nullopt;
-        const position_t closeTo = left.has_value() && left->from == POwner->getZone() && left->to == targetZone ? left->at : POwner->loc.p;
-        m_TravelHop       = pawn::travel::nextHop(POwner->getZone(), targetZone, closeTo);
-        m_TravelHopFrom   = POwner->getZone();
-        m_TravelHopTarget = targetZone;
+        const auto* PLeader = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
+        const auto  left    = PLeader != nullptr ? pawn::playerExit(PLeader->id) : std::nullopt;
+        std::optional<position_t> prefer;
+        if (left.has_value() && left->from == POwner->getZone() && left->to == targetZone)
+        {
+            prefer = left->at;
+        }
+        std::optional<position_t> toPoint;
+        if (!order.has_value() && PLeader != nullptr && PLeader->loc.zone != nullptr && PLeader->getZone() == targetZone)
+        {
+            toPoint = PLeader->loc.p;
+        }
+        m_TravelHop         = pawn::travel::nextHop(POwner->getZone(), POwner->loc.p, targetZone, toPoint, prefer);
+        m_TravelHopKnown    = true;
+        m_TravelHopFrom     = POwner->getZone();
+        m_TravelHopTarget   = targetZone;
+        m_TravelHopChosenAt = m_Tick;
+        m_TravelLegPlanned  = false;
     }
     m_TravelHopAt  = m_Tick;
     const auto hop = m_TravelHop;
@@ -6972,8 +7099,7 @@ void CPawnController::TravelTick()
         }
         else
         {
-            ShowInfoFmt("pawn: travel {}: no route {} -> {}, teleporting to summoner", POwner->getName(), static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone));
-            pawn::requestTransfer(POwner->id, std::nullopt);
+            TravelStuck(fmt::format("no walk from zone {} to zone {}", static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone)));
         }
         return;
     }
@@ -6988,7 +7114,8 @@ void CPawnController::TravelTick()
     // Crossing requires physically reaching the line, like a player does
     if (distToLine < TransferDistance)
     {
-        pawn::requestTransfer(POwner->id, hop);
+        m_TravelStuckSaid = false;
+        cross(*hop);
         return;
     }
 
@@ -7009,31 +7136,30 @@ void CPawnController::TravelTick()
     {
         // As close as the mesh allows counts as arrival
         ShowInfoFmt("pawn: travel {}: no progress at {:.1f}y from the line, crossing", POwner->getName(), distToLine);
-        m_TravelHopZone = {};
-        pawn::requestTransfer(POwner->id, hop);
+        m_TravelHopZone   = {};
+        m_TravelStuckSaid = false;
+        cross(*hop);
         return;
     }
 
-    // Her avoid-aggro row steers her round the danger she meets on the way,
-    // as it does while she follows him: the line is her point, and the
-    // walker's vet moves her -- round a mob's detection, holding, or away --
-    // or walks her on toward the line itself, one step either way. With no
-    // path from the walker the line's own fallbacks below have their say
-    if (IsAvoiding())
+    // The route round every mob that would come for her, planned across the
+    // zone to the line
+    if (TrekSafeWalk(hop->walkTo, racing))
     {
-        RefreshDangers(nullptr); // the trek's own scan: the roam tick does not scan on a trek tick
-        m_HasSlot = false;       // no ring seat to re-seat on a trek
-        Intent intent;
-        intent.kind      = Intent::Kind::Path;
-        intent.point     = hop->walkTo;
-        intent.arrive    = 2.0f;
-        intent.tolerance = 2.0f;
-        intent.claimed   = true; // the line is everyone's: nobody gives way off it
-        if (Walk(intent).value_or(AvoidAction::None) != AvoidAction::None || POwner->PAI->PathFind->IsFollowingPath())
-        {
-            return;
-        }
+        m_TravelLegPlanned = false;
+        m_TravelStuckSaid  = false;
+        return;
     }
+
+    // Walking the whole-zone route to the line, planned when the game's own
+    // query could not reach it: she follows it to its end
+    auto* PPathFind = POwner->PAI->PathFind.get();
+    if (m_TravelLegPlanned && PPathFind->IsFollowingPath())
+    {
+        PPathFind->FollowPath(m_Tick);
+        return;
+    }
+    m_TravelLegPlanned = false;
 
     if (!PathToward(hop->walkTo, 2.0f))
     {
@@ -7042,25 +7168,705 @@ void CPawnController::TravelTick()
         // to ~40 yalms out
         if (distToLine < CrossingSlack)
         {
-            pawn::requestTransfer(POwner->id, hop);
+            m_TravelStuckSaid = false;
+            cross(*hop);
+            return;
         }
-        else if (order.has_value())
+        // the game's query stops short: the route across the whole zone,
+        // looked for again every kNoWayRetry, not every tick
+        std::optional<std::vector<position_t>> route;
+        if (m_Tick - m_TravelRouteTriedAt > kNoWayRetry)
+        {
+            m_TravelRouteTriedAt = m_Tick;
+            route                = pawn::travel::routeTo(POwner->getZone(), POwner->loc.p, hop->walkTo);
+        }
+        if (route.has_value())
+        {
+            std::vector<pathpoint_t> points;
+            points.reserve(route->size());
+            for (const auto& point : *route)
+            {
+                points.push_back(pathpoint_t{ point, 0s, false });
+            }
+            if (PPathFind->PathThrough(std::move(points), PATHFLAG_RUN))
+            {
+                ShowInfoFmt("pawn: travel {}: the line {:.1f}y away is past the game's path query; walking the zone's route, {} waypoints", POwner->getName(),
+                            distToLine, route->size());
+                m_TravelLegPlanned = true;
+                m_TravelStuckSaid  = false;
+                PPathFind->FollowPath(m_Tick);
+                return;
+            }
+        }
+        if (order.has_value())
         {
             ShowInfoFmt("pawn: travel {}: cannot path to line ({:.1f}y away), order cancelled", POwner->getName(), distToLine);
             pawn::clearTravelOrder(POwner->id);
         }
         else
         {
-            ShowInfoFmt("pawn: travel {}: cannot path to line ({:.1f}y away), teleporting to summoner", POwner->getName(), distToLine);
-            pawn::requestTransfer(POwner->id, std::nullopt);
+            TravelStuck(fmt::format("cannot path to the line {:.1f}y away", distToLine));
         }
         return;
     }
 
-    if (POwner->PAI->PathFind->IsFollowingPath())
+    m_TravelStuckSaid = false;
+    if (PPathFind->IsFollowingPath())
     {
-        POwner->PAI->PathFind->FollowPath(m_Tick);
+        PPathFind->FollowPath(m_Tick);
     }
+}
+
+void CPawnController::EndTrek()
+{
+    EndChase("her trek is over");
+    m_TrekHeldSince.reset();
+    m_TrekRouteKnown  = false;
+    m_TrekRouteFailed = false;
+    m_TrekStuckSaid   = false;
+    m_TrekHated       = false;
+    m_TrekBackOff.clear();
+    m_TrekRingsNear.clear();
+}
+
+void CPawnController::EndChase(const std::string_view how)
+{
+    if (m_TrekChaseFromHp < 0)
+    {
+        return;
+    }
+    ShowInfoFmt("pawn: travel {}: the chase is over ({}): {} HP lost in {} s, {} of {} HP left", POwner->getName(), how,
+                m_TrekChaseFromHp - static_cast<int32>(POwner->health.hp), std::chrono::duration_cast<std::chrono::seconds>(m_Tick - m_TrekChaseAt).count(),
+                POwner->health.hp, POwner->GetMaxHP());
+    m_TrekChaseFromHp = -1;
+}
+
+auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) -> bool
+{
+    constexpr float kPlanScan     = 2000.0f; // the whole zone's mobs: a choke is known before she sets out, however far ahead
+    constexpr auto  kCheckEvery   = 1s;      // the route held against where the mobs stand now
+    constexpr auto  kHeldRetry    = 3s;      // a choke looked at again
+    constexpr auto  kRefreshEvery = 15s;     // a shorter way that opened since
+    constexpr auto  kForgotten    = 5s;      // not walked for this long, the route is planned anew
+    constexpr float kStretchPast  = 60.0f;   // a stretch planned again runs this many yalms of her route past the trouble
+    constexpr float kStretchSpare = 60.0f;   // ... on ground half as long again as the stretch, and this many yalms more
+    constexpr float kCrossingNear = 100.0f;  // a mob crossing her route this near ahead is planned round now; one farther waits until she is nearer
+    constexpr float kSafeGround   = 150.0f;  // with no spot short of a choke out of every reach: the nearest ground that is, within this walk
+    constexpr float kGotByNear    = 8.0f;    // past a choke she was stuck at: this near where it held her
+
+    auto*      PPathFind = POwner->PAI->PathFind.get();
+    const auto zone      = POwner->getZone();
+    const auto here      = POwner->loc.p;
+    const bool sameGoal  = m_TrekRouteZone == zone && distance(m_TrekRouteGoal, goal) <= 1.0f;
+    if (m_TrekRouteFailed && sameGoal && m_Tick - m_TrekRoutePlannedAt < kRefreshEvery)
+    {
+        return false;
+    }
+    const bool fresh = !m_TrekRouteKnown || !sameGoal || m_Tick - m_TrekRouteCheckedAt > kForgotten;
+
+    // Her progress: the leg she walks now, the nearest to her of the next
+    // few, and past its end once she stands on it. The route's first point
+    // is where she set out
+    if (!fresh && m_TrekRouteNext < m_TrekRoute.size())
+    {
+        const auto toLeg = [&](const position_t& a, const position_t& b)
+        {
+            const float dx  = b.x - a.x;
+            const float dy  = b.y - a.y;
+            const float dz  = b.z - a.z;
+            const float len = dx * dx + dy * dy + dz * dz;
+            const float t   = len > 0.0f ? std::clamp(((here.x - a.x) * dx + (here.y - a.y) * dy + (here.z - a.z) * dz) / len, 0.0f, 1.0f) : 0.0f;
+            return distance(here, position_t(a.x + dx * t, a.y + dy * t, a.z + dz * t, 0, 0));
+        };
+        size_t best   = m_TrekRouteNext;
+        float  bestAt = std::numeric_limits<float>::max();
+        for (size_t i = m_TrekRouteNext; i < std::min(m_TrekRoute.size(), m_TrekRouteNext + 4); ++i)
+        {
+            const float d = toLeg(m_TrekRoute[i - 1], m_TrekRoute[i]);
+            if (d < bestAt - 0.01f)
+            {
+                bestAt = d;
+                best   = i;
+            }
+        }
+        m_TrekRouteNext = best;
+        if (distance(here, m_TrekRoute[best]) < 1.0f)
+        {
+            ++m_TrekRouteNext;
+        }
+    }
+
+    // A trek always keeps clear of aggro and links, the two rows it lends her
+    // (pawn_gambits.cpp): from her first plan, before the rows are in her
+    // running list, and on a trek outside any party
+    auto* PPawn         = static_cast<CCharEntity*>(POwner);
+    auto  profile       = pawn::danger::Profile::of(PPawn, true, true);
+    profile.extraBuffer = settings::get<float>("pawn.TREK_AVOID_EXTRA");
+
+    // Every tick, standing in any mob's reach, she plans again from where she
+    // and the mobs stand now, and a route that sets out inside a reach leads
+    // out of it first. Nothing her last plan meant is trusted: a mob that
+    // moves keeps no promise made against where it stood (the user,
+    // 2026-10-12). A mob on her has no reach -- an engaged mob is no danger
+    // to plan round (pawn::danger) -- so a chase plans nothing for it
+    constexpr float kRingsNear = 20.0f; // the rings the log keeps (NoteAggro)
+    CMobEntity*     caughtBy   = nullptr;
+    m_TrekRingsNear.clear();
+    for (const auto& s : pawn::danger::spheres(pawn::entitiesAround(POwner), here, kRingsNear, profile))
+    {
+        if (s.mob == nullptr)
+        {
+            continue;
+        }
+        const float off = distance(here, s.at);
+        m_TrekRingsNear.push_back({ .mob = s.mob->id, .radius = s.radius, .off = off });
+        if (caughtBy == nullptr && off < s.radius)
+        {
+            caughtBy = s.mob;
+        }
+    }
+
+    // A choke somewhere ahead on her route, and her holding for one now:
+    // only holding looks again every kHeldRetry, at the stretch round the
+    // choke
+    const bool chokeAhead = m_TrekRouteKnown && m_TrekRouteDanger >= 0 && m_TrekRouteNext <= static_cast<size_t>(m_TrekRouteDanger);
+    const bool holding    = m_TrekHeldSince.has_value();
+    bool       adopted    = false;
+
+    // A choke ahead and no hold for it: racing, none was looked for, and the
+    // race is over -- planned at once, before she walks into it
+    const bool holdUnknown = chokeAhead && !racing && m_TrekRouteHold < 0 && m_TrekBackOff.empty();
+    if (fresh || caughtBy != nullptr || holdUnknown || m_Tick - m_TrekRouteCheckedAt >= (holding ? kHeldRetry : kCheckEvery))
+    {
+        m_TrekRouteCheckedAt = m_Tick;
+
+        const auto spheres = pawn::danger::spheres(pawn::entitiesAround(POwner), here, kPlanScan, profile);
+        std::vector<cardian::route::Hazard> hazards;
+        hazards.reserve(spheres.size());
+        for (const auto& s : spheres)
+        {
+            hazards.push_back({ .at = s.at, .radius = s.radius, .unseen = s.unseen });
+        }
+
+        // A trek keeps every reach whole, walls or not, and asks no line of
+        // sight (the user, 2026-10-12): a mob round a corner is taken to round
+        // it, and the game's sight ray, cast from a flying mob hugging a wall,
+        // can start inside the wall and see nothing at all
+        const cardian::route::HazardSight sight{};
+        const auto nameOf = [&](const int h) -> std::string
+        {
+            return h >= 0 && spheres[h].mob != nullptr ? std::string(spheres[h].mob->getName()) : std::string("a mob");
+        };
+
+        // The rest of her route, against where the mobs stand now: a
+        // crossing within kCrossingNear ahead of her. One farther off is let
+        // be, since a mob that far ahead moves again before she gets there,
+        // and is planned round once she is that near, if it is still there
+        int    crossedBy = -1;
+        size_t crossedAt = 0; // the waypoint the crossed step leads to
+        float  remaining = 0.0f;
+        if (!fresh)
+        {
+            const cardian::route::DangerTest test(hazards, cardian::route::toDetour(here), sight);
+            position_t                       from = here;
+            for (size_t i = m_TrekRouteNext; i < m_TrekRoute.size(); ++i)
+            {
+                if (crossedBy < 0 && remaining < kCrossingNear && (!chokeAhead || i < static_cast<size_t>(m_TrekRouteDanger)))
+                {
+                    crossedBy = test.holder(from, m_TrekRoute[i]);
+                    crossedAt = i;
+                }
+                remaining += distance(from, m_TrekRoute[i]);
+                from = m_TrekRoute[i];
+            }
+        }
+
+        const bool refresh = m_Tick - m_TrekRoutePlannedAt >= kRefreshEvery;
+        if (fresh || caughtBy != nullptr || holdUnknown || holding || crossedBy >= 0 || refresh)
+        {
+            // A stretch is planned again, not the whole zone, when a mob
+            // comes onto her way or onto her, or while she holds for a
+            // choke: from her to the waypoint kStretchPast yalms past the
+            // trouble -- the crossing, the choke, or her own spot -- on the
+            // ground round the two, joined to the rest of her route. The
+            // whole route is planned as she sets out, every kRefreshEvery,
+            // and when the stretch cannot be: no walk on its ground, or held
+            // where she was not holding -- so that a long way round, past the
+            // stretch's ground, is looked for before she stops -- that last
+            // at most once a kRefreshEvery, a choke's mobs crossing her way
+            // again and again as she nears it
+            std::optional<size_t> stretchTo;
+            float                 stretchLength = 0.0f;
+            if (!fresh && !refresh && m_TrekRouteNext < m_TrekRoute.size())
+            {
+                size_t from = m_TrekRouteNext;
+                if (crossedBy >= 0)
+                {
+                    from = crossedAt;
+                }
+                else if (holding && m_TrekRouteDanger >= 0)
+                {
+                    from = std::max(from, static_cast<size_t>(m_TrekRouteDanger));
+                }
+                size_t to   = std::min(from, m_TrekRoute.size() - 1);
+                float  past = 0.0f;
+                while (to + 1 < m_TrekRoute.size() && past < kStretchPast)
+                {
+                    past += distance(m_TrekRoute[to], m_TrekRoute[to + 1]);
+                    ++to;
+                }
+                position_t at = here;
+                for (size_t i = m_TrekRouteNext; i <= to; ++i)
+                {
+                    stretchLength += distance(at, m_TrekRoute[i]);
+                    at = m_TrekRoute[i];
+                }
+                stretchTo = to;
+            }
+
+            const auto                           began    = std::chrono::steady_clock::now();
+            int                                  searched = 0;
+            std::optional<cardian::route::Route> route;
+            if (stretchTo.has_value())
+            {
+                const float reach = std::max(stretchLength * 1.5f, distance(here, m_TrekRoute[*stretchTo])) + kStretchSpare;
+                route             = pawn::travel::routeAvoiding(zone, here, m_TrekRoute[*stretchTo], hazards, sight, reach);
+                searched += route.has_value() ? route->searched : 0;
+                if (!route.has_value() || !route->complete || route->points.empty() ||
+                    (route->firstDanger >= 0 && !holding && m_Tick - m_TrekRoutePlannedAt >= kRefreshEvery))
+                {
+                    stretchTo.reset();
+                    route.reset();
+                }
+            }
+            if (!route.has_value())
+            {
+                route    = pawn::travel::routeAvoiding(zone, here, goal, hazards, sight);
+                searched += route.has_value() ? route->searched : 0;
+                m_TrekRoutePlannedAt = m_Tick;
+                m_TrekRouteFailed    = !route.has_value() || !route->complete || route->points.empty();
+                m_TrekWholeHeld      = !m_TrekRouteFailed && route->firstDanger >= 0; // the whole zone's word on a choke
+                m_TrekWholeAt        = m_Tick;
+            }
+            const auto spent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began);
+            const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(spent).count();
+            pawn::drill::notePlan(POwner->id, spent, searched, stretchTo.has_value());
+            m_TrekRouteGoal = goal;
+            m_TrekRouteZone = zone;
+            if (!stretchTo.has_value() && m_TrekRouteFailed)
+            {
+                ShowInfoFmt("pawn: travel {}: no route on the mesh to the line ({} ms), the trek's own walk", POwner->getName(), took);
+                m_TrekRouteKnown = false;
+                m_TrekRoute.clear();
+                m_TrekHeldSince.reset();
+                return false;
+            }
+
+            // The route she would walk: the stretch joined to the rest of
+            // hers, or the whole one, her own spot first
+            std::vector<position_t> planned(1, here);
+            planned.insert(planned.end(), route->points.begin(), route->points.end());
+            int danger = route->firstDanger >= 0 ? route->firstDanger + 1 : -1;
+            if (stretchTo.has_value())
+            {
+                const size_t joined = planned.size();
+                if (danger < 0 && m_TrekRouteDanger > static_cast<int>(*stretchTo))
+                {
+                    danger = static_cast<int>(joined + (m_TrekRouteDanger - (*stretchTo + 1)));
+                }
+                planned.insert(planned.end(), m_TrekRoute.begin() + static_cast<std::ptrdiff_t>(*stretchTo + 1), m_TrekRoute.end());
+            }
+            float length = 0.0f;
+            for (size_t i = 1; i < planned.size(); ++i)
+            {
+                length += distance(planned[i - 1], planned[i]);
+            }
+
+            // Looked at again while her route keeps clear, the new one only
+            // when it is shorter by a tenth -- no swapping sides round a mob
+            // -- or when the choke ahead has opened
+            const bool held   = danger >= 0;
+            const bool better = length < remaining * 0.9f;
+            if (stretchTo.has_value() || fresh || caughtBy != nullptr || holdUnknown || holding || crossedBy >= 0 || better || (chokeAhead && !held))
+            {
+                if (fresh)
+                {
+                    m_TrekHeldSince.reset(); // a new zone or goal: a hold of the last one is not this one's
+                }
+                m_TrekRoute        = std::move(planned);
+                m_TrekRouteNext    = 1;
+                m_TrekRouteDanger  = danger;
+                m_TrekRouteKnown   = true;
+                m_TrekRouteWalking = false;
+                adopted            = true;
+
+                // Where she holds for a choke: the last point short of it out
+                // of every reach -- a route out of a reach may pass the choke
+                // before it leaves. She waits at the reaches' edge, and a mob
+                // that roams her way bumps her back at once, the reach on her
+                // planned out of every tick (the user, 2026-10-12). With none
+                // ahead of her, the nearest ground out of every reach, any way
+                // within kSafeGround of walk -- back the way she came, an
+                // alcove, a side passage (the user, 2026-10-12: no going
+                // through); with none, she holds where she stands, and what
+                // holds the ground round her is logged. Racing, she holds for
+                // nothing, so none of it is looked for
+                //
+                // Planned again every tick she stands in a reach: what it finds
+                // is said once a second
+                const bool caughtSaid = caughtBy != nullptr && m_Tick - m_TrekCaughtLogAt < 1s;
+                m_TrekRouteHold       = -1;
+                m_TrekBackOff.clear();
+                bool noGround = false; // no ground out of every reach near her: she holds where she stands
+                if (held && !racing)
+                {
+                    const auto exposed = [&](const position_t& p)
+                    {
+                        return std::any_of(hazards.begin(), hazards.end(), [&](const auto& h) { return distance(p, h.at) < h.radius; });
+                    };
+                    for (int i = m_TrekRouteDanger - 1; i >= 0; --i)
+                    {
+                        if (!exposed(m_TrekRoute[i]))
+                        {
+                            m_TrekRouteHold = i + 1;
+                            break;
+                        }
+                    }
+                    if (m_TrekRouteHold < 0)
+                    {
+                        const auto safe = pawn::travel::routeToSafeGround(zone, here, hazards, sight, kSafeGround);
+                        if (safe.has_value() && safe->complete)
+                        {
+                            if (safe->points.empty())
+                            {
+                                m_TrekRouteHold = 1; // her spot on the mesh is out of every reach already: she holds here
+                            }
+                            else
+                            {
+                                m_TrekBackOff = safe->points;
+                            }
+                        }
+                        else
+                        {
+                            m_TrekRouteHold = 1; // no ground out of every reach within her walk: where she stands
+                            noGround        = true;
+
+                            // What holds the ground round her: every mob whose
+                            // reach comes within that walk, nearest first
+                            if (!caughtSaid)
+                            {
+                                std::vector<std::pair<float, size_t>> around;
+                                for (size_t h = 0; h < hazards.size(); ++h)
+                                {
+                                    const float d = distance(here, hazards[h].at);
+                                    if (d < kSafeGround + hazards[h].radius)
+                                    {
+                                        around.emplace_back(d, h);
+                                    }
+                                }
+                                std::sort(around.begin(), around.end());
+                                std::string holders;
+                                for (size_t i = 0; i < around.size() && i < 8; ++i)
+                                {
+                                    holders += fmt::format("{}{} {:.0f}y off, reach {:.0f}y", holders.empty() ? "" : "; ", nameOf(static_cast<int>(around[i].second)),
+                                                           around[i].first, hazards[around[i].second].radius);
+                                }
+                                ShowInfoFmt("pawn: travel {}: no ground out of every reach within {:.0f}y of walk ({} mobs reach that far: {}{})", POwner->getName(),
+                                            kSafeGround, around.size(), holders, around.size() > 8 ? "; ..." : "");
+                            }
+                        }
+                    }
+                }
+
+                if (fresh || (caughtBy != nullptr && !caughtSaid) || crossedBy >= 0 || better || held != chokeAhead)
+                {
+                    if (caughtBy != nullptr)
+                    {
+                        m_TrekCaughtLogAt = m_Tick;
+                    }
+                    std::string why = "the way opened";
+                    if (fresh)
+                    {
+                        why = "set out";
+                    }
+                    else if (caughtBy != nullptr)
+                    {
+                        why = fmt::format("in {}'s reach", caughtBy->getName());
+                    }
+                    else if (crossedBy >= 0)
+                    {
+                        why = fmt::format("{} crossed her route", nameOf(crossedBy));
+                    }
+                    else if (held)
+                    {
+                        why = "held";
+                    }
+                    else if (better)
+                    {
+                        why = "a shorter way opened";
+                    }
+                    std::string choke;
+                    if (held)
+                    {
+                        const cardian::route::DangerTest test(hazards, cardian::route::toDetour(here), sight);
+                        const auto d     = static_cast<size_t>(m_TrekRouteDanger);
+                        float      ahead = 0.0f;
+                        for (size_t i = 1; i < d; ++i)
+                        {
+                            ahead += distance(m_TrekRoute[i - 1], m_TrekRoute[i]);
+                        }
+                        float back = m_TrekBackOff.empty() ? 0.0f : distance(here, m_TrekBackOff.front());
+                        for (size_t i = 1; i < m_TrekBackOff.size(); ++i)
+                        {
+                            back += distance(m_TrekBackOff[i - 1], m_TrekBackOff[i]);
+                        }
+                        // The choke a stretch kept from her last route was found
+                        // against where the mobs stood then: with none holding
+                        // that step now, the mob whose reach comes nearest it
+                        int holder = test.holder(m_TrekRoute[d - 1], m_TrekRoute[d]);
+                        if (holder < 0)
+                        {
+                            const auto& a       = m_TrekRoute[d - 1];
+                            const auto& b       = m_TrekRoute[d];
+                            float       nearest = std::numeric_limits<float>::max();
+                            for (size_t h = 0; h < hazards.size(); ++h)
+                            {
+                                const auto& c   = hazards[h].at;
+                                const float dx  = b.x - a.x;
+                                const float dy  = b.y - a.y;
+                                const float dz  = b.z - a.z;
+                                const float len = dx * dx + dy * dy + dz * dz;
+                                const float t   = len > 0.0f ? std::clamp(((c.x - a.x) * dx + (c.y - a.y) * dy + (c.z - a.z) * dz) / len, 0.0f, 1.0f) : 0.0f;
+                                const float gap = distance(c, position_t(a.x + dx * t, a.y + dy * t, a.z + dz * t, 0, 0)) - hazards[h].radius;
+                                if (gap < nearest)
+                                {
+                                    nearest = gap;
+                                    holder  = static_cast<int>(h);
+                                }
+                            }
+                        }
+                        choke = fmt::format("; the way is held by {} {:.0f}y ahead{}", nameOf(holder), ahead,
+                                            racing                  ? std::string(", racing: she does not hold for it")
+                                            : !m_TrekBackOff.empty() ? fmt::format(", with no spot short of it out of every reach: she goes {:.0f}y to the nearest ground that is", back)
+                                            : noGround               ? std::string(", with no ground out of every reach near her: she holds where she stands")
+                                                                     : std::string());
+                    }
+                    ShowInfoFmt("pawn: travel {}: route to the line round {} mobs ({}): {:.0f}y in {} waypoints{}, {} points searched, {} ms{}",
+                                POwner->getName(), hazards.size(), why, length, m_TrekRoute.size() - 1,
+                                stretchTo.has_value() ? fmt::format(", the next {:.0f}y planned again", route->length) : std::string(", planned whole"), searched,
+                                took, choke);
+                }
+            }
+        }
+    }
+    if (!m_TrekRouteKnown)
+    {
+        return false;
+    }
+    if (m_TrekRouteNext >= m_TrekRoute.size())
+    {
+        m_TrekRouteWalking = false;
+        return false; // walked it all: the line's own rules
+    }
+
+    // The part she walks: all of it, or up to the choke while she holds for
+    // it to open -- a mob roaming off, as a player waits for it -- or, with
+    // no spot short of it out of every reach, to the nearest ground that is.
+    // Racing, she never holds. A choke behind her holds nothing
+    const bool choke = m_TrekRouteDanger >= 0 && m_TrekRouteNext <= static_cast<size_t>(m_TrekRouteDanger);
+    if (!choke)
+    {
+        m_TrekBackOff.clear();
+        if (m_TrekHeldSince.has_value())
+        {
+            ShowInfoFmt("pawn: travel {}: the way opened after {} s", POwner->getName(), std::chrono::duration_cast<std::chrono::seconds>(m_Tick - *m_TrekHeldSince).count());
+            m_TrekHeldSince.reset();
+        }
+        if (m_TrekStuckSaid && !racing && distance(here, m_TrekStuckAt) < kGotByNear)
+        {
+            TrekGotBy("past the choke");
+        }
+    }
+    if (choke && !racing && !m_TrekBackOff.empty())
+    {
+        // However short the way, she walks it: safe ground is at a reach's
+        // edge, and her walker arrives within 0.1 yalms
+        if (distance(here, m_TrekBackOff.back()) > 0.2f)
+        {
+            if (adopted || !m_TrekRouteWalking || m_TrekRouteEnd != 0 || !PPathFind->IsFollowingPath())
+            {
+                std::vector<pathpoint_t> back;
+                back.reserve(m_TrekBackOff.size());
+                for (const auto& point : m_TrekBackOff)
+                {
+                    back.push_back(pathpoint_t{ point, 0s, false });
+                }
+                if (PPathFind->PathThrough(std::move(back), PATHFLAG_RUN))
+                {
+                    m_TrekRouteWalking = true;
+                    m_TrekRouteEnd     = 0; // walking to safe ground, none of her route
+                }
+            }
+            m_TravelProgressTime = m_Tick;
+            PPathFind->FollowPath(m_Tick);
+            return true;
+        }
+        m_TrekBackOff.clear();
+        m_TrekRouteHold = 1; // on safe ground: she holds here
+    }
+    const size_t end = choke && !racing && m_TrekRouteHold >= 0 ? static_cast<size_t>(m_TrekRouteHold) : m_TrekRoute.size();
+    if (m_TrekRouteNext >= end)
+    {
+        if (!m_TrekHeldSince.has_value())
+        {
+            ShowInfoFmt("pawn: travel {}: holds for the way ahead to open", POwner->getName());
+            pawn::drill::noteHold(POwner->id);
+            m_TrekHeldSince = m_Tick;
+        }
+
+        // Stuck by aggro, said once she is sure: the way held this long,
+        // and the whole zone's plan, made while she held, finds no way round
+        const auto stuckAfter = std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.TREK_STUCK_AFTER")));
+        if (!m_TrekStuckSaid && m_Tick - *m_TrekHeldSince >= stuckAfter && m_TrekWholeHeld && m_TrekWholeAt >= *m_TrekHeldSince)
+        {
+            static constexpr std::array kStuckLines = {
+                "I'm stuck, too much aggro on the way.",
+                "Can't get past these mobs. Waiting for an opening.",
+                "The path is crawling with mobs. I'm holding back.",
+                "No way through without pulling something. Waiting.",
+                "Stuck behind some mobs here, they'd spot me if I moved.",
+            };
+            m_TrekStuckSaid = true;
+            m_TrekStuckAt   = m_TrekRoute[static_cast<size_t>(m_TrekRouteDanger)];
+            ShowInfoFmt("pawn: travel {}: stuck by aggro, the way held {} s", POwner->getName(), std::chrono::duration_cast<std::chrono::seconds>(m_Tick - *m_TrekHeldSince).count());
+            pawn::drill::noteBlocked(POwner->id);
+            TrekSay(kStuckLines[xirand::GetRandomNumber(kStuckLines.size())]);
+        }
+        m_TravelProgressTime = m_Tick; // a hold is no stall: the line's no-progress crossing waits on it
+        if (PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+        m_TrekRouteWalking = false;
+        return true;
+    }
+
+    if (adopted || !m_TrekRouteWalking || m_TrekRouteEnd != end || !PPathFind->IsFollowingPath())
+    {
+        std::vector<pathpoint_t> points;
+        points.reserve(end - m_TrekRouteNext);
+        for (size_t i = m_TrekRouteNext; i < end; ++i)
+        {
+            points.push_back(pathpoint_t{ m_TrekRoute[i], 0s, false });
+        }
+        if (!PPathFind->PathThrough(std::move(points), PATHFLAG_RUN))
+        {
+            ShowInfoFmt("pawn: travel {}: her walker refused the route, the trek's own walk", POwner->getName());
+            m_TrekRouteKnown     = false;
+            m_TrekRouteFailed    = true;
+            m_TrekRoutePlannedAt = m_Tick;
+            return false;
+        }
+        m_TrekRouteWalking = true;
+        m_TrekRouteEnd     = end;
+    }
+    PPathFind->FollowPath(m_Tick);
+    return true;
+}
+
+auto CPawnController::CutOffFrom(const CCharEntity* PPlayer) -> bool
+{
+    if (m_Tick - m_CutOffCheckedAt >= 3s || POwner->getZone() != m_CutOffZone)
+    {
+        m_CutOffCheckedAt = m_Tick;
+        m_CutOffZone      = POwner->getZone();
+        const bool cut    = pawn::travel::cutOff(POwner->getZone(), POwner->loc.p, PPlayer->loc.p);
+        if (cut && !m_CutOff)
+        {
+            ShowInfoFmt("pawn: {} is cut off from {} in zone {}: no walk joins them, so her trek goes round", POwner->getName(), PPlayer->getName(),
+                        static_cast<uint16>(POwner->getZone()));
+        }
+        m_CutOff = cut;
+    }
+    return m_CutOff;
+}
+
+void CPawnController::TravelStuck(const std::string_view why)
+{
+    POwner->PAI->PathFind->Clear();
+    if (m_TravelStuckSaid)
+    {
+        return;
+    }
+    m_TravelStuckSaid = true;
+    pawn::drill::noteStuck(POwner->id);
+    ShowInfoFmt("pawn: travel {}: stuck at ({:.1f}, {:.1f}, {:.1f}) in zone {}: {}; waiting, and looking for a way again", POwner->getName(), POwner->loc.p.x,
+                POwner->loc.p.y, POwner->loc.p.z, static_cast<uint16>(POwner->getZone()), why);
+    TrekSay("I'm stuck!");
+}
+
+void CPawnController::TrekSay(const std::string_view text)
+{
+    if (POwner->PParty == nullptr)
+    {
+        return;
+    }
+    for (auto* PMember : POwner->PParty->members)
+    {
+        if (auto* PChar = dynamic_cast<CCharEntity*>(PMember); PChar != nullptr && !pawn::isPawn(PChar))
+        {
+            PChar->pushPacket<GP_SERV_COMMAND_CHAT_STD>(static_cast<const CCharEntity*>(POwner), MESSAGE_PARTY, std::string(text));
+        }
+    }
+}
+
+auto CPawnController::TrekWatchHate() -> bool
+{
+    // A mob on her (HatedByAnyMob): from none to one, the chase begins and
+    // she says so, once until none is on her, when the chase is over
+    static constexpr std::array kAggroLines = {
+        "I got aggro!",
+        "They've spotted me!",
+        "Aggro! I'm running for it!",
+        "I've been spotted, making a break for it!",
+        "Something's on me, running!",
+    };
+    const bool hated = HatedByAnyMob();
+    if (hated && !m_TrekHated)
+    {
+        ShowInfoFmt("pawn: travel {}: a mob is on her ({} of {} HP), races for her line", POwner->getName(), POwner->health.hp, POwner->GetMaxHP());
+        pawn::drill::noteChase(POwner->id);
+        m_TrekChaseFromHp = static_cast<int32>(POwner->health.hp);
+        m_TrekChaseAt     = m_Tick;
+        m_TrekStuckSaid   = false; // caught, not got by: the choke she was stuck at says nothing more
+        TrekSay(kAggroLines[xirand::GetRandomNumber(kAggroLines.size())]);
+
+        // Racing, she holds for nothing: a hold of before the chase is over,
+        // and one is looked for afresh once it is (TrekSafeWalk)
+        m_TrekHeldSince.reset();
+        m_TrekBackOff.clear();
+        m_TrekRouteHold = -1;
+    }
+    else if (!hated && m_TrekHated)
+    {
+        EndChase("shaken off");
+    }
+    m_TrekHated = hated;
+    return hated;
+}
+
+void CPawnController::TrekGotBy(const std::string_view where)
+{
+    static constexpr std::array kGotByLines = {
+        "I was able to get by!",
+        "Made it past them!",
+        "Slipped through, on my way again.",
+        "They wandered off, I'm through!",
+        "Got by without a scratch!",
+    };
+    m_TrekStuckSaid = false;
+    ShowInfoFmt("pawn: travel {}: got by the choke she was stuck at ({})", POwner->getName(), where);
+    TrekSay(kGotByLines[xirand::GetRandomNumber(kGotByLines.size())]);
 }
 
 auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
@@ -7908,7 +8714,7 @@ void CPawnController::RampCatchUp(const bool playerMoving, const position_t& poi
     float       wanted      = cardian::formation::catchUpSpeed(distance(POwner->loc.p, point), playerMoving, normalSpeed,
                                                                settings::get<float>("pawn.FORMATION_CATCHUP_SPEED"),
                                                                settings::get<float>("pawn.FORMATION_CATCHUP_DISTANCE"));
-    // Never a step faster than the player while a mob holds hate on her
+    // Never a step faster than the player while a mob is on her
     if (wanted > normalSpeed && HatedByAnyMob())
     {
         wanted = normalSpeed;

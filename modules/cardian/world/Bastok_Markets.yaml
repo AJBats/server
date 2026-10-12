@@ -24,6 +24,7 @@ slots:
     enter: any
     exit: south_gustaberg
     cliques: [1, 4]
+    lounge: true
   # Signet and out: a beat before Rabid Wolf, I.M., then through the gate
   - activity: stand
     band: [1, 75]
@@ -122,6 +123,7 @@ slots:
     enter: any
     exit: any
     cliques: [1, 4]
+    lounge: true
   # Seeking party: off to the side, afternoons and evenings
   - activity: stand
     band: [1, 75]
@@ -132,6 +134,7 @@ slots:
     enter: any
     exit: south_gustaberg
     cliques: [1, 2]
+    lounge: true
   # Coming home: in from the field, a stop in the square, then to the Mog House
   - activity: stand
     band: [1, 75]
@@ -142,6 +145,7 @@ slots:
     enter: south_gustaberg
     exit: mog_house
     cliques: [1, 2]
+    lounge: true
   # -- AFK: one kneeler at each home point
   - activity: stand
     band: [1, 75]
@@ -189,6 +193,7 @@ slots:
     enter: mog_house
     exit: any
     cliques: [1, 3]
+    lounge: true
   # -- Goldsmiths' Guild: at the door (TODO its hours: vhours and holiday by hand)
   - activity: stand
     band: [1, 75]

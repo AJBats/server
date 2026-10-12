@@ -413,6 +413,22 @@ xi.settings.pawn =
     -- looks.
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
+    -- On a trek between zones (ROADMAP T) every circle is TREK_AVOID_EXTRA
+    -- yalms wider still: she has no camp spot to keep her near the edge (the
+    -- user, 2026-10-11: two yalms to start; a survey of the routes past the
+    -- mobs' patrols is to tell the margin a trek wants)
+    TREK_AVOID_EXTRA = 2.0,
+    -- Where the mobs hold every way on her trek (a choke), she waits out of
+    -- their reach for one to roam off, backing off to the nearest ground
+    -- that is when no spot short of it is, and never goes through on her own.
+    -- Once the way has stayed held this many seconds, and the whole zone's
+    -- plan finds no way round, she says in party chat that she is stuck by
+    -- aggro; past it later, that she got by (the user, 2026-10-12)
+    TREK_STUCK_AFTER = 15,
+    -- The milliseconds of each 400 ms logic tick every trek together may
+    -- spend (planning its route round the mobs, checking it): a tick whose
+    -- treks pass it is shouted in the map log as a [critical] line
+    TREK_PLAN_BUDGET_MS = 40,
 
     -- Linking, her Avoid links row: the idle kin of any mob fighting a
     -- cardian are circles for that cardian alone -- link range plus

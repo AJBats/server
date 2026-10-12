@@ -20,6 +20,7 @@ slots:
     enter: any
     exit: west_sarutabaruta
     cliques: [1, 4]
+    lounge: true
   # Signet and out: a beat before Milma-Hapilma, W.W., then through the gate
   - activity: stand
     band: [1, 75]
@@ -86,6 +87,7 @@ slots:
     enter: mog_house
     exit: any
     cliques: [1, 3]
+    lounge: true
   # -- Shopping at Kususu, Aroro
   - activity: stand
     band: [1, 75]

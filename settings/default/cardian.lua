@@ -29,6 +29,11 @@ xi.settings.cardian =
     -- lockout, which alone holds him off the mob of that swing (pawn/reengage.h).
     REENGAGE_SWITCH_DELAY = 2.0,
 
+    -- Drills (ROADMAP T, "Drills"): travel tests with no client, run by
+    -- `./dev-servers.ps1 drill <file>`. The map reads its drill file only
+    -- while this is on; the dev profile turns it on, and nothing else does.
+    DRILLS = false,
+
     -- The combat pause (ROADMAP B): the addon's pause button holds the whole
     -- simulation -- combat and movement, nothing else -- until the player who
     -- took it resumes. Off, the button is refused with a note.

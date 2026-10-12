@@ -20,6 +20,7 @@ slots:
     enter: any
     exit: sauromugue_champaign
     cliques: [1, 4]
+    lounge: true
   # -- The gate to qufim_island: loitering inside the arch, a long while
   - activity: stand
     band: [1, 75]
@@ -30,6 +31,7 @@ slots:
     enter: any
     exit: qufim_island
     cliques: [1, 2]
+    lounge: true
   # -- Through traffic from lower_jeuno: a pause on the way, then on to a gate
   - activity: stand
     band: [1, 75]
@@ -68,6 +70,7 @@ slots:
     enter: mog_house
     exit: any
     cliques: [1, 3]
+    lounge: true
   # -- Shopping at Gekko, Leyla
   - activity: stand
     band: [1, 75]

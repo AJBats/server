@@ -309,7 +309,7 @@ namespace pawn
         // was; else why it was not, for the log
         auto UseHateTool(uint16 ability, CBattleEntity* PTarget, const std::string& why) -> std::optional<std::string>;
         // Her rows as the editor shows them: her own and the rows her party
-        // role lends, in the running order (gambit_layers.h place, with the
+        // role and her trek lend, in the running order (gambit_layers.h place, with the
         // role's rows where Rebind keeps them), each with
         // whose it is, its number (hers: the one the edits name; a lent one:
         // 0, no edit names it) and its state where it sits
@@ -319,7 +319,8 @@ namespace pawn
             cardian::layers::Origin   origin = cardian::layers::Origin::Own;
             std::size_t               index  = 0;
             cardian::tactician::State state  = cardian::tactician::State::Order;
-            bool                      on     = true; // as it runs: a row the role pins runs on whatever its checkbox
+            bool                      on     = true;  // as it runs: a row the role pins runs on whatever its checkbox
+            bool                      trek   = false; // lent by her trek, not her party role
         };
         auto Shown() -> std::vector<ShownRow>;
         // Whether her own row at a 1-based place is pinned by her party role
@@ -470,12 +471,14 @@ namespace pawn
     private:
         // What her party role's layer was compiled for: the role, her main
         // job and her sub job, since a seat lends the tools her two jobs can
-        // ever use (role_bundles.h)
+        // ever use (role_bundles.h); and whether she is on a trek, which lends
+        // its own rows ahead of the role's while it lasts (ROADMAP T)
         struct RoleKey
         {
             cardian::party::Role role;
             xi::Job              job;
             xi::Job              sub;
+            bool                 trek = false;
             auto                 operator==(const RoleKey&) const -> bool = default;
         };
 
@@ -618,6 +621,7 @@ namespace pawn
         std::vector<GambitRow>                  m_roleRows;
         std::vector<std::string>                m_roleBinds;
         std::optional<RoleKey>                  m_roleKey;
+        std::vector<std::string>                m_trekRowIds; // the lent rows her trek lends, ahead of the role's (ROADMAP T)
         uint32                                  m_rowsGeneration = 0; // moves with every change to her rows or her layers
         mutable std::optional<Offered>          m_offers;
         uint32                                  m_nextRoleId = 0;

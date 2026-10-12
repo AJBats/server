@@ -558,9 +558,10 @@ namespace pawn
         }
         // Her party role's rows run with a player and never in the wild. Her
         // sub job as she has set it, a zone's restriction of it aside: the
-        // rows stay put, and a restricted tool is never usable anyway
+        // rows stay put, and a restricted tool is never usable anyway. A trek
+        // lends its rows while it lasts
         const auto role = wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner);
-        const RoleKey key{ role, POwner->GetMJob(), POwner->GetSJob(true) };
+        const RoleKey key{ role, POwner->GetMJob(), POwner->GetSJob(true), !wild && m_host->Trekking() };
         if (!m_roleKey.has_value() || *m_roleKey != key)
         {
             RebuildRoleLayer(key);
@@ -580,12 +581,31 @@ namespace pawn
         m_roleRows.clear();
         m_roleBinds.clear();
         m_roleTimers.clear();
-        for (const auto& [spec, enabled] : pawn::bundles::bundleFor(role, key.job, key.sub, seatCaps(), toolLevel))
+        m_trekRowIds.clear();
+        // On a trek she keeps clear of every mob on the way, whatever her own
+        // rows say (ROADMAP T): Avoid aggro and Avoid links, ahead of the
+        // role's rows, standing in the place of hers that mean the same
+        std::vector<std::pair<std::string, bool>> rows;
+        if (key.trek)
+        {
+            rows.emplace_back("0|0:0|100:1:1|0", true);  // Self -> Avoid aggro
+            rows.emplace_back("0|0:0|100:13:1|0", true); // Self -> Avoid links
+        }
+        const std::size_t trekRows = rows.size();
+        for (auto& lent : pawn::bundles::bundleFor(role, key.job, key.sub, seatCaps(), toolLevel))
+        {
+            rows.push_back(std::move(lent));
+        }
+        for (const auto& [spec, enabled] : rows)
         {
             if (auto row = pawn::text::parseRow(spec); row.has_value())
             {
                 row->identifier = cardian::layers::roleRowId(++m_nextRoleId);
                 row->last_used  = {};
+                if (m_roleRows.size() < trekRows)
+                {
+                    m_trekRowIds.push_back(row->identifier);
+                }
                 m_roleRows.push_back(GambitRow{ std::move(*row), enabled });
             }
             else
@@ -596,7 +616,13 @@ namespace pawn
         RowsChanged();
         if (!m_roleRows.empty())
         {
-            ShowInfoFmt("pawn: {} runs the {} role's {} rows with her own", POwner->getName(), cardian::party::roleName(role), m_roleRows.size());
+            const std::size_t roleRows = m_roleRows.size() - m_trekRowIds.size();
+            std::string       lent     = roleRows > 0 ? fmt::format("the {} role's {} rows", cardian::party::roleName(role), roleRows) : std::string();
+            if (!m_trekRowIds.empty())
+            {
+                lent += fmt::format("{}her trek's {}", lent.empty() ? "" : " and ", m_trekRowIds.size());
+            }
+            ShowInfoFmt("pawn: {} runs {} with her own", POwner->getName(), lent);
         }
         else if (had)
         {
@@ -1751,8 +1777,9 @@ namespace pawn
         out.reserve(layers.rows.size());
         for (std::size_t i = 0; i < layers.rows.size(); ++i)
         {
-            const auto& p = layers.rows[i];
-            out.push_back({ p.row, p.origin, p.origin == cardian::layers::Origin::Lent ? 0 : p.index, states[worldRows + i], p.on });
+            const auto& p    = layers.rows[i];
+            const bool  trek = p.origin != cardian::layers::Origin::Own && std::ranges::find(m_trekRowIds, p.row->gambit.identifier) != m_trekRowIds.end();
+            out.push_back({ p.row, p.origin, p.origin == cardian::layers::Origin::Lent ? 0 : p.index, states[worldRows + i], p.on, trek });
         }
         return out;
     }

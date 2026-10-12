@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 73: a broken rod that takes the lure --
+// compatible, the user, 2026-09-14). 74: CL_LENDER_TREK, a gambit row her trek
+// lends; 73: a broken rod that takes the lure --
 // VENTURE_NEWS's lure, CL_NEWS_ROD_LURE_LOST; 72: a venture's supplies by item --
 // CL_VENTURE_USED and CL_VENTURE_BOUGHT; 71: a lure lost to a snapped line --
 // SEND_ERRAND's and PROFESSION's endOnSnap, VENTURE_BAIT's lure,
@@ -141,7 +142,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 73 };
+enum { CL_PROTOCOL = 74 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -952,7 +953,7 @@ typedef struct cl_gambit_row
     uint8_t   state;     // CL_GS_*: what the row means where it sits
     uint8_t   fits;       // 0: more than cl_gambit carries (a hand-made brain's), gambit left empty: shown, not rewritten
     uint8_t   origin;    // CL_GO_*
-    uint8_t   lender;    // CL_ROLE_*: the party role a lent row comes from, or that hers folds; CL_ROLE_NONE on her own
+    uint8_t   lender;    // CL_ROLE_*: the party role a lent row comes from, or that hers folds; CL_LENDER_TREK her trek's; CL_ROLE_NONE on her own
     cl_gambit gambit;
     char      head[64];   // the row as the player reads it: when, "Ally: HP < 50%"
     char      action[64]; // and what, "Cure (best)"
@@ -1391,6 +1392,12 @@ enum
     CL_ROLE_DAMAGE = 3,
     CL_ROLE_PULLER = 4, // one member's; the others can be held by several
     CL_ROLE_AUTO   = 255, // asked only, never answered: the player's choice for her is taken back, and the join rule decides again
+};
+
+// A lent gambit row's lender that is no party role (GAMBIT_ROW's lender)
+enum
+{
+    CL_LENDER_TREK = 200, // her trek between zones: Avoid aggro and Avoid links, while it lasts
 };
 
 // One member of his party, her role, and what her column of the party screen

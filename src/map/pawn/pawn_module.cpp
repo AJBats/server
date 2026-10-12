@@ -22,6 +22,7 @@
 #include "auction.h"
 #include "cardian_link.h"
 #include "club.h"
+#include "drill.h"
 #include "engage_math.h"
 #include "errands.h"
 #include "professions.h"
@@ -284,6 +285,9 @@ class PawnModule : public CPPModule
         pawn::linkapi::loadLibraries();
         // The seat waterfall (ROADMAP H): the ladder, its lookups and its engine
         pawn::seats::init();
+        // Travel's sub-zones, cut from the zones' meshes before the watchdog
+        // watches (pawn_travel.h)
+        pawn::travel::prepare();
         // The MP bank's samplers, a Lua library (RESEARCH §12.13)
         pawn::tactics::bank::load();
 
@@ -749,6 +753,7 @@ class PawnModule : public CPPModule
     // linkshell, go on either way, as his own trade window does through a pause
     void OnZoneTick(CZone* PZone) override
     {
+        pawn::drill::tick();
         pawn::club::tick(PZone);
         if (cardian::pause::isHeld())
         {

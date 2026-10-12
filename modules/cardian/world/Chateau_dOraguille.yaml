@@ -14,3 +14,4 @@ slots:
     enter: any
     exit: bostaunieux_oubliette
     cliques: [1, 4]
+    lounge: true

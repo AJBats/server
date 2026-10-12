@@ -111,5 +111,11 @@ namespace pawn
         // Her rows' "mob" while she has no battle target: the fight she
         // attends or walks in on
         virtual auto PartyFightTarget() const -> CBattleEntity* = 0;
+        // On a trek between zones (ROADMAP T): the trek lends her rows of
+        // its own while it lasts. A played character never treks
+        virtual auto Trekking() const -> bool
+        {
+            return false;
+        }
     };
 } // namespace pawn

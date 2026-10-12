@@ -54,6 +54,7 @@ slots:
     party: 3                  # three hold the seat and come and go together
     cliques: [1, 4]           # the seats laid out as little groups of 1-4 facing each other
     via: [[-182.9, -1.0, 29.4]]  # points walked in order on the way in, in reverse on the way out
+    lounge: true              # the player's idle linkshell members gather here
 ```
 
 A town walk keeps to a lane of her own -- the mesh's route slid a step
@@ -68,6 +69,15 @@ opens for her, but the mesh leaks through the building's east wall, so a
 seat inside names the doorway as its via and she goes round by it. She
 comes in from the exit nearest her first via point and leaves the same
 way back.
+
+`lounge` marks a spot where the player's idle linkshell members -- in
+his zone, out of his party, with nothing to do -- gather, in a ring round
+its middle (`club.cpp`'s lounge): the one nearest them, of the spots the
+zone marks. Only a marked slot is one, so a zone that marks none, every
+field zone, leaves them standing where they are (the user, 2026-10-12).
+The lounge walks them straight there, minding no `via` and no hours, so
+mark only an open spot that needs neither: the cities' clustered seats
+are marked, but for the Tanners' Guild's workroom.
 
 `cliques` is for a crowd: group sizes are drawn in the range until the
 seats are covered, group centres are spread over the slot by
