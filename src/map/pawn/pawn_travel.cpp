@@ -345,17 +345,17 @@ namespace pawn::travel
     }
 
     auto routeAvoiding(const xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
-                       const cardian::route::HazardSight& sight) -> std::optional<cardian::route::Route>
+                       const cardian::route::HazardSight& sight, const float reach) -> std::optional<cardian::route::Route>
     {
         const auto* zm = meshOf(static_cast<uint16>(zone));
         if (zm == nullptr)
         {
             return std::nullopt;
         }
-        auto route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight);
+        auto route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight, reach);
         if (!route.has_value())
         {
-            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight);
+            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach);
         }
         return route;
     }

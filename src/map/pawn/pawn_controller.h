@@ -544,8 +544,9 @@ private:
     // aggro and Avoid links rows a trek lends): the route round every mob in
     // her zone that would
     // come for her (pawn::travel::routeAvoiding), checked against where the
-    // mobs stand now and planned again when one crosses it, or at once when
-    // one's reach takes her in. Where the mobs hold every way she walks up
+    // mobs stand now: the stretch round the trouble planned again when one
+    // crosses it, or at once when one's reach takes her in, and the whole
+    // route as she sets out and every 15 s. Where the mobs hold every way she walks up
     // to the choke and holds there, out of every reach, for it to open,
     // pawn.TREK_CHOKE_WAIT at most; racing, she never holds.
     // False when no route could be planned: the trek's other ways have

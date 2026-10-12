@@ -82,10 +82,11 @@ namespace pawn
         // The route from a body at `from` to `to` in `zone` kept out of the
         // hazards (pawn/route_search.h searchAvoiding): its `firstDanger`
         // names where the mobs hold every way, a choke known before she takes
-        // a step. Not complete when no walk joins them; nullopt when the zone
-        // has no mesh or she stands off it
+        // a step. Not complete when no walk joins them -- within `reach`,
+        // when given, the stretch's own ground; nullopt when the zone has no
+        // mesh or she stands off it
         auto routeAvoiding(xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
-                           const cardian::route::HazardSight& sight) -> std::optional<cardian::route::Route>;
+                           const cardian::route::HazardSight& sight, float reach = 0.0f) -> std::optional<cardian::route::Route>;
 
         // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
         // at 0 (BFS from all of them at once); a zone no line reaches is absent

@@ -7242,6 +7242,8 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
     constexpr auto  kHeldRetry    = 3s;      // a choke looked at again
     constexpr auto  kRefreshEvery = 15s;     // a shorter way that opened since
     constexpr auto  kForgotten    = 5s;      // not walked for this long, the route is planned anew
+    constexpr float kStretchPast  = 60.0f;   // a stretch planned again runs this many yalms of her route past the trouble
+    constexpr float kStretchSpare = 60.0f;   // ... on ground half as long again as the stretch, and this many yalms more
 
     auto*      PPathFind = POwner->PAI->PathFind.get();
     const auto zone      = POwner->getZone();
@@ -7310,7 +7312,8 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
     }
 
     // A choke somewhere ahead on her route, and her holding for one now:
-    // only holding looks again every kHeldRetry with a whole new route
+    // only holding looks again every kHeldRetry, at the stretch round the
+    // choke
     const bool chokeAhead = m_TrekRouteKnown && m_TrekRouteDanger >= 0 && m_TrekRouteNext <= static_cast<size_t>(m_TrekRouteDanger);
     const bool holding    = m_TrekHeldSince.has_value();
     bool       adopted    = false;
@@ -7348,8 +7351,9 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
         };
 
         // The rest of her route, against where the mobs stand now
-        int   crossedBy = -1;
-        float remaining = 0.0f;
+        int    crossedBy = -1;
+        size_t crossedAt = 0; // the waypoint the crossed step leads to
+        float  remaining = 0.0f;
         if (!fresh)
         {
             const cardian::route::DangerTest test(hazards, cardian::route::toDetour(here), sight);
@@ -7359,22 +7363,79 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
                 if (crossedBy < 0 && (!chokeAhead || i < static_cast<size_t>(m_TrekRouteDanger)))
                 {
                     crossedBy = test.holder(from, m_TrekRoute[i]);
+                    crossedAt = i;
                 }
                 remaining += distance(from, m_TrekRoute[i]);
                 from = m_TrekRoute[i];
             }
         }
 
-        if (fresh || caughtBy != nullptr || holding || crossedBy >= 0 || m_Tick - m_TrekRoutePlannedAt >= kRefreshEvery)
+        const bool refresh = m_Tick - m_TrekRoutePlannedAt >= kRefreshEvery;
+        if (fresh || caughtBy != nullptr || holding || crossedBy >= 0 || refresh)
         {
-            const auto began = std::chrono::steady_clock::now();
-            auto       route = pawn::travel::routeAvoiding(zone, here, goal, hazards, sight);
-            const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
-            m_TrekRoutePlannedAt = m_Tick;
-            m_TrekRouteGoal      = goal;
-            m_TrekRouteZone      = zone;
-            m_TrekRouteFailed    = !route.has_value() || !route->complete || route->points.empty();
-            if (m_TrekRouteFailed)
+            // A stretch is planned again, not the whole zone, when a mob
+            // comes onto her way or onto her, or while she holds for a
+            // choke: from her to the waypoint kStretchPast yalms past the
+            // trouble -- the crossing, the choke, or her own spot -- on the
+            // ground round the two, joined to the rest of her route. The
+            // whole route is planned as she sets out, every kRefreshEvery,
+            // and when the stretch cannot be: no walk on its ground, or held
+            // where she was not holding, so that a long way round, past the
+            // stretch's ground, is looked for before she stops
+            std::optional<size_t> stretchTo;
+            float                 stretchLength = 0.0f;
+            if (!fresh && !refresh && m_TrekRouteNext < m_TrekRoute.size())
+            {
+                size_t from = m_TrekRouteNext;
+                if (crossedBy >= 0)
+                {
+                    from = crossedAt;
+                }
+                else if (holding && m_TrekRouteDanger >= 0)
+                {
+                    from = std::max(from, static_cast<size_t>(m_TrekRouteDanger));
+                }
+                size_t to   = std::min(from, m_TrekRoute.size() - 1);
+                float  past = 0.0f;
+                while (to + 1 < m_TrekRoute.size() && past < kStretchPast)
+                {
+                    past += distance(m_TrekRoute[to], m_TrekRoute[to + 1]);
+                    ++to;
+                }
+                position_t at = here;
+                for (size_t i = m_TrekRouteNext; i <= to; ++i)
+                {
+                    stretchLength += distance(at, m_TrekRoute[i]);
+                    at = m_TrekRoute[i];
+                }
+                stretchTo = to;
+            }
+
+            const auto                           began    = std::chrono::steady_clock::now();
+            int                                  searched = 0;
+            std::optional<cardian::route::Route> route;
+            if (stretchTo.has_value())
+            {
+                const float reach = std::max(stretchLength * 1.5f, distance(here, m_TrekRoute[*stretchTo])) + kStretchSpare;
+                route             = pawn::travel::routeAvoiding(zone, here, m_TrekRoute[*stretchTo], hazards, sight, reach);
+                searched += route.has_value() ? route->searched : 0;
+                if (!route.has_value() || !route->complete || route->points.empty() || (route->firstDanger >= 0 && !holding))
+                {
+                    stretchTo.reset();
+                    route.reset();
+                }
+            }
+            if (!route.has_value())
+            {
+                route    = pawn::travel::routeAvoiding(zone, here, goal, hazards, sight);
+                searched += route.has_value() ? route->searched : 0;
+                m_TrekRoutePlannedAt = m_Tick;
+                m_TrekRouteFailed    = !route.has_value() || !route->complete || route->points.empty();
+            }
+            const auto took = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+            m_TrekRouteGoal = goal;
+            m_TrekRouteZone = zone;
+            if (!stretchTo.has_value() && m_TrekRouteFailed)
             {
                 ShowInfoFmt("pawn: travel {}: no route on the mesh to the line ({} ms), the trek's own walk", POwner->getName(), took);
                 m_TrekRouteKnown = false;
@@ -7383,24 +7444,41 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
                 return false;
             }
 
+            // The route she would walk: the stretch joined to the rest of
+            // hers, or the whole one, her own spot first
+            std::vector<position_t> planned(1, here);
+            planned.insert(planned.end(), route->points.begin(), route->points.end());
+            int danger = route->firstDanger >= 0 ? route->firstDanger + 1 : -1;
+            if (stretchTo.has_value())
+            {
+                const size_t joined = planned.size();
+                if (danger < 0 && m_TrekRouteDanger > static_cast<int>(*stretchTo))
+                {
+                    danger = static_cast<int>(joined + (m_TrekRouteDanger - (*stretchTo + 1)));
+                }
+                planned.insert(planned.end(), m_TrekRoute.begin() + static_cast<std::ptrdiff_t>(*stretchTo + 1), m_TrekRoute.end());
+            }
+            float length = 0.0f;
+            for (size_t i = 1; i < planned.size(); ++i)
+            {
+                length += distance(planned[i - 1], planned[i]);
+            }
+
             // Looked at again while her route keeps clear, the new one only
             // when it is shorter by a tenth -- no swapping sides round a mob
             // -- or when the choke ahead has opened
-            const bool held   = route->firstDanger >= 0;
-            const bool better = route->length < remaining * 0.9f;
-            if (fresh || caughtBy != nullptr || holding || crossedBy >= 0 || better || (chokeAhead && !held))
+            const bool held   = danger >= 0;
+            const bool better = length < remaining * 0.9f;
+            if (stretchTo.has_value() || fresh || caughtBy != nullptr || holding || crossedBy >= 0 || better || (chokeAhead && !held))
             {
                 if (fresh)
                 {
                     m_TrekHeldSince.reset(); // a new zone or goal: a hold of the last one is not this one's
                 }
-                m_TrekRoute.assign(1, here);
-                m_TrekRoute.insert(m_TrekRoute.end(), route->points.begin(), route->points.end());
+                m_TrekRoute        = std::move(planned);
                 m_TrekRouteNext    = 1;
-                m_TrekRouteDanger  = held ? route->firstDanger + 1 : -1;
+                m_TrekRouteDanger  = danger;
                 m_TrekRouteKnown   = true;
-                m_TrekRouteGoal    = goal;
-                m_TrekRouteZone    = zone;
                 m_TrekRouteWalking = false;
                 m_TrekRouteInside  = reaching;
                 adopted            = true;
@@ -7469,8 +7547,10 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
                         choke = fmt::format("; the way is held by {} {:.0f}y ahead{}", nameOf(test.holder(m_TrekRoute[d - 1], m_TrekRoute[d])), ahead,
                                             m_TrekRouteHold < 0 ? ", with no spot short of it out of every reach: she goes through" : "");
                     }
-                    ShowInfoFmt("pawn: travel {}: route to the line round {} mobs ({}): {:.0f}y in {} waypoints, {} points searched, {} sight tests, {} ms{}",
-                                POwner->getName(), hazards.size(), why, route->length, route->points.size(), route->searched, sightTests, took, choke);
+                    ShowInfoFmt("pawn: travel {}: route to the line round {} mobs ({}): {:.0f}y in {} waypoints{}, {} points searched, {} sight tests, {} ms{}",
+                                POwner->getName(), hazards.size(), why, length, m_TrekRoute.size() - 1,
+                                stretchTo.has_value() ? fmt::format(", the next {:.0f}y planned again", route->length) : std::string(", planned whole"), searched,
+                                sightTests, took, choke);
                 }
             }
         }

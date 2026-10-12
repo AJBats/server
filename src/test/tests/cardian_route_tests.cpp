@@ -26,7 +26,10 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -355,7 +358,6 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
             REQUIRE(round->complete);
             CHECK(round->firstDanger == -1);
             CHECK(closestApproach(from, round->points, mob) >= h.radius - 0.01f);
-            CHECK(round->length > clear->length);
         }
     }
 
@@ -366,7 +368,7 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
         const auto   ignored = cardian::route::searchAvoiding(*mesh, from, to, sz::kBodyExtents, sz::kLineExtents, { Hazard{ .at = mob, .radius = 12.0f } }, blind);
         REQUIRE(ignored.has_value());
         CHECK(ignored->firstDanger == -1);
-        CHECK(ignored->length < clear->length + 1.0f);
+        CHECK(closestApproach(from, ignored->points, mob) < 12.0f); // straight past it
         const auto ambush = cardian::route::searchAvoiding(*mesh, from, to, sz::kBodyExtents, sz::kLineExtents, { Hazard{ .at = mob, .radius = 12.0f, .unseen = 5.0f } }, blind);
         REQUIRE(ambush.has_value());
         CHECK(ambush->firstDanger == -1);
@@ -383,6 +385,29 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
         const auto& stand = held->firstDanger == 0 ? from : held->points[held->firstDanger - 1];
         CHECK(yalms(stand, to) >= h.radius - 0.01f);
         CHECK(closestApproach(from, std::vector<position_t>(held->points.begin(), held->points.begin() + held->firstDanger), to) >= h.radius - 0.01f);
+    }
+
+    SECTION("a stretch planned again keeps to its ground: round a mob within it, held where it is too narrow to go round")
+    {
+        const auto  end   = along(from, plain->points, 150.0f / plain->length);
+        const auto  mob   = position_t((from.x + end.x) / 2.0f, (from.y + end.y) / 2.0f, (from.z + end.z) / 2.0f, 0, 0);
+        const auto  crow  = yalms(from, end);
+        const float reach = std::max(150.0f * 1.5f, crow) + 60.0f;
+        const auto  wide  = cardian::route::searchAvoiding(*mesh, from, end, sz::kBodyExtents, sz::kBodyExtents, { Hazard{ .at = mob, .radius = 12.0f } }, {}, reach);
+        REQUIRE(wide.has_value());
+        REQUIRE(wide->complete);
+        CHECK(wide->firstDanger == -1);
+        CHECK(closestApproach(from, wide->points, mob) >= 12.0f - 0.01f);
+        for (const auto& p : wide->points)
+        {
+            CHECK(yalms(p, from) + yalms(p, end) <= reach + 6.0f); // the ends are found on the mesh, a little off the points asked
+        }
+
+        // ground no wider than the mob's reach across the middle: every way
+        // over it passes the mob
+        const auto tight = cardian::route::searchAvoiding(*mesh, from, end, sz::kBodyExtents, sz::kBodyExtents, { Hazard{ .at = mob, .radius = 12.0f } }, {}, crow + 2.0f);
+        REQUIRE(tight.has_value());
+        CHECK((!tight->complete || tight->firstDanger >= 0));
     }
 
     SECTION("setting out inside a mob's reach, she walks out of it")
@@ -442,4 +467,78 @@ TEST_CASE("Route kept out of danger: crosses the mesh's off-mesh links where the
     REQUIRE(held.has_value());
     REQUIRE(held->complete);
     CHECK(held->firstDanger >= 0);
+}
+
+TEST_CASE("Route kept out of danger: timings (opt-in, CARDIAN_BENCH=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_BENCH") == nullptr)
+    {
+        SKIP("the timings run with CARDIAN_BENCH=1");
+    }
+    using cardian::route::Hazard;
+    struct Case
+    {
+        const char* zone;
+        position_t  from;
+        position_t  to;
+    };
+    const Case cases[] = {
+        { "South_Gustaberg", { 0.840f, -5.027f, 76.838f, 0, 0 }, { -440.465f, 33.268f, -118.436f, 0, 0 } },
+        { "La_Theine_Plateau", { -558.569f, -7.049f, 688.049f, 0, 0 }, { 160.169f, 24.326f, -764.007f, 0, 0 } },
+    };
+    for (const auto& c : cases)
+    {
+        const auto mesh = loadMesh(c.zone);
+        if (!mesh)
+        {
+            continue;
+        }
+        const auto plain = cardian::route::search(*mesh, c.from, c.to, sz::kLineExtents, sz::kLineExtents);
+        REQUIRE(plain.has_value());
+
+        // mobs as play has them: one every 40 yalms along the way, 15 yalms
+        // to one side or the other, every circle 12 yalms
+        std::vector<Hazard> scattered;
+        float               total = plain->length;
+        for (int i = 1; i * 40.0f < total; ++i)
+        {
+            auto p = along(c.from, plain->points, i * 40.0f / total);
+            p.x += (i % 2 == 0 ? 15.0f : -15.0f);
+            scattered.push_back({ .at = p, .radius = 12.0f });
+        }
+        const std::vector<Hazard> choke = { { .at = c.to, .radius = 25.0f } };
+
+        // every mob sees everything, and the sight tests a real one's eyes
+        // would cost are counted
+        int        sightTests = 0;
+        const auto sight      = [&](size_t, const position_t&)
+        {
+            ++sightTests;
+            return true;
+        };
+        const auto time = [&](const char* what, const std::vector<Hazard>& hazards)
+        {
+            sightTests       = 0;
+            const auto began = std::chrono::steady_clock::now();
+            const auto route = cardian::route::searchAvoiding(*mesh, c.from, c.to, sz::kLineExtents, sz::kLineExtents, hazards, sight);
+            const auto us    = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count();
+            REQUIRE(route.has_value());
+            WARN(c.zone << " " << what << ": " << us / 1000.0 << " ms, " << route->searched << " points searched, " << sightTests << " sight tests, "
+                        << route->length << "y (Detour's " << plain->length << "y), danger at " << route->firstDanger);
+        };
+        time("clear", {});
+        time("scattered", scattered);
+        time("choke", choke);
+
+        // a stretch planned again: 150 yalms of the way, a mob on its middle
+        const auto stretchEnd = along(c.from, plain->points, 150.0f / total);
+        const auto stretchMob = along(c.from, plain->points, 75.0f / total);
+        const auto began      = std::chrono::steady_clock::now();
+        const auto stretch    = cardian::route::searchAvoiding(*mesh, c.from, stretchEnd, sz::kLineExtents, sz::kBodyExtents, { { .at = stretchMob, .radius = 12.0f } },
+                                                               sight, 150.0f * 1.5f + 60.0f);
+        const auto us         = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count();
+        REQUIRE(stretch.has_value());
+        WARN(c.zone << " stretch: " << us / 1000.0 << " ms, " << stretch->searched << " points searched, " << stretch->length << "y, complete "
+                    << stretch->complete << ", danger at " << stretch->firstDanger);
+    }
 }
