@@ -540,17 +540,24 @@ private:
     // A chase on her trek is over: said with what it cost her (TravelTick)
     void EndChase(std::string_view how);
 
+    // A line of hers in party chat, to the real players in her party
+    void TrekSay(std::string_view text);
+
+    // Past the choke she said she was stuck at: one of her "got by" lines
+    void TrekGotBy(std::string_view where);
+
     // Her trek's walk to `goal` kept out of danger (TravelTick; the Avoid
     // aggro and Avoid links rows a trek lends): the route round every mob in
-    // her zone that would
-    // come for her (pawn::travel::routeAvoiding), checked against where the
-    // mobs stand now: the stretch round the trouble planned again when one
-    // crosses it, or at once when one's reach takes her in, and the whole
-    // route as she sets out and every 15 s. Where the mobs hold every way she walks up
-    // to the choke and holds there, out of every reach, for it to open,
-    // pawn.TREK_CHOKE_WAIT at most; racing, she never holds.
-    // False when no route could be planned: the trek's other ways have
-    // their say
+    // her zone that would come for her (pawn::travel::routeAvoiding),
+    // checked against where the mobs stand now -- the stretch round the
+    // trouble planned again when one crosses it near ahead, or at once when
+    // one's reach takes her in, and the whole route as she sets out and
+    // every 15 s. Where the mobs hold every way she walks up to the choke
+    // and holds there, out of every reach, for it to open -- or, with no such
+    // spot ahead, backs off along the way she came to one -- and says she is
+    // stuck by aggro once sure, never going through on her own; racing, she
+    // never holds. False when no route could be planned: the trek's other
+    // ways have their say
     auto TrekSafeWalk(const position_t& goal, bool racing) -> bool;
 
     // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
@@ -1253,6 +1260,13 @@ private:
     bool                              m_TrekRouteWalking = false; // ... handed to her walker
     size_t                            m_TrekRouteEnd     = 0;     // ... up to here
     std::optional<timer::time_point>  m_TrekHeldSince;            // holding at a choke since
+    std::vector<position_t>           m_TrekBackOff;              // backing off: the way back along her trail to a spot out of every reach
+    std::deque<position_t>            m_TrekTrail;                // her trail in this zone, newest last (TrekSafeWalk)
+    xi::ZoneId                        m_TrekTrailZone{};
+    bool                              m_TrekWholeHeld = false;    // the last whole-zone plan found the way held
+    timer::time_point                 m_TrekWholeAt;              // ... and when it was made
+    bool                              m_TrekStuckSaid = false;    // she said she was stuck by aggro at this choke
+    position_t                        m_TrekStuckAt{};            // ... where it held her
 
     bool              m_Hunting    = false;
     bool              m_World      = false;

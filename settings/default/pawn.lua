@@ -419,9 +419,12 @@ xi.settings.pawn =
     -- mobs' patrols is to tell the margin a trek wants)
     TREK_AVOID_EXTRA = 2.0,
     -- Where the mobs hold every way on her trek (a choke), she waits out of
-    -- their reach for one to roam off, this many seconds at most, then goes
-    -- through and races for her line
-    TREK_CHOKE_WAIT = 60,
+    -- their reach for one to roam off, backing off the way she came when no
+    -- spot short of it is out of reach, and never goes through on her own.
+    -- Once the way has stayed held this many seconds, and the whole zone's
+    -- plan finds no way round, she says in party chat that she is stuck by
+    -- aggro; past it later, that she got by (the user, 2026-10-12)
+    TREK_STUCK_AFTER = 15,
     -- The milliseconds of each 400 ms logic tick every trek together may
     -- spend (planning its route round the mobs, checking it): a tick whose
     -- treks pass it is shouted in the map log as a [critical] line

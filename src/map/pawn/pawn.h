@@ -203,6 +203,18 @@ namespace pawn
     // player left her, as he left her (ROADMAP H, the party waits)
     bool spawnAt(uint32 charid, CZone* PZone, const position_t& point, uint8 job, bool asLeft = false);
 
+    // A drill's walker (pawn/drill.h, dev only): the offline character stood
+    // at the point as spawnAt stands one, but as no world body -- her own
+    // gambits, none of the farmer's errands -- for the drill's orders alone.
+    // Refused for a character with a session of any kind: a player between
+    // zones, one of the world's online out of sight, a member away on a venture
+    bool standForDrill(uint32 charid, CZone* PZone, const position_t& point);
+
+    // A drill walker's main job set to the level as the game's own setLevel
+    // sets it, in memory; with `save`, written back too (her own level, put
+    // back as her drill ends, whatever saved her meanwhile)
+    bool setDrillLevel(uint32 charid, uint8 level, bool save);
+
     // Presence without a body: the session row (search, the lobby's
     // already-online check) and a position in a zone, written for an
     // offline character, with her census job and level where search reads

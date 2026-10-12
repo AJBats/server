@@ -112,6 +112,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_shop.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_spots.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/venture_spots.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/drill.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/drill.h
 )
 
 set(MAP_CORE_SOURCES
