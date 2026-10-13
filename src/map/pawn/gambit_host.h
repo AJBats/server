@@ -103,6 +103,9 @@ namespace pawn
         virtual auto Anchor() const -> CCharEntity* = 0;
         // A foe she holds off for now: her door passes it by
         virtual auto HoldingOff(const CBattleEntity* PFoe) const -> bool = 0;
+        // A pull on its way in -- towed to the player, or not yet received
+        // at the camp -- that her fire waits on until it arrives
+        virtual auto FireWaitsOn(const CBattleEntity* PTarget) -> bool = 0;
         // The player sent her onto this mob himself: hers to fight, never to
         // attend
         virtual auto OrderedOnto(const CBattleEntity* PTarget) const -> bool = 0;

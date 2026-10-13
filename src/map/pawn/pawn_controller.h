@@ -141,6 +141,10 @@ public:
     // A target refused at the door is left alone for a while (HoldOff), so
     // a standing refusal (claimed, unclean) is not tried every beat
     auto HoldingOff(const CBattleEntity* PTarget) const -> bool;
+    // A pull on its way in that her fire waits on, and until when ("until it
+    // reaches him", "until it comes in to the camp"); nothing otherwise.
+    // HoldsFireOn says it for her spells, and her tank call asks it unsaid
+    auto FireWaitsOn(const CBattleEntity* PTarget) -> std::optional<std::string>;
     // The beat before she takes a fight: the reaction beat for a draw or a
     // walk in, none for a fight she attends, since she is not walking in
     auto JoinBeat(CBattleEntity* PTarget) const -> timer::duration;
@@ -1186,7 +1190,8 @@ private:
     // At a camp a caster holds her spells on a pull until it has come in,
     // as the melee wait for it: no walk out to meet it, and no enfeeble or
     // nuke from afar that would turn it from the puller. Free roaming, the
-    // same for a pull towed to the player (TowedToPlayer). A cure for the
+    // same for a pull towed to the player (TowedToPlayer); her tank call
+    // holds Provoke on it the same way (FireWaitsOn). A cure for the
     // puller still goes; the player's own order is never held
     auto HoldsFireOn(const CBattleEntity* PTarget) -> bool;
     uint32 m_HeldFireOn = 0; // the pull her spells wait on, said once

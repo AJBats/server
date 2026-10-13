@@ -93,6 +93,33 @@ TEST_CASE("tank calls: the pull -- a mob on someone else is Provoked the moment 
     CHECK_FALSE(callOf(v).has_value());
 }
 
+TEST_CASE("tank calls: a pull on its way in is not Provoked until it arrives", "[cardian][tactics][tank]")
+{
+    using cardian::tank::Held;
+    auto v = party();
+    v.mobs = { { 100, 100, kPuller, 10.0f, true } };
+    // towed in by the puller, in range: held, and said why
+    CHECK_FALSE(callOf(v).has_value());
+    CHECK(cardian::tank::decide(v).held == Held::Incoming);
+
+    // arrived: the pull as ever
+    v.mobs[0].incoming = false;
+    CHECK(callOf(v) == std::optional<Call>(Call{ 100, Reason::Pull }));
+
+    // the puller towing one in while another came on the melee: the melee's
+    v.mobs = { { 100, 100, kPuller, 10.0f, true }, { 101, 100, kMelee, 12.0f, false } };
+    CHECK(callOf(v) == std::optional<Call>(Call{ 101, Reason::Pull }));
+
+    // on its way in beats out of range as the reason held
+    v.mobs = { { 100, 100, kPuller, 12.0f, true }, { 101, 100, kMelee, 30.0f, false } };
+    CHECK(cardian::tank::decide(v).held == Held::Incoming);
+
+    // her own fight is hers on its clock, whatever else is on its way in
+    v.fight = 102;
+    v.mobs  = { { 102, 80, kTank, 3.0f, false }, { 100, 100, kPuller, 12.0f, true } };
+    CHECK(callOf(v) == std::optional<Call>(Call{ 102, Reason::Upkeep }));
+}
+
 TEST_CASE("tank calls: two to choose from -- the one on the Healer first, then the one on whoever is lowest", "[cardian][tactics][tank]")
 {
     auto v = party();

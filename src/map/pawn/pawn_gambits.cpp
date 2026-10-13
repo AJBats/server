@@ -755,7 +755,8 @@ namespace pawn
         // stunned, asleep -- is not made, so nothing is pushed at her
         if (tank && m_host->RestAllowsAction() && readyToAct(POwner))
         {
-            if (const auto call = pawn::tactics::tankCall(POwner, engaged); call.has_value())
+            const auto incoming = [this](const CBattleEntity* PMob) { return m_host->FireWaitsOn(PMob); };
+            if (const auto call = pawn::tactics::tankCall(POwner, engaged, incoming); call.has_value())
             {
                 // Its mind, said as it changes -- not the clock ticking,
                 // which is every fight's rhythm (quiet)

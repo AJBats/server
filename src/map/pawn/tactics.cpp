@@ -1175,7 +1175,7 @@ namespace pawn::tactics
         }
     }
 
-    auto tankCall(CCharEntity* PPawn, const bool engaged) -> std::optional<TankCall>
+    auto tankCall(CCharEntity* PPawn, const bool engaged, const std::function<bool(const CBattleEntity*)>& incoming) -> std::optional<TankCall>
     {
         auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
         auto* PProvoke   = ability::GetAbility(ABILITY_PROVOKE);
@@ -1208,9 +1208,10 @@ namespace pawn::tactics
 
         // The mobs the party fights, as the log has them open, each read
         // live: its HP, whom it is on, how far from her -- hitbox to hitbox,
-        // which is the gap the server's own range check allows. Her own
-        // fight is among them whether or not the log has it yet; a fight of
-        // the alliance's in another zone is nothing to her
+        // which is the gap the server's own range check allows -- and
+        // whether it is a pull still on its way in. Her own fight is among
+        // them whether or not the log has it yet; a fight of the alliance's
+        // in another zone is nothing to her
         auto* PFight = engaged ? PPawn->GetBattleTarget() : nullptr;
         if (PFight != nullptr && !PFight->isDead())
         {
@@ -1226,7 +1227,7 @@ namespace pawn::tactics
             auto*        POn    = PMob->GetBattleTarget();
             const uint32 target = POn != nullptr && POn->objtype == TYPE_PC ? POn->id : 0;
             const float  gap    = distance(PPawn->loc.p, PMob->loc.p) - PPawn->modelHitboxSize - PMob->modelHitboxSize;
-            v.mobs.push_back({ PMob->id, PMob->GetHPP(), target, gap });
+            v.mobs.push_back({ PMob->id, PMob->GetHPP(), target, gap, incoming(PMob) });
         };
         for (const auto& r : PTactician->log().open())
         {
