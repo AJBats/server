@@ -342,10 +342,11 @@ namespace cardian::formation
     // fight ring holds a mob's melee, not a seat turning with his facing --
     // so his turning on the spot moves nobody, and an about-turn makes nobody
     // cross. While he walks, her bearing blends toward her ring seat
-    // (measured from his heading) at her own pace; one he walks at holds her
-    // ground, steps off his line if he would run into her, and falls in once
-    // he has passed. Standing, she stays where she is within a band round
-    // him, else walks straight in or out along her bearing.
+    // (measured from his heading) at her own pace, and lagging well behind
+    // she makes straight for it; one he walks at holds her ground, steps off
+    // his line if he would run into her, and falls in once he has passed.
+    // Standing, she stays where she is within a band round him, else walks
+    // straight in or out along her bearing.
     // ------------------------------------------------------------------
 
     // The shortest signed turn from bearing b to bearing a, in (-pi, pi]
@@ -368,7 +369,7 @@ namespace cardian::formation
     {
         float blend     = 0.785f; // radians a second her bearing drifts toward her seat while he walks
         float bandNear  = 2.5f;   // standing: nearer than this, she steps out along her bearing
-        float bandFar   = 6.0f;   // standing: farther than this, she walks in along it
+        float bandFar   = 6.0f;   // standing: farther than this, she walks in along it; walking, farther than this behind or beside him, she makes straight for her seat
         float aheadHalf = 1.047f; // radians either side of his heading where she is ahead of him, and lets him pass
         float lineClear = 1.5f;   // yalms off his line she keeps while he passes her
         float passRange = 5.0f;   // ... once he is this near
@@ -416,17 +417,41 @@ namespace cardian::formation
             }
             return { sx, sz, true };
         }
-        // Behind or beside him: her bearing drifts toward her seat, at her pace
+        // Behind or beside him: her bearing drifts toward her seat, at her
+        // pace. Lagging -- past the band's far edge, not ahead of him -- she
+        // makes straight for her seat: from behind him the drift alone aims
+        // her at the rear seats, another follower's, and two who lag
+        // together walk into one spot
+        const bool  lags = d > r.bandFar && std::abs(turnFrom(std::atan2(hz, hx), bearing)) >= r.aheadHalf;
         const float most = r.blend * std::max(dt, 0.0f);
-        const float b    = bearing + std::clamp(turnFrom(bearing, seatBearing), -most, most);
+        const float b    = lags ? seatBearing : bearing + std::clamp(turnFrom(bearing, seatBearing), -most, most);
         return { px + seatDist * std::cos(b), pz + seatDist * std::sin(b), false };
     }
 
+    // Her heading as she comes to a stand (the user, 2026-10-13), in the
+    // world's 256ths of a turn: somewhere in the arc between the way to him
+    // (`toHim`) and the way he faces (`hisWay`), the short way round -- one
+    // fixed way when the two are exactly opposite -- widened by `room` past
+    // either end, `roll` in [0, 1) picking where. `off` is the heading less
+    // the way to him, `span` the way he faces less it
+    struct StandFacing
+    {
+        int off  = 0;
+        int span = 0;
+    };
+
+    inline auto standFacing(const int toHim, const int hisWay, const int room, const float roll) -> StandFacing
+    {
+        const int span = ((hisWay - toHim) % 256 + 256 + 128) % 256 - 128;
+        const int lo   = std::min(0, span) - room;
+        const int hi   = std::max(0, span) + room;
+        const int off  = std::min(hi, lo + static_cast<int>(std::floor(std::clamp(roll, 0.0f, 1.0f) * static_cast<float>(hi - lo + 1))));
+        return { off, span };
+    }
+
     // ------------------------------------------------------------------
-    // Aggro avoidance geometry (M3.87). Every detection type is a circle of
-    // that type's range plus a buffer; a cardian moves on the server with
-    // the mobs, so it may stand boldly just outside and is pushed away as
-    // a mob roams toward it.
+    // Flat circle geometry: the stake's route round the mobs it keeps clear
+    // of, the courtesy step round the player, the doors she opens
     // ------------------------------------------------------------------
 
     struct Circle
@@ -439,96 +464,6 @@ namespace cardian::formation
     inline auto planarDistance(const float ax, const float az, const float bx, const float bz) -> float
     {
         return std::hypot(ax - bx, az - bz);
-    }
-
-    // How deep inside the circle a point is (0 = outside or on the rim)
-    inline auto depthInside(const Circle& c, const float x, const float z) -> float
-    {
-        return std::max(0.0f, c.radius - planarDistance(c.x, c.z, x, z));
-    }
-
-    template <typename Circles>
-    inline auto insideAny(const Circles& circles, const float x, const float z) -> bool
-    {
-        for (const auto& c : circles)
-        {
-            if (depthInside(c, x, z) > 0.0f)
-            {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // Move the point radially out of every circle it sits in, a few passes
-    // so overlapping circles settle. A point exactly at a centre is pushed
-    // along +x. Returns the new point; unchanged when already clear.
-    template <typename Circles>
-    inline auto pushOut(const Circles& circles, float x, float z, const float clearance = 0.1f) -> std::pair<float, float>
-    {
-        for (int pass = 0; pass < 6; ++pass)
-        {
-            bool moved = false;
-            for (const auto& c : circles)
-            {
-                const float d = planarDistance(c.x, c.z, x, z);
-                if (d >= c.radius)
-                {
-                    continue;
-                }
-                const float want = c.radius + clearance;
-                if (d < 0.001f)
-                {
-                    x = c.x + want;
-                }
-                else
-                {
-                    x = c.x + (x - c.x) / d * want;
-                    z = c.z + (z - c.z) / d * want;
-                }
-                moved = true;
-            }
-            if (!moved)
-            {
-                break;
-            }
-        }
-        return { x, z };
-    }
-
-    // The nearest clear angle to `idealAngle` on a ring, sampled every
-    // `stepRadians` outward on both sides out to the opposite point.
-    // `pointAt(angle)` produces the candidate as {x, z} in whatever angle
-    // convention the caller's ring uses (nearPosition's, for formation
-    // slots), so this stays convention-free. nullopt when the whole ring is
-    // inside danger.
-    template <typename Circles, typename PointAt>
-    inline auto safestAngleOnRing(const Circles& circles, const float idealAngle, PointAt&& pointAt, const float stepRadians = 0.2617994f) -> std::optional<float>
-    {
-        const auto clearAt = [&](const float angle) -> bool
-        {
-            const auto [x, z] = pointAt(angle);
-            return !insideAny(circles, x, z);
-        };
-
-        if (clearAt(idealAngle))
-        {
-            return idealAngle;
-        }
-        const int steps = static_cast<int>(std::ceil(std::numbers::pi_v<float> / stepRadians));
-        for (int k = 1; k <= steps; ++k)
-        {
-            const float delta = static_cast<float>(k) * stepRadians;
-            if (clearAt(idealAngle + delta))
-            {
-                return idealAngle + delta;
-            }
-            if (clearAt(idealAngle - delta))
-            {
-                return idealAngle - delta;
-            }
-        }
-        return std::nullopt;
     }
 
     // Does the segment a->b pass through the circle? (endpoints included)
@@ -547,16 +482,6 @@ namespace cardian::formation
         return planarDistance(c.x, c.z, px, pz) < c.radius;
     }
 
-    // The settle rule's meter. `improvement` is how much closer to her ideal
-    // spot the best clear spot on offer would put her than the spot she
-    // holds; beyond `tolerance` it charges the itch at that rate (yalms per
-    // second), below it the itch drains at the shortfall. The caller moves
-    // her when the level reaches her patience. Never below zero.
-    inline auto itchAfter(const float level, const float improvement, const float tolerance, const float dtSeconds) -> float
-    {
-        return std::max(0.0f, level + (improvement - tolerance) * dtSeconds);
-    }
-
     // The closest the segment a->b comes to the circle's centre
     inline auto segmentClosest(const Circle& c, const float ax, const float az, const float bx, const float bz) -> float
     {
@@ -569,51 +494,6 @@ namespace cardian::formation
             t = std::clamp(((c.x - ax) * dx + (c.z - az) * dz) / len, 0.0f, 1.0f);
         }
         return planarDistance(c.x, c.z, ax + dx * t, az + dz * t);
-    }
-
-    // Does the segment a->b go INTO the circle: closer to the centre than
-    // both the rim and where it starts, by more than `slack`. A start that
-    // is already within the rim and moves away does not count (planning
-    // against padded circles puts a cardian there on purpose); a start
-    // outside that cuts in does.
-    inline auto segmentEnters(const Circle& c, const float ax, const float az, const float bx, const float bz, const float slack = 0.3f) -> bool
-    {
-        const float start = planarDistance(c.x, c.z, ax, az);
-        return segmentClosest(c, ax, az, bx, bz) < std::min(c.radius, start) - slack;
-    }
-
-    // The first point along a->b at `clearance` outside the circle: where
-    // an approach to something inside it stops. nullopt when `a` is already
-    // that close or closer, or the segment never reaches the ring.
-    inline auto approachRim(const Circle& c, const float ax, const float az, const float bx, const float bz, const float clearance = 0.0f) -> std::optional<std::pair<float, float>>
-    {
-        const float r  = c.radius + clearance;
-        const float fx = ax - c.x;
-        const float fz = az - c.z;
-        if (fx * fx + fz * fz <= r * r)
-        {
-            return std::nullopt;
-        }
-        const float dx = bx - ax;
-        const float dz = bz - az;
-        const float A  = dx * dx + dz * dz;
-        if (A <= 0.0f)
-        {
-            return std::nullopt;
-        }
-        const float B    = 2.0f * (fx * dx + fz * dz);
-        const float C    = fx * fx + fz * fz - r * r;
-        const float disc = B * B - 4.0f * A * C;
-        if (disc < 0.0f)
-        {
-            return std::nullopt;
-        }
-        const float t = (-B - std::sqrt(disc)) / (2.0f * A);
-        if (t < 0.0f || t > 1.0f)
-        {
-            return std::nullopt;
-        }
-        return std::pair{ ax + dx * t, az + dz * t };
     }
 
     // A waypoint that takes the way a->b round the circle without ever

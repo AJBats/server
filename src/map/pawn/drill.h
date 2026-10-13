@@ -47,7 +47,7 @@ namespace pawn::drill
     // twice a second, whichever zone ticks
     void tick();
 
-    // What her trek tells of itself (TravelTick, TrekSafeWalk, the rest
+    // What her trek tells of itself (TravelTick, TrekStep, the rest
     // across a line), counted for a drill's walker and ignored for anyone
     // else: each route planned, a hold at a choke, stuck by aggro there, a
     // sneak-by set out on, a chase begun, an "I'm stuck!" with no walk at

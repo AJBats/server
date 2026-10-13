@@ -187,32 +187,39 @@ xi.settings.pawn =
     -- (within COMPASS_AHEAD_DEG of his heading) holds her ground while
     -- within COMPASS_HOLD_RANGE yalms of him (farther, she comes to him),
     -- steps COMPASS_LINE_CLEAR yalms off his line if he comes within
-    -- COMPASS_PASS_RANGE, and falls in once he has passed. Standing, she
-    -- stays where she is between COMPASS_NEAR and COMPASS_FAR yalms of him,
-    -- else walks straight in or out along her bearing, and she turns to him
-    -- (give or take COMPASS_FACE_JITTER_DEG) as she comes to a stand,
-    -- unless she is kneeling to rest. Each
+    -- COMPASS_PASS_RANGE, and falls in once he has passed; lagging farther
+    -- than COMPASS_FAR behind or beside him, she makes straight for her seat.
+    -- Standing, she stays where she is between COMPASS_NEAR and COMPASS_FAR
+    -- yalms of him, else walks straight in or out along her bearing. Come to
+    -- a stand, she turns in her own time (the user, 2026-10-13):
+    -- COMPASS_FACE_STAY_PERCENT of the time she keeps the way she faces;
+    -- else, 0 to COMPASS_FACE_DELAY_MAX seconds after she stops, she faces
+    -- somewhere between him and the way he faces, COMPASS_FACE_ARC_ROOM_DEG
+    -- past either end -- now his way, now ahead where he points -- once she
+    -- is not kneeling or busy. Each
     -- cardian has her own manner, the same every time: her blend pace times
     -- 1 +- COMPASS_RATE_SPREAD, her seat turned up to
     -- COMPASS_ANGLE_SPREAD_DEG either way, up to COMPASS_DIST_SPREAD yalms
     -- further out, and a pause of COMPASS_REACT_MIN to _MAX seconds before
     -- she sets off when he does. A camp's place, and holding for his strike,
     -- keep the ring; false: the ring everywhere.
-    FORMATION_COMPASS                  = true,
-    FORMATION_COMPASS_SPACING          = 1.0,
-    FORMATION_COMPASS_BLEND_DEG        = 45,
-    FORMATION_COMPASS_AHEAD_DEG        = 60,
-    FORMATION_COMPASS_LINE_CLEAR       = 1.5,
-    FORMATION_COMPASS_PASS_RANGE       = 5.0,
-    FORMATION_COMPASS_HOLD_RANGE       = 10.0,
-    FORMATION_COMPASS_NEAR             = 2.5,
-    FORMATION_COMPASS_FAR              = 6.0,
-    FORMATION_COMPASS_FACE_JITTER_DEG  = 25,
-    FORMATION_COMPASS_RATE_SPREAD      = 0.4,
-    FORMATION_COMPASS_ANGLE_SPREAD_DEG = 10,
-    FORMATION_COMPASS_DIST_SPREAD      = 0.75,
-    FORMATION_COMPASS_REACT_MIN        = 0.2,
-    FORMATION_COMPASS_REACT_MAX        = 0.9,
+    FORMATION_COMPASS                   = true,
+    FORMATION_COMPASS_SPACING           = 1.0,
+    FORMATION_COMPASS_BLEND_DEG         = 45,
+    FORMATION_COMPASS_AHEAD_DEG         = 60,
+    FORMATION_COMPASS_LINE_CLEAR        = 1.5,
+    FORMATION_COMPASS_PASS_RANGE        = 5.0,
+    FORMATION_COMPASS_HOLD_RANGE        = 10.0,
+    FORMATION_COMPASS_NEAR              = 2.5,
+    FORMATION_COMPASS_FAR               = 6.0,
+    FORMATION_COMPASS_FACE_STAY_PERCENT = 25,
+    FORMATION_COMPASS_FACE_DELAY_MAX    = 10,
+    FORMATION_COMPASS_FACE_ARC_ROOM_DEG = 25,
+    FORMATION_COMPASS_RATE_SPREAD       = 0.4,
+    FORMATION_COMPASS_ANGLE_SPREAD_DEG  = 10,
+    FORMATION_COMPASS_DIST_SPREAD       = 0.75,
+    FORMATION_COMPASS_REACT_MIN         = 0.2,
+    FORMATION_COMPASS_REACT_MAX         = 0.9,
     -- How far ahead of the player the compass follow aims while he walks, as
     -- a share of the lead's prediction (FORMATION_PREDICT_MS): the server
     -- learns of his steps a moment late, and at 1 his followers keep up as
@@ -272,13 +279,23 @@ xi.settings.pawn =
     -- move and WAKE_STANDING while they stand. Where there is room the
     -- cheap way round wins; where the walls leave nothing cheaper the
     -- walk goes through. Suggestions only: the danger map and the mesh
-    -- still rule. BODY_COST 0 switches it off.
+    -- still rule. BODY_COST 0 switches it off. The party's other members
+    -- are in the field too (the user, 2026-10-13): a disc of MEMBER_RADIUS
+    -- yalms costing MEMBER_COST where each stands and where each is going,
+    -- so the party paths round one another. The formation's walks settle:
+    -- any cell within SETTLE yalms of her place will do, the cheapest --
+    -- nearest it, clear of the field -- taken, so a follower stops beside
+    -- another, never on her spot, and one standing within a member's radius
+    -- steps to the cheapest cell near her.
     COURTESY_BODY_RADIUS   = 1.5,
     COURTESY_BODY_COST     = 6.0,
     COURTESY_WAKE_RADIUS   = 3.5,
     COURTESY_WAKE_COST     = 2.0,
     COURTESY_WAKE_RUN      = 8.0,
     COURTESY_WAKE_STANDING = 2.0,
+    COURTESY_MEMBER_RADIUS = 1.2,
+    COURTESY_MEMBER_COST   = 6.0,
+    COURTESY_SETTLE        = 1.5,
 
     -- The step back, off by MELEE_STEP_BACK below: a mob used to walk onto
     -- its target's exact coordinates and stop there (upstream's pathfind
@@ -400,58 +417,61 @@ xi.settings.pawn =
     SPOT_FACING_ARC    = 45,
 
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
-    -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
+    -- ball of that type's range plus AVOID_BUFFER yalms -- sight and sound
     -- always, low-HP while the cardian is under 75%, magic only while it is
-    -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
-    -- and itself outside those circles, and is pushed away as a mob roams
-    -- toward it. Cardians move on the server with the mobs, so nothing
-    -- surprises them: they stand boldly just outside. Avoidance is two
-    -- gambit rows, each on its own: Avoid aggro (these circles) and Avoid
-    -- links (below). The world's layer runs both for a world body out in the
+    -- casting, ambush at 3 y (the conditions the game itself applies). The
+    -- walker (ROADMAP W) plans her every walk round those balls, walks her
+    -- out of one she stands in first, and takes her to the safe ground
+    -- nearest a spot inside one. Cardians move on the server with the mobs,
+    -- so nothing surprises them: they stand boldly just outside. Avoidance
+    -- is two gambit rows, each on its own: Avoid aggro (these balls) and
+    -- Avoid links (below). The world's layer runs both for a world body out in the
     -- wild, a job's default rows carry neither, and !pawnavoid checks and
     -- unchecks Avoid aggro. AVOID_SCAN is how far around itself a cardian
     -- looks.
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
-    -- On a trek between zones (ROADMAP T) every circle is TREK_AVOID_EXTRA
+    -- On a trek between zones (ROADMAP T) every ball is TREK_AVOID_EXTRA
     -- yalms wider still: she has no camp spot to keep her near the edge (the
     -- user, 2026-10-11: two yalms to start; a survey of the routes past the
     -- mobs' patrols is to tell the margin a trek wants)
     TREK_AVOID_EXTRA = 2.0,
-    -- Where the mobs hold every way on her trek (a choke), she waits out of
+    -- Where the mobs hold every way on her walk (a choke), she waits out of
     -- their reach for one to roam off, backing off to the nearest ground
-    -- that is when no spot short of it is, and never goes through on her own.
-    -- Once the way has stayed held this many seconds, and the whole zone's
-    -- plan finds no way round, she says in party chat that she is stuck by
-    -- aggro; past it later, that she got by (the user, 2026-10-12)
+    -- that is when no spot short of it is, and goes through on her own only
+    -- racing: on a trek, or off the party's ground, with a mob on her.
+    -- On a trek, or off the party's ground (PARTY_GROUND_RADIUS), once the
+    -- way has stayed held this many seconds and the whole zone's plan finds
+    -- no way round, she says in party chat that she is stuck by aggro; past
+    -- it later, that she got by (the user, 2026-10-12)
     TREK_STUCK_AFTER = 15,
     -- The milliseconds of each 400 ms logic tick every trek together may
     -- spend (planning its route round the mobs, checking it): a tick whose
     -- treks pass it is shouted in the map log as a [critical] line
     TREK_PLAN_BUDGET_MS = 40,
 
+    -- The party's own ground (the user, 2026-10-13): PARTY_GROUND_RADIUS
+    -- yalms round the player whose orders a cardian follows. A retreat binds
+    -- a cardian on it, or with a mob on her -- and she stays bound until it
+    -- is lifted; one detached from the fight, far off with nothing on her,
+    -- carries on with her own standing order and judgement, sneak-bys
+    -- included, until she comes within it. Off it she is on her own: a mob
+    -- on her sends her through any choke to the party, and its aggro is
+    -- said to the party; held at a choke on her way in, she says she is
+    -- stuck (TREK_STUCK_AFTER), as a trek does. On it the party is there
+    -- for her, and she holds and sneaks by as ever, a mob on her or not
+    PARTY_GROUND_RADIUS = 30,
+
     -- Linking, her Avoid links row: the idle kin of any mob fighting a
-    -- cardian are circles for that cardian alone -- link range plus
+    -- cardian are balls for that cardian alone -- link range plus
     -- AVOID_TAIL, the distance the mob keeps behind her as it follows -- so
     -- she leads her fight away from the kin and no one else has to. A kin
     -- that joins is a fight, not a danger, and drops out on its own. A mob
-    -- that both aggroes and links is the larger of its two circles when she
-    -- avoids both. The same pass runs mid-fight: a target parked inside
-    -- another mob's circle is not approached; she waits at the rim for the
-    -- tank to bring it.
-    AVOID_TAIL  = 3.0,
-
-    -- The settle rule (the itch): a cardian whose spot lies inside a circle
-    -- takes the best clear spot on offer when she arrives, then stands
-    -- there. Every second the itch grows by how much better than her spot
-    -- the best spot on offer now is, minus AVOID_ITCH_TOLERANCE yalms (an
-    -- improvement under that is never worth walking for, and drains it);
-    -- when it reaches AVOID_ITCH_PATIENCE (yalm-seconds) she moves once, in
-    -- one go, and the itch resets. Four yalms better with a tolerance of
-    -- three fires after twenty seconds; eight yalms better, after four.
-    -- Escapes and fights never wait on it.
-    AVOID_ITCH_TOLERANCE = 3.0,
-    AVOID_ITCH_PATIENCE  = 20,
+    -- that both aggroes and links is the larger of its two balls when she
+    -- avoids both. The same rule runs mid-fight: a target parked inside
+    -- another mob's ball is not approached; she waits at the safe ground
+    -- nearest it for the tank to bring it.
+    AVOID_TAIL = 3.0,
 
     -- Company around a pull is the party's call (the Party page: aggressive
     -- company and linking company, saved per player in cardian_orders).

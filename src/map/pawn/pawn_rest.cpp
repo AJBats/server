@@ -133,7 +133,7 @@ auto CPawnController::RestsInDanger() -> std::optional<std::string>
     {
         return std::nullopt;
     }
-    m_SightMemo.clear(); // a mob walked out from behind a wall since the last look is seen now
+    m_BallSight.clear(); // a mob walked out from behind a wall since the last look is seen now
     auto* PPawn     = static_cast<CCharEntity*>(POwner);
     auto  profile   = pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks());
     profile.casting = false;
@@ -148,14 +148,11 @@ auto CPawnController::RestsInDanger() -> std::optional<std::string>
         }
     } kneels{ POwner, POwner->animation };
     POwner->animation  = xi::Animation::Healing;
-    const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
-    const auto matter    = pawn::danger::forWalk(dangers, POwner->loc.p, POwner->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
-    for (const auto& d : matter)
+    // The mob whose ball holds her where she would kneel, where it sees her
+    const auto balls = pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
+    if (const auto* PMob = BallHolding(balls, nullptr, POwner->loc.p, true); PMob != nullptr)
     {
-        if (cardian::formation::depthInside(d, POwner->loc.p.x, POwner->loc.p.z) > 0.0f)
-        {
-            return d.mob != nullptr ? d.mob->getName() : std::string("a mob");
-        }
+        return PMob->getName();
     }
     return std::nullopt;
 }
@@ -355,7 +352,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // after -- the order holds until full, or his command. A routine move
     // waits on it as on his own (DoRoamTick): the player's follow is the
     // way out
-    const bool impossible = Acting() || noRecovery || POwner->isDead() || POwner->PAI->IsEngaged();
+    const bool impossible = Acting() || noRecovery || POwner->isDead() || POwner->PAI->IsEngaged() || SneakingBy();
     const bool deliberate = ordered && !m_RestOrder.byRow;
     const bool rowRest    = ordered && m_RestOrder.byRow;
     // The player's own Attack keeps her up until the fight it named is over
@@ -401,6 +398,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
             }
         };
         hold(Acting(), "acting");
+        hold(SneakingBy(), "a sneak-by");
         hold(eatsFirst, "eating before she kneels");
         hold(walkBlocks, "the player is walking");
         hold(noRecovery, "she cannot recover");

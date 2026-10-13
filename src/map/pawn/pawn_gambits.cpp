@@ -2369,6 +2369,12 @@ namespace pawn
     auto readyToAct(CCharEntity* PChar) -> bool
     {
         auto* PController = dynamic_cast<CPlayerController*>(PChar->PAI->GetController());
+        // A sneak-by is never cut short: nothing starts until she is through
+        // (the user, 2026-10-13)
+        if (const auto* PPawn = dynamic_cast<const CPawnController*>(PController); PPawn != nullptr && PPawn->SneakingBy())
+        {
+            return false;
+        }
         return PController != nullptr && PController->canAct() && PChar->PAI->CanChangeState();
     }
 

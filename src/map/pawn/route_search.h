@@ -1033,7 +1033,14 @@ namespace cardian::route
                 const dtPoly*     nextPoly = nullptr;
                 mesh.getTileAndPolyByRefUnsafe(next, &nextTile, &nextPoly);
                 const bool nextLink = nextPoly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION;
-                if ((nextPoly->flags & kPolyDisabled) || (isLink && nextLink))
+                // A disabled ground polygon (one the builder found buried) is
+                // never walked. A disabled off-mesh link is: the builder
+                // switches off every drop whose two ends a walk already joins,
+                // however long that walk (navmesh_builder.cpp,
+                // disableRedundantOffMeshLinks), and for her it is the short
+                // way down a ledge or a slope -- dropped off, never climbed,
+                // as every link rising past the mesh's climb is
+                if (((nextPoly->flags & kPolyDisabled) && !nextLink) || (isLink && nextLink))
                 {
                     continue;
                 }

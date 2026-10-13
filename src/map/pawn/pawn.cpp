@@ -1591,10 +1591,12 @@ namespace pawn
             // the other (the user, 2026-09-17): the stake says where they
             // work from -- his side, or a place that does not move -- and
             // strategy 1 says they may start fights. Retreat beats both.
+            // The retreat binds the party's own ground: one detached from the
+            // fight keeps her stake and hunt until it reaches her (SetRetreat)
             const auto  orders = ordersFor(owner);
-            const bool  starts = orders.strategy == 1 && !orders.retreat;
-            PController->SetRetreat(orders.retreat);
-            PController->SetStake(orders.retreat ? std::nullopt : orders.stake);
+            const bool  binds  = PController->SetRetreat(orders.retreat);
+            const bool  starts = orders.strategy == 1 && !binds;
+            PController->SetStake(binds ? std::nullopt : orders.stake);
             // Starting a fight from a place is the puller's job, and the
             // puller is its own design, deliberately last. Until it lands
             // the order is held and only the roam obeys it

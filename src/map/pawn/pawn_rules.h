@@ -21,14 +21,9 @@
 
 #pragma once
 
-#include "formation_math.h"
-
 #include <cmath>
-#include <cstddef>
-#include <optional>
 #include <string>
 #include <utility>
-#include <vector>
 
 // The rules a cardian fights by, as pure functions over plain facts: one
 // answer per question, asked the same way from every door into a fight
@@ -46,10 +41,10 @@ namespace cardian::rules
     constexpr float kServerSightRange = 30.0f;
     constexpr float kDrawRange        = kServerSightRange - 2.0f;
 
-    // The clearance every planned point keeps from a danger circle. The
-    // same padding judges a pull, so the pick and the fight never disagree
-    // by it: a target just outside a mob's circle was once a clean pick and
-    // an unclean fight, and she drew on it and dropped it in a loop.
+    // The clearance every planned point keeps from a danger ball. The same
+    // padding judges a pull, so the pick and the fight never disagree by it:
+    // a target just outside a mob's ball was once a clean pick and an
+    // unclean fight, and she drew on it and dropped it in a loop.
     constexpr float kClearance = 1.5f;
 
     // Yes, or no and why -- in the narration's voice, so a refusal reads in
@@ -159,59 +154,11 @@ namespace cardian::rules
         return mayFight(ready).ok;
     }
 
-    // ------------------------------------------------------------------
-    // Is this pull clean?
-    // ------------------------------------------------------------------
-
-    using Circle  = cardian::formation::Circle;
-    using Circles = std::vector<Circle>;
-
-    constexpr std::size_t npos = static_cast<std::size_t>(-1);
-
-    // The planning circles: every danger grown by the clearance. Any range
-    // of circles (the danger map's entries are circles too)
-    template <typename Range>
-    inline auto padded(const Range& circles, const float clearance = kClearance) -> Circles
+    // Whether a retreat called binds her (the user, 2026-10-13): it reaches
+    // her -- within its line of the player, or a mob on her -- or she is
+    // bound already, and once bound she stays bound until it is lifted
+    constexpr auto retreatBinds(const bool called, const bool bound, const bool reaches) -> bool
     {
-        Circles out;
-        out.reserve(circles.size());
-        for (const auto& c : circles)
-        {
-            out.push_back(Circle{ c.x, c.z, c.radius + clearance });
-        }
-        return out;
-    }
-
-    // Why a pull is unclean: the target stands inside a circle (its
-    // guard), or the straight way in from `from` enters one. `ignore` is
-    // the target's own circle when it is an aggressive mob itself -- the
-    // pull is allowed into that one. nullopt = clean.
-    struct PullBlock
-    {
-        std::size_t circle       = npos;  // index into the circles
-        bool        targetInside = false; // else the way in enters it
-    };
-
-    inline auto pullBlocked(const Circles& paddedCircles, const float fromX, const float fromZ, const float toX, const float toZ, const std::size_t ignore = npos) -> std::optional<PullBlock>
-    {
-        using cardian::formation::depthInside;
-        using cardian::formation::segmentEnters;
-
-        // The guard first: a target inside a circle is the stronger fact
-        for (std::size_t i = 0; i < paddedCircles.size(); ++i)
-        {
-            if (i != ignore && depthInside(paddedCircles[i], toX, toZ) > 0.0f)
-            {
-                return PullBlock{ i, true };
-            }
-        }
-        for (std::size_t i = 0; i < paddedCircles.size(); ++i)
-        {
-            if (i != ignore && segmentEnters(paddedCircles[i], fromX, fromZ, toX, toZ))
-            {
-                return PullBlock{ i, false };
-            }
-        }
-        return std::nullopt;
+        return called && (bound || reaches);
     }
 } // namespace cardian::rules

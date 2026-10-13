@@ -21,8 +21,6 @@
 
 #pragma once
 
-#include "formation_math.h"
-
 #include "common/types/fn.h"
 #include "common/types/position.h"
 
@@ -36,17 +34,17 @@ class CMobEntity;
 class CZoneEntities;
 
 // The danger map (M3.87): every mob near a cardian that could turn on it,
-// as a circle it must stay out of. Whether an idle mob would go for her at
+// as a ball it must stay out of. Whether an idle mob would go for her at
 // all is the game's own aggro test, asked (CZoneEntities::tapMobAggro with
 // `ask`: everything but detection) -- her level against the mob's (a Too
 // Weak mob leaves her be unless she rests), AlwaysAggro, neutral, the
 // battlefield, the follow roamers and whatever else the server decides by.
 // Each detection type such a mob has -- sight, sound, magic, low-HP,
-// ambush -- is a circle of that type's range plus pawn.AVOID_BUFFER (her
+// ambush -- is a ball of that type's range plus pawn.AVOID_BUFFER (her
 // Avoid aggro row); the idle kin of a mob already fighting the cardian is a
-// circle of its link range plus the tail the mob keeps behind her
+// ball of its link range plus the tail the mob keeps behind her
 // (pawn.AVOID_TAIL; her Avoid links row) -- she is the one it follows, so
-// she is the one who leads it away; the largest circle wins. The
+// she is the one who leads it away; the largest ball wins. The
 // cardian's own Sneak and Invisible shrink the map the way the game's own
 // detection honours them (unless the mob has true sight/sound). Mobs
 // already fighting, owned by someone, dead or neutral are not dangers, and
@@ -60,61 +58,6 @@ namespace pawn::danger
     constexpr float CloseDetectionRange = 20.0f;
     constexpr float AmbushRange         = 3.0f;
     constexpr float MaxDetectionRange   = 60.0f;
-
-    // A danger IS its circle (x, z, radius), so the geometry helpers take a
-    // vector of these directly
-    struct Danger : cardian::formation::Circle
-    {
-        CMobEntity* mob          = nullptr;
-        float       distance     = 0.0f;  // from the query centre to the mob
-        bool        linked       = false; // kin of a mob fighting the one asking
-        float       unseenRadius = 0.0f;  // the circle that holds with no line of sight: the ambush's (0 when none)
-    };
-
-    // Line of sight from the danger's mob to a point, the mob's own test
-    // (CBaseEntity::CanSeeTarget: a ray against the zone's collision mesh,
-    // cached). Every way a mob notices a character but the 3 y ambush ends
-    // in this test, and so does linking, so a mob behind a wall is no
-    // danger to a point it cannot see. The circle is the range; the sight
-    // is the rest of the rule.
-    auto sees(const Danger& danger, const position_t& point) -> bool;
-
-    // The dangers that matter to a walk from `from` to `to`: those whose
-    // mobs see the start, the end, or the point of the way nearest to them
-    // -- a wall between makes the rest no danger, except that an ambusher
-    // keeps its unseen circle, which the server tests without sight. One
-    // rule for the vet, the clear-spot test, the escape test (a walk of no
-    // length: the mobs that see her where she stands) and the pull rule,
-    // so no two of them disagree. `sees` is the caller's line-of-sight
-    // test, memoised per tick.
-    using Sight = FnRef<bool(const Danger&, const position_t&)>;
-    inline auto forWalk(const std::vector<Danger>& all, const position_t& from, const position_t& to, Sight sees) -> std::vector<Danger>
-    {
-        std::vector<Danger> out;
-        out.reserve(all.size());
-        for (const auto& d : all)
-        {
-            // The point of the way nearest the mob: where a circle across
-            // the middle of a walk would first see her
-            const float dx  = to.x - from.x;
-            const float dz  = to.z - from.z;
-            const float len = dx * dx + dz * dz;
-            const float t   = len > 0.0f ? std::clamp(((d.x - from.x) * dx + (d.z - from.z) * dz) / len, 0.0f, 1.0f) : 0.0f;
-            const position_t nearest(from.x + dx * t, from.y + (to.y - from.y) * t, from.z + dz * t, 0, 0);
-
-            if (sees(d, from) || (len > 0.0f && sees(d, to)) || (t > 0.0f && t < 1.0f && sees(d, nearest)))
-            {
-                out.push_back(d);
-            }
-            else if (d.unseenRadius > 0.0f)
-            {
-                Danger unseen = d;
-                unseen.radius = d.unseenRadius;
-                out.push_back(unseen);
-            }
-        }
-        return out;
-    }
 
     // What the mobs can detect about the one asking: a cardian's own
     // concealment, health and casting state shrink or grow the map the way
@@ -244,15 +187,10 @@ namespace pawn::danger
         return radiusFor(d, p, buffer, tail);
     }
 
-    // Dangers whose circle comes within `scan` yalms (planar) of `center`,
-    // each circle being the mob's detection sphere sliced at center's height
-    // (unordered).
-    auto around(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile, const CBaseEntity* exclude = nullptr) -> std::vector<Danger>;
-
-    // A danger as a route planned ahead reads it (pawn::travel's route kept
-    // out of danger): its mob, where it stands, and the whole sphere it
-    // detects in -- not cut flat at one height, since a route climbs and
-    // drops -- with the ambush's sphere that needs no sight (0 when none)
+    // A danger as the walker plans round it: its mob, where it stands, and
+    // the whole sphere it detects in -- not cut flat at one height, since a
+    // route climbs and drops -- with the ambush's sphere that needs no sight
+    // (0 when none)
     struct Sphere
     {
         CMobEntity* mob    = nullptr;
@@ -266,11 +204,15 @@ namespace pawn::danger
         float allRound = 0.0f;
     };
 
-    // Every danger within `scan` (3D, sphere's edge) of `center`: the same
-    // mobs, the same ranges and the same buffer as around
-    auto spheres(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile) -> std::vector<Sphere>;
+    // Every danger within `scan` (3D, sphere's edge) of `center`, `exclude`
+    // none (unordered)
+    auto spheres(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile, const CBaseEntity* exclude = nullptr) -> std::vector<Sphere>;
 
-    // Line of sight from a sphere's mob to a point, the test sees() makes
+    // Line of sight from a sphere's mob to a point, the mob's own test
+    // (CBaseEntity::CanSeeTarget: a ray against the zone's collision mesh,
+    // cached). Every way a mob notices a character but the 3 y ambush ends
+    // in this test, and so does linking, so a mob behind a wall is no
+    // danger to a point it cannot see
     auto sees(const Sphere& sphere, const position_t& point) -> bool;
 } // namespace pawn::danger
 

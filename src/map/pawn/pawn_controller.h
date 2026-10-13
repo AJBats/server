@@ -35,6 +35,7 @@
 #include "stake_math.h"
 #include "tp_clock.h"
 #include "rest_math.h"
+#include "safe_walk.h"
 #include "warp_hold.h"
 
 #include "ai/controllers/player_controller.h"
@@ -67,7 +68,7 @@ class CSpell;
 
 // The autonomous controller for pawn characters: CTrustController's physical
 // layer (formation follow, engage-on-the-player's-swing, combat positioning,
-// declumping, rest regen) rebuilt around party membership instead of the
+// rest regen) rebuilt around party membership instead of the
 // trust master/minion model, mounted on CPlayerController so the pawn keeps
 // a real character's action surface. Decisions come from the pawn gambit
 // interpreter over her rows (seeded once from her job's defaults), and the
@@ -173,7 +174,7 @@ public:
     // True while the policy keeps her kneeling; defer routine positioning then.
     // moveWhy names the move a routine one is not, for the stand's line
     auto RestTick(bool stationary, bool townKneel = false, bool routinePosition = false, std::string_view moveWhy = {}) -> bool;
-    // Her rest's own danger test: her switches' circles, no spell cast, asked
+    // Her rest's own danger test: her switches' balls, no spell cast, asked
     // as if she already knelt; the mob it found, or nothing
     auto RestsInDanger() -> std::optional<std::string>;
     // The player's own rest order has her kneeling: it wins over everything
@@ -223,8 +224,12 @@ public:
     // her HP and MP, every kHealthSaveEvery while they changed
     void NoteForSaving();
     auto IsHunting() const -> bool;
-    void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
+    auto SetRetreat(bool on) -> bool; // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared; true when it binds her (the party's own ground)
     auto IsRetreating() const -> bool;
+    // A sneak-by under way, within its time: nothing of hers starts until
+    // she is through -- no spell, no rest, no item, and the player's order
+    // waits as it waits while she is busy (readyToAct)
+    auto SneakingBy() const -> bool;
     // Her tactician (tactician_line.h) runs: her rows offer it a tool (a
     // marked row that is on), her gambits are on, and a tactician watches
     // her scope
@@ -517,7 +522,6 @@ public:
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float LockOnSlack      = 2.0f; // lock-on holds this far beyond melee reach, so a step out of reach does not drop it
-    static constexpr float WarpDistance     = 30.0f;
     static constexpr float TransferDistance = 3.0f;
     static constexpr float CrossingSlack    = 40.0f;
 
@@ -557,35 +561,12 @@ private:
     // stuck at; from one to none, it is over (TravelTick)
     auto TrekWatchHate() -> bool;
 
-    // Her trek's walk to `goal` kept out of danger (TravelTick; the Avoid
-    // aggro and Avoid links rows a trek lends): the route round every mob in
-    // her zone that would come for her (pawn::travel::routeAvoiding),
-    // checked against where the mobs stand now -- the stretch round the
-    // trouble planned again when one crosses it near ahead, and at every tick
-    // she stands in a reach, and the whole route as she sets out and every
-    // 15 s. Where the mobs hold every way she walks up to the choke and
-    // holds there, out of every reach, for it to open -- or, with no such
-    // spot ahead, on the nearest ground that is --
-    // and says she is stuck by aggro once sure, never going through on her
-    // own; racing (a mob on her), she never holds. False when no route could
-    // be planned: the trek's other ways have their say
-    auto TrekSafeWalk(const position_t& goal, bool racing) -> bool;
-
-    // While she holds for a choke, once a second: a sneak-by past the mobs
-    // that hold it, if one fits now (ROADMAP T slice 3, pawn/sneak.h).
-    // True when she sets out on one
-    auto TrekSneakBy(const position_t& goal) -> bool;
-
-    // On a sneak-by: she walks it past the mobs, the everyday ring rule
-    // standing down; false once it is over -- through, caught, or late --
-    // and her route is planned afresh
-    auto TrekHopTick(bool racing) -> bool;
-
     // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
     // bookkeeping (WalkOrderTick) and, with no steer timer, her step
     void WalkTick();
     void WalkOrderTick(timer::time_point now);
     std::optional<position_t> m_WalkPoint; // the point the current path was made for
+    timer::time_point         m_WalkOrderPlannedAt{}; // the walker last asked for a walk order's route
     timer::time_point         m_LastWalkStep{}; // the steer tick's last step, for its elapsed-time scale
 
     // The maneuver's books (BeginManeuver): who drives her, and her gambit
@@ -751,30 +732,21 @@ private:
     // evidence once a second
     void FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& anchor, const position_t& point);
 
-    // The avoidance pass over a movement decision, roaming or fighting: the
-    // pawn itself inside a danger circle is pushed out (that wins over
-    // everything); a slot inside one moves to the nearest clear angle on its
-    // ring, or is pushed out; a fight's target inside one is not approached
-    // -- she walks up to the boundary and stands there until the tank
-    // brings it out; a way to the point that cuts into a circle goes round
-    // it first. Every point she walks to is planned against the circles
-    // padded by a margin, so the boundary is not slippery. PIgnore is the
-    // party's own mob, never a danger. Adjusts the point and the follow
-    // tolerances in place; logs once a second.
+    // What the danger map made of a walk, the word the rest of her code
+    // reads: a spell is not cast while she steps out of a ring, a mover
+    // knows its point was moved
     enum class AvoidAction : uint8
     {
         None,
-        Escape,     // the pawn itself was inside a circle
-        Slot,       // its slot was; re-seated on the ring
-        PushedSlot, // its slot was; no clear angle, pushed straight out
-        Perch,      // its slot is in or beside a circle; standing on the perch it took
-        Hold,       // its target was; standing at the boundary
-        Detour,     // the way there crossed a circle
+        Escape, // she stands in a ring: walking out of it first
+        Slot,   // her point is in a ring: walking to the safe ground nearest it
+        Hold,   // held short of a choke, or her fight's mob is in another's ring: waiting at the safe ground nearest it
+        Detour, // the way there goes round a ring, or sneaks by
     };
-    auto Avoid(position_t& point, float& followMax, float& followTarget, float& declumpDistance, bool fighting) -> AvoidAction;
 
-    // Movers propose an intent. Move applies spell positioning; Walk checks
-    // avoidance, executes movement, and maintains combat facing.
+    // Movers propose an intent. Move applies spell positioning; Walk plans
+    // and walks it round the danger map (pawn_walker.cpp), and keeps her
+    // facing her target in a fight.
     struct Intent
     {
         enum class Kind : uint8
@@ -783,18 +755,16 @@ private:
             Keep,      // leave the path she is on alone
             Hop,       // a step under the planner's floor, straight at the point
             Path,      // a path to the point, when farther than `tolerance`
-            Formation, // the follow rules: path, nudge out of a clump, warp when lost
+            Formation, // the follow: a path to her place round the player, when farther than `tolerance`
         };
         Kind                 kind       = Kind::Stand;
         position_t           point{};
         float                arrive     = 1.0f;    // close enough: the path's end
         float                tolerance  = 2.0f;    // this far off before she walks
-        float                declump    = 0.0f;    // Formation: nudge out when closer than this
         const CBattleEntity* target     = nullptr; // the mob in the fight: lock-on in reach
-        bool                 fighting   = false;   // in danger, hold at the rim (else re-seat the slot)
+        bool                 fighting   = false;   // her fight's mob in another's ring: she waits at the safe ground nearest it
         bool                 vet        = true;    // false: the party waved the company through
         bool                 keepsClear = false;   // the walk to her attend or camp spot: vetted for other mobs' detection whatever her switches (KeepsClearOfAggro)
-        bool                 warpIfLost = false;   // Formation: far and no path, warp to the player
         bool                 seat       = false;   // a walk to a seat (her herd spot, the mob's back, the camp tank's spot): the mover keeps its path
         bool                 herdSpot   = false;   // a walk to her herd spot: failing it pins her where she stands (HerdPin)
         bool                 comesIn    = false;   // the mob she attends is coming in on her: a move no rest puts off
@@ -807,15 +777,96 @@ private:
         float                     keepWithin = 0.0f;
         bool                      holdsSpot  = false; // Stand: she was placed where she stands (the crescent, the camp's backline): crowded, she gives way as a walk would
         bool                      claimed    = false; // the board has had its say on this point: the walker does not ask again
+        // The walker's rules for a trek (ROADMAP W): the zone's every
+        // mob, every ring whole, and, racing with a mob on her, no hold
+        bool                      trek       = false;
+        bool                      racing     = false;
     };
     auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
+    // One walk's tick: planned, or planned again when the point moves, a mob
+    // comes onto her route or she stands in a ring, and handed to her path
+    // finder. `target` is where the walk goes now: the point, or with the
+    // point inside a ring the safe ground nearest it. Her path finder is
+    // set; Walk steps it
+    struct WalkResult
+    {
+        cardian::walk::Outcome outcome = cardian::walk::Outcome::Walking;
+        position_t             target{};
+        AvoidAction            action = AvoidAction::None; // what the danger map made of the walk, which her other code reads
+    };
+    auto SafeWalk(const position_t& point, const cardian::walk::Rules& rules) -> WalkResult;
+
+    // The danger map's balls for a walk, `scan` yalms round her, with her
+    // rows' profile or the rules' (the fight's own mob never a danger)
+    auto WalkSpheres(const cardian::walk::Rules& rules, float scan) -> std::vector<pawn::danger::Sphere>;
+
+    // Her rows' danger profile, as the danger map reads it this tick
+    auto DangerProfile(bool forceAvoid) -> pawn::danger::Profile;
+
+    // Holding short of a choke, once a second: a sneak-by past the mobs
+    // that hold it (pawn/sneak.h), toward the walk's target. True when she
+    // sets out on one
+    auto WalkSneakBy(const cardian::walk::Rules& rules) -> bool;
+
+    // A sneak-by under way: walked past the mobs; false once it is over
+    auto WalkHopTick(bool racing) -> bool;
+
+    // A trek's step through the walker (ROADMAP W2): the line proposed
+    // as any mover proposes its point, and the walk's outcome read for what
+    // only a trek says -- stuck by aggro, got by, no way, a crossing taken
+    // from as near as the mesh allows
+    void TrekStep(const pawn::TravelHop& hop, float distToLine, bool ordered, bool racing);
+
+    // Held at a choke this long, and the plan of the whole way finding none
+    // round it: one of her "stuck by aggro" lines, once (a trek's, or an
+    // everyday walk's off the party's ground)
+    void SayStuckIfSure(bool trek);
+
+    // The player whose orders she follows, when he is in her zone: in
+    // another, or loading between zones, nullptr
+    auto OrdersOwnerHere() const -> CCharEntity*;
+
+    // Farther than pawn.PARTY_GROUND_RADIUS from the player whose orders she
+    // follows, in his zone
+    auto FarFromParty() const -> bool;
+
+    // Off the party's ground, a mob that comes onto her unbidden is said to
+    // the party, once a chase, as a trek says it (TrekWatchHate)
+    void AggroWatch();
+
+    auto RetreatReaches() const -> bool; // in her zone, within pawn.PARTY_GROUND_RADIUS of her orders' player, or a mob on her
+    void RetreatTick();                  // a retreat she was detached from binds her once it reaches her
+    void ApplyRetreat(bool on);          // the retreat bound on her, or lifted
+
+    // Whether a ball's mob sees a point (no wall between), memoised per tick
+    auto SeesBall(const pawn::danger::Sphere& sphere, const position_t& point) const -> bool;
+    mutable std::unordered_map<uint64_t, bool> m_BallSight;
+    mutable timer::time_point                  m_BallSightAt;
+
+    // She stands in a ring whose mob sees her, by the rules' balls
+    auto WalkExposed(const cardian::walk::Rules& rules) -> bool;
+
+    // A route kept behind the camp's line (an intent's rearBoundary): the
+    // walker's routes to a camp spot, and the camp's spot search pricing one
+    // (RearCampRoute)
+    auto CampLineHolds(const std::vector<position_t>& route, const position_t& camp) const -> bool;
+
+    // The yes/no readers on the walker's balls (ROADMAP W5): one test
+    // (route_search.h DangerTest) of the same balls the walker plans
+    // round, `exclude` none of them: the mob
+    // whose ball holds `point` where it sees it (with `sight`); the mob whose
+    // ball the straight way from `from` to `to` passes; the mob whose ball
+    // the route she would walk to `to` must pass. Null for none
+    auto BallHolding(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& point, bool sight) const -> CMobEntity*;
+    auto BallCrossing(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& from, const position_t& to) const -> CMobEntity*;
+    auto BallRouteHeld(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& to) const -> CMobEntity*;
+
     // The tick's danger map, scanned once before the movers run so every
-    // one of them can ask IsClear while choosing, and the vet sees the
-    // same circles. PIgnore is the party's own mob, never a danger.
+    // one of them can ask IsClear while choosing, and the walker sees the
+    // same balls. PIgnore is the party's own mob, never a danger.
     void RefreshDangers(const CBattleEntity* PIgnore);
-    auto IsClear(float x, float z) const -> bool; // the walk to the spot ends outside every padded circle that matters to it
-    auto InsideDanger() const -> bool;      // she stands inside a true circle whose mob sees her (or an ambusher's)
+    auto IsClear(float x, float z) const -> bool; // the spot is outside every ball whose mob sees it
 
     // The perimeter's movers (RESEARCH §12.15): a mob's TP reach off its
     // live skill list, its round area moves weighed by move_harm.h, read
@@ -911,10 +962,12 @@ private:
     void Attend(CBattleEntity* PTarget, std::string_view how);
     auto AttendExitReason() -> std::string;
 
-    // The walker. Returns the vet's action, or nothing when the tick was
-    // spent on a warp.
-    auto Move(Intent intent) -> std::optional<AvoidAction>;
-    auto Walk(Intent intent) -> std::optional<AvoidAction>;
+    // The walker (ROADMAP W, pawn_walker.cpp): every walk a route the scored
+    // search plans round the danger map's balls, walked as planned. Move
+    // weighs the spell's approach and a hold, Walk plans and walks; both
+    // return what the danger map made of the walk
+    auto Move(Intent intent) -> AvoidAction;
+    auto Walk(Intent intent) -> AvoidAction;
 
     // The formation mover, roaming or holding for the player's strike:
     // where this pawn belongs (the lead's point ahead of the place, or a
@@ -951,23 +1004,23 @@ private:
     auto TowIntent(CBattleEntity* PTarget) -> Intent;
 
     // The courtesy (local_planner.h): this tick's step toward `point`,
-    // planned over a one-yalm grid round her against the player's body
-    // and wake, where the straight walk would cut through them; the point
-    // itself otherwise. Under every path the walker makes (PathToward).
-    // pawn.COURTESY_* size and price the field; BODY_COST 0 is off.
-    auto CourtesyStep(const position_t& point) -> position_t;
+    // planned over a one-yalm grid round her against the player's body and
+    // wake and the other members' (where they stand, where they are going),
+    // where the straight walk would cut through them; the point itself
+    // otherwise. With `settle`, any cell within that many yalms of the
+    // point will do, the cheapest taken: she stops beside a member, not on
+    // her. Under every walk the walker plans to a point. pawn.COURTESY_*
+    // size and price the field; BODY_COST 0 is off.
+    auto CourtesyStep(const position_t& point, float settle = 0.0f) -> position_t;
+    auto MemberSpots(const CCharEntity* PPlayer) const -> std::vector<position_t>; // the courtesy's members: where each other member stands, and where each cardian goes
+    auto Crowded() const -> bool;                                                  // within COURTESY_MEMBER_RADIUS of another member's spot
 
     // The walk in on a mob: to within RoamDistance of it
     auto ApproachIntent(const CBattleEntity* PTarget) const -> Intent;
 
-    // An avoidance move too short for the planner, which refuses a hop under
-    // a yalm and plans nothing: such a move steps straight at its point when
-    // the point is on the mesh
+    // A move too short to be worth a path -- under 1.2 yalms, onto the mesh:
+    // a single step straight at its point (the seat mover's Hop)
     auto IsShortHop(const position_t& point, float followMax) const -> bool;
-
-    // An avoidance move the planner could not path: one line a second, so a
-    // cardian standing still in Escape, Hold or Detour names its cause
-    void NotePathFailure(AvoidAction action, const position_t& point, float away);
 
     // The auto rescue (pawn.AUTO_RESCUE, the rule in rescue_watch.h): Walk
     // says each time whether it sent her toward a spot she is farther from
@@ -1018,12 +1071,6 @@ private:
     // once, the others REACTION_BEATS_* beats later, plus up to
     // REACTION_JITTER random beats. Safety moves never wait on it.
     auto ReactionBeat() const -> timer::duration;
-
-    // Navmesh-path toward a point, healing off-mesh endpoints: an off-mesh
-    // destination is snapped to the nearest valid point, and an off-mesh
-    // owner is snapped back onto the mesh. Zero closeTo uses PathTo, otherwise
-    // PathAround supplies the stop-short distance. Never uses raw stepping.
-    auto PathToward(const position_t& point, float closeTo, const position_t* rearBoundary = nullptr) -> bool;
 
     // Her body turns to the target of an action as it fires, a foe only:
     // an ally's action turns her head alone (ROADMAP G, #249)
@@ -1200,37 +1247,20 @@ private:
     // she may.
     auto Refusal(CBattleEntity* PTarget, const cardian::rules::EngageFacts& facts) const -> std::string;
 
-    // The pull rule as the fight and the walk in ask it: the pick's padded
-    // circles, scanned around her now. "" when clean, else what makes it
-    // unclean
+    // The pull rule as the fight and the walk in ask it: the party's balls,
+    // padded, scanned around her now -- the target in one where its mob sees
+    // it, or the route she would walk in passing one. "" when clean, else
+    // what makes it unclean
     auto PullBlocker(const CMobEntity* PMob) const -> std::string;
 
     // The walk in on a mob, through the locomotion pass: the danger map,
     // the approach proposal, the vet, the step
     void WalkToward(CBattleEntity* PTarget);
 
-    // The tick's danger map (RefreshDangers): every circle in range. The
-    // vet works on the ones that matter to the walk in question
-    // (FocusDangers, pawn::danger::forWalk) -- the active set, which Avoid
-    // plans against -- and its escape test on the ones whose mobs see her
-    // where she stands. Sees is the line-of-sight test the whole tick
-    // shares, memoised so the mobs' own small caches are not thrashed by
-    // one tick's questions.
-    std::vector<pawn::danger::Danger>       m_Dangers;
-    std::vector<pawn::danger::Danger>       m_ActiveDangers;
-    std::vector<cardian::formation::Circle> m_ActivePadded;
-    std::vector<pawn::danger::Danger>       m_EscapeDangers;
-    std::vector<cardian::formation::Circle> m_EscapePadded;
-    void                                    FocusDangers(const position_t& from, const position_t& to);
-    auto                                    Sees(const pawn::danger::Danger& danger, const position_t& point) const -> bool;
-    struct SightMemo
-    {
-        uint32 mob = 0;
-        int    x   = 0;
-        int    z   = 0;
-        bool   seen = false;
-    };
-    mutable std::vector<SightMemo> m_SightMemo;
+    // The tick's danger map (RefreshDangers): a ball round every mob in
+    // range that would come for her, padded as the pull rule pads, which
+    // the yes/no readers ask (IsClear, BallHolding and the rest)
+    std::vector<pawn::danger::Sphere> m_DangerBalls;
 
     // What her gambit engine asks of her (gambit_host.h): this controller,
     // through an adapter, so its names stay the engine's
@@ -1253,8 +1283,6 @@ private:
     xi::ZoneId                        m_TravelHopTarget{};
     timer::time_point                 m_TravelHopAt;
     timer::time_point                 m_TravelHopChosenAt; // when the hop, or none, was chosen: none is asked again in a while
-    bool                              m_TravelLegPlanned = false; // walking the whole-zone route to the line (pawn::travel::routeTo)
-    timer::time_point                 m_TravelRouteTriedAt;       // ... last looked for
     bool                              m_TravelStuckSaid  = false; // "I'm stuck!" said for this trek's standstill
     std::optional<xi::ZoneId>         m_TrekCrossedFrom;          // the zone her trek asked to cross out of: landed elsewhere, she rests her HP up
     bool                              m_TrekResting = false;      // resting her HP up across a zone line on her trek: her trek's rows stay lent
@@ -1264,34 +1292,9 @@ private:
     timer::time_point                 m_CutOffCheckedAt;          // CutOffFrom's last look
     xi::ZoneId                        m_CutOffZone{};             // ... the zone she was in: a new zone looks again at once
     bool                              m_CutOff = false;           // ... what it saw
-    // Her trek's route kept out of danger (TrekSafeWalk)
-    std::vector<position_t>           m_TrekRoute;                // its waypoints
-    size_t                            m_TrekRouteNext   = 0;      // ... the next she walks to
-    int                               m_TrekRouteDanger = -1;     // ... the first reached through danger, -1 for none
-    int                               m_TrekRouteHold   = -1;     // ... the end of her walk while she holds for it, -1 for no spot out of every reach
-    timer::time_point                 m_TrekCaughtLogAt;          // ... last planned again for a mob's reach on her, as logged: once a second
-    bool                              m_TrekRouteKnown  = false;
-    bool                              m_TrekRouteFailed = false;  // ... none could be planned to m_TrekRouteGoal: asked again in a while
-    position_t                        m_TrekRouteGoal{};          // ... where it goes
-    xi::ZoneId                        m_TrekRouteZone{};
-    timer::time_point                 m_TrekRoutePlannedAt;
-    timer::time_point                 m_TrekRouteCheckedAt;       // ... last held against where the mobs stand
-    bool                              m_TrekRouteWalking = false; // ... handed to her walker
-    size_t                            m_TrekRouteEnd     = 0;     // ... up to here
-    std::optional<timer::time_point>  m_TrekHeldSince;            // holding at a choke since
-    std::vector<position_t>           m_TrekBackOff;              // the way to the nearest ground out of every reach, with no spot short of a choke that is
-    bool                              m_TrekWholeHeld = false;    // the last whole-zone plan found the way held
-    timer::time_point                 m_TrekWholeAt;              // ... and when it was made
-    bool                              m_TrekStuckSaid = false;    // she said she was stuck by aggro at this choke
+    bool                              m_TrekStuckSaid = false;    // she said she was stuck by aggro at this choke (SayStuckIfSure)
     position_t                        m_TrekStuckAt{};            // ... where it held her
     bool                              m_TrekHated     = false;    // a mob on her at her trek's last look (TrekWatchHate)
-    std::vector<position_t>           m_TrekHop;                  // a sneak-by under way: her walk past the mobs, its end last
-    xi::ZoneId                        m_TrekHopZone{};            // ... planned in
-    timer::time_point                 m_TrekHopAt;                // ... set out at
-    float                             m_TrekHopSeconds = 0.0f;    // ... planned to reach its end this long after
-    bool                              m_TrekHopWalking = false;   // ... handed to her walker
-    timer::time_point                 m_TrekSneakLookedAt;        // a hold's last look for a sneak-by
-    timer::time_point                 m_TrekSneakSaidAt;          // ... and the last time it said why none fits
 
     // The rings of the mobs near her at her trek's last look, for the log
     // alone: the moment one turns on her, how far inside its ring she stood
@@ -1303,6 +1306,46 @@ private:
         float  off    = 0.0f; // how far the mob stood from her
     };
     std::vector<TrekRing> m_TrekRingsNear;
+
+    // The walker's walk (SafeWalk): its route, kept while it holds and
+    // planned again as the trek's was
+    struct PlannedWalk
+    {
+        std::vector<position_t>          route;          // her spot as it was planned, then its waypoints
+        size_t                           next   = 0;     // the waypoint she walks to next
+        int                              danger = -1;    // the first waypoint reached through a ring, -1 for none
+        int                              hold   = -1;    // the end of her walk while she holds short of it, -1 for no spot out of every ring
+        bool                             known  = false;
+        bool                             failed = false; // no route could be planned to `goal`: asked again in a while
+        bool                             detour = false; // the route goes round a ring the straight way would cross
+        position_t                       goal{};         // the point asked for
+        position_t                       target{};       // where the route goes: the point, or the safe ground nearest it
+        xi::ZoneId                       zone{};
+        cardian::walk::Rules             rules{};
+        timer::time_point                plannedAt;
+        timer::time_point                checkedAt;      // last held against where the mobs stand
+        timer::time_point                caughtLogAt;    // a plan for a ring on her, as logged: once a second
+        timer::time_point                loggedAt;       // the everyday walk's line, once a second
+        bool                             walking = false; // handed to her path finder
+        size_t                           end     = 0;     // ... up to here
+        std::optional<timer::time_point> heldSince;
+        position_t                       heldAt{};        // where she stood holding, last tick she held: a new plan holding her there holds on, its clock kept
+        std::vector<position_t>          backOff;        // the way to the nearest ground out of every ring, with no spot short of a choke that is
+        bool                             wholeHeld = false; // the last plan of the whole way found it held
+        timer::time_point                wholeAt;
+        std::vector<position_t>          hop;             // a sneak-by under way: her walk past the mobs, its end last
+        xi::ZoneId                       hopZone{};
+        timer::time_point                hopAt;
+        float                            hopSeconds = 0.0f;
+        bool                             hopWalking = false;
+        timer::time_point                sneakLookedAt;
+        timer::time_point                sneakSaidAt;
+        cardian::walk::Outcome           outcome = cardian::walk::Outcome::Walking; // what the walk came to at its last tick, for the mover that asked
+        timer::time_point                outcomeAt;
+    };
+    PlannedWalk          m_Plan;
+    const CBattleEntity* m_DangerIgnore = nullptr; // the fight's own mob, as the movers named it to RefreshDangers this tick
+    timer::time_point    m_DangerIgnoreAt;
 
     bool              m_Hunting    = false;
     bool              m_World      = false;
@@ -1322,6 +1365,8 @@ private:
     position_t        m_TownLastPos{};
     uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
     bool              m_Retreat    = false;
+    bool              m_RetreatCalled = false; // her orders call a retreat, whether or not it binds her (SetRetreat)
+    bool              m_WalkHated     = false; // a chase off the party's ground, said or her own pull (AggroWatch)
     bool              m_Waiting     = false;
     // The stake the orders pushed, and the tank's tow: she is
     // towing toward its frontline unless the player's pull has stopped
@@ -1721,11 +1766,17 @@ private:
     HeldPoint         m_FollowHeld;
     // The compass follow (CompassPoint): the tick of her last step, whether
     // he was walking then, when she sets off after him, and whether she
-    // stood last step (she turns to him as she comes to a stand)
+    // stood last step (she turns in her own time as she comes to a stand)
     timer::time_point m_CompassLast{};
     bool              m_CompassWasMoving = false;
     timer::time_point m_CompassGoAt{};
     bool              m_CompassHeld = false;
+    std::optional<position_t>        m_CompassStoodAt; // where she came to her stand and decided how to face; a step away from it makes a new stand
+    std::optional<timer::time_point> m_CompassFaceAt;  // ... when she turns, if she turns at all
+    // The walker's word on her last formation walk: settled where she stands,
+    // the cheapest cell near her place (CourtesyStep's settle), and when
+    std::optional<position_t> m_SettledAt;
+    timer::time_point         m_SettledTick{};
     float             m_CourtesySide = 0.0f; // her side of the line last tick, kept a little cheaper (CourtesyStep)
     timer::time_point m_LastCourtesyTime;
     timer::time_point m_LastCourtesySaid;
@@ -1750,19 +1801,7 @@ private:
     std::array<std::optional<uint16>, pawn::BehaviorCount> m_Behaviors{};             // the behaviour layer, by pawn::Behavior
     bool                                                    m_PlayerSeenDead = false; // while KO'd: the player has been seen dead since
 
-    // Aggro avoidance state
-    bool                m_HasSlot = false;  // this tick's FormationPoint ring, for re-seating a slot in danger
-    Anchor            m_Slot{};
-    float             m_SlotOffset      = 0.0f;
-    float             m_SlotAngle       = 0.0f;
-    AvoidAction       m_LastAvoidAction = AvoidAction::None;
-    // The settle rule: the clear spot she committed to while her own spot
-    // lies inside a circle, and the itch to leave it (yalm-seconds)
-    std::optional<position_t> m_AvoidPerch;
-    float                     m_AvoidItch = 0.0f;
-    timer::time_point         m_LastItchTick;
-    timer::time_point m_LastAvoidDebugTime;
-    timer::time_point m_LastPathFailTime;
+    AvoidAction m_LastAvoidAction = AvoidAction::None; // what the danger map made of her last walk: a change of it is a line in the log
 
     // The auto rescue (RescueTick): the watch, and Walk's last word on
     // where she is trying to go
