@@ -90,11 +90,13 @@ namespace
 
     namespace sz = cardian::subzones;
 
-    // A zone's mesh as the game loaded it, and its pieces
+    // A zone's mesh as the game loaded it, its pieces, and the faces of its
+    // ground a player cannot climb, worked out once as it is loaded
     struct ZoneMesh
     {
-        const dtNavMesh* mesh{};
-        sz::Pieces       pieces;
+        const dtNavMesh*      mesh{};
+        sz::Pieces            pieces;
+        cardian::route::Faces faces;
     };
 
     // Leaked on purpose, as the zones they read are
@@ -138,6 +140,7 @@ namespace
         if (current != nullptr)
         {
             entry.pieces = sz::piecesOf(*current);
+            entry.faces  = cardian::route::facesOf(*current);
         }
         auto& kept = meshes[zone] = std::move(entry);
         if (changed && worldBuilt)
@@ -173,13 +176,18 @@ namespace
 
         auto& built = world();
         built       = {};
-        std::size_t pieces = 0;
+        std::size_t pieces    = 0;
+        std::size_t faces     = 0;
+        std::size_t faceBytes = 0; // what the steep faces hold in memory, kept for good
         for (const auto zoneId : zoneIds)
         {
             const auto zone = static_cast<uint16>(zoneId);
             if (const auto* zm = meshOf(zone); zm != nullptr)
             {
                 pieces += zm->pieces.polys.size() - 1;
+                faces += zm->faces.faces.size();
+                faceBytes += zm->faces.faces.capacity() * sizeof(cardian::route::Face) +
+                             (zm->faces.first.capacity() + zm->faces.base.capacity()) * sizeof(uint32_t);
                 if (!zm->pieces.drops.empty())
                 {
                     built.drops[zone] = zm->pieces.drops;
@@ -210,7 +218,8 @@ namespace
         {
             drops += zoneDrops.size();
         }
-        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, in {} ms", zoneIds.size(), pieces, built.lines.size(), drops,
+        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, {} steep faces ({:.1f} MB), in {} ms", zoneIds.size(), pieces,
+                    built.lines.size(), drops, faces, static_cast<double>(faceBytes) / (1024.0 * 1024.0),
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
     }
 
@@ -352,10 +361,10 @@ namespace pawn::travel
         {
             return std::nullopt;
         }
-        auto route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kBodyExtents, hazards, sight, within);
+        auto route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kBodyExtents, hazards, sight, within, &zm->faces);
         if (!route.has_value())
         {
-            route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kLineExtents, hazards, sight, within);
+            route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kLineExtents, hazards, sight, within, &zm->faces);
         }
         return route;
     }
@@ -368,10 +377,10 @@ namespace pawn::travel
         {
             return std::nullopt;
         }
-        auto route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight, reach);
+        auto route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces);
         if (!route.has_value())
         {
-            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach);
+            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces);
         }
         return route;
     }

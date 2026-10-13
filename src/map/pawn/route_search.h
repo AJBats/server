@@ -35,6 +35,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -169,9 +170,116 @@ namespace cardian::route
     // The meshes are built for monsters and let them up steeper; measured on
     // Valkurm Dunes' goblin hill (the user, 2026-10-12), a player made 29
     // degrees and stopped at 31. A rise of kClimbStep or less is a step,
-    // whatever its slope. Down, any slope is walked
+    // whatever its slope; a run of steeper ground shorter than kClimbRun is
+    // a bump, and walked (a lone yalm of 35 degrees he walked, not two of 31
+    // to 34, nor a band of 38 to 44). Down, any slope is walked
     constexpr float kClimbSlope = 0.57735f; // tan(30 degrees)
     constexpr float kClimbStep  = 0.5f;
+    constexpr float kClimbRun   = 1.5f;
+
+    // The ground a player cannot climb, worked out once for a mesh -- the
+    // ground never moves: every triangle of its fine ground (the detail
+    // mesh, the heights Detour reads under a point) steeper than
+    // kClimbSlope, kept by polygon with the rise it makes per yalm along x
+    // and along z. A walk across one is judged by the way it goes
+    // (detail::climbsFaces): down a face is walked
+    struct Face
+    {
+        float ax{}, az{}, bx{}, bz{}, cx{}, cz{}; // its corners across the ground (Detour's x and z)
+        float sx{}, sz{};                         // its rise per yalm along x and along z
+    };
+
+    struct Faces
+    {
+        std::vector<uint32_t> base;  // each tile's first polygon in `first`
+        std::vector<uint32_t> first; // per polygon, its first face; the next polygon's first is where its faces end
+        std::vector<Face>     faces;
+
+        // A polygon's faces: none on a mesh's ground climbable everywhere
+        auto of(const dtNavMesh& mesh, const dtPolyRef ref) const -> std::span<const Face>
+        {
+            unsigned int salt = 0;
+            unsigned int it   = 0;
+            unsigned int ip   = 0;
+            mesh.decodePolyId(ref, salt, it, ip);
+            if (it >= base.size())
+            {
+                return {};
+            }
+            const size_t i = static_cast<size_t>(base[it]) + ip;
+            if (i + 1 >= first.size())
+            {
+                return {};
+            }
+            return { faces.data() + first[i], faces.data() + first[i + 1] };
+        }
+    };
+
+    inline auto facesOf(const dtNavMesh& mesh) -> Faces
+    {
+        Faces     out;
+        const int maxTiles = mesh.getMaxTiles();
+        out.base.resize(static_cast<size_t>(maxTiles));
+        uint32_t total = 0;
+        for (int t = 0; t < maxTiles; ++t)
+        {
+            out.base[t]            = total;
+            const dtMeshTile* tile = mesh.getTile(t);
+            total += tile != nullptr && tile->header != nullptr ? static_cast<uint32_t>(tile->header->polyCount) : 0;
+        }
+        out.first.reserve(static_cast<size_t>(total) + 1);
+        for (int t = 0; t < maxTiles; ++t)
+        {
+            const dtMeshTile* tile = mesh.getTile(t);
+            if (tile == nullptr || tile->header == nullptr)
+            {
+                continue;
+            }
+            for (int p = 0; p < tile->header->polyCount; ++p)
+            {
+                out.first.push_back(static_cast<uint32_t>(out.faces.size()));
+                const dtPoly& poly = tile->polys[p];
+                if (poly.getType() != DT_POLYTYPE_GROUND || tile->detailMeshes == nullptr)
+                {
+                    continue;
+                }
+                const dtPolyDetail& pd   = tile->detailMeshes[p];
+                const auto          vert = [&](const unsigned char v) -> const float*
+                {
+                    return v < poly.vertCount ? &tile->verts[poly.verts[v] * 3] : &tile->detailVerts[(pd.vertBase + v - poly.vertCount) * 3];
+                };
+                for (int j = 0; j < pd.triCount; ++j)
+                {
+                    const unsigned char* tri = &tile->detailTris[(pd.triBase + j) * 4];
+                    const float*         a   = vert(tri[0]);
+                    const float*         b   = vert(tri[1]);
+                    const float*         c   = vert(tri[2]);
+                    const float          ux  = b[0] - a[0];
+                    const float          uy  = b[1] - a[1];
+                    const float          uz  = b[2] - a[2];
+                    const float          vx  = c[0] - a[0];
+                    const float          vy  = c[1] - a[1];
+                    const float          vz  = c[2] - a[2];
+                    const float          nx  = uy * vz - uz * vy;
+                    const float          ny  = uz * vx - ux * vz;
+                    const float          nz  = ux * vy - uy * vx;
+                    if (std::fabs(ny) <= 1e-6f)
+                    {
+                        continue; // upright: it covers no ground
+                    }
+                    // the plane's height over the ground rises -n/ny along x and z
+                    const float sx = -nx / ny;
+                    const float sz = -nz / ny;
+                    if (sx * sx + sz * sz > kClimbSlope * kClimbSlope)
+                    {
+                        out.faces.push_back({ a[0], a[2], b[0], b[2], c[0], c[2], sx, sz });
+                    }
+                }
+            }
+        }
+        out.first.push_back(static_cast<uint32_t>(out.faces.size()));
+        return out;
+    }
 
     namespace detail
     {
@@ -191,36 +299,85 @@ namespace cardian::route
             return rise > kClimbStep && rise > run * kClimbSlope;
         }
 
-        // Whether any triangle of a polygon's detail mesh -- the fine ground
-        // Detour reads heights off -- is steeper than a player climbs,
-        // whichever way it faces
-        inline auto hasSteepFace(const dtMeshTile& tile, const dtPoly& poly) -> bool
+        // Whether a walk from a to b climbs faces for kClimbRun yalms on
+        // end: the stretches of it across faces that climb past kClimbSlope
+        // the way it goes, each the walk clipped to its triangle on the
+        // ground, joined where they meet. `forEachFace(visit)` hands every
+        // face the walk may cross to `visit`
+        template <typename ForEachFace>
+        inline auto climbsOver(const ForEachFace& forEachFace, const Vec& a, const Vec& b) -> bool
         {
-            if (tile.detailMeshes == nullptr)
+            const float dx  = b[0] - a[0];
+            const float dz  = b[2] - a[2];
+            const float run = std::sqrt(dx * dx + dz * dz);
+            if (run < kClimbRun)
+            {
+                return false; // too short to hold such a climb
+            }
+            const float ux = dx / run;
+            const float uz = dz / run;
+
+            thread_local std::vector<std::pair<float, float>> spans;
+            spans.clear();
+            forEachFace([&](const Face& f)
+            {
+                if (f.sx * ux + f.sz * uz <= kClimbSlope)
+                {
+                    return; // across it or down it: walked
+                }
+                // facesOf keeps no upright triangle, so the corners always turn one way
+                const float turn = (f.bx - f.ax) * (f.cz - f.az) - (f.bz - f.az) * (f.cx - f.ax);
+                const float side = turn > 0.0f ? 1.0f : -1.0f;
+                float       lo   = 0.0f;
+                float       hi   = run;
+                // the walk a + t u (t in yalms) kept on the inner side of each edge
+                const auto edge = [&](const float px, const float pz, const float qx, const float qz)
+                {
+                    const float ex  = qx - px;
+                    const float ez  = qz - pz;
+                    const float at0 = side * (ex * (a[2] - pz) - ez * (a[0] - px));
+                    const float per = side * (ex * uz - ez * ux);
+                    if (std::fabs(per) <= 1e-9f)
+                    {
+                        if (at0 < 0.0f)
+                        {
+                            hi = lo - 1.0f; // parallel, and outside
+                        }
+                        return;
+                    }
+                    const float cut = -at0 / per;
+                    if (per > 0.0f)
+                    {
+                        lo = std::max(lo, cut);
+                    }
+                    else
+                    {
+                        hi = std::min(hi, cut);
+                    }
+                };
+                edge(f.ax, f.az, f.bx, f.bz);
+                edge(f.bx, f.bz, f.cx, f.cz);
+                edge(f.cx, f.cz, f.ax, f.az);
+                if (hi > lo)
+                {
+                    spans.emplace_back(lo, hi);
+                }
+            });
+            if (spans.empty())
             {
                 return false;
             }
-            const dtPolyDetail& pd   = tile.detailMeshes[&poly - tile.polys];
-            const auto          vert = [&](const unsigned char v) -> const float*
+            std::sort(spans.begin(), spans.end());
+            float from = spans.front().first;
+            float to   = spans.front().second;
+            for (const auto& [lo, hi] : spans)
             {
-                return v < poly.vertCount ? &tile.verts[poly.verts[v] * 3] : &tile.detailVerts[(pd.vertBase + v - poly.vertCount) * 3];
-            };
-            for (int j = 0; j < pd.triCount; ++j)
-            {
-                const unsigned char* t  = &tile.detailTris[(pd.triBase + j) * 4];
-                const float*         a  = vert(t[0]);
-                const float*         b  = vert(t[1]);
-                const float*         c  = vert(t[2]);
-                const float          ux = b[0] - a[0];
-                const float          uy = b[1] - a[1];
-                const float          uz = b[2] - a[2];
-                const float          vx = c[0] - a[0];
-                const float          vy = c[1] - a[1];
-                const float          vz = c[2] - a[2];
-                const float          nx = uy * vz - uz * vy;
-                const float          ny = uz * vx - ux * vz;
-                const float          nz = ux * vy - uy * vx;
-                if (std::sqrt(nx * nx + nz * nz) > std::fabs(ny) * kClimbSlope)
+                if (lo > to + 0.1f)
+                {
+                    from = lo; // a gap: a new climb
+                }
+                to = std::max(to, hi);
+                if (to - from >= kClimbRun)
                 {
                     return true;
                 }
@@ -228,54 +385,20 @@ namespace cardian::route
             return false;
         }
 
-        // Whether a walk from a to b, crossing the polygons `polys` in order,
-        // climbs steeper than a player can: its fine ground read a yalm at a
-        // time, two yalms in a row each climbing past kClimbSlope. A single
-        // steep yalm is a bump, and walked (measured on Valkurm Dunes,
-        // 2026-10-12: a player walks a lone yalm of 35 degrees, not two of
-        // 31 to 34 nor a band of 38 to 44)
-        inline auto steepRun(const dtNavMeshQuery& query, const dtPolyRef* polys, const int count, const Vec& a, const Vec& b) -> bool
+        // The same for a walk crossing the polygons `polys` of a mesh, over
+        // their faces (Faces)
+        inline auto climbsFaces(const Faces& faces, const dtNavMesh& mesh, const dtPolyRef* polys, const int count, const Vec& a, const Vec& b) -> bool
         {
-            const float dx    = b[0] - a[0];
-            const float dz    = b[2] - a[2];
-            const float run   = std::sqrt(dx * dx + dz * dz);
-            const int   steps = std::max(1, static_cast<int>(std::floor(run))); // a yalm apart or more
-            int         on    = 0; // the polygon the walk is on, as it crosses them in order
-            bool        known = false;
-            float       lastY = 0.0f;
-            float       lastF = 0.0f;
-            int         inRow = 0;
-            for (int k = 0; k <= steps; ++k)
+            return climbsOver([&](const auto& visit)
             {
-                const float f = static_cast<float>(k) / static_cast<float>(steps);
-                const float p[3]{ a[0] + dx * f, a[1] + (b[1] - a[1]) * f, a[2] + dz * f };
-                // the point lies on the polygon the walk is on or one it
-                // crosses after: along one straight line, the first that
-                // holds it is the one. A point on an edge, in none, is passed
-                // over
-                for (int i = on; i < count; ++i)
+                for (int i = 0; i < count; ++i)
                 {
-                    float y = 0.0f;
-                    if (dtStatusSucceed(query.getPolyHeight(polys[i], p, &y)))
+                    for (const Face& f : faces.of(mesh, polys[i]))
                     {
-                        on = i;
-                        if (known)
-                        {
-                            const float seg = run * (f - lastF);
-                            inRow           = seg > 0.0f && (y - lastY) > seg * kClimbSlope ? inRow + 1 : 0;
-                            if (inRow >= 2)
-                            {
-                                return true;
-                            }
-                        }
-                        known = true;
-                        lastY = y;
-                        lastF = f;
-                        break;
+                        visit(f);
                     }
                 }
-            }
-            return false;
+            }, a, b);
         }
 
         // The point of the segment a-b nearest c
@@ -443,8 +566,6 @@ namespace cardian::route
             std::vector<uint8_t>               kind;   // ... kLink, kOneWay
             std::vector<uint32_t>              nearIn; // ... the search that judged it near danger or not
             std::vector<uint8_t>               nearby; // ... near danger (kNearDanger)
-            std::vector<uint32_t>              steepIn; // ... the search that judged its ground steep or not
-            std::vector<uint8_t>               steep;   // ... its fine ground has a face steeper than a player climbs
             std::vector<Node>                  nodes;
             std::vector<std::pair<float, int>> open; // the open list, a heap
             uint32_t                           stamp = 0;
@@ -632,7 +753,8 @@ namespace cardian::route
     // given; without one, to the nearest point out of every reach, walking at
     // most `within` yalms (Dijkstra, the greed off)
     inline auto searchCore(const dtNavMesh& mesh, const position_t& from, const std::optional<position_t>& to, const float* fromExtents, const float* toExtents,
-                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within) -> std::optional<Route>
+                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within, const Faces* faces)
+        -> std::optional<Route>
     {
         using detail::apart;
         using detail::Node;
@@ -691,7 +813,6 @@ namespace cardian::route
             std::fill(ws.madeIn.begin(), ws.madeIn.end(), 0);
             std::fill(ws.listIn.begin(), ws.listIn.end(), 0);
             std::fill(ws.nearIn.begin(), ws.nearIn.end(), 0);
-            std::fill(ws.steepIn.begin(), ws.steepIn.end(), 0);
         }
         const uint32_t stamp    = ws.stamp;
         const int      maxTiles = mesh.getMaxTiles();
@@ -711,8 +832,6 @@ namespace cardian::route
             ws.kind.resize(total, 0);
             ws.nearIn.resize(total, 0);
             ws.nearby.resize(total, 0);
-            ws.steepIn.resize(total, 0);
-            ws.steep.resize(total, 0);
         }
         const auto indexOf = [&](const dtPolyRef ref) -> uint32_t
         {
@@ -755,34 +874,12 @@ namespace cardian::route
             return ws.nearby[i] != 0;
         };
 
-        // Whether a polygon's fine ground (its detail mesh, the heights
-        // Detour reads under a point) has a face steeper than a player
-        // climbs, judged once a search: a steep band hides inside a polygon
-        // whose corners average it away. Only on such ground is a climb read
-        // yalm by yalm
-        const auto steepOf = [&](const dtPolyRef ref) -> bool
-        {
-            const uint32_t i = indexOf(ref);
-            if (ws.steepIn[i] != stamp)
-            {
-                const dtMeshTile* tile = nullptr;
-                const dtPoly*     poly = nullptr;
-                mesh.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
-                ws.steepIn[i] = stamp;
-                ws.steep[i]   = poly->getType() == DT_POLYTYPE_GROUND && detail::hasSteepFace(*tile, *poly) ? 1 : 0;
-            }
-            return ws.steep[i] != 0;
-        };
-
-        // Whether a walk from a to b, crossing `polys` in order, climbs
-        // steeper than a player can anywhere on steep ground (detail::steepRun)
+        // Whether a walk from a to b, crossing `polys`, climbs a face a
+        // player cannot (detail::climbsFaces); with no faces, the caller's,
+        // only the climb overall is judged (tooSteep)
         const auto climbsCliff = [&](const dtPolyRef* polys, const int count, const Vec& a, const Vec& b) -> bool
         {
-            if (std::none_of(polys, polys + count, [&](const dtPolyRef p) { return steepOf(p); }))
-            {
-                return false;
-            }
-            return detail::steepRun(query, polys, count, a, b);
+            return faces != nullptr && detail::climbsFaces(*faces, mesh, polys, count, a, b);
         };
 
         auto& nodes = ws.nodes;
@@ -975,12 +1072,6 @@ namespace cardian::route
                 {
                     return; // up a ledge: never climbed
                 }
-                // up ground too steep for a player: read yalm by yalm only on
-                // a step that climbs as much as two steep yalms in a row do
-                if (!viaLink && (detail::tooSteep(at, next.at) || (next.at[1] - at[1] > 2.0f * kClimbSlope && climbsCliff(&via, 1, at, next.at))))
-                {
-                    return;
-                }
                 if (reach > 0.0f && there != kGoal && apart(next.at, origin) + apart(next.at, target) > reach)
                 {
                     return; // past the ground the stretch is planned on
@@ -991,6 +1082,12 @@ namespace cardian::route
                 if (walked >= next.g || (within > 0.0f && walk > within))
                 {
                     return; // danger only adds; past the yalms safe ground is looked for within
+                }
+                // up ground too steep for a player, overall or up a face: read
+                // last, the dearest of the step's tests
+                if (!viaLink && (detail::tooSteep(at, next.at) || climbsCliff(&via, 1, at, next.at)))
+                {
+                    return;
                 }
                 const bool  danger = inDanger(at, next.at);
                 const float cost   = walked + (danger ? kDangerCost : 0.0f);
@@ -1047,9 +1144,9 @@ namespace cardian::route
         // polygon she leaves by, ending on the polygon that point lies on --
         // and out of danger; the farthest found that climbs nothing a player
         // cannot is kept, the search going kShortcutTries points past one
-        // that fails. The climb is read, yalm by yalm, only of the straights
-        // that pass the rest, farthest first. A step through danger, or
-        // across an off-mesh link, is kept as it is
+        // that fails. The climb up faces is read only of the straights that
+        // pass the rest, farthest first. A step through danger, or across an
+        // off-mesh link, is kept as it is
         const auto straight = [&](const int a, const int k, const bool climb) -> bool
         {
             const Node& from_ = nodes[raw[a]];
@@ -1137,9 +1234,10 @@ namespace cardian::route
 
     // The route from `from` to `to` that keeps out of danger (searchCore)
     inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
-                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f) -> std::optional<Route>
+                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f, const Faces* faces = nullptr)
+        -> std::optional<Route>
     {
-        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f);
+        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces);
     }
 
     // The way from `from` to the nearest ground out of every reach, walking
@@ -1148,8 +1246,8 @@ namespace cardian::route
     // the fewest steps of it. Complete and empty when `from` is out of every
     // reach already; not complete when no such ground lies within
     inline auto searchSafeGround(const dtNavMesh& mesh, const position_t& from, const float* fromExtents, const std::vector<Hazard>& hazards,
-                                 const HazardSight& sight, const float within) -> std::optional<Route>
+                                 const HazardSight& sight, const float within, const Faces* faces = nullptr) -> std::optional<Route>
     {
-        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within);
+        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within, faces);
     }
 } // namespace cardian::route
