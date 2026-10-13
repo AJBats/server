@@ -74,9 +74,11 @@ namespace
     constexpr auto  kHeldRetry    = 3s;      // a choke looked at again
     constexpr auto  kRefreshEvery = 15s;     // a shorter way that opened since
     constexpr auto  kForgotten    = 5s;      // not asked for this long, the route is planned anew
-    constexpr float kSameGoal     = 1.0f;    // a point moved less than this is the same walk
-    constexpr float kLongWalk     = 150.0f;  // a walk this long or longer is planned as a trek's
-    constexpr float kLocalSpare   = 30.0f;   // a short walk's ground: half as long again as the way, and this much more
+    constexpr float kSameGoal     = 1.0f;    // a trek's line moved less than this is the same walk
+    constexpr float kLocalSpare   = 30.0f;   // a walk's ground: half as long again as the way, and this much more
+    constexpr float kWiderSpare   = 100.0f;  // ... and where the way round runs wider, three times the way and this much more
+    constexpr float kOffRoute     = 2.0f;    // knocked this far off the leg she walks, her route is planned afresh from where she stands
+    constexpr float kHopGoalMoved = 10.0f;   // a sneak-by is let go when the walk's point moves this far from the one it set out for
     constexpr float kStretchPast  = 60.0f;   // a stretch planned again runs this many yalms of her route past the trouble
     constexpr float kStretchSpare = 60.0f;   // ... on ground half as long again as the stretch, and this many yalms more
     constexpr float kCrossingNear = 100.0f;  // a mob crossing her route this near ahead is planned round now; one farther waits until she is nearer
@@ -94,6 +96,14 @@ namespace
             out.push_back({ .at = s.at, .radius = s.radius, .unseen = s.unseen });
         }
         return out;
+    }
+
+    // Two walks under the same rules: a change of them -- the vet waived for
+    // a pull, a race begun, a range asked for -- is a walk planned afresh
+    auto sameRules(const Rules& a, const Rules& b) -> bool
+    {
+        return a.danger == b.danger && a.forceAvoid == b.forceAvoid && a.sightHides == b.sightHides && a.holds == b.holds && a.sneaks == b.sneaks &&
+               a.wholeZone == b.wholeZone && std::fabs(a.extra - b.extra) < 0.01f && std::fabs(a.closeTo - b.closeTo) < 0.01f;
     }
 
     auto without(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude) -> std::vector<pawn::danger::Sphere>
@@ -139,11 +149,12 @@ auto CPawnController::BallCrossing(const std::vector<pawn::danger::Sphere>& ball
     return h >= 0 ? kept[h].mob : nullptr;
 }
 
-auto CPawnController::BallRouteHeld(const std::vector<pawn::danger::Sphere>& balls, const position_t& to) const -> CMobEntity*
+auto CPawnController::BallRouteHeld(const std::vector<pawn::danger::Sphere>& all, const CBaseEntity* exclude, const position_t& to) const -> CMobEntity*
 {
     // The route she would walk there, planned as the walker plans it: held
     // when every way passes a ball, by the ball its first such step passes
     // -- or, should that step pass none now, the ball nearest its end
+    const auto balls = without(all, exclude);
     if (balls.empty())
     {
         return nullptr;
@@ -213,10 +224,13 @@ auto CPawnController::SeesBall(const pawn::danger::Sphere& sphere, const positio
         m_BallSight.clear();
         m_BallSightAt = m_Tick;
     }
+    // The point to the yalm, its height too: a spot asked about on a slope
+    // and the route's point beneath it are two questions
     const uint64_t mob = sphere.mob != nullptr ? sphere.mob->id : 0;
-    const auto     qx  = static_cast<uint16_t>(static_cast<int16_t>(std::lround(point.x)));
-    const auto     qz  = static_cast<uint16_t>(static_cast<int16_t>(std::lround(point.z)));
-    const uint64_t key = (mob << 32) | (static_cast<uint64_t>(qx) << 16) | qz;
+    const auto     qx  = static_cast<uint64_t>(std::lround(point.x)) & 0x7FF;
+    const auto     qy  = static_cast<uint64_t>(std::lround(point.y)) & 0x3FF;
+    const auto     qz  = static_cast<uint64_t>(std::lround(point.z)) & 0x7FF;
+    const uint64_t key = (mob << 32) | (qx << 21) | (qy << 11) | qz;
     if (const auto it = m_BallSight.find(key); it != m_BallSight.end())
     {
         return it->second;
@@ -274,28 +288,6 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
     WalkResult result;
     result.target = point;
 
-    // On a sneak-by she walks it past the mobs, and nothing else has a say
-    // until it is over
-    if (WalkHopTick(racing))
-    {
-        result.outcome = Outcome::Hopping;
-        result.target  = plan.hop.empty() ? point : plan.hop.back();
-        result.action  = AvoidAction::Detour;
-        return result;
-    }
-
-    const bool sameGoal = plan.zone == zone && distance(plan.goal, point) <= kSameGoal && plan.rules.wholeZone == rules.wholeZone;
-    if (plan.failed && sameGoal && m_Tick - plan.plannedAt < kRefreshEvery)
-    {
-        result.outcome = Outcome::NoRoute;
-        return result;
-    }
-    const bool fresh = !plan.known || !sameGoal || m_Tick - plan.checkedAt > kForgotten;
-    if (!fresh && plan.next < plan.route.size())
-    {
-        plan.next = cardian::walk::progress(plan.route, plan.next, here);
-    }
-
     // Whether a ball's mob sees a point: the game's line of sight, a wall
     // hiding her; a trek keeps every ring whole and asks none
     const auto sightOf = [&](const std::vector<pawn::danger::Sphere>& balls) -> cardian::route::HazardSight
@@ -329,6 +321,56 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
         }
     }
 
+    // The walk asked for is the same one while its point stays put -- within
+    // a tenth of a yalm near it, a twentieth of the way far off, so a moving
+    // player's spot is planned afresh as it moves and a far one is not
+    // planned every tick -- under the same rules. A trek's line is the same
+    // within a yalm
+    const float within   = rules.wholeZone ? kSameGoal : std::clamp(distance(here, point) * 0.05f, 0.1f, 5.0f);
+    const bool  sameGoal = plan.zone == zone && distance(plan.goal, point) <= within && sameRules(plan.rules, rules);
+
+    // A sneak-by under way is let go when the walk it was planned for is
+    // another's now: rules with none (the player steering her), a new zone,
+    // or a point moved far from the one it set out for
+    if (!plan.hop.empty() &&
+        (!rules.sneaks || plan.hopZone != zone || plan.rules.wholeZone != rules.wholeZone || distance(point, plan.hopGoal) > kHopGoalMoved))
+    {
+        ShowInfoFmt("pawn: {}: the sneak-by is let go: her walk is another now", who);
+        plan.hop.clear();
+        plan.hopWalking = false;
+        plan.known      = false;
+        plan.heldSince.reset();
+    }
+
+    // On a sneak-by she walks it past the mobs, and nothing else has a say
+    // until it is over
+    if (WalkHopTick(racing))
+    {
+        result.outcome = Outcome::Hopping;
+        result.target  = plan.hop.empty() ? point : plan.hop.back();
+        result.action  = AvoidAction::Detour;
+        return result;
+    }
+
+    // No route to this point a moment ago: asked again in a while -- unless a
+    // ring is on her, which is planned out of now
+    if (plan.failed && sameGoal && caughtBy == nullptr && m_Tick - plan.plannedAt < kRefreshEvery)
+    {
+        result.outcome = Outcome::NoRoute;
+        return result;
+    }
+    bool fresh = !plan.known || !sameGoal || m_Tick - plan.checkedAt > kForgotten;
+    if (!fresh && plan.next < plan.route.size())
+    {
+        plan.next = cardian::walk::progress(plan.route, plan.next, here);
+        // Knocked off the leg she walks (a knockback, a shove): planned
+        // afresh from where she stands, never a straight line back to it
+        if (plan.next > 0 && plan.next < plan.route.size() && cardian::walk::offLeg(plan.route[plan.next - 1], plan.route[plan.next], here) > kOffRoute)
+        {
+            fresh = true;
+        }
+    }
+
     const bool chokeAhead  = plan.known && plan.danger >= 0 && plan.next <= static_cast<size_t>(plan.danger);
     const bool holding     = plan.heldSince.has_value();
     const bool holdUnknown = chokeAhead && !racing && plan.hold < 0 && plan.backOff.empty();
@@ -339,11 +381,12 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
     {
         plan.checkedAt = m_Tick;
 
-        // The mobs that matter to this walk: on a long one the zone's every
-        // one, on a short one those whose balls reach the ground round her
-        // and the point
+        // The mobs that matter to this walk: on a trek the zone's every one,
+        // planned whole and then a stretch at a time; on any other walk those
+        // whose balls reach the ground round her and the point, planned whole
+        // every time the point moves
         const float crow     = distance(here, point);
-        const bool  longWalk = rules.wholeZone || crow >= kLongWalk;
+        const bool  longWalk = rules.wholeZone;
         const auto  spheres  = WalkSpheres(rules, longWalk ? kTrekScan : crow * 1.5f + kLocalSpare);
         const auto  hazards  = toHazards(spheres);
         const auto  sight    = sightOf(spheres);
@@ -353,9 +396,11 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
         };
 
         // The point inside a ring: the safe ground nearest it, and her way
-        // there round the ring's edge (the user, 2026-10-12)
+        // there round the ring's edge (the user, 2026-10-12). A trek's line
+        // is never moved: a ring on it is a choke, held short of and sneaked
+        // by, or raced through
         position_t target = point;
-        if (!hazards.empty())
+        if (!hazards.empty() && !rules.wholeZone)
         {
             const auto at = cardian::route::toDetour(point);
             if (cardian::route::DangerTest(hazards, at, sight).exposes(at) >= 0)
@@ -367,7 +412,7 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
                 }
             }
         }
-        const bool newTarget = !plan.known || distance(plan.target, target) > kSameGoal;
+        const bool newTarget = !plan.known || distance(plan.target, target) > within;
 
         // The rest of her route, against where the mobs stand now: a
         // crossing within kCrossingNear ahead of her. One farther off is let
@@ -444,15 +489,16 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
             }
             if (!route.has_value())
             {
-                // A short walk's ground is the ellipse round her and the
-                // target; the way round a ring may run wider, and is then
-                // looked for on the whole mesh
+                // A walk's ground is the ellipse round her and the target;
+                // the way round a ring may run wider, and is then looked for
+                // on ground three times the way -- never the whole mesh, which
+                // a point no walk reaches would search every time it moves
                 const float span = distance(here, target);
                 route            = pawn::travel::routeAvoiding(zone, here, target, hazards, sight, longWalk ? 0.0f : span * 1.5f + kLocalSpare);
                 searched += route.has_value() ? route->searched : 0;
                 if (!longWalk && (!route.has_value() || !route->complete || route->points.empty()))
                 {
-                    route = pawn::travel::routeAvoiding(zone, here, target, hazards, sight);
+                    route = pawn::travel::routeAvoiding(zone, here, target, hazards, sight, span * 3.0f + kWiderSpare);
                     searched += route.has_value() ? route->searched : 0;
                 }
                 plan.plannedAt = m_Tick;
@@ -462,12 +508,15 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
             }
             const auto spent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began);
             const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(spent).count();
-            pawn::drill::notePlan(POwner->id, spent, searched, stretchTo.has_value());
-            plan.goal  = point;
-            plan.zone  = zone;
-            plan.rules = rules;
+            if (rules.wholeZone)
+            {
+                pawn::drill::notePlan(POwner->id, spent, searched, stretchTo.has_value());
+            }
             if (!stretchTo.has_value() && plan.failed)
             {
+                plan.goal    = point;
+                plan.zone    = zone;
+                plan.rules   = rules;
                 plan.target  = target;
                 plan.known   = false;
                 plan.walking = false;
@@ -512,6 +561,9 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
                 plan.route   = std::move(planned);
                 plan.next    = 1;
                 plan.danger  = danger;
+                plan.goal    = point;
+                plan.zone    = zone;
+                plan.rules   = rules;
                 plan.target  = target;
                 plan.known   = true;
                 plan.walking = false;
@@ -522,7 +574,7 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
 
                 // The walk to a range ends short of the point, never past it;
                 // the safe ground beside a point in a ring is walked to itself
-                if (rules.closeTo > 0.0f && distance(target, point) < 0.01f && plan.danger < 0)
+                if (rules.closeTo > 0.0f && distance(target, point) < 0.01f && plan.danger < 0 && !stretchTo.has_value())
                 {
                     cardian::walk::cutShort(plan.route, rules.closeTo);
                     plan.next = std::min<size_t>(1, plan.route.size());
@@ -907,8 +959,12 @@ auto CPawnController::WalkSneakBy(const Rules& rules) -> bool
                 hop.island ? ", ground none can ever reach" : "",
                 tightest < std::numeric_limits<float>::max() ? fmt::format("; {} rests {:.0f} s more", who_[tight]->getName(), tightest) : std::string(),
                 mobs.size(), took.count() / 1000.0);
-    pawn::drill::noteHop(POwner->id);
+    if (rules.wholeZone)
+    {
+        pawn::drill::noteHop(POwner->id);
+    }
     plan.hop        = std::move(hop.points);
+    plan.hopGoal    = plan.goal;
     plan.hopZone    = POwner->getZone();
     plan.hopAt      = m_Tick;
     plan.hopSeconds = hop.seconds;
@@ -1225,9 +1281,9 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
                     PPathFind->StepTo(intent.point);
                     m_Plan.walking = false;
                 }
-                else
+                else if (walk(intent.point, 0.0f).outcome == Outcome::NoRoute && exposed)
                 {
-                    walk(intent.point, 0.0f);
+                    walk(POwner->loc.p, 0.0f); // no way to the hop's point: out of the ring she stands in, at least
                 }
                 break;
             }
@@ -1240,8 +1296,18 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
                     // The player's personal space: her goal stepped clear of
                     // his body and his wake, as the first walker's every path
                     const auto goal = intent.trek ? intent.point : CourtesyStep(intent.point);
-                    const auto out  = walk(goal, intent.kind == Intent::Kind::Path || away > followMax ? followTarget : 0.0f);
-                    trying         = out.outcome == Outcome::Walking && out.action != AvoidAction::Slot && out.action != AvoidAction::Hold;
+                    auto       out  = walk(goal, intent.kind == Intent::Kind::Path || away > followMax ? followTarget : 0.0f);
+                    // No way to her point, a ring on her: she steps out of
+                    // it all the same -- escape wins over everything, reachable
+                    // point or not, as the first walker's did
+                    if (out.outcome == Outcome::NoRoute && exposed)
+                    {
+                        out = walk(POwner->loc.p, 0.0f);
+                    }
+                    // The auto rescue watches everyday walks only: a trek
+                    // caught on the mesh says so in its own lines, and a rescue
+                    // to its line would carry her hundreds of yalms
+                    trying = !intent.trek && out.outcome == Outcome::Walking && out.action != AvoidAction::Slot && out.action != AvoidAction::Hold;
 
                     // The camp's line: normal positioning stays behind it, as the
                     // first walker's did; a walk shaped by danger overrides it
@@ -1257,9 +1323,10 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
                     {
                         // The camp's line refusing her route keeps her where she
                         // is on purpose: she waits, she is not caught
-                        trying = !intent.rearBoundary.has_value();
-                        // Said once a spot: where she cannot walk to, and from where
-                        if (!m_PathFailedAt.has_value() || distance(*m_PathFailedAt, intent.point) > 1.0f)
+                        trying = !intent.trek && !intent.rearBoundary.has_value();
+                        // Said once a spot: where she cannot walk to, and from
+                        // where (a trek says it in its own lines)
+                        if (!intent.trek && (!m_PathFailedAt.has_value() || distance(*m_PathFailedAt, intent.point) > 1.0f))
                         {
                             m_PathFailedAt = intent.point;
                             ShowInfoFmt("pawn: {} cannot path to ({:.1f}, {:.1f}, {:.1f}) from ({:.1f}, {:.1f}, {:.1f}), {:.1f} y{}", POwner->getName(), intent.point.x,

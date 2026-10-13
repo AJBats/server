@@ -587,6 +587,7 @@ private:
     void WalkTick();
     void WalkOrderTick(timer::time_point now);
     std::optional<position_t> m_WalkPoint; // the point the current path was made for
+    timer::time_point         m_WalkOrderPlannedAt{}; // the one walker last asked for a walk order's route (ROADMAP W3)
     timer::time_point         m_LastWalkStep{}; // the steer tick's last step, for its elapsed-time scale
 
     // The maneuver's books (BeginManeuver): who drives her, and her gambit
@@ -876,7 +877,7 @@ private:
     // the route she would walk to `to` must pass. Null for none
     auto BallHolding(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& point, bool sight) const -> CMobEntity*;
     auto BallCrossing(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& from, const position_t& to) const -> CMobEntity*;
-    auto BallRouteHeld(const std::vector<pawn::danger::Sphere>& balls, const position_t& to) const -> CMobEntity*;
+    auto BallRouteHeld(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& to) const -> CMobEntity*;
 
     // The tick's danger map, scanned once before the movers run so every
     // one of them can ask IsClear while choosing, and the vet sees the
@@ -1399,6 +1400,7 @@ private:
         bool                             wholeHeld = false; // the last plan of the whole way found it held
         timer::time_point                wholeAt;
         std::vector<position_t>          hop;             // a sneak-by under way: her walk past the mobs, its end last
+        position_t                       hopGoal{};       // ... the walk's point it was planned for
         xi::ZoneId                       hopZone{};
         timer::time_point                hopAt;
         float                            hopSeconds = 0.0f;

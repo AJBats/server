@@ -926,15 +926,16 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
     if (SafeWalkOn())
     {
         // The one walker's planner (ROADMAP W3): the route the scored search
-        // finds, a town's walk having no ring to keep out of, her own spot
-        // first so its first corner slides too
-        const auto route = pawn::travel::routeTo(POwner->getZone(), POwner->loc.p, goal);
-        if (!route.has_value() || route->empty())
+        // finds -- on the mesh, never up a slope a player cannot climb -- a
+        // town's walk having no ring to keep out of; her own spot first so
+        // its first corner slides too
+        const auto route = pawn::travel::routeAvoiding(POwner->getZone(), POwner->loc.p, goal, {}, {});
+        if (!route.has_value() || !route->complete || route->points.empty())
         {
             return false;
         }
         points.push_back(pathpoint_t{ POwner->loc.p, 0s, false });
-        for (const auto& p : *route)
+        for (const auto& p : route->points)
         {
             points.push_back(pathpoint_t{ p, 0s, false });
         }
@@ -2850,7 +2851,7 @@ auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
         {
             return fmt::format("inside {}'s circle", guard->getName());
         }
-        if (const auto* guard = BallRouteHeld(balls, PMob->loc.p); guard != nullptr)
+        if (const auto* guard = BallRouteHeld(balls, nullptr, PMob->loc.p); guard != nullptr)
         {
             return fmt::format("the way in crosses {}'s circle", guard->getName());
         }
@@ -3637,7 +3638,18 @@ auto CPawnController::IsClear(const float x, const float z) const -> bool
     const position_t spot(x, POwner->loc.p.y, z, 0, 0);
     if (SafeWalkOn())
     {
-        return BallHolding(m_DangerBalls, nullptr, spot, true) == nullptr;
+        // A ball is three-dimensional: the spot at the ground's own height
+        // there, not hers, or a spot down a slope sits underground and a
+        // mob's sight never reaches it
+        position_t ground = spot;
+        if (auto* navMesh = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr; navMesh != nullptr)
+        {
+            if (const auto snapped = navMesh->findClosestValidPoint(spot); snapped.has_value())
+            {
+                ground.y = snapped->y;
+            }
+        }
+        return BallHolding(m_DangerBalls, nullptr, ground, true) == nullptr;
     }
     const auto       matter = pawn::danger::forWalk(m_Dangers, POwner->loc.p, spot, [this](const auto& d, const auto& p) { return Sees(d, p); });
     return !cardian::formation::insideAny(cardian::rules::padded(matter), x, z);
@@ -6981,23 +6993,36 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
     {
         return;
     }
-    if (PPathFind->IsFollowingPath() && m_WalkPoint.has_value() && distance(*m_WalkPoint, *point) < 0.15f)
+    // With the one walker an errand's walk is held against the mobs once a
+    // logic tick as it goes, as every other walk is; a walk held short of a
+    // ring asks the planner once a logic tick, not at every steer step
+    const bool onPlan    = SafeWalkOn();
+    const bool errand    = by == pawn::kErrandWalker;
+    const bool samePoint = m_WalkPoint.has_value() && distance(*m_WalkPoint, *point) < 0.15f;
+    const bool asked     = onPlan && now - m_WalkOrderPlannedAt < 400ms;
+    if (PPathFind->IsFollowingPath() && samePoint && !(onPlan && errand && !asked))
+    {
+        return;
+    }
+    if (onPlan && !PPathFind->IsFollowingPath() && samePoint && asked)
     {
         return;
     }
     m_WalkPoint = *point;
     bool pathed = false;
-    if (SafeWalkOn())
+    if (onPlan)
     {
         // The one walker's planner (ROADMAP W3): the player's own steering is
         // his, so no ring holds it, but its route keeps to the mesh and to a
-        // player's slope; an errand's walk keeps her rows' rings. The steer
-        // timer steps the route as it stepped the first walker's path
+        // player's slope; an errand's walk keeps her rows' rings, and may
+        // sneak by. The steer timer steps the route as it stepped the first
+        // walker's path
         cardian::walk::Rules rules;
-        rules.danger = by == pawn::kErrandWalker && IsAvoiding();
-        rules.extra  = cardian::rules::kClearance;
-        rules.sneaks = false;
-        pathed       = SafeWalk(*point, rules).outcome != cardian::walk::Outcome::NoRoute;
+        rules.danger         = errand && IsAvoiding();
+        rules.extra          = cardian::rules::kClearance;
+        rules.sneaks         = errand;
+        m_WalkOrderPlannedAt = now;
+        pathed               = SafeWalk(*point, rules).outcome != cardian::walk::Outcome::NoRoute;
     }
     else
     {
@@ -8908,6 +8933,15 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
     float       bestDist = radius; // the hunter's own walk is capped too
     int         bestKey  = 0;
 
+    // On the walker's balls, every pick that passes, ranked after the walk
+    struct Ranked
+    {
+        CMobEntity* mob  = nullptr;
+        int         key  = 0;
+        float       dist = 0.0f;
+    };
+    std::vector<Ranked> ranked;
+
     const auto consider = [&](CMobEntity* PMob)
     {
         if (!eligible(PMob))
@@ -8972,7 +9006,16 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
 
         const float toHunter = distance(POwner->loc.p, pick->loc.p);
         const int   key      = keyOf(pick);
-        if (toHunter >= radius || (best != nullptr && (key > bestKey || (key == bestKey && toHunter >= bestDist))))
+        if (toHunter >= radius)
+        {
+            return;
+        }
+        if (onBalls)
+        {
+            ranked.push_back({ pick, key, toHunter });
+            return;
+        }
+        if (best != nullptr && (key > bestKey || (key == bestKey && toHunter >= bestDist)))
         {
             return;
         }
@@ -8982,6 +9025,36 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
         bestKey  = key;
     };
     pawn::forEachMobNear(entities, around, radius, consider);
+
+    // On the walker's balls the pick in order is confirmed by the route she
+    // would walk to it, the test the pull itself is judged by (PullBlocker),
+    // so the pick and the pull never disagree; a few at most, a hunt check
+    // being made many times
+    if (onBalls)
+    {
+        constexpr size_t kRouteChecks = 3;
+        std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) { return a.key != b.key ? a.key < b.key : a.dist < b.dist; });
+        std::vector<const CMobEntity*> asked;
+        for (const auto& r : ranked)
+        {
+            if (std::find(asked.begin(), asked.end(), r.mob) != asked.end())
+            {
+                continue;
+            }
+            if (asked.size() >= kRouteChecks)
+            {
+                break;
+            }
+            asked.push_back(r.mob);
+            if (const auto* guard = BallRouteHeld(balls, r.mob, r.mob->loc.p); guard != nullptr && !rules.aggressive)
+            {
+                skip(r.mob, fmt::format("the way in crosses {}'s circle", guard->getName()));
+                continue;
+            }
+            return r.mob;
+        }
+        return nullptr;
+    }
 
     return best;
 }
