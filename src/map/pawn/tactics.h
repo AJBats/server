@@ -27,6 +27,7 @@
 #include "common/cbasetypes.h"
 #include "common/timer.h"
 
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -165,7 +166,9 @@ namespace pawn::tactics
         std::string           mind;  // "Provoke X (the pull)" or "holds Provoke (...)"
         bool                  quiet = false; // Provoke merely on its clock: every fight's rhythm, not a change of mind
     };
-    auto tankCall(CCharEntity* PPawn, bool engaged) -> std::optional<TankCall>;
+    // `incoming` says whether a mob is a pull on its way in, which she
+    // holds Provoke on until it arrives (her host's FireWaitsOn)
+    auto tankCall(CCharEntity* PPawn, bool engaged, const std::function<bool(const CBattleEntity*)>& incoming) -> std::optional<TankCall>;
 
     struct RestAdvice
     {

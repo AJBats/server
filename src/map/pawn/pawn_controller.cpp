@@ -230,6 +230,10 @@ namespace
         {
             return m_controller.HoldingOff(PFoe);
         }
+        auto FireWaitsOn(const CBattleEntity* PTarget) -> bool override
+        {
+            return m_controller.FireWaitsOn(PTarget).has_value();
+        }
         auto OrderedOnto(const CBattleEntity* PTarget) const -> bool override
         {
             return m_controller.PlayersOrderOn(PTarget);
@@ -8870,17 +8874,12 @@ auto CPawnController::TowsAtStake() const -> bool
     return Staked() && m_Gambits->MasterOn() && pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Tank;
 }
 
-auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
+auto CPawnController::FireWaitsOn(const CBattleEntity* PTarget) -> std::optional<std::string>
 {
     // Free roaming, held while the pull is towed to the player
     if (const auto* PPlayer = GetAnchor(); PTarget != nullptr && TowedToPlayer(PPlayer, PTarget))
     {
-        if (m_HeldFireOn != PTarget->id)
-        {
-            m_HeldFireOn = PTarget->id;
-            ShowInfoFmt("pawn: {} holds her spells on {} until it reaches {}", POwner->getName(), PTarget->getName(), PPlayer->getName());
-        }
-        return true;
+        return fmt::format("until it reaches {}", PPlayer->getName());
     }
     // Held while the camp's receive rule (PullIn) says the pull is still
     // on its way: not at the landing point, not on her, not stopped inside
@@ -8888,14 +8887,20 @@ auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
     if (PTarget == nullptr || PTarget->objtype != TYPE_MOB || !Staked() || TowsAtStake() || PTarget->GetBattleTarget() == POwner ||
         PullIn(PTarget) == cardian::stake::ReceiveAction::Join)
     {
-        return false;
+        return std::nullopt;
     }
-    if (m_HeldFireOn != PTarget->id)
+    return std::string("until it comes in to the camp");
+}
+
+auto CPawnController::HoldsFireOn(const CBattleEntity* PTarget) -> bool
+{
+    const auto until = FireWaitsOn(PTarget);
+    if (until.has_value() && m_HeldFireOn != PTarget->id)
     {
         m_HeldFireOn = PTarget->id;
-        ShowInfoFmt("pawn: {} holds her spells on {} until it comes in to the camp", POwner->getName(), PTarget->getName());
+        ShowInfoFmt("pawn: {} holds her spells on {} {}", POwner->getName(), PTarget->getName(), *until);
     }
-    return true;
+    return until.has_value();
 }
 
 auto CPawnController::WaitsForThePull(const CBattleEntity* PTarget, const ApproachKind kind) -> bool

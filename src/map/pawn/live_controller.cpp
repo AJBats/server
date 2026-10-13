@@ -269,6 +269,11 @@ namespace
         {
             return false;
         }
+        // His pulls are his own: nothing of his waits on one coming in
+        auto FireWaitsOn(const CBattleEntity* /*PTarget*/) -> bool override
+        {
+            return false;
+        }
         // His own command engaged him on it
         auto OrderedOnto(const CBattleEntity* PTarget) const -> bool override
         {

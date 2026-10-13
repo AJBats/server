@@ -31,7 +31,10 @@
 // 2026-10-01). A tank keeps Provoke for the pull and runs it on its clock
 // otherwise:
 //  1. the pull: she has no fight of her own, and a mob the party fights is
-//     on someone else -- Provoke it the moment it is in range;
+//     on someone else -- Provoke it the moment it is in range, unless it is
+//     a pull towed to the player in free roam, on its way in (the user,
+//     2026-10-13): she takes it once it has arrived. At a camp she tows
+//     the pull herself, so nothing waits there;
 //  2. upkeep: her fight's mob, Provoke up -- Provoke at once, whoever the
 //     mob is on; she does not wait for hate to be ripped;
 //  3. the end of the fight: her mob under the hold -- keep Provoke for the
@@ -49,6 +52,7 @@ namespace cardian::tank
         int    hp       = 100; // percent
         uint32 target   = 0;   // whom it is on: a member's id, or 0 for nobody of ours
         float  distance = 0.0f; // from her, yalms
+        bool   incoming = false; // a pull on its way in that her fire waits on (CPawnController::FireWaitsOn)
     };
 
     struct Member
@@ -91,6 +95,7 @@ namespace cardian::tank
         NoProvoke,  // not hers, or on its clock
         Nothing,    // no mob of the party's on anyone else, and no fight of hers
         OutOfRange, // the mob it would Provoke is too far
+        Incoming,   // the pull is on its way in: taken once it arrives
         OnHer,      // her fight's mob, under the hold, on her: kept for the next pull
         EndOfFight, // her fight's mob, under the hold, on someone who is fine
     };
@@ -127,6 +132,8 @@ namespace cardian::tank
                 return "nothing to Provoke";
             case Held::OutOfRange:
                 return "out of range";
+            case Held::Incoming:
+                return "the pull is on its way in";
             case Held::OnHer:
                 return "the end of the fight, the mob on her";
             case Held::EndOfFight:
@@ -213,14 +220,20 @@ namespace cardian::tank
             }
             return { std::nullopt, mob->target == v.self ? Held::OnHer : Held::EndOfFight };
         }
-        // The pull (rule 1): a mob on someone else, in range
+        // The pull (rule 1): a mob on someone else, in range, arrived
         const Mob* best     = nullptr;
         bool       tooFar   = false; // never `far`: a Windows macro
+        bool       incoming = false;
         for (const auto& mob : v.mobs)
         {
             const auto* on = detail::memberOf(v, mob.target);
             if (on == nullptr || on->id == v.self)
             {
+                continue;
+            }
+            if (mob.incoming)
+            {
+                incoming = true;
                 continue;
             }
             if (mob.distance > v.provokeRange)
@@ -237,7 +250,7 @@ namespace cardian::tank
         {
             return { Call{ best->id, Reason::Pull }, Held::Nothing };
         }
-        return { std::nullopt, tooFar ? Held::OutOfRange : Held::Nothing };
+        return { std::nullopt, incoming ? Held::Incoming : tooFar ? Held::OutOfRange : Held::Nothing };
     }
 
     inline auto call(const View& v) -> std::optional<Call>
