@@ -19,7 +19,7 @@
 ===========================================================================
 */
 
-// The one walker's route arithmetic (ROADMAP W, pawn/safe_walk.h)
+// The walker's route arithmetic (ROADMAP W, pawn/safe_walk.h)
 
 #include "map/pawn/safe_walk.h"
 

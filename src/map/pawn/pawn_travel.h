@@ -74,11 +74,6 @@ namespace pawn
         // mesh, where her piece cannot be told, or when no walk goes round
         auto cutOff(xi::ZoneId zone, const position_t& a, const position_t& b) -> bool;
 
-        // The whole-zone route from a body at `from` to `to` in `zone`
-        // (pawn/route_search.h), its waypoints after her own spot; nullopt
-        // when no walk on the zone's mesh joins them, or the zone has none
-        auto routeTo(xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<std::vector<position_t>>;
-
         // The route from a body at `from` to `to` in `zone` kept out of the
         // hazards (pawn/route_search.h searchAvoiding): its `firstDanger`
         // names where the mobs hold every way, a choke known before she takes

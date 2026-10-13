@@ -19,13 +19,11 @@
 ===========================================================================
 */
 
-// The one walker (ROADMAP W): every walk a cardian takes is a route the
-// scored search plans round the danger map's balls (pawn/route_search.h)
-// and walks as planned. A mover proposes where she wants to be (its
-// Intent); WalkPlanned decides how, through SafeWalk, which plans, holds
-// and backs off the way the trek's walk always has, for every walk. On
-// while pawn.SAFE_WALK is; off, Walk keeps the first walker (Avoid and
-// the game's own path finder)
+// The walker (ROADMAP W): every walk a cardian takes is a route the scored
+// search plans round the danger map's balls (pawn/route_search.h) and walks
+// as planned. A mover proposes where she wants to be (its Intent); Walk
+// decides how, through SafeWalk, which plans, holds, backs off and sneaks
+// by, for every walk, a trek's included
 
 #include "pawn_controller.h"
 
@@ -107,6 +105,14 @@ namespace
                a.wholeZone == b.wholeZone && std::fabs(a.extra - b.extra) < 0.01f && std::fabs(a.closeTo - b.closeTo) < 0.01f;
     }
 
+    // Two walks that hold for a choke alike: the same rings, the same rule
+    // for holding. How near she means to stop is no part of it
+    auto sameHold(const Rules& a, const Rules& b) -> bool
+    {
+        return a.danger == b.danger && a.forceAvoid == b.forceAvoid && a.sightHides == b.sightHides && a.holds == b.holds && a.wholeZone == b.wholeZone &&
+               std::fabs(a.extra - b.extra) < 0.01f;
+    }
+
     auto without(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude) -> std::vector<pawn::danger::Sphere>
     {
         std::vector<pawn::danger::Sphere> out;
@@ -186,11 +192,6 @@ auto CPawnController::BallRouteHeld(const std::vector<pawn::danger::Sphere>& all
     return balls[nearest].mob;
 }
 
-auto CPawnController::SafeWalkOn() const -> bool
-{
-    return settings::get<bool>("pawn.SAFE_WALK");
-}
-
 auto CPawnController::DangerProfile(const bool forceAvoid) -> pawn::danger::Profile
 {
     auto* PPawn   = static_cast<CCharEntity*>(POwner);
@@ -257,11 +258,13 @@ auto CPawnController::WalkExposed(const Rules& rules) -> bool
 
 auto CPawnController::CampLineHolds(const std::vector<position_t>& route, const position_t& camp) const -> bool
 {
-    // Behind the camp's line, as RearCampRoute holds the first walker's
-    // paths: the end never in front of it, and at the camp no step further
-    // forward than where she stands -- an AoE reposition never routes round
-    // a wall through the front. Farther from the flag than her cast range
-    // she walks the mesh's own way there
+    // Behind the camp's line: the end never in front of it, and at the camp
+    // no step further forward than where she stands -- out in front, she
+    // walks back; behind it, an AoE reposition never routes round a wall
+    // through the front. Farther from the flag than her cast range (past
+    // the deepest spot CampSpot looks at) she walks the mesh's own way
+    // there: a camp set across a maze has no route to its back that never
+    // crosses its front
     if (route.empty())
     {
         return true;
@@ -558,10 +561,13 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
             const bool better = length < remaining * 0.9f;
             if (stretchTo.has_value() || fresh || newTarget || caughtBy != nullptr || holdUnknown || holding || crossedBy >= 0 || better || (chokeAhead && !held))
             {
-                // A new walk starts its own hold -- unless she stands where she
-                // held: the point moved round her (the player about his
-                // camp), and the choke holds her still, its clock running on
-                if ((fresh || newTarget) && plan.heldSince.has_value() && distance(here, plan.heldAt) > kOffRoute)
+                // A new walk starts its own hold -- unless she holds for a
+                // choke alike in the same zone and stands where she held: the
+                // point moved round her (the player about his camp), and the
+                // choke holds her still, its clock running on. A race begun,
+                // or a zone crossed, is a new hold
+                const bool holdsOn = plan.zone == zone && sameHold(plan.rules, rules) && distance(here, plan.heldAt) <= kOffRoute;
+                if ((fresh || newTarget) && plan.heldSince.has_value() && !holdsOn)
                 {
                     plan.heldSince.reset();
                 }
@@ -720,8 +726,8 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
     }
     result.target = plan.target;
 
-    // The action, in the first walker's words her other code reads: out of a
-    // ring first, held, at the safe ground beside her point, or round a ring
+    // The action, the word her other code reads: out of a ring first, held,
+    // at the safe ground beside her point, or round a ring
     if (caughtBy != nullptr)
     {
         result.action = AvoidAction::Escape;
@@ -1110,7 +1116,7 @@ void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLin
 {
     constexpr float kGotByNear = 8.0f; // past a choke she was stuck at: this near where it held her
 
-    // The trek is a mover like any other: it proposes its line, and the one
+    // The trek is a mover like any other: it proposes its line, and the
     // walker plans the way there round every mob in her zone and walks it.
     // A trek walks outside the claim board, by design
     Intent toLine;
@@ -1175,7 +1181,7 @@ void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLin
     }
 }
 
-auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
+auto CPawnController::Walk(Intent intent) -> AvoidAction
 {
     // The claim board first (claim_board.h): no two party members aim for
     // one spot, whichever mover proposed it
@@ -1212,8 +1218,8 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
     }
     else
     {
-        // The everyday walk plans against the rings padded as the first
-        // walker's were, so a mob that steps her way does not find her on
+        // The everyday walk plans against the rings padded by the pull
+        // rule's clearance, so a mob that steps her way does not find her on
         // its edge
         rules.extra = cardian::rules::kClearance;
         // Alone with a mob on her -- off the party's ground, beyond
@@ -1330,12 +1336,12 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
                 if (away > followMax || exposed)
                 {
                     // The player's personal space: her goal stepped clear of
-                    // his body and his wake, as the first walker's every path
+                    // his body and his wake
                     const auto goal = intent.trek ? intent.point : CourtesyStep(intent.point);
                     auto       out  = walk(goal, intent.kind == Intent::Kind::Path || away > followMax ? followTarget : 0.0f);
                     // No way to her point, a ring on her: she steps out of
                     // it all the same -- escape wins over everything, reachable
-                    // point or not, as the first walker's did
+                    // point or not
                     if (out.outcome == Outcome::NoRoute && exposed)
                     {
                         out = walk(POwner->loc.p, 0.0f);
@@ -1345,8 +1351,8 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
                     // to its line would carry her hundreds of yalms
                     trying = !intent.trek && out.outcome == Outcome::Walking && out.action != AvoidAction::Slot && out.action != AvoidAction::Hold;
 
-                    // The camp's line: normal positioning stays behind it, as the
-                    // first walker's did; a walk shaped by danger overrides it
+                    // The camp's line: normal positioning stays behind it; a
+                    // walk shaped by danger overrides it
                     const bool campRefuses = out.outcome != Outcome::NoRoute && intent.rearBoundary.has_value() && action == AvoidAction::None &&
                                              !CampLineHolds(std::vector<position_t>(m_Plan.route.begin() + static_cast<std::ptrdiff_t>(std::min(m_Plan.next, m_Plan.route.size())), m_Plan.route.end()),
                                                             *intent.rearBoundary);
@@ -1378,7 +1384,7 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
                             intent.tolerance = 0.0f;
                             intent.fallback.reset();
                             intent.claimed = false;
-                            return WalkPlanned(std::move(intent));
+                            return Walk(std::move(intent));
                         }
                         if (intent.herdSpot)
                         {
@@ -1452,8 +1458,8 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
         PPathFind->LookAt(intent.target->loc.p);
     }
 
-    // A change of action is always worth a line, as the first walker's was;
-    // a trek's plans say it in their own lines
+    // A change of action is always worth a line; a trek's plans say it in
+    // their own lines
     if (!intent.trek && m_LastAvoidAction != action && action != AvoidAction::None)
     {
         ShowInfoFmt("pawn: {} walks ({}): to ({:.1f}, {:.1f}, {:.1f}), {:.1f}y off the point asked for", POwner->getName(), magic_enum::enum_name(action), point.x, point.y,

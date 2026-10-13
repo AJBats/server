@@ -400,44 +400,38 @@ xi.settings.pawn =
     SPOT_FACING_ARC    = 45,
 
     -- Aggro avoidance (M3.87). Every detection type a mob has counts as a
-    -- circle of that type's range plus AVOID_BUFFER yalms -- sight and sound
+    -- ball of that type's range plus AVOID_BUFFER yalms -- sight and sound
     -- always, low-HP while the cardian is under 75%, magic only while it is
-    -- casting, ambush at 3 y (the conditions the game itself applies); a cardian keeps its slots, its paths
-    -- and itself outside those circles, and is pushed away as a mob roams
-    -- toward it. Cardians move on the server with the mobs, so nothing
-    -- surprises them: they stand boldly just outside. Avoidance is two
-    -- gambit rows, each on its own: Avoid aggro (these circles) and Avoid
-    -- links (below). The world's layer runs both for a world body out in the
+    -- casting, ambush at 3 y (the conditions the game itself applies). The
+    -- walker (ROADMAP W) plans her every walk round those balls, walks her
+    -- out of one she stands in first, and takes her to the safe ground
+    -- nearest a spot inside one. Cardians move on the server with the mobs,
+    -- so nothing surprises them: they stand boldly just outside. Avoidance
+    -- is two gambit rows, each on its own: Avoid aggro (these balls) and
+    -- Avoid links (below). The world's layer runs both for a world body out in the
     -- wild, a job's default rows carry neither, and !pawnavoid checks and
     -- unchecks Avoid aggro. AVOID_SCAN is how far around itself a cardian
     -- looks.
     AVOID_BUFFER = 1.5,
     AVOID_SCAN   = 30,
-    -- On a trek between zones (ROADMAP T) every circle is TREK_AVOID_EXTRA
+    -- On a trek between zones (ROADMAP T) every ball is TREK_AVOID_EXTRA
     -- yalms wider still: she has no camp spot to keep her near the edge (the
     -- user, 2026-10-11: two yalms to start; a survey of the routes past the
     -- mobs' patrols is to tell the margin a trek wants)
     TREK_AVOID_EXTRA = 2.0,
-    -- Where the mobs hold every way on her trek (a choke), she waits out of
+    -- Where the mobs hold every way on her walk (a choke), she waits out of
     -- their reach for one to roam off, backing off to the nearest ground
-    -- that is when no spot short of it is, and never goes through on her own.
-    -- Once the way has stayed held this many seconds, and the whole zone's
-    -- plan finds no way round, she says in party chat that she is stuck by
-    -- aggro; past it later, that she got by (the user, 2026-10-12)
+    -- that is when no spot short of it is, and goes through on her own only
+    -- racing: on a trek, or off the party's ground, with a mob on her.
+    -- On a trek, or off the party's ground (PARTY_GROUND_RADIUS), once the
+    -- way has stayed held this many seconds and the whole zone's plan finds
+    -- no way round, she says in party chat that she is stuck by aggro; past
+    -- it later, that she got by (the user, 2026-10-12)
     TREK_STUCK_AFTER = 15,
     -- The milliseconds of each 400 ms logic tick every trek together may
     -- spend (planning its route round the mobs, checking it): a tick whose
     -- treks pass it is shouted in the map log as a [critical] line
     TREK_PLAN_BUDGET_MS = 40,
-
-    -- The one walker (ROADMAP W): on, every walk a cardian takes is a route
-    -- the scored search plans round the danger map and walks as planned --
-    -- the way round every ring, out of a ring first, the safe ground nearest
-    -- a point inside one, holding short of a choke and a sneak-by past it --
-    -- and treks walk through it too. Off, the first walker: the avoid's
-    -- circles and the game's own path finder, and the trek's own walk. Both
-    -- stay until the new one is played and trusted (the user, 2026-10-12)
-    SAFE_WALK = false,
 
     -- The party's own ground (the user, 2026-10-13): PARTY_GROUND_RADIUS
     -- yalms round the player whose orders a cardian follows. A retreat binds
@@ -452,27 +446,15 @@ xi.settings.pawn =
     PARTY_GROUND_RADIUS = 30,
 
     -- Linking, her Avoid links row: the idle kin of any mob fighting a
-    -- cardian are circles for that cardian alone -- link range plus
+    -- cardian are balls for that cardian alone -- link range plus
     -- AVOID_TAIL, the distance the mob keeps behind her as it follows -- so
     -- she leads her fight away from the kin and no one else has to. A kin
     -- that joins is a fight, not a danger, and drops out on its own. A mob
-    -- that both aggroes and links is the larger of its two circles when she
-    -- avoids both. The same pass runs mid-fight: a target parked inside
-    -- another mob's circle is not approached; she waits at the rim for the
-    -- tank to bring it.
-    AVOID_TAIL  = 3.0,
-
-    -- The settle rule (the itch): a cardian whose spot lies inside a circle
-    -- takes the best clear spot on offer when she arrives, then stands
-    -- there. Every second the itch grows by how much better than her spot
-    -- the best spot on offer now is, minus AVOID_ITCH_TOLERANCE yalms (an
-    -- improvement under that is never worth walking for, and drains it);
-    -- when it reaches AVOID_ITCH_PATIENCE (yalm-seconds) she moves once, in
-    -- one go, and the itch resets. Four yalms better with a tolerance of
-    -- three fires after twenty seconds; eight yalms better, after four.
-    -- Escapes and fights never wait on it.
-    AVOID_ITCH_TOLERANCE = 3.0,
-    AVOID_ITCH_PATIENCE  = 20,
+    -- that both aggroes and links is the larger of its two balls when she
+    -- avoids both. The same rule runs mid-fight: a target parked inside
+    -- another mob's ball is not approached; she waits at the safe ground
+    -- nearest it for the tank to bring it.
+    AVOID_TAIL = 3.0,
 
     -- Company around a pull is the party's call (the Party page: aggressive
     -- company and linking company, saved per player in cardian_orders).

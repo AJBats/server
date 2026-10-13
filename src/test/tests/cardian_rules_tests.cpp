@@ -20,8 +20,8 @@
 */
 
 // The rules a cardian fights by (pawn_rules.h): may she draw on this, and
-// is the pull clean. Pure, and asked the same way from every door into a
-// fight, so a change here is a change everywhere at once.
+// does a retreat bind her. Pure, and asked the same way from every door
+// into a fight, so a change here is a change everywhere at once.
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -128,70 +128,6 @@ TEST_CASE("onlyCooldown: near enough, and only the draw's wait refuses", "[cardi
     claimedAndWaiting.cooldown  = true;
     claimedAndWaiting.claimable = false;
     REQUIRE_FALSE(onlyCooldown(claimedAndWaiting));
-}
-
-TEST_CASE("padded: every circle grows by the clearance", "[cardian][rules]")
-{
-    const Circles circles{ { 0.0f, 0.0f, 8.0f }, { 20.0f, 0.0f, 15.0f } };
-    const auto    p = padded(circles);
-
-    REQUIRE(p.size() == 2);
-    REQUIRE(p[0].radius == 8.0f + kClearance);
-    REQUIRE(p[1].radius == 15.0f + kClearance);
-    REQUIRE(p[1].x == 20.0f);
-}
-
-TEST_CASE("pullBlocked: a clean pull is clean", "[cardian][rules]")
-{
-    // A guard far off to the side; the way in from (0,0) to (20,0) never
-    // nears it
-    const auto circles = padded(Circles{ { 10.0f, 30.0f, 8.0f } });
-    REQUIRE_FALSE(pullBlocked(circles, 0.0f, 0.0f, 20.0f, 0.0f).has_value());
-}
-
-TEST_CASE("pullBlocked: prey inside a guard's padded circle names the guard", "[cardian][rules]")
-{
-    // The guard at (20, 9): 9 y from the prey, outside its true 8 y circle
-    // and inside the padded 9.5 y one. This is the band the loop lived in.
-    const auto circles = padded(Circles{ { 20.0f, 9.0f, 8.0f } });
-    const auto block   = pullBlocked(circles, 0.0f, 0.0f, 20.0f, 0.0f);
-
-    REQUIRE(block.has_value());
-    REQUIRE(block->targetInside);
-    REQUIRE(block->circle == 0);
-}
-
-TEST_CASE("pullBlocked: a way in that enters a circle is blocked, and says which", "[cardian][rules]")
-{
-    // The prey at (30, 0) is clear; a mob at (15, 4) with a 6 y circle
-    // (7.5 padded) sits across the straight way in
-    const auto circles = padded(Circles{ { 0.0f, 40.0f, 8.0f }, { 15.0f, 4.0f, 6.0f } });
-    const auto block   = pullBlocked(circles, 0.0f, 0.0f, 30.0f, 0.0f);
-
-    REQUIRE(block.has_value());
-    REQUIRE_FALSE(block->targetInside);
-    REQUIRE(block->circle == 1);
-}
-
-TEST_CASE("pullBlocked: the target's own circle is no reason", "[cardian][rules]")
-{
-    // An aggressive prey: its own circle surrounds it and lies across the
-    // way in. Ignored, the pull is clean; counted, it is blocked.
-    const auto circles = padded(Circles{ { 20.0f, 0.0f, 15.0f } });
-
-    REQUIRE_FALSE(pullBlocked(circles, 0.0f, 0.0f, 20.0f, 0.0f, 0).has_value());
-    REQUIRE(pullBlocked(circles, 0.0f, 0.0f, 20.0f, 0.0f).has_value());
-}
-
-TEST_CASE("pullBlocked: judged from where she stands now, it can turn unclean on the walk", "[cardian][rules]")
-{
-    // The same prey and guard: from the far side the way in is clear, from
-    // the near side it cuts through the guard's circle. The fight and the
-    // pick ask this the same way, so neither can hold what the other drops.
-    const auto circles = padded(Circles{ { 10.0f, 6.0f, 6.0f } });
-
-    REQUIRE_FALSE(pullBlocked(circles, 20.0f, -20.0f, 20.0f, 0.0f).has_value());
-    REQUIRE(pullBlocked(circles, 0.0f, 0.0f, 20.0f, 0.0f).has_value());
 }
 
 TEST_CASE("retreatBinds: the party's own ground retreats; one detached carries on until it reaches her, then stays bound", "[cardian][rules]")

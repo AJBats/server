@@ -133,7 +133,7 @@ auto CPawnController::RestsInDanger() -> std::optional<std::string>
     {
         return std::nullopt;
     }
-    m_SightMemo.clear(); // a mob walked out from behind a wall since the last look is seen now
+    m_BallSight.clear(); // a mob walked out from behind a wall since the last look is seen now
     auto* PPawn     = static_cast<CCharEntity*>(POwner);
     auto  profile   = pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks());
     profile.casting = false;
@@ -148,26 +148,11 @@ auto CPawnController::RestsInDanger() -> std::optional<std::string>
         }
     } kneels{ POwner, POwner->animation };
     POwner->animation  = xi::Animation::Healing;
-    if (SafeWalkOn())
+    // The mob whose ball holds her where she would kneel, where it sees her
+    const auto balls = pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
+    if (const auto* PMob = BallHolding(balls, nullptr, POwner->loc.p, true); PMob != nullptr)
     {
-        // The one walker's balls (ROADMAP W5): the mob whose ball holds her
-        // where she would kneel, where it sees her
-        m_BallSight.clear();
-        const auto balls = pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
-        if (const auto* PMob = BallHolding(balls, nullptr, POwner->loc.p, true); PMob != nullptr)
-        {
-            return PMob->getName();
-        }
-        return std::nullopt;
-    }
-    const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
-    const auto matter    = pawn::danger::forWalk(dangers, POwner->loc.p, POwner->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
-    for (const auto& d : matter)
-    {
-        if (cardian::formation::depthInside(d, POwner->loc.p.x, POwner->loc.p.z) > 0.0f)
-        {
-            return d.mob != nullptr ? d.mob->getName() : std::string("a mob");
-        }
+        return PMob->getName();
     }
     return std::nullopt;
 }

@@ -91,9 +91,8 @@ namespace pawn::danger
         // handed to `emit` with the radius of the sphere it detects in (the
         // buffer on), the ambush's that needs no sight (0 when none),
         // whether it links to a fight of hers, and the radius split into its
-        // sight's cone and its reach all round: the danger map's one rule,
-        // whether the map is cut flat where she stands (around) or a route
-        // is planned ahead (spheres)
+        // sight's cone and its reach all round: the danger map's one rule
+        // (spheres)
         template <typename Emit>
         void collect(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude, Emit&& emit)
         {
@@ -190,42 +189,6 @@ namespace pawn::danger
         }
     } // namespace
 
-    auto around(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude) -> std::vector<Danger>
-    {
-        std::vector<Danger> out;
-        collect(entities, center, scan, profile, exclude, [&](CMobEntity* PMob, float radius, float unseen, const bool links, float, float)
-        {
-            // Detection is a sphere and the map is flat: the circle is
-            // that sphere sliced at the query height, and a mob too far
-            // above or below (a bridge, a cliff) is no danger at all
-            const float dy = center.y - PMob->loc.p.y;
-            if (std::fabs(dy) >= radius)
-            {
-                return;
-            }
-            radius = std::sqrt(radius * radius - dy * dy);
-            if (unseen > 0.0f)
-            {
-                unseen = std::fabs(dy) >= unseen ? 0.0f : std::sqrt(unseen * unseen - dy * dy);
-            }
-            const float dist = distance(center, PMob->loc.p, true); // planar, like the circle
-            if (dist > scan + radius)
-            {
-                return;
-            }
-            Danger danger;
-            danger.x            = PMob->loc.p.x;
-            danger.z            = PMob->loc.p.z;
-            danger.radius       = radius;
-            danger.mob          = PMob;
-            danger.distance     = dist;
-            danger.linked       = links;
-            danger.unseenRadius = unseen;
-            out.push_back(danger);
-        });
-        return out;
-    }
-
     auto spheres(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude) -> std::vector<Sphere>
     {
         std::vector<Sphere> out;
@@ -237,11 +200,6 @@ namespace pawn::danger
             }
         });
         return out;
-    }
-
-    auto sees(const Danger& danger, const position_t& point) -> bool
-    {
-        return danger.mob != nullptr && danger.mob->CanSeeTarget(point);
     }
 
     auto sees(const Sphere& sphere, const position_t& point) -> bool

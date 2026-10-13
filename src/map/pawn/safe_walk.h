@@ -30,7 +30,7 @@
 #include <limits>
 #include <vector>
 
-// The one walker's rules and its route's arithmetic (ROADMAP W): every walk
+// The walker's rules and its route's arithmetic (ROADMAP W): every walk
 // a cardian takes is a route the scored search plans round the danger map
 // (pawn/route_search.h), walked as planned. A mover proposes where; these
 // say how the walker treats the walk, and the arithmetic below is what the
