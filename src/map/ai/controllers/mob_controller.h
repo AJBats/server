@@ -63,6 +63,7 @@ public:
     void         ClearFollowTarget();
     auto         CheckHide(const CBattleEntity* PTarget) const -> bool;
     auto         TpThreshold() const -> uint16 { return m_tpThreshold; } // CARDIAN: the TP its next move fires at, read by a kneeling cardian (pawn/tp_clock.h)
+    auto         LastActionTime() const -> timer::time_point { return m_LastActionTime; } // CARDIAN: its rest ends at this plus its RoamCool (pawn/sneak.h)
     void         OnCastStopped(CMagicState& state, action_t& action);
 
 protected:

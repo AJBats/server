@@ -109,6 +109,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_fish_fight_tests.cpp # CARDIAN: a venture's fish fight, timed and not played
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_kit_loss_tests.cpp # CARDIAN: a venture cast's kit loss
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_route_tests.cpp # CARDIAN: a route searched across a whole zone
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_sneak_tests.cpp # CARDIAN: the sneak-by: a mob's reach over its rest, islands, the timed crossing
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

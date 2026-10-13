@@ -50,11 +50,12 @@ namespace pawn::drill
     // What her trek tells of itself (TravelTick, TrekSafeWalk, the rest
     // across a line), counted for a drill's walker and ignored for anyone
     // else: each route planned, a hold at a choke, stuck by aggro there, a
-    // chase begun, an "I'm stuck!" with no walk at all, a rest across a zone
-    // line
+    // sneak-by set out on, a chase begun, an "I'm stuck!" with no walk at
+    // all, a rest across a zone line
     void notePlan(uint32 charid, std::chrono::microseconds took, int searched, bool stretch);
     void noteHold(uint32 charid);
     void noteBlocked(uint32 charid);
+    void noteHop(uint32 charid);
     void noteChase(uint32 charid);
     void noteStuck(uint32 charid);
     void noteRest(uint32 charid);
