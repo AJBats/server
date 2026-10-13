@@ -95,7 +95,84 @@ namespace
         }
         return out;
     }
+
+    auto without(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude) -> std::vector<pawn::danger::Sphere>
+    {
+        std::vector<pawn::danger::Sphere> out;
+        out.reserve(balls.size());
+        for (const auto& b : balls)
+        {
+            if (exclude == nullptr || b.mob != exclude)
+            {
+                out.push_back(b);
+            }
+        }
+        return out;
+    }
 } // namespace
+
+auto CPawnController::BallHolding(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& point, const bool sight) const -> CMobEntity*
+{
+    const auto kept = without(balls, exclude);
+    if (kept.empty())
+    {
+        return nullptr;
+    }
+    const auto                        hazards = toHazards(kept);
+    const auto                        at      = cardian::route::toDetour(point);
+    const cardian::route::HazardSight seen    = sight ? cardian::route::HazardSight([&](const size_t h, const position_t& p) { return SeesBall(kept[h], p); })
+                                                      : cardian::route::HazardSight{};
+    const int                         h       = cardian::route::DangerTest(hazards, at, seen).exposes(at);
+    return h >= 0 ? kept[h].mob : nullptr;
+}
+
+auto CPawnController::BallCrossing(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& from, const position_t& to) const -> CMobEntity*
+{
+    const auto kept = without(balls, exclude);
+    if (kept.empty())
+    {
+        return nullptr;
+    }
+    const auto                        hazards = toHazards(kept);
+    const cardian::route::HazardSight seen    = [&](const size_t h, const position_t& p) { return SeesBall(kept[h], p); };
+    const int                         h       = cardian::route::DangerTest(hazards, cardian::route::toDetour(from), seen).holder(from, to);
+    return h >= 0 ? kept[h].mob : nullptr;
+}
+
+auto CPawnController::BallRouteHeld(const std::vector<pawn::danger::Sphere>& balls, const position_t& to) const -> CMobEntity*
+{
+    // The route she would walk there, planned as the walker plans it: held
+    // when every way passes a ball, by the ball its first such step passes
+    // -- or, should that step pass none now, the ball nearest its end
+    if (balls.empty())
+    {
+        return nullptr;
+    }
+    const auto                        hazards = toHazards(balls);
+    const cardian::route::HazardSight seen    = [&](const size_t h, const position_t& p) { return SeesBall(balls[h], p); };
+    const auto                        here    = POwner->loc.p;
+    const auto route = pawn::travel::routeAvoiding(POwner->getZone(), here, to, hazards, seen, distance(here, to) * 1.5f + kLocalSpare);
+    if (!route.has_value() || !route->complete || route->firstDanger < 0)
+    {
+        return nullptr;
+    }
+    const auto& points = route->points;
+    const auto  d      = static_cast<size_t>(route->firstDanger);
+    const auto& a      = d == 0 ? here : points[d - 1];
+    if (const int h = cardian::route::DangerTest(hazards, cardian::route::toDetour(here), seen).holder(a, points[d]); h >= 0)
+    {
+        return balls[h].mob;
+    }
+    size_t nearest = 0;
+    for (size_t h = 1; h < balls.size(); ++h)
+    {
+        if (distance(balls[h].at, points[d]) - balls[h].radius < distance(balls[nearest].at, points[d]) - balls[nearest].radius)
+        {
+            nearest = h;
+        }
+    }
+    return balls[nearest].mob;
+}
 
 auto CPawnController::SafeWalkOn() const -> bool
 {
@@ -507,7 +584,8 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
                     }
                     else if (caughtBy != nullptr)
                     {
-                        why = fmt::format("in {}'s reach", caughtBy->getName());
+                        why = fmt::format("in {}'s reach, {:.1f}y off it, she at ({:.1f}, {:.1f}, {:.1f})", caughtBy->getName(), distance(here, caughtBy->loc.p), here.x,
+                                          here.y, here.z);
                     }
                     else if (crossedBy >= 0)
                     {
@@ -549,7 +627,8 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
                         }
                         choke = fmt::format("; the way is held by {} {:.0f}y ahead{}", nameOf(holder), ahead,
                                                  racing                 ? std::string(", racing: she does not hold for it")
-                                                 : !plan.backOff.empty() ? std::string(", with no spot short of it out of every reach: she goes to the nearest ground that is")
+                                                 : !plan.backOff.empty() ? fmt::format(", with no spot short of it out of every reach: she goes {:.0f}y to the nearest ground that is",
+                                                                                       cardian::walk::lengthOf(plan.backOff) + distance(here, plan.backOff.front()))
                                                  : noGround              ? std::string(", with no ground out of every reach near her: she holds where she stands")
                                                                          : std::string());
                     }
@@ -1245,8 +1324,9 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
         PPathFind->LookAt(intent.target->loc.p);
     }
 
-    // A change of action is always worth a line, as the first walker's was
-    if (m_LastAvoidAction != action && action != AvoidAction::None)
+    // A change of action is always worth a line, as the first walker's was;
+    // a trek's plans say it in their own lines
+    if (!intent.trek && m_LastAvoidAction != action && action != AvoidAction::None)
     {
         ShowInfoFmt("pawn: {} walks ({}): to ({:.1f}, {:.1f}, {:.1f}), {:.1f}y off the point asked for", POwner->getName(), magic_enum::enum_name(action), point.x, point.y,
                     point.z, distance(point, intent.point));

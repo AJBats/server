@@ -2837,6 +2837,26 @@ auto CPawnController::Draw(CBattleEntity* PTarget, const ApproachKind kind, cons
 
 auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
 {
+    // The one walker's balls (ROADMAP W5): the party's, worst case, padded,
+    // the pull itself left out; the target standing in one, or the route she
+    // would walk in passing one
+    if (SafeWalkOn())
+    {
+        auto profile        = pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner));
+        profile.extraBuffer = cardian::rules::kClearance;
+        const float scan    = std::max(settings::get<float>("pawn.AVOID_SCAN"), distance(POwner->loc.p, PMob->loc.p) + 10.0f);
+        const auto  balls   = pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, scan, profile, PMob);
+        if (const auto* guard = BallHolding(balls, nullptr, PMob->loc.p, true); guard != nullptr)
+        {
+            return fmt::format("inside {}'s circle", guard->getName());
+        }
+        if (const auto* guard = BallRouteHeld(balls, PMob->loc.p); guard != nullptr)
+        {
+            return fmt::format("the way in crosses {}'s circle", guard->getName());
+        }
+        return "";
+    }
+
     // The party's own mob is no danger to the pull (exclude), and the
     // circles are the pick's: every danger, worst case, padded
     const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"),
@@ -2857,6 +2877,7 @@ auto CPawnController::PullBlocker(const CMobEntity* PMob) const -> std::string
 void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
 {
     m_Dangers.clear();
+    m_DangerBalls.clear();
     m_SightMemo.clear();
     m_DangerIgnore   = PIgnore; // the one walker's balls leave it out too
     m_DangerIgnoreAt = m_Tick;
@@ -2877,6 +2898,14 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
     // On a trek, with no camp spot to keep her near the edge, a wider berth
     profile.extraBuffer = Trekking() ? settings::get<float>("pawn.TREK_AVOID_EXTRA") : 0.0f;
     m_Dangers       = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, PIgnore);
+    // The one walker's yes/no readers read the same mobs as balls (ROADMAP
+    // W5), padded as the pull rule pads the circles
+    if (SafeWalkOn())
+    {
+        auto padded = profile;
+        padded.extraBuffer += cardian::rules::kClearance;
+        m_DangerBalls = pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), padded, PIgnore);
+    }
 }
 
 auto CPawnController::MagicHearer(const CBattleEntity* PFight) -> CMobEntity*
@@ -2896,6 +2925,23 @@ auto CPawnController::MagicHearer(const CBattleEntity* PFight) -> CMobEntity*
     const auto  me = POwner->loc.p;
     const float scan     = settings::get<float>("pawn.AVOID_SCAN");
     auto*       entities = pawn::entitiesAround(POwner);
+    if (SafeWalkOn())
+    {
+        // The one walker's balls (ROADMAP W5): a ball that holds her only
+        // while she casts
+        const auto loudBalls  = pawn::danger::spheres(entities, me, scan, loud, PFight);
+        const auto quietBalls = pawn::danger::spheres(entities, me, scan, quiet, PFight);
+        for (const auto& b : loudBalls)
+        {
+            const bool inside = distance(me, b.at) < b.radius;
+            const bool anyway = std::any_of(quietBalls.begin(), quietBalls.end(), [&](const auto& q) { return q.mob == b.mob && distance(me, q.at) < q.radius; });
+            if (inside && !anyway)
+            {
+                return b.mob;
+            }
+        }
+        return nullptr;
+    }
     const auto  heard    = pawn::danger::around(entities, me, scan, loud, PFight);
     const auto  seen     = pawn::danger::around(entities, me, scan, quiet, PFight);
     for (const auto& d : heard)
@@ -3586,8 +3632,13 @@ void CPawnController::FocusDangers(const position_t& from, const position_t& to)
 auto CPawnController::IsClear(const float x, const float z) const -> bool
 {
     // A spot is clear when the walk to it, vetted as Move will vet it,
-    // ends outside every padded circle that matters
+    // ends outside every padded circle that matters -- with the one walker,
+    // outside every ball whose mob sees it (ROADMAP W5)
     const position_t spot(x, POwner->loc.p.y, z, 0, 0);
+    if (SafeWalkOn())
+    {
+        return BallHolding(m_DangerBalls, nullptr, spot, true) == nullptr;
+    }
     const auto       matter = pawn::danger::forWalk(m_Dangers, POwner->loc.p, spot, [this](const auto& d, const auto& p) { return Sees(d, p); });
     return !cardian::formation::insideAny(cardian::rules::padded(matter), x, z);
 }
@@ -4994,7 +5045,8 @@ void CPawnController::NoteAggro()
         }
         else
         {
-            const bool counted = std::any_of(m_Dangers.begin(), m_Dangers.end(), [&](const auto& d) { return d.mob == PMob; });
+            const bool counted = SafeWalkOn() ? std::any_of(m_DangerBalls.begin(), m_DangerBalls.end(), [&](const auto& b) { return b.mob == PMob; })
+                                              : std::any_of(m_Dangers.begin(), m_Dangers.end(), [&](const auto& d) { return d.mob == PMob; });
             map                = !IsAvoidingAggro() && !KeepsClearOfAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it";
         }
         ShowInfoFmt("pawn: {}: {} comes for her, {:.1f} y off ({}; she {}; it detects by {}; {})", POwner->getName(), PMob->getName(),
@@ -8144,7 +8196,22 @@ auto CPawnController::TrekWatchHate() -> bool
     const bool hated = HatedByAnyMob();
     if (hated && !m_TrekHated)
     {
-        ShowInfoFmt("pawn: travel {}: a mob is on her ({} of {} HP), races for her line", POwner->getName(), POwner->health.hp, POwner->GetMaxHP());
+        // Who, and from how far: the map log's only word on it in a drill,
+        // where no player is online for NoteAggro
+        const CMobEntity* PChaser = nullptr;
+        float             off     = 0.0f;
+        pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, 50.0f, [&](CMobEntity* PMob)
+        {
+            if (PMob->GetBattleTarget() == POwner && (PChaser == nullptr || distance(POwner->loc.p, PMob->loc.p) < off))
+            {
+                PChaser = PMob;
+                off     = distance(POwner->loc.p, PMob->loc.p);
+            }
+        });
+        ShowInfoFmt("pawn: travel {}: a mob is on her ({} of {} HP){}, races for her line", POwner->getName(), POwner->health.hp, POwner->GetMaxHP(),
+                    PChaser != nullptr ? fmt::format(" -- {}, {:.1f}y off, she at ({:.1f}, {:.1f}, {:.1f})", PChaser->getName(), off, POwner->loc.p.x, POwner->loc.p.y,
+                                                     POwner->loc.p.z)
+                                       : std::string());
         pawn::drill::noteChase(POwner->id);
         m_TrekChaseFromHp = static_cast<int32>(POwner->health.hp);
         m_TrekChaseAt     = m_Tick;
@@ -8763,8 +8830,16 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
     // One danger scan per hunt check, wide enough to cover every candidate's
     // circle and every approach from the hunter. Judged for the whole party
     // that will fight beside the target, not for the hunter's own buffs
-    const auto dangers = pawn::danger::around(entities, around, radius + std::max(cleanRadius, distance(POwner->loc.p, around)),
-                                              pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner)));
+    const float scan    = radius + std::max(cleanRadius, distance(POwner->loc.p, around));
+    const bool  onBalls = SafeWalkOn(); // the one walker's balls, padded as the pull rule pads (ROADMAP W5)
+    const auto  dangers = onBalls ? std::vector<pawn::danger::Danger>{} : pawn::danger::around(entities, around, scan, pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner)));
+    std::vector<pawn::danger::Sphere> balls;
+    if (onBalls)
+    {
+        auto profile        = pawn::danger::Profile::party(static_cast<CCharEntity*>(POwner));
+        profile.extraBuffer = cardian::rules::kClearance;
+        balls               = pawn::danger::spheres(entities, around, scan, profile);
+    }
 
     // An idle, unclaimed, ordinary field mob in the band, within the hunt
     // radius of the anchor
@@ -8847,18 +8922,39 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
         // a circle across the hunter's way in skips it too. The player
         // can still sneak behind a guard and pull it to the party waiting
         // outside its circle
-        CMobEntity* pick = PMob;
-        focusOn(PMob);
-        if (const auto block = cardian::rules::pullBlocked(paddedCircles, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z, ownCircle); block.has_value())
+        CMobEntity* pick         = PMob;
+        CMobEntity* guard        = nullptr;
+        bool        targetInside = false;
+        if (onBalls)
         {
-            CMobEntity* guard = seen[block->circle].mob;
+            // The candidate in a ball, or the straight way in passing one --
+            // the pull itself is judged by the route she would walk
+            // (PullBlocker), the pick by the straight way, many times a tick
+            guard        = BallHolding(balls, PMob, PMob->loc.p, true);
+            targetInside = guard != nullptr;
+            if (guard == nullptr)
+            {
+                guard = BallCrossing(balls, PMob, POwner->loc.p, PMob->loc.p);
+            }
+        }
+        else
+        {
+            focusOn(PMob);
+            if (const auto block = cardian::rules::pullBlocked(paddedCircles, POwner->loc.p.x, POwner->loc.p.z, PMob->loc.p.x, PMob->loc.p.z, ownCircle); block.has_value())
+            {
+                guard        = seen[block->circle].mob;
+                targetInside = block->targetInside;
+            }
+        }
+        if (guard != nullptr)
+        {
             if (!rules.aggressive)
             {
-                skip(PMob, block->targetInside ? fmt::format("inside {}'s circle", guard->getName())
-                                               : fmt::format("the way in crosses {}'s circle", guard->getName()));
+                skip(PMob, targetInside ? fmt::format("inside {}'s circle", guard->getName())
+                                        : fmt::format("the way in crosses {}'s circle", guard->getName()));
                 return;
             }
-            if (block->targetInside)
+            if (targetInside)
             {
                 if (!eligible(guard))
                 {

@@ -868,6 +868,16 @@ private:
     // rule RearCampRoute holds the first walker's paths to
     auto CampLineHolds(const std::vector<position_t>& route, const position_t& camp) const -> bool;
 
+    // The yes/no readers on the walker's balls (ROADMAP W5), while
+    // pawn.SAFE_WALK is on -- one test (route_search.h DangerTest) of the
+    // same balls the walker plans round, `exclude` none of them: the mob
+    // whose ball holds `point` where it sees it (with `sight`); the mob whose
+    // ball the straight way from `from` to `to` passes; the mob whose ball
+    // the route she would walk to `to` must pass. Null for none
+    auto BallHolding(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& point, bool sight) const -> CMobEntity*;
+    auto BallCrossing(const std::vector<pawn::danger::Sphere>& balls, const CBaseEntity* exclude, const position_t& from, const position_t& to) const -> CMobEntity*;
+    auto BallRouteHeld(const std::vector<pawn::danger::Sphere>& balls, const position_t& to) const -> CMobEntity*;
+
     // The tick's danger map, scanned once before the movers run so every
     // one of them can ask IsClear while choosing, and the vet sees the
     // same circles. PIgnore is the party's own mob, never a danger.
@@ -1275,6 +1285,7 @@ private:
     // shares, memoised so the mobs' own small caches are not thrashed by
     // one tick's questions.
     std::vector<pawn::danger::Danger>       m_Dangers;
+    std::vector<pawn::danger::Sphere>       m_DangerBalls; // the same, as balls padded as the pull rule pads, while pawn.SAFE_WALK is on (ROADMAP W5)
     std::vector<pawn::danger::Danger>       m_ActiveDangers;
     std::vector<cardian::formation::Circle> m_ActivePadded;
     std::vector<pawn::danger::Danger>       m_EscapeDangers;

@@ -148,6 +148,18 @@ auto CPawnController::RestsInDanger() -> std::optional<std::string>
         }
     } kneels{ POwner, POwner->animation };
     POwner->animation  = xi::Animation::Healing;
+    if (SafeWalkOn())
+    {
+        // The one walker's balls (ROADMAP W5): the mob whose ball holds her
+        // where she would kneel, where it sees her
+        m_BallSight.clear();
+        const auto balls = pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
+        if (const auto* PMob = BallHolding(balls, nullptr, POwner->loc.p, true); PMob != nullptr)
+        {
+            return PMob->getName();
+        }
+        return std::nullopt;
+    }
     const auto dangers = pawn::danger::around(pawn::entitiesAround(POwner), POwner->loc.p, settings::get<float>("pawn.AVOID_SCAN"), profile, AttendedTarget());
     const auto matter    = pawn::danger::forWalk(dangers, POwner->loc.p, POwner->loc.p, [this](const auto& d, const auto& p) { return Sees(d, p); });
     for (const auto& d : matter)
