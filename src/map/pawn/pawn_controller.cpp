@@ -2828,6 +2828,8 @@ void CPawnController::RefreshDangers(const CBattleEntity* PIgnore)
 {
     m_Dangers.clear();
     m_SightMemo.clear();
+    m_DangerIgnore   = PIgnore; // the one walker's balls leave it out too
+    m_DangerIgnoreAt = m_Tick;
     if (!IsAvoiding() && !KeepsClearOfAggro())
     {
         return;
@@ -3928,6 +3930,13 @@ auto CPawnController::SightPatient(const CBattleEntity* PMob) const -> const CBa
 
 auto CPawnController::Walk(Intent intent) -> std::optional<AvoidAction>
 {
+    // The one walker, every walk planned round the danger map (ROADMAP W,
+    // pawn_walker.cpp), while pawn.SAFE_WALK is on; off, this first walker
+    if (SafeWalkOn())
+    {
+        return WalkPlanned(std::move(intent));
+    }
+
     // The claim board first (claim_board.h): no two party members aim for
     // one spot, whichever mover proposed it
     ClaimSpot(intent);

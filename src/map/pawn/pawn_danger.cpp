@@ -226,10 +226,10 @@ namespace pawn::danger
         return out;
     }
 
-    auto spheres(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile) -> std::vector<Sphere>
+    auto spheres(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude) -> std::vector<Sphere>
     {
         std::vector<Sphere> out;
-        collect(entities, center, scan, profile, nullptr, [&](CMobEntity* PMob, const float radius, const float unseen, bool, const float cone, const float allRound)
+        collect(entities, center, scan, profile, exclude, [&](CMobEntity* PMob, const float radius, const float unseen, bool, const float cone, const float allRound)
         {
             if (distance(center, PMob->loc.p) <= scan + radius)
             {

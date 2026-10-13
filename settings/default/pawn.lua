@@ -430,6 +430,15 @@ xi.settings.pawn =
     -- treks pass it is shouted in the map log as a [critical] line
     TREK_PLAN_BUDGET_MS = 40,
 
+    -- The one walker (ROADMAP W): on, every walk a cardian takes is a route
+    -- the scored search plans round the danger map and walks as planned --
+    -- the way round every ring, out of a ring first, the safe ground nearest
+    -- a point inside one, holding short of a choke and a sneak-by past it --
+    -- and treks walk through it too. Off, the first walker: the avoid's
+    -- circles and the game's own path finder, and the trek's own walk. Both
+    -- stay until the new one is played and trusted (the user, 2026-10-12)
+    SAFE_WALK = false,
+
     -- Linking, her Avoid links row: the idle kin of any mob fighting a
     -- cardian are circles for that cardian alone -- link range plus
     -- AVOID_TAIL, the distance the mob keeps behind her as it follows -- so

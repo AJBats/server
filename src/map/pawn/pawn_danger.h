@@ -267,8 +267,8 @@ namespace pawn::danger
     };
 
     // Every danger within `scan` (3D, sphere's edge) of `center`: the same
-    // mobs, the same ranges and the same buffer as around
-    auto spheres(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile) -> std::vector<Sphere>;
+    // mobs, the same ranges and the same buffer as around, `exclude` none
+    auto spheres(CZoneEntities* entities, const position_t& center, float scan, const Profile& profile, const CBaseEntity* exclude = nullptr) -> std::vector<Sphere>;
 
     // Line of sight from a sphere's mob to a point, the test sees() makes
     auto sees(const Sphere& sphere, const position_t& point) -> bool;

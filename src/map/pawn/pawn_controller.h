@@ -35,6 +35,7 @@
 #include "stake_math.h"
 #include "tp_clock.h"
 #include "rest_math.h"
+#include "safe_walk.h"
 #include "warp_hold.h"
 
 #include "ai/controllers/player_controller.h"
@@ -807,8 +808,59 @@ private:
         float                     keepWithin = 0.0f;
         bool                      holdsSpot  = false; // Stand: she was placed where she stands (the crescent, the camp's backline): crowded, she gives way as a walk would
         bool                      claimed    = false; // the board has had its say on this point: the walker does not ask again
+        // The one walker's rules for a trek (ROADMAP W): the zone's every
+        // mob, every ring whole, and, racing with a mob on her, no hold
+        bool                      trek       = false;
+        bool                      racing     = false;
     };
     auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
+
+    // The one walker (ROADMAP W, pawn_walker.cpp), on while pawn.SAFE_WALK
+    // is: every walk a route the scored search plans round the danger map's
+    // balls and walks as planned, in place of the first walker's avoid and
+    // the game's own path finder. Walk hands over to WalkPlanned at once
+    auto SafeWalkOn() const -> bool;
+    auto WalkPlanned(Intent intent) -> std::optional<AvoidAction>;
+
+    // One walk's tick: planned, or planned again when the point moves, a mob
+    // comes onto her route or she stands in a ring, and handed to her path
+    // finder. `target` is where the walk goes now: the point, or with the
+    // point inside a ring the safe ground nearest it. Her path finder is
+    // set; Walk steps it
+    struct WalkResult
+    {
+        cardian::walk::Outcome outcome = cardian::walk::Outcome::Walking;
+        position_t             target{};
+        AvoidAction            action = AvoidAction::None; // the first walker's word for it, which her other code reads
+    };
+    auto SafeWalk(const position_t& point, const cardian::walk::Rules& rules) -> WalkResult;
+
+    // The danger map's balls for a walk, `scan` yalms round her, with her
+    // rows' profile or the rules' (the fight's own mob never a danger)
+    auto WalkSpheres(const cardian::walk::Rules& rules, float scan) -> std::vector<pawn::danger::Sphere>;
+
+    // Her rows' danger profile, as the danger map reads it this tick
+    auto DangerProfile(bool forceAvoid) -> pawn::danger::Profile;
+
+    // Holding short of a choke, once a second: a sneak-by past the mobs
+    // that hold it (pawn/sneak.h), toward the walk's target. True when she
+    // sets out on one
+    auto WalkSneakBy(const cardian::walk::Rules& rules) -> bool;
+
+    // A sneak-by under way: walked past the mobs; false once it is over
+    auto WalkHopTick(bool racing) -> bool;
+
+    // Whether a ball's mob sees a point (no wall between), memoised per tick
+    auto SeesBall(const pawn::danger::Sphere& sphere, const position_t& point) const -> bool;
+    mutable std::unordered_map<uint64_t, bool> m_BallSight;
+    mutable timer::time_point                  m_BallSightAt;
+
+    // She stands in a ring whose mob sees her, by the rules' balls
+    auto WalkExposed(const cardian::walk::Rules& rules) -> bool;
+
+    // A route kept behind the camp's line (an intent's rearBoundary), the
+    // rule RearCampRoute holds the first walker's paths to
+    auto CampLineHolds(const std::vector<position_t>& route, const position_t& camp) const -> bool;
 
     // The tick's danger map, scanned once before the movers run so every
     // one of them can ask IsClear while choosing, and the vet sees the
@@ -1303,6 +1355,45 @@ private:
         float  off    = 0.0f; // how far the mob stood from her
     };
     std::vector<TrekRing> m_TrekRingsNear;
+
+    // The one walker's walk (SafeWalk): its route, kept while it holds and
+    // planned again as the trek's was
+    struct PlannedWalk
+    {
+        std::vector<position_t>          route;          // her spot as it was planned, then its waypoints
+        size_t                           next   = 0;     // the waypoint she walks to next
+        int                              danger = -1;    // the first waypoint reached through a ring, -1 for none
+        int                              hold   = -1;    // the end of her walk while she holds short of it, -1 for no spot out of every ring
+        bool                             known  = false;
+        bool                             failed = false; // no route could be planned to `goal`: asked again in a while
+        bool                             detour = false; // the route goes round a ring the straight way would cross
+        position_t                       goal{};         // the point asked for
+        position_t                       target{};       // where the route goes: the point, or the safe ground nearest it
+        xi::ZoneId                       zone{};
+        cardian::walk::Rules             rules{};
+        timer::time_point                plannedAt;
+        timer::time_point                checkedAt;      // last held against where the mobs stand
+        timer::time_point                caughtLogAt;    // a plan for a ring on her, as logged: once a second
+        timer::time_point                loggedAt;       // the everyday walk's line, once a second
+        bool                             walking = false; // handed to her path finder
+        size_t                           end     = 0;     // ... up to here
+        std::optional<timer::time_point> heldSince;
+        std::vector<position_t>          backOff;         // the way to the nearest ground out of every ring, with no spot short of a choke that is
+        bool                             wholeHeld = false; // the last plan of the whole way found it held
+        timer::time_point                wholeAt;
+        std::vector<position_t>          hop;             // a sneak-by under way: her walk past the mobs, its end last
+        xi::ZoneId                       hopZone{};
+        timer::time_point                hopAt;
+        float                            hopSeconds = 0.0f;
+        bool                             hopWalking = false;
+        timer::time_point                sneakLookedAt;
+        timer::time_point                sneakSaidAt;
+        cardian::walk::Outcome           outcome = cardian::walk::Outcome::Walking; // what the walk came to at its last tick, for the mover that asked
+        timer::time_point                outcomeAt;
+    };
+    PlannedWalk          m_Plan;
+    const CBattleEntity* m_DangerIgnore = nullptr; // the fight's own mob, as the movers named it to RefreshDangers this tick
+    timer::time_point    m_DangerIgnoreAt;
 
     bool              m_Hunting    = false;
     bool              m_World      = false;
