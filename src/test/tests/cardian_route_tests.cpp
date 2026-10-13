@@ -457,6 +457,39 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
         }
         CHECK_FALSE(inside);
     }
+
+    SECTION("setting out inside the edge of a mob's reach beside her way, she leaves it by the shortest way, then goes on")
+    {
+        // The mob stands off to the side of her way, on one side and then on
+        // the other, she 3 yalms inside its reach: going on along her way
+        // would keep her inside it for 10 yalms, stepping straight away from
+        // the mob for 3
+        const auto  ahead = along(from, plain->points, 20.0f / plain->length);
+        const float dx    = ahead.x - from.x;
+        const float dz    = ahead.z - from.z;
+        const float len   = std::sqrt(dx * dx + dz * dz);
+        const float depth = 3.0f;
+        const float r     = 18.5f;
+        for (const float side : { 1.0f, -1.0f })
+        {
+            const Hazard h   = { .at = position_t(from.x - side * dz / len * (r - depth), from.y, from.z + side * dx / len * (r - depth), 0, 0), .radius = r };
+            const auto   out = cardian::route::searchAvoiding(*mesh, from, to, sz::kBodyExtents, sz::kLineExtents, { h }, {});
+            REQUIRE(out.has_value());
+            REQUIRE(out->complete);
+            CHECK(out->firstDanger == -1);
+            CHECK(out->length < clear->length + 15.0f);
+
+            float      inside = 0.0f;
+            position_t a      = from;
+            for (const auto& b : out->points)
+            {
+                inside += cardian::route::detail::insideLength(cardian::route::toDetour(a), cardian::route::toDetour(b), cardian::route::toDetour(h.at), h.radius);
+                a = b;
+            }
+            INFO("the mob on side " << side << "; yalms walked inside the reach: " << inside);
+            CHECK(inside < depth * 1.5f + 1.5f);
+        }
+    }
 }
 
 TEST_CASE("Route kept out of danger: La Theine Plateau end to end, as short as the game's own route", "[cardian][route]")

@@ -160,6 +160,7 @@ namespace cardian::route
     constexpr float kPortalSpacing = 3.0f;    // yalms between the points tried along a polygon's edge near danger; its two ends elsewhere
     constexpr float kNearDanger    = 3.0f;    // a polygon whose box comes this near a hazard's sphere is near danger
     constexpr float kDangerCost    = 5000.0f; // a step through danger, in yalms of walk: a way round shorter than this is taken (less the greed's quarter at worst)
+    constexpr float kInsideCost    = 100.0f;  // each yalm walked inside the reaches she set out in (once where they overlap), in yalms of walk: she leaves them by the shortest way, then goes on
     constexpr float kShortcutReach = 250.0f;  // the longest straight a route is drawn tight over
     constexpr int   kShortcutTries = 4;       // points ahead tried past a straight that fails, before the last good one is kept
     constexpr float kGreed         = 1.25f;   // how much harder the search runs toward the goal than a shortest way allows: far fewer points looked at, a route a quarter longer at worst (under 1% in the zones measured)
@@ -430,6 +431,34 @@ namespace cardian::route
             return { Vec{ a[0] + d[0] * t1, a[1] + d[1] * t1, a[2] + d[2] * t1 }, Vec{ a[0] + d[0] * t2, a[1] + d[1] * t2, a[2] + d[2] * t2 } };
         }
 
+        // The part of the segment a-b inside the sphere round c of radius r,
+        // as the fractions of the way from a to b it enters and leaves at;
+        // the two equal when none of it is
+        inline auto insideSpan(const Vec& a, const Vec& b, const Vec& c, const float r) -> std::pair<float, float>
+        {
+            const Vec   d{ b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+            const Vec   f{ a[0] - c[0], a[1] - c[1], a[2] - c[2] };
+            const float qa   = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            const float qb   = 2.0f * (f[0] * d[0] + f[1] * d[1] + f[2] * d[2]);
+            const float qc   = f[0] * f[0] + f[1] * f[1] + f[2] * f[2] - r * r;
+            const float disc = qb * qb - 4.0f * qa * qc;
+            if (qa <= 0.0f || disc <= 0.0f)
+            {
+                return { 0.0f, 0.0f };
+            }
+            const float root = std::sqrt(disc);
+            const float t1   = std::clamp((-qb - root) / (2.0f * qa), 0.0f, 1.0f);
+            const float t2   = std::clamp((-qb + root) / (2.0f * qa), 0.0f, 1.0f);
+            return { t1, std::max(t1, t2) };
+        }
+
+        // The yalms of the segment a-b inside the sphere round c of radius r
+        inline auto insideLength(const Vec& a, const Vec& b, const Vec& c, const float r) -> float
+        {
+            const auto [enters, leaves] = insideSpan(a, b, c, r);
+            return (leaves - enters) * apart(a, b);
+        }
+
         // The hazards filed by the cells of a flat grid over the ground their
         // spheres cover, each cell's hazards one run of `items_`, so a step
         // asks only those near it
@@ -599,7 +628,10 @@ namespace cardian::route
     // point its mob sees -- where the step comes nearest, or where it enters
     // or leaves the sphere, so a pillar hiding one of them hides no more --
     // or inside its unseen sphere. Inside a sphere she stood in as she set
-    // out (`origin`), only a step that takes her deeper is
+    // out (`origin`), only a step that takes her deeper is; the yalms she
+    // walks inside one whose mob sees where she set out -- the reaches she
+    // is in -- are no choke, and are counted (insideOrigin) so the search
+    // can price them
     class DangerTest
     {
     public:
@@ -609,7 +641,47 @@ namespace cardian::route
         , centres_(centresOf(hazards))
         , holdsOrigin_(holding(hazards, centres_, origin))
         , grid_(centres_, hazards)
+        , origins_(exposing(origin))
         {
+        }
+
+        // The yalms of the step a-b inside the reaches she set out in, each
+        // yalm counted once however many of them overlap (Detour's
+        // coordinates)
+        auto insideOrigin(const detail::Vec& a, const detail::Vec& b) const -> float
+        {
+            if (origins_.empty())
+            {
+                return 0.0f;
+            }
+            thread_local std::vector<std::pair<float, float>> spans;
+            spans.clear();
+            for (const uint32_t h : origins_)
+            {
+                const auto span = detail::insideSpan(a, b, centres_[h], hazards_[h].radius);
+                if (span.second > span.first)
+                {
+                    spans.push_back(span);
+                }
+            }
+            std::sort(spans.begin(), spans.end());
+            float inside = 0.0f;
+            float upTo   = 0.0f;
+            for (const auto& [enters, leaves] : spans)
+            {
+                if (leaves > upTo)
+                {
+                    inside += leaves - std::max(enters, upTo);
+                    upTo = leaves;
+                }
+            }
+            return inside * detail::apart(a, b);
+        }
+
+        // Whether she set out inside any reach
+        auto startsInside() const -> bool
+        {
+            return !origins_.empty();
         }
 
         // The hazard the step a-b passes through, or -1 (Detour's coordinates)
@@ -718,11 +790,28 @@ namespace cardian::route
             return out;
         }
 
+        // The spheres she set out in whose mobs see where she set out: inside
+        // the unseen sphere, or where its sight reaches
+        auto exposing(const detail::Vec& origin) const -> std::vector<uint32_t>
+        {
+            std::vector<uint32_t> out;
+            for (size_t h = 0; h < hazards_.size(); ++h)
+            {
+                if (holdsOrigin_[h] &&
+                    (detail::apart(origin, centres_[h]) < hazards_[h].unseen || !sight_ || sight_(h, fromDetour(origin.data()))))
+                {
+                    out.push_back(static_cast<uint32_t>(h));
+                }
+            }
+            return out;
+        }
+
         const std::vector<Hazard>& hazards_;
         HazardSight                sight_;
         std::vector<detail::Vec>   centres_;
         std::vector<char>          holdsOrigin_;
         detail::HazardGrid         grid_;
+        std::vector<uint32_t>      origins_; // the reaches she set out in
     };
 
     // The route from `from` to `to` that keeps out of danger: an A* of its
@@ -740,8 +829,11 @@ namespace cardian::route
     // and, where the mobs hold every way, the
     // fewest steps through them: `firstDanger` names the first, a choke known
     // before she takes a step. Danger she stands in as she sets out holds
-    // only a step that takes her deeper. The route is then drawn tight, a
-    // straight kept wherever it stays on the mesh and out of danger. Not
+    // only a step that takes her deeper, and every yalm she walks inside it
+    // costs kInsideCost, so she leaves it by the shortest way before going
+    // on -- not along its inside toward her goal. The route is then drawn
+    // tight, a straight kept wherever it stays on the mesh and out of
+    // danger, and keeps her inside no longer than the way it replaces. Not
     // complete when no walk joins the two points; none when either is off the
     // mesh. With a `reach`, only the ground within it looks for the way --
     // every point whose distances to the two ends add up to no more, an
@@ -1090,7 +1182,7 @@ namespace cardian::route
                     return;
                 }
                 const bool  danger = inDanger(at, next.at);
-                const float cost   = walked + (danger ? kDangerCost : 0.0f);
+                const float cost   = walked + (danger ? kDangerCost : 0.0f) + kInsideCost * inDanger.insideOrigin(at, next.at);
                 if (cost < next.g)
                 {
                     next.g      = cost;
@@ -1146,7 +1238,17 @@ namespace cardian::route
         // cannot is kept, the search going kShortcutTries points past one
         // that fails. The climb up faces is read only of the straights that
         // pass the rest, farthest first. A step through danger, or across an
-        // off-mesh link, is kept as it is
+        // off-mesh link, is kept as it is. A straight keeps her no longer
+        // inside the reaches she set out in than the way it replaces: the
+        // yalms inside them, added up along the route to each point
+        std::vector<float> insideTo(raw.size(), 0.0f);
+        if (inDanger.startsInside())
+        {
+            for (size_t i = 1; i < raw.size(); ++i)
+            {
+                insideTo[i] = insideTo[i - 1] + inDanger.insideOrigin(nodes[raw[i - 1]].at, nodes[raw[i]].at);
+            }
+        }
         const auto straight = [&](const int a, const int k, const bool climb) -> bool
         {
             const Node& from_ = nodes[raw[a]];
@@ -1176,6 +1278,10 @@ namespace cardian::route
             if (climb)
             {
                 return !climbsCliff(path, count, from_.at, to_.at);
+            }
+            if (inDanger.startsInside() && inDanger.insideOrigin(from_.at, to_.at) > insideTo[k] - insideTo[a] + 0.1f)
+            {
+                return false; // longer inside the reaches she set out in than the way it replaces
             }
             return !inDanger(from_.at, to_.at); // the danger's sight tests last
         };
