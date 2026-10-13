@@ -787,6 +787,12 @@ namespace
 // both ends -- the route is what needs fixing, not her
 void CPawnController::TownTick(const pawn::world::TownOrder& order)
 {
+    // The one walker vets her town walk against this tick's danger map, as
+    // every other mover's (ROADMAP W3)
+    if (SafeWalkOn())
+    {
+        RefreshDangers(nullptr);
+    }
     auto*       PPathFind = POwner->PAI->PathFind.get();
     const uint8 leg       = order.leaving ? 3 : order.atSeat ? 2 : 1;
     const bool  newGoal   = leg != 2 && std::hypot(order.goal.x - m_TownGoal.x, order.goal.z - m_TownGoal.z) > 0.5f;
@@ -916,13 +922,33 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
     {
         return false;
     }
-    const auto found = routeOf(navMesh, POwner, POwner->loc.p, goal);
-    if (!found.has_value() || found->points.size() < 2)
+    std::vector<pathpoint_t> points;
+    if (SafeWalkOn())
     {
-        return false;
+        // The one walker's planner (ROADMAP W3): the route the scored search
+        // finds, a town's walk having no ring to keep out of, her own spot
+        // first so its first corner slides too
+        const auto route = pawn::travel::routeTo(POwner->getZone(), POwner->loc.p, goal);
+        if (!route.has_value() || route->empty())
+        {
+            return false;
+        }
+        points.push_back(pathpoint_t{ POwner->loc.p, 0s, false });
+        for (const auto& p : *route)
+        {
+            points.push_back(pathpoint_t{ p, 0s, false });
+        }
     }
-    const float              lane   = pawn::world::laneOf(POwner->id);
-    std::vector<pathpoint_t> points = found->points;
+    else
+    {
+        const auto found = routeOf(navMesh, POwner, POwner->loc.p, goal);
+        if (!found.has_value() || found->points.size() < 2)
+        {
+            return false;
+        }
+        points = found->points;
+    }
+    const float lane = pawn::world::laneOf(POwner->id);
     for (size_t i = 1; i + 1 < points.size(); ++i)
     {
         const auto& prev = points[i - 1].position;
@@ -941,6 +967,10 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
         {
             points[i].position = *snapped;
         }
+    }
+    if (SafeWalkOn() && !points.empty())
+    {
+        points.erase(points.begin()); // her own spot, there only for the first corner's slide
     }
     PPathFind->PathThrough(std::move(points), PATHFLAG_RUN);
     return PPathFind->IsFollowingPath();
@@ -6904,7 +6934,24 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
         return;
     }
     m_WalkPoint = *point;
-    if (!PathToward(*point, 0.0f))
+    bool pathed = false;
+    if (SafeWalkOn())
+    {
+        // The one walker's planner (ROADMAP W3): the player's own steering is
+        // his, so no ring holds it, but its route keeps to the mesh and to a
+        // player's slope; an errand's walk keeps her rows' rings. The steer
+        // timer steps the route as it stepped the first walker's path
+        cardian::walk::Rules rules;
+        rules.danger = by == pawn::kErrandWalker && IsAvoiding();
+        rules.extra  = cardian::rules::kClearance;
+        rules.sneaks = false;
+        pathed       = SafeWalk(*point, rules).outcome != cardian::walk::Outcome::NoRoute;
+    }
+    else
+    {
+        pathed = PathToward(*point, 0.0f);
+    }
+    if (!pathed)
     {
         if (away < 1.5f)
         {
