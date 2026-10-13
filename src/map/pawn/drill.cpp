@@ -100,6 +100,7 @@ namespace
         int64                     points          = 0;
         int                       holds           = 0;
         int                       blocked         = 0; // stuck by aggro at a choke
+        int                       hops            = 0; // sneak-bys set out on
         int                       chases          = 0;
         int                       stuck           = 0; // "I'm stuck!": no walk at all
         int                       rests           = 0; // across a zone line
@@ -170,10 +171,10 @@ namespace
             zones += fmt::format("{}{}", zones.empty() ? "" : ",", zone);
         }
         writeLine(fmt::format("{{\"run\":{},\"name\":{},\"character\":{},\"level\":{},\"result\":{},\"seconds\":{:.1f},\"walked\":{:.1f},\"zones\":[{}],"
-                              "\"hits\":{},\"hpLost\":{},\"maxHp\":{},\"chases\":{},\"holds\":{},\"blocked\":{},\"stuck\":{},\"rests\":{},\"plans\":{},"
+                              "\"hits\":{},\"hpLost\":{},\"maxHp\":{},\"chases\":{},\"holds\":{},\"blocked\":{},\"hops\":{},\"stuck\":{},\"rests\":{},\"plans\":{},"
                               "\"stretches\":{},\"planMsTotal\":{:.2f},\"planMsMax\":{:.2f},\"points\":{}}}",
                               jsonText(runId), jsonText(w.spec.name), jsonText(w.spec.character), w.spec.level, jsonText(result), seconds, w.walked, zones,
-                              w.hits, w.hpLost, w.maxHp, w.chases, w.holds, w.blocked, w.stuck, w.rests, w.plans, w.stretches, w.planMs, w.planMsMax, w.points));
+                              w.hits, w.hpLost, w.maxHp, w.chases, w.holds, w.blocked, w.hops, w.stuck, w.rests, w.plans, w.stretches, w.planMs, w.planMsMax, w.points));
         ShowInfoFmt("drill {}: {} -- {} after {:.0f} s, {:.0f}y walked, {} plans, the worst {:.2f} ms", w.spec.name, result, w.spec.character, seconds, w.walked,
                     w.plans, w.planMsMax);
         if (w.charid != 0)
@@ -457,6 +458,14 @@ namespace pawn::drill
         if (auto* w = watchOf(charid); w != nullptr)
         {
             ++w->blocked;
+        }
+    }
+
+    void noteHop(const uint32 charid)
+    {
+        if (auto* w = watchOf(charid); w != nullptr)
+        {
+            ++w->hops;
         }
     }
 

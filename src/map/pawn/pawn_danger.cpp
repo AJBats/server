@@ -89,8 +89,9 @@ namespace pawn::danger
     {
         // Every idle mob near `center` that is a danger to the profile, each
         // handed to `emit` with the radius of the sphere it detects in (the
-        // buffer on), the ambush's that needs no sight (0 when none), and
-        // whether it links to a fight of hers: the danger map's one rule,
+        // buffer on), the ambush's that needs no sight (0 when none),
+        // whether it links to a fight of hers, and the radius split into its
+        // sight's cone and its reach all round: the danger map's one rule,
         // whether the map is cut flat where she stands (around) or a route
         // is planned ahead (spheres)
         template <typename Emit>
@@ -183,7 +184,7 @@ namespace pawn::danger
                 // The ambush's sphere needs no sight (CanDetectTarget tests it
                 // by distance alone), so it holds behind a wall
                 const bool hidesFromSound = (!d.trueDetection && profile.sneak) || (profile.illusion && !d.seesThroughIllusion);
-                emit(PMob, radius, d.ambush && !hidesFromSound ? AmbushRange + buffer : 0.0f, links);
+                emit(PMob, radius, d.ambush && !hidesFromSound ? AmbushRange + buffer : 0.0f, links, coneFor(d, profile, buffer), allRoundFor(d, profile, buffer, tail));
             };
             forEachMobNear(entities, center, coarse, consider);
         }
@@ -192,7 +193,7 @@ namespace pawn::danger
     auto around(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile, const CBaseEntity* exclude) -> std::vector<Danger>
     {
         std::vector<Danger> out;
-        collect(entities, center, scan, profile, exclude, [&](CMobEntity* PMob, float radius, float unseen, const bool links)
+        collect(entities, center, scan, profile, exclude, [&](CMobEntity* PMob, float radius, float unseen, const bool links, float, float)
         {
             // Detection is a sphere and the map is flat: the circle is
             // that sphere sliced at the query height, and a mob too far
@@ -228,11 +229,11 @@ namespace pawn::danger
     auto spheres(CZoneEntities* entities, const position_t& center, const float scan, const Profile& profile) -> std::vector<Sphere>
     {
         std::vector<Sphere> out;
-        collect(entities, center, scan, profile, nullptr, [&](CMobEntity* PMob, const float radius, const float unseen, bool)
+        collect(entities, center, scan, profile, nullptr, [&](CMobEntity* PMob, const float radius, const float unseen, bool, const float cone, const float allRound)
         {
             if (distance(center, PMob->loc.p) <= scan + radius)
             {
-                out.push_back({ .mob = PMob, .at = PMob->loc.p, .radius = radius, .unseen = unseen });
+                out.push_back({ .mob = PMob, .at = PMob->loc.p, .radius = radius, .unseen = unseen, .cone = cone, .allRound = allRound });
             }
         });
         return out;

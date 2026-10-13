@@ -35,6 +35,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <span>
 #include <utility>
 #include <vector>
 
@@ -159,11 +160,127 @@ namespace cardian::route
     constexpr float kPortalSpacing = 3.0f;    // yalms between the points tried along a polygon's edge near danger; its two ends elsewhere
     constexpr float kNearDanger    = 3.0f;    // a polygon whose box comes this near a hazard's sphere is near danger
     constexpr float kDangerCost    = 5000.0f; // a step through danger, in yalms of walk: a way round shorter than this is taken (less the greed's quarter at worst)
+    constexpr float kInsideCost    = 100.0f;  // each yalm walked inside the reaches she set out in (once where they overlap), in yalms of walk: she leaves them by the shortest way, then goes on
     constexpr float kShortcutReach = 250.0f;  // the longest straight a route is drawn tight over
     constexpr int   kShortcutTries = 4;       // points ahead tried past a straight that fails, before the last good one is kept
     constexpr float kGreed         = 1.25f;   // how much harder the search runs toward the goal than a shortest way allows: far fewer points looked at, a route a quarter longer at worst (under 1% in the zones measured)
     constexpr int   kAvoidNodes    = 400000;  // the search's bound, past every zone's edge points
     constexpr int   kRayPolys      = 1024;
+
+    // The steepest ground a player walks up, as a climb over run: 30 degrees.
+    // The meshes are built for monsters and let them up steeper; measured on
+    // Valkurm Dunes' goblin hill (the user, 2026-10-12), a player made 29
+    // degrees and stopped at 31. A rise of kClimbStep or less is a step,
+    // whatever its slope; a run of steeper ground shorter than kClimbRun is
+    // a bump, and walked (a lone yalm of 35 degrees he walked, not two of 31
+    // to 34, nor a band of 38 to 44). Down, any slope is walked
+    constexpr float kClimbSlope = 0.57735f; // tan(30 degrees)
+    constexpr float kClimbStep  = 0.5f;
+    constexpr float kClimbRun   = 1.5f;
+
+    // The ground a player cannot climb, worked out once for a mesh -- the
+    // ground never moves: every triangle of its fine ground (the detail
+    // mesh, the heights Detour reads under a point) steeper than
+    // kClimbSlope, kept by polygon with the rise it makes per yalm along x
+    // and along z. A walk across one is judged by the way it goes
+    // (detail::climbsFaces): down a face is walked
+    struct Face
+    {
+        float ax{}, az{}, bx{}, bz{}, cx{}, cz{}; // its corners across the ground (Detour's x and z)
+        float sx{}, sz{};                         // its rise per yalm along x and along z
+    };
+
+    struct Faces
+    {
+        std::vector<uint32_t> base;  // each tile's first polygon in `first`
+        std::vector<uint32_t> first; // per polygon, its first face; the next polygon's first is where its faces end
+        std::vector<Face>     faces;
+
+        // A polygon's faces: none on a mesh's ground climbable everywhere
+        auto of(const dtNavMesh& mesh, const dtPolyRef ref) const -> std::span<const Face>
+        {
+            unsigned int salt = 0;
+            unsigned int it   = 0;
+            unsigned int ip   = 0;
+            mesh.decodePolyId(ref, salt, it, ip);
+            if (it >= base.size())
+            {
+                return {};
+            }
+            const size_t i = static_cast<size_t>(base[it]) + ip;
+            if (i + 1 >= first.size())
+            {
+                return {};
+            }
+            return { faces.data() + first[i], faces.data() + first[i + 1] };
+        }
+    };
+
+    inline auto facesOf(const dtNavMesh& mesh) -> Faces
+    {
+        Faces     out;
+        const int maxTiles = mesh.getMaxTiles();
+        out.base.resize(static_cast<size_t>(maxTiles));
+        uint32_t total = 0;
+        for (int t = 0; t < maxTiles; ++t)
+        {
+            out.base[t]            = total;
+            const dtMeshTile* tile = mesh.getTile(t);
+            total += tile != nullptr && tile->header != nullptr ? static_cast<uint32_t>(tile->header->polyCount) : 0;
+        }
+        out.first.reserve(static_cast<size_t>(total) + 1);
+        for (int t = 0; t < maxTiles; ++t)
+        {
+            const dtMeshTile* tile = mesh.getTile(t);
+            if (tile == nullptr || tile->header == nullptr)
+            {
+                continue;
+            }
+            for (int p = 0; p < tile->header->polyCount; ++p)
+            {
+                out.first.push_back(static_cast<uint32_t>(out.faces.size()));
+                const dtPoly& poly = tile->polys[p];
+                if (poly.getType() != DT_POLYTYPE_GROUND || tile->detailMeshes == nullptr)
+                {
+                    continue;
+                }
+                const dtPolyDetail& pd   = tile->detailMeshes[p];
+                const auto          vert = [&](const unsigned char v) -> const float*
+                {
+                    return v < poly.vertCount ? &tile->verts[poly.verts[v] * 3] : &tile->detailVerts[(pd.vertBase + v - poly.vertCount) * 3];
+                };
+                for (int j = 0; j < pd.triCount; ++j)
+                {
+                    const unsigned char* tri = &tile->detailTris[(pd.triBase + j) * 4];
+                    const float*         a   = vert(tri[0]);
+                    const float*         b   = vert(tri[1]);
+                    const float*         c   = vert(tri[2]);
+                    const float          ux  = b[0] - a[0];
+                    const float          uy  = b[1] - a[1];
+                    const float          uz  = b[2] - a[2];
+                    const float          vx  = c[0] - a[0];
+                    const float          vy  = c[1] - a[1];
+                    const float          vz  = c[2] - a[2];
+                    const float          nx  = uy * vz - uz * vy;
+                    const float          ny  = uz * vx - ux * vz;
+                    const float          nz  = ux * vy - uy * vx;
+                    if (std::fabs(ny) <= 1e-6f)
+                    {
+                        continue; // upright: it covers no ground
+                    }
+                    // the plane's height over the ground rises -n/ny along x and z
+                    const float sx = -nx / ny;
+                    const float sz = -nz / ny;
+                    if (sx * sx + sz * sz > kClimbSlope * kClimbSlope)
+                    {
+                        out.faces.push_back({ a[0], a[2], b[0], b[2], c[0], c[2], sx, sz });
+                    }
+                }
+            }
+        }
+        out.first.push_back(static_cast<uint32_t>(out.faces.size()));
+        return out;
+    }
 
     namespace detail
     {
@@ -172,6 +289,117 @@ namespace cardian::route
         inline auto apart(const Vec& a, const Vec& b) -> float
         {
             return std::sqrt((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2]));
+        }
+
+        // Whether going from a to b climbs steeper than a player can
+        // (kClimbSlope, past a step of kClimbStep); Detour's y is up
+        inline auto tooSteep(const Vec& a, const Vec& b) -> bool
+        {
+            const float rise = b[1] - a[1];
+            const float run  = std::sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[2] - a[2]) * (b[2] - a[2]));
+            return rise > kClimbStep && rise > run * kClimbSlope;
+        }
+
+        // Whether a walk from a to b climbs faces for kClimbRun yalms on
+        // end: the stretches of it across faces that climb past kClimbSlope
+        // the way it goes, each the walk clipped to its triangle on the
+        // ground, joined where they meet. `forEachFace(visit)` hands every
+        // face the walk may cross to `visit`
+        template <typename ForEachFace>
+        inline auto climbsOver(const ForEachFace& forEachFace, const Vec& a, const Vec& b) -> bool
+        {
+            const float dx  = b[0] - a[0];
+            const float dz  = b[2] - a[2];
+            const float run = std::sqrt(dx * dx + dz * dz);
+            if (run < kClimbRun)
+            {
+                return false; // too short to hold such a climb
+            }
+            const float ux = dx / run;
+            const float uz = dz / run;
+
+            thread_local std::vector<std::pair<float, float>> spans;
+            spans.clear();
+            forEachFace([&](const Face& f)
+            {
+                if (f.sx * ux + f.sz * uz <= kClimbSlope)
+                {
+                    return; // across it or down it: walked
+                }
+                // facesOf keeps no upright triangle, so the corners always turn one way
+                const float turn = (f.bx - f.ax) * (f.cz - f.az) - (f.bz - f.az) * (f.cx - f.ax);
+                const float side = turn > 0.0f ? 1.0f : -1.0f;
+                float       lo   = 0.0f;
+                float       hi   = run;
+                // the walk a + t u (t in yalms) kept on the inner side of each edge
+                const auto edge = [&](const float px, const float pz, const float qx, const float qz)
+                {
+                    const float ex  = qx - px;
+                    const float ez  = qz - pz;
+                    const float at0 = side * (ex * (a[2] - pz) - ez * (a[0] - px));
+                    const float per = side * (ex * uz - ez * ux);
+                    if (std::fabs(per) <= 1e-9f)
+                    {
+                        if (at0 < 0.0f)
+                        {
+                            hi = lo - 1.0f; // parallel, and outside
+                        }
+                        return;
+                    }
+                    const float cut = -at0 / per;
+                    if (per > 0.0f)
+                    {
+                        lo = std::max(lo, cut);
+                    }
+                    else
+                    {
+                        hi = std::min(hi, cut);
+                    }
+                };
+                edge(f.ax, f.az, f.bx, f.bz);
+                edge(f.bx, f.bz, f.cx, f.cz);
+                edge(f.cx, f.cz, f.ax, f.az);
+                if (hi > lo)
+                {
+                    spans.emplace_back(lo, hi);
+                }
+            });
+            if (spans.empty())
+            {
+                return false;
+            }
+            std::sort(spans.begin(), spans.end());
+            float from = spans.front().first;
+            float to   = spans.front().second;
+            for (const auto& [lo, hi] : spans)
+            {
+                if (lo > to + 0.1f)
+                {
+                    from = lo; // a gap: a new climb
+                }
+                to = std::max(to, hi);
+                if (to - from >= kClimbRun)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // The same for a walk crossing the polygons `polys` of a mesh, over
+        // their faces (Faces)
+        inline auto climbsFaces(const Faces& faces, const dtNavMesh& mesh, const dtPolyRef* polys, const int count, const Vec& a, const Vec& b) -> bool
+        {
+            return climbsOver([&](const auto& visit)
+            {
+                for (int i = 0; i < count; ++i)
+                {
+                    for (const Face& f : faces.of(mesh, polys[i]))
+                    {
+                        visit(f);
+                    }
+                }
+            }, a, b);
         }
 
         // The point of the segment a-b nearest c
@@ -201,6 +429,34 @@ namespace cardian::route
             const float t1   = std::clamp((-qb - root) / (2.0f * qa), 0.0f, 1.0f);
             const float t2   = std::clamp((-qb + root) / (2.0f * qa), 0.0f, 1.0f);
             return { Vec{ a[0] + d[0] * t1, a[1] + d[1] * t1, a[2] + d[2] * t1 }, Vec{ a[0] + d[0] * t2, a[1] + d[1] * t2, a[2] + d[2] * t2 } };
+        }
+
+        // The part of the segment a-b inside the sphere round c of radius r,
+        // as the fractions of the way from a to b it enters and leaves at;
+        // the two equal when none of it is
+        inline auto insideSpan(const Vec& a, const Vec& b, const Vec& c, const float r) -> std::pair<float, float>
+        {
+            const Vec   d{ b[0] - a[0], b[1] - a[1], b[2] - a[2] };
+            const Vec   f{ a[0] - c[0], a[1] - c[1], a[2] - c[2] };
+            const float qa   = d[0] * d[0] + d[1] * d[1] + d[2] * d[2];
+            const float qb   = 2.0f * (f[0] * d[0] + f[1] * d[1] + f[2] * d[2]);
+            const float qc   = f[0] * f[0] + f[1] * f[1] + f[2] * f[2] - r * r;
+            const float disc = qb * qb - 4.0f * qa * qc;
+            if (qa <= 0.0f || disc <= 0.0f)
+            {
+                return { 0.0f, 0.0f };
+            }
+            const float root = std::sqrt(disc);
+            const float t1   = std::clamp((-qb - root) / (2.0f * qa), 0.0f, 1.0f);
+            const float t2   = std::clamp((-qb + root) / (2.0f * qa), 0.0f, 1.0f);
+            return { t1, std::max(t1, t2) };
+        }
+
+        // The yalms of the segment a-b inside the sphere round c of radius r
+        inline auto insideLength(const Vec& a, const Vec& b, const Vec& c, const float r) -> float
+        {
+            const auto [enters, leaves] = insideSpan(a, b, c, r);
+            return (leaves - enters) * apart(a, b);
         }
 
         // The hazards filed by the cells of a flat grid over the ground their
@@ -372,7 +628,10 @@ namespace cardian::route
     // point its mob sees -- where the step comes nearest, or where it enters
     // or leaves the sphere, so a pillar hiding one of them hides no more --
     // or inside its unseen sphere. Inside a sphere she stood in as she set
-    // out (`origin`), only a step that takes her deeper is
+    // out (`origin`), only a step that takes her deeper is; the yalms she
+    // walks inside one whose mob sees where she set out -- the reaches she
+    // is in -- are no choke, and are counted (insideOrigin) so the search
+    // can price them
     class DangerTest
     {
     public:
@@ -382,7 +641,47 @@ namespace cardian::route
         , centres_(centresOf(hazards))
         , holdsOrigin_(holding(hazards, centres_, origin))
         , grid_(centres_, hazards)
+        , origins_(exposing(origin))
         {
+        }
+
+        // The yalms of the step a-b inside the reaches she set out in, each
+        // yalm counted once however many of them overlap (Detour's
+        // coordinates)
+        auto insideOrigin(const detail::Vec& a, const detail::Vec& b) const -> float
+        {
+            if (origins_.empty())
+            {
+                return 0.0f;
+            }
+            thread_local std::vector<std::pair<float, float>> spans;
+            spans.clear();
+            for (const uint32_t h : origins_)
+            {
+                const auto span = detail::insideSpan(a, b, centres_[h], hazards_[h].radius);
+                if (span.second > span.first)
+                {
+                    spans.push_back(span);
+                }
+            }
+            std::sort(spans.begin(), spans.end());
+            float inside = 0.0f;
+            float upTo   = 0.0f;
+            for (const auto& [enters, leaves] : spans)
+            {
+                if (leaves > upTo)
+                {
+                    inside += leaves - std::max(enters, upTo);
+                    upTo = leaves;
+                }
+            }
+            return inside * detail::apart(a, b);
+        }
+
+        // Whether she set out inside any reach
+        auto startsInside() const -> bool
+        {
+            return !origins_.empty();
         }
 
         // The hazard the step a-b passes through, or -1 (Detour's coordinates)
@@ -491,11 +790,28 @@ namespace cardian::route
             return out;
         }
 
+        // The spheres she set out in whose mobs see where she set out: inside
+        // the unseen sphere, or where its sight reaches
+        auto exposing(const detail::Vec& origin) const -> std::vector<uint32_t>
+        {
+            std::vector<uint32_t> out;
+            for (size_t h = 0; h < hazards_.size(); ++h)
+            {
+                if (holdsOrigin_[h] &&
+                    (detail::apart(origin, centres_[h]) < hazards_[h].unseen || !sight_ || sight_(h, fromDetour(origin.data()))))
+                {
+                    out.push_back(static_cast<uint32_t>(h));
+                }
+            }
+            return out;
+        }
+
         const std::vector<Hazard>& hazards_;
         HazardSight                sight_;
         std::vector<detail::Vec>   centres_;
         std::vector<char>          holdsOrigin_;
         detail::HazardGrid         grid_;
+        std::vector<uint32_t>      origins_; // the reaches she set out in
     };
 
     // The route from `from` to `to` that keeps out of danger: an A* of its
@@ -504,7 +820,8 @@ namespace cardian::route
     // -- or across one of the mesh's off-mesh links (a ledge, a step) from
     // the end it lands on to the other, never back along a one-way link nor up
     // one that rises more than the mesh's own climb (dropped off, never
-    // climbed: the meshes mark ledges of up to 5 yalms two-way), and
+    // climbed: the meshes mark ledges of up to 5 yalms two-way), never up
+    // ground steeper than a player climbs (kClimbSlope), and
     // every step tested as a segment against the hazards' spheres, a
     // wall between a mob and the step hiding it but for its unseen sphere.
     // A step through danger costs kDangerCost more, so the route takes a
@@ -512,8 +829,11 @@ namespace cardian::route
     // and, where the mobs hold every way, the
     // fewest steps through them: `firstDanger` names the first, a choke known
     // before she takes a step. Danger she stands in as she sets out holds
-    // only a step that takes her deeper. The route is then drawn tight, a
-    // straight kept wherever it stays on the mesh and out of danger. Not
+    // only a step that takes her deeper, and every yalm she walks inside it
+    // costs kInsideCost, so she leaves it by the shortest way before going
+    // on -- not along its inside toward her goal. The route is then drawn
+    // tight, a straight kept wherever it stays on the mesh and out of
+    // danger, and keeps her inside no longer than the way it replaces. Not
     // complete when no walk joins the two points; none when either is off the
     // mesh. With a `reach`, only the ground within it looks for the way --
     // every point whose distances to the two ends add up to no more, an
@@ -525,7 +845,8 @@ namespace cardian::route
     // given; without one, to the nearest point out of every reach, walking at
     // most `within` yalms (Dijkstra, the greed off)
     inline auto searchCore(const dtNavMesh& mesh, const position_t& from, const std::optional<position_t>& to, const float* fromExtents, const float* toExtents,
-                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within) -> std::optional<Route>
+                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within, const Faces* faces)
+        -> std::optional<Route>
     {
         using detail::apart;
         using detail::Node;
@@ -643,6 +964,14 @@ namespace cardian::route
                 ws.nearby[i] = !hazards.empty() && inDanger.reaches(lo, hi, kNearDanger) ? 1 : 0;
             }
             return ws.nearby[i] != 0;
+        };
+
+        // Whether a walk from a to b, crossing `polys`, climbs a face a
+        // player cannot (detail::climbsFaces); with no faces, the caller's,
+        // only the climb overall is judged (tooSteep)
+        const auto climbsCliff = [&](const dtPolyRef* polys, const int count, const Vec& a, const Vec& b) -> bool
+        {
+            return faces != nullptr && detail::climbsFaces(*faces, mesh, polys, count, a, b);
         };
 
         auto& nodes = ws.nodes;
@@ -846,8 +1175,14 @@ namespace cardian::route
                 {
                     return; // danger only adds; past the yalms safe ground is looked for within
                 }
+                // up ground too steep for a player, overall or up a face: read
+                // last, the dearest of the step's tests
+                if (!viaLink && (detail::tooSteep(at, next.at) || climbsCliff(&via, 1, at, next.at)))
+                {
+                    return;
+                }
                 const bool  danger = inDanger(at, next.at);
-                const float cost   = walked + (danger ? kDangerCost : 0.0f);
+                const float cost   = walked + (danger ? kDangerCost : 0.0f) + kInsideCost * inDanger.insideOrigin(at, next.at);
                 if (cost < next.g)
                 {
                     next.g      = cost;
@@ -899,10 +1234,22 @@ namespace cardian::route
         // Drawn tight: from each kept point, the points ahead in turn whose
         // straight stays on the mesh -- a ray along the ground from the
         // polygon she leaves by, ending on the polygon that point lies on --
-        // and out of danger; the farthest found is kept, the search going
-        // kShortcutTries points past one that fails. A step through danger,
-        // or across an off-mesh link, is kept as it is
-        const auto straight = [&](const int a, const int k) -> bool
+        // and out of danger; the farthest found that climbs nothing a player
+        // cannot is kept, the search going kShortcutTries points past one
+        // that fails. The climb up faces is read only of the straights that
+        // pass the rest, farthest first. A step through danger, or across an
+        // off-mesh link, is kept as it is. A straight keeps her no longer
+        // inside the reaches she set out in than the way it replaces: the
+        // yalms inside them, added up along the route to each point
+        std::vector<float> insideTo(raw.size(), 0.0f);
+        if (inDanger.startsInside())
+        {
+            for (size_t i = 1; i < raw.size(); ++i)
+            {
+                insideTo[i] = insideTo[i - 1] + inDanger.insideOrigin(nodes[raw[i - 1]].at, nodes[raw[i]].at);
+            }
+        }
+        const auto straight = [&](const int a, const int k, const bool climb) -> bool
         {
             const Node& from_ = nodes[raw[a]];
             const Node& to_   = nodes[raw[k]];
@@ -920,26 +1267,52 @@ namespace cardian::route
                 return false;
             }
             const dtPolyRef last = path[count - 1];
-            return (last == to_.polys[0] || last == to_.polys[1] || last == to_.via) && !inDanger(from_.at, to_.at); // the danger's sight tests last
+            if (last != to_.polys[0] && last != to_.polys[1] && last != to_.via)
+            {
+                return false;
+            }
+            if (detail::tooSteep(from_.at, to_.at))
+            {
+                return false; // climbs past a player's slope overall
+            }
+            if (climb)
+            {
+                return !climbsCliff(path, count, from_.at, to_.at);
+            }
+            if (inDanger.startsInside() && inDanger.insideOrigin(from_.at, to_.at) > insideTo[k] - insideTo[a] + 0.1f)
+            {
+                return false; // longer inside the reaches she set out in than the way it replaces
+            }
+            return !inDanger(from_.at, to_.at); // the danger's sight tests last
         };
         std::vector<int> kept;
+        std::vector<int> straights; // an anchor's straights that pass all but the climb, nearest first
         const int        last = static_cast<int>(raw.size()) - 1;
         for (int anchor = 0; anchor < last;)
         {
             int best = anchor + 1;
             if (!nodes[raw[best]].danger && !nodes[raw[best]].link)
             {
+                straights.clear();
                 int misses = 0;
                 for (int k = anchor + 2; k <= last && !nodes[raw[k]].danger && misses <= kShortcutTries; ++k)
                 {
-                    if (straight(anchor, k))
+                    if (straight(anchor, k, false))
                     {
-                        best   = k;
+                        straights.push_back(k);
                         misses = 0;
                     }
                     else
                     {
                         ++misses;
+                    }
+                }
+                for (auto it = straights.rbegin(); it != straights.rend(); ++it)
+                {
+                    if (straight(anchor, *it, true))
+                    {
+                        best = *it;
+                        break;
                     }
                 }
             }
@@ -967,9 +1340,10 @@ namespace cardian::route
 
     // The route from `from` to `to` that keeps out of danger (searchCore)
     inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
-                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f) -> std::optional<Route>
+                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f, const Faces* faces = nullptr)
+        -> std::optional<Route>
     {
-        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f);
+        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces);
     }
 
     // The way from `from` to the nearest ground out of every reach, walking
@@ -978,8 +1352,8 @@ namespace cardian::route
     // the fewest steps of it. Complete and empty when `from` is out of every
     // reach already; not complete when no such ground lies within
     inline auto searchSafeGround(const dtNavMesh& mesh, const position_t& from, const float* fromExtents, const std::vector<Hazard>& hazards,
-                                 const HazardSight& sight, const float within) -> std::optional<Route>
+                                 const HazardSight& sight, const float within, const Faces* faces = nullptr) -> std::optional<Route>
     {
-        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within);
+        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within, faces);
     }
 } // namespace cardian::route

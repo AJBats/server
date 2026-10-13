@@ -571,6 +571,16 @@ private:
     // be planned: the trek's other ways have their say
     auto TrekSafeWalk(const position_t& goal, bool racing) -> bool;
 
+    // While she holds for a choke, once a second: a sneak-by past the mobs
+    // that hold it, if one fits now (ROADMAP T slice 3, pawn/sneak.h).
+    // True when she sets out on one
+    auto TrekSneakBy(const position_t& goal) -> bool;
+
+    // On a sneak-by: she walks it past the mobs, the everyday ring rule
+    // standing down; false once it is over -- through, caught, or late --
+    // and her route is planned afresh
+    auto TrekHopTick(bool racing) -> bool;
+
     // A walk order (pawn::walkOrderOf): the logic tick's half -- the order's
     // bookkeeping (WalkOrderTick) and, with no steer timer, her step
     void WalkTick();
@@ -1275,6 +1285,13 @@ private:
     bool                              m_TrekStuckSaid = false;    // she said she was stuck by aggro at this choke
     position_t                        m_TrekStuckAt{};            // ... where it held her
     bool                              m_TrekHated     = false;    // a mob on her at her trek's last look (TrekWatchHate)
+    std::vector<position_t>           m_TrekHop;                  // a sneak-by under way: her walk past the mobs, its end last
+    xi::ZoneId                        m_TrekHopZone{};            // ... planned in
+    timer::time_point                 m_TrekHopAt;                // ... set out at
+    float                             m_TrekHopSeconds = 0.0f;    // ... planned to reach its end this long after
+    bool                              m_TrekHopWalking = false;   // ... handed to her walker
+    timer::time_point                 m_TrekSneakLookedAt;        // a hold's last look for a sneak-by
+    timer::time_point                 m_TrekSneakSaidAt;          // ... and the last time it said why none fits
 
     // The rings of the mobs near her at her trek's last look, for the log
     // alone: the moment one turns on her, how far inside its ring she stood

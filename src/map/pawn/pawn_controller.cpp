@@ -36,6 +36,7 @@
 #include "move_harm.h"
 #include "stake_math.h"
 #include "drill.h"
+#include "sneak.h"
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 #include "pawn_rules.h"
@@ -100,6 +101,7 @@
 #include "utils/itemutils.h"
 #include "utils/zoneutils.h"
 #include "item_container.h"
+#include "roam_region.h"
 #include "zone.h"
 
 #include <optional>
@@ -5663,6 +5665,8 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
         EndChase("left behind at the zone line");
         m_TrekHated = false; // the mobs of the zone she left are on her no more
+        m_TrekHop.clear();   // a sneak-by to the line is through
+        m_TrekHopWalking = false;
         if (POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP())
         {
             m_TrekResting = true;
@@ -7227,6 +7231,8 @@ void CPawnController::EndTrek()
     m_TrekHated       = false;
     m_TrekBackOff.clear();
     m_TrekRingsNear.clear();
+    m_TrekHop.clear();
+    m_TrekHopWalking = false;
 }
 
 void CPawnController::EndChase(const std::string_view how)
@@ -7253,6 +7259,13 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
     constexpr float kCrossingNear = 100.0f;  // a mob crossing her route this near ahead is planned round now; one farther waits until she is nearer
     constexpr float kSafeGround   = 150.0f;  // with no spot short of a choke out of every reach: the nearest ground that is, within this walk
     constexpr float kGotByNear    = 8.0f;    // past a choke she was stuck at: this near where it held her
+
+    // On a sneak-by she walks it past the mobs, and nothing else of her
+    // trek's has a say until it is over (TrekHopTick)
+    if (TrekHopTick(racing))
+    {
+        return true;
+    }
 
     auto*      PPathFind = POwner->PAI->PathFind.get();
     const auto zone      = POwner->getZone();
@@ -7742,6 +7755,12 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
             pawn::drill::noteBlocked(POwner->id);
             TrekSay(kStuckLines[xirand::GetRandomNumber(kStuckLines.size())]);
         }
+
+        // Holding, she looks for a sneak-by past the choke
+        if (TrekSneakBy(goal))
+        {
+            return TrekHopTick(racing);
+        }
         m_TravelProgressTime = m_Tick; // a hold is no stall: the line's no-progress crossing waits on it
         if (PPathFind->IsFollowingPath())
         {
@@ -7770,6 +7789,226 @@ auto CPawnController::TrekSafeWalk(const position_t& goal, const bool racing) ->
         m_TrekRouteWalking = true;
         m_TrekRouteEnd     = end;
     }
+    PPathFind->FollowPath(m_Tick);
+    return true;
+}
+
+auto CPawnController::TrekSneakBy(const position_t& goal) -> bool
+{
+    constexpr auto  kLookEvery = 1s;     // a hold looks for a hop this often
+    constexpr auto  kSayEvery  = 10s;    // ... and says why none fits at most this often
+    constexpr float kScan      = 2000.0f; // the whole zone's mobs, as her route plans round them
+    constexpr float kSlack     = 2.0f;   // every rest taken to end this many seconds early
+    constexpr float kSettle    = 2.0f;   // past the mobs, none may reach her for this long after
+    constexpr float kSetOff    = 0.5f;   // seconds before her first step
+    if (m_Tick - m_TrekSneakLookedAt < kLookEvery)
+    {
+        return false;
+    }
+    m_TrekSneakLookedAt = m_Tick;
+    const auto began    = std::chrono::steady_clock::now();
+
+    // Every mob that would come for her, as the hop reads it: its sight
+    // cone and its reach all round, its walk, the seconds before its rest
+    // ends (its last action plus its roam cool, as the game decides when to
+    // walk again), and its territory
+    auto* PPawn         = static_cast<CCharEntity*>(POwner);
+    auto  profile       = pawn::danger::Profile::of(PPawn, true, true);
+    profile.extraBuffer = settings::get<float>("pawn.TREK_AVOID_EXTRA");
+    std::vector<cardian::sneak::Mob>    mobs;
+    std::vector<cardian::route::Hazard> hazards;
+    std::vector<CMobEntity*>            who;
+    for (const auto& s : pawn::danger::spheres(pawn::entitiesAround(POwner), POwner->loc.p, kScan, profile))
+    {
+        if (s.mob == nullptr)
+        {
+            continue;
+        }
+        cardian::sneak::Mob m;
+        m.at       = s.mob->loc.p;
+        m.cone     = s.cone;
+        m.allRound = s.allRound;
+        m.speed    = static_cast<float>(std::max(s.mob->GetSpeed(), s.mob->baseSpeed)) / 17.0f;
+
+        const auto* PPath      = s.mob->PAI->PathFind.get();
+        const bool  patrolling = PPath != nullptr && PPath->IsPatrolling();
+        const bool  walking    = patrolling || (PPath != nullptr && PPath->IsFollowingPath());
+        if (const auto* PController = dynamic_cast<const CMobController*>(s.mob->PAI->GetController()); PController != nullptr && !walking)
+        {
+            const auto resumes = PController->LastActionTime() + std::chrono::seconds(s.mob->getMobMod(xi::MobMod::RoamCool));
+            m.restLeft         = std::max(0.0f, std::chrono::duration<float>(resumes - m_Tick).count());
+        }
+        if (patrolling)
+        {
+            m.unbounded = true;
+        }
+        else if (const RoamRegion* region = s.mob->roamRegion(); region != nullptr)
+        {
+            m.outside = [region](const position_t& p) { return region->distanceOutside(p); };
+        }
+        else
+        {
+            m.home = s.mob->m_SpawnPoint;
+            m.roam = s.mob->GetRoamDistance();
+        }
+        // Away from its territory -- on its way home -- it is not where the
+        // model says it can be
+        if (!m.unbounded)
+        {
+            const float away = m.outside ? m.outside(m.at) : std::max(0.0f, distance(m.at, m.home, true) - m.roam);
+            m.unbounded      = away > 5.0f;
+        }
+        mobs.push_back(std::move(m));
+        hazards.push_back({ .at = s.at, .radius = s.radius, .unseen = s.allRound });
+        who.push_back(s.mob);
+    }
+
+    // Her way past them as they stand now, round each one's cone and its
+    // reach all round, then her walk along it played forward to the second
+    const cardian::route::HazardSight cone = [&](const size_t h, const position_t& p) { return facing(mobs[h].at, p, 64); };
+    const auto route = pawn::travel::routeAvoiding(POwner->getZone(), POwner->loc.p, goal, hazards, cone);
+    // A danger later on the route, past where the hop ends, is the everyday
+    // trek's: the timed walk meets any before its end on its own
+    cardian::sneak::Hop hop;
+    std::string         why = "no way to the line on the mesh";
+    if (route.has_value() && route->complete)
+    {
+        std::vector<position_t> walk(1, POwner->loc.p);
+        walk.insert(walk.end(), route->points.begin(), route->points.end());
+        hop = cardian::sneak::plan(mobs, walk, static_cast<float>(POwner->GetSpeed()) / 17.0f, kSetOff, kSlack, kSettle, true);
+        if (hop.caughtBy >= 0)
+        {
+            // Who would reach her, and why: its rest, its walk, its facing
+            const auto& m = mobs[hop.caughtBy];
+            why           = fmt::format("{} would reach her {:.0f} s in, {:.0f}y along ({:.0f}y from her now, {}, facing {} her)", who[hop.caughtBy]->getName(),
+                                        hop.caughtAt, hop.walked, distance(m.at, POwner->loc.p),
+                                        m.restLeft > 0.0f ? fmt::format("resting {:.0f} s more", m.restLeft) : std::string("walking or about to"),
+                                        facing(m.at, POwner->loc.p, 64) ? "toward" : "away from");
+        }
+        else
+        {
+            why = fmt::format("never past them on the way ({:.0f}y walked)", hop.walked);
+        }
+    }
+    const auto took = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began);
+    if (!hop.fits)
+    {
+        if (m_Tick - m_TrekSneakSaidAt >= kSayEvery)
+        {
+            m_TrekSneakSaidAt = m_Tick;
+            ShowInfoFmt("pawn: travel {}: no sneak-by yet: {} ({} mobs, {:.1f} ms)", POwner->getName(), why, mobs.size(), took.count() / 1000.0);
+        }
+        return false;
+    }
+
+    // The shortest rest left among the resting mobs near her, for the log
+    float  tightest = std::numeric_limits<float>::max();
+    size_t tight    = 0;
+    for (size_t m = 0; m < mobs.size(); ++m)
+    {
+        if (mobs[m].restLeft > 0.0f && mobs[m].restLeft < tightest && distance(mobs[m].at, POwner->loc.p) < mobs[m].reach() + 60.0f)
+        {
+            tightest = mobs[m].restLeft;
+            tight    = m;
+        }
+    }
+    ShowInfoFmt("pawn: travel {}: sneaks by: {:.0f}y to ground past them, {:.0f} s{}{} ({} mobs, {:.1f} ms)", POwner->getName(), hop.walked, hop.seconds,
+                hop.island ? ", ground none can ever reach" : "",
+                tightest < std::numeric_limits<float>::max() ? fmt::format("; {} rests {:.0f} s more", who[tight]->getName(), tightest) : std::string(),
+                mobs.size(), took.count() / 1000.0);
+    pawn::drill::noteHop(POwner->id);
+    m_TrekHop        = std::move(hop.points);
+    m_TrekHopZone    = POwner->getZone();
+    m_TrekHopAt      = m_Tick;
+    m_TrekHopSeconds = hop.seconds;
+    m_TrekHopWalking = false;
+    return true;
+}
+
+auto CPawnController::TrekHopTick(const bool racing) -> bool
+{
+    constexpr float kLate    = 2.0f; // seconds past its planned end a hop is given up: as far as its plan holds (TrekSneakBy's slack)
+    constexpr float kThrough = 0.3f; // this near its end, she is past them: her walker arrives within 0.1
+    if (m_TrekHop.empty())
+    {
+        return false;
+    }
+    auto*       PPathFind = POwner->PAI->PathFind.get();
+    const float elapsed   = std::chrono::duration<float>(m_Tick - m_TrekHopAt).count();
+    const auto  over      = [&](const std::string_view how)
+    {
+        ShowInfoFmt("pawn: travel {}: the sneak-by {} after {:.0f} s", POwner->getName(), how, elapsed);
+        m_TrekHop.clear();
+        m_TrekHopWalking = false;
+        m_TrekRouteKnown = false; // her route is planned afresh from where the hop left her
+        m_TrekHeldSince.reset();
+        if (PPathFind->IsFollowingPath())
+        {
+            PPathFind->Clear();
+        }
+    };
+
+    // Caught on the way, the chase has her; at its end, past her time to
+    // reach it, or out of the zone it was planned in, the everyday rules
+    // take over again
+    if (racing)
+    {
+        over("is caught");
+        return false;
+    }
+    if (POwner->getZone() != m_TrekHopZone)
+    {
+        over("ends with her zone");
+        return false;
+    }
+    if (distance(POwner->loc.p, m_TrekHop.back()) < kThrough)
+    {
+        over("is through");
+        if (m_TrekStuckSaid)
+        {
+            TrekGotBy("sneaked by");
+        }
+        return false;
+    }
+    if (elapsed > m_TrekHopSeconds + kLate)
+    {
+        over("runs late, and is given up");
+        return false;
+    }
+
+    if (!m_TrekHopWalking || !PPathFind->IsFollowingPath())
+    {
+        // From the end of the leg she stands nearest: her walker, cleared on
+        // the way, never takes her back toward the mobs, nor cuts a corner
+        const auto& here = POwner->loc.p;
+        size_t      from = m_TrekHop.size() - 1;
+        float       best = std::numeric_limits<float>::max();
+        for (size_t i = 1; i < m_TrekHop.size(); ++i)
+        {
+            const auto& a   = m_TrekHop[i - 1];
+            const auto& b   = m_TrekHop[i];
+            const float dx  = b.x - a.x;
+            const float dy  = b.y - a.y;
+            const float dz  = b.z - a.z;
+            const float len = dx * dx + dy * dy + dz * dz;
+            const float t   = len > 0.0f ? std::clamp(((here.x - a.x) * dx + (here.y - a.y) * dy + (here.z - a.z) * dz) / len, 0.0f, 1.0f) : 0.0f;
+            if (const float d = distance(here, position_t(a.x + dx * t, a.y + dy * t, a.z + dz * t, 0, 0)); d < best)
+            {
+                best = d;
+                from = i;
+            }
+        }
+        std::vector<pathpoint_t> points;
+        points.reserve(m_TrekHop.size() - from);
+        for (size_t i = from; i < m_TrekHop.size(); ++i)
+        {
+            points.push_back(pathpoint_t{ m_TrekHop[i], 0s, false });
+        }
+        PPathFind->PathThrough(std::move(points), PATHFLAG_RUN);
+        m_TrekHopWalking   = true;
+        m_TrekRouteWalking = false; // her route's walk is handed to her walker again after the hop
+    }
+    m_TravelProgressTime = m_Tick;
     PPathFind->FollowPath(m_Tick);
     return true;
 }

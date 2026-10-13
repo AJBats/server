@@ -228,6 +228,22 @@ namespace pawn::danger
         return radius > 0.0f ? radius + buffer : 0.0f;
     }
 
+    // The same rule split for a mob whose back may be turned (the sneak-by,
+    // ROADMAP T slice 3): its sight, which reaches only within its cone, and
+    // everything else, which reaches all round. The larger of the two is
+    // radiusFor's; zero is no reach of that kind
+    inline auto coneFor(const Detection& d, const Profile& p, const float buffer) -> float
+    {
+        const bool hidesFromSight = (!d.trueDetection && p.invisible) || (p.illusion && !d.seesThroughIllusion);
+        return d.sight && !hidesFromSight && d.sightRange > 0.0f ? d.sightRange + buffer : 0.0f;
+    }
+
+    inline auto allRoundFor(Detection d, const Profile& p, const float buffer, const float tail) -> float
+    {
+        d.sight = false;
+        return radiusFor(d, p, buffer, tail);
+    }
+
     // Dangers whose circle comes within `scan` yalms (planar) of `center`,
     // each circle being the mob's detection sphere sliced at center's height
     // (unordered).
@@ -243,6 +259,11 @@ namespace pawn::danger
         position_t  at{};
         float       radius = 0.0f;
         float       unseen = 0.0f;
+
+        // The radius split as a sneak-by reads it (coneFor, allRoundFor):
+        // sight's reach, within the mob's cone, and the reach all round
+        float cone     = 0.0f;
+        float allRound = 0.0f;
     };
 
     // Every danger within `scan` (3D, sphere's edge) of `center`: the same

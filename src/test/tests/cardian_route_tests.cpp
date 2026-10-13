@@ -457,6 +457,39 @@ TEST_CASE("Route kept out of danger: a mob on the way is walked round, and a cho
         }
         CHECK_FALSE(inside);
     }
+
+    SECTION("setting out inside the edge of a mob's reach beside her way, she leaves it by the shortest way, then goes on")
+    {
+        // The mob stands off to the side of her way, on one side and then on
+        // the other, she 3 yalms inside its reach: going on along her way
+        // would keep her inside it for 10 yalms, stepping straight away from
+        // the mob for 3
+        const auto  ahead = along(from, plain->points, 20.0f / plain->length);
+        const float dx    = ahead.x - from.x;
+        const float dz    = ahead.z - from.z;
+        const float len   = std::sqrt(dx * dx + dz * dz);
+        const float depth = 3.0f;
+        const float r     = 18.5f;
+        for (const float side : { 1.0f, -1.0f })
+        {
+            const Hazard h   = { .at = position_t(from.x - side * dz / len * (r - depth), from.y, from.z + side * dx / len * (r - depth), 0, 0), .radius = r };
+            const auto   out = cardian::route::searchAvoiding(*mesh, from, to, sz::kBodyExtents, sz::kLineExtents, { h }, {});
+            REQUIRE(out.has_value());
+            REQUIRE(out->complete);
+            CHECK(out->firstDanger == -1);
+            CHECK(out->length < clear->length + 15.0f);
+
+            float      inside = 0.0f;
+            position_t a      = from;
+            for (const auto& b : out->points)
+            {
+                inside += cardian::route::detail::insideLength(cardian::route::toDetour(a), cardian::route::toDetour(b), cardian::route::toDetour(h.at), h.radius);
+                a = b;
+            }
+            INFO("the mob on side " << side << "; yalms walked inside the reach: " << inside);
+            CHECK(inside < depth * 1.5f + 1.5f);
+        }
+    }
 }
 
 TEST_CASE("Route kept out of danger: La Theine Plateau end to end, as short as the game's own route", "[cardian][route]")
@@ -513,6 +546,10 @@ TEST_CASE("Route kept out of danger: timings (opt-in, CARDIAN_BENCH=1)", "[cardi
         {
             continue;
         }
+        const auto facesBegan = std::chrono::steady_clock::now();
+        const auto faces      = cardian::route::facesOf(*mesh);
+        const auto facesUs    = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - facesBegan).count();
+        WARN(c.zone << " faces: " << faces.faces.size() << " worked out in " << facesUs / 1000.0 << " ms");
         const auto plain = cardian::route::search(*mesh, c.from, c.to, sz::kLineExtents, sz::kLineExtents);
         REQUIRE(plain.has_value());
 
@@ -540,7 +577,7 @@ TEST_CASE("Route kept out of danger: timings (opt-in, CARDIAN_BENCH=1)", "[cardi
         {
             sightTests       = 0;
             const auto began = std::chrono::steady_clock::now();
-            const auto route = cardian::route::searchAvoiding(*mesh, c.from, c.to, sz::kLineExtents, sz::kLineExtents, hazards, sight);
+            const auto route = cardian::route::searchAvoiding(*mesh, c.from, c.to, sz::kLineExtents, sz::kLineExtents, hazards, sight, 0.0f, &faces);
             const auto us    = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count();
             REQUIRE(route.has_value());
             WARN(c.zone << " " << what << ": " << us / 1000.0 << " ms, " << route->searched << " points searched, " << sightTests << " sight tests, "
@@ -555,7 +592,7 @@ TEST_CASE("Route kept out of danger: timings (opt-in, CARDIAN_BENCH=1)", "[cardi
         const auto stretchMob = along(c.from, plain->points, 75.0f / total);
         const auto began      = std::chrono::steady_clock::now();
         const auto stretch    = cardian::route::searchAvoiding(*mesh, c.from, stretchEnd, sz::kLineExtents, sz::kBodyExtents, { { .at = stretchMob, .radius = 12.0f } },
-                                                               sight, 150.0f * 1.5f + 60.0f);
+                                                               sight, 150.0f * 1.5f + 60.0f, &faces);
         const auto us         = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - began).count();
         REQUIRE(stretch.has_value());
         WARN(c.zone << " stretch: " << us / 1000.0 << " ms, " << stretch->searched << " points searched, " << stretch->length << "y, complete "
@@ -636,4 +673,254 @@ TEST_CASE("Route kept out of danger: a ledge taller than the mesh's climb is dro
     REQUIRE(down.has_value());
     REQUIRE(down->complete);
     CHECK(down->length < yalms(top, foot) + 2.0f);
+}
+
+TEST_CASE("Route slopes: steep faces climbed for kClimbRun on end are refused, a bump and the way down or across walked", "[cardian][route]")
+{
+    using cardian::route::Face;
+    using cardian::route::detail::Vec;
+
+    // A ramp rising 0.7 a yalm along x (35 degrees) from x0 to x1, ten
+    // yalms across: two triangles, split on its diagonal
+    const auto ramp = [](const float x0, const float x1)
+    {
+        return std::vector<Face>{ { x0, -5.0f, x1, -5.0f, x1, 5.0f, 0.7f, 0.0f }, { x0, -5.0f, x1, 5.0f, x0, 5.0f, 0.7f, 0.0f } };
+    };
+    const auto climbs = [](const std::vector<Face>& faces, const Vec& a, const Vec& b)
+    {
+        return cardian::route::detail::climbsOver([&](const auto& visit)
+        {
+            for (const auto& f : faces)
+            {
+                visit(f);
+            }
+        }, a, b);
+    };
+    const Vec west{ -2.0f, 0.0f, 0.0f };
+    const Vec east{ 6.0f, 0.0f, 0.0f };
+
+    CHECK_FALSE(climbs(ramp(0.0f, 1.4f), west, east)); // a bump: 1.4 yalms of it
+    CHECK(climbs(ramp(0.0f, 1.6f), west, east));       // past kClimbRun
+    CHECK_FALSE(climbs(ramp(0.0f, 4.0f), east, west)); // down it
+    CHECK_FALSE(climbs(ramp(0.0f, 4.0f), Vec{ 2.0f, 0.0f, -4.0f }, Vec{ 2.0f, 0.0f, 4.0f })); // across it
+
+    // two ramps a hair apart are one climb; a yalm apart, two bumps
+    auto joined = ramp(0.0f, 1.0f);
+    for (const auto& f : ramp(1.05f, 2.05f))
+    {
+        joined.push_back(f);
+    }
+    CHECK(climbs(joined, west, east));
+    auto split = ramp(0.0f, 1.0f);
+    for (const auto& f : ramp(2.0f, 3.0f))
+    {
+        split.push_back(f);
+    }
+    CHECK_FALSE(climbs(split, west, east));
+
+    // a walk shorter than kClimbRun holds no such climb
+    CHECK_FALSE(climbs(ramp(0.0f, 4.0f), Vec{ 0.5f, 0.0f, 0.0f }, Vec{ 1.9f, 0.0f, 0.0f }));
+}
+
+TEST_CASE("Route kept out of danger: ground steeper than a player climbs is walked down, never up", "[cardian][route]")
+{
+    const auto mesh = loadMesh("Valkurm_Dunes");
+    if (!mesh)
+    {
+        SKIP("no navmesh for Valkurm_Dunes");
+    }
+
+    const auto faces = cardian::route::facesOf(*mesh);
+
+    // The hill by Valkurm Dunes' goblins (2026-10-12): a player walks up to
+    // its shoulder and no further, where it steepens past 30 degrees; the
+    // mesh, built for monsters, walks on up
+    const position_t foot(691.7f, -2.9f, -201.3f, 0, 0);
+    const position_t shoulder(672.1f, -4.98f, -217.08f, 0, 0);
+    const position_t top(652.9f, -11.1f, -218.4f, 0, 0);
+
+    const auto up = cardian::route::searchAvoiding(*mesh, foot, top, sz::kBodyExtents, sz::kBodyExtents, {}, {}, 0.0f, &faces);
+    REQUIRE(up.has_value());
+    CHECK_FALSE((up->complete && !up->points.empty()));
+
+    const auto toShoulder = cardian::route::searchAvoiding(*mesh, foot, shoulder, sz::kBodyExtents, sz::kBodyExtents, {}, {}, 0.0f, &faces);
+    REQUIRE(toShoulder.has_value());
+    CHECK(toShoulder->complete);
+
+    const auto down = cardian::route::searchAvoiding(*mesh, top, foot, sz::kBodyExtents, sz::kBodyExtents, {}, {}, 0.0f, &faces);
+    REQUIRE(down.has_value());
+    CHECK(down->complete);
+    CHECK(down->length < yalms(top, foot) + 15.0f);
+
+    // A cliff near the La Theine line, a band of four yalms climbing 38 to 44
+    // degrees that one polygon averages to 29: read by its steep faces, not climbed
+    const position_t below(606.98f, -16.82f, 287.74f, 0, 0);
+    const position_t onTop(620.9f, -22.79f, 292.8f, 0, 0);
+    const auto       cliff = cardian::route::searchAvoiding(*mesh, below, onTop, sz::kBodyExtents, sz::kBodyExtents, {}, {}, 0.0f, &faces);
+    REQUIRE(cliff.has_value());
+    if (cliff->complete)
+    {
+        CHECK(cliff->length > yalms(below, onTop) + 20.0f); // round by some gentler way, not up the face
+    }
+}
+
+// Every zone's lines a walk joins, walked under the slope rule: a pair the
+// sub-zones join (the mesh walks them, ledges as the rule takes them) that
+// the search now finds no way between is a way the slope rule has closed --
+// stairs, a ramp to a line -- and listed. Opt-in: it loads every mesh
+TEST_CASE("Route slopes: the world's lines a walk joins, kept to a player's slope (opt-in, CARDIAN_SLOPES=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_SLOPES") == nullptr)
+    {
+        SKIP("the slope survey runs with CARDIAN_SLOPES=1");
+    }
+    using Settings = xi::data::datasets::zones::settings::Dataset;
+    int         zones   = 0;
+    int         pairs   = 0;
+    int         refused = 0;
+    std::string closed;
+    for (int z = 1; z < 300; ++z)
+    {
+        const auto id       = static_cast<xi::ZoneId>(z);
+        const auto settings = xi::data::loadZoneFile<Settings>(id);
+        if (!settings || settings->ZoneLines.size() < 2)
+        {
+            continue;
+        }
+        const std::string name = std::filesystem::path(xi::data::zoneFilePath(id, "zone")).parent_path().filename().string();
+        const auto        mesh = loadMesh(name);
+        if (!mesh)
+        {
+            continue;
+        }
+        ++zones;
+        const auto  faces  = cardian::route::facesOf(*mesh);
+        const auto  pieces = sz::piecesOf(*mesh);
+        const auto& lines  = settings->ZoneLines;
+        for (size_t i = 0; i < lines.size(); ++i)
+        {
+            for (size_t j = i + 1; j < lines.size(); ++j)
+            {
+                const auto& a  = lines[i].Origin;
+                const auto& b  = lines[j].Origin;
+                const auto  pa = sz::pieceAt(*mesh, pieces, a, sz::kLineExtents);
+                if (pa == 0 || pa != sz::pieceAt(*mesh, pieces, b, sz::kLineExtents) || yalms(a, b) < 10.0f)
+                {
+                    continue;
+                }
+                ++pairs;
+                const auto route = cardian::route::searchAvoiding(*mesh, a, b, sz::kLineExtents, sz::kLineExtents, {}, {}, 0.0f, &faces);
+                if (!route.has_value() || !route->complete)
+                {
+                    ++refused;
+                    closed += fmt::format(" {} ({:.0f},{:.0f},{:.0f})->({:.0f},{:.0f},{:.0f});", name, a.x, a.y, a.z, b.x, b.y, b.z);
+                }
+            }
+        }
+    }
+    WARN(fmt::format("{} zones, {} walks between lines the sub-zones join, {} closed by the slope rule:{}", zones, pairs, refused, closed));
+}
+
+// How steep each yalm of a few walks in Valkurm Dunes climbs, read off the
+// mesh's detail: the measurements behind kClimbSlope, run again after any
+// change to it
+TEST_CASE("Route slopes (opt-in, CARDIAN_SLOPES=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_SLOPES") == nullptr)
+    {
+        SKIP("the slope survey runs with CARDIAN_SLOPES=1");
+    }
+    const auto mesh = loadMesh("Valkurm_Dunes");
+    REQUIRE(mesh);
+    const auto faces = cardian::route::facesOf(*mesh);
+    dtNavMeshQuery query;
+    REQUIRE(dtStatusSucceed(query.init(mesh.get(), 2048)));
+    dtQueryFilter filter;
+    filter.setIncludeFlags(0xFFFF);
+    filter.setExcludeFlags(cardian::route::kPolyDisabled);
+
+    // The ground's height under (x, z), near `nearY` (the zone's y, down)
+    const auto ground = [&](const float x, const float z, const float nearY) -> std::optional<float>
+    {
+        const float  at[3]{ x, -nearY, -z };
+        const float  ext[3]{ 1.0f, 6.0f, 1.0f };
+        dtPolyRef    ref{};
+        float        on[3]{};
+        if (dtStatusFailed(query.findNearestPoly(at, ext, &filter, &ref, on)) || !ref)
+        {
+            return std::nullopt;
+        }
+        float h = 0.0f;
+        if (dtStatusFailed(query.getPolyHeight(ref, on, &h)))
+        {
+            return std::nullopt;
+        }
+        return -h;
+    };
+
+    // A walk's route, sampled a yalm at a time: the steepest climbs up
+    const auto survey = [&](const std::string& what, const position_t& from, const position_t& to)
+    {
+        const auto route = cardian::route::searchAvoiding(*mesh, from, to, sz::kBodyExtents, sz::kBodyExtents, {}, {}, 0.0f, &faces);
+        REQUIRE(route.has_value());
+        std::vector<float> ups;
+        position_t         a = from;
+        std::optional<float> lastY = ground(a.x, a.z, a.y);
+        float lastX = a.x;
+        float lastZ = a.z;
+        std::string profile;
+        for (const auto& b : route->points)
+        {
+            const float len   = std::sqrt((b.x - a.x) * (b.x - a.x) + (b.z - a.z) * (b.z - a.z));
+            const int   steps = std::max(1, static_cast<int>(std::ceil(len)));
+            for (int k = 1; k <= steps; ++k)
+            {
+                const float f = static_cast<float>(k) / static_cast<float>(steps);
+                const float x = a.x + (b.x - a.x) * f;
+                const float z = a.z + (b.z - a.z) * f;
+                const auto  y = ground(x, z, a.y + (b.y - a.y) * f);
+                if (y.has_value() && lastY.has_value())
+                {
+                    const float run  = std::sqrt((x - lastX) * (x - lastX) + (z - lastZ) * (z - lastZ));
+                    const float rise = *lastY - *y; // the zone's y is down: a climb lowers it
+                    if (run > 0.01f)
+                    {
+                        const float deg = std::atan2(rise, run) * 180.0f / 3.14159265f;
+                        ups.push_back(deg);
+                        if (deg > 30.0f)
+                        {
+                            profile += fmt::format(" ({:.0f},{:.0f}):{:.0f}", x, z, deg);
+                        }
+                    }
+                }
+                lastY = y;
+                lastX = x;
+                lastZ = z;
+            }
+            a = b;
+        }
+        std::sort(ups.begin(), ups.end());
+        const auto pct = [&](const float p) { return ups.empty() ? 0.0f : ups[std::min(ups.size() - 1, static_cast<size_t>(p * ups.size()))]; };
+        std::string points;
+        for (const auto& p : route->points)
+        {
+            points += fmt::format(" ({:.1f},{:.1f},{:.1f})", p.x, p.y, p.z);
+        }
+        WARN(fmt::format("{}: {}{:.0f}y, {} links, {} yalms sampled; climbs: median {:.0f}, 90% {:.0f}, 99% {:.0f}, steepest {:.0f} degrees; over 30:{}; points:{}", what,
+                         route->complete ? "" : "NOT COMPLETE ", route->length, route->links, ups.size(), pct(0.5f), pct(0.9f), pct(0.99f), ups.empty() ? 0.0f : ups.back(),
+                         profile, route->points.size() <= 40 ? points : std::string(" (many)")));
+    };
+
+    // Jevyak's climb on 2026-10-12, which a player cannot make
+    survey("the goblins' hill", position_t(691.7f, -2.9f, -201.3f, 0, 0), position_t(652.9f, -11.1f, -218.4f, 0, 0));
+    // the player's climb up it, as far as he could go, and the rest of it
+    survey("up to the player's highest", position_t(691.7f, -2.9f, -201.3f, 0, 0), position_t(672.1f, -4.98f, -217.08f, 0, 0));
+    survey("from the player's highest to the top", position_t(672.1f, -4.98f, -217.08f, 0, 0), position_t(652.9f, -11.1f, -218.4f, 0, 0));
+    // the cliff she climbed on 2026-10-12, near the La Theine line: from the player below to her, and on from her
+    survey("the player below the cliff to her on it", position_t(606.98f, -16.82f, 287.74f, 0, 0), position_t(620.9f, -22.79f, 292.8f, 0, 0));
+    survey("her on the cliff to the La Theine line", position_t(620.9f, -22.79f, 292.8f, 0, 0), position_t(760.4f, -12.0f, 405.0f, 0, 0));
+    survey("the player below the cliff to the La Theine line", position_t(606.98f, -16.82f, 287.74f, 0, 0), position_t(760.4f, -12.0f, 405.0f, 0, 0));
+    // ways players walk: the Konschtat line to the bat cave, the cave to the La Theine line
+    survey("Konschtat line to the cave", position_t(919.0f, -4.6f, -426.0f, 0, 0), position_t(780.0f, -8.0f, -230.0f, 0, 0));
+    survey("the goblins to the La Theine line", position_t(691.7f, -2.9f, -201.3f, 0, 0), position_t(760.4f, -12.0f, 405.0f, 0, 0));
 }
