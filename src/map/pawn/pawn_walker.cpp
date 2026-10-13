@@ -1333,11 +1333,24 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
             case Intent::Kind::Formation:
             {
                 const float away = distance(POwner->loc.p, intent.point);
-                if (away > followMax || exposed)
+                // The formation settles: any cell near her place will do, the
+                // courtesy's cheapest, so a follower stops beside another,
+                // and one standing on another's spot steps off it
+                const float settle  = intent.kind == Intent::Kind::Formation && !intent.trek ? settings::get<float>("pawn.COURTESY_SETTLE") : 0.0f;
+                const bool  crowded = settle > 0.0f && away <= followMax && !exposed && Crowded();
+                if (away > followMax || exposed || crowded)
                 {
-                    // The player's personal space: her goal stepped clear of
-                    // his body and his wake
-                    const auto goal = intent.trek ? intent.point : CourtesyStep(intent.point);
+                    // The player's personal space and the party's: her goal
+                    // stepped clear of their bodies, his wake and where the
+                    // others are going
+                    const auto goal = intent.trek ? intent.point : CourtesyStep(intent.point, settle);
+                    // Settled where she stands -- the cheapest cell near her
+                    // place is her own -- the compass hears she has arrived
+                    if (settle > 0.0f && distance(goal, POwner->loc.p, true) < 0.05f)
+                    {
+                        m_SettledAt   = POwner->loc.p;
+                        m_SettledTick = m_Tick;
+                    }
                     auto       out  = walk(goal, intent.kind == Intent::Kind::Path || away > followMax ? followTarget : 0.0f);
                     // No way to her point, a ring on her: she steps out of
                     // it all the same -- escape wins over everything, reachable

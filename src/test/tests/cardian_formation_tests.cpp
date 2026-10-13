@@ -441,6 +441,51 @@ TEST_CASE("Compass: walking, her bearing blends toward her seat at her pace", "[
     CHECK_THAT(std::abs(turnFrom(std::atan2(step.z, step.x), kPi)), WithinAbs(0.0f, 1e-4));
 }
 
+TEST_CASE("Compass: lagging well behind him, she makes straight for her seat", "[cardian][formation]")
+{
+    constexpr float kPi = std::numbers::pi_v<float>;
+    const CompassRules r;
+    // he walks +x; two followers lag ten yalms behind him, side by side: the
+    // flank seat straight off his left (+z), the rear seat behind it
+    const float rear  = kPi * 140.0f / 180.0f;
+    const auto  flank = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, -10.0f, 1.0f, 0.0f, 1.0f, 4.0f, 0.4f, r);
+    const auto  back  = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, -10.0f, 1.5f, std::cos(rear), std::sin(rear), 4.0f, 0.4f, r);
+    CHECK_FALSE(flank.holds);
+    CHECK_THAT(flank.x, WithinAbs(0.0f, 1e-4));
+    CHECK_THAT(flank.z, WithinAbs(4.0f, 1e-4));
+    // each to her own seat: the drift alone sent both to the rear seat's spot
+    CHECK(std::hypot(flank.x - back.x, flank.z - back.z) > 2.5f);
+    // within the band, four yalms behind him, her bearing still only drifts
+    const auto close = compassStep(0.0f, 0.0f, 1.0f, 0.0f, true, -4.0f, 0.0f, 0.0f, 1.0f, 4.0f, 0.4f, r);
+    CHECK(close.x < -1.0f);
+}
+
+TEST_CASE("Compass: coming to a stand, she faces into the arc between him and his way, its room past either end", "[cardian][formation]")
+{
+    // the way to him 0, his way 32: the arc 0..32, eight more either side
+    CHECK(standFacing(0, 32, 8, 0.0f).span == 32);
+    CHECK(standFacing(0, 32, 8, 0.0f).off == -8);
+    CHECK(standFacing(0, 32, 8, 0.9999f).off == 40);
+    // the short way round, across the turn's end, either way
+    CHECK(standFacing(250, 10, 0, 0.0f).span == 16);
+    CHECK(standFacing(10, 250, 8, 0.0f).span == -16);
+    CHECK(standFacing(10, 250, 8, 0.0f).off == -24);
+    CHECK(standFacing(10, 250, 8, 0.9999f).off == 8);
+    // exactly opposite: one fixed way round, the half turn
+    CHECK(standFacing(0, 128, 0, 0.0f).span == -128);
+    CHECK(standFacing(128, 0, 0, 0.0f).span == -128);
+    // he faces the way to him from her, no room: straight at him every time
+    CHECK(standFacing(5, 5, 0, 0.0f).off == 0);
+    CHECK(standFacing(5, 5, 0, 0.9999f).off == 0);
+    // every roll lands inside the arc and its room
+    for (int i = 0; i < 100; ++i)
+    {
+        const auto f = standFacing(200, 60, 18, static_cast<float>(i) / 100.0f);
+        CHECK(f.off >= std::min(0, f.span) - 18);
+        CHECK(f.off <= std::max(0, f.span) + 18);
+    }
+}
+
 TEST_CASE("Compass: standing on her, or too near, she steps out to the band on her side", "[cardian][formation]")
 {
     const CompassRules r;

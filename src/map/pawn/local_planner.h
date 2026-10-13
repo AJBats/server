@@ -29,6 +29,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <numbers>
 #include <optional>
 #include <queue>
@@ -138,6 +139,12 @@ namespace cardian::planner
         float sideBias      = 0.0f; // +1 / -1: last tick's side of the start->goal line, kept a little cheaper (0: none)
         float biasCost      = 0.1f; // per yalm on the other side
         int   maxExpansions = 1500;
+        // Yalms round a goal inside the window where any cell will do: the
+        // plan ends on the cheapest, priced by its distance from the goal
+        // and the field's extra where she would stand -- so she stops beside
+        // a body on her spot, not on it, and steps off one she stands in
+        // (0: the goal itself)
+        float goalRadius = 0.0f;
     };
 
     // Which cells can be walked: the navmesh, asked at a cell's centre.
@@ -173,7 +180,11 @@ namespace cardian::planner
     // A* over the grid: eight neighbours, a step's cost its length times one
     // plus the field's extra at the cell entered, no cutting of corners past
     // a cell that cannot be walked, the octile distance as the heuristic
-    // (admissible: extras are never negative).
+    // (admissible: extras are never negative). With a goal area, every cell
+    // of it reached is a possible end, its price the walk there and its own
+    // (twice the end's distance from the goal, the field's extra there); the
+    // search runs until nothing left could end cheaper, the heuristic eased
+    // by the area's radius so it stays admissible.
     inline auto plan(const Query& q, const Field& field, Walkable walkable) -> std::optional<Plan>
     {
         using namespace detail;
@@ -184,6 +195,8 @@ namespace cardian::planner
         const int  gx         = std::clamp(cellOf(q.gx), sx - q.window, sx + q.window);
         const int  gz         = std::clamp(cellOf(q.gz), sz - q.window, sz + q.window);
         const bool goalInside = gx == cellOf(q.gx) && gz == cellOf(q.gz);
+        const bool area       = goalInside && q.goalRadius > 0.0f;
+        const int  ease       = area ? static_cast<int>(std::ceil(q.goalRadius)) + 1 : 0;
 
         const float lx   = q.gx - q.sx;
         const float lz   = q.gz - q.sz;
@@ -210,6 +223,21 @@ namespace cardian::planner
             return ok;
         };
 
+        // The field's extra at a cell's centre, worked out once a cell: a
+        // cell is entered from up to eight neighbours
+        std::unordered_map<int64_t, float> extras;
+        const auto                         extraAt = [&](const int cx, const int cz) -> float
+        {
+            const auto k = key(cx, cz);
+            if (const auto it = extras.find(k); it != extras.end())
+            {
+                return it->second;
+            }
+            const float extra = field.at(centre(cx), centre(cz));
+            extras.emplace(k, extra);
+            return extra;
+        };
+
         struct Node
         {
             float   g      = 0.0f;
@@ -230,9 +258,24 @@ namespace cardian::planner
         };
         const auto h = [&](const int cx, const int cz) -> float
         {
-            const float dx = static_cast<float>(std::abs(cx - gx));
-            const float dz = static_cast<float>(std::abs(cz - gz));
+            const float dx = static_cast<float>(std::max(std::abs(cx - gx) - ease, 0));
+            const float dz = static_cast<float>(std::max(std::abs(cz - gz) - ease, 0));
             return dx + dz + (kSqrt2 - 2.0f) * std::min(dx, dz);
+        };
+
+        // Where a cell's walk would end: her own spot for her cell, the goal
+        // itself for its cell, a cell's centre otherwise
+        const auto endOf = [&](const int cx, const int cz) -> std::pair<float, float>
+        {
+            if (cx == sx && cz == sz)
+            {
+                return { q.sx, q.sz };
+            }
+            if (cx == gx && cz == gz && goalInside)
+            {
+                return { q.gx, q.gz };
+            }
+            return { centre(cx), centre(cz) };
         };
 
         std::unordered_map<int64_t, Node>                                 best;
@@ -240,18 +283,39 @@ namespace cardian::planner
         best[key(sx, sz)] = Node{ 0.0f, sx, sz, key(sx, sz) };
         open.push(Open{ h(sx, sz), 0.0f, sx, sz });
 
-        int  expansions = 0;
-        bool found      = false;
+        int     expansions = 0;
+        bool    found      = false;
+        int64_t endKey     = key(gx, gz);
+        float   endPrice   = std::numeric_limits<float>::max();
         while (!open.empty())
         {
             const Open cur = open.top();
+            if (area && cur.f >= endPrice)
+            {
+                break; // nothing left could end cheaper
+            }
             open.pop();
             const auto ck = key(cur.cx, cur.cz);
             if (cur.g > best[ck].g + 1e-4f)
             {
                 continue; // a stale entry: the cell was reached cheaper since
             }
-            if (cur.cx == gx && cur.cz == gz)
+            if (area)
+            {
+                // The end's distance from the goal counts twice: stopping
+                // short saves as much walk as it leaves, so once would tie
+                // every cell on the way with the goal itself
+                const auto [ex, ez] = endOf(cur.cx, cur.cz);
+                const float off     = formation::planarDistance(ex, ez, q.gx, q.gz);
+                const float price   = cur.g + 2.0f * off + field.at(ex, ez);
+                if (off <= q.goalRadius && price < endPrice)
+                {
+                    endPrice = price;
+                    endKey   = ck;
+                    found    = true;
+                }
+            }
+            else if (cur.cx == gx && cur.cz == gz)
             {
                 found = true;
                 break;
@@ -280,7 +344,7 @@ namespace cardian::planner
                         continue;
                     }
                     const float len  = diagonal ? kSqrt2 : 1.0f;
-                    float       step = len * (1.0f + field.at(centre(nx), centre(nz)));
+                    float       step = len * (1.0f + extraAt(nx, nz));
                     if (q.sideBias != 0.0f && side(centre(nx), centre(nz)) == -q.sideBias)
                     {
                         step += len * q.biasCost;
@@ -301,7 +365,7 @@ namespace cardian::planner
         }
 
         std::vector<std::pair<int, int>> cells;
-        for (auto k = key(gx, gz);;)
+        for (auto k = endKey;;)
         {
             const auto& n = best[k];
             cells.emplace_back(n.cx, n.cz);
@@ -314,7 +378,7 @@ namespace cardian::planner
         std::reverse(cells.begin(), cells.end());
 
         Plan p;
-        p.cost = best[key(gx, gz)].g;
+        p.cost = best[endKey].g;
         p.points.reserve(cells.size());
         p.points.emplace_back(q.sx, q.sz);
         for (std::size_t i = 1; i + 1 < cells.size(); ++i)
@@ -323,7 +387,7 @@ namespace cardian::planner
         }
         if (cells.size() > 1)
         {
-            p.points.emplace_back(goalInside ? q.gx : centre(gx), goalInside ? q.gz : centre(gz));
+            p.points.push_back(endOf(cells.back().first, cells.back().second));
         }
         for (std::size_t i = 1; i < p.points.size(); ++i)
         {

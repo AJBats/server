@@ -172,6 +172,58 @@ TEST_CASE("plan: last tick's side is kept when the two ways round cost the same"
     REQUIRE(zl * zr < 0.0f);
 }
 
+TEST_CASE("plan: a goal area with a body on the goal ends beside the body, as near the goal as is clear", "[cardian][planner]")
+{
+    Field f;
+    f.discs.push_back(Disc{ 10.5f, 0.5f, 1.2f, 6.0f });
+    auto q       = straightQuery();
+    q.goalRadius = 1.5f;
+
+    const auto p = plan(q, f, openGround);
+    REQUIRE(p.has_value());
+    const auto [ex, ez] = p->points.back();
+    CHECK(cardian::formation::planarDistance(ex, ez, 10.5f, 0.5f) <= 1.5f + 0.01f);
+    CHECK(cardian::formation::planarDistance(ex, ez, 10.5f, 0.5f) >= 1.2f);
+}
+
+TEST_CASE("plan: a goal area with nothing on the goal ends on the goal itself", "[cardian][planner]")
+{
+    // The first cell of the area the search reaches is the near edge, a
+    // yalm short of the goal: the search must run on past it to the goal,
+    // the cheaper end
+    auto q       = straightQuery();
+    q.goalRadius = 1.5f;
+
+    const auto p = plan(q, Field{}, openGround);
+    REQUIRE(p.has_value());
+    CHECK_THAT(p->points.back().first, WithinAbs(10.5f, 0.01f));
+    CHECK_THAT(p->points.back().second, WithinAbs(0.5f, 0.01f));
+    CHECK_THAT(p->length, WithinAbs(10.0f, 0.01f));
+}
+
+TEST_CASE("plan: standing in a body, a goal area round her own spot steps her just out of it; standing clear, she stays", "[cardian][planner]")
+{
+    Query q;
+    q.sx         = 0.5f;
+    q.sz         = 0.5f;
+    q.gx         = 0.5f;
+    q.gz         = 0.5f;
+    q.goalRadius = 1.5f;
+
+    Field f;
+    f.discs.push_back(Disc{ 0.6f, 0.6f, 1.2f, 6.0f });
+    const auto out = plan(q, f, openGround);
+    REQUIRE(out.has_value());
+    REQUIRE(out->points.size() >= 2);
+    const auto [ex, ez] = out->points.back();
+    CHECK(cardian::formation::planarDistance(ex, ez, 0.6f, 0.6f) >= 1.2f);
+    CHECK(cardian::formation::planarDistance(ex, ez, 0.5f, 0.5f) <= 1.5f + 0.01f);
+
+    const auto stays = plan(q, Field{}, openGround);
+    REQUIRE(stays.has_value());
+    CHECK(stays->points.size() == 1);
+}
+
 TEST_CASE("along: the point so many yalms along the plan, its end when shorter", "[cardian][planner]")
 {
     const auto p = plan(straightQuery(), Field{}, openGround);

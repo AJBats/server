@@ -342,10 +342,11 @@ namespace cardian::formation
     // fight ring holds a mob's melee, not a seat turning with his facing --
     // so his turning on the spot moves nobody, and an about-turn makes nobody
     // cross. While he walks, her bearing blends toward her ring seat
-    // (measured from his heading) at her own pace; one he walks at holds her
-    // ground, steps off his line if he would run into her, and falls in once
-    // he has passed. Standing, she stays where she is within a band round
-    // him, else walks straight in or out along her bearing.
+    // (measured from his heading) at her own pace, and lagging well behind
+    // she makes straight for it; one he walks at holds her ground, steps off
+    // his line if he would run into her, and falls in once he has passed.
+    // Standing, she stays where she is within a band round him, else walks
+    // straight in or out along her bearing.
     // ------------------------------------------------------------------
 
     // The shortest signed turn from bearing b to bearing a, in (-pi, pi]
@@ -368,7 +369,7 @@ namespace cardian::formation
     {
         float blend     = 0.785f; // radians a second her bearing drifts toward her seat while he walks
         float bandNear  = 2.5f;   // standing: nearer than this, she steps out along her bearing
-        float bandFar   = 6.0f;   // standing: farther than this, she walks in along it
+        float bandFar   = 6.0f;   // standing: farther than this, she walks in along it; walking, farther than this behind or beside him, she makes straight for her seat
         float aheadHalf = 1.047f; // radians either side of his heading where she is ahead of him, and lets him pass
         float lineClear = 1.5f;   // yalms off his line she keeps while he passes her
         float passRange = 5.0f;   // ... once he is this near
@@ -416,10 +417,36 @@ namespace cardian::formation
             }
             return { sx, sz, true };
         }
-        // Behind or beside him: her bearing drifts toward her seat, at her pace
+        // Behind or beside him: her bearing drifts toward her seat, at her
+        // pace. Lagging -- past the band's far edge, not ahead of him -- she
+        // makes straight for her seat: from behind him the drift alone aims
+        // her at the rear seats, another follower's, and two who lag
+        // together walk into one spot
+        const bool  lags = d > r.bandFar && std::abs(turnFrom(std::atan2(hz, hx), bearing)) >= r.aheadHalf;
         const float most = r.blend * std::max(dt, 0.0f);
-        const float b    = bearing + std::clamp(turnFrom(bearing, seatBearing), -most, most);
+        const float b    = lags ? seatBearing : bearing + std::clamp(turnFrom(bearing, seatBearing), -most, most);
         return { px + seatDist * std::cos(b), pz + seatDist * std::sin(b), false };
+    }
+
+    // Her heading as she comes to a stand (the user, 2026-10-13), in the
+    // world's 256ths of a turn: somewhere in the arc between the way to him
+    // (`toHim`) and the way he faces (`hisWay`), the short way round -- one
+    // fixed way when the two are exactly opposite -- widened by `room` past
+    // either end, `roll` in [0, 1) picking where. `off` is the heading less
+    // the way to him, `span` the way he faces less it
+    struct StandFacing
+    {
+        int off  = 0;
+        int span = 0;
+    };
+
+    inline auto standFacing(const int toHim, const int hisWay, const int room, const float roll) -> StandFacing
+    {
+        const int span = ((hisWay - toHim) % 256 + 256 + 128) % 256 - 128;
+        const int lo   = std::min(0, span) - room;
+        const int hi   = std::max(0, span) + room;
+        const int off  = std::min(hi, lo + static_cast<int>(std::floor(std::clamp(roll, 0.0f, 1.0f) * static_cast<float>(hi - lo + 1))));
+        return { off, span };
     }
 
     // ------------------------------------------------------------------

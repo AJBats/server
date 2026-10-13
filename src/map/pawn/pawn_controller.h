@@ -1004,11 +1004,16 @@ private:
     auto TowIntent(CBattleEntity* PTarget) -> Intent;
 
     // The courtesy (local_planner.h): this tick's step toward `point`,
-    // planned over a one-yalm grid round her against the player's body
-    // and wake, where the straight walk would cut through them; the point
-    // itself otherwise. Under every walk the walker plans to a point.
-    // pawn.COURTESY_* size and price the field; BODY_COST 0 is off.
-    auto CourtesyStep(const position_t& point) -> position_t;
+    // planned over a one-yalm grid round her against the player's body and
+    // wake and the other members' (where they stand, where they are going),
+    // where the straight walk would cut through them; the point itself
+    // otherwise. With `settle`, any cell within that many yalms of the
+    // point will do, the cheapest taken: she stops beside a member, not on
+    // her. Under every walk the walker plans to a point. pawn.COURTESY_*
+    // size and price the field; BODY_COST 0 is off.
+    auto CourtesyStep(const position_t& point, float settle = 0.0f) -> position_t;
+    auto MemberSpots(const CCharEntity* PPlayer) const -> std::vector<position_t>; // the courtesy's members: where each other member stands, and where each cardian goes
+    auto Crowded() const -> bool;                                                  // within COURTESY_MEMBER_RADIUS of another member's spot
 
     // The walk in on a mob: to within RoamDistance of it
     auto ApproachIntent(const CBattleEntity* PTarget) const -> Intent;
@@ -1761,11 +1766,17 @@ private:
     HeldPoint         m_FollowHeld;
     // The compass follow (CompassPoint): the tick of her last step, whether
     // he was walking then, when she sets off after him, and whether she
-    // stood last step (she turns to him as she comes to a stand)
+    // stood last step (she turns in her own time as she comes to a stand)
     timer::time_point m_CompassLast{};
     bool              m_CompassWasMoving = false;
     timer::time_point m_CompassGoAt{};
     bool              m_CompassHeld = false;
+    std::optional<position_t>        m_CompassStoodAt; // where she came to her stand and decided how to face; a step away from it makes a new stand
+    std::optional<timer::time_point> m_CompassFaceAt;  // ... when she turns, if she turns at all
+    // The walker's word on her last formation walk: settled where she stands,
+    // the cheapest cell near her place (CourtesyStep's settle), and when
+    std::optional<position_t> m_SettledAt;
+    timer::time_point         m_SettledTick{};
     float             m_CourtesySide = 0.0f; // her side of the line last tick, kept a little cheaper (CourtesyStep)
     timer::time_point m_LastCourtesyTime;
     timer::time_point m_LastCourtesySaid;

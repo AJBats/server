@@ -187,32 +187,39 @@ xi.settings.pawn =
     -- (within COMPASS_AHEAD_DEG of his heading) holds her ground while
     -- within COMPASS_HOLD_RANGE yalms of him (farther, she comes to him),
     -- steps COMPASS_LINE_CLEAR yalms off his line if he comes within
-    -- COMPASS_PASS_RANGE, and falls in once he has passed. Standing, she
-    -- stays where she is between COMPASS_NEAR and COMPASS_FAR yalms of him,
-    -- else walks straight in or out along her bearing, and she turns to him
-    -- (give or take COMPASS_FACE_JITTER_DEG) as she comes to a stand,
-    -- unless she is kneeling to rest. Each
+    -- COMPASS_PASS_RANGE, and falls in once he has passed; lagging farther
+    -- than COMPASS_FAR behind or beside him, she makes straight for her seat.
+    -- Standing, she stays where she is between COMPASS_NEAR and COMPASS_FAR
+    -- yalms of him, else walks straight in or out along her bearing. Come to
+    -- a stand, she turns in her own time (the user, 2026-10-13):
+    -- COMPASS_FACE_STAY_PERCENT of the time she keeps the way she faces;
+    -- else, 0 to COMPASS_FACE_DELAY_MAX seconds after she stops, she faces
+    -- somewhere between him and the way he faces, COMPASS_FACE_ARC_ROOM_DEG
+    -- past either end -- now his way, now ahead where he points -- once she
+    -- is not kneeling or busy. Each
     -- cardian has her own manner, the same every time: her blend pace times
     -- 1 +- COMPASS_RATE_SPREAD, her seat turned up to
     -- COMPASS_ANGLE_SPREAD_DEG either way, up to COMPASS_DIST_SPREAD yalms
     -- further out, and a pause of COMPASS_REACT_MIN to _MAX seconds before
     -- she sets off when he does. A camp's place, and holding for his strike,
     -- keep the ring; false: the ring everywhere.
-    FORMATION_COMPASS                  = true,
-    FORMATION_COMPASS_SPACING          = 1.0,
-    FORMATION_COMPASS_BLEND_DEG        = 45,
-    FORMATION_COMPASS_AHEAD_DEG        = 60,
-    FORMATION_COMPASS_LINE_CLEAR       = 1.5,
-    FORMATION_COMPASS_PASS_RANGE       = 5.0,
-    FORMATION_COMPASS_HOLD_RANGE       = 10.0,
-    FORMATION_COMPASS_NEAR             = 2.5,
-    FORMATION_COMPASS_FAR              = 6.0,
-    FORMATION_COMPASS_FACE_JITTER_DEG  = 25,
-    FORMATION_COMPASS_RATE_SPREAD      = 0.4,
-    FORMATION_COMPASS_ANGLE_SPREAD_DEG = 10,
-    FORMATION_COMPASS_DIST_SPREAD      = 0.75,
-    FORMATION_COMPASS_REACT_MIN        = 0.2,
-    FORMATION_COMPASS_REACT_MAX        = 0.9,
+    FORMATION_COMPASS                   = true,
+    FORMATION_COMPASS_SPACING           = 1.0,
+    FORMATION_COMPASS_BLEND_DEG         = 45,
+    FORMATION_COMPASS_AHEAD_DEG         = 60,
+    FORMATION_COMPASS_LINE_CLEAR        = 1.5,
+    FORMATION_COMPASS_PASS_RANGE        = 5.0,
+    FORMATION_COMPASS_HOLD_RANGE        = 10.0,
+    FORMATION_COMPASS_NEAR              = 2.5,
+    FORMATION_COMPASS_FAR               = 6.0,
+    FORMATION_COMPASS_FACE_STAY_PERCENT = 25,
+    FORMATION_COMPASS_FACE_DELAY_MAX    = 10,
+    FORMATION_COMPASS_FACE_ARC_ROOM_DEG = 25,
+    FORMATION_COMPASS_RATE_SPREAD       = 0.4,
+    FORMATION_COMPASS_ANGLE_SPREAD_DEG  = 10,
+    FORMATION_COMPASS_DIST_SPREAD       = 0.75,
+    FORMATION_COMPASS_REACT_MIN         = 0.2,
+    FORMATION_COMPASS_REACT_MAX         = 0.9,
     -- How far ahead of the player the compass follow aims while he walks, as
     -- a share of the lead's prediction (FORMATION_PREDICT_MS): the server
     -- learns of his steps a moment late, and at 1 his followers keep up as
@@ -272,13 +279,23 @@ xi.settings.pawn =
     -- move and WAKE_STANDING while they stand. Where there is room the
     -- cheap way round wins; where the walls leave nothing cheaper the
     -- walk goes through. Suggestions only: the danger map and the mesh
-    -- still rule. BODY_COST 0 switches it off.
+    -- still rule. BODY_COST 0 switches it off. The party's other members
+    -- are in the field too (the user, 2026-10-13): a disc of MEMBER_RADIUS
+    -- yalms costing MEMBER_COST where each stands and where each is going,
+    -- so the party paths round one another. The formation's walks settle:
+    -- any cell within SETTLE yalms of her place will do, the cheapest --
+    -- nearest it, clear of the field -- taken, so a follower stops beside
+    -- another, never on her spot, and one standing within a member's radius
+    -- steps to the cheapest cell near her.
     COURTESY_BODY_RADIUS   = 1.5,
     COURTESY_BODY_COST     = 6.0,
     COURTESY_WAKE_RADIUS   = 3.5,
     COURTESY_WAKE_COST     = 2.0,
     COURTESY_WAKE_RUN      = 8.0,
     COURTESY_WAKE_STANDING = 2.0,
+    COURTESY_MEMBER_RADIUS = 1.2,
+    COURTESY_MEMBER_COST   = 6.0,
+    COURTESY_SETTLE        = 1.5,
 
     -- The step back, off by MELEE_STEP_BACK below: a mob used to walk onto
     -- its target's exact coordinates and stop there (upstream's pathfind

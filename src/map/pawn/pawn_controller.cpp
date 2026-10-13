@@ -5999,9 +5999,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // and one beside it is judged on the spot she will stand on; the
     // walker's own pass then finds it clear
     ClaimSpot(proposal);
+    // A follower on another member's spot is no stand either: the walker
+    // steps her off it first (Walk, the courtesy's settle), and a kneel
+    // there would keep the two on one pixel
     const bool stationary = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
                              distance(POwner->loc.p, proposal.point) <= proposal.tolerance) &&
-                            !POwner->PAI->PathFind->IsFollowingPath();
+                            !POwner->PAI->PathFind->IsFollowingPath() && !(proposal.kind == Intent::Kind::Formation && Crowded());
     // A mage's safety spot as planned, the battle she faces from it, and
     // where she stands before her move (FaceBattleOnArrival): taken before
     // a kneel stands her where she is
@@ -6116,6 +6119,8 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
         {
             m_CompassLast     = {};
             m_CompassHeld     = false;
+            m_CompassStoodAt.reset();
+            m_CompassFaceAt.reset();
             const auto slot   = RingSlot();
             const auto seat   = SeatOf(slot);
             followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowHeld));
@@ -6136,7 +6141,49 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
     return intent;
 }
 
-auto CPawnController::CourtesyStep(const position_t& point) -> position_t
+auto CPawnController::MemberSpots(const CCharEntity* PPlayer) const -> std::vector<position_t>
+{
+    // Every other member of her party in her zone, alive, but the player the
+    // courtesy prices on his own: where each stands, and for a cardian where
+    // she is going (her claim on the board)
+    std::vector<position_t> out;
+    const auto*             PParty = static_cast<const CCharEntity*>(POwner)->PParty;
+    if (PParty == nullptr)
+    {
+        return out;
+    }
+    for (const auto* PMember : PParty->members)
+    {
+        const auto* PChar = dynamic_cast<const CCharEntity*>(PMember);
+        if (PChar == nullptr || PChar == POwner || PChar == PPlayer || PChar->loc.zone != POwner->loc.zone || PChar->isDead())
+        {
+            continue;
+        }
+        out.push_back(PChar->loc.p);
+        const auto* PPeer = PChar->PAI != nullptr ? dynamic_cast<const CPawnController*>(PChar->PAI->GetController()) : nullptr;
+        if (PPeer == nullptr)
+        {
+            continue;
+        }
+        for (const auto& at : PPeer->SpotClaims())
+        {
+            if (distance(at, PChar->loc.p, true) > 0.5f)
+            {
+                out.push_back(at);
+            }
+        }
+    }
+    return out;
+}
+
+auto CPawnController::Crowded() const -> bool
+{
+    const float radius = settings::get<float>("pawn.COURTESY_MEMBER_RADIUS");
+    const auto  spots  = MemberSpots(GetLivePlayer());
+    return std::any_of(spots.begin(), spots.end(), [&](const position_t& at) { return distance(POwner->loc.p, at, true) < radius; });
+}
+
+auto CPawnController::CourtesyStep(const position_t& point, const float settle) -> position_t
 {
     const float bodyCost = settings::get<float>("pawn.COURTESY_BODY_COST");
     const auto* PPlayer  = GetLivePlayer();
@@ -6181,6 +6228,16 @@ auto CPawnController::CourtesyStep(const position_t& point) -> position_t
     };
     cardian::planner::Field field;
     field.discs.push_back(cardian::planner::Disc{ p.x, p.z, body, bodyCost });
+    // The party's other members, priced as his body is at a member's own
+    // radius: where each stands and where each is going, so the party paths
+    // round one another and, with a spot to settle on, stops beside one
+    // another rather than on one spot
+    const float memberRadius = settings::get<float>("pawn.COURTESY_MEMBER_RADIUS");
+    const float memberCost   = settings::get<float>("pawn.COURTESY_MEMBER_COST");
+    for (const auto& at : MemberSpots(PPlayer))
+    {
+        field.discs.push_back(cardian::planner::Disc{ at.x, at.z, memberRadius, memberCost });
+    }
     for (const auto [from, radius] : { std::pair{ body, body + 0.5f }, std::pair{ width, width } })
     {
         if (wake > from)
@@ -6228,22 +6285,34 @@ auto CPawnController::CourtesyStep(const position_t& point) -> position_t
         return point;
     }
 
+    // A spot to settle on is her place itself on her own ground: never a
+    // waypoint at the window's edge, nor a place a ledge above or below her,
+    // which the flat grid cannot tell from her own
+    constexpr float kSettleRise = 1.5f;
+    const bool      settles     = settle > 0.0f && distance(me, point, true) <= edge && std::abs(me.y - point.y) <= kSettleRise;
+
     cardian::planner::Query q;
-    q.sx       = me.x;
-    q.sz       = me.z;
-    q.gx       = goal.x;
-    q.gz       = goal.z;
-    q.window   = kWindow;
-    q.sideBias = m_Tick - m_LastCourtesyTime <= 1s ? m_CourtesySide : 0.0f;
+    q.sx         = me.x;
+    q.sz         = me.z;
+    q.gx         = goal.x;
+    q.gz         = goal.z;
+    q.window     = kWindow;
+    q.sideBias   = m_Tick - m_LastCourtesyTime <= 1s ? m_CourtesySide : 0.0f;
+    q.goalRadius = settles ? settle : 0.0f;
 
     const auto walkable = [&](const float x, const float z)
     {
         return navMesh->validPosition(position_t(x, me.y, z, 0, 0));
     };
     const auto plan = cardian::planner::plan(q, field, walkable);
-    if (!plan.has_value() || plan->points.size() < 2)
+    if (!plan.has_value())
     {
         return point;
+    }
+    if (plan->points.size() < 2)
+    {
+        // Settling, where she stands is the cheapest of the spot's cells
+        return settles ? me : point;
     }
 
     // Her side of the line, kept for next tick's tie
@@ -6257,7 +6326,8 @@ auto CPawnController::CourtesyStep(const position_t& point) -> position_t
     if (plan->length > plan->straight + 0.5f && m_Tick - m_LastCourtesySaid > 3s)
     {
         m_LastCourtesySaid = m_Tick;
-        ShowInfoFmt("pawn: {} goes round {} ({:.1f}y further, {})", POwner->getName(), PPlayer->getName(), plan->length - plan->straight, moving ? "their wake" : "standing");
+        ShowInfoFmt("pawn: {} goes round {} and the party ({:.1f}y further, {})", POwner->getName(), PPlayer->getName(), plan->length - plan->straight,
+                    moving ? "his wake" : "standing");
     }
 
     // The step target that far along the plan; a plan not much longer than
@@ -8073,7 +8143,11 @@ void CPawnController::FormationDebug(const char* role, const CCharEntity* PPlaye
     // the prediction applied and how wrong the last one was, how far the
     // pawn sits from its point, and from the player
     const auto packetAge = pawn::positionPacketAge(PPlayer->id);
-    ShowInfoFmt("pawn: {} {} on {}: source={} stream={} packet={} gap={:.1f}y moving={} pred=+{:.1f}y predErr={} track={:.1f}y dist={:.1f}y speed={}",
+    // and which way she faces against the way to him, and whom her head is on
+    const float facing = angleDifference(POwner->loc.p.rotation, worldAngle(POwner->loc.p, PPlayer->loc.p)) * 360.0f / 256.0f;
+    const auto  head   = POwner->m_TargID == 0 ? "ahead" : POwner->m_TargID == PPlayer->targid ? "him" : "another";
+    ShowInfoFmt("pawn: {} {} on {}: source={} stream={} packet={} gap={:.1f}y moving={} pred=+{:.1f}y predErr={} track={:.1f}y dist={:.1f}y speed={} "
+                "facing={:+.0f}deg head={}",
                 role, POwner->getName(), PPlayer->getName(),
                 a.streamed ? "stream" : "packet",
                 a.streamed ? fmt::format("{}ms", a.streamAge.count()) : "none",
@@ -8084,7 +8158,9 @@ void CPawnController::FormationDebug(const char* role, const CCharEntity* PPlaye
                 m_LastPredictionError >= 0.0f ? fmt::format("{:.1f}y", m_LastPredictionError) : "n/a",
                 distance(POwner->loc.p, point),
                 distance(POwner->loc.p, a.observed),
-                POwner->baseSpeed);
+                POwner->baseSpeed,
+                facing,
+                head);
 }
 
 auto CPawnController::WalkLength(const position_t& to) const -> std::optional<float>
@@ -8333,11 +8409,18 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     // afresh: no blend for the time she was away
     const float gap    = std::chrono::duration<float>(m_Tick - m_CompassLast).count();
     const float dt     = m_CompassLast == timer::time_point{} || gap > 1.0f ? 0.0f : std::max(gap, 0.0f);
-    m_CompassLast      = m_Tick;
+    if (dt == 0.0f)
+    {
+        // and a stand after one is a new stand: no turn left over from before
+        m_CompassStoodAt.reset();
+        m_CompassFaceAt.reset();
+    }
+    m_CompassLast = m_Tick;
 
     // Her ring seat (RingSlot, SeatOf), turned by his heading and by her
     // own tilt, a little further out than the ring has it
-    const auto       seat   = SeatOf(RingSlot());
+    const auto       slot   = RingSlot();
+    const auto       seat   = SeatOf(slot);
     const position_t centre = moving ? a.anchor : a.observed;
     const position_t seatAt = nearPosition(centre, 1.0f, seat.angle + manner.tilt);
     const position_t ahead  = nearPosition(centre, 1.0f, 0.0f);
@@ -8353,16 +8436,77 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     const auto step = cardian::formation::compassStep(centre.x, centre.z, ahead.x - centre.x, ahead.z - centre.z, moving, POwner->loc.p.x, POwner->loc.p.z,
                                                       seatAt.x - centre.x, seatAt.z - centre.z, seat.offset + manner.extra, dt, rules);
 
-    // Coming to a stand she turns to him, give or take, not the way her
-    // last step went; kneeling, she keeps the way she knelt
-    if (step.holds && !m_CompassHeld && !Kneeling() && !Acting())
+    // Settled where she stands by the walker -- the cheapest cell near her
+    // place, another member on it (CourtesyStep's settle) -- she has arrived,
+    // wherever the band would have put her
+    const bool settled = !moving && m_SettledAt.has_value() && m_Tick - m_SettledTick <= 1s && distance(POwner->loc.p, *m_SettledAt, true) < 0.3f;
+    const bool holds   = step.holds || settled;
+
+    // The formation's trace (pawn.FORMATION_DEBUG), every tick: where she
+    // stands, her seat, and where the compass sends her, each as a bearing
+    // off his heading (positive anticlockwise) and a distance from him, so
+    // two followers whose points meet can be read from the log
+    if (settings::get<bool>("pawn.FORMATION_DEBUG"))
     {
-        const int jitter = static_cast<int>(settings::get<float>("pawn.FORMATION_COMPASS_FACE_JITTER_DEG") * 256.0f / 360.0f);
-        POwner->loc.p.rotation = static_cast<uint8>(worldAngle(POwner->loc.p, a.observed) + xirand::GetRandomNumber(-jitter, jitter + 1));
-        POwner->updatemask |= UPDATE_POS;
+        const float heading = std::atan2(ahead.z - centre.z, ahead.x - centre.x);
+        const auto  off     = [&](const float x, const float z)
+        {
+            return cardian::formation::turnFrom(heading, std::atan2(z - centre.z, x - centre.x)) / kDegree;
+        };
+        const auto from = [&](const float x, const float z)
+        {
+            return std::hypot(x - centre.x, z - centre.z);
+        };
+        ShowInfoFmt("pawn: compass trace {}: at ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y; seat {} {:+.0f} deg {:.1f}y; to ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y, {}; "
+                    "he at ({:.1f}, {:.1f}), {}",
+                    POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, off(POwner->loc.p.x, POwner->loc.p.z), from(POwner->loc.p.x, POwner->loc.p.z),
+                    cardian::formation::slotName(slot), off(seatAt.x, seatAt.z), seat.offset + manner.extra, step.x, step.z, off(step.x, step.z),
+                    from(step.x, step.z), step.holds ? "holds" : settled ? "settled" : "walks", centre.x, centre.z, moving ? "walking" : "standing");
     }
-    m_CompassHeld = step.holds;
-    if (step.holds)
+
+    // Come to a stand -- he stands, and she holds, still -- she turns in her
+    // own time, or not at all (the user, 2026-10-13): FACE_STAY_PERCENT of
+    // the time she keeps the way she faces; else, a moment of her own after
+    // she stops -- nothing to FACE_DELAY_MAX seconds -- she faces somewhere
+    // between him and the way he faces, FACE_ARC_ROOM_DEG past either end:
+    // now his way, now ahead where he points (standFacing). A step taken
+    // since (making room for another member) makes a new stand; walking
+    // again, she forgets it; kneeling or busy, she turns once she is free.
+    // Holding her ground while he walks at her is no stand
+    const bool stands = holds && !moving;
+    const bool still  = !POwner->PAI->PathFind->IsFollowingPath();
+    if (!stands)
+    {
+        m_CompassStoodAt.reset();
+        m_CompassFaceAt.reset();
+    }
+    else if (still && (!m_CompassStoodAt.has_value() || distance(POwner->loc.p, *m_CompassStoodAt, true) > 0.3f))
+    {
+        m_CompassStoodAt = POwner->loc.p;
+        const bool stays = static_cast<float>(xirand::GetRandomNumber(100)) < settings::get<float>("pawn.FORMATION_COMPASS_FACE_STAY_PERCENT");
+        const auto wait  = std::chrono::duration<float>(xirand::GetRandomNumber(0.0f, settings::get<float>("pawn.FORMATION_COMPASS_FACE_DELAY_MAX")));
+        m_CompassFaceAt  = stays ? std::nullopt : std::optional<timer::time_point>(m_Tick + std::chrono::duration_cast<timer::duration>(wait));
+        if (settings::get<bool>("pawn.FORMATION_DEBUG"))
+        {
+            ShowInfoFmt("pawn: compass trace {}: comes to a stand, {}", POwner->getName(), stays ? std::string("keeps the way she faces") : fmt::format("turns in {:.1f} s", wait.count()));
+        }
+    }
+    if (stands && still && m_CompassFaceAt.has_value() && m_Tick >= *m_CompassFaceAt && !Kneeling() && !Acting())
+    {
+        m_CompassFaceAt.reset();
+        const int  toHim  = worldAngle(POwner->loc.p, a.observed);
+        const int  room   = static_cast<int>(settings::get<float>("pawn.FORMATION_COMPASS_FACE_ARC_ROOM_DEG") * 256.0f / 360.0f);
+        const auto facing = cardian::formation::standFacing(toHim, a.observed.rotation, room, static_cast<float>(xirand::GetRandomNumber(0.0f, 1.0f)));
+        POwner->loc.p.rotation = static_cast<uint8>(toHim + facing.off);
+        POwner->updatemask |= UPDATE_POS;
+        if (settings::get<bool>("pawn.FORMATION_DEBUG"))
+        {
+            ShowInfoFmt("pawn: compass trace {}: turns {:+.0f} deg off him (his way {:+.0f} deg off him)", POwner->getName(), facing.off * 360.0f / 256.0f,
+                        facing.span * 360.0f / 256.0f);
+        }
+    }
+    m_CompassHeld = stands;
+    if (holds)
     {
         return POwner->loc.p;
     }
