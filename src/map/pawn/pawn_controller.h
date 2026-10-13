@@ -850,6 +850,12 @@ private:
     // A sneak-by under way: walked past the mobs; false once it is over
     auto WalkHopTick(bool racing) -> bool;
 
+    // A trek's step through the one walker (ROADMAP W2): the line proposed
+    // as any mover proposes its point, and the walk's outcome read for what
+    // only a trek says -- stuck by aggro, got by, no way, a crossing taken
+    // from as near as the mesh allows
+    void TrekStep(const pawn::TravelHop& hop, float distToLine, bool ordered, bool racing);
+
     // Whether a ball's mob sees a point (no wall between), memoised per tick
     auto SeesBall(const pawn::danger::Sphere& sphere, const position_t& point) const -> bool;
     mutable std::unordered_map<uint64_t, bool> m_BallSight;

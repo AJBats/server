@@ -7155,6 +7155,14 @@ void CPawnController::TravelTick()
         return;
     }
 
+    // The one walker (ROADMAP W2): the trek proposes its line and walks the
+    // way there through it, like every other mover
+    if (SafeWalkOn())
+    {
+        TrekStep(*hop, distToLine, order.has_value(), racing);
+        return;
+    }
+
     // The route round every mob that would come for her, planned across the
     // zone to the line
     if (TrekSafeWalk(hop->walkTo, racing))
@@ -7242,6 +7250,13 @@ void CPawnController::EndTrek()
     m_TrekRingsNear.clear();
     m_TrekHop.clear();
     m_TrekHopWalking = false;
+    // The one walker's walk is the trek's no longer: planned afresh for
+    // whatever she walks next, a sneak-by under way let go
+    m_Plan.hop.clear();
+    m_Plan.hopWalking = false;
+    m_Plan.known      = false;
+    m_Plan.heldSince.reset();
+    m_Plan.backOff.clear();
 }
 
 void CPawnController::EndChase(const std::string_view how)

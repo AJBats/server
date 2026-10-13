@@ -44,6 +44,7 @@
 #include "ai/helpers/pathfind.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "roam_region.h"
@@ -52,6 +53,7 @@
 #include <magic_enum/magic_enum.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -916,6 +918,97 @@ auto CPawnController::WalkHopTick(const bool racing) -> bool
     }
     m_TravelProgressTime = m_Tick;
     return true;
+}
+
+void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLine, const bool ordered, const bool racing)
+{
+    constexpr float kGotByNear = 8.0f; // past a choke she was stuck at: this near where it held her
+
+    // The trek is a mover like any other: it proposes its line, and the one
+    // walker plans the way there round every mob in her zone and walks it.
+    // A trek walks outside the claim board, by design
+    Intent toLine;
+    toLine.kind      = Intent::Kind::Path;
+    toLine.point     = hop.walkTo;
+    toLine.arrive    = 0.0f;
+    toLine.tolerance = 0.0f;
+    toLine.trek      = true;
+    toLine.racing    = racing;
+    toLine.claimed   = true;
+    Walk(std::move(toLine));
+    if (m_Plan.outcomeAt != m_Tick)
+    {
+        return; // her rest put the step off
+    }
+
+    switch (m_Plan.outcome)
+    {
+        case Outcome::Walking:
+        case Outcome::Escaping:
+        {
+            m_TravelStuckSaid = false;
+            const bool chokeAhead = m_Plan.danger >= 0 && m_Plan.next <= static_cast<size_t>(m_Plan.danger);
+            if (!chokeAhead && m_TrekStuckSaid && !racing && distance(POwner->loc.p, m_TrekStuckAt) < kGotByNear)
+            {
+                TrekGotBy("past the choke");
+            }
+            return;
+        }
+        case Outcome::BackingOff:
+        case Outcome::Hopping:
+            m_TravelStuckSaid    = false;
+            m_TravelProgressTime = m_Tick; // no stall: the line's no-progress crossing waits on it
+            return;
+        case Outcome::Held:
+        {
+            m_TravelProgressTime = m_Tick;
+
+            // Stuck by aggro, said once she is sure: the way held this long,
+            // and the plan of the whole way, made while she held, finds no
+            // way round
+            const auto stuckAfter = std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.TREK_STUCK_AFTER")));
+            if (!m_TrekStuckSaid && m_Plan.heldSince.has_value() && m_Tick - *m_Plan.heldSince >= stuckAfter && m_Plan.wholeHeld && m_Plan.wholeAt >= *m_Plan.heldSince)
+            {
+                static constexpr std::array kStuckLines = {
+                    "I'm stuck, too much aggro on the way.",
+                    "Can't get past these mobs. Waiting for an opening.",
+                    "The path is crawling with mobs. I'm holding back.",
+                    "No way through without pulling something. Waiting.",
+                    "Stuck behind some mobs here, they'd spot me if I moved.",
+                };
+                m_TrekStuckSaid = true;
+                m_TrekStuckAt   = m_Plan.danger >= 0 && static_cast<size_t>(m_Plan.danger) < m_Plan.route.size() ? m_Plan.route[m_Plan.danger] : POwner->loc.p;
+                ShowInfoFmt("pawn: travel {}: stuck by aggro, the way held {} s", POwner->getName(),
+                            std::chrono::duration_cast<std::chrono::seconds>(m_Tick - *m_Plan.heldSince).count());
+                pawn::drill::noteBlocked(POwner->id);
+                TrekSay(kStuckLines[xirand::GetRandomNumber(kStuckLines.size())]);
+            }
+            return;
+        }
+        case Outcome::NoRoute:
+            break;
+    }
+
+    // No walk on the mesh to the line: the mesh often ends short of the zone
+    // mouth, and the server itself accepts crossings from up to ~40 yalms
+    // out; farther, the order is let go, or she says she is stuck and looks
+    // again in a while
+    if (distToLine < CrossingSlack)
+    {
+        m_TravelStuckSaid = false;
+        m_TrekCrossedFrom = POwner->getZone();
+        pawn::requestTransfer(POwner->id, hop);
+        return;
+    }
+    if (ordered)
+    {
+        ShowInfoFmt("pawn: travel {}: cannot path to line ({:.1f}y away), order cancelled", POwner->getName(), distToLine);
+        pawn::clearTravelOrder(POwner->id);
+    }
+    else
+    {
+        TravelStuck(fmt::format("cannot path to the line {:.1f}y away", distToLine));
+    }
 }
 
 auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
