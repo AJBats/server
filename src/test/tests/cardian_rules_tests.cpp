@@ -193,3 +193,13 @@ TEST_CASE("pullBlocked: judged from where she stands now, it can turn unclean on
     REQUIRE_FALSE(pullBlocked(circles, 20.0f, -20.0f, 20.0f, 0.0f).has_value());
     REQUIRE(pullBlocked(circles, 0.0f, 0.0f, 20.0f, 0.0f).has_value());
 }
+
+TEST_CASE("retreatBinds: the party's own ground retreats; one detached carries on until it reaches her, then stays bound", "[cardian][rules]")
+{
+    using cardian::rules::retreatBinds;
+    CHECK_FALSE(retreatBinds(false, false, true)); // no retreat called: nothing binds
+    CHECK(retreatBinds(true, false, true));        // within the line, or a mob on her: bound
+    CHECK_FALSE(retreatBinds(true, false, false)); // far off, nothing on her: detached, she carries on
+    CHECK(retreatBinds(true, true, false));        // bound, then far again: the latch holds her
+    CHECK_FALSE(retreatBinds(false, true, false)); // lifted: free, bound or not
+}

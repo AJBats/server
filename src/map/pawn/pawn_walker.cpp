@@ -49,6 +49,7 @@
 #include "entities/mob_entity.h"
 #include "roam_region.h"
 #include "status_effect_container.h"
+#include "utils/zoneutils.h"
 
 #include <magic_enum/magic_enum.hpp>
 
@@ -78,7 +79,7 @@ namespace
     constexpr float kLocalSpare   = 30.0f;   // a walk's ground: half as long again as the way, and this much more
     constexpr float kWiderSpare   = 100.0f;  // ... and where the way round runs wider, three times the way and this much more
     constexpr float kOffRoute     = 2.0f;    // knocked this far off the leg she walks, her route is planned afresh from where she stands
-    constexpr float kHopGoalMoved = 10.0f;   // a sneak-by is let go when the walk's point moves this far from the one it set out for
+    constexpr float kHopLate      = 2.0f;    // seconds past its planned end a sneak-by is given up: as far as its plan holds (WalkSneakBy's slack)
     constexpr float kStretchPast  = 60.0f;   // a stretch planned again runs this many yalms of her route past the trouble
     constexpr float kStretchSpare = 60.0f;   // ... on ground half as long again as the stretch, and this many yalms more
     constexpr float kCrossingNear = 100.0f;  // a mob crossing her route this near ahead is planned round now; one farther waits until she is nearer
@@ -329,13 +330,14 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
     const float within   = rules.wholeZone ? kSameGoal : std::clamp(distance(here, point) * 0.05f, 0.1f, 5.0f);
     const bool  sameGoal = plan.zone == zone && distance(plan.goal, point) <= within && sameRules(plan.rules, rules);
 
-    // A sneak-by under way is let go when the walk it was planned for is
-    // another's now: rules with none (the player steering her), a new zone,
-    // or a point moved far from the one it set out for
-    if (!plan.hop.empty() &&
-        (!rules.sneaks || plan.hopZone != zone || plan.rules.wholeZone != rules.wholeZone || distance(point, plan.hopGoal) > kHopGoalMoved))
+    // A sneak-by is never cut short mid-way: it ends through, late, out of
+    // its zone, or once she races, and only then is her walk planned again,
+    // however her point has moved meanwhile (the user, 2026-10-13).
+    // The one exception is the player taking the wheel: his steering's rules
+    // carry no sneak-by
+    if (!plan.hop.empty() && !rules.sneaks)
     {
-        ShowInfoFmt("pawn: {}: the sneak-by is let go: her walk is another now", who);
+        ShowInfoFmt("pawn: {}: the sneak-by is let go: the player steers her", who);
         plan.hop.clear();
         plan.hopWalking = false;
         plan.known      = false;
@@ -343,7 +345,9 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
     }
 
     // On a sneak-by she walks it past the mobs, and nothing else has a say
-    // until it is over
+    // until it is over -- unless she races: alone with a mob on her, she
+    // runs for the party or her line instead. On the party's ground, a mob
+    // on her or not, the party is there and the sneak-by goes on
     if (WalkHopTick(racing))
     {
         result.outcome = Outcome::Hopping;
@@ -554,9 +558,12 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
             const bool better = length < remaining * 0.9f;
             if (stretchTo.has_value() || fresh || newTarget || caughtBy != nullptr || holdUnknown || holding || crossedBy >= 0 || better || (chokeAhead && !held))
             {
-                if (fresh || newTarget)
+                // A new walk starts its own hold -- unless she stands where she
+                // held: the point moved round her (the player about his
+                // camp), and the choke holds her still, its clock running on
+                if ((fresh || newTarget) && plan.heldSince.has_value() && distance(here, plan.heldAt) > kOffRoute)
                 {
-                    plan.heldSince.reset(); // a new walk: a hold of the last one is not this one's
+                    plan.heldSince.reset();
                 }
                 plan.route   = std::move(planned);
                 plan.next    = 1;
@@ -791,6 +798,7 @@ auto CPawnController::SafeWalk(const position_t& point, const Rules& rules) -> W
             }
             plan.heldSince = m_Tick;
         }
+        plan.heldAt = here;
         if (PPathFind->IsFollowingPath())
         {
             PPathFind->Clear();
@@ -964,7 +972,6 @@ auto CPawnController::WalkSneakBy(const Rules& rules) -> bool
         pawn::drill::noteHop(POwner->id);
     }
     plan.hop        = std::move(hop.points);
-    plan.hopGoal    = plan.goal;
     plan.hopZone    = POwner->getZone();
     plan.hopAt      = m_Tick;
     plan.hopSeconds = hop.seconds;
@@ -974,7 +981,6 @@ auto CPawnController::WalkSneakBy(const Rules& rules) -> bool
 
 auto CPawnController::WalkHopTick(const bool racing) -> bool
 {
-    constexpr float kLate    = 2.0f; // seconds past its planned end a hop is given up: as far as its plan holds (WalkSneakBy's slack)
     constexpr float kThrough = 0.3f; // this near its end, she is past them: her path finder arrives within 0.1
     auto&           plan     = m_Plan;
     if (plan.hop.empty())
@@ -1019,7 +1025,7 @@ auto CPawnController::WalkHopTick(const bool racing) -> bool
         }
         return false;
     }
-    if (elapsed > plan.hopSeconds + kLate)
+    if (elapsed > plan.hopSeconds + kHopLate)
     {
         over("runs late, and is given up");
         return false;
@@ -1053,6 +1059,51 @@ auto CPawnController::WalkHopTick(const bool racing) -> bool
     }
     m_TravelProgressTime = m_Tick;
     return true;
+}
+
+void CPawnController::SayStuckIfSure(const bool trek)
+{
+    // Stuck by aggro, said once she is sure: the way held this long, and the
+    // plan of the whole way, made while she held, finds no way round
+    const auto stuckAfter = std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.TREK_STUCK_AFTER")));
+    if (m_TrekStuckSaid || !m_Plan.heldSince.has_value() || m_Tick - *m_Plan.heldSince < stuckAfter || !m_Plan.wholeHeld || m_Plan.wholeAt < *m_Plan.heldSince)
+    {
+        return;
+    }
+    static constexpr std::array kStuckLines = {
+        "I'm stuck, too much aggro on the way.",
+        "Can't get past these mobs. Waiting for an opening.",
+        "The path is crawling with mobs. I'm holding back.",
+        "No way through without pulling something. Waiting.",
+        "Stuck behind some mobs here, they'd spot me if I moved.",
+    };
+    m_TrekStuckSaid = true;
+    m_TrekStuckAt   = m_Plan.danger >= 0 && static_cast<size_t>(m_Plan.danger) < m_Plan.route.size() ? m_Plan.route[m_Plan.danger] : POwner->loc.p;
+    ShowInfoFmt("pawn: {}{}: stuck by aggro, the way held {} s", trek ? "travel " : "", POwner->getName(),
+                std::chrono::duration_cast<std::chrono::seconds>(m_Tick - *m_Plan.heldSince).count());
+    if (trek)
+    {
+        pawn::drill::noteBlocked(POwner->id);
+    }
+    TrekSay(kStuckLines[xirand::GetRandomNumber(kStuckLines.size())]);
+}
+
+auto CPawnController::OrdersOwnerHere() const -> CCharEntity*
+{
+    const uint32 owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner));
+    return owner != 0 && POwner->loc.zone != nullptr ? POwner->loc.zone->GetCharByID(owner) : nullptr;
+}
+
+auto CPawnController::FarFromParty() const -> bool
+{
+    const auto* PPlayer = OrdersOwnerHere();
+    return PPlayer != nullptr && distance(POwner->loc.p, PPlayer->loc.p) > settings::get<float>("pawn.PARTY_GROUND_RADIUS");
+}
+
+auto CPawnController::SneakingBy() const -> bool
+{
+    const auto& plan = m_Plan;
+    return !plan.hop.empty() && POwner->getZone() == plan.hopZone && std::chrono::duration<float>(m_Tick - plan.hopAt).count() <= plan.hopSeconds + kHopLate;
 }
 
 void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLine, const bool ordered, const bool racing)
@@ -1095,31 +1146,9 @@ void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLin
             m_TravelProgressTime = m_Tick; // no stall: the line's no-progress crossing waits on it
             return;
         case Outcome::Held:
-        {
             m_TravelProgressTime = m_Tick;
-
-            // Stuck by aggro, said once she is sure: the way held this long,
-            // and the plan of the whole way, made while she held, finds no
-            // way round
-            const auto stuckAfter = std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(settings::get<float>("pawn.TREK_STUCK_AFTER")));
-            if (!m_TrekStuckSaid && m_Plan.heldSince.has_value() && m_Tick - *m_Plan.heldSince >= stuckAfter && m_Plan.wholeHeld && m_Plan.wholeAt >= *m_Plan.heldSince)
-            {
-                static constexpr std::array kStuckLines = {
-                    "I'm stuck, too much aggro on the way.",
-                    "Can't get past these mobs. Waiting for an opening.",
-                    "The path is crawling with mobs. I'm holding back.",
-                    "No way through without pulling something. Waiting.",
-                    "Stuck behind some mobs here, they'd spot me if I moved.",
-                };
-                m_TrekStuckSaid = true;
-                m_TrekStuckAt   = m_Plan.danger >= 0 && static_cast<size_t>(m_Plan.danger) < m_Plan.route.size() ? m_Plan.route[m_Plan.danger] : POwner->loc.p;
-                ShowInfoFmt("pawn: travel {}: stuck by aggro, the way held {} s", POwner->getName(),
-                            std::chrono::duration_cast<std::chrono::seconds>(m_Tick - *m_Plan.heldSince).count());
-                pawn::drill::noteBlocked(POwner->id);
-                TrekSay(kStuckLines[xirand::GetRandomNumber(kStuckLines.size())]);
-            }
+            SayStuckIfSure(true);
             return;
-        }
         case Outcome::NoRoute:
             break;
     }
@@ -1187,6 +1216,13 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
         // walker's were, so a mob that steps her way does not find her on
         // its edge
         rules.extra = cardian::rules::kClearance;
+        // Alone with a mob on her -- off the party's ground, beyond
+        // pawn.PARTY_GROUND_RADIUS of the player -- she runs on to the party
+        // with it and holds for no choke: through it, round every other ring
+        // she can. On the party's ground the party is there for her, and she
+        // holds and sneaks by as ever, whatever is on her (the user,
+        // 2026-10-13)
+        rules.holds = !(FarFromParty() && HatedByAnyMob());
     }
 
     AvoidAction action  = AvoidAction::None;
@@ -1364,6 +1400,31 @@ auto CPawnController::WalkPlanned(Intent intent) -> std::optional<AvoidAction>
         }
     }
     settleSeat();
+
+    // Off the party's ground, held at a choke on her way in, she says she is
+    // stuck, as a trek does, and once past it that she got by; back with the
+    // party some other way -- the player came to her -- there is nothing to
+    // say (the user, 2026-10-13)
+    if (!intent.trek && walked && m_Plan.outcomeAt == m_Tick)
+    {
+        const bool offGround = FarFromParty();
+        if (offGround && m_Plan.outcome == Outcome::Held && m_Plan.heldSince.has_value())
+        {
+            SayStuckIfSure(false);
+        }
+        else if (m_TrekStuckSaid)
+        {
+            const bool chokeAhead = m_Plan.danger >= 0 && m_Plan.next <= static_cast<size_t>(m_Plan.danger);
+            if (m_Plan.outcome == Outcome::Walking && !chokeAhead && distance(POwner->loc.p, m_TrekStuckAt) < 8.0f)
+            {
+                TrekGotBy("past the choke");
+            }
+            else if (!offGround && !m_Plan.heldSince.has_value())
+            {
+                m_TrekStuckSaid = false;
+            }
+        }
+    }
 
     // Her claim on the board while she walks: the point the walker sent her
     // to, or the end of the path she keeps (SpotClaims)

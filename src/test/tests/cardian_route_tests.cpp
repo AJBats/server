@@ -924,3 +924,34 @@ TEST_CASE("Route slopes (opt-in, CARDIAN_SLOPES=1)", "[cardian][route]")
     survey("Konschtat line to the cave", position_t(919.0f, -4.6f, -426.0f, 0, 0), position_t(780.0f, -8.0f, -230.0f, 0, 0));
     survey("the goblins to the La Theine line", position_t(691.7f, -2.9f, -201.3f, 0, 0), position_t(760.4f, -12.0f, 405.0f, 0, 0));
 }
+
+TEST_CASE("Route kept out of danger: a slope the mesh joins only by a switched-off drop is dropped down, never climbed", "[cardian][route]")
+{
+    // Valkurm Dunes: a slope a player slides down, whose foot and top the
+    // mesh's builder joins by drop links it switched off, a walk already
+    // joining them -- three minutes round. Down, she takes the drop; up, the
+    // drop is never climbed and she walks round
+    const auto mesh = loadMesh("Valkurm_Dunes");
+    if (!mesh)
+    {
+        SKIP("no navmesh for Valkurm_Dunes");
+    }
+    const auto       faces = cardian::route::facesOf(*mesh);
+    const position_t top(354.4f, -15.2f, 192.9f, 0, 0);
+    const position_t side(349.5f, -13.8f, 195.5f, 0, 0);
+    const position_t bottom(345.0f, -9.7f, 189.1f, 0, 0);
+
+    for (const auto& from : { top, side })
+    {
+        const auto down = cardian::route::searchAvoiding(*mesh, from, bottom, sz::kBodyExtents, sz::kLineExtents, {}, {}, 0.0f, &faces);
+        REQUIRE(down.has_value());
+        REQUIRE(down->complete);
+        CHECK(down->length < 30.0f);
+    }
+
+    const auto up = cardian::route::searchAvoiding(*mesh, bottom, top, sz::kBodyExtents, sz::kLineExtents, {}, {}, 0.0f, &faces);
+    if (up.has_value() && up->complete)
+    {
+        CHECK(up->length > 60.0f);
+    }
+}

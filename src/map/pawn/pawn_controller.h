@@ -224,8 +224,12 @@ public:
     // her HP and MP, every kHealthSaveEvery while they changed
     void NoteForSaving();
     auto IsHunting() const -> bool;
-    void SetRetreat(bool on); // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared
+    auto SetRetreat(bool on) -> bool; // the "on me" switch: disengage now, engage nobody, avoid nothing, until cleared; true when it binds her (the party's own ground)
     auto IsRetreating() const -> bool;
+    // A sneak-by under way, within its time: nothing of hers starts until
+    // she is through -- no spell, no rest, no item, and the player's order
+    // waits as it waits while she is busy (readyToAct)
+    auto SneakingBy() const -> bool;
     // Her tactician (tactician_line.h) runs: her rows offer it a tool (a
     // marked row that is on), her gambits are on, and a tactician watches
     // her scope
@@ -857,6 +861,27 @@ private:
     // from as near as the mesh allows
     void TrekStep(const pawn::TravelHop& hop, float distToLine, bool ordered, bool racing);
 
+    // Held at a choke this long, and the plan of the whole way finding none
+    // round it: one of her "stuck by aggro" lines, once (a trek's, or an
+    // everyday walk's off the party's ground)
+    void SayStuckIfSure(bool trek);
+
+    // The player whose orders she follows, when he is in her zone: in
+    // another, or loading between zones, nullptr
+    auto OrdersOwnerHere() const -> CCharEntity*;
+
+    // Farther than pawn.PARTY_GROUND_RADIUS from the player whose orders she
+    // follows, in his zone
+    auto FarFromParty() const -> bool;
+
+    // Off the party's ground, a mob that comes onto her unbidden is said to
+    // the party, once a chase, as a trek says it (TrekWatchHate)
+    void AggroWatch();
+
+    auto RetreatReaches() const -> bool; // in her zone, within pawn.PARTY_GROUND_RADIUS of her orders' player, or a mob on her
+    void RetreatTick();                  // a retreat she was detached from binds her once it reaches her
+    void ApplyRetreat(bool on);          // the retreat bound on her, or lifted
+
     // Whether a ball's mob sees a point (no wall between), memoised per tick
     auto SeesBall(const pawn::danger::Sphere& sphere, const position_t& point) const -> bool;
     mutable std::unordered_map<uint64_t, bool> m_BallSight;
@@ -1396,11 +1421,11 @@ private:
         bool                             walking = false; // handed to her path finder
         size_t                           end     = 0;     // ... up to here
         std::optional<timer::time_point> heldSince;
-        std::vector<position_t>          backOff;         // the way to the nearest ground out of every ring, with no spot short of a choke that is
+        position_t                       heldAt{};        // where she stood holding, last tick she held: a new plan holding her there holds on, its clock kept
+        std::vector<position_t>          backOff;        // the way to the nearest ground out of every ring, with no spot short of a choke that is
         bool                             wholeHeld = false; // the last plan of the whole way found it held
         timer::time_point                wholeAt;
         std::vector<position_t>          hop;             // a sneak-by under way: her walk past the mobs, its end last
-        position_t                       hopGoal{};       // ... the walk's point it was planned for
         xi::ZoneId                       hopZone{};
         timer::time_point                hopAt;
         float                            hopSeconds = 0.0f;
@@ -1432,6 +1457,8 @@ private:
     position_t        m_TownLastPos{};
     uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
     bool              m_Retreat    = false;
+    bool              m_RetreatCalled = false; // her orders call a retreat, whether or not it binds her (SetRetreat)
+    bool              m_WalkHated     = false; // a chase off the party's ground, said or her own pull (AggroWatch)
     bool              m_Waiting     = false;
     // The stake the orders pushed, and the tank's tow: she is
     // towing toward its frontline unless the player's pull has stopped

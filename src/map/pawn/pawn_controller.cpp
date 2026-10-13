@@ -1368,7 +1368,54 @@ void CPawnController::NoteTowsLanded()
     }
 }
 
-void CPawnController::SetRetreat(const bool on)
+auto CPawnController::SetRetreat(const bool on) -> bool
+{
+    // The retreat binds the party's own ground (the user, 2026-10-13): a
+    // cardian within pawn.PARTY_GROUND_RADIUS of the player whose orders she
+    // follows, or with a mob on her, retreats; one detached from the fight
+    // -- far off, nothing on her, on no hate list -- carries on with her own
+    // standing order and judgement, sneak-bys included, until she comes
+    // within it (RetreatTick). Once bound, she stays bound until it is lifted
+    const bool wasCalled = m_RetreatCalled;
+    m_RetreatCalled      = on;
+    const bool binds     = cardian::rules::retreatBinds(on, m_Retreat, RetreatReaches());
+    if (on && !wasCalled && !binds)
+    {
+        ShowInfoFmt("pawn: {} is detached from the retreat (far from the fight, nothing on her): she carries on until she is within {:.0f} y", POwner->getName(),
+                    settings::get<float>("pawn.PARTY_GROUND_RADIUS"));
+    }
+    ApplyRetreat(binds);
+    return binds;
+}
+
+auto CPawnController::RetreatReaches() const -> bool
+{
+    // Only with the player in her zone: in another, or loading between
+    // zones, he is no one to run to, and her trek keeps its own avoidance
+    const auto* PPlayer = OrdersOwnerHere();
+    if (PPlayer == nullptr)
+    {
+        return false;
+    }
+    return POwner->PAI->IsEngaged() || distance(POwner->loc.p, PPlayer->loc.p) <= settings::get<float>("pawn.PARTY_GROUND_RADIUS") || HatedByAnyMob();
+}
+
+void CPawnController::RetreatTick()
+{
+    // While the player steers her she is his: the retreat binds her once he
+    // lets go
+    if (!m_RetreatCalled || m_Retreat || POwner->isDead() || InManeuver() ||
+        !cardian::rules::retreatBinds(m_RetreatCalled, m_Retreat, RetreatReaches()))
+    {
+        return;
+    }
+    ShowInfoFmt("pawn: {} joins the retreat", POwner->getName());
+    ApplyRetreat(true);
+    SetStake(std::nullopt);
+    SetHunting(false);
+}
+
+void CPawnController::ApplyRetreat(const bool on)
 {
     if (m_Retreat != on)
     {
@@ -4834,6 +4881,11 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     // a KO'd cardian included, or a wipe would never close
     pawn::tactics::tick(static_cast<CCharEntity*>(POwner), tick);
 
+    // A retreat she was detached from binds her once she comes within its
+    // line or a mob is on her
+    RetreatTick();
+    AggroWatch();
+
     // The server's attack state, reconciled with the mode: a fight the
     // server ended (the mob died, she lost sight of it, another party's
     // claim) is her exit from Fight, said with the server's reason; a
@@ -5908,6 +5960,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             if (m_Mode != Mode::Travel)
             {
+                m_TrekStuckSaid = false; // a stuck line of a walk in this zone is not her trek's
                 Transition(Mode::Travel, "the player is in another zone");
             }
             LookAhead();
@@ -8207,17 +8260,23 @@ void CPawnController::TrekSay(const std::string_view text)
     }
 }
 
-auto CPawnController::TrekWatchHate() -> bool
+namespace
 {
-    // A mob on her (HatedByAnyMob): from none to one, the chase begins and
-    // she says so, once until none is on her, when the chase is over
-    static constexpr std::array kAggroLines = {
+    // A chase begun, said to the party: a trek's (TrekWatchHate) or a walk's
+    // off the party's ground (AggroWatch)
+    constexpr std::array kAggroLines = {
         "I got aggro!",
         "They've spotted me!",
         "Aggro! I'm running for it!",
         "I've been spotted, making a break for it!",
         "Something's on me, running!",
     };
+} // namespace
+
+auto CPawnController::TrekWatchHate() -> bool
+{
+    // A mob on her (HatedByAnyMob): from none to one, the chase begins and
+    // she says so, once until none is on her, when the chase is over
     const bool hated = HatedByAnyMob();
     if (hated && !m_TrekHated)
     {
@@ -8267,8 +8326,41 @@ void CPawnController::TrekGotBy(const std::string_view where)
         "Got by without a scratch!",
     };
     m_TrekStuckSaid = false;
-    ShowInfoFmt("pawn: travel {}: got by the choke she was stuck at ({})", POwner->getName(), where);
+    ShowInfoFmt("pawn: {}{}: got by the choke she was stuck at ({})", m_Mode == Mode::Travel ? "travel " : "", POwner->getName(), where);
     TrekSay(kGotByLines[xirand::GetRandomNumber(kGotByLines.size())]);
+}
+
+void CPawnController::AggroWatch()
+{
+    // Off the party's ground, a mob on her that she did not go for is aggro,
+    // and the party hears it as from a trek, once a chase: a mob of her own
+    // pull or fight is no news, and a trek watches its own (TrekWatchHate)
+    if (m_Mode == Mode::Travel || POwner->isDead())
+    {
+        m_WalkHated = false;
+        return;
+    }
+    if (!m_WalkHated && !FarFromParty())
+    {
+        return;
+    }
+    if (!HatedByAnyMob())
+    {
+        m_WalkHated = false;
+        return;
+    }
+    if (m_WalkHated)
+    {
+        return;
+    }
+    m_WalkHated = true;
+    if (POwner->PAI->IsEngaged() || m_Approach.has_value())
+    {
+        return;
+    }
+    ShowInfoFmt("pawn: {}: a mob is on her off the party's ground ({} of {} HP)", POwner->getName(), POwner->health.hp, POwner->GetMaxHP());
+    m_TrekStuckSaid = false; // caught, not got by: the choke she was stuck at says nothing more
+    TrekSay(kAggroLines[xirand::GetRandomNumber(kAggroLines.size())]);
 }
 
 auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool

@@ -214,4 +214,12 @@ namespace cardian::rules
         }
         return std::nullopt;
     }
+
+    // Whether a retreat called binds her (the user, 2026-10-13): it reaches
+    // her -- within its line of the player, or a mob on her -- or she is
+    // bound already, and once bound she stays bound until it is lifted
+    constexpr auto retreatBinds(const bool called, const bool bound, const bool reaches) -> bool
+    {
+        return called && (bound || reaches);
+    }
 } // namespace cardian::rules

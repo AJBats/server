@@ -439,6 +439,18 @@ xi.settings.pawn =
     -- stay until the new one is played and trusted (the user, 2026-10-12)
     SAFE_WALK = false,
 
+    -- The party's own ground (the user, 2026-10-13): PARTY_GROUND_RADIUS
+    -- yalms round the player whose orders a cardian follows. A retreat binds
+    -- a cardian on it, or with a mob on her -- and she stays bound until it
+    -- is lifted; one detached from the fight, far off with nothing on her,
+    -- carries on with her own standing order and judgement, sneak-bys
+    -- included, until she comes within it. Off it she is on her own: a mob
+    -- on her sends her through any choke to the party, and its aggro is
+    -- said to the party; held at a choke on her way in, she says she is
+    -- stuck (TREK_STUCK_AFTER), as a trek does. On it the party is there
+    -- for her, and she holds and sneaks by as ever, a mob on her or not
+    PARTY_GROUND_RADIUS = 30,
+
     -- Linking, her Avoid links row: the idle kin of any mob fighting a
     -- cardian are circles for that cardian alone -- link range plus
     -- AVOID_TAIL, the distance the mob keeps behind her as it follows -- so
