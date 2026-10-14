@@ -955,3 +955,331 @@ TEST_CASE("Route kept out of danger: a slope the mesh joins only by a switched-o
         CHECK(up->length > 60.0f);
     }
 }
+
+// Where the travel map places every zone line's two ends (pawn_travel.cpp's
+// rule: the nearest polygon within kLineExtents), beside the ground straight
+// under each and the pieces near it; an end on a piece ten times smaller than
+// one beside it is marked ODD. Written to log/lines_survey.txt (OPEN_ISSUES
+// #466)
+TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_LINES") == nullptr)
+    {
+        SKIP("the line survey runs with CARDIAN_LINES=1");
+    }
+    using Settings = xi::data::datasets::zones::settings::Dataset;
+    std::ofstream out("log/lines_survey.txt");
+
+    struct Z
+    {
+        MeshPtr     mesh{ nullptr, &dtFreeNavMesh };
+        sz::Pieces  pieces;
+        std::string name;
+        bool        tried = false;
+    };
+    std::map<int, Z> zones;
+    const auto       zoneOf = [&](const int z) -> Z*
+    {
+        auto& e = zones[z];
+        if (!e.tried)
+        {
+            e.tried = true;
+            e.name  = std::filesystem::path(xi::data::zoneFilePath(static_cast<xi::ZoneId>(z), "zone")).parent_path().filename().string();
+            e.mesh  = loadMesh(e.name);
+            if (e.mesh)
+            {
+                e.pieces = sz::piecesOf(*e.mesh);
+            }
+        }
+        return e.mesh ? &e : nullptr;
+    };
+
+    struct Hit
+    {
+        sz::Piece  piece = 0;
+        position_t at{};
+        int        polys = 0;
+    };
+    const auto place = [&](Z& z, const position_t& p, const float* ext) -> Hit
+    {
+        dtNavMeshQuery query;
+        Hit            hit;
+        if (dtStatusFailed(query.init(z.mesh.get(), 64)))
+        {
+            return hit;
+        }
+        dtQueryFilter filter;
+        filter.setExcludeFlags(cardian::route::kPolyDisabled);
+        const auto at  = cardian::route::toDetour(p);
+        dtPolyRef  ref = 0;
+        float      nearest[3]{};
+        if (dtStatusFailed(query.findNearestPoly(at.data(), ext, &filter, &ref, nearest)) || !ref)
+        {
+            return hit;
+        }
+        hit.piece = z.pieces.of(*z.mesh, ref);
+        hit.at    = cardian::route::fromDetour(nearest);
+        hit.polys = z.pieces.polys[hit.piece];
+        return hit;
+    };
+    // The pieces with ground within `ext` of a point, biggest first
+    const auto around = [&](Z& z, const position_t& p, const float* ext) -> std::vector<std::pair<int, sz::Piece>>
+    {
+        dtNavMeshQuery                         query;
+        std::vector<std::pair<int, sz::Piece>> found;
+        if (dtStatusFailed(query.init(z.mesh.get(), 64)))
+        {
+            return found;
+        }
+        dtQueryFilter filter;
+        filter.setExcludeFlags(cardian::route::kPolyDisabled);
+        const auto at = cardian::route::toDetour(p);
+        dtPolyRef  refs[1024];
+        int        count = 0;
+        query.queryPolygons(at.data(), ext, &filter, refs, &count, 1024);
+        std::map<sz::Piece, int> seen;
+        for (int i = 0; i < count; ++i)
+        {
+            const auto piece = z.pieces.of(*z.mesh, refs[i]);
+            if (piece != 0)
+            {
+                seen[piece] = z.pieces.polys[piece];
+            }
+        }
+        for (const auto& [piece, polys] : seen)
+        {
+            found.emplace_back(polys, piece);
+        }
+        std::sort(found.rbegin(), found.rend());
+        return found;
+    };
+    const float kColumn[] = { 1.5f, 60.0f, 1.5f };
+    const float kNear[]   = { 12.0f, 30.0f, 12.0f };
+
+    const auto describe = [&](Z& z, const position_t& p) -> std::pair<std::string, bool>
+    {
+        const auto  placed = place(z, p, sz::kLineExtents);
+        const auto  column = place(z, p, kColumn);
+        const auto  nearby   = around(z, p, kNear);
+        std::string text   = fmt::format("({:.1f}, {:.1f}, {:.1f}) placed on piece {} ({} polys) at ({:.1f}, {:.1f}, {:.1f}) {:.1f}y off; under it piece {} ({} polys) at y {:.1f}; nearby:",
+                                         p.x, p.y, p.z, placed.piece, placed.polys, placed.at.x, placed.at.y, placed.at.z, yalms(p, placed.at), column.piece,
+                                         column.polys, column.at.y);
+        for (std::size_t i = 0; i < nearby.size() && i < 4; ++i)
+        {
+            text += fmt::format(" {}({})", nearby[i].second, nearby[i].first);
+        }
+        // odd: a much bigger piece lies nearby, and the line is not on it
+        const bool odd = !nearby.empty() && placed.piece != nearby[0].second && placed.polys * 10 < nearby[0].first;
+        return { text, odd || placed.piece == 0 };
+    };
+
+    int ends = 0;
+    int odd  = 0;
+    for (int z = 1; z < 300; ++z)
+    {
+        const auto settings = xi::data::loadZoneFile<Settings>(static_cast<xi::ZoneId>(z));
+        if (!settings)
+        {
+            continue;
+        }
+        for (const auto& line : settings->ZoneLines)
+        {
+            const int to = static_cast<int>(line.DestinationZone);
+            if (to == z)
+            {
+                continue;
+            }
+            auto* from = zoneOf(z);
+            auto* dest = zoneOf(to);
+            if (from != nullptr)
+            {
+                ++ends;
+                const auto [text, flagged] = describe(*from, line.Origin);
+                odd += flagged ? 1 : 0;
+                out << (flagged ? "ODD  " : "ok   ") << from->name << " (" << z << ") -> " << to << " origin  " << text << "\n";
+            }
+            if (dest != nullptr)
+            {
+                ++ends;
+                const auto [text, flagged] = describe(*dest, line.Destination);
+                odd += flagged ? 1 : 0;
+                out << (flagged ? "ODD  " : "ok   ") << dest->name << " (" << to << ") <- " << z << " arrival " << text << "\n";
+            }
+        }
+    }
+    out << "\n" << ends << " line ends, " << odd << " odd\n\n";
+
+    // Jugner Forest's Davoi entrance, as the party stood there
+    if (auto* jugner = zoneOf(104); jugner != nullptr)
+    {
+        out << "jugner_forest: " << jugner->pieces.polys.size() - 1 << " pieces, " << jugner->pieces.drops.size() << " drops\n";
+        for (const position_t at : { position_t{ -241.5f, -8.1f, -593.6f, 0, 0 }, position_t{ -237.3f, -8.0f, -598.2f, 0, 0 }, position_t{ -211.7f, -12.3f, -523.6f, 0, 0 } })
+        {
+            const auto body = place(*jugner, at, sz::kBodyExtents);
+            out << fmt::format("  a body at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), ground at y {:.1f}\n", at.x, at.y, at.z, body.piece, body.polys, body.at.y);
+            for (const auto& drop : jugner->pieces.drops)
+            {
+                if (drop.from == body.piece || drop.to == body.piece)
+                {
+                    out << fmt::format("    drop {} -> {}: ({:.1f}, {:.1f}, {:.1f}) down to ({:.1f}, {:.1f}, {:.1f})\n", drop.from, drop.to, drop.top.x, drop.top.y, drop.top.z,
+                                       drop.bottom.x, drop.bottom.y, drop.bottom.z);
+                }
+            }
+        }
+        const position_t line{ -240.440f, -16.683f, -597.493f, 0, 0 };
+        const auto       placed = place(*jugner, line, sz::kLineExtents);
+        const auto       body   = place(*jugner, position_t{ -241.5f, -8.1f, -593.6f, 0, 0 }, sz::kBodyExtents);
+        if (placed.piece != 0 && body.piece != 0 && placed.piece != body.piece)
+        {
+            out << "  the line's piece and the party's: " << closestSpots(*jugner->mesh, jugner->pieces, placed.piece, body.piece) << "\n";
+        }
+    }
+    if (auto* davoi = zoneOf(149); davoi != nullptr)
+    {
+        out << "davoi: " << davoi->pieces.polys.size() - 1 << " pieces, " << davoi->pieces.drops.size() << " drops\n";
+        const position_t arrival{ 218.468f, -2.302f, -3.871f, 0, 0 };
+        const float      wide[] = { 40.0f, 30.0f, 40.0f };
+        out << "  pieces within 40y of the arrival from Jugner:";
+        for (const auto& [polys, piece] : around(*davoi, arrival, wide))
+        {
+            out << " " << piece << "(" << polys << ")";
+        }
+        out << "\n";
+        for (const auto& drop : davoi->pieces.drops)
+        {
+            out << fmt::format("  drop {} -> {}: ({:.1f}, {:.1f}, {:.1f}) down to ({:.1f}, {:.1f}, {:.1f})\n", drop.from, drop.to, drop.top.x, drop.top.y, drop.top.z, drop.bottom.x,
+                               drop.bottom.y, drop.bottom.z);
+        }
+    }
+    WARN("line survey written to log/lines_survey.txt: " << ends << " ends, " << odd << " odd");
+}
+
+// Which zone lines stand on a piece their zone's biggest piece cannot reach
+// by walking and drops (origins), or that cannot reach it (arrivals), each
+// line placed on the ground under it first, with how near the two pieces
+// come. Written to log/lines_islands.txt (OPEN_ISSUES #466)
+TEST_CASE("Zone lines: islands (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_LINES") == nullptr)
+    {
+        SKIP("the line survey runs with CARDIAN_LINES=1");
+    }
+    using Settings = xi::data::datasets::zones::settings::Dataset;
+    std::ofstream out("log/lines_islands.txt");
+
+    struct Z
+    {
+        MeshPtr     mesh{ nullptr, &dtFreeNavMesh };
+        sz::Pieces  pieces;
+        std::string name;
+        sz::Piece   main  = 0;
+        bool        tried = false;
+    };
+    std::map<int, Z> zones;
+    const auto       zoneOf = [&](const int z) -> Z*
+    {
+        auto& e = zones[z];
+        if (!e.tried)
+        {
+            e.tried = true;
+            e.name  = std::filesystem::path(xi::data::zoneFilePath(static_cast<xi::ZoneId>(z), "zone")).parent_path().filename().string();
+            e.mesh  = loadMesh(e.name);
+            if (e.mesh)
+            {
+                e.pieces = sz::piecesOf(*e.mesh);
+                for (std::size_t p = 1; p < e.pieces.polys.size(); ++p)
+                {
+                    if (e.main == 0 || e.pieces.polys[p] > e.pieces.polys[e.main])
+                    {
+                        e.main = static_cast<sz::Piece>(p);
+                    }
+                }
+            }
+        }
+        return e.mesh ? &e : nullptr;
+    };
+    const auto pieceOf = [&](Z& z, const position_t& p, const float* ext) -> sz::Piece
+    {
+        return sz::pieceAt(*z.mesh, z.pieces, p, ext);
+    };
+    const float kColumn[] = { 1.5f, 60.0f, 1.5f };
+    // the ground under the point first, else the nearest
+    const auto placed = [&](Z& z, const position_t& p) -> sz::Piece
+    {
+        const auto under = pieceOf(z, p, kColumn);
+        return under != 0 ? under : pieceOf(z, p, sz::kLineExtents);
+    };
+    // the pieces a body reaches from `start` by the zone's drops
+    const auto reach = [&](const Z& z, const sz::Piece start) -> std::vector<bool>
+    {
+        std::vector<bool>      seen(z.pieces.polys.size(), false);
+        std::vector<sz::Piece> todo{ start };
+        seen[start] = true;
+        while (!todo.empty())
+        {
+            const auto at = todo.back();
+            todo.pop_back();
+            for (const auto& drop : z.pieces.drops)
+            {
+                if (drop.from == at && !seen[drop.to])
+                {
+                    seen[drop.to] = true;
+                    todo.push_back(drop.to);
+                }
+            }
+        }
+        return seen;
+    };
+
+    int origins = 0, originIslands = 0, arrivals = 0, arrivalIslands = 0;
+    std::map<int, std::vector<bool>> fromMain;
+    for (int z = 1; z < 300; ++z)
+    {
+        const auto settings = xi::data::loadZoneFile<Settings>(static_cast<xi::ZoneId>(z));
+        if (!settings)
+        {
+            continue;
+        }
+        for (const auto& line : settings->ZoneLines)
+        {
+            const int to = static_cast<int>(line.DestinationZone);
+            if (to == z)
+            {
+                continue;
+            }
+            if (auto* from = zoneOf(z); from != nullptr && from->main != 0)
+            {
+                ++origins;
+                if (!fromMain.contains(z))
+                {
+                    fromMain[z] = reach(*from, from->main);
+                }
+                const auto piece = placed(*from, line.Origin);
+                if (piece != 0 && !fromMain[z][piece])
+                {
+                    ++originIslands;
+                    out << "ORIGIN  " << from->name << " (" << z << ") -> " << to
+                        << fmt::format(" at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), main {} ({} polys): ", line.Origin.x, line.Origin.y, line.Origin.z, piece,
+                                       from->pieces.polys[piece], from->main, from->pieces.polys[from->main])
+                        << (from->pieces.polys[piece] < 600 ? closestSpots(*from->mesh, from->pieces, piece, from->main) : std::string("a large piece of its own")) << "\n";
+                }
+            }
+            if (auto* dest = zoneOf(to); dest != nullptr && dest->main != 0)
+            {
+                ++arrivals;
+                const auto piece = placed(*dest, line.Destination);
+                if (piece != 0 && !reach(*dest, piece)[dest->main])
+                {
+                    ++arrivalIslands;
+                    out << "ARRIVAL " << dest->name << " (" << to << ") <- " << z
+                        << fmt::format(" at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), main {} ({} polys): ", line.Destination.x, line.Destination.y,
+                                       line.Destination.z, piece, dest->pieces.polys[piece], dest->main, dest->pieces.polys[dest->main])
+                        << (dest->pieces.polys[piece] < 600 ? closestSpots(*dest->mesh, dest->pieces, piece, dest->main) : std::string("a large piece of its own")) << "\n";
+                }
+            }
+        }
+    }
+    out << "\n" << origins << " origins, " << originIslands << " on a piece the zone's main ground cannot reach; " << arrivals << " arrivals, " << arrivalIslands
+        << " on a piece that cannot reach it\n";
+    WARN("islands written to log/lines_islands.txt: " << originIslands << " of " << origins << " origins, " << arrivalIslands << " of " << arrivals << " arrivals");
+}
