@@ -343,8 +343,13 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     }
     if (was != on)
     {
-        pawn::tellMember(static_cast<CCharEntity*>(POwner)); // his roster, and his party list's Holding pill, follow at once
+        TellMember(); // his roster, and his party list's Holding pill, follow at once
     }
+}
+
+void CPawnController::TellMember()
+{
+    m_TellPending = !pawn::tellMember(static_cast<CCharEntity*>(POwner));
 }
 
 auto CPawnController::modeName(const Mode mode) -> const char*
@@ -4690,6 +4695,10 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         m_PlayerSeenDead = false;
         CheckBrain();
         TrekArrivalTick();
+        if (m_TellPending)
+        {
+            TellMember();
+        }
         UpdateRunning(); // an order over lets its line go before the enchanted item's use begins
         EnchantTick();   // the enchanted item's use goes ahead of her line, holding no place in it
         FireQueuedOrder();

@@ -37,6 +37,7 @@
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "players.h"
 #include "account_wide.h"
 #include "pawn_items.h"
 #include "view.h"
@@ -2455,16 +2456,25 @@ namespace pawn::linkapi
 
 namespace pawn
 {
-    void tellMember(CCharEntity* PPawn)
+    auto tellMember(CCharEntity* PPawn) -> bool
     {
-        const auto owner   = ordersOwnerOf(PPawn);
-        auto*      PPlayer = owner != 0 ? zoneutils::GetChar(owner) : nullptr;
-        if (PPlayer == nullptr || isPawn(PPlayer))
+        const auto owner = ordersOwnerOf(PPawn);
+        if (owner == 0)
         {
-            return;
+            return true; // nobody's: nothing to tell
+        }
+        auto* PPlayer = zoneutils::GetChar(owner);
+        if (PPlayer == nullptr)
+        {
+            return !players::online(owner); // between zones he is in none: asked again once he lands
+        }
+        if (isPawn(PPlayer))
+        {
+            return true;
         }
         // one-way (request 0): the addon takes it into its live roster
         cardian::link::send(owner, linkapi::memberOf(PPlayer, PPawn, linkapi::reachOf(PPlayer), findManagedPawn(PPlayer, PPawn->id) != nullptr));
+        return true;
     }
 } // namespace pawn
 

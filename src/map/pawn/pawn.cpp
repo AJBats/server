@@ -562,6 +562,9 @@ namespace
             travelOrders.erase(PPawn->id);
             ShowInfoFmt("pawn: {} holds in {} until {} gathers her ({} is not her city)", PPawn->getName(), PPawn->loc.zone->getName(), PSummoner->getName(), PSummoner->loc.zone->getName());
         }
+        // his addon has her at once, its menu open or not: her party list
+        // pills follow her from her first moment with him
+        PController->TellMember();
     }
 } // namespace
 

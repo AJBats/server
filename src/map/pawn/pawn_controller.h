@@ -518,6 +518,7 @@ public:
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
     auto Trekking() const -> bool { return m_Mode == Mode::Travel || m_TrekResting || m_TrekArriving; } // on a trek between zones, resting on one, or arriving from one: the trek lends her its rows (ROADMAP T)
+    void TellMember(); // her roster line to his addon now (pawn::tellMember), and each tick after until it reaches him
     auto KeepsClearOfAggro() const -> bool; // attending, or waiting at her camp spot: other mobs' detection kept out of whatever her switches say
     auto FightSettled(const CMobEntity* PMob) -> bool; // engaged and held still for a second, not running in or on its tow
     // The mob's next TP move, assumed the area one she keeps out of, comes
@@ -1302,6 +1303,7 @@ private:
     bool                              m_TrekArriving = false;     // her trek to him ended as she entered his zone, short of him: its rows stay lent until she arrives (TrekArrivalTick)
     bool                              m_SeatHeld     = false;     // the formation's last step had her at her seat round him (CompassPoint)
     void                              TrekArrivalTick();
+    bool                              m_TellPending  = false;     // her roster line is owed to his addon: he was between zones (TellMember)
     timer::time_point                 m_TrekKneltAt;              // her rest across a line: when she was last down, or it began
     int32                             m_TrekChaseFromHp = -1;     // her HP as the chase under way began, -1 for none
     timer::time_point                 m_TrekChaseAt;              // ... and when
