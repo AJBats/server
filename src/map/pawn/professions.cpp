@@ -667,11 +667,13 @@ namespace pawn::professions
             return nullptr;
         }
 
-        // A payment's line to the payer's addon, once it is bound
+        // A purchase's line to his addon, once it is bound: the payer's, or
+        // with her purse alone paying, the character her account plays now
         void tellPaid()
         {
-            const auto rset = db::preparedStmt("SELECT id, cardian, profession, item, quantity, her_gil, gil, payer FROM cardian_venture_pay "
+            const auto rset = db::preparedStmt("SELECT id, cardian, accid, profession, item, quantity, her_gil, gil, payer FROM cardian_venture_pay "
                                                "WHERE state = 'paid' AND told = 0 ORDER BY id");
+            std::unordered_map<uint32, uint32> playing; // by account: the character it plays now, 0 none; asked once a pass
             while (rset && rset->next())
             {
                 auto paid       = make<cl_venture_paid>();
@@ -681,7 +683,18 @@ namespace pawn::professions
                 paid.quantity   = rset->get<uint16>("quantity");
                 paid.herGil     = rset->get<uint32>("her_gil");
                 paid.hisGil     = rset->get<uint32>("gil");
-                if (cardian::link::send(rset->get<uint32>("payer"), paid))
+                uint32 to       = rset->get<uint32>("payer");
+                if (to == 0)
+                {
+                    const uint32 accid = rset->get<uint32>("accid");
+                    if (!playing.contains(accid))
+                    {
+                        const auto* PPlayer = playingNow(accid);
+                        playing[accid]      = PPlayer != nullptr ? PPlayer->id : 0;
+                    }
+                    to = playing[accid];
+                }
+                if (to != 0 && cardian::link::send(to, paid))
                 {
                     db::preparedStmt("UPDATE cardian_venture_pay SET told = 1 WHERE id = ?", rset->get<uint32>("id"));
                 }

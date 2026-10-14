@@ -2480,9 +2480,9 @@ typedef struct cl_venture_baits
     uint8_t   spare;
 } cl_venture_baits;
 
-// Pushed, one way: on a venture she bought a piece of her kit, her gil
-// short, his paying the rest. The addon words the line for his log, both
-// purses' shares in it
+// Pushed, one way: on a venture she bought a piece of her kit, from her
+// purse alone or with his gil paying what hers was short. The addon words
+// the line for his log, both purses' shares in it
 typedef struct cl_venture_paid
 {
     cl_header h;

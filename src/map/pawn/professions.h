@@ -98,7 +98,9 @@ namespace pawn::professions
     auto starterRods() -> std::vector<uint16>;
     auto isStarter(uint16 rod) -> bool;
 
-    // A purchase his gil helped pay for: the purchase line his addon is told
+    // A venture's purchase, from her purse alone or with his gil behind hers:
+    // the purchase line his addon is told. payer is the character whose gil
+    // paid his share, 0 when hers paid it all
     struct Purchase
     {
         uint32 cardian    = 0;

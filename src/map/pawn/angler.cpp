@@ -460,17 +460,16 @@ namespace pawn::angler
                                 pawn::ventureshop::whereOf(offer));
                     continue;
                 }
-                if (his > 0)
-                {
-                    pawn::professions::recordPurchase({ .cardian    = a.trip.charid,
-                                                        .accid      = a.trip.accid,
-                                                        .profession = a.trip.profession,
-                                                        .item       = item,
-                                                        .quantity   = static_cast<uint16>(quantity),
-                                                        .herGil     = hers,
-                                                        .hisGil     = his,
-                                                        .payer      = payer });
-                }
+                // Every purchase is a line in his log, from her purse alone or
+                // with his gil behind hers
+                pawn::professions::recordPurchase({ .cardian    = a.trip.charid,
+                                                    .accid      = a.trip.accid,
+                                                    .profession = a.trip.profession,
+                                                    .item       = item,
+                                                    .quantity   = static_cast<uint16>(quantity),
+                                                    .herGil     = hers,
+                                                    .hisGil     = his,
+                                                    .payer      = payer });
                 reportSpent(a.trip.charid, cost);
                 reportSupply(a.trip.charid, item, 0, quantity);
                 ShowInfoFmt("angler: {} buys item {} x{} for {} gil at {} ({} hers, {} her player's)", nameOf(a.trip.charid), item, quantity, cost,
