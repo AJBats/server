@@ -6995,12 +6995,16 @@ void CPawnController::TravelTick()
     // player stands on, when she follows him -- and of the lines that land
     // the same way, the one nearest where he walked through, when she
     // follows him out of the zone he left. With no walk at all, the way is
-    // looked for again every kNoWayRetry
+    // looked for again every kNoWayRetry. A tick that chooses the line does
+    // nothing else: the way to it is planned on the next, so no one tick
+    // carries both searches (the trek budget, TREK_PLAN_BUDGET_MS)
     constexpr auto kHopForgotten = 10s;
     constexpr auto kNoWayRetry   = 15s;
     const bool     sameLeg       = m_TravelHopKnown && m_TravelHopFrom == POwner->getZone() && m_TravelHopTarget == targetZone && m_Tick - m_TravelHopAt < kHopForgotten;
+    bool           chose         = false;
     if (!sameLeg || (!m_TravelHop.has_value() && m_Tick - m_TravelHopChosenAt > kNoWayRetry))
     {
+        const auto  began   = std::chrono::steady_clock::now();
         const auto* PLeader = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
         const auto  left    = PLeader != nullptr ? pawn::playerExit(PLeader->id) : std::nullopt;
         std::optional<position_t> prefer;
@@ -7018,6 +7022,19 @@ void CPawnController::TravelTick()
         m_TravelHopFrom     = POwner->getZone();
         m_TravelHopTarget   = targetZone;
         m_TravelHopChosenAt = m_Tick;
+        chose               = true;
+        const float took    = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - began).count();
+        if (m_TravelHop.has_value())
+        {
+            ShowInfoFmt("pawn: travel {}: chose the line from zone {} to zone {}, {:.1f}y away, toward zone {} ({:.1f} ms)", POwner->getName(),
+                        static_cast<uint16>(POwner->getZone()), static_cast<uint16>(m_TravelHop->destinationZone), distance(POwner->loc.p, m_TravelHop->walkTo),
+                        static_cast<uint16>(targetZone), took);
+        }
+        else
+        {
+            ShowInfoFmt("pawn: travel {}: found no line from zone {} toward zone {} ({:.1f} ms)", POwner->getName(), static_cast<uint16>(POwner->getZone()),
+                        static_cast<uint16>(targetZone), took);
+        }
     }
     m_TravelHopAt  = m_Tick;
     const auto hop = m_TravelHop;
@@ -7032,6 +7049,10 @@ void CPawnController::TravelTick()
         {
             TravelStuck(fmt::format("no walk from zone {} to zone {}", static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone)));
         }
+        return;
+    }
+    if (chose)
+    {
         return;
     }
 
