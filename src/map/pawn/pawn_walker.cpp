@@ -1361,8 +1361,14 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
                     }
                     // The auto rescue watches everyday walks only: a trek
                     // caught on the mesh says so in its own lines, and a rescue
-                    // to its line would carry her hundreds of yalms
-                    trying = !intent.trek && out.outcome == Outcome::Walking && out.action != AvoidAction::Slot && out.action != AvoidAction::Hold;
+                    // to its line would carry her hundreds of yalms. A walk to
+                    // a slot -- the safe ground nearest a point inside a ring
+                    // -- counts while she is short of it, so a walk that swings
+                    // between the slot and no route keeps one clock; caught,
+                    // she is set down on the slot, never inside the ring
+                    const bool shortOfSlot = out.action == AvoidAction::Slot && distance(POwner->loc.p, out.target) > followTarget + 1.0f;
+                    trying                 = !intent.trek && out.outcome == Outcome::Walking && out.action != AvoidAction::Hold &&
+                             (out.action != AvoidAction::Slot || shortOfSlot);
 
                     // The camp's line: normal positioning stays behind it; a
                     // walk shaped by danger overrides it
@@ -1456,7 +1462,7 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     {
         m_WalkTo.reset();
     }
-    NoteWalk(trying, intent.point, followTarget);
+    NoteWalk(trying, action == AvoidAction::Slot ? point : intent.point, followTarget);
 
     PPathFind->FollowPath(m_Tick);
 
