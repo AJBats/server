@@ -4852,16 +4852,32 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
     CCharEntity* PPlayer = GetAnchor();
     const Place* place   = CurrentPlace(PPlayer);
 
-    // The party's place gone means stand down: the player left the zone
-    // with no stake holding her here. Their weapon going down does not
-    // call the party off a fight that has started -- it runs until the
-    // mob dies or an order ends it -- but it does end a hold
-    // (below), which the party only drew for.
+    // The party's place gone means stand down: no player of her party in
+    // her zone, and no stake holding her here. The player in another zone,
+    // she goes after him, and her trek races past a mob on her rather than
+    // fight it. Otherwise -- out of the party, or he is here but out of
+    // reach (his Mog House, a zone change) -- a mob on her is fought: she
+    // defends herself until it is dead or off her. Their weapon going down
+    // does not call the party off a fight that has started -- it runs until
+    // the mob dies or an order ends it -- but it does end a hold (below),
+    // which the party only drew for.
     if (place == nullptr && !m_Waiting && !m_World)
     {
-        Transition(IdleMode(), "the player left the zone");
-        POwner->PAI->Internal_Disengage();
-        co_return;
+        // A fight already over (no target, or it fell) is said by the target
+        // check below, by its own cause
+        const auto* PFoe      = POwner->GetBattleTarget();
+        const auto* PLeader   = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
+        const bool  elsewhere = PLeader != nullptr && PLeader->loc.zone != nullptr && PLeader->getZone() != POwner->getZone();
+        const bool  over      = PFoe == nullptr || PFoe->isDead();
+        if (elsewhere || (!over && PFoe->GetBattleTarget() != POwner))
+        {
+            Transition(IdleMode(), elsewhere                                              ? "the player is in another zone"
+                                   : static_cast<CCharEntity*>(POwner)->PParty == nullptr ? "no party to fight beside"
+                                   : PLeader == nullptr                                   ? "no player in her party"
+                                                                                          : "the player is out of reach (his Mog House, or a zone change)");
+            POwner->PAI->Internal_Disengage();
+            co_return;
+        }
     }
     if (PPlayer != nullptr)
     {
