@@ -4689,6 +4689,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         }
         m_PlayerSeenDead = false;
         CheckBrain();
+        TrekArrivalTick();
         UpdateRunning(); // an order over lets its line go before the enchanted item's use begins
         EnchantTick();   // the enchanted item's use goes ahead of her line, holding no place in it
         FireQueuedOrder();
@@ -5790,7 +5791,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
         if (m_Mode == Mode::Travel)
         {
-            Transition(IdleMode(), fmt::format("with {} again", PPlayer->getName()));
+            // Her trek ends as she enters his zone; still short of him, she
+            // keeps its rows for the rest of the way (TrekArrivalTick)
+            m_TrekArriving = distance(POwner->loc.p, PPlayer->loc.p) > settings::get<float>("pawn.TREK_ARRIVE_YALMS");
+            m_SeatHeld     = false;
+            Transition(IdleMode(), fmt::format("with {} again{}", PPlayer->getName(), m_TrekArriving ? ", her trek's rows kept on her way to him" : ""));
         }
 
         ShareSignet(PPlayer);
@@ -8649,6 +8654,7 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     // since (making room for another member) makes a new stand; walking
     // again, she forgets it; kneeling or busy, she turns once she is free.
     // Holding her ground while he walks at her is no stand
+    m_SeatHeld        = holds;
     const bool stands = holds && !moving;
     const bool still  = !POwner->PAI->PathFind->IsFollowingPath();
     if (!stands)

@@ -1106,6 +1106,58 @@ auto CPawnController::FarFromParty() const -> bool
     return PPlayer != nullptr && distance(POwner->loc.p, PPlayer->loc.p) > settings::get<float>("pawn.PARTY_GROUND_RADIUS");
 }
 
+// Arriving from a trek to meet him (m_TrekArriving), she keeps its rows --
+// Avoid aggro, Avoid links -- and its walk across his zone until she is with
+// him: within pawn.TREK_ARRIVE_YALMS of him, at her seat round him, or
+// standing at her place on the party's ground (a camp's seat, a mage's
+// attend spot) and not held at a choke (the user, 2026-10-14). The party's
+// ground (PARTY_GROUND_RADIUS) keeps its own rules meanwhile, as for any
+// follower. A task of her own (a hold, a fight, attending), his leaving her
+// zone or another trek ends it too
+void CPawnController::TrekArrivalTick()
+{
+    if (!m_TrekArriving)
+    {
+        return;
+    }
+    const auto* PPlayer = OrdersOwnerHere();
+    std::string why;
+    if (m_Mode == Mode::Travel)
+    {
+        why = "a trek again";
+    }
+    else if (PPlayer == nullptr)
+    {
+        why = "he is not in her zone";
+    }
+    else if (POwner->PAI->IsEngaged())
+    {
+        why = "a fight";
+    }
+    else if (m_Mode != Mode::Follow)
+    {
+        why = fmt::format("{} now", modeName(m_Mode));
+    }
+    else if (const float off = distance(POwner->loc.p, PPlayer->loc.p); off <= settings::get<float>("pawn.TREK_ARRIVE_YALMS"))
+    {
+        why = fmt::format("within {:.0f} y of {}", off, PPlayer->getName());
+    }
+    else if (m_SeatHeld)
+    {
+        why = "at her seat";
+    }
+    else if (!FarFromParty() && !POwner->PAI->PathFind->IsFollowingPath() && m_Plan.outcome != Outcome::Held)
+    {
+        why = "standing at her place on the party's ground";
+    }
+    if (why.empty())
+    {
+        return;
+    }
+    m_TrekArriving = false;
+    ShowInfoFmt("pawn: travel {}: arrived ({}), her trek's rows go back", POwner->getName(), why);
+}
+
 auto CPawnController::SneakingBy() const -> bool
 {
     const auto& plan = m_Plan;
@@ -1199,8 +1251,9 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     // (RestsInDanger), and on the player's rest order nothing stands her
     const bool proposes   = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
     const bool kneelsHere = !proposes && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    const bool arriving   = m_TrekArriving && !intent.trek; // the rest of a trek's way to him, in his zone (TrekArrivalTick)
     const bool vetted     = intent.vet && !kneelsHere && !PlayersRestHolds() &&
-                        (intent.trek || IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro()));
+                        (intent.trek || arriving || IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro()));
 
     Rules rules;
     rules.danger = vetted;
@@ -1220,8 +1273,14 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     {
         // The everyday walk plans against the rings padded by the pull
         // rule's clearance, so a mob that steps her way does not find her on
-        // its edge
-        rules.extra = cardian::rules::kClearance;
+        // its edge. Arriving from a trek, the trek's own rings: every one
+        // whole, walls or not, and its wider berth
+        rules.extra = arriving ? settings::get<float>("pawn.TREK_AVOID_EXTRA") : cardian::rules::kClearance;
+        if (arriving)
+        {
+            rules.forceAvoid = true;
+            rules.sightHides = false;
+        }
         // Alone with a mob on her -- off the party's ground, beyond
         // pawn.PARTY_GROUND_RADIUS of the player -- she runs on to the party
         // with it and holds for no choke: through it, round every other ring

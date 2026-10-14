@@ -455,6 +455,13 @@ xi.settings.pawn =
     -- whatever the travel map makes of the line. Farther back, she takes
     -- the map's way, or with none walks to where he crossed
     FOLLOW_THROUGH_YALMS = 7,
+    -- A trek to meet the player ends as she enters his zone, but she keeps
+    -- its rows -- Avoid aggro, Avoid links -- and its walk, every mob's ring
+    -- whole with TREK_AVOID_EXTRA's berth, on the rest of her way to him,
+    -- until she is within this many yalms of him, at her seat round him, or
+    -- standing at her place on the party's ground (the user, 2026-10-14).
+    -- Meanwhile the party's ground (PARTY_GROUND_RADIUS) keeps its own rules
+    TREK_ARRIVE_YALMS = 10,
     -- Across a zone line on a trek she rests to full only when it is earned
     -- (the user, 2026-10-13): a mob was on her on the way, or she arrives
     -- under this percent of her HP or MP
