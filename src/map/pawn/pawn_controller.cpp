@@ -341,6 +341,10 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     {
         Transition(IdleMode(), why.empty() ? "follows again" : why);
     }
+    if (was != on)
+    {
+        pawn::tellMember(static_cast<CCharEntity*>(POwner)); // his roster, and his party list's Holding pill, follow at once
+    }
 }
 
 auto CPawnController::modeName(const Mode mode) -> const char*

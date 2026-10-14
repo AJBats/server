@@ -2451,6 +2451,25 @@ namespace pawn::linkapi
         }
     }
 
+} // namespace pawn::linkapi
+
+namespace pawn
+{
+    void tellMember(CCharEntity* PPawn)
+    {
+        const auto owner   = ordersOwnerOf(PPawn);
+        auto*      PPlayer = owner != 0 ? zoneutils::GetChar(owner) : nullptr;
+        if (PPlayer == nullptr || isPawn(PPlayer))
+        {
+            return;
+        }
+        // one-way (request 0): the addon takes it into its live roster
+        cardian::link::send(owner, linkapi::memberOf(PPlayer, PPawn, linkapi::reachOf(PPlayer), findManagedPawn(PPlayer, PPawn->id) != nullptr));
+    }
+} // namespace pawn
+
+namespace pawn::linkapi
+{
     void registerHandlers()
     {
         handle<cl_give>(give);
