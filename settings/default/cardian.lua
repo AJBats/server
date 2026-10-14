@@ -51,16 +51,17 @@ xi.settings.cardian =
     -- retail's Monday midnight JST. Only region control and the countdown
     -- follow it: the lockouts Lua keys to NextConquestTally() (the experience
     -- rings, supply runs, Garrison, the era quests' weekly limits) keep the
-    -- JST week. The dev profile sets 3; prod keeps the week until the user
-    -- chooses otherwise.
-    CONQUEST_TALLY_DAYS = 0,
+    -- JST week.
+    CONQUEST_TALLY_DAYS = 3,
 
     -- The crowd's conquest, simulated (src/map/pawn/conquest_sim.cpp): every
     -- Vana'diel hour the slot tables' seats in the field and the dungeons earn
     -- simulated experience under Signet for their nations, through the dials
     -- in modules/cardian/conquest.yaml, and a region with no seat filled is
-    -- the beastmen's until somebody fights there. On in the dev profile.
-    CONQUEST_SIMULATION = false,
+    -- the beastmen's until somebody fights there. Without it nobody but the
+    -- player earns influence, and every region nobody fights in is left to
+    -- nobody at each tally
+    CONQUEST_SIMULATION = true,
 
     -- A player's major progression is his account's (ROADMAP N;
     -- src/map/pawn/account_wide.cpp): the support job, the level cap, the
