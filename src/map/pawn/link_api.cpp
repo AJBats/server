@@ -133,16 +133,7 @@ namespace pawn::linkapi
                 {
                     continue;
                 }
-                auto& item = msg.items[msg.count++];
-                item.slot  = slot;
-                item.id    = PItem->getID();
-                item.qty   = PItem->getQuantity();
-                item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
-                if (const auto charge = chargeOf(PItem))
-                {
-                    item.charges = charge->charges;
-                    item.readyIn = charge->readyIn;
-                }
+                msg.items[msg.count++] = itemOf(PItem, slot);
             }
             return msg;
         }
@@ -2436,6 +2427,21 @@ namespace pawn::linkapi
             return std::nullopt;
         }
         return res.get<sol::table>(0);
+    }
+
+    auto itemOf(const CItem* PItem, const uint8 slot) -> cl_item
+    {
+        cl_item item{};
+        item.slot  = slot;
+        item.id    = PItem->getID();
+        item.qty   = PItem->getQuantity();
+        item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
+        if (const auto charge = chargeOf(PItem))
+        {
+            item.charges = charge->charges;
+            item.readyIn = charge->readyIn;
+        }
+        return item;
     }
 
     void loadLibraries()
