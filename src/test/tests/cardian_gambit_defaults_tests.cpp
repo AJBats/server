@@ -225,6 +225,16 @@ TEST_CASE("gambit defaults: the melee set is the assist trio, her best weapon sk
     CHECK_FALSE(parseRow("0|0:0|100:11:3|0").has_value());
     CHECK_FALSE(parseRow("0|0:0|100:11:2|0").has_value());
     CHECK_FALSE(parseRow("0|0:0|100:11:1|0").has_value());
+
+    // and a saved set's loader knows it for retired, to drop it for good,
+    // apart from a row it cannot read
+    using pawn::text::namesRetiredBehavior;
+    CHECK(namesRetiredBehavior("0|0:0|100:11:2|0"));
+    CHECK(namesRetiredBehavior("0|0:0|100:9:1|0"));
+    CHECK_FALSE(namesRetiredBehavior("0|0:0|100:13:1|0")); // a live behaviour
+    CHECK_FALSE(namesRetiredBehavior("0|0:0|1:11:2|0"));   // 11 as a spell, not a behaviour
+    CHECK_FALSE(namesRetiredBehavior("0|0:0|100:11"));     // unreadable
+    CHECK_FALSE(namesRetiredBehavior("garbage"));
 }
 
 TEST_CASE("gambit defaults: the Monk, the Warrior and the Thief carry their tactician's tools between the trio and the weapon skill", "[cardian][gambits][defaults]")

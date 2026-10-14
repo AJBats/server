@@ -2285,10 +2285,11 @@ namespace pawn
         PGambits->RemoveAllGambits();
         const bool master = rset->get<uint8>("master_on") != 0;
 
-        const auto  blob  = rset->get<std::string>("set_rows");
-        std::size_t count = 0;
-        std::size_t bad   = 0;
-        std::size_t start = 0;
+        const auto  blob    = rset->get<std::string>("set_rows");
+        std::size_t count   = 0;
+        std::size_t bad     = 0;
+        std::size_t retired = 0; // rows naming a retired behaviour (gambit_ids.h): dead for good
+        std::size_t start   = 0;
         while (start < blob.size())
         {
             auto end = blob.find('\n', start);
@@ -2311,13 +2312,24 @@ namespace pawn
                 PGambits->AddGambit(std::move(*row), line[0] == '1');
                 ++count;
             }
+            else if (text::namesRetiredBehavior(line.substr(2)))
+            {
+                ++retired;
+            }
             else
             {
                 ++bad;
             }
         }
-        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{}{})", PChar->getName(), count, setId == kOwnClientSet ? ", his own set" : "",
-                    bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
+        ShowInfoFmt("pawn: saved gambits loaded for {} ({} rows{}{}{})", PChar->getName(), count, setId == kOwnClientSet ? ", his own set" : "",
+                    retired != 0 ? fmt::format(", {} retired dropped", retired) : "", bad != 0 ? fmt::format(", {} malformed skipped", bad) : "");
+        // A set saved before a behaviour was retired is saved again without
+        // its dead rows, so it loads whole from now on. A set with a row this
+        // build cannot read is left as it is: it may be another build's
+        if (retired != 0 && bad == 0)
+        {
+            saveGambitSet(PChar, setId, *PGambits, master);
+        }
         return master;
     }
 

@@ -181,4 +181,29 @@ namespace pawn::text
         g.retry_delay = static_cast<uint16>(value);
         return g;
     }
+
+    // A row parseRow refuses only because it names a retired behaviour: a
+    // row saved before that behaviour was retired, dead for good, which a
+    // loader may drop from a saved set. False for any other row, readable
+    // or not
+    inline auto namesRetiredBehavior(std::string_view text) -> bool
+    {
+        const auto fields = detail::split(text, '|');
+        if (fields.size() != 4)
+        {
+            return false;
+        }
+        for (const auto actionText : detail::split(fields[2], '+'))
+        {
+            const auto parts    = detail::split(actionText, ':');
+            uint32     reaction = 0;
+            uint32     select   = 0;
+            if (parts.size() == 3 && detail::number(parts[0], reaction) && detail::number(parts[1], select) &&
+                reaction == static_cast<uint16>(G_REACTION_BEHAVIOR) && isRetiredBehavior(select))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 } // namespace pawn::text
