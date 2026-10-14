@@ -344,8 +344,14 @@ namespace pawn
     // summoner's, else the real player in her party's -- where she holds
     // until her player is in her zone with her (warp_hold.h). Party
     // membership is untouched. false unless the pawn is dead and one of
-    // those players is in the world.
-    bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer = nullptr);
+    // those players is in the world -- or, ownIfAlone, with none of them
+    // she goes to her own home point.
+    bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer = nullptr, bool ownIfAlone = false);
+    // Knocked out for the game's hour, a character's client sends him home;
+    // a cardian has none, so the map does it: to her player's home point,
+    // else her own. The world's own bodies away from any player are its to
+    // fade (WORLD_KO_FADE). Each zone tick, for every pawn in the zone
+    void sendHomeAtHourEnd(CCharEntity* PPawn);
     // The player's order to one of his: home points, then waits there as a
     // warp leaves her (the user, 2026-09-14). CL_S_OK, or CL_S_NOT_KNOCKED_OUT.
     auto orderHomePoint(const CCharEntity* PPlayer, CCharEntity* PPawn) -> uint16;

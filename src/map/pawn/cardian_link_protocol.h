@@ -561,7 +561,8 @@ typedef struct cl_member
     uint32_t  exp;          // on her main job
     uint32_t  tnl;          // what the next level costs
     uint8_t   flags;        // CL_MEMBER_*
-    uint8_t   spare[3];
+    uint8_t   spare;
+    uint16_t  homeIn;       // knocked out: seconds left of the game's hour before a fallen character is sent home; 0 otherwise
     char      zoneName[32]; // where she is, for people
 } cl_member;
 
@@ -2151,6 +2152,7 @@ enum
     CL_CAN2_PROFESSIONS  = 0x01, // she may take up professions: an alt, or a cardian he owns
     CL_CAN2_REPORT       = 0x02, // she has a venture report: a money venture under way, its leftovers selling, or its last one done
     CL_CAN2_SEND_FISHING = 0x04, // her fishing is set up: a fishing venture is hers to be sent on
+    CL_CAN2_HOMEPOINT    = 0x08, // she lies knocked out, in his party or not: HOMEPOINT takes her to his home point
 };
 
 // One member of his club, or one of the world's who qualifies to be his
@@ -2175,7 +2177,7 @@ typedef struct cl_club_member
     uint16_t  gearWhy;            // CL_S_*: why Gear up cannot go now; 0 when it can
     uint16_t  zone;               // where she is: her body's zone, else where she was saved
     uint16_t  errandZone;         // away: the zone her errand has her crossing now; 0 for none
-    uint16_t  spare;
+    uint16_t  homeIn;             // knocked out: seconds left of the game's hour before a fallen character is sent home; 0 otherwise
     uint32_t  secondsLeft;        // away: seconds on the game clock until she is back; 0 off the clock
     char      zoneName[32];       // for people
     char      errandZoneName[32]; // for people

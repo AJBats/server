@@ -427,6 +427,13 @@ namespace pawn::club
             {
                 row.can |= CL_CAN_GIVE_PEARL;
             }
+            // Knocked out where she lies, in his party or not: the page's Home
+            // point takes her to his home point (a recruit is no member yet)
+            if (kind != Member::Recruit && PPawn != nullptr && PPawn->isDead())
+            {
+                row.can2 |= CL_CAN2_HOMEPOINT;
+                row.homeIn = static_cast<uint16_t>(std::clamp<int64>(timer::count_seconds(PPawn->GetTimeUntilDeathHomepoint()), 0, UINT16_MAX));
+            }
             return row;
         }
 
@@ -1527,10 +1534,9 @@ namespace pawn::club
             {
                 return CL_S_CANNOT_STAND;
             }
-            if (PPawn->isDead())
-            {
-                return CL_S_KNOCKED_OUT;
-            }
+            // Knocked out, she is invited all the same, as the game lets a
+            // knocked-out player be: in his party, the party's Home point
+            // reaches her
             if (PPawn->PParty != nullptr)
             {
                 return CL_S_IN_A_PARTY;

@@ -919,10 +919,8 @@ namespace pawn::finder
             return CL_S_CANNOT_STAND;
         }
 
-        if (PPawn->isDead())
-        {
-            return CL_S_KNOCKED_OUT;
-        }
+        // Knocked out, she is invited all the same, as the game lets a
+        // knocked-out player be: in his party, the party's Home point reaches her
         if (PPawn->PParty != nullptr)
         {
             return CL_S_IN_A_PARTY;

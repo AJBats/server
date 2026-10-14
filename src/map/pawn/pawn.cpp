@@ -1991,7 +1991,7 @@ namespace pawn
         return CL_S_OK;
     }
 
-    bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer)
+    bool homePoint(CCharEntity* PPawn, const CCharEntity* PPlayer, const bool ownIfAlone)
     {
         if (PPawn == nullptr || !pawns.contains(PPawn->id) || !PPawn->isDead())
         {
@@ -2000,19 +2000,22 @@ namespace pawn
 
         // Cardians share their player's home point: the player who sent her,
         // else her summoner, else the real player in her party (a wild
-        // cardian has no summoner)
+        // cardian has no summoner); with none of them, her own if allowed
         const CCharEntity* PHome = PPlayer != nullptr ? PPlayer : zoneutils::GetChar(summonerOf(PPawn->id));
         if (PHome == nullptr)
         {
             PHome = partyPlayer(PPawn);
         }
-        if (PHome == nullptr)
+        if (PHome == nullptr && !ownIfAlone)
         {
             return false;
         }
 
-        PPawn->profile.home_point = PHome->profile.home_point;
-        const auto& home          = PPawn->profile.home_point;
+        if (PHome != nullptr)
+        {
+            PPawn->profile.home_point = PHome->profile.home_point;
+        }
+        const auto& home = PPawn->profile.home_point;
         db::preparedStmt("UPDATE chars SET home_zone = ?, home_rot = ?, home_x = ?, home_y = ?, home_z = ? WHERE charid = ?",
                          static_cast<uint16>(home.destination), home.p.rotation, home.p.x, home.p.y, home.p.z, PPawn->id);
 
@@ -2034,6 +2037,22 @@ namespace pawn
             PController->HoldForWarp("holds at her home point (carried there by the warp)");
         }
         return true;
+    }
+
+    void sendHomeAtHourEnd(CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr || !PPawn->isDead() || PPawn->GetTimeUntilDeathHomepoint() > timer::duration::zero())
+        {
+            return;
+        }
+        if (world::isBody(PPawn->id) && partyPlayer(PPawn) == nullptr)
+        {
+            return;
+        }
+        if (homePoint(PPawn, nullptr, true))
+        {
+            ShowInfoFmt("pawn: {} is sent home: her hour knocked out is up", PPawn->getName());
+        }
     }
 
     auto orderHomePoint(const CCharEntity* PPlayer, CCharEntity* PPawn) -> uint16
@@ -3108,6 +3127,8 @@ namespace pawn
                 PPawn->clearPacketList();
                 continue;
             }
+
+            sendHomeAtHourEnd(PPawn.get());
 
             const auto inviteIt = pendingInvites.find(charid);
             if (inviteIt != pendingInvites.end() && timer::now() >= inviteIt->second)

@@ -188,6 +188,10 @@ namespace pawn::linkapi
             member.tp        = clamp16(PPawn->health.tp);
             member.zone      = static_cast<uint16_t>(PPawn->getZone());
             setZoneName(member.zoneName, PPawn->loc.zone);
+            if (PPawn->isDead())
+            {
+                member.homeIn = static_cast<uint16_t>(std::clamp<int64>(timer::count_seconds(PPawn->GetTimeUntilDeathHomepoint()), 0, UINT16_MAX));
+            }
 
             const auto job = static_cast<uint8>(PPawn->GetMJob());
             member.exp     = job < MAX_JOBTYPE ? PPawn->jobs.exp[job] : 0;
@@ -1739,10 +1743,16 @@ namespace pawn::linkapi
             reply.finish(ask, CL_S_OK);
         }
 
-        // A KO'd cardian to his home point, where she waits
+        // A KO'd cardian to his home point, where she waits: one he commands,
+        // or a member of his club wherever she fell, in his party or not (the
+        // Linkshell page)
         void homePoint(CCharEntity* PChar, const cl_homepoint& ask, Reply& reply)
         {
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr && pawn::club::memberOf(PChar, ask.cardian).has_value())
+            {
+                PPawn = pawn::findPawn(ask.cardian);
+            }
             reply.finish(ask, PPawn != nullptr ? pawn::orderHomePoint(PChar, PPawn) : CL_S_NO_SUCH_CARDIAN);
         }
 
