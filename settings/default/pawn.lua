@@ -704,6 +704,14 @@ xi.settings.pawn =
     -- which the server never waits on: she spends them all the same, so she
     -- fishes no faster than a person could.
     VENTURE_CAST_SECONDS  = 10,
+    -- The game clock runs on while the map is down (cardian.CLOCK_RUNS_OFFLINE),
+    -- and a venture away through it makes that time up as the map comes back,
+    -- before it can end: a cast for every VENTURE_CATCH_UP_CAST_SECONDS
+    -- missed -- about what a cast takes in play, the bite's wait, the fight and
+    -- the animations -- VENTURE_CATCH_UP_CASTS of them a second until she is
+    -- caught up.
+    VENTURE_CATCH_UP_CAST_SECONDS = 45,
+    VENTURE_CATCH_UP_CASTS        = 4,
     -- Her catch goes on the auction house only in a form the crowd has bought
     -- within this many days: the crowd's listing window (listing_days in
     -- tools/economy/settings.yaml), inside which a listing at the next

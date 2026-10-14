@@ -109,6 +109,8 @@ namespace pawn::errands
             uint16                 fromZone = 0; // where she started: a gear-up comes back here
             position_t             from{};
             Walk                   walk;
+            bool                   catchingUp = false; // a money venture making up the time the map was down
+            uint32                 castsSeen  = 0;     // her angler's casts as last counted (angler::casts)
         };
 
         std::unordered_map<uint32, Record> records;
@@ -640,6 +642,76 @@ namespace pawn::errands
                         pawn::findPawn(r.charid) != nullptr ? "; the ladder has not taken her body" : "");
         }
 
+        // ---- a money venture's time made up --------------------------------------
+
+        // The map was down while she was away: the casts of that time are
+        // made up as it comes back. Her row keeps the game clock her fishing
+        // has covered ("fished"): the end of her last cast while the map
+        // runs, and while the time it was down is made up, moved on a cast at
+        // a time before the cast is made, so a crash mid-way loses one cast at
+        // most and never makes up the same time twice. "made_up_from" is
+        // where the making up began, for his log. A row with no mark yet (her
+        // venture began before the mark was kept) makes up nothing; nor does
+        // the debug venture
+        auto castsOwed(const Record& r, const uint32 clock) -> uint32
+        {
+            const auto from = cardian::errand::numberArg(r.args, "fished");
+            if (!from.has_value() || (r.args.contains("debug") && r.args.at("debug") == "1"))
+            {
+                return 0;
+            }
+            const auto until = std::min(clock, r.errand.ends);
+            const auto per   = std::max<uint32>(1, settings::get<uint32>("pawn.VENTURE_CATCH_UP_CAST_SECONDS"));
+            return until > *from ? (until - *from) / per : 0;
+        }
+
+        void markFished(Record& r, const uint32 at)
+        {
+            r.args["fished"] = std::to_string(at);
+            save(r);
+        }
+
+        // His log told how much of her venture was made up, once the making
+        // up is over or her venture ends during it
+        void tellMadeUp(const Record& r)
+        {
+            const auto from = cardian::errand::numberArg(r.args, "made_up_from");
+            const auto to   = cardian::errand::numberArg(r.args, "fished");
+            if (!from.has_value() || !to.has_value() || *to <= *from)
+            {
+                return;
+            }
+            const auto minutes = std::min<uint32>((*to - *from) / 60, UINT16_MAX);
+            ShowInfoFmt("errands: {} made up {} minutes of fishing for the time the map was down", nameOf(r.charid), minutes);
+            if (minutes > 0)
+            {
+                pawn::professions::recordNews(r.charid, r.accid, CL_NEWS_CAUGHT_UP, 0, 0, static_cast<uint16>(minutes));
+            }
+        }
+
+        // A tick's casts of the time owed, VENTURE_CATCH_UP_CASTS at most;
+        // owed no more, she fishes on as she does while the map runs
+        auto catchUp(Record& r, const uint32 clock) -> pawn::angler::Stop
+        {
+            const auto per  = std::max<uint32>(1, settings::get<uint32>("pawn.VENTURE_CATCH_UP_CAST_SECONDS"));
+            const auto most = std::max<uint32>(1, settings::get<uint32>("pawn.VENTURE_CATCH_UP_CASTS"));
+            auto       stop = pawn::angler::Stop::None;
+            for (uint32 i = 0; i < most && stop == pawn::angler::Stop::None && castsOwed(r, clock) > 0; ++i)
+            {
+                markFished(r, cardian::errand::numberArg(r.args, "fished").value_or(clock) + per);
+                stop = pawn::angler::castAtOnce(r.charid);
+            }
+            r.castsSeen = pawn::angler::casts(r.charid);
+            if (stop == pawn::angler::Stop::None && castsOwed(r, clock) == 0)
+            {
+                r.catchingUp = false;
+                tellMadeUp(r);
+                r.args.erase(std::string("made_up_from"));
+                save(r);
+            }
+            return stop;
+        }
+
         // Back: what the errand earned put on her -- written before she can
         // stand, so the body the ladder loads has it -- the row gone, and the
         // ladder stands her where she left the world when her player is near.
@@ -702,6 +774,7 @@ namespace pawn::errands
                 {
                     pawn::angler::stop(charid, wornOf(r));
                 }
+                tellMadeUp(r);
                 // where she left, saved again before the ladder stands her by it
                 if (r.args.contains("placed") && r.args.at("placed") == "1" && r.fromZone != 0)
                 {
@@ -801,7 +874,9 @@ namespace pawn::errands
         }
 
         // Away: placed at her spot once the ladder has taken her body, then
-        // fishing (angler.h) until her time is up or something stops her
+        // fishing (angler.h) until her time is up or something stops her. A
+        // restart that finds her away makes up the time the map was down
+        // before her venture can end (catchUp)
         void tickMoney(Record& r, const uint32 clock)
         {
             const auto charid = r.charid;
@@ -813,17 +888,14 @@ namespace pawn::errands
                 }
                 place(r);
             }
-            if (cardian::errand::due(r.errand, clock))
+            const bool owed = r.catchingUp || (!pawn::angler::fishing(charid) && castsOwed(r, clock) > 0);
+            if (!owed && cardian::errand::due(r.errand, clock))
             {
                 finish(charid, cardian::errand::Kept::Whole, false);
                 return;
             }
             auto stop = pawn::angler::Stop::None;
-            if (pawn::angler::fishing(charid))
-            {
-                stop = pawn::angler::tick(charid);
-            }
-            else
+            if (!pawn::angler::fishing(charid))
             {
                 // what she wore is kept before her kit goes on: a restart
                 // between the two would take the kit for what she wore
@@ -835,6 +907,34 @@ namespace pawn::errands
                                                     r.args["worn_ammo"]   = std::to_string(w.ammo);
                                                     save(r);
                                                 });
+                r.castsSeen = 0;
+                if (stop == pawn::angler::Stop::None && !r.args.contains("fished"))
+                {
+                    markFished(r, clock);
+                }
+                else if (stop == pawn::angler::Stop::None && owed)
+                {
+                    r.catchingUp = true;
+                    if (!r.args.contains("made_up_from"))
+                    {
+                        r.args["made_up_from"] = r.args.at("fished");
+                        save(r);
+                    }
+                    ShowInfoFmt("errands: {} makes up {} casts of fishing for the time the map was down", nameOf(charid), castsOwed(r, clock));
+                }
+            }
+            else if (r.catchingUp)
+            {
+                stop = catchUp(r, clock);
+            }
+            else
+            {
+                stop = pawn::angler::tick(charid);
+                if (const auto casts = pawn::angler::casts(charid); casts != r.castsSeen)
+                {
+                    r.castsSeen = casts;
+                    markFished(r, clock);
+                }
             }
             if (stop != pawn::angler::Stop::None)
             {

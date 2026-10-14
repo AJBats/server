@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 74: CL_LENDER_TREK, a gambit row her trek
+// compatible, the user, 2026-09-14). 75: a venture's time made up after the map
+// was down -- VENTURE_NEWS's minutes, CL_NEWS_CAUGHT_UP; 74: CL_LENDER_TREK, a gambit row her trek
 // lends; 73: a broken rod that takes the lure --
 // VENTURE_NEWS's lure, CL_NEWS_ROD_LURE_LOST; 72: a venture's supplies by item --
 // CL_VENTURE_USED and CL_VENTURE_BOUGHT; 71: a lure lost to a snapped line --
@@ -142,7 +143,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 74 };
+enum { CL_PROTOCOL = 75 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2507,6 +2508,7 @@ enum
     CL_NEWS_CANNOT_FISH = 6, // the server would not let her fish there: the venture is cut short
     CL_NEWS_LURE_LOST = 7,   // her lure (the item) was lost to a snapped line, and the venture ends, as the player chose
     CL_NEWS_ROD_LURE_LOST = 8, // her rod broke and took her lure, and the venture ends: a lost lure ends it, as the player chose, or she held no spare rod
+    CL_NEWS_CAUGHT_UP = 9,     // the map was down while she was away, and the casts of that time were made up as it came back: minutes says how long
 };
 
 // Pushed, one way: news from her venture for his log
@@ -2518,7 +2520,7 @@ typedef struct cl_venture_news
     uint8_t   spare;
     uint16_t  item;    // what it is about: her rod, or her bait or lure
     uint16_t  lure;    // CL_NEWS_ROD_SPARE and CL_NEWS_ROD_LURE_LOST: the lure the broken rod took; 0 none
-    uint16_t  spare2;
+    uint16_t  minutes; // CL_NEWS_CAUGHT_UP: the minutes of her venture made up
 } cl_venture_news;
 
 // Where a thing of her trip is
