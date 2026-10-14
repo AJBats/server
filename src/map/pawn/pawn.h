@@ -153,14 +153,17 @@ namespace pawn
     // The zone line a real player last walked through: the zone he left, the
     // zone it led to and where he stood as he went (as his client's zone line
     // packet came in: by the zone change the line's handler has moved him
-    // to its far side, in the next zone). His followers make for
-    // the line nearest that spot (TravelTick), not the one nearest them --
-    // a zone can have several lines into the next
+    // to its far side, in the next zone), and where it set him down there.
+    // His followers make for the line nearest that spot (TravelTick), not
+    // the one nearest them -- a zone can have several lines into the next --
+    // and one within pawn.FOLLOW_THROUGH_YALMS of it goes through where he
+    // crossed, landing where he landed
     struct PlayerExit
     {
         xi::ZoneId from{};
         xi::ZoneId to{};
         position_t at{};
+        position_t landed{};
     };
     auto playerExit(uint32 playerCharID) -> std::optional<PlayerExit>;
     // A real player's client walked into a zone line (packet 0x05E, seen

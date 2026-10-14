@@ -6990,25 +6990,43 @@ void CPawnController::TravelTick()
         }
     }
 
+    // The line her player walked through, out of her zone and into the one
+    // she is bound for: where he stood as he crossed, and where it set him
+    // down. He walked it, so it is a crossing, whatever the travel map makes
+    // of the line (the user, 2026-10-13). Within pawn.FOLLOW_THROUGH_YALMS of
+    // where he crossed she goes through there herself, at once
+    const auto* PLeader = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
+    const auto  left    = PLeader != nullptr ? pawn::playerExit(PLeader->id) : std::nullopt;
+    const bool  hisLine = left.has_value() && left->from == POwner->getZone() && left->to == targetZone;
+    if (hisLine && distance(POwner->loc.p, left->at) <= settings::get<float>("pawn.FOLLOW_THROUGH_YALMS"))
+    {
+        ShowInfoFmt("pawn: travel {}: follows {} through where he crossed, {:.1f}y away (zone {} -> {})", POwner->getName(), PLeader->getName(),
+                    distance(POwner->loc.p, left->at), static_cast<uint16>(left->from), static_cast<uint16>(left->to));
+        m_TravelHopZone   = {};
+        m_TravelStuckSaid = false;
+        cross(pawn::TravelHop{ left->to, left->at, left->landed });
+        return;
+    }
+
     // The line chosen as she sets out, and kept while she walks it: the
     // first of the shortest walk across the sub-zones -- to the piece her
     // player stands on, when she follows him -- and of the lines that land
     // the same way, the one nearest where he walked through, when she
-    // follows him out of the zone he left. With no walk at all, the way is
-    // looked for again every kNoWayRetry. A tick that chooses the line does
-    // nothing else: the way to it is planned on the next, so no one tick
-    // carries both searches (the trek budget, TREK_PLAN_BUDGET_MS)
+    // follows him out of the zone he left. Where the map knows no walk but
+    // he walked through a line here, she walks to where he crossed. With no
+    // walk at all, the way is looked for again every kNoWayRetry. A tick
+    // that chooses the line does nothing else: the way to it is planned on
+    // the next, so no one tick carries both searches (the trek budget,
+    // TREK_PLAN_BUDGET_MS)
     constexpr auto kHopForgotten = 10s;
     constexpr auto kNoWayRetry   = 15s;
     const bool     sameLeg       = m_TravelHopKnown && m_TravelHopFrom == POwner->getZone() && m_TravelHopTarget == targetZone && m_Tick - m_TravelHopAt < kHopForgotten;
     bool           chose         = false;
-    if (!sameLeg || (!m_TravelHop.has_value() && m_Tick - m_TravelHopChosenAt > kNoWayRetry))
+    if (!sameLeg || ((!m_TravelHop.has_value() || m_TravelHopHeels) && m_Tick - m_TravelHopChosenAt > kNoWayRetry))
     {
-        const auto  began   = std::chrono::steady_clock::now();
-        const auto* PLeader = pawn::partyPlayer(static_cast<const CCharEntity*>(POwner));
-        const auto  left    = PLeader != nullptr ? pawn::playerExit(PLeader->id) : std::nullopt;
+        const auto                began = std::chrono::steady_clock::now();
         std::optional<position_t> prefer;
-        if (left.has_value() && left->from == POwner->getZone() && left->to == targetZone)
+        if (hisLine)
         {
             prefer = left->at;
         }
@@ -7018,6 +7036,7 @@ void CPawnController::TravelTick()
             toPoint = PLeader->loc.p;
         }
         m_TravelHop         = pawn::travel::nextHop(POwner->getZone(), POwner->loc.p, targetZone, toPoint, prefer);
+        m_TravelHopHeels    = false;
         m_TravelHopKnown    = true;
         m_TravelHopFrom     = POwner->getZone();
         m_TravelHopTarget   = targetZone;
@@ -7029,6 +7048,13 @@ void CPawnController::TravelTick()
             ShowInfoFmt("pawn: travel {}: chose the line from zone {} to zone {}, {:.1f}y away, toward zone {} ({:.1f} ms)", POwner->getName(),
                         static_cast<uint16>(POwner->getZone()), static_cast<uint16>(m_TravelHop->destinationZone), distance(POwner->loc.p, m_TravelHop->walkTo),
                         static_cast<uint16>(targetZone), took);
+        }
+        else if (hisLine)
+        {
+            m_TravelHop      = pawn::TravelHop{ left->to, left->at, left->landed };
+            m_TravelHopHeels = true;
+            ShowInfoFmt("pawn: travel {}: the map knows no line from zone {} toward zone {} ({:.1f} ms); she walks to where {} crossed, {:.1f}y away", POwner->getName(),
+                        static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone), took, PLeader->getName(), distance(POwner->loc.p, left->at));
         }
         else
         {

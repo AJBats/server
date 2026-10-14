@@ -1288,6 +1288,7 @@ private:
     xi::ZoneId                        m_TravelHopTarget{};
     timer::time_point                 m_TravelHopAt;
     timer::time_point                 m_TravelHopChosenAt; // when the hop, or none, was chosen: none is asked again in a while
+    bool                              m_TravelHopHeels = false; // the hop is the walk to where her player crossed, the map knowing none: asked again in a while too
     bool                              m_TravelStuckSaid  = false; // "I'm stuck!" said for this trek's standstill
     std::optional<xi::ZoneId>         m_TrekCrossedFrom;          // the zone her trek asked to cross out of: landed elsewhere, she rests her HP up
     bool                              m_TrekResting = false;      // resting her HP up across a zone line on her trek: her trek's rows stay lent

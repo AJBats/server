@@ -127,6 +127,7 @@ namespace
     {
         realtime::time_point when;
         position_t           where;
+        bool                 fromMogHouse = false; // his Mog House's exit, not a line he walked to
     };
     std::unordered_map<uint32, ZoneLineSeen> zoneLineAt;
     // A player's last walk through a zone line (playerExit)
@@ -2642,11 +2643,13 @@ namespace pawn
         // client sent moments before says which, and is spent on this zone
         // change, whatever it is (a Mog House's own door included)
         std::optional<std::chrono::milliseconds> sinceZoneLine;
-        position_t                               lineAt = PPlayer->loc.p;
+        position_t                               lineAt       = PPlayer->loc.p;
+        bool                                     fromMogHouse = false;
         if (const auto it = zoneLineAt.find(PPlayer->id); it != zoneLineAt.end())
         {
             sinceZoneLine = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second.when);
             lineAt        = it->second.where;
+            fromMogHouse  = it->second.fromMogHouse;
             zoneLineAt.erase(it);
         }
         if (PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
@@ -2654,9 +2657,13 @@ namespace pawn
             return;
         }
         const bool walked = cardian::hold::walked(sinceZoneLine);
-        if (walked)
+        // His Mog House's exit is no crossing to follow through: where he
+        // stood is inside it, and where it sets him down is decided only as
+        // he arrives (the handler zeroes his position)
+        if (walked && !fromMogHouse)
         {
-            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, lineAt };
+            // His position is the far side's already: the line's handler has set it
+            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, lineAt, PPlayer->loc.p };
         }
 
         for (auto& [charid, PPawn] : pawns)
@@ -2717,7 +2724,7 @@ namespace pawn
     {
         if (PChar != nullptr && !isPawn(PChar))
         {
-            zoneLineAt.insert_or_assign(PChar->id, ZoneLineSeen{ realtime::now(), PChar->loc.p });
+            zoneLineAt.insert_or_assign(PChar->id, ZoneLineSeen{ realtime::now(), PChar->loc.p, PChar->inMogHouse() });
         }
     }
 

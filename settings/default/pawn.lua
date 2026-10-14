@@ -449,6 +449,12 @@ xi.settings.pawn =
     -- spend (planning its route round the mobs, checking it): a tick whose
     -- treks pass it is shouted in the map log as a [critical] line
     TREK_PLAN_BUDGET_MS = 40,
+    -- Following her player through a zone line he walked through (the
+    -- user, 2026-10-13): within this many yalms of where he crossed, she
+    -- goes through there herself at once and lands where he landed,
+    -- whatever the travel map makes of the line. Farther back, she takes
+    -- the map's way, or with none walks to where he crossed
+    FOLLOW_THROUGH_YALMS = 7,
 
     -- The party's own ground (the user, 2026-10-13): PARTY_GROUND_RADIUS
     -- yalms round the player whose orders a cardian follows. A retreat binds
