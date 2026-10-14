@@ -25,6 +25,7 @@
 #include "drill.h"
 #include "engage_math.h"
 #include "errands.h"
+#include "junk.h"
 #include "professions.h"
 #include "venture_sales.h"
 #include "pawn.h"
@@ -276,6 +277,8 @@ class PawnModule : public CPPModule
         // Professions and the money venture's tables, both its sides' (professions.h)
         pawn::professions::ensureTables();
         pawn::sales::ensureTables();
+        // The junk rule over this database's items and recipes (junk.h)
+        pawn::junk::load();
         // The cardian API's messages on the Cardian Link (link_api.cpp, and
         // the linkshell's), and the Lua libraries some are answered from
         pawn::linkapi::registerHandlers();
