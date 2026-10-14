@@ -1301,6 +1301,7 @@ private:
     bool                              m_TrekStuckSaid = false;    // she said she was stuck by aggro at this choke (SayStuckIfSure)
     position_t                        m_TrekStuckAt{};            // ... where it held her
     bool                              m_TrekHated     = false;    // a mob on her at her trek's last look (TrekWatchHate)
+    bool                              m_TrekLegChased = false;    // a mob on her at any look since her last zone line: she rests across the next
 
     // The rings of the mobs near her at her trek's last look, for the log
     // alone: the moment one turns on her, how far inside its ring she stood

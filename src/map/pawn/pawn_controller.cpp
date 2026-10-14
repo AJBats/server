@@ -5501,8 +5501,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     TracyZoneScoped;
 
     // Across a zone line on her trek the chase is over -- every zone line is
-    // safe -- so with HP or MP missing she rests to full right there, before
-    // her trek goes on or as she meets the player (the user, 2026-10-11)
+    // safe -- so she rests to full right there, before her trek goes on or as
+    // she meets the player (the user, 2026-10-11), when the rest is earned: a
+    // mob was on her on the way, or she arrives under
+    // pawn.TREK_LINE_REST_BELOW percent of her HP or MP. Following him
+    // through a line nearly full she stands, and her ordinary rest rules
+    // apply beside him (the user, 2026-10-13)
     if (m_TrekCrossedFrom.has_value() && POwner->loc.zone != nullptr && *m_TrekCrossedFrom != POwner->getZone())
     {
         m_TrekCrossedFrom.reset();
@@ -5511,15 +5515,26 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             TrekGotBy("across the line");
         }
         EndChase("left behind at the zone line");
-        m_TrekHated = false; // the mobs of the zone she left are on her no more
-        if (POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP())
+        m_TrekHated           = false; // the mobs of the zone she left are on her no more
+        const bool  chased    = m_TrekLegChased;
+        m_TrekLegChased       = false;
+        const float below     = settings::get<float>("pawn.TREK_LINE_REST_BELOW") / 100.0f;
+        const bool  worn      = static_cast<float>(POwner->health.hp) < static_cast<float>(POwner->GetMaxHP()) * below ||
+                          (POwner->GetMaxMP() > 0 && static_cast<float>(POwner->health.mp) < static_cast<float>(POwner->GetMaxMP()) * below);
+        const bool  missing   = POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP();
+        if (missing && (chased || worn))
         {
             m_TrekResting = true;
             m_TrekKneltAt = m_Tick;
             m_RestOrder   = cardian::rest::Order{ .percent = 100, .byRow = true };
-            ShowInfoFmt("rest: {} rests to full across the line on her trek ({} of {} HP, {} of {} MP)", POwner->getName(), POwner->health.hp,
-                        POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP());
+            ShowInfoFmt("rest: {} rests to full across the line on her trek ({} of {} HP, {} of {} MP; {})", POwner->getName(), POwner->health.hp,
+                        POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP(), chased ? "chased on the way" : "worn down");
             pawn::drill::noteRest(POwner->id);
+        }
+        else if (missing)
+        {
+            ShowInfoFmt("rest: {} crosses the line and stays up ({} of {} HP, {} of {} MP: no chase, not worn down)", POwner->getName(), POwner->health.hp,
+                        POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP());
         }
     }
     // Her rest across a zone line on her trek: a mob on her ends it, and so
@@ -7130,6 +7145,7 @@ void CPawnController::EndTrek()
     EndChase("her trek is over");
     m_TrekStuckSaid = false;
     m_TrekHated     = false;
+    m_TrekLegChased = false; // a chase on a trek that ended short of a line earns no rest across the next
     m_TrekRingsNear.clear();
     // The walk is the trek's no longer: planned afresh for whatever she
     // walks next, a sneak-by under way let go
@@ -7245,6 +7261,10 @@ auto CPawnController::TrekWatchHate() -> bool
         EndChase("shaken off");
     }
     m_TrekHated = hated;
+    if (hated)
+    {
+        m_TrekLegChased = true;
+    }
     return hated;
 }
 

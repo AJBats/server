@@ -455,6 +455,10 @@ xi.settings.pawn =
     -- whatever the travel map makes of the line. Farther back, she takes
     -- the map's way, or with none walks to where he crossed
     FOLLOW_THROUGH_YALMS = 7,
+    -- Across a zone line on a trek she rests to full only when it is earned
+    -- (the user, 2026-10-13): a mob was on her on the way, or she arrives
+    -- under this percent of her HP or MP
+    TREK_LINE_REST_BELOW = 60,
 
     -- The party's own ground (the user, 2026-10-13): PARTY_GROUND_RADIUS
     -- yalms round the player whose orders a cardian follows. A retreat binds
