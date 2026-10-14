@@ -152,7 +152,11 @@ namespace cardian::link
     X(VENTURE_REPORT, cl_venture_report)     \
     X(VENTURE_ITEM, cl_venture_item)         \
     X(VENTURE_NEWS, cl_venture_news)         \
-    X(PROFESSION_SLOT, cl_profession_slot)
+    X(PROFESSION_SLOT, cl_profession_slot)   \
+    X(BANK, cl_bank)                         \
+    X(BANK_HOLDER, cl_bank_holder)           \
+    X(BANK_DEPOSIT, cl_bank_deposit)         \
+    X(BANK_WITHDRAW, cl_bank_withdraw)
 
     template <typename T>
     struct MessageType;

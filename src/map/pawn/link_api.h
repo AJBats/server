@@ -21,9 +21,13 @@
 
 #pragma once
 
+#include "cardian_link_messages.h"
+#include "common/cbasetypes.h"
 #include "common/lua.h"
 
 #include <optional>
+
+class CItem;
 
 // The cardian API on the Cardian Link: the companion addon's messages about
 // cardians, answered from the pawn module. The transport (cardian_link.h)
@@ -46,4 +50,9 @@ namespace pawn::linkapi
     // A library call's answer, its table; nullopt when the call failed (said
     // once per name) or answered no table
     auto libraryTable(const char* name, const sol::protected_function_result& res) -> std::optional<sol::table>;
+
+    // A stack as every message lists one (cl_item): its slot, item and
+    // quantity, whether it is worn, and an enchanted piece's charges and
+    // readiness -- the inventory's, and the linkshell bank's (ls_bank.h)
+    auto itemOf(const CItem* PItem, uint8 slot) -> cl_item;
 } // namespace pawn::linkapi
