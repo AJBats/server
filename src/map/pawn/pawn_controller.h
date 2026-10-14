@@ -420,6 +420,7 @@ public:
     // its timing (the user, 2026-10-05). Orders behind it wait their turn,
     // kQueueDepth deep in all.
     void FireQueuedOrder();
+    void FireQueuedOrderStep(); // FireQueuedOrder's one step, the maneuver's end left to it
     auto HasQueuedOrder() const -> bool
     {
         return m_QueuedOrder.has_value();
@@ -454,6 +455,11 @@ public:
     // The rest her queue line shows (m_RestLineKind) brought up to date, and
     // told to her player when it changed with nothing queued
     void UpdateRestLine();
+    // The rest her queue line shows, as she is now: his order while it
+    // stands, her own while she kneels without one and he has not called it
+    // off, else none. Read fresh by every line sent, so a line sent while a
+    // pause holds her tick is never stale
+    auto RestLineNow() const -> uint8;
 
     // The enchanted-item lane (OPEN_ISSUES #297, pawn_enchant.cpp): an
     // enchanted piece -- an experience ring -- used from her inventory is put
@@ -578,6 +584,7 @@ private:
     uint32 m_ManeuverBy          = 0;
     bool   m_ManeuverPriorMaster = true;
     bool   m_ManeuverComposed    = false; // its order given (held: after the route, at the release; a rest, live too): it plays out without his eye
+    bool   m_FirstIsManeuvers    = false; // the first of her line is the composed maneuver's own order, not one he queued behind it
     bool   m_ManeuverResting     = false; // its rest is under way: kept in step with the queue by SetQueuedOrder
     void   ManeuverTick();
     void   NoteOrderFired(); // an order of his left her: a maneuver ends here
@@ -1593,6 +1600,12 @@ private:
     std::optional<std::pair<std::string, EntityId>> m_Running;
     timer::time_point                               m_RunningSince;
     bool                                            m_RunningSeen = false;
+    // What holds the first of her line back from starting, said in the map
+    // log as it changes and when the order starts, so the gap between two
+    // of his orders can be read off it: its kind, and since when it waits
+    std::string                                     m_OrderWaitKind;
+    timer::time_point                               m_OrderWaitSince;
+    void                                            NoteOrderWait(const std::string& key);
     void                                            SetRunning(const std::string& key, EntityId target);
     void                                            UpdateRunning();
 

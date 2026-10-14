@@ -42,15 +42,20 @@ void CPawnController::EndRestOrder(const std::string_view why)
     m_RestOrder = {};
 }
 
+auto CPawnController::RestLineNow() const -> uint8
+{
+    const bool down      = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
+    const bool calledOff = restSeconds(timer::now()) < m_RestCalledOffUntil;
+    const bool hisOrder  = m_RestOrder.active() && !m_RestOrder.byRow;
+    return hisOrder ? uint8{ CL_AK_REST } : (down && !calledOff) ? uint8{ CL_AK_OWN_REST } : uint8{ CL_AK_NONE };
+}
+
 void CPawnController::UpdateRestLine()
 {
-    // Her queue line's rest: his order while it stands, her own while she
-    // kneels without one; told to her player as it changes, when nothing is
-    // queued to show instead (#256). Asked every tick, not by RestTick alone,
-    // which a fight, a walk or a KO leaves unasked
-    const bool  down     = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
-    const bool  hisOrder = m_RestOrder.active() && !m_RestOrder.byRow;
-    const uint8 restLine = hisOrder ? uint8{ CL_AK_REST } : down ? uint8{ CL_AK_OWN_REST } : uint8{ CL_AK_NONE };
+    // Her queue line's rest, told to her player as it changes, when nothing
+    // is queued to show instead (#256). Asked every tick, not by RestTick
+    // alone, which a fight, a walk or a KO leaves unasked
+    const uint8 restLine = RestLineNow();
     if (restLine == m_RestLineKind)
     {
         return;
@@ -67,7 +72,8 @@ void CPawnController::UpdateRestLine()
 
 auto CPawnController::CallOffRest() -> bool
 {
-    if (m_RestLineKind == CL_AK_NONE)
+    // as her line shows it now: a pause holds the tick that keeps the cached kind
+    if (RestLineNow() == CL_AK_NONE)
     {
         return false;
     }
@@ -75,6 +81,7 @@ auto CPawnController::CallOffRest() -> bool
     m_RestCalledOffUntil = restSeconds(timer::now()) + holdOff;
     EndRestOrder("the player called it off");
     ShowInfoFmt("rest: {}'s rest is called off by the player; her own kneels wait {:.0f} s", POwner->getName(), holdOff);
+    UpdateRestLine(); // told at once: a pause holds the tick that would tell it
     return true;
 }
 
