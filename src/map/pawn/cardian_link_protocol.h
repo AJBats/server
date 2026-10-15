@@ -34,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 79: BANK_JUNK, the player's haul into
+// compatible, the user, 2026-09-14). 81: AH_REPRICE, a listing of his given a
+// new price; 80: selling on the auction house --
+// AH_QUOTES, AH_LISTINGS, AH_SELL and AH_CANCEL, AH_HISTORY's start, and
+// CL_S_NOT_AUCTIONABLE to CL_S_LISTING_GONE; 79: BANK_JUNK, the player's haul into
 // the bank at once; 78: the bank's moves made safe --
 // BANK_WITHDRAW's version, CLUB's and BANK's shell name widened to 24,
 // CL_S_NOT_WITH_YOU; 77: the shell's bank -- BANK and
@@ -150,7 +153,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 79 };
+enum { CL_PROTOCOL = 81 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -355,6 +358,14 @@ enum
     CL_S_MOG_HOUSE_ONLY    = 0x0204, // that bag opens only in his Mog House
     CL_S_HOLDER_ONLY       = 0x0205, // only the shell's holder may change the bank's settings
     CL_S_NOT_WITH_YOU      = 0x0206, // that character is not where the place he stands at reaches (his city from his Mog House, near a moogle or a counter)
+
+    // Selling on the auction house (his inventory full: CL_S_NO_SPACE; a Rare item he holds already: CL_S_RARE_OWNED;
+    // too little gil for the fee: CL_S_NOT_ENOUGH_GIL; worn: CL_S_ITEM_EQUIPPED; a stack of an item that comes in none: CL_S_NOT_IN_STACKS)
+    CL_S_NOT_AUCTIONABLE   = 0x0210, // the auction house takes no such item: flagged so (as Ex and most Rare items are), or with no place on its shelves
+    CL_S_LISTING_LIMIT     = 0x0211, // he has as many listings on sale as he may
+    CL_S_PARTLY_USED       = 0x0212, // an enchanted item with charges spent: the auction house takes it only full
+    CL_S_NOT_A_FULL_STACK  = 0x0213, // a stack sells only full
+    CL_S_LISTING_GONE      = 0x0214, // no listing of his on sale by that number: it sold, or came back to him
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -1959,13 +1970,22 @@ typedef struct cl_cp_buy
 // party: the player himself, by his own charid, or a cardian of his to manage.
 // He must stand by an auction counter, and she by the counter he stands at.
 // The auction house stays blind, as retail's: a listing's price is never told,
-// only how many are listed and what the last sales paid.
+// only how many are listed and what the last sales paid -- but for the sell
+// panel's starting price (AH_HISTORY's start), which is one gil under the
+// cheapest listing of anyone else's when that is lower than the going rate
+// (the user, 2026-10-15: the fishing venture's own undercut). Its Sell page
+// lists for him alone: whoever's bag an item comes from, the listing is his.
 
 enum
 {
-    CL_T_AH_SHELF   = 0x0801,
-    CL_T_AH_HISTORY = 0x0802,
-    CL_T_AH_BID     = 0x0803,
+    CL_T_AH_SHELF    = 0x0801,
+    CL_T_AH_HISTORY  = 0x0802,
+    CL_T_AH_BID      = 0x0803,
+    CL_T_AH_QUOTES   = 0x0804,
+    CL_T_AH_LISTINGS = 0x0805,
+    CL_T_AH_SELL     = 0x0806,
+    CL_T_AH_CANCEL   = 0x0807,
+    CL_T_AH_REPRICE  = 0x0808,
 };
 
 // One item in one form the auction house lists it in: singly, or by the stack
@@ -2014,7 +2034,8 @@ typedef struct cl_ah_sale
 } cl_ah_sale;
 
 // What the game's own auction house shows of an item in one form: its stock,
-// the going rate, and its last ten sales, newest first. Asked by the buy panel.
+// the going rate, and its last ten sales, newest first. Asked by the buy panel
+// and the sell panel, which starts its price at `start`.
 typedef struct cl_ah_history
 {
     cl_header  h;
@@ -2023,6 +2044,8 @@ typedef struct cl_ah_history
     uint8_t    count;     // answered: sales used
     uint32_t   stock;     // answered
     uint32_t   going;     // answered
+    uint32_t   start;     // answered: where a sale of his starts -- the going rate, or one gil under the cheapest
+                          // listing of anyone else's when that is lower; 0 with neither
     cl_ah_sale sales[10]; // answered
 } cl_ah_history;
 
@@ -2047,6 +2070,112 @@ typedef struct cl_ah_bid
     uint16_t  notWorn;   // answered with equip and equipped 0: why (CL_S_*)
     uint16_t  spare2;
 } cl_ah_bid;
+
+// An item in one form and the going rate its last sales make: a row's price
+// on the Sell page
+typedef struct cl_ah_quote
+{
+    uint16_t item;
+    uint8_t  stack; // 1: the stack form
+    uint8_t  spare;
+    uint32_t going; // answered: the median of its last ten sales in this form; 0 when none has sold
+} cl_ah_quote;
+
+// The going rates of many items at once, a bag's worth for the Sell page's
+// list: asked with each item and form, answered the same with each rate. The
+// server keeps a rate a minute, so a page flipping between bags and sellers
+// asks the auction house little
+typedef struct cl_ah_quotes
+{
+    cl_header   h;
+    uint8_t     count; // quotes used
+    uint8_t     spare;
+    uint16_t    spare2;
+    cl_ah_quote quotes[48];
+} cl_ah_quotes;
+
+// One listing of his: on sale, or sold with its gil still waiting in his
+// delivery box
+typedef struct cl_ah_mine
+{
+    uint32_t listing; // its own number, for a cancel
+    uint32_t price;   // on sale: his price; sold: what it sold for
+    uint32_t date;    // Unix time: when it went up, or when it sold
+    uint16_t item;
+    uint8_t  stack;   // 1: the stack form
+    uint8_t  sold;    // 1: sold
+} cl_ah_mine;
+
+// His sales status for the Sell page: his listings on sale in the order they
+// went up, then each sold one whose gil waits in his delivery box, the newest
+// first; and the auction house's fees, so the page can say what a listing
+// costs before it goes up -- base + price x rate / 10000, at most maxFee, as
+// the game's own listing charges it
+typedef struct cl_ah_listings
+{
+    cl_header  h;
+    uint8_t    count;      // answered: rows used
+    uint8_t    open;       // answered: his listings on sale, every one, whether all fit in rows or not
+    uint8_t    limit;      // answered: how many he may have on sale at once; 0 for no limit
+    uint8_t    spare;
+    uint32_t   baseSingle; // answered: a single's fee before its rate
+    uint32_t   baseStack;  // answered: a stack's
+    uint32_t   rateSingle; // answered: a single's rate on its price, in hundredths of a percent
+    uint32_t   rateStack;  // answered: a stack's
+    uint32_t   maxFee;     // answered
+    cl_ah_mine rows[48];   // answered
+} cl_ah_listings;
+
+// A listing of his: one piece or one full stack at his price, from a bag of
+// a character he manages who stands by the counter with him -- himself, an
+// alt, a cardian he owns -- or from the shell's bank. It is his whoever held
+// it: his slots, his fee, his name on it, and its gil to his delivery box.
+// From the bank it comes out into his inventory first, as BANK_WITHDRAW
+// takes a stack for him, and is listed from there; refused after that, it
+// stays in his inventory (taken). Answered with the outcome and, listed, the
+// fee and the listing's number
+typedef struct cl_ah_sell
+{
+    cl_header h;
+    uint32_t  holder;  // charid: himself, an alt or a cardian he owns; 0: the shell's bank
+    uint32_t  price;
+    uint32_t  fee;     // answered: the fee he paid
+    uint32_t  listing; // answered: the listing's own number
+    uint16_t  item;    // the item the page saw there: another there now is refused CL_S_ITEM_SLIPPED_AWAY
+    uint8_t   loc;     // her bag, a container id: the inventory, a satchel, sack or case, a wardrobe (the bank: 0)
+    uint8_t   slot;    // her bag's slot; the bank's slot, 1 to CL_BANK_SIZE
+    uint8_t   stack;   // 1: a full stack
+    uint8_t   taken;   // answered: 1 once it came out of the bank into his inventory, listed or not
+    uint16_t  version; // the bank: its version the page saw, as BANK_WITHDRAW's
+} cl_ah_sell;
+
+// A listing of his on sale taken back into his inventory, as the game's own
+// cancel; refused with his inventory full or a Rare one in it already, and
+// by an auction counter only. Answered with the slot it landed in
+typedef struct cl_ah_cancel
+{
+    cl_header h;
+    uint32_t  listing; // its own number
+    uint16_t  item;    // the item the page saw listed: another is refused CL_S_LISTING_GONE
+    uint8_t   landed;  // answered: his inventory's slot
+    uint8_t   spare;
+} cl_ah_cancel;
+
+// A listing of his on sale given a new price, as taking it down and putting
+// it up again would: the fee at the new price paid again and its date fresh,
+// so its time on sale starts over (the user, 2026-10-15), while the listing
+// itself stays up under its own number and needs no room in his inventory.
+// Its own price again changes nothing and costs nothing. By an auction
+// counter only. Answered with the fee
+typedef struct cl_ah_reprice
+{
+    cl_header h;
+    uint32_t  listing; // its own number
+    uint32_t  price;
+    uint32_t  fee;     // answered: the fee he paid
+    uint16_t  item;    // the item the page saw listed: another is refused CL_S_LISTING_GONE
+    uint16_t  spare;
+} cl_ah_reprice;
 
 // ---- 0x09xx: the Mog House -------------------------------------------------
 //

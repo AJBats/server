@@ -27,6 +27,7 @@
 #include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/timer.h"
 #include "common/utils.h"
 
 #include "entities/char_entity.h"
@@ -486,6 +487,77 @@ namespace pawn::auction
             out.going = median(std::move(prices));
         }
         return out;
+    }
+
+    auto quotes(const std::vector<std::pair<uint16, bool>>& asked) -> std::vector<uint32>
+    {
+        struct Quote
+        {
+            uint32              going = 0;
+            realtime::time_point at;
+        };
+        static std::unordered_map<uint32, Quote> kept;
+        constexpr auto                           kKept = std::chrono::seconds(60);
+        const auto                               now   = realtime::now();
+        if (kept.size() > 8192)
+        {
+            kept.clear(); // a bound, never reached by one player's bags
+        }
+
+        const auto keyOf = [](const uint16 itemId, const bool stack)
+        {
+            return static_cast<uint32>(itemId) * 2u + (stack ? 1u : 0u);
+        };
+        std::vector<uint16> stale[2];
+        for (const auto& [itemId, stack] : asked)
+        {
+            const auto it   = kept.find(keyOf(itemId, stack));
+            auto&      list = stale[stack ? 1 : 0];
+            if ((it == kept.end() || now - it->second.at > kKept) && std::find(list.begin(), list.end(), itemId) == list.end())
+            {
+                list.push_back(itemId);
+            }
+        }
+        for (const bool stack : { false, true })
+        {
+            const auto& list = stale[stack ? 1 : 0];
+            if (list.empty())
+            {
+                continue;
+            }
+            const auto rates = goingRates(list, stack);
+            for (const uint16 itemId : list)
+            {
+                const auto rate               = rates.find(itemId);
+                kept[keyOf(itemId, stack)] = Quote{ rate != rates.end() ? rate->second : 0, now };
+            }
+        }
+
+        std::vector<uint32> out;
+        out.reserve(asked.size());
+        for (const auto& [itemId, stack] : asked)
+        {
+            out.push_back(kept[keyOf(itemId, stack)].going);
+        }
+        return out;
+    }
+
+    auto startPrice(const uint16 itemId, const bool stack, const uint32 sellerId, const uint32 going) -> uint32
+    {
+        uint32     start = going;
+        const auto rset  = db::preparedStmt("SELECT COALESCE(MIN(price), 0) AS cheapest FROM auction_house WHERE itemid = ? AND stack = ? AND sale = 0 AND seller <> ?",
+                                            itemId,
+                                            stack ? 1 : 0,
+                                            sellerId);
+        if (rset && rset->next())
+        {
+            const auto cheapest = rset->get<uint32>("cheapest");
+            if (cheapest > 1 && (start == 0 || cheapest - 1 < start))
+            {
+                start = cheapest - 1;
+            }
+        }
+        return start;
     }
 
     auto bid(CCharEntity* PChar, CCharEntity* PPurse, const uint16 itemId, const bool stack, const uint32 price, const uint8 location, const uint8 equipSlot, const bool equip) -> BidResult

@@ -60,7 +60,7 @@ class AHPaginationModule : public CPPModule
         }
 
         // Rate limit opening the AH Sales Info to once every 1.5 seconds
-        const timer::time_point curTick = timer::now();
+        const realtime::time_point curTick = realtime::now(); // CARDIAN: the sales-list throttle runs on real time
         if (curTick < PChar->m_AHHistoryTimestamp + 1500ms)
         {
             PChar->pushPacket<GP_SERV_COMMAND_AUC>(typedPacket->Command, 246, 0, 0, 0, 0); // try again in a little while msg
@@ -150,6 +150,11 @@ class AHPaginationModule : public CPPModule
         for (size_t slot = 0; slot < totalItemsOnAh; slot++)
         {
             PChar->pushPacket<GP_SERV_COMMAND_AUC>(GP_CLI_COMMAND_AUC_COMMAND::LotCancel, static_cast<uint8>(slot), PChar);
+        }
+        // CARDIAN: the page's empty slots reported too, as auctionutils' sales list reports them
+        for (size_t slot = totalItemsOnAh; slot < 7; slot++)
+        {
+            PChar->pushPacket<GP_SERV_COMMAND_AUC>(static_cast<GP_CLI_COMMAND_AUC_COMMAND>(0x0C), static_cast<uint8>(slot), PChar);
         }
 
         return true;

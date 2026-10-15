@@ -22,6 +22,7 @@
 #include "link_api.h"
 
 #include "action_keys.h"
+#include "ah_sell.h"
 #include "auction.h"
 #include "cardian_link.h"
 #include "club.h"
@@ -30,6 +31,7 @@
 #include "gambit_wire.h"
 #include "gate_guards.h"
 #include "live_controller.h"
+#include "ls_bank.h"
 #include "mog_house.h"
 #include "offers.h"
 #include "party_finder.h"
@@ -63,6 +65,7 @@
 #include "recast_container.h"
 #include "utils/battleutils.h"
 #include "utils/charutils.h"
+#include "utils/itemutils.h"
 #include "utils/zoneutils.h"
 #include "zone.h"
 
@@ -1933,13 +1936,15 @@ namespace pawn::linkapi
         }
 
         // An item's stock, going rate and last sales in one form, as the game's
-        // own auction house shows them (the buy panel)
-        void ahHistory(CCharEntity* /* PChar */, const cl_ah_history& ask, Reply& reply)
+        // own auction house shows them (the buy panel), and where a sale of his
+        // starts (the sell panel)
+        void ahHistory(CCharEntity* PChar, const cl_ah_history& ask, Reply& reply)
         {
             const auto history = pawn::auction::history(ask.item, ask.stack != 0);
             auto       answer  = ask;
             answer.stock       = history.stock;
             answer.going       = history.going;
+            answer.start       = pawn::auction::startPrice(ask.item, ask.stack != 0, PChar->id, history.going);
             answer.count       = 0;
             constexpr std::size_t kSales = sizeof(cl_ah_history::sales) / sizeof(cl_ah_sale);
             for (const auto& sale : history.sales)
@@ -1981,6 +1986,170 @@ namespace pawn::linkapi
                 answer.notWorn   = result.notWorn;
                 answer.fromPurse = result.fromPurse;
             }
+            reply.finish(answer, result.status);
+        }
+
+        // The going rates of many items at once: the Sell page's row prices
+        void ahQuotes(CCharEntity* /* PChar */, const cl_ah_quotes& ask, Reply& reply)
+        {
+            constexpr std::size_t kQuotes = sizeof(cl_ah_quotes::quotes) / sizeof(cl_ah_quote);
+            if (ask.count > kQuotes)
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            std::vector<std::pair<uint16, bool>> asked;
+            for (std::size_t i = 0; i < ask.count; ++i)
+            {
+                asked.emplace_back(ask.quotes[i].item, ask.quotes[i].stack != 0);
+            }
+            const auto rates  = pawn::auction::quotes(asked);
+            auto       answer = ask;
+            for (std::size_t i = 0; i < ask.count; ++i)
+            {
+                answer.quotes[i].going = rates[i];
+            }
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // His sales status and the auction house's fees: the Sell page's
+        // right-hand column, and the sell panel's fee
+        void ahListings(CCharEntity* PChar, const cl_ah_listings& ask, Reply& reply)
+        {
+            constexpr std::size_t kRows  = sizeof(cl_ah_listings::rows) / sizeof(cl_ah_mine);
+            std::size_t           open   = 0;
+            const auto            rows   = pawn::ahsell::listingsOf(PChar->id, kRows, open);
+            auto                  answer = ask;
+            answer.count                 = 0;
+            for (const auto& row : rows)
+            {
+                auto& out   = answer.rows[answer.count++];
+                out         = cl_ah_mine{};
+                out.listing = row.listing;
+                out.price   = row.price;
+                out.date    = row.date;
+                out.item    = row.item;
+                out.stack   = row.stack ? 1 : 0;
+                out.sold    = row.sold ? 1 : 0;
+            }
+            answer.open       = static_cast<uint8_t>(std::min<std::size_t>(open, UINT8_MAX));
+            answer.limit      = settings::get<uint8>("map.AH_LIST_LIMIT");
+            answer.baseSingle = settings::get<uint32>("map.AH_BASE_FEE_SINGLE");
+            answer.baseStack  = settings::get<uint32>("map.AH_BASE_FEE_STACKS");
+            answer.rateSingle = static_cast<uint32_t>(std::lround(settings::get<float>("map.AH_TAX_RATE_SINGLE") * 100.0f));
+            answer.rateStack  = static_cast<uint32_t>(std::lround(settings::get<float>("map.AH_TAX_RATE_STACKS") * 100.0f));
+            answer.maxFee     = settings::get<uint32>("map.AH_MAX_FEE");
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // A listing of his (pawn/ah_sell.h), from a bag of a character he
+        // manages who stands by the counter with him, or from the shell's
+        // bank: out into his inventory first, as BANK_WITHDRAW takes a stack
+        // for him, and listed from there
+        void ahSell(CCharEntity* PChar, const cl_ah_sell& ask, Reply& reply)
+        {
+            auto answer      = ask;
+            answer.fee       = 0;
+            answer.listing   = 0;
+            answer.taken     = 0;
+            const bool stack = ask.stack != 0;
+            if (const auto status = pawn::auction::whereShopping(PChar, PChar); status != CL_S_OK)
+            {
+                reply.finish(answer, status);
+                return;
+            }
+            if (PChar->isInEvent())
+            {
+                reply.finish(answer, CL_S_IN_EVENT);
+                return;
+            }
+
+            pawn::ahsell::Listed listed;
+            if (ask.holder == 0)
+            {
+                // judged first, so no stack leaves the bank for a listing that cannot go up
+                if (const auto why = pawn::ahsell::judge(PChar, ask.item, stack, ask.price); why != CL_S_OK)
+                {
+                    reply.finish(answer, why);
+                    return;
+                }
+                const uint32 qty    = stack ? xi::items::lookup(ask.item)->getStackSize() : 1u;
+                uint8        landed = 0;
+                if (const auto why = pawn::lsbank::takeForSale(PChar, ask.slot, ask.item, ask.version, qty, landed); why != CL_S_OK)
+                {
+                    reply.finish(answer, why);
+                    return;
+                }
+                // the very piece that came out of the bank, never another of his
+                answer.taken = 1;
+                listed       = pawn::ahsell::list(PChar, PChar, LOC_INVENTORY, landed, ask.item, stack, ask.price);
+            }
+            else
+            {
+                auto* PHolder = shopperOf(PChar, ask.holder);
+                if (PHolder == nullptr)
+                {
+                    reply.finish(answer, CL_S_NO_SUCH_CARDIAN);
+                    return;
+                }
+                if (const auto status = pawn::auction::whereShopping(PChar, PHolder); status != CL_S_OK)
+                {
+                    reply.finish(answer, status);
+                    return;
+                }
+                if (PHolder->isInEvent())
+                {
+                    reply.finish(answer, CL_S_IN_EVENT);
+                    return;
+                }
+                listed = pawn::ahsell::list(PChar, PHolder, ask.loc, ask.slot, ask.item, stack, ask.price);
+            }
+            if (listed.status == CL_S_OK)
+            {
+                answer.fee     = listed.fee;
+                answer.listing = listed.listing;
+            }
+            reply.finish(answer, listed.status);
+        }
+
+        // A listing of his on sale taken back into his inventory, by an
+        // auction counter as the game's own cancel
+        void ahCancel(CCharEntity* PChar, const cl_ah_cancel& ask, Reply& reply)
+        {
+            auto answer   = ask;
+            answer.landed = 0;
+            if (const auto status = pawn::auction::whereShopping(PChar, PChar); status != CL_S_OK)
+            {
+                reply.finish(answer, status);
+                return;
+            }
+            if (PChar->isInEvent())
+            {
+                reply.finish(answer, CL_S_IN_EVENT);
+                return;
+            }
+            const auto result = pawn::ahsell::cancel(PChar, ask.listing, ask.item);
+            answer.landed     = result.landed;
+            reply.finish(answer, result.status);
+        }
+
+        // A listing of his on sale given a new price, by an auction counter
+        void ahReprice(CCharEntity* PChar, const cl_ah_reprice& ask, Reply& reply)
+        {
+            auto answer = ask;
+            answer.fee  = 0;
+            if (const auto status = pawn::auction::whereShopping(PChar, PChar); status != CL_S_OK)
+            {
+                reply.finish(answer, status);
+                return;
+            }
+            if (PChar->isInEvent())
+            {
+                reply.finish(answer, CL_S_IN_EVENT);
+                return;
+            }
+            const auto result = pawn::ahsell::reprice(PChar, ask.listing, ask.item, ask.price);
+            answer.fee        = result.fee;
             reply.finish(answer, result.status);
         }
 
@@ -2538,6 +2707,11 @@ namespace pawn::linkapi
         handle<cl_ah_shelf>(ahShelf);
         handle<cl_ah_history>(ahHistory);
         handle<cl_ah_bid>(ahBid);
+        handle<cl_ah_quotes>(ahQuotes);
+        handle<cl_ah_listings>(ahListings);
+        handle<cl_ah_sell>(ahSell);
+        handle<cl_ah_cancel>(ahCancel);
+        handle<cl_ah_reprice>(ahReprice);
         handle<cl_roster>(roster);
         handle<cl_sync>(sync);
         handle<cl_inventory>(inventory);

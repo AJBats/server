@@ -56,114 +56,15 @@ namespace pawn::lsbank::moves
     {
         using cardian::lsbank::Extra;
         using cardian::lsbank::Stack;
+        using itemmoves::abandon;
+        using itemmoves::commitMove;
+        using itemmoves::newMark;
+        using itemmoves::takeFault;
+        using itemmoves::Txn;
+        using itemmoves::writeMark;
+        using Slot = itemmoves::Slot;
 
         constexpr uint32 kPurseMax = 999'999'999; // the most gil a purse holds, and so the most one move carries
-
-        MoveFault nextFault = MoveFault::None; // xi_test's (failNext)
-
-        // Whether xi_test armed this fault, which it then meets
-        auto takeFault(const MoveFault fault) -> bool
-        {
-            if (nextFault != fault)
-            {
-                return false;
-            }
-            nextFault = MoveFault::None;
-            return true;
-        }
-
-        // xi_test's lost connection: MariaDB drops it as it drops any client
-        // gone quiet, and rolls back the transaction it held
-        void loseConnection()
-        {
-            db::preparedStmt("SET SESSION wait_timeout = 1");
-            std::this_thread::sleep_for(std::chrono::milliseconds(2500));
-        }
-
-        // ---- one move's database transaction ----------------------------------
-
-        // Opened and closed by hand, so a refusal rolls it back quietly (a throw
-        // into db::transaction is logged as a critical failure). While it is open
-        // nothing may open another: a START TRANSACTION commits the one open.
-        // Rolled back unless committed
-        class Txn
-        {
-        public:
-            Txn()
-            : open_(db::transactionStart())
-            {
-                if (open_)
-                {
-                    db::getDatabase().setInTransaction(true); // a lost connection is not retried mid-transaction
-                }
-            }
-
-            ~Txn()
-            {
-                rollback();
-            }
-
-            Txn(const Txn&)            = delete;
-            Txn& operator=(const Txn&) = delete;
-
-            auto ok() const -> bool
-            {
-                return open_;
-            }
-
-            // The COMMIT; false when it failed -- or when xi_test makes it
-            // fail as the wire can
-            auto commit() -> bool
-            {
-                if (!open_)
-                {
-                    return false;
-                }
-                if (takeFault(MoveFault::LostAtCommit))
-                {
-                    loseConnection();
-                }
-                bool done = false;
-                if (takeFault(MoveFault::RolledBack))
-                {
-                    db::transactionRollback();
-                }
-                else
-                {
-                    done = db::transactionCommit();
-                    if (!done)
-                    {
-                        db::transactionRollback();
-                    }
-                    else if (takeFault(MoveFault::Committed))
-                    {
-                        done = false; // committed, and its answer lost
-                    }
-                    else if (takeFault(MoveFault::CommittedThenLost))
-                    {
-                        loseConnection();
-                        db::transactionRollback(); // fails on the lost connection, as a failed COMMIT's does
-                        done = false;
-                    }
-                }
-                db::getDatabase().setInTransaction(false);
-                open_ = false;
-                return done;
-            }
-
-            void rollback()
-            {
-                if (open_)
-                {
-                    db::transactionRollback();
-                    db::getDatabase().setInTransaction(false);
-                    open_ = false;
-                }
-            }
-
-        private:
-            bool open_ = false;
-        };
 
         // ---- the bank's rows --------------------------------------------------
 
@@ -234,235 +135,10 @@ namespace pawn::lsbank::moves
             return true;
         }
 
-        // ---- a move that fails once her items moved (#478) --------------------
-        //
-        // Once her item transaction has changed her, a move that fails must put
-        // her back as her rows are, and her rows are what the database rolled
-        // back to. It fails before the COMMIT -- a statement refused, or the
-        // connection lost, which fails every statement after it while MariaDB
-        // rolls the move back -- or at the COMMIT, on the wire: rolled back and
-        // told so, or committed with its answer lost. Each move writes a mark of
-        // its own inside its transaction, so a COMMIT told failed is settled by
-        // asking whether the mark is there: there, the move happened, and its
-        // item transaction lets go as after any move; not there, it did not. A
-        // move that did not happen is abandoned (abandon). Proven by xi_test's
-        // scripts/tests/cardian/ls_bank_commit.lua, a lost connection included.
-
-        // A slot of hers: the bag and the slot
-        using Slot = std::pair<uint8, uint8>;
-
-        auto newMark() -> uint64
-        {
-            static std::mt19937_64 marks{ std::random_device{}() };
-            uint64                 mark = 0;
-            while (mark == 0)
-            {
-                mark = marks();
-            }
-            return mark;
-        }
-
-        auto writeMark(const uint64 mark) -> bool
-        {
-            if (takeFault(MoveFault::LostBeforeCommit))
-            {
-                loseConnection();
-            }
-            else if (takeFault(MoveFault::LostTwice))
-            {
-                nextFault = MoveFault::LostInPutBack;
-                loseConnection();
-            }
-            return db::preparedStmt("INSERT INTO cardian_ls_bank_marks (mark) VALUES (?)", mark) != nullptr;
-        }
-
-        void forgetMark(const uint64 mark)
-        {
-            db::preparedStmt("DELETE FROM cardian_ls_bank_marks WHERE mark = ?", mark);
-        }
-
-        enum class Outcome : uint8
-        {
-            Committed,
-            RolledBack,
-            Unknown,
-        };
-
-        // Whether a move whose COMMIT was told failed went through after all:
-        // its mark, read with a lock, so a COMMIT the database is still
-        // finishing is waited for rather than read as rolled back. The read
-        // reconnects a lost connection, and a database that stays gone ends
-        // the map server (LandSandBoat's query layer); Unknown is a read that
-        // failed otherwise
-        auto outcomeOf(const uint64 mark) -> Outcome
-        {
-            if (const auto rset = db::preparedStmt("SELECT mark FROM cardian_ls_bank_marks WHERE mark = ? LOCK IN SHARE MODE", mark))
-            {
-                return rset->next() ? Outcome::Committed : Outcome::RolledBack;
-            }
-            return Outcome::Unknown;
-        }
-
-        // Her character in memory put back as the rollback left her rows. The
-        // item transaction's undo writes her rows as it puts her back, so it
-        // runs in a scratch transaction thrown away after it, whose START
-        // reconnects a lost connection; and a stack the move took whole has its
-        // row cleared in that scratch first -- the rollback put the row back
-        // already, and the undo's own insert of it would fail and leave the
-        // stack out of memory
-        void putBack(ItemClaimTransaction& items, const CCharEntity* PHolder, const std::optional<Slot>& whole)
-        {
-            Txn scratch;
-            if (scratch.ok() && whole.has_value())
-            {
-                db::preparedStmt("DELETE FROM char_inventory WHERE charid = ? AND location = ? AND slot = ?", PHolder->id, whole->first, whole->second);
-            }
-            if (takeFault(MoveFault::LostInPutBack))
-            {
-                loseConnection();
-            }
-            items.rollback();
-            scratch.rollback();
-        }
-
-        // Her character in memory made to follow her rows in the slots a move
-        // that did not happen touched. putBack's undo leaves memory as it was
-        // wherever a write of it fails (a connection lost again), so memory is
-        // checked against the rows, which are the truth after any rollback --
-        // and after a COMMIT nobody can settle, whichever way it went. A slot
-        // that agrees is left alone; one that does not is set from its row as
-        // the game loads one, with a critical line in the log
-        void followRows(CCharEntity* PHolder, const std::vector<Slot>& touched)
-        {
-            bool changed = false;
-            for (const auto& [loc, slot] : touched)
-            {
-                auto* storage = PHolder->getStorage(loc);
-                if (storage == nullptr)
-                {
-                    continue;
-                }
-                const auto rset = db::preparedStmt("SELECT itemId, quantity, signature, extra FROM char_inventory WHERE charid = ? AND location = ? AND slot = ?", PHolder->id,
-                                                   loc, slot);
-                if (rset == nullptr)
-                {
-                    ShowCriticalFmt("lsbank: {}'s slot {} of bag {} could not be read to check memory against it", PHolder->getName(), slot, loc);
-                    continue;
-                }
-                CItem* mine = storage->GetItem(slot);
-                if (!rset->next())
-                {
-                    if (mine != nullptr)
-                    {
-                        ShowCriticalFmt("lsbank: {} holds {} x{} in slot {} of bag {} in memory, and nothing in its row: taken out of memory", PHolder->getName(),
-                                        mine->getID(), mine->getQuantity(), slot, loc);
-                        storage->RemoveItem(slot);
-                        PHolder->pushPacket<GP_SERV_COMMAND_ITEM_ATTR>(nullptr, static_cast<CONTAINER_ID>(loc), slot);
-                        changed = true;
-                    }
-                    continue;
-                }
-                const auto itemId = rset->get<uint16>("itemId");
-                const auto qty    = rset->get<uint32>("quantity");
-                if (mine != nullptr && mine->getID() == itemId)
-                {
-                    if (mine->getQuantity() != qty)
-                    {
-                        ShowCriticalFmt("lsbank: {} holds {} x{} in slot {} of bag {} in memory, and x{} in its row: set from the row", PHolder->getName(), itemId,
-                                        mine->getQuantity(), slot, loc, qty);
-                        mine->setQuantity(qty);
-                        PHolder->pushPacket<GP_SERV_COMMAND_ITEM_NUM>(static_cast<CONTAINER_ID>(loc), slot, qty);
-                        changed = true;
-                    }
-                    continue;
-                }
-                Extra extra{};
-                db::extractFromBlob(rset, "extra", extra);
-                auto PItem = rebuild(itemId, qty, extra);
-                if (PItem == nullptr)
-                {
-                    ShowCriticalFmt("lsbank: {}'s row in slot {} of bag {} holds item {}, which the game does not know", PHolder->getName(), slot, loc, itemId);
-                    continue;
-                }
-                if (PItem->isType(ITEM_LINKSHELL) || PItem->hasFlag(ItemFlag::Inscribable))
-                {
-                    PItem->setSignature(rset->get<std::string>("signature"));
-                }
-                ShowCriticalFmt("lsbank: {} holds {} in slot {} of bag {} in memory, and {} x{} in its row: set from the row", PHolder->getName(),
-                                mine != nullptr ? mine->getID() : 0, slot, loc, itemId, qty);
-                if (mine != nullptr)
-                {
-                    storage->RemoveItem(slot);
-                }
-                if (storage->InsertItem(std::move(PItem), slot) == ERROR_SLOTID)
-                {
-                    ShowCriticalFmt("lsbank: {}'s slot {} of bag {} would not take its row's item back into memory", PHolder->getName(), slot, loc);
-                    PHolder->pushPacket<GP_SERV_COMMAND_ITEM_ATTR>(nullptr, static_cast<CONTAINER_ID>(loc), slot);
-                    changed = true;
-                    continue;
-                }
-                PHolder->pushPacket<GP_SERV_COMMAND_ITEM_ATTR>(storage->GetItem(slot), static_cast<CONTAINER_ID>(loc), slot);
-                changed = true;
-            }
-            if (changed)
-            {
-                PHolder->pushPacket<GP_SERV_COMMAND_ITEM_SAME>(PHolder);
-            }
-        }
-
-        // A move that did not happen, once her item transaction has changed
-        // her: the database rolled back first, then her character put back,
-        // then checked against her rows (followRows). Never her undo inside the
-        // move's own transaction: on a lost connection every write of it fails,
-        // and she would stay as the move left her while the database rolls her
-        // rows back. `whole`: her slot the move took whole, if it took one;
-        // `touched`: her slots the move changed
-        void abandon(Txn& txn, ItemClaimTransaction& items, CCharEntity* PHolder, const std::optional<Slot>& whole, const std::vector<Slot>& touched)
-        {
-            txn.rollback();
-            putBack(items, PHolder, whole);
-            followRows(PHolder, touched);
-        }
-
-        // A move's COMMIT, a failed one settled: true when the move happened
-        // (its item transaction let go), false when it did not (abandoned)
-        auto commitMove(Txn& txn, ItemClaimTransaction& items, CCharEntity* PHolder, const uint64 mark, const std::optional<Slot>& whole, const std::vector<Slot>& touched,
-                        const std::string_view what) -> bool
-        {
-            bool happened = txn.commit();
-            if (!happened)
-            {
-                switch (outcomeOf(mark))
-                {
-                    case Outcome::Committed:
-                        ShowWarningFmt("lsbank: {}'s {} was told its COMMIT failed, and it went through: kept", PHolder->getName(), what);
-                        happened = true;
-                        break;
-                    case Outcome::RolledBack:
-                        ShowWarningFmt("lsbank: {}'s {} did not commit: put back", PHolder->getName(), what);
-                        break;
-                    case Outcome::Unknown:
-                        ShowCriticalFmt("lsbank: {}'s {} failed to commit, and the database cannot say whether it went through: her character follows her rows",
-                                        PHolder->getName(), what);
-                        break;
-                }
-            }
-            if (!happened)
-            {
-                abandon(txn, items, PHolder, whole, touched);
-                return false;
-            }
-            if (!items.commit())
-            {
-                ShowErrorFmt("lsbank: {}'s item transaction would not let go after the bank committed", PHolder->getName());
-            }
-            forgetMark(mark);
-            return true;
-        }
-
         // ---- the moves --------------------------------------------------------
         //
-        // Each is one database transaction (Txn): the shell's head locked, the
+        // Each is one database transaction (Txn, item_moves.h, which keeps a
+        // move whole when the database fails partway, #478): the shell's head locked, the
         // bank read under the lock and judged against what the page saw, the
         // character's item transaction run on the same connection, the bank's
         // rows written, the move's mark written, and the database committed
@@ -515,14 +191,7 @@ namespace pawn::lsbank::moves
                          "`sack_can` tinyint(3) unsigned NOT NULL DEFAULT 15, " // CL_BANK_* bits the holder lets a sack holder
                          "`pearl_can` tinyint(3) unsigned NOT NULL DEFAULT 1, " // ... a pearl holder
                          "PRIMARY KEY (`lsid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        // a move's mark, written inside its transaction and forgotten once it
-        // has committed: one still there tells a COMMIT whose answer was lost
-        // that it went through (#478)
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_ls_bank_marks` ("
-                         "`mark` bigint(20) unsigned NOT NULL, "
-                         "`at` timestamp NOT NULL DEFAULT current_timestamp(), "
-                         "PRIMARY KEY (`mark`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("DELETE FROM cardian_ls_bank_marks WHERE at < NOW() - INTERVAL 1 DAY"); // left by a map stopped mid-move
+        itemmoves::ensureTable(); // a move's marks (#478)
     }
 
     auto ensureHead(const uint32 lsid) -> bool
@@ -543,7 +212,7 @@ namespace pawn::lsbank::moves
     auto readStacks(const uint32 lsid) -> std::optional<std::vector<Stack>>
     {
         auto rset = db::preparedStmt("SELECT itemId, quantity, extra FROM cardian_ls_bank WHERE lsid = ? ORDER BY slot", lsid);
-        if (takeFault(MoveFault::BankReadFails))
+        if (takeFault(itemmoves::Fault::BankReadFails))
         {
             rset.reset(); // xi_test's: the read failed
         }
@@ -564,50 +233,9 @@ namespace pawn::lsbank::moves
         return bank;
     }
 
-    // Built as charutils::LoadInventory builds an item, item by item: its
-    // quantity and extra data, a linkshell item's kind when its data has none,
-    // an enchanted item's last use (its recast) and a piece of gear's
-    // augments. A copy of upstream's steps: compare them at every merge from
-    // base
     auto rebuild(const uint16 itemId, const uint32 qty, const Extra& extra) -> std::unique_ptr<CItem>
     {
-        auto PItem = xi::items::spawn(itemId);
-        if (PItem == nullptr)
-        {
-            return nullptr;
-        }
-        PItem->setQuantity(qty);
-        std::memcpy(PItem->m_extra, extra.data(), std::min<std::size_t>(extra.size(), CItem::extra_size));
-
-        if (PItem->isType(ITEM_LINKSHELL))
-        {
-            auto* PLink = static_cast<CItemLinkshell*>(PItem.get());
-            if (PLink->GetLSType() == 0)
-            {
-                PLink->SetLSType(static_cast<LSTYPE>(PItem->getID() - 0x200));
-            }
-        }
-        if (auto* PUsable = dynamic_cast<CItemUsable*>(PItem.get()))
-        {
-            uint32 useTime = 0;
-            std::memcpy(&useTime, PUsable->m_extra + 0x04, sizeof(useTime));
-            if (useTime != 0)
-            {
-                PUsable->setLastUseTime(timer::now() - std::chrono::seconds(earth_time::vanadiel_timestamp() - useTime));
-            }
-        }
-        if ((PItem->isType(ITEM_EQUIPMENT) || PItem->isType(ITEM_WEAPON)) && !PItem->isSubType(ITEM_CHARGED))
-        {
-            auto* PEquip = static_cast<CItemEquipment*>(PItem.get());
-            for (uint8 slot = 0; slot < 4; ++slot)
-            {
-                if (PEquip->getAugment(slot) != 0)
-                {
-                    PEquip->ApplyAugment(slot);
-                }
-            }
-        }
-        return PItem;
+        return itemmoves::rebuild(itemId, qty, extra);
     }
 
     // A stack from her bag into the bank: the slot holds what the page saw,
@@ -643,9 +271,9 @@ namespace pawn::lsbank::moves
             return CL_S_ITEM_CANNOT_MOVE;
         }
         // a stack taken whole leaves her row to be put back if the move fails
-        const auto whole   = ask.qty == PItem->getQuantity() ? std::optional<Slot>(Slot{ ask.loc, ask.slot }) : std::nullopt;
-        const auto touched = std::vector<Slot>{ Slot{ ask.loc, ask.slot } };
-        const auto what    = fmt::format("deposit of {} x{} (shell {})", ask.item, ask.qty, lsid);
+        const auto whole   = ask.qty == PItem->getQuantity() ? std::optional<Slot>(Slot{ PHolder, ask.loc, ask.slot }) : std::nullopt;
+        const auto touched = std::vector<Slot>{ Slot{ PHolder, ask.loc, ask.slot } };
+        const auto what    = fmt::format("{}'s deposit of {} x{} (shell {})", PHolder->getName(), ask.item, ask.qty, lsid);
         Stack      in;
         in.item  = PItem->getID();
         in.qty   = ask.qty;
@@ -686,17 +314,17 @@ namespace pawn::lsbank::moves
         }
         if (!items->take(ask.loc, ask.slot, ask.qty))
         {
-            abandon(txn, *items, PHolder, whole, touched);
+            abandon(txn, *items, whole, touched);
             return CL_S_ITEM_SLIPPED_AWAY;
         }
         const auto mark = newMark();
         if (!writeStacks(lsid, taken->bank) || !writeHead(lsid, head->gil) || !writeMark(mark))
         {
-            ShowWarningFmt("lsbank: {}'s {} could not be written: put back", PHolder->getName(), what);
-            abandon(txn, *items, PHolder, whole, touched);
+            ShowWarningFmt("lsbank: {} could not be written: put back", what);
+            abandon(txn, *items, whole, touched);
             return CL_S_REFUSED;
         }
-        if (!commitMove(txn, *items, PHolder, mark, whole, touched, what))
+        if (!commitMove(txn, *items, mark, whole, touched, what))
         {
             return CL_S_REFUSED;
         }
@@ -775,19 +403,19 @@ namespace pawn::lsbank::moves
         const auto given = items->give(ask.loc, std::move(PItem), Silence::Yes);
         if (!given.has_value())
         {
-            abandon(txn, *items, PHolder, std::nullopt, {});
+            abandon(txn, *items, std::nullopt, {});
             return CL_S_NO_SPACE;
         }
-        const auto touched = std::vector<Slot>{ Slot{ ask.loc, *given } };
-        const auto what    = fmt::format("withdrawal of {} x{} (shell {})", itemId, ask.qty, lsid);
+        const auto touched = std::vector<Slot>{ Slot{ PHolder, ask.loc, *given } };
+        const auto what    = fmt::format("{}'s withdrawal of {} x{} (shell {})", PHolder->getName(), itemId, ask.qty, lsid);
         const auto mark    = newMark();
         if (!writeStacks(lsid, *after) || !writeHead(lsid, head->gil) || !writeMark(mark))
         {
-            ShowWarningFmt("lsbank: {}'s {} could not be written: put back", PHolder->getName(), what);
-            abandon(txn, *items, PHolder, std::nullopt, touched);
+            ShowWarningFmt("lsbank: {} could not be written: put back", what);
+            abandon(txn, *items, std::nullopt, touched);
             return CL_S_REFUSED;
         }
-        if (!commitMove(txn, *items, PHolder, mark, std::nullopt, touched, what))
+        if (!commitMove(txn, *items, mark, std::nullopt, touched, what))
         {
             return CL_S_REFUSED;
         }
@@ -830,8 +458,8 @@ namespace pawn::lsbank::moves
         }
         // her purse's row is never taken away, even emptied (the game keeps a
         // purse of 0), so a gil move leaves no row to put back
-        const auto purse = std::vector<Slot>{ Slot{ LOC_INVENTORY, 0 } };
-        const auto what  = fmt::format("{} gil {} (shell {})", ask.amount, ask.out != 0 ? "out" : "in", lsid);
+        const auto purse = std::vector<Slot>{ Slot{ PHolder, LOC_INVENTORY, 0 } };
+        const auto what  = fmt::format("{}'s {} gil {} (shell {})", PHolder->getName(), ask.amount, ask.out != 0 ? "out" : "in", lsid);
         uint32     after = head->gil;
         if (ask.out != 0)
         {
@@ -841,7 +469,7 @@ namespace pawn::lsbank::moves
             }
             if (!items->earn(ask.amount))
             {
-                abandon(txn, *items, PHolder, std::nullopt, purse);
+                abandon(txn, *items, std::nullopt, purse);
                 return CL_S_REFUSED;
             }
             after = head->gil - ask.amount;
@@ -854,7 +482,7 @@ namespace pawn::lsbank::moves
             }
             if (!items->pay(ask.amount))
             {
-                abandon(txn, *items, PHolder, std::nullopt, purse);
+                abandon(txn, *items, std::nullopt, purse);
                 return CL_S_NOT_ENOUGH_GIL;
             }
             after = head->gil + ask.amount;
@@ -862,11 +490,11 @@ namespace pawn::lsbank::moves
         const auto mark = newMark();
         if (!writeGil(lsid, after) || !writeMark(mark))
         {
-            ShowWarningFmt("lsbank: {}'s {} could not be written: put back", PHolder->getName(), what);
-            abandon(txn, *items, PHolder, std::nullopt, purse);
+            ShowWarningFmt("lsbank: {} could not be written: put back", what);
+            abandon(txn, *items, std::nullopt, purse);
             return CL_S_REFUSED;
         }
-        if (!commitMove(txn, *items, PHolder, mark, std::nullopt, purse, what))
+        if (!commitMove(txn, *items, mark, std::nullopt, purse, what))
         {
             return CL_S_REFUSED;
         }
@@ -978,15 +606,5 @@ namespace pawn::lsbank::moves
             return CL_S_OK;
         }
         return answer.full != 0 ? static_cast<uint16>(CL_S_BANK_FULL) : skipped;
-    }
-
-    void failNext(const MoveFault fault)
-    {
-        nextFault = fault;
-    }
-
-    auto pendingFault() -> MoveFault
-    {
-        return nextFault;
     }
 } // namespace pawn::lsbank::moves

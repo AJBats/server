@@ -129,6 +129,11 @@ namespace cardian::link
     X(AH_SHELF, cl_ah_shelf)     \
     X(AH_HISTORY, cl_ah_history) \
     X(AH_BID, cl_ah_bid)         \
+    X(AH_QUOTES, cl_ah_quotes)   \
+    X(AH_LISTINGS, cl_ah_listings) \
+    X(AH_SELL, cl_ah_sell)       \
+    X(AH_CANCEL, cl_ah_cancel)   \
+    X(AH_REPRICE, cl_ah_reprice) \
     X(JOB_CHANGE, cl_job_change) \
     X(CLUB, cl_club)             \
     X(CLUB_MEMBER, cl_club_member) \
