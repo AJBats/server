@@ -21,34 +21,52 @@
 
 #pragma once
 
-class CCharEntity;
+#include "common/cbasetypes.h"
 
-// The linkshell bank (OPEN_ISSUES #471): a storage of Cardian's own, one per
-// account, of CL_BANK_SIZE slots of items -- any item, Ex and Rare included,
-// never gil -- which only the addon's Linkshell page reaches, over the Link's
-// BANK, BANK_HOLDER, BANK_DEPOSIT and BANK_WITHDRAW. Nothing in the game
-// itself reads or writes it.
+#include <optional>
+#include <string>
+
+class CCharEntity;
+struct cl_club;
+
+// The shell's bank (OPEN_ISSUES #471; ROADMAP N, "The shell's bank, shared
+// and transactional"): one per linkshell, of CL_BANK_SIZE slots of items --
+// any item, Ex and Rare included -- and a balance of gil, shared by everyone
+// wearing a linkshell item of the shell, which only the addon's Linkshell
+// page reaches, over the Link's BANK, BANK_HOLDER, BANK_DEPOSIT,
+// BANK_WITHDRAW, BANK_GIL and BANK_RIGHTS. Nothing in the game itself reads
+// or writes it.
 //
 // It opens while the player stands by an auction counter, by a Nomad Moogle
-// or in his own Mog House, and every request is refused CL_S_BANK_CLOSED
-// anywhere else. Items move between it and the inventory of a character he
-// manages: himself, an alt of his account or a cardian it owns (the club's
-// members of those kinds, club.h), wherever she is. A character in memory --
-// he himself, a member standing as a cardian -- is changed there through the
-// game's own item transaction, which writes her rows and tells a client; one
-// out of the world is loaded for the move a moment and let go after it, as a
-// venture's sale loads her (venture_sales.h). A member away on a venture, or
-// held by one in no zone, is not reached until she is back.
+// or in his own Mog House. What he may do follows his rank in the shell: the
+// shell's holder anything; a sack holder and a pearl holder what the holder
+// has set. Items and gil move between the bank and a bag of a character he
+// manages: himself, or an alt of his account or a cardian it owns where the
+// place he stands at reaches her, by its own rule -- in his Mog House anyone
+// of his in his city, by a Nomad Moogle or an auction counter one near it
+// (the user, 2026-10-14: no bags reached across the world) -- the Mog
+// House's bags only while he stands in his Mog House. So every
+// character a move changes is one this map server holds in memory, changed
+// through the game's own item transaction; none is loaded from her rows.
 //
-// The bank's stacks are kept in its table, `cardian_bank` (one row a stack:
-// the account, its slot in the bank's order, the item, the quantity and the
-// item's extra data), merged and sorted on every change by the rules of
-// ls_bank_math.h. An item comes out of the bank built as the game builds one
-// it loads from a character's rows, so its charges, augments, a linkpearl's
+// Every move is one database transaction: it locks the shell's bank (its head
+// row, FOR UPDATE, so moves on one shell from any number of map servers take
+// their turns), reads his rank's right to the move under that lock, checks
+// the bank still holds what the page saw, writes the bank's rows and the
+// character's item rows on the one connection, and commits; anything refused
+// or failed before the commit rolls both back. The item transaction is let go
+// only once the database has committed.
+//
+// The bank's stacks are kept in `cardian_ls_bank` (a row a stack: the shell,
+// its slot in the bank's order, the item, the quantity and the item's extra
+// data), merged and sorted on every change by ls_bank_math.h; its gil, the
+// holder's settings and a version that changes with every move of its stacks in
+// `cardian_ls_bank_head`. An item comes out built as the game builds one it
+// loads from a character's rows, so its charges, augments, a linkpearl's
 // shell and a signature come back with it.
 namespace pawn::lsbank
 {
-    // Its table, made where it is missing: the pawn module's init
+    // Its tables, made where they are missing: the pawn module's init
     void ensureTable();
 
     // Its messages on the Cardian Link: the pawn module's init
@@ -58,4 +76,20 @@ namespace pawn::lsbank
     // auction counter, of a Nomad Moogle, or in his own Mog House. The
     // Linkshell page's Bank row lights by it (CLUB's bank)
     auto opens(const CCharEntity* PPlayer) -> bool;
+
+    // The shell a character wears -- her link slot 1, else 2 -- and what she
+    // wears of it (CL_RANK_*); none for no linkshell item, a broken pearl or
+    // a new linkshell not yet made
+    struct Shell
+    {
+        uint32      lsid  = 0;
+        uint8       rank  = 0;
+        std::string name;
+        uint16      color = 0; // the game's own: four bits each of red, green, blue and alpha, red lowest
+    };
+    auto shellOf(CCharEntity* PChar) -> std::optional<Shell>;
+
+    // CLUB's shell and bank: the shell he wears, his rank in it, and its
+    // bank's stacks and gil
+    void fillClub(cl_club& club, CCharEntity* PPlayer);
 } // namespace pawn::lsbank

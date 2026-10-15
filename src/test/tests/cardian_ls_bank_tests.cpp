@@ -27,6 +27,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <vector>
 
 using namespace cardian::lsbank;
@@ -171,4 +172,35 @@ TEST_CASE("Linkshell bank: a Rare item is refused to one who holds one, as the g
     CHECK(judgeReceive(true, false, 10) == CL_S_OK);
     CHECK(judgeReceive(false, true, 10) == CL_S_OK); // an ordinary item: one held already is no matter
     CHECK(judgeReceive(false, false, 0) == CL_S_NO_SPACE);
+}
+
+TEST_CASE("Linkshell bank: the holder may do anything, a sack and a pearl what he set", "[cardian][lsbank]")
+{
+    using cardian::lsbank::canOf;
+    using cardian::lsbank::kAll;
+    CHECK(canOf(CL_RANK_HOLDER, 0, 0) == kAll); // whatever he set for the others
+    CHECK(canOf(CL_RANK_SACK, cardian::lsbank::kSackDefault, cardian::lsbank::kPearlDefault) == kAll);
+    CHECK(canOf(CL_RANK_PEARL, cardian::lsbank::kSackDefault, cardian::lsbank::kPearlDefault) == CL_BANK_PUT);
+    CHECK(canOf(CL_RANK_SACK, CL_BANK_PUT | CL_BANK_GIL_IN, kAll) == (CL_BANK_PUT | CL_BANK_GIL_IN));
+    CHECK(canOf(CL_RANK_PEARL, 0, 0xFF) == kAll); // bits past the four are no right
+    CHECK(canOf(CL_RANK_NONE, kAll, kAll) == 0);
+}
+
+TEST_CASE("Linkshell bank: the Mog House's bags open only in his Mog House, never the temporary items", "[cardian][lsbank]")
+{
+    using cardian::lsbank::judgeBag;
+    for (const uint8 loc : std::array<uint8, 7>{ 0, 5, 6, 7, 8, 10, 16 }) // inventory, Satchel, Sack, Case, the wardrobes
+    {
+        CHECK(judgeBag(loc, false) == CL_S_OK);
+    }
+    for (const uint8 loc : std::array<uint8, 4>{ 1, 2, 4, 9 }) // Mog Safe, Storage, Mog Locker, Mog Safe 2
+    {
+        CHECK(judgeBag(loc, false) == CL_S_MOG_HOUSE_ONLY);
+        CHECK(judgeBag(loc, true) == CL_S_OK);
+    }
+    CHECK(judgeBag(3, true) == CL_S_NO_SUCH_BAG);  // the temporary items
+    CHECK(judgeBag(17, true) == CL_S_NO_SUCH_BAG); // the recycle bin
+    CHECK(cardian::lsbank::wardrobe(8));
+    CHECK(cardian::lsbank::wardrobe(16));
+    CHECK_FALSE(cardian::lsbank::wardrobe(9));
 }

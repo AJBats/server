@@ -208,4 +208,61 @@ namespace cardian::lsbank
         }
         return CL_S_OK;
     }
+
+    // ---- who may do what, and which bags it reaches ---------------------------
+
+    // What the holder lets a sack holder and a pearl holder do until he says
+    // otherwise (the user, 2026-10-14): an officer everything, a pearl only
+    // puts items in
+    constexpr uint8 kAll          = CL_BANK_PUT | CL_BANK_TAKE | CL_BANK_GIL_IN | CL_BANK_GIL_OUT;
+    constexpr uint8 kSackDefault  = kAll;
+    constexpr uint8 kPearlDefault = CL_BANK_PUT;
+
+    // What a rank may do (CL_BANK_* bits): the shell's holder always
+    // everything, a sack holder and a pearl holder what the holder has set,
+    // anyone else nothing
+    inline auto canOf(const uint8 rank, const uint8 sackCan, const uint8 pearlCan) -> uint8
+    {
+        switch (rank)
+        {
+            case CL_RANK_HOLDER:
+                return kAll;
+            case CL_RANK_SACK:
+                return static_cast<uint8>(sackCan & kAll);
+            case CL_RANK_PEARL:
+                return static_cast<uint8>(pearlCan & kAll);
+            default:
+                return 0;
+        }
+    }
+
+    // The bags of a character by container id (item_container.h's LOC_*):
+    // the Mog House's, which open only while he stands in his Mog House
+    // (the user, 2026-10-14), and the wardrobes, which take only gear
+    inline auto mogHouseBag(const uint8 loc) -> bool
+    {
+        return loc == 1 || loc == 2 || loc == 4 || loc == 9; // Mog Safe, Storage, Mog Locker, Mog Safe 2
+    }
+
+    inline auto wardrobe(const uint8 loc) -> bool
+    {
+        return loc == 8 || (loc >= 10 && loc <= 16);
+    }
+
+    // Whether a bag is one the bank reaches where he stands: the inventory,
+    // Mog Satchel, Mog Sack, Mog Case and the wardrobes anywhere it opens,
+    // the Mog House's only in his Mog House; never the temporary items or
+    // the recycle bin. CL_S_OK, else why not
+    inline auto judgeBag(const uint8 loc, const bool inMogHouse) -> uint16
+    {
+        if (loc == 0 || loc == 5 || loc == 6 || loc == 7 || wardrobe(loc))
+        {
+            return CL_S_OK;
+        }
+        if (mogHouseBag(loc))
+        {
+            return inMogHouse ? static_cast<uint16>(CL_S_OK) : static_cast<uint16>(CL_S_MOG_HOUSE_ONLY);
+        }
+        return CL_S_NO_SUCH_BAG;
+    }
 } // namespace cardian::lsbank

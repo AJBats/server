@@ -449,6 +449,7 @@ namespace pawn::club
             answer.shell      = shells.empty() ? 0 : 1;
             answer.pearls     = static_cast<uint8_t>(std::min<std::size_t>(pearlToTrade(PChar, shells).size(), UINT8_MAX));
             answer.bank       = pawn::lsbank::opens(PChar) ? 1 : 0;
+            pawn::lsbank::fillClub(answer, PChar); // the shell he wears, its title card and its bank's stats
             if (shells.empty() && PChar->loc.zone != nullptr && (PChar->loc.zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown)
             {
                 if (const auto vendor = rules::vendorOf(static_cast<uint8_t>(PChar->loc.zone->GetRegionID())); vendor.has_value())

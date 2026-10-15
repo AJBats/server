@@ -34,7 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 76: the linkshell bank -- BANK,
+// compatible, the user, 2026-09-14). 78: the bank's moves made safe --
+// BANK_WITHDRAW's version, CLUB's and BANK's shell name widened to 24,
+// CL_S_NOT_WITH_YOU; 77: the shell's bank -- BANK and
+// BANK_HOLDER reshaped (bags, gil, ranks), BANK_GIL, BANK_RIGHTS, CLUB's
+// shell name, colour and bank; 76: the linkshell bank -- BANK,
 // BANK_HOLDER, BANK_DEPOSIT and BANK_WITHDRAW, CLUB's bank, CL_S_BANK_CLOSED
 // and CL_S_BANK_FULL; 75: a venture's time made up after the map was down --
 // VENTURE_NEWS's minutes, CL_NEWS_CAUGHT_UP; 74: CL_LENDER_TREK, a gambit row her trek
@@ -145,7 +149,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 76 };
+enum { CL_PROTOCOL = 78 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -345,6 +349,11 @@ enum
     // The linkshell bank (her inventory full: CL_S_NO_SPACE; a Rare item she holds already: CL_S_RARE_OWNED)
     CL_S_BANK_CLOSED       = 0x0200, // the player stands by no auction counter, by no Nomad Moogle, and not in his Mog House
     CL_S_BANK_FULL         = 0x0201, // the bank has no room for the stack: its slots are all in use
+    CL_S_NO_SHELL_WORN     = 0x0202, // he wears no linkshell item: no shell, no bank
+    CL_S_BANK_NOT_ALLOWED  = 0x0203, // his rank in the shell may not do that (the holder's settings)
+    CL_S_MOG_HOUSE_ONLY    = 0x0204, // that bag opens only in his Mog House
+    CL_S_HOLDER_ONLY       = 0x0205, // only the shell's holder may change the bank's settings
+    CL_S_NOT_WITH_YOU      = 0x0206, // that character is not where the place he stands at reaches (his city from his Mog House, near a moogle or a counter)
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -2211,6 +2220,11 @@ typedef struct cl_club
     uint8_t   bank;           // answered: 1 while he stands where the linkshell bank opens (BANK)
     char      vendor[24];     // answered: holding no shell, in a city with a linkshell vendor: the vendor's name, for people
     char      vendorZone[32]; // answered: where the vendor stands, for people
+    char      shellName[24];  // answered: the shell he wears (link slot 1, else 2), its name, for people; empty for none
+    uint16_t  shellColor;     // answered: its colour, the game's own: four bits each of red, green, blue and alpha, red lowest
+    uint8_t   rank;           // answered: CL_RANK_*: what he wears of it
+    uint8_t   bankUsed;       // answered: the shell's bank's stacks
+    uint32_t  bankGil;        // answered: the shell's bank's gil
 } cl_club;
 
 // The party invite he would send by hand, sent for him: the alts' rule of
@@ -2591,19 +2605,25 @@ typedef struct cl_venture_report
 
 // ---- 0x0Bxx: the linkshell bank --------------------------------------------
 //
-// The account's own storage (pawn/ls_bank.h): CL_BANK_SIZE slots of items --
-// any item, Ex and Rare included, never gil -- shared by every character of
-// the player's account, which nothing in the game reaches but these messages.
-// It opens while the player stands by an auction counter, by a Nomad Moogle
-// or in his Mog House (CLUB's bank says so as the page reads it); anywhere
-// else each of these messages is refused CL_S_BANK_CLOSED. Its stacks are
-// kept merged and in order on every change -- by item, the fuller stack of
-// one first -- so a bank slot names the stack at that place in the order as
-// last sent. Items move between the bank and the inventory of a character he
-// manages (a holder): himself, an alt of his account or a cardian it owns,
-// standing in the world or not. A stack of one item merges with the bank's
-// stacks of the same item and the same extra data (charges, augments, a
-// pearl's shell, a signature), up to the item's stack size.
+// The shell's bank (pawn/ls_bank.h): CL_BANK_SIZE slots of items -- any
+// item, Ex and Rare included -- and a balance of gil, one bank per
+// linkshell, shared by everyone wearing a linkshell item of the shell (his
+// link slot 1 names it, else slot 2), which nothing in the game reaches but
+// these messages. Wearing none, each is refused CL_S_NO_SHELL_WORN. It opens
+// while the player stands by an auction counter, by a Nomad Moogle or in his
+// Mog House (CLUB's bank says so as the page reads it); anywhere else each
+// of these messages is refused CL_S_BANK_CLOSED. What he may do follows his
+// rank in the shell: the shell's holder anything, a sack holder and a pearl
+// holder what the holder has set (BANK_RIGHTS), else CL_S_BANK_NOT_ALLOWED.
+// Its stacks are kept merged and in order on every change -- by item, the
+// fuller stack of one first -- so a bank slot names the stack at that place
+// in the order as last sent; a move names the item and the slot the page
+// saw, and finding another there is refused CL_S_ITEM_SLIPPED_AWAY (another
+// player's move came first). Items move between the bank and a bag of a
+// character he manages (a holder): himself, an alt of his account or a
+// cardian it owns, standing in the world or not. A stack of one item merges
+// with the bank's stacks of the same item and the same extra data (charges,
+// augments, a pearl's shell, a signature), up to the item's stack size.
 
 enum
 {
@@ -2611,6 +2631,8 @@ enum
     CL_T_BANK_HOLDER   = 0x0B02,
     CL_T_BANK_DEPOSIT  = 0x0B03,
     CL_T_BANK_WITHDRAW = 0x0B04,
+    CL_T_BANK_GIL      = 0x0B05,
+    CL_T_BANK_RIGHTS   = 0x0B06,
 };
 
 enum { CL_BANK_SIZE = 200 };
@@ -2623,62 +2645,129 @@ enum
     CL_HOLDER_OWNED = 2, // a cardian his account owns
 };
 
-// One character whose inventory the bank reaches, and that inventory as it
-// stands: an answer to BANK, and to a deposit or a withdrawal (the holder it
-// changed). Asked by itself, for one holder, it answers itself
+// His rank in a shell, by the linkshell item he wears of it
+enum
+{
+    CL_RANK_NONE   = 0, // he wears none
+    CL_RANK_HOLDER = 1, // the shell itself: the founder's
+    CL_RANK_SACK   = 2, // a Pearlsack: an officer
+    CL_RANK_PEARL  = 3, // a Linkpearl
+};
+
+// What a rank may do in the bank: BANK's can, BANK_RIGHTS' bits
+enum
+{
+    CL_BANK_PUT     = 0x01, // put items in
+    CL_BANK_TAKE    = 0x02, // take items out
+    CL_BANK_GIL_IN  = 0x04, // put gil in
+    CL_BANK_GIL_OUT = 0x08, // take gil out
+};
+
+// A bag of a holder the bank reaches, and that bag as it stands: an answer to
+// BANK (her inventory, loc 0), to a deposit or a withdrawal (the bag it
+// changed), and to gil (loc 0). Asked by itself, for one holder and one of
+// her bags (loc), it answers itself
 typedef struct cl_bank_holder
 {
     cl_header h;
     uint32_t  cardian;   // charid: the player himself, or one of his
+    uint32_t  gil;       // answered: her gil
     char      name[16];  // answered
     uint8_t   kind;      // answered: CL_HOLDER_*
-    uint8_t   size;      // answered: the slots her inventory has
+    uint8_t   loc;       // the bag: a container id, 0 the inventory; answered for that bag
+    uint8_t   size;      // answered: the slots that bag has
     uint8_t   free;      // answered
     uint8_t   count;     // answered: items in use
-    uint16_t  why;       // answered: CL_S_*: why her inventory cannot be reached now (away on a venture); 0 when it can
-    uint16_t  spare;
-    cl_item   items[80]; // answered: her inventory, as INVENTORY lists one
+    uint8_t   spare;
+    uint16_t  why;       // answered: CL_S_*: why her bags cannot be reached now (away on a venture); 0 when they can
+    uint8_t   sizes[18]; // answered: each of her bags' slots, by container id: 0 for a bag she has not, or that does not open here (the Mog House's outside it)
+    uint16_t  spare2;
+    cl_item   items[80]; // answered: that bag, as INVENTORY lists one
 } cl_bank_holder;
 
 // The bank as it stands. Asked, it answers each holder in his order -- the
 // player himself first, then his alts and his own cardians by name -- as a
-// BANK_HOLDER (CL_F_MORE), then its stacks in parts of up to 80, each part a
-// BANK, the last with the outcome. A move answers its stacks the same way
-// (CL_F_MORE), ahead of its own outcome
+// BANK_HOLDER of her inventory (CL_F_MORE), then its stacks in parts of up to
+// 80, each part a BANK, the last with the outcome. A move answers its stacks
+// the same way (CL_F_MORE), ahead of its own outcome
 typedef struct cl_bank
 {
     cl_header h;
     uint8_t   holders;   // answered: holders sent ahead of the stacks (0 in a move's answer)
     uint8_t   used;      // answered: the bank's stacks, all parts together: 0 to CL_BANK_SIZE
     uint8_t   count;     // answered: stacks in this part
+    uint8_t   rank;      // answered: his rank in the shell, CL_RANK_*
+    uint8_t   can;       // answered: what his rank may do, CL_BANK_* bits
+    uint8_t   sackCan;   // answered: what the holder lets a sack holder do
+    uint8_t   pearlCan;  // answered: what the holder lets a pearl holder do
     uint8_t   spare;
+    uint32_t  gil;       // answered: the bank's gil
+    uint32_t  version;   // answered: changes with every move of its stacks, whoever made it (gil and the settings leave it)
+    char      shell[24]; // answered: the shell's name, for people
+    uint16_t  color;     // answered: the shell's colour, as CLUB's shellColor
+    uint16_t  spare2;
     cl_item   items[80]; // answered: each stack with its bank slot, 1 to CL_BANK_SIZE, in the bank's order
 } cl_bank;
 
-// A stack from a holder's inventory into the bank, whole or in part. Answered,
-// once it has moved, by the holder and the bank as they now stand (CL_F_MORE),
-// then this; refused before anything moved, by this alone
+// A stack from a holder's bag into the bank, whole or in part. Answered, once
+// it has moved, by the holder's bag and the bank as they now stand
+// (CL_F_MORE), then this; refused before anything moved, by this alone
 typedef struct cl_bank_deposit
 {
     cl_header h;
     uint32_t  cardian; // charid: the holder
     uint32_t  qty;
-    uint8_t   slot;    // her inventory slot
+    uint8_t   slot;    // her bag's slot
     uint8_t   landed;  // answered: the bank slot of the first stack of that item now
     uint16_t  item;    // the item the page saw in the slot: another there now is refused CL_S_ITEM_SLIPPED_AWAY
+    uint8_t   loc;     // her bag: a container id
+    uint8_t   spare;
+    uint16_t  spare2;
 } cl_bank_deposit;
 
-// A stack from the bank into a holder's inventory, whole or in part, as the
-// game gives an item: room in her inventory, and no second of a Rare item.
-// Answered as a deposit is
+// A stack from the bank into a holder's bag, whole or in part, as the game
+// gives an item: room in that bag, gear alone into a wardrobe, and no second
+// of a Rare item. Answered as a deposit is
 typedef struct cl_bank_withdraw
 {
     cl_header h;
     uint32_t  cardian; // charid: the holder
     uint32_t  qty;
     uint8_t   slot;    // the bank slot, 1 to CL_BANK_SIZE
-    uint8_t   landed;  // answered: her inventory slot it landed in
+    uint8_t   landed;  // answered: her bag's slot it landed in
     uint16_t  item;    // the item the page saw in that bank slot: another there now is refused CL_S_ITEM_SLIPPED_AWAY
+    uint8_t   loc;     // her bag: a container id
+    uint8_t   spare;
+    uint16_t  version; // the bank's version the page saw (cl_bank's), its low 16 bits: a bank moved since is refused
+                       // CL_S_ITEM_SLIPPED_AWAY, so a stack its order put in that slot since is never taken for it
 } cl_bank_withdraw;
+
+// Gil between the bank and a holder's purse. Answered, once it has moved, by
+// her inventory and the bank as they now stand (CL_F_MORE), then this with
+// both balances; refused before anything moved (CL_S_NOT_ENOUGH_GIL: the
+// purse it comes from is short), by this alone
+typedef struct cl_bank_gil
+{
+    cl_header h;
+    uint32_t  cardian; // charid: the holder
+    uint32_t  amount;
+    uint8_t   out;     // 1: from the bank to her; 0: from her to the bank
+    uint8_t   loc;     // the bag of hers the page shows, which the answer brings back
+    uint16_t  spare2;
+    uint32_t  bankGil; // answered
+    uint32_t  herGil;  // answered
+} cl_bank_gil;
+
+// What a sack holder and a pearl holder may do in the bank, CL_BANK_* bits:
+// asked (set 0), answered as they stand; set (set 1) by the shell's holder
+// alone, else refused CL_S_HOLDER_ONLY. The holder may always do everything
+typedef struct cl_bank_rights
+{
+    cl_header h;
+    uint8_t   set;
+    uint8_t   sack;
+    uint8_t   pearl;
+    uint8_t   spare;
+} cl_bank_rights;
 
 #pragma pack(pop)
