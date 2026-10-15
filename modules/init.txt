@@ -39,6 +39,8 @@
 # Live example:
 
 custom/lua/test_npcs_in_gm_home.lua
+# CARDIAN: more than seven listings, paged in the game's own Sales Status
+custom/cpp/ah_pagination.cpp
 # CARDIAN: pawn module (schema)
 cardian/sql/cardian_pawns.sql
 cardian/sql/cardian_gambits.sql

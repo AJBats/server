@@ -120,6 +120,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/junk_math.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ls_bank.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ls_bank_moves.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ah_sell.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/item_moves.cpp
 )
 
 set(MAP_CORE_SOURCES

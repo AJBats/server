@@ -22,6 +22,7 @@
 #pragma once
 
 #include "cardian_link_protocol.h"
+#include "item_moves.h"
 #include "ls_bank.h"
 #include "ls_bank_math.h"
 
@@ -94,22 +95,18 @@ namespace pawn::lsbank::moves
 
     // xi_test's, and nothing else's: the next move failed as the wire can fail
     // one, for the cases that prove a failed move leaves the bank, her rows
-    // and her character in memory agreeing (#478). A lost connection is a
-    // real one: MariaDB drops it and rolls back what it held
-    enum class MoveFault : uint8
+    // and her character in memory agreeing (#478) -- the faults of every move
+    // made through item_moves.h
+    using MoveFault = pawn::itemmoves::Fault;
+
+    inline void failNext(const MoveFault fault)
     {
-        None,
-        RolledBack,        // the COMMIT rolled back, and told so
-        Committed,         // the COMMIT went through, and its answer was lost
-        LostBeforeCommit,  // the connection lost before the COMMIT
-        LostAtCommit,      // the connection lost as the COMMIT was sent
-        CommittedThenLost, // the COMMIT went through, then the connection was lost before its answer
-        LostTwice,         // the connection lost before the COMMIT, and again while she is put back
-        BankReadFails,     // the move's read of the bank's stacks failed
-        LostInPutBack,     // LostTwice's second loss, still to come
-    };
-    void failNext(MoveFault fault);
+        pawn::itemmoves::failNext(fault);
+    }
 
     // The fault still armed: None once the move it was armed for has met it
-    auto pendingFault() -> MoveFault;
+    inline auto pendingFault() -> MoveFault
+    {
+        return pawn::itemmoves::pendingFault();
+    }
 } // namespace pawn::lsbank::moves

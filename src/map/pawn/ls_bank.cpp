@@ -623,6 +623,30 @@ namespace pawn::lsbank
         return place.mogHouse || place.moogle != nullptr;
     }
 
+    auto takeForSale(CCharEntity* PChar, const uint8 bankSlot, const uint16 itemId, const uint16 version, const uint32 qty, uint8& landed) -> uint16
+    {
+        cl_bank_withdraw ask{};
+        ask.cardian = PChar->id;
+        ask.qty     = qty;
+        ask.slot    = bankSlot;
+        ask.item    = itemId;
+        ask.loc     = LOC_INVENTORY;
+        ask.version = version;
+        std::optional<Shell> shell;
+        std::optional<uint8> kind;
+        if (const auto why = judgeMove(PChar, PChar->id, LOC_INVENTORY, CL_BANK_TAKE, shell, kind); why != CL_S_OK)
+        {
+            return why;
+        }
+        // his own bag is never tidied after a move (onHolder), so the slot it
+        // landed in still holds it
+        landed = 0;
+        return onHolder(
+            PChar, PChar->id, *kind,
+            [&](CCharEntity* PHolder) { return moves::withdraw(PHolder, *shell, ask, landed); },
+            [](CCharEntity*) {});
+    }
+
     auto shellOf(CCharEntity* PChar) -> std::optional<Shell>
     {
         if (PChar == nullptr)

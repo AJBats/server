@@ -77,6 +77,14 @@ namespace pawn::lsbank
     // Linkshell page's Bank row lights by it (CLUB's bank)
     auto opens(const CCharEntity* PPlayer) -> bool;
 
+    // A stack of the bank, whole or in part, taken out into the player's own
+    // inventory for the Sell page to list (pawn/ah_sell.h): as BANK_WITHDRAW
+    // takes one for him -- the bank open to him, his rank's right to take,
+    // the stack the page saw in that bank slot (its item, the bank's
+    // version), a slot free -- so whatever holds of a move holds of this one.
+    // CL_S_OK once it is in his inventory, `landed` its slot there
+    auto takeForSale(CCharEntity* PChar, uint8 bankSlot, uint16 itemId, uint16 version, uint32 qty, uint8& landed) -> uint16;
+
     // The shell a character wears -- her link slot 1, else 2 -- and what she
     // wears of it (CL_RANK_*); none for no linkshell item, a broken pearl or
     // a new linkshell not yet made

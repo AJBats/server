@@ -85,8 +85,15 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_ah_listing) == 16);
     STATIC_REQUIRE(sizeof(cl_ah_shelf) == 1064);
     STATIC_REQUIRE(sizeof(cl_ah_sale) == 40);
-    STATIC_REQUIRE(sizeof(cl_ah_history) == 428);
+    STATIC_REQUIRE(sizeof(cl_ah_history) == 432);
     STATIC_REQUIRE(sizeof(cl_ah_bid) == 40);
+    STATIC_REQUIRE(sizeof(cl_ah_quote) == 8);
+    STATIC_REQUIRE(sizeof(cl_ah_quotes) == 404);
+    STATIC_REQUIRE(sizeof(cl_ah_mine) == 16);
+    STATIC_REQUIRE(sizeof(cl_ah_listings) == 808);
+    STATIC_REQUIRE(sizeof(cl_ah_sell) == 40);
+    STATIC_REQUIRE(sizeof(cl_ah_cancel) == 24);
+    STATIC_REQUIRE(sizeof(cl_ah_reprice) == 32);
     STATIC_REQUIRE(sizeof(cl_roster) == 20);
     STATIC_REQUIRE(sizeof(cl_member) == 96);
     STATIC_REQUIRE(sizeof(cl_sync) == 20);

@@ -29,12 +29,16 @@
 // battlefield, no warp of his is held for a question, and nobody is a cardian.
 
 #include "common/database.h"
+#include "common/earth_time.h"
 #include "map/entities/char_entity.h"
 #include "map/item_container.h"
 #include "map/items/item.h"
 #include "map/lua/lua_base_entity.h"
 #include "map/pause/input_gate.h"
 #include "map/pause/pause.h"
+#include "map/pawn/ah_sell.h"
+#include "map/pawn/cardian_link_protocol.h"
+#include "map/pawn/item_moves.h"
 #include "map/pawn/errands.h"
 #include "map/pawn/ls_bank_moves.h"
 #include "map/pawn/pawn.h"
@@ -300,6 +304,104 @@ class CardianTestStubs : public CPPModule
                 out[rset->get<uint8>("slot")] = ::lua.create_table_with("item", rset->get<uint16>("itemId"), "qty", rset->get<uint32>("quantity"));
             }
             return out;
+        };
+
+        // Selling on the auction house as the Sell page's handlers do it
+        // (scripts/tests/cardian/ah_sell.lua, pawn/ah_sell.h), on players of
+        // the test's, the places they stand left out: a listing put up by a
+        // seller from a holder's bag, its cancel, his sales status, and a
+        // listing bought as the crowd buys one, which pays his delivery box
+        ::lua["xi"]["cardian"]["ahsell"] = ::lua.create_table();
+        sol::table ah                    = ::lua["xi"]["cardian"]["ahsell"];
+        const auto charOf                = [](CLuaBaseEntity* PLua)
+        {
+            return dynamic_cast<CCharEntity*>(PLua->GetBaseEntity());
+        };
+        ah["status"] = ::lua.create_table_with(
+            "OK", CL_S_OK, "NO_ITEM", CL_S_NO_ITEM, "ITEM_EQUIPPED", CL_S_ITEM_EQUIPPED, "NO_SPACE", CL_S_NO_SPACE,
+            "NOT_ENOUGH_GIL", CL_S_NOT_ENOUGH_GIL, "NOT_AUCTIONABLE", CL_S_NOT_AUCTIONABLE, "LISTING_LIMIT", CL_S_LISTING_LIMIT,
+            "NOT_A_FULL_STACK", CL_S_NOT_A_FULL_STACK, "LISTING_GONE", CL_S_LISTING_GONE, "NOT_IN_STACKS", CL_S_NOT_IN_STACKS,
+            "NO_SUCH_BAG", CL_S_NO_SUCH_BAG, "ITEM_SLIPPED_AWAY", CL_S_ITEM_SLIPPED_AWAY, "BAD_PRICE", CL_S_BAD_PRICE);
+        // the moves' marks table, as the pawn module's init makes it
+        ah["prepare"] = []()
+        {
+            pawn::itemmoves::ensureTable();
+        };
+        // the next move failed on purpose, by item_moves.h's Fault number;
+        // pending, the fault not yet met
+        ah["failNext"] = [](const uint8 fault)
+        {
+            pawn::itemmoves::failNext(static_cast<pawn::itemmoves::Fault>(fault));
+        };
+        ah["pending"] = []() -> uint8
+        {
+            return static_cast<uint8>(pawn::itemmoves::pendingFault());
+        };
+        ah["fee"] = [](const uint32 price, const bool stack) -> uint32
+        {
+            return pawn::ahsell::feeOf(price, stack);
+        };
+        ah["list"] = [charOf](CLuaBaseEntity* PSeller, CLuaBaseEntity* PHolder, const uint8 loc, const uint8 slot, const uint16 itemId, const bool stack,
+                              const uint32 price) -> std::tuple<uint16, uint32, uint32>
+        {
+            const auto listed = pawn::ahsell::list(charOf(PSeller), charOf(PHolder), loc, slot, itemId, stack, price);
+            return { listed.status, listed.fee, listed.listing };
+        };
+        ah["cancel"] = [charOf](CLuaBaseEntity* PSeller, const uint32 listing, const uint16 itemId) -> std::tuple<uint16, uint8>
+        {
+            const auto cancelled = pawn::ahsell::cancel(charOf(PSeller), listing, itemId);
+            return { cancelled.status, cancelled.landed };
+        };
+        ah["reprice"] = [charOf](CLuaBaseEntity* PSeller, const uint32 listing, const uint16 itemId, const uint32 price) -> std::tuple<uint16, uint32>
+        {
+            const auto repriced = pawn::ahsell::reprice(charOf(PSeller), listing, itemId, price);
+            return { repriced.status, repriced.fee };
+        };
+        // { open = n, rows = { { listing, price, item, stack, sold } ... } }
+        ah["listings"] = [](const uint32 charid) -> sol::table
+        {
+            std::size_t open = 0;
+            sol::table  rows = ::lua.create_table();
+            for (const auto& row : pawn::ahsell::listingsOf(charid, 48, open))
+            {
+                rows.add(::lua.create_table_with("listing", row.listing, "price", row.price, "item", row.item, "stack", row.stack, "sold", row.sold));
+            }
+            return ::lua.create_table_with("open", open, "rows", rows);
+        };
+        // The seller a listing names, its id and its name
+        ah["sellerOf"] = [](const uint32 listing) -> std::tuple<uint32, std::string>
+        {
+            const auto rset = db::preparedStmt("SELECT seller, seller_name FROM auction_house WHERE id = ?", listing);
+            if (rset && rset->next())
+            {
+                return { rset->get<uint32>("seller"), rset->get<std::string>("seller_name") };
+            }
+            return { 0, std::string{} };
+        };
+        // A listing bought at price, as the crowd's buyer marks one sold: the
+        // auction house's trigger pays its gil into the seller's delivery box
+        ah["buy"] = [](const uint32 listing, const uint32 price)
+        {
+            db::preparedStmt("UPDATE auction_house SET buyer = 0, buyer_name = 'Crowd', sale = ?, sell_date = ? WHERE id = ?", price, earth_time::timestamp(), listing);
+        };
+        // Every sale's gil taken out of his delivery box, as collecting it does
+        ah["collect"] = [](const uint32 charid)
+        {
+            db::preparedStmt("DELETE FROM delivery_box WHERE charid = ? AND box = 1 AND itemid = 65535 AND sender = 'AH-Jeuno'", charid);
+        };
+        // Every listing written to the auction house refused by the database
+        // while on -- a trigger of the test database's, as a statement the
+        // server refuses after the piece has left her bag. True once it stands
+        // as asked
+        ah["refuseListings"] = [](const bool on) -> bool
+        {
+            db::preparedStmt("DROP TRIGGER IF EXISTS cardian_test_refuse_listing");
+            if (!on)
+            {
+                return true;
+            }
+            return db::preparedStmt("CREATE TRIGGER cardian_test_refuse_listing BEFORE INSERT ON auction_house FOR EACH ROW "
+                                    "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'") != nullptr;
         };
     }
 };

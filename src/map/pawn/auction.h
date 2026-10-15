@@ -99,6 +99,19 @@ namespace pawn::auction
 
     auto history(uint16 itemId, bool stack) -> History;
 
+    // The going rate of each item in its form, as goingRates finds it (0 when
+    // none has sold), in the order asked: the Sell page's row prices. Each is
+    // kept a minute of real time -- the crowd buys on real time, paused or
+    // not -- so a page flipping between bags and sellers asks the auction
+    // house little
+    auto quotes(const std::vector<std::pair<uint16, bool>>& asked) -> std::vector<uint32>;
+
+    // Where a sale of an item in one form starts on the sell panel: the going
+    // rate, or one gil under the cheapest listing of anyone but the seller's
+    // when that is lower (the fishing venture's own undercut,
+    // pawn/venture_sales.cpp); 0 with neither
+    auto startPrice(uint16 itemId, bool stack, uint32 sellerId, uint32 going) -> uint32;
+
     // What a bid came to: CL_S_OK when won (the Link's outcomes), else why
     // not -- CL_S_NOTHING_AT_PRICE when the auction house had no listing at
     // or under the bid. Won: where the piece is (the inventory when the move
