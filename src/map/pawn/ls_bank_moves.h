@@ -27,6 +27,7 @@
 
 #include "common/cbasetypes.h"
 
+#include <functional>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -78,6 +79,18 @@ namespace pawn::lsbank::moves
     auto deposit(CCharEntity* PHolder, const Shell& shell, const cl_bank_deposit& ask, uint8& landed) -> uint16;
     auto withdraw(CCharEntity* PHolder, const Shell& shell, const cl_bank_withdraw& ask, uint8& landed) -> uint16;
     auto gil(CCharEntity* PHolder, const Shell& shell, const cl_bank_gil& ask, uint32& bankGil) -> uint16;
+
+    // Each stack in one of her bags that pick names, into the bank as
+    // deposit moves one, in her bag's order (BANK_JUNK: the map's pick is the
+    // junk rule). A stack worn or busy stays where it is, and a bank too full
+    // for a stack goes on to the next, which may still merge. answer holds
+    // what moved and whether the bank filled; look moves nothing and answers
+    // what would move now, judged in deposit's own order. CL_S_OK when it all
+    // went (or would); a refusal of the bank's or the database's that ended it
+    // partway, what moved before it in answer; else why none moved --
+    // CL_S_BANK_FULL, the first skipped stack's reason (in a trade or a
+    // bazaar), or CL_S_NO_ITEM when none is named there
+    auto depositEach(CCharEntity* PHolder, const Shell& shell, uint8 loc, const std::function<bool(uint16)>& pick, bool look, cl_bank_junk& answer) -> uint16;
 
     // xi_test's, and nothing else's: the next move failed as the wire can fail
     // one, for the cases that prove a failed move leaves the bank, her rows

@@ -158,7 +158,8 @@ namespace cardian::link
     X(BANK_DEPOSIT, cl_bank_deposit)         \
     X(BANK_WITHDRAW, cl_bank_withdraw)       \
     X(BANK_GIL, cl_bank_gil)                 \
-    X(BANK_RIGHTS, cl_bank_rights)
+    X(BANK_RIGHTS, cl_bank_rights)           \
+    X(BANK_JUNK, cl_bank_junk)
 
     template <typename T>
     struct MessageType;

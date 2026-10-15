@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 78: the bank's moves made safe --
+// compatible, the user, 2026-09-14). 79: BANK_JUNK, the player's haul into
+// the bank at once; 78: the bank's moves made safe --
 // BANK_WITHDRAW's version, CLUB's and BANK's shell name widened to 24,
 // CL_S_NOT_WITH_YOU; 77: the shell's bank -- BANK and
 // BANK_HOLDER reshaped (bags, gil, ranks), BANK_GIL, BANK_RIGHTS, CLUB's
@@ -149,7 +150,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 78 };
+enum { CL_PROTOCOL = 79 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2633,6 +2634,7 @@ enum
     CL_T_BANK_WITHDRAW = 0x0B04,
     CL_T_BANK_GIL      = 0x0B05,
     CL_T_BANK_RIGHTS   = 0x0B06,
+    CL_T_BANK_JUNK     = 0x0B07,
 };
 
 enum { CL_BANK_SIZE = 200 };
@@ -2769,5 +2771,28 @@ typedef struct cl_bank_rights
     uint8_t   pearl;
     uint8_t   spare;
 } cl_bank_rights;
+
+// A holder's junk in one bag into the bank at once -- the player's word for
+// it is haul: each stack there the junk rule names (pawn/junk.h: a raw
+// material a vendor buys and no recipe makes), moved as BANK_DEPOSIT moves
+// one, in her bag's order. A stack worn or busy stays; a bank too full for a
+// stack goes on to the next, which may still merge. Answered, once it has
+// all gone, by her bag and the bank as they now stand (CL_F_MORE), then this
+// with what moved. Refused partway -- a deposit the bank or the database
+// refused, which ends it -- this alone, its status the refusal and what moved
+// before it in it. None moved: CL_S_NO_ITEM, none named there; CL_S_BANK_FULL,
+// no room for any; the first stack's reason it stayed (CL_S_ITEM_BUSY, in a
+// trade or a bazaar). Asked with look, it moves nothing and answers this
+// alone, with what a press would move now, as the bank's room stands
+typedef struct cl_bank_junk
+{
+    cl_header h;
+    uint32_t  cardian;   // charid: the holder
+    uint8_t   loc;       // her bag: a container id
+    uint8_t   look;      // 1: only what it would move, nothing moved
+    uint8_t   count;     // answered: stacks moved (or that would move)
+    uint8_t   full;      // answered: 1 when the bank had no room for a stack it named
+    cl_item   items[80]; // answered: each stack moved, by her bag's slot it left, in that order
+} cl_bank_junk;
 
 #pragma pack(pop)

@@ -42,6 +42,9 @@
 #include "map/pawn/world.h"
 #include "map/utils/moduleutils.h"
 
+#include <tuple>
+#include <unordered_set>
+
 namespace pawn
 {
     auto signOutClub(CCharEntity* /* PPlayer */) -> uint32
@@ -257,6 +260,35 @@ class CardianTestStubs : public CPPModule
         bank["gilOf"] = [](const uint32 lsid) -> uint32
         {
             return moves::readHead(lsid).gil;
+        };
+        // Each stack of a bag the list names into the bank (moves::depositEach,
+        // the list standing in for the junk rule); look moves nothing. The
+        // outcome, the stacks moved, whether the bank filled, and the stacks
+        // moved as { { slot, item, qty } ... }
+        bank["depositEach"] = [holderOf](CLuaBaseEntity* PLua, const uint32 lsid, const uint8 loc, const sol::table& ids, const bool look) -> std::tuple<uint16, uint8, uint8, sol::table>
+        {
+            const auto [PChar, shell] = holderOf(PLua, lsid);
+            std::unordered_set<uint16> named;
+            for (const auto& [_, id] : ids)
+            {
+                named.insert(id.as<uint16>());
+            }
+            cl_bank_junk answer{};
+            const auto   status = moves::depositEach(PChar, shell, loc, [&](const uint16 itemId) { return named.contains(itemId); }, look, answer);
+            sol::table   moved  = ::lua.create_table();
+            for (uint8 i = 0; i < answer.count; ++i)
+            {
+                moved.add(::lua.create_table_with("slot", answer.items[i].slot, "item", answer.items[i].id, "qty", answer.items[i].qty));
+            }
+            return { status, answer.count, answer.full, moved };
+        };
+        // n stacks of items of the test's own in the bank, its rows written straight
+        bank["fill"] = [](const uint32 lsid, const uint8 n)
+        {
+            for (uint8 slot = 1; slot <= n; ++slot)
+            {
+                db::preparedStmt("INSERT INTO cardian_ls_bank (lsid, slot, itemId, quantity) VALUES (?, ?, ?, 1)", lsid, slot, 20000 + slot);
+            }
         };
         // { [slot] = { item, qty } } of a character's rows in a bag, slot 0 (gil) included
         bank["rows"] = [](const uint32 charid, const uint8 loc) -> sol::table

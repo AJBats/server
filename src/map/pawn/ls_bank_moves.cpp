@@ -875,6 +875,111 @@ namespace pawn::lsbank::moves
         return CL_S_OK;
     }
 
+    auto depositEach(CCharEntity* PHolder, const Shell& shell, const uint8 loc, const std::function<bool(uint16)>& pick, const bool look, cl_bank_junk& answer) -> uint16
+    {
+        answer.count  = 0;
+        answer.full   = 0;
+        auto* storage = PHolder->getStorage(loc);
+        if (storage == nullptr)
+        {
+            return CL_S_NO_SUCH_BAG;
+        }
+        // a look counts the bank's room as each deposit would, on the bank as
+        // it would stand after the ones before
+        std::optional<std::vector<Stack>> bank;
+        if (look)
+        {
+            bank = readStacks(shell.lsid);
+            if (!bank.has_value())
+            {
+                return CL_S_REFUSED;
+            }
+        }
+        uint16 skipped = CL_S_NO_ITEM; // why the first stack named and left stayed: none named, until one is
+        uint16 stopped = CL_S_OK;      // the refusal that ended it partway, if one did
+        for (uint8 slot = 1; slot <= storage->GetSize() && answer.count < std::size(answer.items); ++slot)
+        {
+            const CItem* PItem = storage->GetItem(slot);
+            if (PItem == nullptr || PItem->getQuantity() == 0 || PItem->isType(ITEM_CURRENCY) || !pick(PItem->getID()))
+            {
+                continue;
+            }
+            const uint16 itemId = PItem->getID();
+            const uint32 qty    = PItem->getQuantity();
+            uint16       status = CL_S_OK;
+            if (look)
+            {
+                // in deposit's own order: worn, one the bank refuses, the
+                // bank's room, then a stack in a trade or a bazaar
+                Stack in;
+                in.item  = itemId;
+                in.qty   = qty;
+                in.stack = std::max<uint32>(1, PItem->getStackSize());
+                std::memcpy(in.extra.data(), PItem->m_extra, std::min<std::size_t>(in.extra.size(), CItem::extra_size));
+                if (PItem->state() == ItemState::Equipped)
+                {
+                    status = CL_S_ITEM_EQUIPPED;
+                }
+                else if (!bankable(PItem))
+                {
+                    status = CL_S_ITEM_CANNOT_MOVE;
+                }
+                else if (auto taken = cardian::lsbank::deposit(*bank, in); !taken.has_value())
+                {
+                    status = CL_S_BANK_FULL;
+                }
+                else if (PItem->isBusy())
+                {
+                    status = CL_S_ITEM_BUSY;
+                }
+                else
+                {
+                    bank = std::move(taken->bank);
+                }
+            }
+            else
+            {
+                cl_bank_deposit ask{};
+                ask.cardian  = PHolder->id;
+                ask.loc      = loc;
+                ask.slot     = slot;
+                ask.item     = itemId;
+                ask.qty      = qty;
+                uint8 landed = 0;
+                status       = deposit(PHolder, shell, ask, landed);
+            }
+            if (status == CL_S_OK)
+            {
+                auto& moved = answer.items[answer.count++];
+                moved.slot  = slot;
+                moved.id    = itemId;
+                moved.qty   = qty;
+            }
+            else if (status == CL_S_BANK_FULL)
+            {
+                answer.full = 1;
+            }
+            else if (status == CL_S_ITEM_EQUIPPED || status == CL_S_ITEM_BUSY || status == CL_S_ITEM_CANNOT_MOVE)
+            {
+                skipped = skipped == CL_S_NO_ITEM ? status : skipped;
+            }
+            else
+            {
+                stopped = status; // the bank or the database refused: nothing more is tried
+                break;
+            }
+        }
+        if (stopped != CL_S_OK)
+        {
+            return stopped; // what moved before it is in answer all the same
+        }
+        if (answer.count > 0)
+        {
+            return CL_S_OK;
+        }
+        return answer.full != 0 ? static_cast<uint16>(CL_S_BANK_FULL) : skipped;
+    }
+
     void failNext(const MoveFault fault)
     {
         nextFault = fault;

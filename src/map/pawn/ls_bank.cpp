@@ -26,6 +26,7 @@
 #include "cardian_link_messages.h"
 #include "club.h"
 #include "errands.h"
+#include "junk.h"
 #include "link_api.h"
 #include "ls_bank_math.h"
 #include "ls_bank_moves.h"
@@ -524,6 +525,41 @@ namespace pawn::lsbank
             answerMove(PChar, *shell, answer, told, reply, status);
         }
 
+        // Her junk in one bag into the bank at once (the player's word: haul),
+        // each stack the junk rule names moved as a deposit is; a look moves
+        // nothing and answers what a press would move
+        void junk(CCharEntity* PChar, const cl_bank_junk& ask, Reply& reply)
+        {
+            auto                 answer = ask;
+            std::optional<Shell> shell;
+            std::optional<uint8> kind;
+            if (const auto why = judgeMove(PChar, ask.cardian, ask.loc, CL_BANK_PUT, shell, kind); why != CL_S_OK)
+            {
+                reply.finish(answer, why);
+                return;
+            }
+            // a look touches nothing of hers: not onHolder, which tidies a
+            // member's stacks after a move
+            if (ask.look != 0)
+            {
+                const bool self = *kind == CL_HOLDER_SELF;
+                auto       why  = self ? selfWhy(PChar) : memberWhy(PChar, ask.cardian);
+                if (why == CL_S_OK)
+                {
+                    auto* PHolder = self ? PChar : beside(PChar, ask.cardian);
+                    why           = PHolder != nullptr ? moves::depositEach(PHolder, *shell, ask.loc, pawn::junk::isJunk, true, answer) : static_cast<uint16>(CL_S_REFUSED);
+                }
+                reply.finish(answer, why);
+                return;
+            }
+            std::optional<cl_bank_holder> told;
+            const auto                    status = onHolder(
+                PChar, ask.cardian, *kind,
+                [&](CCharEntity* PHolder) { return moves::depositEach(PHolder, *shell, ask.loc, pawn::junk::isJunk, false, answer); },
+                [&](CCharEntity*) { told = holderOf(PChar, ask.cardian, *kind, ask.loc); });
+            answerMove(PChar, *shell, answer, told, reply, status);
+        }
+
         void rights(CCharEntity* PChar, const cl_bank_rights& ask, Reply& reply)
         {
             auto                 answer = ask;
@@ -570,6 +606,7 @@ namespace pawn::lsbank
         cardian::link::handle<cl_bank_withdraw>(withdraw);
         cardian::link::handle<cl_bank_gil>(gil);
         cardian::link::handle<cl_bank_rights>(rights);
+        cardian::link::handle<cl_bank_junk>(junk);
     }
 
     auto opens(const CCharEntity* PPlayer) -> bool
