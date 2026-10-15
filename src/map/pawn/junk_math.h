@@ -31,24 +31,19 @@
 #include <unordered_set>
 #include <vector>
 
-// The junk rule (OPEN_ISSUES #472), one for every character: what a junk
-// setting of Sell or Bank acts on. An item is junk when it is a raw material
-// -- a recipe uses it and none makes it -- that cannot be equipped (gear that
-// recipes use is never junk), is neither Ex nor Rare, a vendor buys, and no
-// script asks for in a trade (junk_guard.yaml, generated from the scripts by
-// tools/economy/junk_guard.py); the hand-kept exceptions (junk.yaml) say
-// otherwise either way, but never make gear, an Ex or a Rare item junk.
-// Pure: the map's reading of its database and the two files is junk.cpp
+// The junk rule (OPEN_ISSUES #472), one for every character -- the player's
+// word for it is haul: what Deposit Haul banks, and a junk setting of Sell
+// or Bank acts on. An item is junk when it is a raw material -- a recipe uses
+// it and none makes it -- that cannot be equipped (gear that recipes use is
+// never junk), is neither Ex nor Rare, and a vendor buys. A common material
+// a quest asks for is junk all the same (the user, 2026-10-15). The hand-kept
+// exceptions (junk.yaml) say otherwise either way, but never make gear, an
+// Ex or a Rare item junk. Pure: the map's reading of its database and the
+// file is junk.cpp
 namespace cardian::junk
 {
     namespace files
     {
-        // modules/cardian/junk_guard.yaml
-        struct GuardFile
-        {
-            std::vector<uint16> guarded;
-        };
-
         // modules/cardian/junk.yaml
         struct ExceptionFile
         {
@@ -67,14 +62,13 @@ namespace cardian::junk
         bool   vendorBuys = false; // not NOSALE, and a sell price above nothing
     };
 
-    // What the rule asks of the recipes and the two files
+    // What the rule asks of the recipes and the hand-kept file
     struct Sources
     {
-        std::unordered_set<uint16> used;    // an ingredient of a synthesis recipe
-        std::unordered_set<uint16> made;    // what a synthesis recipe makes, normal or high quality
-        std::unordered_set<uint16> guarded; // a script asks for it in a trade
-        std::unordered_set<uint16> keep;    // the hand list's never
-        std::unordered_set<uint16> junk;    // the hand list's always
+        std::unordered_set<uint16> used; // an ingredient of a synthesis recipe, or its crystal
+        std::unordered_set<uint16> made; // what a synthesis recipe makes, normal or high quality
+        std::unordered_set<uint16> keep; // the hand list's never
+        std::unordered_set<uint16> junk; // the hand list's always
     };
 
     inline auto isJunk(const Item& item, const Sources& s) -> bool
@@ -87,7 +81,7 @@ namespace cardian::junk
         {
             return true;
         }
-        return item.vendorBuys && s.used.contains(item.id) && !s.made.contains(item.id) && !s.guarded.contains(item.id);
+        return item.vendorBuys && s.used.contains(item.id) && !s.made.contains(item.id);
     }
 
     template <typename File>

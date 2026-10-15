@@ -35,15 +35,14 @@ namespace
 {
     constexpr uint16 kOre     = 643;  // a raw material: used, never made
     constexpr uint16 kIngot   = 651;  // made by a recipe, and used by others
-    constexpr uint16 kFeather = 847;  // a raw material a quest asks for
+    constexpr uint16 kFeather = 847;  // a raw material a quest asks for, junk all the same
     constexpr uint16 kRing    = 13454; // gear a recipe uses
 
     auto sources() -> Sources
     {
         Sources s;
-        s.used    = { kOre, kIngot, kFeather, kRing };
-        s.made    = { kIngot };
-        s.guarded = { kFeather };
+        s.used = { kOre, kIngot, kFeather, kRing };
+        s.made = { kIngot };
         return s;
     }
 
@@ -53,12 +52,12 @@ namespace
     }
 } // namespace
 
-TEST_CASE("Junk: a raw material a vendor buys and no script asks for", "[cardian][junk]")
+TEST_CASE("Junk: a raw material a vendor buys", "[cardian][junk]")
 {
     const auto s = sources();
     CHECK(isJunk(material(kOre), s));
+    CHECK(isJunk(material(kFeather), s));           // a quest's asking for it changes nothing
     CHECK_FALSE(isJunk(material(kIngot), s));       // a recipe makes it
-    CHECK_FALSE(isJunk(material(kFeather), s));     // a script asks for it in a trade
     CHECK_FALSE(isJunk(material(9999), s));         // no recipe uses it
     CHECK_FALSE(isJunk({ .id = kOre, .vendorBuys = false }, s));
 }
@@ -76,18 +75,18 @@ TEST_CASE("Junk: the hand-kept exceptions say otherwise either way", "[cardian][
 {
     auto s = sources();
     s.keep = { kOre };
-    s.junk = { kFeather };
+    s.junk = { kIngot };
     CHECK_FALSE(isJunk(material(kOre), s));
-    CHECK(isJunk(material(kFeather), s));
-    CHECK(isJunk({ .id = kFeather, .vendorBuys = false }, s)); // named junk: sold or banked, whichever his setting says
+    CHECK(isJunk(material(kIngot), s));
+    CHECK(isJunk({ .id = kIngot, .vendorBuys = false }, s)); // named junk: sold or banked, whichever his setting says
 }
 
-TEST_CASE("Junk: the two files read, comments and all", "[cardian][junk]")
+TEST_CASE("Junk: the hand-kept file read, comments and all", "[cardian][junk]")
 {
     std::string error;
-    const auto  guard = cardian::junk::parse<cardian::junk::files::GuardFile>("# made\nguarded:\n  - 640  # COPPER\n  - 847  # FEATHER\n", error);
-    REQUIRE(guard.has_value());
-    CHECK(guard->guarded == std::vector<uint16>{ 640, 847 });
+    const auto  some = cardian::junk::parse<cardian::junk::files::ExceptionFile>("# kept\nkeep:\n  - 640  # COPPER\njunk: []\n", error);
+    REQUIRE(some.has_value());
+    CHECK(some->keep == std::vector<uint16>{ 640 });
 
     const auto none = cardian::junk::parse<cardian::junk::files::ExceptionFile>("keep: []\njunk: []\n", error);
     REQUIRE(none.has_value());
@@ -96,18 +95,13 @@ TEST_CASE("Junk: the two files read, comments and all", "[cardian][junk]")
     CHECK_FALSE(cardian::junk::parse<cardian::junk::files::ExceptionFile>("keeps: [1]\n", error).has_value());
 }
 
-TEST_CASE("Junk: the module's own files parse", "[cardian][junk]")
+TEST_CASE("Junk: the module's own file parses", "[cardian][junk]")
 {
-    for (const auto* path : { "./modules/cardian/junk_guard.yaml", "./modules/cardian/junk.yaml" })
-    {
-        std::ifstream in(path, std::ios::binary);
-        REQUIRE(in);
-        const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
-        std::string       error;
-        const bool        guard = std::string(path).find("guard") != std::string::npos;
-        const bool        ok    = guard ? cardian::junk::parse<cardian::junk::files::GuardFile>(text, error).has_value()
-                                        : cardian::junk::parse<cardian::junk::files::ExceptionFile>(text, error).has_value();
-        INFO(path << ": " << error);
-        CHECK(ok);
-    }
+    std::ifstream in("./modules/cardian/junk.yaml", std::ios::binary);
+    REQUIRE(in);
+    const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+    std::string       error;
+    const bool        ok = cardian::junk::parse<cardian::junk::files::ExceptionFile>(text, error).has_value();
+    INFO("junk.yaml: " << error);
+    CHECK(ok);
 }

@@ -37,7 +37,6 @@ namespace pawn::junk
 {
     namespace
     {
-        const std::filesystem::path kGuardPath     = std::filesystem::path("modules/cardian") / "junk_guard.yaml";
         const std::filesystem::path kExceptionPath = std::filesystem::path("modules/cardian") / "junk.yaml";
 
         std::unordered_set<uint16> junkItems;
@@ -72,23 +71,29 @@ namespace pawn::junk
     void load()
     {
         junkItems.clear();
-        const auto guard      = readFile<cardian::junk::files::GuardFile>(kGuardPath);
         const auto exceptions = readFile<cardian::junk::files::ExceptionFile>(kExceptionPath);
-        if (!guard.has_value() || !exceptions.has_value())
+        if (!exceptions.has_value())
         {
             return;
         }
 
         cardian::junk::Sources sources;
-        sources.guarded.insert(guard->guarded.begin(), guard->guarded.end());
         sources.keep.insert(exceptions->keep.begin(), exceptions->keep.end());
         sources.junk.insert(exceptions->junk.begin(), exceptions->junk.end());
 
-        // the synthesis recipes, desynthesis left out: what they use and make
-        const auto recipes = db::preparedStmt("SELECT Ingredient1, Ingredient2, Ingredient3, Ingredient4, Ingredient5, Ingredient6, Ingredient7, Ingredient8, "
-                                              "Result, ResultHQ1, ResultHQ2, ResultHQ3 FROM synth_recipes WHERE Desynth = 0");
+        // the synthesis recipes, desynthesis left out: what they use -- the
+        // crystal too, so the crystals are junk -- and what they make
+        const auto recipes = db::preparedStmt("SELECT Crystal, HQCrystal, Ingredient1, Ingredient2, Ingredient3, Ingredient4, Ingredient5, Ingredient6, "
+                                              "Ingredient7, Ingredient8, Result, ResultHQ1, ResultHQ2, ResultHQ3 FROM synth_recipes WHERE Desynth = 0");
         while (recipes && recipes->next())
         {
+            for (const auto* column : { "Crystal", "HQCrystal" })
+            {
+                if (const auto id = recipes->get<uint16>(column); id != 0)
+                {
+                    sources.used.insert(id);
+                }
+            }
             for (int i = 1; i <= 8; ++i)
             {
                 if (const auto id = recipes->get<uint16>(fmt::format("Ingredient{}", i)); id != 0)
@@ -120,8 +125,8 @@ namespace pawn::junk
                 junkItems.insert(item.id);
             }
         }
-        ShowInfoFmt("junk: {} items are junk ({} used by recipes, {} guarded by the scripts, {} kept and {} named junk by hand)", junkItems.size(),
-                    sources.used.size(), sources.guarded.size(), sources.keep.size(), sources.junk.size());
+        ShowInfoFmt("junk: {} items are junk ({} used by recipes, {} kept and {} named junk by hand)", junkItems.size(), sources.used.size(),
+                    sources.keep.size(), sources.junk.size());
     }
 
     auto isJunk(const uint16 itemId) -> bool

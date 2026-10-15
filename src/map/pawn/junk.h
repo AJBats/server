@@ -26,9 +26,8 @@
 #include <cstddef>
 
 // The junk rule (junk_math.h) over this map's own database -- its items and
-// recipes, so each profile gets its own answer -- and the two files beside
-// it: modules/cardian/junk_guard.yaml (generated from the scripts) and
-// modules/cardian/junk.yaml (the hand-kept exceptions). Read once at boot
+// recipes, so each profile gets its own answer -- and the hand-kept
+// exceptions beside it, modules/cardian/junk.yaml. Read once at boot
 namespace pawn::junk
 {
     void load();
