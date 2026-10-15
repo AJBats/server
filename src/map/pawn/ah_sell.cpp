@@ -395,7 +395,8 @@ namespace pawn::ahsell
         {
             return { CL_S_REFUSED };
         }
-        const auto moved = db::preparedStmt("UPDATE auction_house SET price = ? WHERE id = ? AND seller = ? AND sale = 0", price, listing, PSeller->id);
+        const auto moved = db::preparedStmt("UPDATE auction_house SET price = ?, date = ? WHERE id = ? AND seller = ? AND sale = 0", price, earth_time::timestamp(),
+                                            listing, PSeller->id);
         if (moved == nullptr)
         {
             return { CL_S_REFUSED };

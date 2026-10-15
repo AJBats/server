@@ -98,8 +98,9 @@ namespace pawn::ahsell
     auto cancel(CCharEntity* PSeller, uint32 listing, uint16 itemId) -> Cancelled;
 
     // His listing on sale by its number given a new price, as taking it down
-    // and putting it up again would: the fee at the new price paid again,
-    // while the listing stays up, its number and the day it went up kept.
-    // Its own price again changes nothing and costs nothing
+    // and putting it up again would: the fee at the new price paid again and
+    // its date fresh, so its time on sale starts over, while the listing
+    // stays up under its own number. Its own price again changes nothing and
+    // costs nothing
     auto reprice(CCharEntity* PSeller, uint32 listing, uint16 itemId, uint32 price) -> Listed;
 } // namespace pawn::ahsell

@@ -357,16 +357,21 @@ class CardianTestStubs : public CPPModule
             const auto repriced = pawn::ahsell::reprice(charOf(PSeller), listing, itemId, price);
             return { repriced.status, repriced.fee };
         };
-        // { open = n, rows = { { listing, price, item, stack, sold } ... } }
+        // { open = n, rows = { { listing, price, date, item, stack, sold } ... } }
         ah["listings"] = [](const uint32 charid) -> sol::table
         {
             std::size_t open = 0;
             sol::table  rows = ::lua.create_table();
             for (const auto& row : pawn::ahsell::listingsOf(charid, 48, open))
             {
-                rows.add(::lua.create_table_with("listing", row.listing, "price", row.price, "item", row.item, "stack", row.stack, "sold", row.sold));
+                rows.add(::lua.create_table_with("listing", row.listing, "price", row.price, "date", row.date, "item", row.item, "stack", row.stack, "sold", row.sold));
             }
             return ::lua.create_table_with("open", open, "rows", rows);
+        };
+        // A listing's date moved back by seconds, as if it had gone up then
+        ah["backdate"] = [](const uint32 listing, const uint32 seconds)
+        {
+            db::preparedStmt("UPDATE auction_house SET date = date - ? WHERE id = ?", seconds, listing);
         };
         // The seller a listing names, its id and its name
         ah["sellerOf"] = [](const uint32 listing) -> std::tuple<uint32, std::string>

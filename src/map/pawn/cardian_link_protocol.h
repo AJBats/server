@@ -2162,10 +2162,11 @@ typedef struct cl_ah_cancel
 } cl_ah_cancel;
 
 // A listing of his on sale given a new price, as taking it down and putting
-// it up again would: the fee at the new price paid again, while the listing
-// itself stays up -- its number, the day it went up -- so it needs no room in
-// his inventory. Its own price again changes nothing and costs nothing. By an
-// auction counter only. Answered with the fee
+// it up again would: the fee at the new price paid again and its date fresh,
+// so its time on sale starts over (the user, 2026-10-15), while the listing
+// itself stays up under its own number and needs no room in his inventory.
+// Its own price again changes nothing and costs nothing. By an auction
+// counter only. Answered with the fee
 typedef struct cl_ah_reprice
 {
     cl_header h;
