@@ -114,7 +114,7 @@ namespace pawn::professions
     };
     void recordPurchase(const Purchase& purchase);
 
-    // A venture's news for his log (CL_NEWS_*): its item, and a lure lost
-    // with a broken rod
-    void recordNews(uint32 cardian, uint32 accid, uint8 news, uint16 item, uint16 lure = 0);
+    // A venture's news for his log (CL_NEWS_*): its item, a lure lost with a
+    // broken rod, and the minutes of a venture made up after the map was down
+    void recordNews(uint32 cardian, uint32 accid, uint8 news, uint16 item, uint16 lure = 0, uint16 minutes = 0);
 } // namespace pawn::professions

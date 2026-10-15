@@ -420,6 +420,7 @@ public:
     // its timing (the user, 2026-10-05). Orders behind it wait their turn,
     // kQueueDepth deep in all.
     void FireQueuedOrder();
+    void FireQueuedOrderStep(); // FireQueuedOrder's one step, the maneuver's end left to it
     auto HasQueuedOrder() const -> bool
     {
         return m_QueuedOrder.has_value();
@@ -454,6 +455,11 @@ public:
     // The rest her queue line shows (m_RestLineKind) brought up to date, and
     // told to her player when it changed with nothing queued
     void UpdateRestLine();
+    // The rest her queue line shows, as she is now: his order while it
+    // stands, her own while she kneels without one and he has not called it
+    // off, else none. Read fresh by every line sent, so a line sent while a
+    // pause holds her tick is never stale
+    auto RestLineNow() const -> uint8;
 
     // The enchanted-item lane (OPEN_ISSUES #297, pawn_enchant.cpp): an
     // enchanted piece -- an experience ring -- used from her inventory is put
@@ -511,7 +517,8 @@ public:
     auto IsAvoidingAggro() const -> bool;  // keep out of every nearby mob's detection circle (M3.87)
     auto IsAvoidingLinks() const -> bool;  // keep clear of the idle kin of every mob fighting her (ROADMAP K6)
     auto IsAvoiding() const -> bool;       // either: the danger map is hers to keep to
-    auto Trekking() const -> bool { return m_Mode == Mode::Travel || m_TrekResting; } // on a trek between zones, or resting on one: the trek lends her its rows (ROADMAP T)
+    auto Trekking() const -> bool { return m_Mode == Mode::Travel || m_TrekResting || m_TrekArriving; } // on a trek between zones, resting on one, or arriving from one: the trek lends her its rows (ROADMAP T)
+    void TellMember(); // her roster line to his addon now (pawn::tellMember), and each tick after until it reaches him
     auto KeepsClearOfAggro() const -> bool; // attending, or waiting at her camp spot: other mobs' detection kept out of whatever her switches say
     auto FightSettled(const CMobEntity* PMob) -> bool; // engaged and held still for a second, not running in or on its tow
     // The mob's next TP move, assumed the area one she keeps out of, comes
@@ -578,6 +585,7 @@ private:
     uint32 m_ManeuverBy          = 0;
     bool   m_ManeuverPriorMaster = true;
     bool   m_ManeuverComposed    = false; // its order given (held: after the route, at the release; a rest, live too): it plays out without his eye
+    bool   m_FirstIsManeuvers    = false; // the first of her line is the composed maneuver's own order, not one he queued behind it
     bool   m_ManeuverResting     = false; // its rest is under way: kept in step with the queue by SetQueuedOrder
     void   ManeuverTick();
     void   NoteOrderFired(); // an order of his left her: a maneuver ends here
@@ -1292,6 +1300,10 @@ private:
     bool                              m_TravelStuckSaid  = false; // "I'm stuck!" said for this trek's standstill
     std::optional<xi::ZoneId>         m_TrekCrossedFrom;          // the zone her trek asked to cross out of: landed elsewhere, she rests her HP up
     bool                              m_TrekResting = false;      // resting her HP up across a zone line on her trek: her trek's rows stay lent
+    bool                              m_TrekArriving = false;     // her trek to him ended as she entered his zone, short of him: its rows stay lent until she arrives (TrekArrivalTick)
+    bool                              m_SeatHeld     = false;     // the formation's last step had her at her seat round him (CompassPoint)
+    void                              TrekArrivalTick();
+    bool                              m_TellPending  = false;     // her roster line is owed to his addon: he was between zones (TellMember)
     timer::time_point                 m_TrekKneltAt;              // her rest across a line: when she was last down, or it began
     int32                             m_TrekChaseFromHp = -1;     // her HP as the chase under way began, -1 for none
     timer::time_point                 m_TrekChaseAt;              // ... and when
@@ -1593,6 +1605,12 @@ private:
     std::optional<std::pair<std::string, EntityId>> m_Running;
     timer::time_point                               m_RunningSince;
     bool                                            m_RunningSeen = false;
+    // What holds the first of her line back from starting, said in the map
+    // log as it changes and when the order starts, so the gap between two
+    // of his orders can be read off it: its kind, and since when it waits
+    std::string                                     m_OrderWaitKind;
+    timer::time_point                               m_OrderWaitSince;
+    void                                            NoteOrderWait(const std::string& key);
     void                                            SetRunning(const std::string& key, EntityId target);
     void                                            UpdateRunning();
 

@@ -102,6 +102,15 @@ namespace pawn::angler
     // on. A stop is in his log already (VENTURE_NEWS)
     auto tick(uint32 charid) -> Stop;
 
+    // The casts of hers that have ended since her body was loaded: her
+    // venture's mark of the time fished moves on at each (errands.cpp)
+    auto casts(uint32 charid) -> uint32;
+
+    // One whole cast at once, the waits taken out as the debug venture's
+    // are: how the time she was away while the map was down is made up
+    // (errands.cpp). Stop::None while she fishes on
+    auto castAtOnce(uint32 charid) -> Stop;
+
     // The trip over: a fish on the line let go, her kit off and what she
     // wore back on, her body saved and released, the report done. Loads her
     // body for it when a restart left it unloaded

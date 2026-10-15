@@ -37,6 +37,7 @@
 #include "pawn_gambits.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "players.h"
 #include "account_wide.h"
 #include "pawn_items.h"
 #include "view.h"
@@ -133,16 +134,7 @@ namespace pawn::linkapi
                 {
                     continue;
                 }
-                auto& item = msg.items[msg.count++];
-                item.slot  = slot;
-                item.id    = PItem->getID();
-                item.qty   = PItem->getQuantity();
-                item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
-                if (const auto charge = chargeOf(PItem))
-                {
-                    item.charges = charge->charges;
-                    item.readyIn = charge->readyIn;
-                }
+                msg.items[msg.count++] = itemOf(PItem, slot);
             }
             return msg;
         }
@@ -2438,6 +2430,21 @@ namespace pawn::linkapi
         return res.get<sol::table>(0);
     }
 
+    auto itemOf(const CItem* PItem, const uint8 slot) -> cl_item
+    {
+        cl_item item{};
+        item.slot  = slot;
+        item.id    = PItem->getID();
+        item.qty   = PItem->getQuantity();
+        item.flags = static_cast<uint8_t>(PItem->state() == ItemState::Equipped ? CL_ITEM_EQUIPPED : 0);
+        if (const auto charge = chargeOf(PItem))
+        {
+            item.charges = charge->charges;
+            item.readyIn = charge->readyIn;
+        }
+        return item;
+    }
+
     void loadLibraries()
     {
         for (const auto& [library, path] : kLibraries)
@@ -2451,6 +2458,34 @@ namespace pawn::linkapi
         }
     }
 
+} // namespace pawn::linkapi
+
+namespace pawn
+{
+    auto tellMember(CCharEntity* PPawn) -> bool
+    {
+        const auto owner = ordersOwnerOf(PPawn);
+        if (owner == 0)
+        {
+            return true; // nobody's: nothing to tell
+        }
+        auto* PPlayer = zoneutils::GetChar(owner);
+        if (PPlayer == nullptr)
+        {
+            return !players::online(owner); // between zones he is in none: asked again once he lands
+        }
+        if (isPawn(PPlayer))
+        {
+            return true;
+        }
+        // one-way (request 0): the addon takes it into its live roster
+        cardian::link::send(owner, linkapi::memberOf(PPlayer, PPawn, linkapi::reachOf(PPlayer), findManagedPawn(PPlayer, PPawn->id) != nullptr));
+        return true;
+    }
+} // namespace pawn
+
+namespace pawn::linkapi
+{
     void registerHandlers()
     {
         handle<cl_give>(give);

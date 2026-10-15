@@ -259,6 +259,11 @@ namespace pawn
     // was with while he crosses a zone line; 0 for nobody's. Out of his party
     // she takes none of his party's orders, his own alt included
     auto ordersOwnerOf(const CCharEntity* PPawn) -> uint32;
+    // Her roster line pushed to that player's addon -- her hold given or
+    // released, which his party list's Holding pill shows, and her joining
+    // his party (#467); link_api.cpp. False while he is online but between
+    // zones, where his entity cannot be read: asked again (TellMember)
+    auto tellMember(CCharEntity* PPawn) -> bool;
     // Her retreat and hunt flags from the orders she follows, as she joins
     void applyOrdersTo(CCharEntity* PPawn);
     auto strategyName(uint16 strategy) -> std::string_view;

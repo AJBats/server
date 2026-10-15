@@ -341,6 +341,15 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     {
         Transition(IdleMode(), why.empty() ? "follows again" : why);
     }
+    if (was != on)
+    {
+        TellMember(); // his roster, and his party list's Holding pill, follow at once
+    }
+}
+
+void CPawnController::TellMember()
+{
+    m_TellPending = !pawn::tellMember(static_cast<CCharEntity*>(POwner));
 }
 
 auto CPawnController::modeName(const Mode mode) -> const char*
@@ -572,13 +581,21 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     if (from == Mode::Maneuver && to != Mode::Maneuver)
     {
         // A composed maneuver ended before its order fired (his cancel, her
-        // death) takes the order with it: an order without its route would
-        // fire from wherever she stands. The flag drops first, so the drop
+        // death) takes its own order with it: an order without its route
+        // would fire from wherever she stands. What he queued behind it comes
+        // up next (the user, 2026-10-14). His rest maneuver ended stands her,
+        // as his cancel of any rest does. The flag drops first, so the drop
         // does not end the maneuver again
-        if (m_ManeuverComposed && m_QueuedOrder.has_value())
+        if (m_ManeuverComposed && m_FirstIsManeuvers && m_QueuedOrder.has_value())
         {
             m_ManeuverComposed = false;
-            ClearQueuedOrders("the maneuver ended first");
+            const bool rest    = m_QueuedOrder->first.starts_with("rest:");
+            ShowInfoFmt("pawn: {} drops the queued {} (the maneuver ended first)", POwner->getName(), m_QueuedOrder->first);
+            SetQueuedOrder(std::nullopt);
+            if (rest && !POwner->isDead())
+            {
+                CallOffRest();
+            }
         }
         m_Gambits->SetMaster(m_ManeuverPriorMaster);
         pawn::clearWalkOrder(POwner->id);
@@ -1832,9 +1849,10 @@ auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -
 
     // Something waits already: the order joins the line behind it, in the
     // order he gives them, kQueueDepth deep in all (the user, 2026-10-05: his
-    // commands go as he gave them, his cancel peels the line back). A
-    // maneuver's order is its own, one command, as it has always been
-    if (m_QueuedOrder.has_value() && !InManeuver())
+    // commands go as he gave them, his cancel peels the line back). Behind a
+    // composed maneuver too: it plays out first (the user, 2026-10-14). A
+    // live maneuver's order is its own, one command, as it has always been
+    if (m_QueuedOrder.has_value() && (!InManeuver() || m_ManeuverComposed))
     {
         return JoinLine(key, target);
     }
@@ -2015,6 +2033,8 @@ auto CPawnController::QueuedOrderHoldsHer() const -> bool
 
 void CPawnController::SetQueuedOrder(std::optional<std::pair<std::string, EntityId>> order)
 {
+    m_FirstIsManeuvers = false; // MarkComposed says so again of the maneuver's own
+    m_OrderWaitKind.clear();    // a new first in line has waited on nothing yet
     // The first done or let go, the next in line takes its place (the user,
     // 2026-10-05: back to back, as he gave them)
     if (!order.has_value() && !m_QueuedNext.empty())
@@ -2128,11 +2148,11 @@ auto CPawnController::QueueLine() const -> cl_queue
             ++line.more;
         }
     }
-    else if (m_RestLineKind != CL_AK_NONE)
+    else if (const auto rest = RestLineNow(); rest != CL_AK_NONE)
     {
         // Nothing queued, a rest under way (mode 1): his order's, by its
         // percent, or her own (#256)
-        line.action = cl_action{ m_RestLineKind, 1, static_cast<uint16_t>(m_RestLineKind == CL_AK_REST ? m_RestOrder.percent : 0) };
+        line.action = cl_action{ rest, 1, static_cast<uint16_t>(rest == CL_AK_REST ? m_RestOrder.percent : 0) };
         line.target = POwner->targid;
     }
     if (m_Enchant.has_value())
@@ -2406,7 +2426,22 @@ auto CPawnController::TryAction(const unsigned kind, const unsigned mode, const 
     return fired ? CL_S_OK : CL_S_CANNOT_NOW;
 }
 
+// A composed maneuver lasts as long as its own order is first in her line:
+// gone by whatever door -- carried out, its target gone, refused, let go --
+// with orders of his behind it, the maneuver ends here, so the next of his
+// is never taken for the maneuver's own
 void CPawnController::FireQueuedOrder()
+{
+    const bool own = InManeuver() && m_ManeuverComposed && m_FirstIsManeuvers;
+    FireQueuedOrderStep();
+    if (own && InManeuver() && m_ManeuverComposed && !m_FirstIsManeuvers)
+    {
+        m_ManeuverComposed = false;
+        EndManeuver("its order has left her line, the maneuver ends");
+    }
+}
+
+void CPawnController::FireQueuedOrderStep()
 {
     if (!m_QueuedOrder.has_value())
     {
@@ -2462,6 +2497,11 @@ void CPawnController::FireQueuedOrder()
             m_ManeuverResting = true;
             pawn::clearWalkOrder(POwner->id); // the route's end is where she kneels
             SetRestOrder(percent, "the player's maneuver");
+            // her line says the rest is under way now, not waiting
+            if (const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)); owner != 0)
+            {
+                cardian::link::send(owner, QueueLine());
+            }
             return;
         }
         if (!m_RestOrder.active())
@@ -2608,6 +2648,7 @@ void CPawnController::FireQueuedOrder()
     // behind its opener, which the combat tick fires first
     if (!ReadyToAct() || m_HeldWs.has_value())
     {
+        NoteOrderWait(key);
         return;
     }
 
@@ -2637,6 +2678,9 @@ void CPawnController::FireQueuedOrder()
         m_RunningSince = m_Tick;
         m_RunningSeen  = Acting();
     }
+    // what held it, kept before the line moves on and forgets it
+    const auto waited = m_OrderWaitKind.empty() ? std::string{}
+                                                : fmt::format(", after {} ms held, last by {}", std::chrono::duration_cast<std::chrono::milliseconds>(m_Tick - m_OrderWaitSince).count(), m_OrderWaitKind);
     SetQueuedOrder(std::nullopt);
     if (status != CL_S_OK)
     {
@@ -2651,8 +2695,57 @@ void CPawnController::FireQueuedOrder()
         return;
     }
     // Started, not done: the game may still refuse it on its next step (ToldAfterOrder)
-    ShowInfoFmt("pawn: {} starts the queued {} on {}", POwner->getName(), key, PTarget->getName());
+    const auto* PCast = dynamic_cast<CMagicState*>(POwner->PAI->GetCurrentState());
+    ShowInfoFmt("pawn: {} starts the queued {} on {}{}{}", POwner->getName(), key, PTarget->getName(),
+                PCast != nullptr ? fmt::format(" ({} ms cast)", std::chrono::duration_cast<std::chrono::milliseconds>(PCast->GetCastTime()).count()) : std::string{}, waited);
     NoteOrderFired();
+}
+
+void CPawnController::NoteOrderWait(const std::string& key)
+{
+    const auto ms = [](const timer::duration d)
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+    };
+    auto*       PPlayer = dynamic_cast<CPlayerController*>(POwner->PAI->GetController());
+    std::string kind;
+    std::string detail;
+    if (m_HeldWs.has_value())
+    {
+        kind = "a weapon skill held behind its opener";
+    }
+    else if (SneakingBy())
+    {
+        kind = "a sneak-by";
+    }
+    else if (!POwner->PAI->CanChangeState())
+    {
+        const auto* PCast = dynamic_cast<CMagicState*>(POwner->PAI->GetCurrentState());
+        kind              = PCast != nullptr ? "her cast and its animation" : "her current action";
+        if (PCast != nullptr && PCast->GetSpell() != nullptr)
+        {
+            detail = fmt::format(" ({}: {} ms cast, {} ms in)", PCast->GetSpell()->getName(), ms(PCast->GetCastTime()), ms(m_Tick - PCast->GetStartTime()));
+        }
+    }
+    else if (PPlayer != nullptr && !PPlayer->canAct())
+    {
+        kind   = "the game's 2.5 s after a spell";
+        detail = fmt::format(" ({} ms since hers ended)", ms(timer::now() - PPlayer->getLastSpellFinishedTime()));
+    }
+    else
+    {
+        kind = "something unnamed";
+    }
+    if (kind == m_OrderWaitKind)
+    {
+        return;
+    }
+    if (m_OrderWaitKind.empty())
+    {
+        m_OrderWaitSince = m_Tick;
+    }
+    m_OrderWaitKind = kind;
+    ShowInfoFmt("pawn: {}'s queued {} waits on {}{}", POwner->getName(), key, kind, detail);
 }
 
 auto CPawnController::CanDrawOn(CBattleEntity* PTarget) -> bool
@@ -4601,6 +4694,11 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         }
         m_PlayerSeenDead = false;
         CheckBrain();
+        TrekArrivalTick();
+        if (m_TellPending)
+        {
+            TellMember();
+        }
         UpdateRunning(); // an order over lets its line go before the enchanted item's use begins
         EnchantTick();   // the enchanted item's use goes ahead of her line, holding no place in it
         FireQueuedOrder();
@@ -5702,7 +5800,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         }
         if (m_Mode == Mode::Travel)
         {
-            Transition(IdleMode(), fmt::format("with {} again", PPlayer->getName()));
+            // Her trek ends as she enters his zone; still short of him, she
+            // keeps its rows for the rest of the way (TrekArrivalTick)
+            m_TrekArriving = distance(POwner->loc.p, PPlayer->loc.p) > settings::get<float>("pawn.TREK_ARRIVE_YALMS");
+            m_SeatHeld     = false;
+            Transition(IdleMode(), fmt::format("with {} again{}", PPlayer->getName(), m_TrekArriving ? ", her trek's rows kept on her way to him" : ""));
         }
 
         ShareSignet(PPlayer);
@@ -6511,6 +6613,7 @@ auto CPawnController::ComposeMove(const bool wait) -> uint16
 void CPawnController::MarkComposed(const std::string_view what)
 {
     m_ManeuverComposed = true;
+    m_FirstIsManeuvers = m_QueuedOrder.has_value();
     if (pawn::maneuverOf(m_ManeuverBy) == POwner->id)
     {
         pawn::clearManeuver(m_ManeuverBy);
@@ -8560,6 +8663,7 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     // since (making room for another member) makes a new stand; walking
     // again, she forgets it; kneeling or busy, she turns once she is free.
     // Holding her ground while he walks at her is no stand
+    m_SeatHeld        = holds;
     const bool stands = holds && !moving;
     const bool still  = !POwner->PAI->PathFind->IsFollowingPath();
     if (!stands)

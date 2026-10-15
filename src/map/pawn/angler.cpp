@@ -89,6 +89,7 @@ namespace pawn::angler
             uint32                       rodsHeld = 0;   // her rods of the trip's kind as the cast began: one fewer after it, one broke
             uint32                       baitHeld = 0;   // ... her bait: what is gone after it was used up
             bool                         lure     = false; // her bait is a lure: kept through a catch, lost to a snapped line or a broken rod
+            uint32                       casts    = 0;     // her casts ended since her body was loaded
         };
 
         // Leaked on purpose: a body still held as the process exits would be
@@ -599,6 +600,7 @@ namespace pawn::angler
             PBody->clearPacketList();
             save(PBody);
             reportCast(a, item, landed);
+            ++a.casts;
             a.step = Step::Ready;
             a.at   = now + settings::get<uint32>("pawn.VENTURE_CAST_SECONDS");
             return afterLoss(a, reportUsed(a));
@@ -691,11 +693,12 @@ namespace pawn::angler
 
         auto land(Angler& a, uint32 now) -> Stop;
 
-        // The dev profile's debug venture: a whole cast at once. The server's
-        // own waits -- its gap between casts, the bite's wait -- are taken out
-        // of her body's own clock before it checks them, and the fight and the
-        // animations are not waited out; every bite, catch, break and skill-up
-        // is still the fishing code's
+        // A whole cast at once: the dev profile's debug venture, and the time
+        // made up after the map was down (castAtOnce). The server's own waits
+        // -- its gap between casts, the bite's wait -- are taken out of her
+        // body's own clock before it checks them, and the fight and the
+        // animations are not waited out; every bite, catch, break and
+        // skill-up is still the fishing code's
         auto turboCast(Angler& a, const uint32 now) -> Stop
         {
             auto* PBody         = a.body.get();
@@ -839,6 +842,18 @@ namespace pawn::angler
                 return land(a, now);
         }
         return Stop::None;
+    }
+
+    auto casts(const uint32 charid) -> uint32
+    {
+        const auto it = anglers().find(charid);
+        return it != anglers().end() ? it->second.casts : 0;
+    }
+
+    auto castAtOnce(const uint32 charid) -> Stop
+    {
+        const auto it = anglers().find(charid);
+        return it != anglers().end() ? turboCast(it->second, calendarNow()) : Stop::None;
     }
 
     void stop(const uint32 charid, const Worn& worn)

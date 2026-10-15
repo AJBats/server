@@ -86,6 +86,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_clock_tests.cpp # CARDIAN: the two clock domains (pause P1)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pause_tests.cpp # CARDIAN: the combat pause's manager (pause P2)
     ${CMAKE_SOURCE_DIR}/src/map/pause/pause_module.cpp # CARDIAN: the pause's real module, so packet tests meet the real input gate (pause P3)
+    ${CMAKE_SOURCE_DIR}/src/map/pawn/ls_bank_moves.cpp # CARDIAN: the bank's moves, for the cases of a failed move (#478)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_calendar_tests.cpp # CARDIAN: the calendar's hold and drift (pause P6)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_gambit_defaults_tests.cpp # CARDIAN: the job default gambit rows and their ids
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_engage_tests.cpp # CARDIAN: the engage door's rules (ROADMAP K3)
@@ -111,6 +112,8 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_route_tests.cpp # CARDIAN: a route searched across a whole zone
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_sneak_tests.cpp # CARDIAN: the sneak-by: a mob's reach over its rest, islands, the timed crossing
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_walk_tests.cpp # CARDIAN: the one walker's route arithmetic (ROADMAP W)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_junk_tests.cpp # CARDIAN: the junk rule (junk_math.h)
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_ls_bank_tests.cpp # CARDIAN: the linkshell bank tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

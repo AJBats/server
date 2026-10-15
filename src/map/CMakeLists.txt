@@ -115,6 +115,11 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/drill.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/drill.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_walker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/junk.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/junk.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/junk_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ls_bank.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ls_bank_moves.cpp
 )
 
 set(MAP_CORE_SOURCES

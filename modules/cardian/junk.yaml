@@ -1,0 +1,9 @@
+# The junk rule's exceptions, kept by hand (OPEN_ISSUES #472; the rule is
+# server/src/map/pawn/junk_math.h). An item id per line, its name after a #.
+# Neither list ever makes gear, an Ex item or a Rare item junk.
+
+# Never junk, whatever the rule says
+keep: []
+
+# Junk, whatever the rule says
+junk: []

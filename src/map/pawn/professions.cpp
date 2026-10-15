@@ -704,7 +704,7 @@ namespace pawn::professions
         // once it is bound; held until then
         void tellNews()
         {
-            const auto rset = db::preparedStmt("SELECT id, cardian, accid, news, item, lure FROM cardian_venture_news WHERE told = 0 ORDER BY id");
+            const auto rset = db::preparedStmt("SELECT id, cardian, accid, news, item, lure, minutes FROM cardian_venture_news WHERE told = 0 ORDER BY id");
             while (rset && rset->next())
             {
                 const auto* PPlayer = playingNow(rset->get<uint32>("accid"));
@@ -717,6 +717,7 @@ namespace pawn::professions
                 news.news    = rset->get<uint8>("news");
                 news.item    = rset->get<uint16>("item");
                 news.lure    = rset->get<uint16>("lure");
+                news.minutes = rset->get<uint16>("minutes");
                 if (cardian::link::send(PPlayer->id, news))
                 {
                     db::preparedStmt("UPDATE cardian_venture_news SET told = 1 WHERE id = ?", rset->get<uint32>("id"));
@@ -797,10 +798,10 @@ namespace pawn::professions
                          p.cardian, p.accid, p.profession, p.item, p.hisGil, p.payer, p.quantity, p.herGil, realNow());
     }
 
-    void recordNews(const uint32 cardian, const uint32 accid, const uint8 news, const uint16 item, const uint16 lure)
+    void recordNews(const uint32 cardian, const uint32 accid, const uint8 news, const uint16 item, const uint16 lure, const uint16 minutes)
     {
-        db::preparedStmt("INSERT INTO cardian_venture_news (cardian, accid, news, item, lure, at) VALUES (?, ?, ?, ?, ?, ?)", cardian, accid, news, item, lure,
-                         realNow());
+        db::preparedStmt("INSERT INTO cardian_venture_news (cardian, accid, news, item, lure, minutes, at) VALUES (?, ?, ?, ?, ?, ?, ?)", cardian, accid, news,
+                         item, lure, minutes, realNow());
     }
 
     void ensureTables()
@@ -898,10 +899,12 @@ namespace pawn::professions
                          "`news` tinyint(3) unsigned NOT NULL, "
                          "`item` smallint(5) unsigned NOT NULL DEFAULT 0, "
                          "`lure` smallint(5) unsigned NOT NULL DEFAULT 0, " // a lure lost with the rod (CL_NEWS_ROD_SPARE, CL_NEWS_ROD_LURE_LOST)
+                         "`minutes` smallint(5) unsigned NOT NULL DEFAULT 0, " // a venture's time made up (CL_NEWS_CAUGHT_UP)
                          "`told` tinyint(3) unsigned NOT NULL DEFAULT 0, "
                          "`at` int(10) unsigned NOT NULL DEFAULT 0, "
                          "PRIMARY KEY (`id`), KEY (`told`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("ALTER TABLE `cardian_venture_news` ADD COLUMN IF NOT EXISTS `lure` smallint(5) unsigned NOT NULL DEFAULT 0 AFTER `item`");
+        db::preparedStmt("ALTER TABLE `cardian_venture_news` ADD COLUMN IF NOT EXISTS `minutes` smallint(5) unsigned NOT NULL DEFAULT 0 AFTER `lure`");
         // an older table: her set's bait, the starter rods, a purchase's shares
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `bait` smallint(5) unsigned NOT NULL DEFAULT 0");
         db::preparedStmt("ALTER TABLE `cardian_professions` ADD COLUMN IF NOT EXISTS `items_go` tinyint(3) unsigned NOT NULL DEFAULT 0");
