@@ -86,6 +86,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_clock_tests.cpp # CARDIAN: the two clock domains (pause P1)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pause_tests.cpp # CARDIAN: the combat pause's manager (pause P2)
     ${CMAKE_SOURCE_DIR}/src/map/pause/pause_module.cpp # CARDIAN: the pause's real module, so packet tests meet the real input gate (pause P3)
+    ${CMAKE_SOURCE_DIR}/src/map/pawn/ls_bank_moves.cpp # CARDIAN: the bank's moves, for the cases of a failed move (#478)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_calendar_tests.cpp # CARDIAN: the calendar's hold and drift (pause P6)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_gambit_defaults_tests.cpp # CARDIAN: the job default gambit rows and their ids
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_engage_tests.cpp # CARDIAN: the engage door's rules (ROADMAP K3)

@@ -24,7 +24,8 @@
 // The linkshell bank's rules (pawn/ls_bank.h): how its stacks merge, the
 // order it keeps, where a deposit lands, and what a withdrawal is refused.
 // Pure and entity-free, so cardian_ls_bank_tests.cpp can hold it to account;
-// ls_bank.cpp feeds it the stacks it reads and writes the ones it returns.
+// ls_bank_moves.cpp feeds it the stacks it reads and writes the ones it
+// returns.
 
 #include "cardian_link_messages.h"
 

@@ -28,6 +28,7 @@
 #include "errands.h"
 #include "link_api.h"
 #include "ls_bank_math.h"
+#include "ls_bank_moves.h"
 #include "mog_house.h"
 #include "pawn.h"
 #include "pawn_items.h"
@@ -36,25 +37,15 @@
 #include "common/database.h"
 #include "common/earth_time.h"
 #include "common/logging.h"
-#include "common/timer.h"
 #include "entities/char_entity.h"
 #include "item_container.h"
 #include "items/item.h"
-#include "items/item_equipment.h"
 #include "items/item_linkshell.h"
-#include "items/item_usable.h"
-#include "items/transactions/item_claim.h"
-#include "lua/luautils.h"
 #include "utils/charutils.h"
-#include "utils/itemutils.h"
 
 #include <algorithm>
-#include <array>
-#include <cstring>
-#include <limits>
 #include <memory>
 #include <optional>
-#include <set>
 #include <utility>
 #include <vector>
 
@@ -63,226 +54,17 @@ namespace pawn::lsbank
     namespace
     {
         using namespace cardian::link;
-        using cardian::lsbank::Extra;
         using cardian::lsbank::Stack;
 
         constexpr std::size_t kPart     = sizeof(cl_bank::items) / sizeof(cl_item);
         constexpr std::size_t kBagItems = sizeof(cl_bank_holder::items) / sizeof(cl_item);
-        constexpr uint32      kPurseMax      = 999'999'999; // the most gil a purse holds, and so the most one move carries
 
-        // ---- one move's database transaction ----------------------------------
-
-        // Opened and closed by hand, so a refusal rolls it back quietly (a throw
-        // into db::transaction is logged as a critical failure). While it is open
-        // nothing may open another: a START TRANSACTION commits the one open.
-        // Rolled back unless committed
-        class Txn
-        {
-        public:
-            Txn()
-            : open_(db::transactionStart())
-            {
-                if (open_)
-                {
-                    db::getDatabase().setInTransaction(true); // a lost connection is not retried mid-transaction
-                }
-            }
-
-            ~Txn()
-            {
-                if (open_)
-                {
-                    db::transactionRollback();
-                    db::getDatabase().setInTransaction(false);
-                }
-            }
-
-            Txn(const Txn&)            = delete;
-            Txn& operator=(const Txn&) = delete;
-
-            auto ok() const -> bool
-            {
-                return open_;
-            }
-
-            auto commit() -> bool
-            {
-                if (!open_)
-                {
-                    return false;
-                }
-                const bool done = db::transactionCommit();
-                if (!done)
-                {
-                    db::transactionRollback();
-                }
-                db::getDatabase().setInTransaction(false);
-                open_ = false;
-                return done;
-            }
-
-        private:
-            bool open_ = false;
-        };
-
-        // ---- the bank's rows --------------------------------------------------
-
-        // The shell's head row: its gil, a version every move of its stacks changes, and what
-        // the holder lets a sack holder and a pearl holder do
-        struct Head
-        {
-            uint32 gil      = 0;
-            uint32 version  = 0;
-            uint8  sackCan  = cardian::lsbank::kSackDefault;
-            uint8  pearlCan = cardian::lsbank::kPearlDefault;
-        };
-
-        auto ensureHead(const uint32 lsid) -> bool
-        {
-            return db::preparedStmt("INSERT IGNORE INTO cardian_ls_bank_head (lsid, gil, version, sack_can, pearl_can) VALUES (?, 0, 0, ?, ?)", lsid,
-                                    cardian::lsbank::kSackDefault, cardian::lsbank::kPearlDefault) != nullptr;
-        }
-
-        auto headFrom(const auto& rset) -> Head
-        {
-            Head head;
-            head.gil      = rset->get<uint32>("gil");
-            head.version  = rset->get<uint32>("version");
-            head.sackCan  = rset->get<uint8>("sack_can");
-            head.pearlCan = rset->get<uint8>("pearl_can");
-            return head;
-        }
-
-        // The head as it stands, unlocked: for a listing
-        auto readHead(const uint32 lsid) -> Head
-        {
-            if (const auto rset = db::preparedStmt("SELECT gil, version, sack_can, pearl_can FROM cardian_ls_bank_head WHERE lsid = ?", lsid); rset && rset->next())
-            {
-                return headFrom(rset);
-            }
-            return Head{};
-        }
-
-        // The head locked until the open transaction ends: every move on one
-        // shell waits for the one before it, on whatever map server. Made
-        // before the transaction (ensureHead), never inside it: INSERT IGNORE
-        // on a row that is there takes a shared lock, and two servers each
-        // holding one while they wait for the exclusive lock would deadlock.
-        // None when it cannot be had
-        auto lockHead(const uint32 lsid) -> std::optional<Head>
-        {
-            if (const auto rset = db::preparedStmt("SELECT gil, version, sack_can, pearl_can FROM cardian_ls_bank_head WHERE lsid = ? FOR UPDATE", lsid); rset && rset->next())
-            {
-                return headFrom(rset);
-            }
-            return std::nullopt;
-        }
-
-        // A stack move's mark on the head: the gil it leaves, and a new version
-        auto writeHead(const uint32 lsid, const uint32 gil) -> bool
-        {
-            return db::preparedStmt("UPDATE cardian_ls_bank_head SET gil = ?, version = version + 1 WHERE lsid = ?", gil, lsid) != nullptr;
-        }
-
-        // A gil move's mark: the gil alone. The version tells a withdrawal the
-        // stacks moved, and gil moves none
-        auto writeGil(const uint32 lsid, const uint32 gil) -> bool
-        {
-            return db::preparedStmt("UPDATE cardian_ls_bank_head SET gil = ? WHERE lsid = ?", gil, lsid) != nullptr;
-        }
-
-        // How many of an item one slot holds
-        auto stackSizeOf(const uint16 itemId) -> uint32
-        {
-            const CItem* PItem = xi::items::lookup(itemId);
-            return PItem != nullptr ? std::max<uint32>(1, PItem->getStackSize()) : 1;
-        }
-
-        // The shell's stacks as its rows hold them, in its order
-        auto readStacks(const uint32 lsid) -> std::vector<Stack>
-        {
-            std::vector<Stack> bank;
-            const auto         rset = db::preparedStmt("SELECT itemId, quantity, extra FROM cardian_ls_bank WHERE lsid = ? ORDER BY slot", lsid);
-            while (rset && rset->next())
-            {
-                Stack stack;
-                stack.item = rset->get<uint16>("itemId");
-                stack.qty  = rset->get<uint32>("quantity");
-                db::extractFromBlob(rset, "extra", stack.extra);
-                stack.stack = stackSizeOf(stack.item);
-                bank.push_back(stack);
-            }
-            return bank;
-        }
-
-        // The shell's stacks written whole, a row a stack in its order. Only
-        // inside a move's transaction, whose rollback undoes a half-written bank
-        auto writeStacks(const uint32 lsid, const std::vector<Stack>& bank) -> bool
-        {
-            if (!db::preparedStmt("DELETE FROM cardian_ls_bank WHERE lsid = ?", lsid))
-            {
-                return false;
-            }
-            uint8 slot = 0;
-            for (const auto& stack : bank)
-            {
-                ++slot;
-                Extra extra = stack.extra; // the binding reads a blob from a mutable value
-                if (!db::preparedStmt("INSERT INTO cardian_ls_bank (lsid, slot, itemId, quantity, extra) VALUES (?, ?, ?, ?, ?)", lsid, slot, stack.item,
-                                      stack.qty, extra))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        // An item built as the game builds one it loads from a character's
-        // rows (charutils::LoadInventory, item by item): its quantity and
-        // extra data, a linkshell item's kind when its data has none, an
-        // enchanted item's last use (its recast) and a piece of gear's
-        // augments. A copy of upstream's steps: compare them at every merge
-        // from base
-        auto rebuild(const uint16 itemId, const uint32 qty, const Extra& extra) -> std::unique_ptr<CItem>
-        {
-            auto PItem = xi::items::spawn(itemId);
-            if (PItem == nullptr)
-            {
-                return nullptr;
-            }
-            PItem->setQuantity(qty);
-            std::memcpy(PItem->m_extra, extra.data(), std::min<std::size_t>(extra.size(), CItem::extra_size));
-
-            if (PItem->isType(ITEM_LINKSHELL))
-            {
-                auto* PLink = static_cast<CItemLinkshell*>(PItem.get());
-                if (PLink->GetLSType() == 0)
-                {
-                    PLink->SetLSType(static_cast<LSTYPE>(PItem->getID() - 0x200));
-                }
-            }
-            if (auto* PUsable = dynamic_cast<CItemUsable*>(PItem.get()))
-            {
-                uint32 useTime = 0;
-                std::memcpy(&useTime, PUsable->m_extra + 0x04, sizeof(useTime));
-                if (useTime != 0)
-                {
-                    PUsable->setLastUseTime(timer::now() - std::chrono::seconds(earth_time::vanadiel_timestamp() - useTime));
-                }
-            }
-            if ((PItem->isType(ITEM_EQUIPMENT) || PItem->isType(ITEM_WEAPON)) && !PItem->isSubType(ITEM_CHARGED))
-            {
-                auto* PEquip = static_cast<CItemEquipment*>(PItem.get());
-                for (uint8 slot = 0; slot < 4; ++slot)
-                {
-                    if (PEquip->getAugment(slot) != 0)
-                    {
-                        PEquip->ApplyAugment(slot);
-                    }
-                }
-            }
-            return PItem;
-        }
+        // The bank's rows and its moves are ls_bank_moves.h's
+        using moves::ensureHead;
+        using moves::Head;
+        using moves::readHead;
+        using moves::readStacks;
+        using moves::rebuild;
 
         // A stack as the Link lists one: the item it would come out as
         auto listed(const Stack& stack, const uint8 slot) -> cl_item
@@ -534,298 +316,6 @@ namespace pawn::lsbank
             return status;
         }
 
-        // ---- the moves --------------------------------------------------------
-        //
-        // Each is one database transaction (Txn): the shell's head locked, the
-        // bank read under the lock and judged against what the page saw, the
-        // character's item transaction run on the same connection, the bank's
-        // rows written, and the database committed before the item transaction
-        // is. A refusal or a failure rolls the item transaction back while the
-        // database transaction is still open, so its undo is undone with it.
-
-        // The common start of a move, inside its transaction: the head locked,
-        // and his rank's right to the move read under that lock, since the
-        // holder may have changed it after judgeMove read it. The head; none
-        // and why when it may not go
-        auto beginMove(const Shell& shell, const uint8 right, uint16& why) -> std::optional<Head>
-        {
-            const auto head = lockHead(shell.lsid);
-            if (!head.has_value())
-            {
-                why = CL_S_REFUSED;
-                return std::nullopt;
-            }
-            if ((cardian::lsbank::canOf(shell.rank, head->sackCan, head->pearlCan) & right) == 0)
-            {
-                why = CL_S_BANK_NOT_ALLOWED;
-                return std::nullopt;
-            }
-            return head;
-        }
-
-        // An item the bank takes: one whose script acts as it leaves its owner
-        // (onItemDrop -- the firefly cages, which hand back a temporary cage)
-        // is refused, or a deposit and a withdrawal would make one each time
-        auto bankable(const CItem* PItem) -> bool
-        {
-            return !luautils::getCachedFileFunction(fmt::format("./scripts/items/{}.lua", PItem->getName()), "onItemDrop").valid();
-        }
-
-        // A stack from her bag into the bank: the slot holds what the page saw,
-        // idle (not worn, not in a trade or a bazaar), and the bank has room for
-        // it once merged
-        auto depositFrom(CCharEntity* PHolder, const Shell& shell, const cl_bank_deposit& ask, uint8& landed) -> uint16
-        {
-            const auto lsid = shell.lsid;
-            auto*  storage = PHolder->getStorage(ask.loc);
-            CItem* PItem   = storage != nullptr && ask.slot > 0 ? storage->GetItem(ask.slot) : nullptr;
-            if (PItem == nullptr || PItem->getQuantity() == 0)
-            {
-                return CL_S_NO_ITEM;
-            }
-            if (PItem->isType(ITEM_CURRENCY))
-            {
-                return CL_S_GIL_NOT_AN_ITEM;
-            }
-            if (PItem->getID() != ask.item)
-            {
-                return CL_S_ITEM_SLIPPED_AWAY;
-            }
-            if (PItem->state() == ItemState::Equipped)
-            {
-                return CL_S_ITEM_EQUIPPED;
-            }
-            if (ask.qty == 0 || ask.qty > PItem->getQuantity())
-            {
-                return CL_S_BAD_QUANTITY;
-            }
-            if (!bankable(PItem))
-            {
-                return CL_S_ITEM_CANNOT_MOVE;
-            }
-            Stack in;
-            in.item  = PItem->getID();
-            in.qty   = ask.qty;
-            in.stack = std::max<uint32>(1, PItem->getStackSize());
-            std::memcpy(in.extra.data(), PItem->m_extra, std::min<std::size_t>(in.extra.size(), CItem::extra_size));
-
-            if (!ensureHead(lsid))
-            {
-                return CL_S_REFUSED;
-            }
-            Txn txn;
-            if (!txn.ok())
-            {
-                return CL_S_REFUSED;
-            }
-            uint16     why  = CL_S_OK;
-            const auto head = beginMove(shell, CL_BANK_PUT, why);
-            if (!head.has_value())
-            {
-                return why;
-            }
-            const auto taken = cardian::lsbank::deposit(readStacks(lsid), in);
-            if (!taken.has_value())
-            {
-                return CL_S_BANK_FULL;
-            }
-            auto items = ItemClaimTransaction::start(PHolder);
-            if (items == nullptr || items->claimSlot(ask.loc, ask.slot) == nullptr)
-            {
-                return CL_S_ITEM_BUSY;
-            }
-            if (!items->take(ask.loc, ask.slot, ask.qty))
-            {
-                items->rollback();
-                return CL_S_ITEM_SLIPPED_AWAY;
-            }
-            if (!writeStacks(lsid, taken->bank) || !writeHead(lsid, head->gil))
-            {
-                items->rollback();
-                return CL_S_REFUSED;
-            }
-            if (!txn.commit())
-            {
-                items->rollback();
-                ShowErrorFmt("lsbank: the deposit of {} x{} by {} did not commit", in.item, in.qty, PHolder->getName());
-                return CL_S_REFUSED;
-            }
-            if (!items->commit())
-            {
-                ShowErrorFmt("lsbank: {}'s item transaction would not let go after the bank committed", PHolder->getName());
-            }
-            landed = static_cast<uint8>(taken->landed + 1);
-            ShowInfoFmt("lsbank: {} banks {} x{} from bag {} (shell {}, {} of {} slots used)", PHolder->getName(), in.item, in.qty, ask.loc, lsid,
-                        taken->bank.size(), cardian::lsbank::kSize);
-            return CL_S_OK;
-        }
-
-        // A stack from the bank into her bag, as the game gives an item: gear
-        // alone into a wardrobe, no second of a Rare item, and a free slot
-        auto withdrawTo(CCharEntity* PHolder, const Shell& shell, const cl_bank_withdraw& ask, uint8& landed) -> uint16
-        {
-            const auto lsid = shell.lsid;
-            if (!ensureHead(lsid))
-            {
-                return CL_S_REFUSED;
-            }
-            Txn txn;
-            if (!txn.ok())
-            {
-                return CL_S_REFUSED;
-            }
-            uint16     why  = CL_S_OK;
-            const auto head = beginMove(shell, CL_BANK_TAKE, why);
-            if (!head.has_value())
-            {
-                return why;
-            }
-            // the bank as the page saw it: a move since may have put another
-            // stack of the same item in that slot (another shell's pearl, a
-            // piece with other augments)
-            if ((head->version & 0xFFFF) != ask.version)
-            {
-                return CL_S_ITEM_SLIPPED_AWAY;
-            }
-            const auto before = readStacks(lsid);
-            if (const auto why = cardian::lsbank::judgeWithdraw(before, ask.slot, ask.item, ask.qty); why != CL_S_OK)
-            {
-                return why;
-            }
-            const auto& stack = before[ask.slot - 1];
-            auto        PItem = rebuild(stack.item, ask.qty, stack.extra);
-            if (PItem == nullptr)
-            {
-                ShowErrorFmt("lsbank: item {} in the bank of shell {} is no item the game knows", stack.item, lsid);
-                return CL_S_ITEM_CANNOT_MOVE;
-            }
-            if (cardian::lsbank::wardrobe(ask.loc) && !PItem->isType(ITEM_EQUIPMENT))
-            {
-                return CL_S_NOT_EQUIPMENT;
-            }
-            const auto* storage = PHolder->getStorage(ask.loc);
-            const bool  rare    = PItem->hasFlag(ItemFlag::Rare);
-            const bool  owned   = rare && charutils::HasItem(PHolder, stack.item);
-            if (const auto refused = cardian::lsbank::judgeReceive(rare, owned, storage != nullptr ? storage->GetFreeSlotsCount() : 0); refused != CL_S_OK)
-            {
-                return refused;
-            }
-            const auto after = cardian::lsbank::withdraw(before, ask.slot, ask.qty);
-            if (!after.has_value())
-            {
-                return CL_S_BAD_QUANTITY;
-            }
-            const uint16 itemId = stack.item;
-            auto         items  = ItemClaimTransaction::start(PHolder);
-            if (items == nullptr)
-            {
-                return CL_S_REFUSED;
-            }
-            const auto given = items->give(ask.loc, std::move(PItem), Silence::Yes);
-            if (!given.has_value())
-            {
-                items->rollback();
-                return CL_S_NO_SPACE;
-            }
-            if (!writeStacks(lsid, *after) || !writeHead(lsid, head->gil))
-            {
-                items->rollback();
-                return CL_S_REFUSED;
-            }
-            if (!txn.commit())
-            {
-                items->rollback();
-                ShowErrorFmt("lsbank: the withdrawal of {} x{} by {} did not commit", itemId, ask.qty, PHolder->getName());
-                return CL_S_REFUSED;
-            }
-            if (!items->commit())
-            {
-                ShowErrorFmt("lsbank: {}'s item transaction would not let go after the bank committed", PHolder->getName());
-            }
-            landed = *given;
-            ShowInfoFmt("lsbank: {} takes {} x{} from the bank into bag {} (shell {}, {} of {} slots used)", PHolder->getName(), itemId, ask.qty, ask.loc, lsid,
-                        after->size(), cardian::lsbank::kSize);
-            return CL_S_OK;
-        }
-
-        // Gil between the bank and her purse, the game's own pay and earn on
-        // her side: the purse it comes from must hold it
-        auto moveGil(CCharEntity* PHolder, const Shell& shell, const cl_bank_gil& ask, uint32& bankGil) -> uint16
-        {
-            const auto lsid = shell.lsid;
-            // one move is at most what a purse holds, as the game's own gil
-            // amounts are: the amount never reaches an int32's sign bit
-            if (ask.amount == 0 || ask.amount > kPurseMax)
-            {
-                return CL_S_BAD_QUANTITY;
-            }
-            if (!ensureHead(lsid))
-            {
-                return CL_S_REFUSED;
-            }
-            Txn txn;
-            if (!txn.ok())
-            {
-                return CL_S_REFUSED;
-            }
-            uint16     why  = CL_S_OK;
-            const auto head = beginMove(shell, ask.out != 0 ? CL_BANK_GIL_OUT : CL_BANK_GIL_IN, why);
-            if (!head.has_value())
-            {
-                return why;
-            }
-            auto items = ItemClaimTransaction::start(PHolder);
-            if (items == nullptr)
-            {
-                return CL_S_REFUSED;
-            }
-            uint32 after = head->gil;
-            if (ask.out != 0)
-            {
-                if (head->gil < ask.amount)
-                {
-                    return CL_S_NOT_ENOUGH_GIL;
-                }
-                if (!items->earn(ask.amount))
-                {
-                    items->rollback();
-                    return CL_S_REFUSED;
-                }
-                after = head->gil - ask.amount;
-            }
-            else
-            {
-                if (std::numeric_limits<uint32>::max() - head->gil < ask.amount)
-                {
-                    return CL_S_BAD_QUANTITY;
-                }
-                if (!items->pay(ask.amount))
-                {
-                    items->rollback();
-                    return CL_S_NOT_ENOUGH_GIL;
-                }
-                after = head->gil + ask.amount;
-            }
-            if (!writeGil(lsid, after))
-            {
-                items->rollback();
-                return CL_S_REFUSED;
-            }
-            if (!txn.commit())
-            {
-                items->rollback();
-                ShowErrorFmt("lsbank: {} gil {} by {} did not commit", ask.amount, ask.out != 0 ? "out" : "in", PHolder->getName());
-                return CL_S_REFUSED;
-            }
-            if (!items->commit())
-            {
-                ShowErrorFmt("lsbank: {}'s item transaction would not let go after the bank committed", PHolder->getName());
-            }
-            bankGil = after;
-            ShowInfoFmt("lsbank: {} moves {} gil {} the bank (shell {}, {} gil in it)", PHolder->getName(), ask.amount, ask.out != 0 ? "out of" : "into", lsid, after);
-            return CL_S_OK;
-        }
-
         // Where a stack that landed in a character's bag is once her stacks
         // are merged: the slot it landed in, or the first holding its item
         // when the merge moved it
@@ -889,7 +379,7 @@ namespace pawn::lsbank
                 reply.more(holderOf(PChar, charid, kind, LOC_INVENTORY));
                 ++sent;
             }
-            auto parts = partsOf(readStacks(shell->lsid), sent, readHead(shell->lsid), *shell);
+            auto parts = partsOf(readStacks(shell->lsid).value_or(std::vector<Stack>{}), sent, readHead(shell->lsid), *shell);
             for (std::size_t i = 0; i + 1 < parts.size(); ++i)
             {
                 reply.more(parts[i]);
@@ -930,7 +420,7 @@ namespace pawn::lsbank
                 {
                     reply.more(*told);
                 }
-                for (const auto& part : partsOf(readStacks(shell.lsid), 0, readHead(shell.lsid), shell))
+                for (const auto& part : partsOf(readStacks(shell.lsid).value_or(std::vector<Stack>{}), 0, readHead(shell.lsid), shell))
                 {
                     reply.more(part);
                 }
@@ -983,7 +473,7 @@ namespace pawn::lsbank
             std::optional<cl_bank_holder> told;
             const auto                    status = onHolder(
                 PChar, ask.cardian, *kind,
-                [&](CCharEntity* PHolder) { return depositFrom(PHolder, *shell, ask, answer.landed); },
+                [&](CCharEntity* PHolder) { return moves::deposit(PHolder, *shell, ask, answer.landed); },
                 [&](CCharEntity*) { told = holderOf(PChar, ask.cardian, *kind, ask.loc); });
             answerMove(PChar, *shell, answer, told, reply, status);
         }
@@ -1002,7 +492,7 @@ namespace pawn::lsbank
             std::optional<cl_bank_holder> told;
             const auto                    status = onHolder(
                 PChar, ask.cardian, *kind,
-                [&](CCharEntity* PHolder) { return withdrawTo(PHolder, *shell, ask, answer.landed); },
+                [&](CCharEntity* PHolder) { return moves::withdraw(PHolder, *shell, ask, answer.landed); },
                 [&](CCharEntity* PHolder)
                 {
                     answer.landed = landedNow(PHolder, ask.loc, answer.landed, ask.item);
@@ -1024,7 +514,7 @@ namespace pawn::lsbank
             std::optional<cl_bank_holder> told;
             const auto                    status = onHolder(
                 PChar, ask.cardian, *kind,
-                [&](CCharEntity* PHolder) { return moveGil(PHolder, *shell, ask, answer.bankGil); },
+                [&](CCharEntity* PHolder) { return moves::gil(PHolder, *shell, ask, answer.bankGil); },
                 [&](CCharEntity* PHolder)
                 {
                     answer.herGil = gilOf(PHolder);
@@ -1069,20 +559,7 @@ namespace pawn::lsbank
 
     void ensureTable()
     {
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_ls_bank` ("
-                         "`lsid` int(10) unsigned NOT NULL, "
-                         "`slot` tinyint(3) unsigned NOT NULL, " // 1 to CL_BANK_SIZE, the bank's order
-                         "`itemId` smallint(5) unsigned NOT NULL, "
-                         "`quantity` int(10) unsigned NOT NULL DEFAULT 1, "
-                         "`extra` blob(24) DEFAULT NULL, " // the item's extra data, as char_inventory's
-                         "PRIMARY KEY (`lsid`, `slot`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_ls_bank_head` ("
-                         "`lsid` int(10) unsigned NOT NULL, "
-                         "`gil` int(10) unsigned NOT NULL DEFAULT 0, "
-                         "`version` int(10) unsigned NOT NULL DEFAULT 0, "       // every move of its stacks changes it
-                         "`sack_can` tinyint(3) unsigned NOT NULL DEFAULT 15, "  // CL_BANK_* bits the holder lets a sack holder
-                         "`pearl_can` tinyint(3) unsigned NOT NULL DEFAULT 1, "  // ... a pearl holder
-                         "PRIMARY KEY (`lsid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        moves::ensureTables();
     }
 
     void registerHandlers()
