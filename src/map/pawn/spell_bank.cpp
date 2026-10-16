@@ -1427,7 +1427,7 @@ namespace pawn::tactics
             // before it spends her MP
             const double now = seconds(timer::now());
             const auto   rt  = ratesOf(r, spot, PMob, now, &members);
-            NukePricing  out{ .seeded = *seeded };
+            NukePricing  out{ .seeded = *seeded, .remaining = rt.remaining };
             for (auto* PSpell : spells)
             {
                 const auto it = seeds.find(static_cast<uint16>(PSpell->getID()));
@@ -1436,6 +1436,45 @@ namespace pawn::tactics
                     continue;
                 }
                 out.prices.push_back(nukePriceOf(PCaster, PSpell, it->second, PMob, rt));
+            }
+            return out;
+        }
+
+        auto burstFactors(CBattleEntity* PCaster, CBattleEntity* PTarget, const std::vector<CSpell*>& spells, const uint8 count) -> std::optional<std::map<uint16, double>>
+        {
+            if (PCaster == nullptr || PTarget == nullptr || spells.empty())
+            {
+                return std::nullopt;
+            }
+            auto fn = bankFunction("burstFactors");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            sol::table ask = ::lua.create_table();
+            for (std::size_t i = 0; i < spells.size(); ++i)
+            {
+                sol::table s   = ::lua.create_table();
+                s["id"]        = static_cast<uint16>(spells[i]->getID());
+                s["element"]   = spells[i]->getElement();
+                s["skillType"] = static_cast<uint8>(spells[i]->getSkillType());
+                ask[i + 1]     = s;
+            }
+            auto res = (*fn)(CLuaBaseEntity(PCaster), CLuaBaseEntity(PTarget), ask, count);
+            if (failed("burstFactors", res) || res.get_type(0) != sol::type::table)
+            {
+                return std::nullopt;
+            }
+            std::map<uint16, double> out;
+            const sol::table         answers = res.get<sol::table>(0);
+            for (auto* PSpell : spells)
+            {
+                const auto                  id     = static_cast<uint16>(PSpell->getID());
+                const sol::optional<double> answer = answers[id];
+                if (answer.has_value())
+                {
+                    out[id] = *answer;
+                }
             }
             return out;
         }

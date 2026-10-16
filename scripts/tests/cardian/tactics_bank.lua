@@ -196,6 +196,36 @@ describe('Cardian tactics bank', function()
         assert(protect[xi.magic.spell.PROTECT] == nil, 'Protect is not in the damage table')
     end)
 
+    -- The burst reads the server's own two burst steps: a factor over one,
+    -- growing with the chain's count, and nothing on the mob consumed
+    it('burstFactors multiplies a nuke by the server burst steps, more for a longer chain', function()
+        local blm = xi.test.world:spawnPlayer({ job = xi.job.BLM, level = 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = blm.entities:moveTo(17190976) -- a Forest Hare (data/zones/East_Ronfaure/mobs.yaml)
+        mob:respawn()
+
+        local spells =
+        {
+            { id = xi.magic.spell.FIRE, element = xi.element.FIRE, skillType = xi.skill.ELEMENTAL_MAGIC },
+            { id = xi.magic.spell.STONE, element = xi.element.EARTH, skillType = xi.skill.ELEMENTAL_MAGIC },
+        }
+        local one = xi.cardian.bank.burstFactors(blm, mob, spells, 1)
+        local two = xi.cardian.bank.burstFactors(blm, mob, spells, 2)
+        for _, s in ipairs(spells) do
+            assert(type(one[s.id]) == 'number' and one[s.id] > 1, string.format('spell %d: a burst should multiply it: %s', s.id, tostring(one[s.id])))
+            assert(two[s.id] > one[s.id], string.format('spell %d: a longer chain bursts harder: %s against %s', s.id, tostring(two[s.id]), tostring(one[s.id])))
+            local expected = xi.spells.damage.calculateIfMagicBurst(blm, mob, s.element, 1) *
+                xi.spells.damage.calculateIfMagicBurstBonus(blm, mob, s.id, s.skillType, s.element)
+            assert(math.abs(one[s.id] - expected) < 1e-9, string.format('spell %d: %s, the server says %s', s.id, tostring(one[s.id]), tostring(expected)))
+        end
+
+        -- Sengikori's bonus is read, never consumed
+        mob:setMod(xi.mod.SENGIKORI_MB_DMG_DEBUFF, 25)
+        local sengi = xi.cardian.bank.burstFactors(blm, mob, spells, 1)
+        assert(mob:getMod(xi.mod.SENGIKORI_MB_DMG_DEBUFF) == 25, 'the bonus is left on the mob')
+        assert(sengi[xi.magic.spell.FIRE] > one[xi.magic.spell.FIRE], 'and counted')
+        mob:setMod(xi.mod.SENGIKORI_MB_DMG_DEBUFF, 0)
+    end)
+
     it('debuffSubPower reads what Dia and Bio scripts put on a mob, overrides included', function()
         local bank = xi.cardian.bank
         assert(bank.debuffSubPower('dia', xi.effect.DIA) == 10, 'Dia lowers defence 10% in upstream\'s script')

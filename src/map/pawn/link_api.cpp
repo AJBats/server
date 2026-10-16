@@ -38,6 +38,7 @@
 #include "party_finder.h"
 #include "party_roster.h"
 #include "pawn_gambits.h"
+#include "skillchains.h"
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "players.h"
@@ -1517,6 +1518,7 @@ namespace pawn::linkapi
             msg.staked     = stake.has_value() ? 1 : 0;
             msg.diaBio     = rules.preferBio ? 1 : 0;
             msg.stakeZone  = stake.has_value() ? static_cast<uint16_t>(stake->zone) : 0;
+            msg.avoidAggro = rules.avoidAggro ? 1 : 0;
             return msg;
         }
 
@@ -1641,6 +1643,58 @@ namespace pawn::linkapi
             }
             sendPartyRoles(PChar, reply);
             reply.finish(ask, status);
+        }
+
+        // The skillchains his party can make (skillchains.h optionsFor), each
+        // as an answer, the best first, his plan marked; how many were sent
+        auto sendSkillchains(CCharEntity* PChar, Reply& reply) -> uint8
+        {
+            const auto plan  = pawn::chains::planOf(PChar->id);
+            uint8      count = 0;
+            for (const auto& offered : pawn::chains::optionsFor(PChar))
+            {
+                const auto& o   = offered.option;
+                auto        msg = make<cl_skillchain>();
+                msg.opener      = o.opener;
+                msg.closer      = o.closer;
+                msg.burster     = o.burster;
+                msg.openerSkill = o.openerSkill;
+                msg.closerSkill = o.closerSkill;
+                msg.elements    = o.elements;
+                msg.chain       = o.chain;
+                msg.tier        = o.tier;
+                msg.picked      = plan.has_value() && plan->opener == o.opener && plan->openerSkill == o.openerSkill && plan->closer == o.closer &&
+                                       plan->closerSkill == o.closerSkill
+                                      ? 1
+                                      : 0;
+                setText(msg.openerName, offered.opener);
+                setText(msg.closerName, offered.closer);
+                setText(msg.bursterName, offered.burster);
+                reply.more(msg);
+                ++count;
+            }
+            return count;
+        }
+
+        void skillchains(CCharEntity* PChar, const cl_skillchains& ask, Reply& reply)
+        {
+            auto answer  = ask;
+            answer.count = sendSkillchains(PChar, reply);
+            const auto plan = pawn::chains::planOf(PChar->id);
+            answer.chain = plan.has_value() ? plan->chain : 0;
+            reply.finish(answer, CL_S_OK);
+        }
+
+        // His pick of a skillchain, or his taking the plan back (opener 0):
+        // the options come back as they now stand, then its outcome
+        void setSkillchain(CCharEntity* PChar, const cl_set_skillchain& ask, Reply& reply)
+        {
+            const auto status = pawn::chains::choose(PChar, ask.opener, ask.openerSkill, ask.closer, ask.closerSkill);
+            sendSkillchains(PChar, reply);
+            auto       answer = ask;
+            const auto plan   = pawn::chains::planOf(PChar->id);
+            answer.chain      = plan.has_value() ? plan->chain : 0;
+            reply.finish(answer, status);
         }
 
         // "On me": set, cleared, or the other way round from how it stands
@@ -2834,6 +2888,8 @@ namespace pawn::linkapi
         handle<cl_set_hunt>(setHunt);
         handle<cl_party_roles>(partyRoles);
         handle<cl_set_party_role>(setPartyRole);
+        handle<cl_skillchains>(skillchains);
+        handle<cl_set_skillchain>(setSkillchain);
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);

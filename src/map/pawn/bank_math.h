@@ -408,7 +408,8 @@ namespace cardian::tactics
     struct NukePricing
     {
         std::vector<NukePrice> prices;
-        uint32                 seeded = 0;
+        uint32                 seeded    = 0;
+        double                 remaining = -1.0; // the mob's life left at the party's rate, in seconds; below 0 unknown
     };
 
     // What a nuke takes off a mob with this much HP left -- the seed by her

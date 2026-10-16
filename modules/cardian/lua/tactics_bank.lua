@@ -26,6 +26,9 @@
 --        server's damage chain with every die taken at its expectation;
 --        with intDown, a second table in the same pass, as if the target's
 --        INT were that much lower (Burn).
+--   xi.cardian.bank.burstFactors(caster, target, spells, count)
+--     -> what a magic burst multiplies each nuke by, the server's own two
+--        burst steps at the chain's count, read without consuming anything.
 --   xi.cardian.bank.debuffSubPower(scriptName, effectId)
 --     -> the subPower a debuff's own script puts on its effect (Dia's
 --        defence down, Bio's attack down, in percent), read by running the
@@ -682,6 +685,30 @@ xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
     end
 
     return seeds, seedsMoved
+end
+
+-- What a magic burst multiplies each nuke by (ROADMAP, Road to subjob item
+-- 6, slice 3h): the two burst steps of xi.spells.damage.useDamageSpell, the
+-- server's own -- calculateIfMagicBurst at the chain's count (the
+-- Skillchain effect's subPower: 1 for a chain of two weapon skills) and
+-- calculateIfMagicBurstBonus -- for this caster on this target. Left out:
+-- the burst's accuracy bonus to the resist roll, so the factor is the low
+-- side of a burst. Read only: the Sengikori bonus the first step would
+-- consume is not consumed. spells: { id, element, skillType } each; the
+-- answer is the factor by spell id
+xi.cardian.bank.burstFactors = function(caster, target, spells, count)
+    local damage = xi.spells.damage
+    local c      = remembered(caster)
+    local t      = remembered(target)
+    rawset(t, 'setMod', function() end)
+
+    local factors = {}
+    for _, s in ipairs(spells) do
+        factors[s.id] = damage.calculateIfMagicBurst(c, t, s.element, count) *
+            damage.calculateIfMagicBurstBonus(c, t, s.id, s.skillType, s.element)
+    end
+
+    return factors
 end
 
 -- A debuff spell's own script, run on stand-ins: the caster answers 0 to
