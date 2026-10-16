@@ -1327,11 +1327,51 @@ namespace
         return end.piece == 0 || (!nearby.empty() && end.piece != nearby[0].second && pieces.polys[end.piece] * 10 < nearby[0].first);
     }
 
-    // An end the travel map uses at a spot other than its point: the ground
-    // under it (subzones.h lineEnd)
-    auto movedEnd(const position_t& point, const sz::LineEnd& end) -> bool
+    // An end the travel map could not place on the ground under its point
+    // (subzones.h lineEnd): placed on the nearest ground instead
+    auto offGroundEnd(const position_t& point, const sz::LineEnd& end) -> bool
     {
-        return yalms(point, end.at) > 0.01f;
+        return std::hypot(point.x - end.at.x, point.z - end.at.z) > sz::kFloorReach;
+    }
+
+    // How far off another floor comes within a crossing's reach of a line's
+    // spot (CPawnController::TransferDistance, 3 yalms in 3D): the most a
+    // polygon in reach differs from the spot's height, past kFloorApart; 0
+    // with none. A crossing judged from the spot fires from any floor in reach
+    constexpr float kFloorApart = 2.0f;
+
+    auto otherFloor(const dtNavMesh& mesh, const position_t& spot) -> float
+    {
+        constexpr float kReach = 3.0f;
+        dtNavMeshQuery  query;
+        if (dtStatusFailed(query.init(&mesh, 64)))
+        {
+            return 0.0f;
+        }
+        dtQueryFilter filter;
+        filter.setExcludeFlags(cardian::route::kPolyDisabled);
+        const auto  at = cardian::route::toDetour(spot);
+        const float ext[3]{ kReach, kReach, kReach };
+        dtPolyRef   found[256]{};
+        int         n = 0;
+        query.queryPolygons(at.data(), ext, &filter, found, &n, 256);
+        float worst = 0.0f;
+        for (int k = 0; k < n; ++k)
+        {
+            float closest[3]{};
+            if (dtStatusFailed(query.closestPointOnPoly(found[k], at.data(), closest, nullptr)))
+            {
+                continue;
+            }
+            const float dx = closest[0] - at[0];
+            const float dy = closest[1] - at[1];
+            const float dz = closest[2] - at[2];
+            if (std::sqrt(dx * dx + dy * dy + dz * dz) <= kReach && std::fabs(dy) > kFloorApart)
+            {
+                worst = std::max(worst, std::fabs(dy));
+            }
+        }
+        return worst;
     }
 
     // One end of a line, by its zone's folder name, which end, and the zone
@@ -1375,26 +1415,40 @@ TEST_CASE("Zone lines: West Ronfaure reaches Northern San d'Oria from its main g
 // should (an arena, a reach of a zone only the lines lead to); the rest are
 // the meshes' own faults (OPEN_ISSUES #493). The opt-in surveys below name
 // every one, in log/lines_survey.txt and log/lines_islands.txt
-TEST_CASE("Zone lines: the ends moved under their point named, and the odd ends and the ends apart from their zone's main ground counted", "[cardian][route]")
+TEST_CASE("Zone lines: every end on the ground under its point, no other floor in a crossing's reach, and the odd ends and the ends apart from their zone's main ground counted", "[cardian][route]")
 {
     // Of the 1,394 ends in zones with a mesh -- 697 origins and 697
-    // arrivals -- measured 2026-10-15; the seams (route::Seams, 2026-10-16)
-    // joined Labyrinth of Onzozo's line to Buburimu Peninsula and two of
-    // Cirdas Caverns' ends to their zones' main ground
-    const std::vector<std::string> kMoved = {
-        "alzadaal_undersea_ruins origin to zone 79", "beaucedine_glacier origin to zone 112", "dangruf_wadi origin to zone 106",
-        "east_ronfaure origin to zone 190",          "jugner_forest origin to zone 149",     "velugannon_palace origin to zone 130",
+    // arrivals -- measured 2026-10-16, every end placed on the ground under
+    // its point (OPEN_ISSUES #494) and the seams joining their pieces: the
+    // ends left on the nearest ground, and the one origin whose spot has
+    // another floor in reach (a step at the Chamber of Oracles' mouth)
+    const std::vector<std::string> kNearestGround = {
+        "cloister_of_frost arrival from zone 204", "cloister_of_frost origin to zone 204", "cloister_of_gales arrival from zone 113",
+        "northern_san_doria origin to zone 2",
     };
-    constexpr int kOdd           = 73;
-    constexpr int kOriginsApart  = 263;
-    constexpr int kArrivalsApart = 223;
+    const std::vector<std::string> kFloorInReach = { "quicksand_caves origin to zone 168" };
+    // the ends placed over their point (on the floor over it), and those
+    // placed more than kDeep under it: a change of floor in a column shows
+    constexpr float                kDeep         = 10.0f;
+    const std::vector<std::string> kPlacedAbove  = {
+        "altaieu arrival from zone 37", "altaieu origin to zone 37", "kamihr_drifts arrival from zone 281", "navukgo_execution_chamber origin to zone 61",
+        "navukgo_execution_chamber origin to zone 61",
+    };
+    const std::vector<std::string> kPlacedDeep = { "east_ronfaure origin to zone 100", "west_ronfaure origin to zone 102" };
+    constexpr int                  kOdd           = 63;
+    constexpr int                  kOriginsApart  = 259;
+    constexpr int                  kArrivalsApart = 223;
 
     const auto whole = wholeWorld();
     if (whole->meshes.empty())
     {
         SKIP("no navmeshes");
     }
-    std::vector<std::string>                            moved;
+    std::vector<std::string>                            nearestGround;
+    std::vector<std::string>                            floorInReach;
+    std::vector<std::string>                            placedAbove;
+    std::vector<std::string>                            placedDeep;
+    std::string                                         heights; // how far over or under, for the message
     int                                                 ends          = 0;
     int                                                 odd           = 0;
     int                                                 originsApart  = 0;
@@ -1411,9 +1465,24 @@ TEST_CASE("Zone lines: the ends moved under their point named, and the odd ends 
         }
         ++ends;
         const auto& pieces = whole->pieces.at(zone);
-        if (movedEnd(point, end))
+        if (offGroundEnd(point, end))
         {
-            moved.push_back(endName(*whole, line, which));
+            nearestGround.push_back(endName(*whole, line, which));
+        }
+        if (which == End::Origin && otherFloor(*whole->meshes.at(zone), end.at) > 0.0f)
+        {
+            floorInReach.push_back(endName(*whole, line, which));
+        }
+        const float under = end.at.y - point.y; // the zone's y is down: how far under its point the spot stands
+        if (under < -0.05f)
+        {
+            placedAbove.push_back(endName(*whole, line, which));
+            heights += fmt::format("\n  {}: {:.1f}y over", endName(*whole, line, which), -under);
+        }
+        else if (under > kDeep)
+        {
+            placedDeep.push_back(endName(*whole, line, which));
+            heights += fmt::format("\n  {}: {:.1f}y under", endName(*whole, line, which), under);
         }
         if (oddEnd(pieces, end, piecesNear(*whole->meshes.at(zone), pieces, point, kOddNear)))
         {
@@ -1429,15 +1498,29 @@ TEST_CASE("Zone lines: the ends moved under their point named, and the odd ends 
         look(line, End::Origin);
         look(line, End::Arrival);
     }
-    std::sort(moved.begin(), moved.end());
-    std::string movedText;
-    for (const auto& name : moved)
+    for (auto* names : { &nearestGround, &floorInReach, &placedAbove, &placedDeep })
     {
-        movedText += "\n  " + name;
+        std::sort(names->begin(), names->end());
     }
+    const auto listed = [](const std::vector<std::string>& names)
+    {
+        std::string text;
+        for (const auto& name : names)
+        {
+            text += "\n  " + name;
+        }
+        return text;
+    };
     INFO(ends << " line ends; the opt-in surveys (CARDIAN_LINES=1) name every end in log/lines_survey.txt and log/lines_islands.txt");
-    INFO("used at the ground under their point:" << movedText);
-    CHECK(moved == kMoved);
+    INFO("on the nearest ground, not the ground under their point:" << listed(nearestGround));
+    CHECK(nearestGround == kNearestGround);
+    INFO("another floor in a crossing's reach of the spot:" << listed(floorInReach));
+    CHECK(floorInReach == kFloorInReach);
+    INFO("placed over or deep under their point:" << heights);
+    INFO("placed over their point:" << listed(placedAbove));
+    CHECK(placedAbove == kPlacedAbove);
+    INFO("placed more than " << kDeep << " yalms under their point:" << listed(placedDeep));
+    CHECK(placedDeep == kPlacedDeep);
     INFO("odd: " << odd);
     CHECK(odd == kOdd);
     INFO("apart from their zone's main ground: " << originsApart << " origins, " << arrivalsApart << " arrivals");
@@ -1447,8 +1530,8 @@ TEST_CASE("Zone lines: the ends moved under their point named, and the odd ends 
 
 // Where the travel map places every zone line's two ends (subzones.h
 // lineEnd), beside the ground straight under each and the pieces near it.
-// An end is marked MOVED when the map uses it at the ground under its point,
-// and ODD as the guard above counts it. Written to log/lines_survey.txt
+// An end is marked NEAREST when the map could not place it on the ground
+// under its point, and ODD as the guard above counts it. Written to log/lines_survey.txt
 // (OPEN_ISSUES #493)
 TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
 {
@@ -1494,7 +1577,7 @@ TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[ca
 
     int        ends  = 0;
     int        odd   = 0;
-    int        moved = 0;
+    int        nearest = 0;
     const auto survey = [&](const sz::Line& line, const End which)
     {
         const uint16 zone  = which == End::Origin ? line.zone : line.to;
@@ -1516,20 +1599,20 @@ TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[ca
         {
             text += fmt::format(" {}({})", nearby[i].second, nearby[i].first);
         }
-        const bool isMoved = movedEnd(p, end);
+        const bool isNearest = offGroundEnd(p, end);
         const bool isOdd   = oddEnd(pieces, end, nearby);
-        moved += isMoved ? 1 : 0;
+        nearest += isNearest ? 1 : 0;
         odd += isOdd ? 1 : 0;
-        out << (isMoved ? "MOVED " : isOdd ? "ODD   " : "ok    ") << whole->names.at(zone) << " (" << zone << ") " << (which == End::Origin ? "-> " : "<- ") << other
-            << (which == End::Origin ? " origin  " : " arrival ") << text << (isMoved && isOdd ? " (odd)" : "") << "\n";
+        out << (isNearest ? "NEAREST " : isOdd ? "ODD     " : "ok      ") << whole->names.at(zone) << " (" << zone << ") " << (which == End::Origin ? "-> " : "<- ") << other
+            << (which == End::Origin ? " origin  " : " arrival ") << text << (isNearest && isOdd ? " (odd)" : "") << "\n";
     };
     for (const auto& line : whole->world.lines)
     {
         survey(line, End::Origin);
         survey(line, End::Arrival);
     }
-    out << "\n" << ends << " line ends, " << moved << " used at the ground under their point, " << odd << " odd\n";
-    WARN("line survey written to log/lines_survey.txt: " << ends << " ends, " << moved << " moved, " << odd << " odd");
+    out << "\n" << ends << " line ends, " << nearest << " on the nearest ground, not the ground under their point, " << odd << " odd\n";
+    WARN("line survey written to log/lines_survey.txt: " << ends << " ends, " << nearest << " on the nearest ground, " << odd << " odd");
 }
 
 // Which zone line ends stand on ground their zone's main ground does not

@@ -77,9 +77,9 @@ namespace pawn::errands
         constexpr auto  kStepWalk    = std::chrono::seconds(120); // a walk of the gear-up's: past it the next step
         constexpr auto  kCensusWait  = std::chrono::seconds(60);  // the census's answer at the counter: past it she goes on without
         constexpr float kAtNpc       = 5.0f;                      // yalms from the counter or the guard: she stands at it
-        constexpr float kAtLine      = 4.0f;                      // from her zone line's centre: she is at it
+        constexpr float kAtLine      = 4.0f;                      // from her zone line's spot (its ground, subzones.h lineEnd): she is at it
         constexpr float kAtSpot      = 2.0f;                      // from where she started: she is back
-        constexpr float kLineSnap    = 12.0f;                     // a zone line's centre sits off the mesh by this much at most
+        constexpr float kLineSnap    = 12.0f;                     // a zone line's spot is snapped to the mesh within this much
         constexpr float kShortOf     = 2.5f;                      // a counter or a guard is walked to this far short, on her side
 
         // The live half of an errand she walks: the map's alone, gone with a
