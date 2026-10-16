@@ -41,6 +41,7 @@
 #include "ai/helpers/gambits_container.h"
 
 #include <functional>
+#include <map>
 #include <optional>
 #include <unordered_map>
 
@@ -280,6 +281,10 @@ namespace pawn
         // pacing, with its conditions holding now (RESEARCH §17.13)
         auto OffersTools() const -> bool;
         auto OffersSpells() const -> bool;
+        // Her tactician's Weapon skill (best) runs: a marked row of it that
+        // is on, her gambits on -- whom the Shortcuts menu's skillchains
+        // count on to follow the player's plan (skillchains.h optionsFor)
+        auto OffersWeaponSkill() const -> bool;
         auto OffersRest() -> bool;
         // Her marked Rest row is on, its conditions aside: a kneel it started
         // lasts while she is short of MP (the user, 2026-10-07: the row's
@@ -290,6 +295,13 @@ namespace pawn
         // marked Damage spell (any) row of hers runs; none otherwise. What a
         // Burn on her mob is priced against (spell_bank.cpp burnPlans)
         auto OfferedNukes() -> std::vector<SpellID>;
+        // The best burst she would land on a chain of these elements on this
+        // mob, at a chain of `count` links: her tactician's nuke of the
+        // chain's elements she has the MP for, priced as her nukes are, by
+        // the server's burst steps (BurstFactors). 0 while her tactician
+        // casts no nukes for her, or she is not in the fight on this mob.
+        // What the plan's worth counts her burst at (skillchains.cpp)
+        auto BurstEstimate(CBattleEntity* PMob, uint16 elements, uint8 count) -> double;
         // Her marked row of a tool that goes out right before her weapon
         // skill -- Boost, or Sneak Attack from the mob's back -- on, its
         // gate holding now, in any layer that runs (a wild Monk's brains
@@ -520,6 +532,7 @@ namespace pawn
             bool   tools      = false;
             bool   spells     = false;
             bool   nukes      = false;
+            bool   ws         = false;
         };
         auto Offers() const -> const Offered&;
         void RowsChanged();
@@ -558,7 +571,44 @@ namespace pawn
         // a dying mob finished by the quickest that covers it. Every reason
         // she holds in a fight is said once, as it changes. Whether it went
         // out
-        auto CastNuke(CBattleEntity* PTarget, bool engaged, std::size_t index) -> bool;
+        // `burstOnly`: only a burst goes (the tick's own check, BurstNow), her
+        // free pick waiting for its place in her think
+        auto CastNuke(CBattleEntity* PTarget, bool engaged, std::size_t index, bool burstOnly = false) -> bool;
+        // What a burst multiplies these nukes of hers by on this mob, at a
+        // chain of `count` links (spell_bank.h burstFactors), kept for the
+        // mob and the count
+        auto BurstFactors(CBattleEntity* PMob, const std::vector<CSpell*>& spells, uint8 count) -> const std::map<uint16, double>&;
+
+        // Her tactician's weapon skill at a marked Weapon skill (best) row
+        // (ROADMAP slice 3h, skillchain_math.h wsCall), on the foe its gate
+        // found while she fights it: a chain closed, the player's plan
+        // opened, held for, saved for the next fight or spared a weapon
+        // skill alone, else her best -- on a mob at half its HP or more when
+        // no chain comes of it. `closeOnly`: only a close goes (the tick's own
+        // check, below). Every hold is said once, as it changes; with no plan
+        // she may ask for one, and saving it she may say so (skillchains.h).
+        // Whether it went out
+        auto UseWeaponSkill(CBattleEntity* PTarget, bool engaged, std::size_t index, bool closeOnly) -> bool;
+        // Her best weapon skill alone, as Weapon skill (best) chooses it:
+        // the highest of hers, and one that takes Sneak Attack while Sneak
+        // Attack can go (RESEARCH §17.13 item 5); 0 for none
+        auto BestWeaponSkill() -> uint16;
+        // The first row of her tactician's of this kind that runs -- on, its
+        // retry run -- and the foe its gate finds now, with its place: what
+        // the tick's own checks below act through
+        struct ToolAt
+        {
+            const gambits::Gambit_t* gambit = nullptr;
+            CBattleEntity*           target = nullptr;
+            std::size_t              index  = 0;
+        };
+        auto ToolRow(cardian::tactician::Allowance kind) -> std::optional<ToolAt>;
+        // The skillchain's moments, every tick ahead of her stagger, as the
+        // tank's pull is: a window she can close, closed the tick it opens;
+        // a burst window, burst while it is open (no more than twice a
+        // second). Whether she acted
+        auto CloseChainNow(bool engaged) -> bool;
+        auto BurstNow(bool engaged) -> bool;
 
         // A row's actions in order until one fires; `index` is the row's
         // 1-based place, the conveyor's order among her rows
@@ -634,6 +684,13 @@ namespace pawn
         bool                                    m_tankOnDuty = false;
         // Why her nukes hold, as last said (said as it changes)
         std::string                             m_nukeHold;
+        // Why her tactician's weapon skill holds, as last said (said as it changes)
+        std::string                             m_wsHold;
+        // The burst factors kept (BurstFactors): the mob and the chain's
+        // links they were asked for; and her last try at a burst (BurstNow)
+        uint32                                    m_burstMob = 0;
+        std::map<uint8, std::map<uint16, double>> m_burstFactors; // the chain's links -> spell -> factor
+        timer::time_point                       m_lastBurstTry{};
         // NakedSneak's answer, as of her last think (NakedSneakNow)
         bool                                    m_nakedSneak = false;
     };

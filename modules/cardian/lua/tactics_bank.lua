@@ -26,6 +26,13 @@
 --        server's damage chain with every die taken at its expectation;
 --        with intDown, a second table in the same pass, as if the target's
 --        INT were that much lower (Burn).
+--   xi.cardian.bank.burstFactors(caster, target, spells, count)
+--     -> what a magic burst multiplies each nuke by, the server's own two
+--        burst steps at the chain's count, read without consuming anything.
+--   xi.cardian.bank.chainShare(closer, target, chain, tier, count)
+--     -> what a skillchain deals for each point of the weapon skill that
+--        closes it: the server's own skillchain damage, run on a stand-in of
+--        the target that carries the chain and changes nothing.
 --   xi.cardian.bank.debuffSubPower(scriptName, effectId)
 --     -> the subPower a debuff's own script puts on its effect (Dia's
 --        defence down, Bio's attack down, in percent), read by running the
@@ -439,14 +446,20 @@ end
 
 -- A step's answer with every percent roll in it missing: only a certain
 -- proc (a chance of 100) happens. The nullification and the absorption
--- roll their chances; a partial chance is priced as if it never happens
+-- roll their chances; a partial chance is priced as if it never happens.
+-- A fraction roll (math.randomFloat) is pinned just under one, so a
+-- `randomFloat() < chance` misses too, and the answer is the same every
+-- time it is asked
 local function certainOnly(step, ...)
-    local randomInt = math.randomInt
-    math.randomInt  = function(_, hi)
+    local randomInt, randomFloat = math.randomInt, math.randomFloat
+    math.randomInt   = function(_, hi)
         return hi
     end
+    math.randomFloat = function()
+        return 0.999999
+    end
     local ok, result = pcall(step, ...)
-    math.randomInt   = randomInt
+    math.randomInt, math.randomFloat = randomInt, randomFloat
     if not ok then
         error(result, 0)
     end
@@ -682,6 +695,102 @@ xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
     end
 
     return seeds, seedsMoved
+end
+
+-- What a magic burst multiplies each nuke by (ROADMAP, Road to subjob item
+-- 6, slice 3h): the two burst steps of xi.spells.damage.useDamageSpell, the
+-- server's own -- calculateIfMagicBurst at the chain's count (the
+-- Skillchain effect's subPower: 1 for a chain of two weapon skills) and
+-- calculateIfMagicBurstBonus -- for this caster on this target. Left out:
+-- the burst's accuracy bonus to the resist roll, so the factor is the low
+-- side of a burst. Read only: the Sengikori bonus the first step would
+-- consume is not consumed. spells: { id, element, skillType } each; the
+-- answer is the factor by spell id
+xi.cardian.bank.burstFactors = function(caster, target, spells, count)
+    local damage = xi.spells.damage
+    local c      = remembered(caster)
+    local t      = remembered(target)
+    rawset(t, 'setMod', function() end)
+
+    local factors = {}
+    for _, s in ipairs(spells) do
+        factors[s.id] = damage.calculateIfMagicBurst(c, t, s.element, count) *
+            damage.calculateIfMagicBurstBonus(c, t, s.id, s.skillType, s.element)
+    end
+
+    return factors
+end
+
+-- What a skillchain deals for each point of the weapon skill that closes it
+-- (ROADMAP, Road to subjob item 6, slice 3h: the chain's worth, which the
+-- tactician weighs before the plan's opening): the server's own
+-- xi.combat.skillchain.calculateSkillchainDamage, for this closer, on a
+-- stand-in of this target that carries the chain as its Skillchain effect
+-- (the server's chain number, its tier, and its count: 1 for a chain of two
+-- weapon skills) and nothing else, and that changes nothing -- no damage
+-- taken, no HP absorbed, no Sengikori bonus consumed. Every percent roll in
+-- it misses (certainOnly): the day and weather bonus is left out, and a
+-- partial chance to nullify or absorb is taken as never happening. A resist
+-- roll in it (the era module's skillchain damage asks
+-- xi.combat.magicHitRate.calculateResistRate, which halves the damage up to
+-- three times by chance) is priced at its average, as the nukes' is
+-- (resistOf, resistFor), never rolled: the answer is the same every time,
+-- whichever formula is in force. The closer's flat magic damage bonus is
+-- spread over a 1000-point weapon skill. 0 when the target absorbs or
+-- nullifies the chain's element
+xi.cardian.bank.chainShare = function(closer, target, chain, tier, count)
+    local base     = 1000
+    local absorbed = false
+    local effect   =
+    {
+        getPower    = function() return chain end,
+        getTier     = function() return tier end,
+        getSubPower = function() return count end,
+    }
+    local t = remembered(target)
+    rawset(t, 'getStatusEffect', function(_, id)
+        if id == xi.effect.SKILLCHAIN then
+            return effect
+        end
+
+        return nil
+    end)
+    rawset(t, 'setMod', function() end)
+    rawset(t, 'takeDamage', function() end)
+    rawset(t, 'addHP', function()
+        absorbed = true
+    end)
+
+    -- The resist roll, asked by the formula, answered with its average: the
+    -- real roll read for its setup (resistOf) with the real function back in
+    -- place meanwhile, the stand-in in place while the formula runs
+    local roll     = xi.combat.magicHitRate.calculateResistRate
+    local averaged
+    averaged = function(actor, tgt, params)
+        xi.combat.magicHitRate.calculateResistRate = roll
+        local ok, rate = pcall(function()
+            return resistFor(resistOf(actor, tgt, params), 0)
+        end)
+        xi.combat.magicHitRate.calculateResistRate = averaged
+        if not ok then
+            error(rate, 0)
+        end
+
+        return rate
+    end
+
+    xi.combat.magicHitRate.calculateResistRate = averaged
+    local ok, dealt = pcall(certainOnly, xi.combat.skillchain.calculateSkillchainDamage, remembered(closer), t, base)
+    xi.combat.magicHitRate.calculateResistRate = roll
+    if not ok then
+        error(dealt, 0)
+    end
+
+    if absorbed or type(dealt) ~= 'number' or dealt <= 0 then
+        return 0
+    end
+
+    return dealt / base
 end
 
 -- A debuff spell's own script, run on stand-ins: the caster answers 0 to

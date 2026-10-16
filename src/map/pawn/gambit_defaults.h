@@ -58,9 +58,11 @@ namespace pawn
     // A job's default set, as (row, checkbox) pairs in list order. The
     // list's order is its priority, for the tactician's rows (marked, the
     // tactician deciding the when) and orders alike (RESEARCH §17.13).
-    //  - Melee: the assist trio, her best weapon skill on a target with half
-    //    its HP or more (the user, 2026-09-26: TP not spent on a mob about to
-    //    fall), then rest with the player and eat with the player. The trio
+    //  - Melee: the assist trio, her tactician's weapon skill -- the
+    //    player's skillchain plan, a chain to close, else her best, and
+    //    never her TP alone on a mob under half its HP (the user,
+    //    2026-09-26, once this row's gate; skillchain_math.h wsCall) -- then
+    //    rest with the player and eat with the player. The trio
     //    takes the party leader's fight first, and another cardian's only
     //    after it, so a cardian whose mob has died joins the player's fight
     //    before anyone else's.
@@ -84,18 +86,22 @@ namespace pawn
     //    without engaging. The Black Mage adds her nukes, marked, after the
     //    enfeebles (RESEARCH §17.13): her tactician's when and which.
     // The weapon skill row is in every set (the user, 2026-09-26): it costs
-    // nothing, and comes up only once she is engaged with the TP for one.
-    // Neither set avoids aggro (that is the world's, not the party's): the
-    // player adds that as a row of his own.
+    // nothing, and comes up only once she is engaged with the TP for one;
+    // a melee set's is the tactician's (the damage kit, ROADMAP slice 3h), a
+    // mage's an order on a mob at half its HP or more. Every set avoids
+    // aggro (the user, 2026-10-15), after Eat with the player: the
+    // Shortcuts menu's switch turns it off for the party without taking the
+    // row away (pawn.h HuntRules::avoidAggro).
     inline auto defaultRowsFor(const xi::Job job) -> const std::vector<std::pair<std::string, bool>>&
     {
         static const std::vector<std::pair<std::string, bool>> melee{
             { "100|0:0|0:0:0|0", true },  // Foe: party leader's target -> Attack
             { "101|0:0|0:0:0|0", true },  // Foe: targeted by ally -> Attack
             { "102|0:0|0:0:0|0", true },  // Foe: targeting ally -> Attack
-            { "2|2:50|4:0:0|0", true },   // Foe: HP >= 50% -> Weapon skill (best)
+            { "2|101:0|4:0:0|0", true },  // * Foe -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },  // Self -> Rest with the player
             { "0|0:0|100:15:1|0", true }, // Self -> Eat with the player
+            { "0|0:0|100:1:1|0", true },  // Self -> Avoid aggro
         };
         static const std::vector<std::pair<std::string, bool>> monk{
             { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
@@ -104,18 +110,20 @@ namespace pawn
             { "0|101:0|3:2:39|0", true },  // * Self -> Boost
             { "0|101:0|3:2:36|0", true },  // * Self -> Focus
             { "0|101:0|3:2:37|0", true },  // * Self -> Dodge
-            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "2|101:0|4:0:0|0", true },   // * Foe -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
             { "0|0:0|100:15:1|0", true },  // Self -> Eat with the player
+            { "0|0:0|100:1:1|0", true },   // Self -> Avoid aggro
         };
         static const std::vector<std::pair<std::string, bool>> thief{
             { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
             { "101|0:0|0:0:0|0", true },   // Foe: targeted by ally -> Attack
             { "102|0:0|0:0:0|0", true },   // Foe: targeting ally -> Attack
             { "0|101:0|3:2:44|0", true },  // * Self -> Sneak Attack
-            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "2|101:0|4:0:0|0", true },   // * Foe -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
             { "0|0:0|100:15:1|0", true },  // Self -> Eat with the player
+            { "0|0:0|100:1:1|0", true },   // Self -> Avoid aggro
         };
         static const std::vector<std::pair<std::string, bool>> warrior{
             { "100|0:0|0:0:0|0", true },   // Foe: party leader's target -> Attack
@@ -124,9 +132,10 @@ namespace pawn
             { "0|101:0|3:2:31|0", true },  // * Self -> Berserk
             { "0|101:0|3:2:33|0", true },  // * Self -> Defender
             { "0|101:0|3:2:34|0", true },  // * Self -> Aggressor
-            { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
+            { "2|101:0|4:0:0|0", true },   // * Foe -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },   // Self -> Rest with the player
             { "0|0:0|100:15:1|0", true },  // Self -> Eat with the player
+            { "0|0:0|100:1:1|0", true },   // Self -> Avoid aggro
         };
         static const std::vector<std::pair<std::string, bool>> mage{
             { "1|101:0|2:0:1|0", true },   // * Ally -> Cure (best)
@@ -136,6 +145,7 @@ namespace pawn
             { "2|2:50|4:0:0|0", true },    // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
             { "0|0:0|100:15:1|0", true },   // Self -> Eat with the player
+            { "0|0:0|100:1:1|0", true },    // Self -> Avoid aggro
             { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
         };
         static const std::vector<std::pair<std::string, bool>> blackMage{
@@ -147,6 +157,7 @@ namespace pawn
             { "2|2:50|4:0:0|0", true },     // Foe: HP >= 50% -> Weapon skill (best)
             { "0|0:0|100:6:1|0", true },    // Self -> Rest with the player
             { "0|0:0|100:15:1|0", true },   // Self -> Eat with the player
+            { "0|0:0|100:1:1|0", true },    // Self -> Avoid aggro
             { "102|101:0|0:0:0|0", false }, // * Foe: targeting ally -> Attack, off
         };
         if (job == xi::Job::BLM)

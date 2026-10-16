@@ -1,6 +1,7 @@
 // Cardian: a wild cardian re-dressed at the auction house (pawn/redress.h):
-// when the map asks the census, what the census's skill values raise, and
-// which pieces leave her bag.
+// when the map asks the census and which pieces leave her bag; and a ding
+// out of sight: what the census's skill values raise, what her support job
+// takes, and when the map puts it on her.
 #include "pawn/redress_math.h"
 
 #include <catch2/catch_test_macros.hpp>

@@ -195,6 +195,9 @@ namespace pawn::bundles
     //    is lent no Berserk, a Summoner nothing). A buff acts
     //    where it sits in her think (CGambits::BuffNow), the seat choosing
     //    between Berserk and Defender (tactician_line.h wrongStance). Then
+    //    her tactician's Weapon skill (best), marked, the damage kit's
+    //    skillchains (skillchain_math.h wsCall), standing in a Weapon skill
+    //    (best) row of hers, for the same main jobs (ROADMAP slice 3h). Then
     //    her enfeebles, marked, for a main job that nukes and a pair that
     //    learns a priced debuff; Damage spell (any), marked -- her nukes --
     //    and her marked Rest, the MP pacing that sits her down between
@@ -229,6 +232,7 @@ namespace pawn::bundles
             { "0|101:0|3:2:39|0", { K::Ability, t::kBoost, true } },     // * Self -> Boost
             { "0|101:0|3:2:44|0", { K::Ability, t::kSneakAttack, true } }, // * Self -> Sneak Attack
             { "0|101:0|3:2:36|0", { K::Ability, t::kFocus, true } },     // * Self -> Focus
+            { "2|101:0|4:0:0|0", { K::Anyone, 0, true } },               // * Foe -> Weapon skill (best)
             { "2|101:0|2:100:0|0", { K::Enfeeble, 0, false, true } },    // * Foe -> Enfeeble
             { "2|101:0|2:3:0|0", { K::Anyone, 0, false, true } },        // * Foe -> Damage spell (any)
             { "0|101:0|100:14:1|0", { K::Anyone, 0, false, true } },     // * Self -> Rest

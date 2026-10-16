@@ -313,9 +313,11 @@ namespace cardian::tactician
     // hate tool on a Foe row's foe, her rest (a Self -> Rest row: the MP
     // pacing, RESEARCH §17.13), a self buff on its clock (a Self row:
     // Berserk, Defender, Aggressor, Focus, Dodge), Boost before her weapon
-    // skill (Self), Sneak Attack before it from the mob's back (Self), or a
+    // skill (Self), Sneak Attack before it from the mob's back (Self), a
     // damage spell on a Foe row's foe (Damage spell (any): the Black Mage's
-    // nukes). None: a mark with no judgement behind it
+    // nukes and her bursts), or her best weapon skill on a Foe row's foe
+    // (Weapon skill (best): the skillchains, skillchain_math.h wsCall). None:
+    // a mark with no judgement behind it
     enum class Allowance : uint8
     {
         None,
@@ -329,6 +331,7 @@ namespace cardian::tactician
         Boost,
         Nuke,
         SneakAttack,
+        WeaponSkill,
     };
 
     // The tools her tactician casts in the party's fights: cures, priced
@@ -381,6 +384,14 @@ namespace cardian::tactician
                 return self ? Allowance::SneakAttack : Allowance::None;
             }
             return isBuffAbility(a.select_arg) && self ? Allowance::Buff : Allowance::None;
+        }
+        // Weapon skill (best): her tactician's weapon skill, when and which
+        // -- the player's skillchain plan, a chain to close, else her best
+        // (skillchain_math.h wsCall). A row naming one weapon skill, or any,
+        // has no judgement behind it
+        if (a.reaction == G_REACTION::WS)
+        {
+            return a.select == G_SELECT::HIGHEST && engage::isFoeTarget(g.target_selector) ? Allowance::WeaponSkill : Allowance::None;
         }
         if (a.reaction == pawn::G_REACTION_BEHAVIOR)
         {
@@ -538,15 +549,16 @@ namespace cardian::tactician
         return source.find("doPhysicalWeaponskill") != std::string_view::npos;
     }
 
-    // Whether a weapon skill row of hers takes Sneak Attack as it fires: only
-    // an order fires (a marked weapon skill row has no judgement behind it);
-    // one naming a skill does when the skill is hers and takes it; Weapon
-    // skill (best) or (any) does while one of hers takes it. No row that
-    // does, and her Sneak Attack goes naked (CGambits::NakedSneakNow)
+    // Whether a weapon skill row of hers takes Sneak Attack as it fires: an
+    // order, and her tactician's Weapon skill (best) (a marked row naming a
+    // skill, or any, is struck out and never fires); one naming a skill does
+    // when the skill is hers and takes it; Weapon skill (best) or (any) does
+    // while one of hers takes it. No row that does, and her Sneak Attack goes
+    // naked (CGambits::NakedSneakNow)
     template <typename Takes>
     auto wsRowTakesSneak(const gambits::Gambit_t& g, const State state, const bool anyOfHersTakes, Takes&& takesIfHers) -> bool
     {
-        if (state != State::Order)
+        if (state != State::Order && !(state == State::Tool && allowanceOf(g) == Allowance::WeaponSkill))
         {
             return false;
         }

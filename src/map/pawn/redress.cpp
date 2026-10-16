@@ -109,12 +109,17 @@ namespace pawn::redress
             return { .read = true, .record = Record{ rset->get<uint8>("level"), state.value_or(State::Done) } };
         }
 
+        // Her request carries the support job she wears and the level the game
+        // shows it at: the census plans her gear and spells for it, and the
+        // re-dress never changes it (her jobs grow out of sight, applyDing)
         void ask(const CCharEntity* PPawn, const uint8 level)
         {
-            if (!db::preparedStmt("INSERT INTO cardian_redress (charid, level, state, skills, issued, sub, sublevel, asked_at) VALUES (?, ?, 'asked', '', '', 0, 0, NOW()) "
-                                  "ON DUPLICATE KEY UPDATE level = VALUES(level), state = 'asked', skills = '', issued = '', sub = 0, sublevel = 0, asked_at = NOW(), "
-                                  "ready_at = NULL",
-                                  PPawn->id, level))
+            const auto sub      = static_cast<uint8>(PPawn->GetSJob());
+            const auto sublevel = PPawn->GetSLevel();
+            if (!db::preparedStmt("INSERT INTO cardian_redress (charid, level, state, skills, issued, sub, sublevel, asked_at) VALUES (?, ?, 'asked', '', '', ?, ?, NOW()) "
+                                  "ON DUPLICATE KEY UPDATE level = VALUES(level), state = 'asked', skills = '', issued = '', sub = VALUES(sub), "
+                                  "sublevel = VALUES(sublevel), asked_at = NOW(), ready_at = NULL",
+                                  PPawn->id, level, sub, sublevel))
             {
                 ShowErrorFmt("world: {} could not ask the census to dress her for level {}", PPawn->getName(), level);
                 return;
@@ -156,33 +161,26 @@ namespace pawn::redress
             });
         }
 
-        // The census's answer for one of them: the level, her skill values,
-        // the pieces it had issued her before this plan, and the support job
-        // the convention gives that level (job 0 for none) with the job's own
-        // level as she levelled it, ahead of the half of her main the game
-        // shows (census.py sub_trained)
+        // The census's answer for one of them: the level her wardrobe,
+        // spellbook and food were written for (cardian_wardrobe,
+        // cardian_spells, cardian_food)
         struct Answer
         {
-            uint32      charid = 0;
-            uint8       level  = 0;
-            std::string skills;
-            std::string issued;
-            uint8       sub      = 0;
-            uint8       sublevel = 0;
+            uint32 charid = 0;
+            uint8  level  = 0;
         };
 
         auto readyAnswers() -> std::vector<Answer>
         {
             std::vector<Answer> out;
-            const auto          rset = db::preparedStmt("SELECT charid, level, skills, issued, sub, sublevel FROM cardian_redress WHERE state = 'ready'");
+            const auto          rset = db::preparedStmt("SELECT charid, level FROM cardian_redress WHERE state = 'ready'");
             if (!rset)
             {
                 return out;
             }
             while (rset->next())
             {
-                out.push_back({ rset->get<uint32>("charid"), rset->get<uint8>("level"), rset->get<std::string>("skills"), rset->get<std::string>("issued"),
-                                rset->get<uint8>("sub"), rset->get<uint8>("sublevel") });
+                out.push_back({ rset->get<uint32>("charid"), rset->get<uint8>("level") });
             }
             return out;
         }
@@ -190,9 +188,9 @@ namespace pawn::redress
         // She takes it now: up, standing in her zone, in no event, and out of
         // a fight -- not engaged, nor attending the party's fight from its
         // edge -- the refusals of her player's Mog House (mog_house.cpp
-        // changeJobs), since a re-dress may change her support job; and with
-        // no enchanted piece on her lane (StartEnchant), which puts back what
-        // that piece replaced
+        // changeJobs), since a dress out of sight may change her jobs; and
+        // with no enchanted piece on her lane (StartEnchant), which puts back
+        // what that piece replaced
         auto canDress(const CCharEntity* PPawn) -> bool
         {
             if (PPawn->loc.zone == nullptr || PPawn->isDead() || PPawn->isInEvent() || PPawn->status != xi::Status::Normal || PPawn->PAI == nullptr ||
@@ -507,11 +505,11 @@ namespace pawn::redress
             return static_cast<uint32>(raises.size());
         }
 
-        // Her support job as the census planned it for the level, before her
-        // gear: the support job and that job unlocked, the job raised to the
-        // level she levelled it to, which the game shows only up to half her
-        // main, so it rises with her main by itself as she dings. Another
-        // support job than hers is set by the game's own
+        // Her support job as the census planned it for a ding out of sight,
+        // before her gear: the support job and that job unlocked, the job
+        // raised to the level she levelled it to (`sublevel`), which the game
+        // shows only up to half her main, so it rises with her main by itself
+        // as she dings. Another support job than hers is set by the game's own
         // job change, as her player's Mog House does it (mog_house.cpp
         // changeJobs: her pet sent away, a waiting order and an enchanted
         // piece on its way let go), which rebuilds her stats, abilities and
@@ -520,11 +518,11 @@ namespace pawn::redress
         // job brings. The same support job at a higher level takes only what
         // the game's own level change does (charutils, a ding): her buffs, her
         // recasts, her orders and her gear stay. Whether it changed anything
-        auto takeSub(CCharEntity* PPawn, const Answer& answer) -> bool
+        auto takeSub(CCharEntity* PPawn, const uint8 level, const uint8 sub, const uint8 sublevel) -> bool
         {
-            const uint8 planned = answer.sub < MAX_JOBTYPE ? answer.sub : 0;
-            const auto  change  = cardian::redress::subChange({ planned, answer.sublevel }, { static_cast<uint8>(PPawn->GetMJob()), static_cast<uint8>(PPawn->GetSJob()),
-                                                                                              PPawn->jobs.job[planned], PPawn->jobs.unlocked });
+            const uint8 planned = sub < MAX_JOBTYPE ? sub : 0;
+            const auto  change  = cardian::redress::subChange({ planned, sublevel }, { static_cast<uint8>(PPawn->GetMJob()), static_cast<uint8>(PPawn->GetSJob()),
+                                                                                       PPawn->jobs.job[planned], PPawn->jobs.unlocked });
             if (!change.has_value())
             {
                 return false;
@@ -571,7 +569,7 @@ namespace pawn::redress
                 }
             }
 
-            ShowInfoFmt("world: {} takes the support job of level {}: {} -> {} {}", PPawn->getName(), answer.level, before, magic_enum::enum_name(PPawn->GetSJob()),
+            ShowInfoFmt("world: {} takes the support job of level {}: {} -> {} {}", PPawn->getName(), level, before, magic_enum::enum_name(PPawn->GetSJob()),
                         PPawn->GetSLevel());
             return true;
         }
@@ -582,9 +580,10 @@ namespace pawn::redress
                              answer.level);
         }
 
-        // The census's answer put on her: her support job, her gear, her
-        // food laid in her bag, her spells, her skills, her health
-        // recomputed for them; the player she is with told
+        // The census's answer put on her: her gear, her food laid in her bag
+        // and her spells, her health recomputed for them; the player she is
+        // with told. Gear and supplies only: her level, her support job and
+        // her skills grow slowly out of sight (applyDing), never at a counter
         void apply(CCharEntity* PPawn, const Answer& answer)
         {
             const auto plan = planOf(PPawn->getName());
@@ -593,19 +592,16 @@ namespace pawn::redress
                 ShowErrorFmt("world: {}'s wardrobe could not be read; her re-dress waits", PPawn->getName());
                 return;
             }
-            const bool subbed  = takeSub(PPawn, answer);
             pawn::food::forget(PPawn->id);
             const auto dressed = dress(PPawn, *plan, pawn::food::plannedIds(PPawn->getName()));
             pawn::food::topUp(PPawn);
             const auto learned = learnSpells(PPawn);
-            const auto raised  = raiseSkills(PPawn, answer.skills);
             PPawn->UpdateHealth();
             PPawn->clearPacketList();
             markDone(answer);
 
-            ShowInfoFmt("world: {} is dressed for level {} at the auction house ({}{} pieces put on, {} taken off, {} moved to Mog Wardrobe 1, {} spells learned, "
-                        "{} skills raised)",
-                        PPawn->getName(), answer.level, subbed ? "her support job set, " : "", dressed.worn, dressed.dropped + dressed.bared, dressed.moved, learned, raised);
+            ShowInfoFmt("world: {} is dressed for level {} at the auction house ({} pieces put on, {} taken off, {} moved to Mog Wardrobe 1, {} spells learned)",
+                        PPawn->getName(), answer.level, dressed.worn, dressed.dropped + dressed.bared, dressed.moved, learned);
             if (auto* PPlayer = pawn::partyPlayer(PPawn); PPlayer != nullptr)
             {
                 PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is dressed for level {}.", PPawn->getName(), answer.level));
@@ -790,17 +786,17 @@ namespace pawn::redress
         // plays (a city's change), her level, her support job and her skills
         // for it, and where it was planned and she stands in a city her gear,
         // food and spells as the census planned them -- the census's own rule
-        // for her, as at the auction house. The row says whether her gear went
-        // on (`dressed`), for the census's bookkeeping
+        // for her, as at the auction house, which puts on only the gear and
+        // supplies. The row says whether her gear went on (`dressed`), for
+        // the census's bookkeeping
         void applyDing(CCharEntity* PPawn, const Ding& ding, const bool gear)
         {
             const auto   before   = fmt::format("{} {}", magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel());
-            const bool   switched = switchMain(PPawn, ding.plan.job, ding.sub);
-            const bool   raised   = !ding.plan.dress && raiseLevel(PPawn, ding.plan.level);
-            const Answer answer{ ding.charid, ding.plan.level, ding.skills, "", ding.sub, ding.sublevel };
-            const bool   subbed  = takeSub(PPawn, answer);
-            Dressed      dressed{};
-            uint32       learned = 0;
+            const bool switched = switchMain(PPawn, ding.plan.job, ding.sub);
+            const bool raised   = !ding.plan.dress && raiseLevel(PPawn, ding.plan.level);
+            const bool subbed   = takeSub(PPawn, ding.plan.level, ding.sub, ding.sublevel);
+            Dressed    dressed{};
+            uint32     learned = 0;
             if (gear)
             {
                 if (const auto plan = planOf(PPawn->getName()); plan.has_value())
@@ -1007,7 +1003,7 @@ namespace pawn::redress
                          "`ready_at` datetime DEFAULT NULL, "
                          "`done_at` datetime DEFAULT NULL, "
                          "PRIMARY KEY (`charid`), KEY `state` (`state`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
-        // The support job's two columns, on a table made before the answer carried them
+        // The support job's two columns, on a table made before the request carried them
         db::preparedStmt("ALTER TABLE `cardian_redress` "
                          "ADD COLUMN IF NOT EXISTS `sub` tinyint(3) unsigned NOT NULL DEFAULT '0' AFTER `issued`, "
                          "ADD COLUMN IF NOT EXISTS `sublevel` tinyint(3) unsigned NOT NULL DEFAULT '0' AFTER `sub`");

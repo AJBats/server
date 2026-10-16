@@ -326,6 +326,12 @@ namespace pawn
         // while anyone it can ask is able to; the other once nobody is.
         // Plain rows ignore it (role_support.cpp)
         bool preferBio = false;
+        // An order kept with them too (the user, 2026-10-15): the Shortcuts
+        // menu's Avoid aggro. Off, a cardian under these orders avoids no
+        // aggro while her rows say she would -- her rows untouched -- unless
+        // she is on a trek, whose own rows keep her clear
+        // (CPawnController::IsAvoidingAggro)
+        bool avoidAggro = true;
         // A world body's home pull (ROADMAP D3, user): the farther she is from
         // her starting point, the more the errand favours prey that leads back
         // toward it. roam is the distance at which the pull weighs as much as
@@ -335,12 +341,12 @@ namespace pawn
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
-    // cardian_orders as this build reads and writes it, the Dia or Bio
-    // column included: made, or a column added, at boot. The same as
+    // cardian_orders as this build reads and writes it, the Dia or Bio and
+    // the Avoid aggro columns included: made, or a column added, at boot. The same as
     // modules/cardian/sql/cardian_orders.sql, which dbtool's update skips on
     // a database whose upstream SQL has not moved
     void ensureOrdersTable();
-    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS | DIA_BIO. CL_S_OK, or
+    // rule: CL_HUNT_MIN | MAX | PULL | AGGRESSIVE | LINKS | DIA_BIO | AVOID_AGGRO. CL_S_OK, or
     // CL_S_MALFORMED for a rule or value out of range. A band end pushed past
     // the other drags it along.
     auto setHuntRule(CCharEntity* POwner, uint8 rule, int value) -> uint16;

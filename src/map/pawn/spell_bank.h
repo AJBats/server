@@ -30,6 +30,8 @@
 #include "spell.h"
 
 #include <functional>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -184,6 +186,30 @@ namespace pawn::tactics
         // out; nothing when the formula cannot answer
         auto priceNukes(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells)
             -> std::optional<NukePricing>;
+
+        // What a magic burst multiplies each of these nukes by, from this
+        // caster on this target at a chain of `count` (the Skillchain
+        // effect's subPower): the server's own two burst steps
+        // (tactics_bank.lua burstFactors), by spell id. Nothing when the
+        // formula could not answer
+        auto burstFactors(CBattleEntity* PCaster, CBattleEntity* PTarget, const std::vector<CSpell*>& spells, uint8 count) -> std::optional<std::map<uint16, double>>;
+
+        // What a skillchain deals on this target for each point of the
+        // weapon skill this closer closes it with: the server's own
+        // skillchain damage at the chain's tier and count (tactics_bank.lua
+        // chainShare). Nothing when the formula could not answer
+        auto chainShare(CBattleEntity* PCloser, CBattleEntity* PTarget, uint8 chain, uint8 tier, uint8 count) -> std::optional<double>;
+
+        // The mob's life left at the party's rate, in seconds (below 0
+        // unknown), and the party's damage a second: the reading the nuke
+        // prices are made against (the fight's own once it has ten seconds,
+        // the spot's before, the formulas' with neither)
+        struct Pace
+        {
+            double remaining      = -1.0;
+            double dealtPerSecond = 0.0;
+        };
+        auto paceOf(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CMobEntity* PMob) -> Pace;
 
         // The same, as the lines printed when the fight opens
         auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>;

@@ -208,19 +208,162 @@ namespace
                 {
                     continue;
                 }
-                region.world.lines.push_back({ .zone         = zone,
-                                               .to           = to,
-                                               .origin       = line.Origin,
-                                               .arrival      = line.Destination,
-                                               .originPiece  = sz::pieceAt(*region.meshes.at(zone), region.pieces.at(zone), line.Origin, sz::kLineExtents),
-                                               .arrivalPiece = sz::pieceAt(*region.meshes.at(to), region.pieces.at(to), line.Destination, sz::kLineExtents) });
+                region.world.lines.push_back({ .zone    = zone,
+                                               .to      = to,
+                                               .origin  = line.Origin,
+                                               .arrival = line.Destination,
+                                               .leaves  = sz::lineEnd(*region.meshes.at(zone), region.pieces.at(zone), line.Origin),
+                                               .lands   = sz::lineEnd(*region.meshes.at(to), region.pieces.at(to), line.Destination) });
             }
             if (!region.pieces.at(zone).drops.empty())
             {
                 region.world.drops[zone] = region.pieces.at(zone).drops;
             }
         }
+        sz::join(region.world);
         return region;
+    }
+
+    // A zone's main ground: its biggest piece
+    auto mainPiece(const sz::Pieces& pieces) -> sz::Piece
+    {
+        sz::Piece main = 0;
+        for (std::size_t p = 1; p < pieces.polys.size(); ++p)
+        {
+            if (main == 0 || pieces.polys[p] > pieces.polys[main])
+            {
+                main = static_cast<sz::Piece>(p);
+            }
+        }
+        return main;
+    }
+
+    // The pieces a body reaches from `start` by its zone's drops (`down`),
+    // or the pieces from which a body reaches `start` by them
+    auto reachOf(const sz::Pieces& pieces, const sz::Piece start, const bool down) -> std::vector<bool>
+    {
+        std::vector<bool>      seen(pieces.polys.size(), false);
+        std::vector<sz::Piece> todo{ start };
+        seen[start] = true;
+        while (!todo.empty())
+        {
+            const auto at = todo.back();
+            todo.pop_back();
+            for (const auto& drop : pieces.drops)
+            {
+                const auto from = down ? drop.from : drop.to;
+                const auto to   = down ? drop.to : drop.from;
+                if (from == at && !seen[to])
+                {
+                    seen[to] = true;
+                    todo.push_back(to);
+                }
+            }
+        }
+        return seen;
+    }
+
+    // Every zone's mesh, pieces and lines, the lines placed and the world
+    // joined as the map does it (pawn_travel.cpp buildWorld); a zone without
+    // a mesh takes piece 0
+    struct WholeWorld
+    {
+        std::map<uint16, MeshPtr>     meshes;
+        std::map<uint16, sz::Pieces>  pieces;
+        std::map<uint16, std::string> names;
+        sz::World                     world;
+
+        // A body's piece, as pawn_travel.cpp's bodyPiece finds it
+        auto piece(const uint16 zone, const position_t& at) const -> sz::Piece
+        {
+            if (!meshes.contains(zone))
+            {
+                return 0;
+            }
+            const auto& mesh = *meshes.at(zone);
+            const auto  p    = sz::pieceAt(mesh, pieces.at(zone), at, sz::kBodyExtents);
+            return p != 0 ? p : sz::pieceAt(mesh, pieces.at(zone), at, sz::kLineExtents);
+        }
+    };
+
+    auto wholeWorld() -> std::unique_ptr<WholeWorld>
+    {
+        using Settings = xi::data::datasets::zones::settings::Dataset;
+        struct Crossing
+        {
+            uint16     to{};
+            position_t origin{};
+            position_t arrival{};
+        };
+        auto                                    out = std::make_unique<WholeWorld>();
+        std::map<uint16, std::vector<Crossing>> crossings;
+        for (int z = 1; z < 300; ++z)
+        {
+            const auto id       = static_cast<xi::ZoneId>(z);
+            const auto settings = xi::data::loadZoneFile<Settings>(id);
+            if (!settings)
+            {
+                continue;
+            }
+            const auto zone  = static_cast<uint16>(z);
+            out->names[zone] = std::filesystem::path(xi::data::zoneFilePath(id, "zone")).parent_path().filename().string();
+            for (const auto& line : settings->ZoneLines)
+            {
+                if (static_cast<uint16>(line.DestinationZone) != zone)
+                {
+                    crossings[zone].push_back({ static_cast<uint16>(line.DestinationZone), line.Origin, line.Destination });
+                }
+            }
+            if (auto mesh = loadMesh(out->names[zone]); mesh)
+            {
+                out->pieces[zone] = sz::piecesOf(*mesh);
+                out->meshes.emplace(zone, std::move(mesh));
+            }
+        }
+        const auto place = [&](const uint16 zone, const position_t& at) -> sz::LineEnd
+        {
+            return out->meshes.contains(zone) ? sz::lineEnd(*out->meshes.at(zone), out->pieces.at(zone), at) : sz::LineEnd{ 0, at };
+        };
+        for (const auto& [zone, lines] : crossings)
+        {
+            for (const auto& line : lines)
+            {
+                out->world.lines.push_back(
+                    { .zone = zone, .to = line.to, .origin = line.origin, .arrival = line.arrival, .leaves = place(zone, line.origin), .lands = place(line.to, line.arrival) });
+            }
+        }
+        for (const auto& [zone, pieces] : out->pieces)
+        {
+            if (!pieces.drops.empty())
+            {
+                out->world.drops[zone] = pieces.drops;
+            }
+        }
+        sz::join(out->world);
+        return out;
+    }
+
+    // A zone line's two ends, looked at one at a time
+    enum class End
+    {
+        Origin,  // its trigger, in the zone it leaves
+        Arrival, // where it sets her down, in the zone it lands in
+    };
+
+    // Whether a line's end stands on ground its zone's main ground joins: an
+    // origin on a piece the main ground reaches by walking and drops, an
+    // arrival on a piece that reaches the main ground. Piece 0 joins every
+    // piece. Each zone's reach is worked out once, into `cache`
+    auto joinsMain(const WholeWorld& whole, const uint16 zone, const sz::LineEnd& end, const End which, std::map<std::pair<uint16, End>, std::vector<bool>>& cache)
+        -> bool
+    {
+        const auto& pieces = whole.pieces.at(zone);
+        const auto  key    = std::make_pair(zone, which);
+        if (!cache.contains(key))
+        {
+            cache[key] = reachOf(pieces, mainPiece(pieces), which == End::Origin);
+        }
+        return end.piece == 0 || cache.at(key)[end.piece];
     }
 } // namespace
 
@@ -600,6 +743,52 @@ TEST_CASE("Route kept out of danger: timings (opt-in, CARDIAN_BENCH=1)", "[cardi
     }
 }
 
+// A line's choice (pawn::travel::nextHop): the shortest walk across the
+// world's sub-zones from a body to a zone, timed over the whole world
+TEST_CASE("Sub-zones: a line's choice, timed (opt-in, CARDIAN_BENCH=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_BENCH") == nullptr)
+    {
+        SKIP("the timings run with CARDIAN_BENCH=1");
+    }
+    const auto whole = wholeWorld();
+    WARN("the world: " << whole->meshes.size() << " meshes, " << whole->world.lines.size() << " lines");
+    struct Case
+    {
+        const char* what;
+        xi::ZoneId  from;
+        position_t  at;
+        xi::ZoneId  to;
+    };
+    const Case cases[] = {
+        { "Jugner Forest's Davoi gate to Davoi", xi::ZoneId::JugnerForest, { -241.5f, -8.1f, -593.6f, 0, 0 }, xi::ZoneId::Davoi },
+        { "North Gustaberg's lowlands to Konschtat Highlands", xi::ZoneId::NorthGustaberg, { 660.004f, -2.478f, 306.236f, 0, 0 }, xi::ZoneId::KonschtatHighlands },
+        { "Northern San d'Oria to Jugner Forest", xi::ZoneId::NorthernSanDoria, { -125.375f, 10.371f, 268.640f, 0, 0 }, xi::ZoneId::JugnerForest },
+        { "Northern San d'Oria to Windurst Waters", xi::ZoneId::NorthernSanDoria, { -125.375f, 10.371f, 268.640f, 0, 0 }, xi::ZoneId::WindurstWaters },
+        { "North Gustaberg's lowlands to a zone no line reaches: every walk searched", xi::ZoneId::NorthGustaberg, { 660.004f, -2.478f, 306.236f, 0, 0 },
+          static_cast<xi::ZoneId>(0) },
+    };
+    for (const auto& c : cases)
+    {
+        const auto    zone  = static_cast<uint16>(c.from);
+        const auto    piece = whole->piece(zone, c.at);
+        double        total = 0.0;
+        double        most  = 0.0;
+        sz::Plan      plan;
+        constexpr int kRuns = 20;
+        for (int i = 0; i < kRuns; ++i)
+        {
+            const auto began = std::chrono::steady_clock::now();
+            plan             = sz::plan(whole->world, zone, piece, c.at, static_cast<uint16>(c.to), std::nullopt, std::nullopt);
+            const double ms  = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - began).count();
+            total += ms;
+            most = std::max(most, ms);
+        }
+        WARN(c.what << ": " << (plan.reachable ? "a walk" : "NO walk") << ", " << plan.lines << " lines, " << plan.length << "y; " << total / kRuns
+                    << " ms a choice on average, " << most << " ms at most");
+    }
+}
+
 TEST_CASE("Route kept out of danger: a ledge taller than the mesh's climb is dropped off, never climbed", "[cardian][route]")
 {
     const auto mesh = loadMesh("Valkurm_Dunes");
@@ -956,94 +1145,106 @@ TEST_CASE("Route kept out of danger: a slope the mesh joins only by a switched-o
     }
 }
 
-// Where the travel map places every zone line's two ends (pawn_travel.cpp's
-// rule: the nearest polygon within kLineExtents), beside the ground straight
-// under each and the pieces near it; an end on a piece ten times smaller than
-// one beside it is marked ODD. Written to log/lines_survey.txt (OPEN_ISSUES
-// #466)
-TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
+namespace
 {
-    if (std::getenv("CARDIAN_LINES") == nullptr)
-    {
-        SKIP("the line survey runs with CARDIAN_LINES=1");
-    }
-    using Settings = xi::data::datasets::zones::settings::Dataset;
-    std::ofstream out("log/lines_survey.txt");
-
-    struct Z
-    {
-        MeshPtr     mesh{ nullptr, &dtFreeNavMesh };
-        sz::Pieces  pieces;
-        std::string name;
-        bool        tried = false;
-    };
-    std::map<int, Z> zones;
-    const auto       zoneOf = [&](const int z) -> Z*
-    {
-        auto& e = zones[z];
-        if (!e.tried)
-        {
-            e.tried = true;
-            e.name  = std::filesystem::path(xi::data::zoneFilePath(static_cast<xi::ZoneId>(z), "zone")).parent_path().filename().string();
-            e.mesh  = loadMesh(e.name);
-            if (e.mesh)
-            {
-                e.pieces = sz::piecesOf(*e.mesh);
-            }
-        }
-        return e.mesh ? &e : nullptr;
-    };
-
-    struct Hit
-    {
-        sz::Piece  piece = 0;
-        position_t at{};
-        int        polys = 0;
-    };
-    const auto place = [&](Z& z, const position_t& p, const float* ext) -> Hit
+    // The nearest ground of one piece to a point, within `extents` of it
+    auto nearestOn(const dtNavMesh& mesh, const sz::Pieces& pieces, const sz::Piece piece, const position_t& point, const float* extents) -> std::optional<position_t>
     {
         dtNavMeshQuery query;
-        Hit            hit;
-        if (dtStatusFailed(query.init(z.mesh.get(), 64)))
+        if (dtStatusFailed(query.init(&mesh, 64)))
         {
-            return hit;
+            return std::nullopt;
         }
         dtQueryFilter filter;
         filter.setExcludeFlags(cardian::route::kPolyDisabled);
-        const auto at  = cardian::route::toDetour(p);
-        dtPolyRef  ref = 0;
-        float      nearest[3]{};
-        if (dtStatusFailed(query.findNearestPoly(at.data(), ext, &filter, &ref, nearest)) || !ref)
+        const auto at = cardian::route::toDetour(point);
+        dtPolyRef  refs[2048];
+        int        count = 0;
+        query.queryPolygons(at.data(), extents, &filter, refs, &count, 2048);
+        std::optional<position_t> best;
+        for (int i = 0; i < count; ++i)
         {
-            return hit;
+            float closest[3]{};
+            if (pieces.of(mesh, refs[i]) != piece || dtStatusFailed(query.closestPointOnPoly(refs[i], at.data(), closest, nullptr)))
+            {
+                continue;
+            }
+            const auto onIt = cardian::route::fromDetour(closest);
+            if (!best.has_value() || yalms(onIt, point) < yalms(*best, point))
+            {
+                best = onIt;
+            }
         }
-        hit.piece = z.pieces.of(*z.mesh, ref);
-        hit.at    = cardian::route::fromDetour(nearest);
-        hit.polys = z.pieces.polys[hit.piece];
-        return hit;
-    };
-    // The pieces with ground within `ext` of a point, biggest first
-    const auto around = [&](Z& z, const position_t& p, const float* ext) -> std::vector<std::pair<int, sz::Piece>>
+        return best;
+    }
+
+    // From the main ground beside a zone line -- `body`, when given -- the
+    // walk to the line's zone takes that very line: she walks to a spot the
+    // walker finds on her own ground, and the line sets her down on the
+    // piece its arrival is placed on
+    void takesLine(const char* what, const std::pair<xi::ZoneId, const char*> from, const std::pair<xi::ZoneId, const char*> to, const position_t& trigger,
+                   const std::optional<position_t> body = std::nullopt)
+    {
+        const auto region = regionOf({ from, to });
+        if (!region.has_value())
+        {
+            SKIP("a navmesh is missing for " << what);
+        }
+        INFO(what);
+        const auto  zone     = static_cast<uint16>(from.first);
+        const auto  next     = static_cast<uint16>(to.first);
+        const auto& mesh     = *region->meshes.at(zone);
+        const auto& pieces   = region->pieces.at(zone);
+        const auto  main     = mainPiece(pieces);
+        const float beside[] = { 20.0f, 15.0f, 20.0f };
+        const auto  at       = body.has_value() ? body : nearestOn(mesh, pieces, main, trigger, beside);
+        REQUIRE(at.has_value());
+        const auto here = region->piece(zone, *at);
+        CHECK(here == main);
+
+        const auto plan = sz::plan(region->world, zone, here, *at, next, std::nullopt, std::nullopt);
+        REQUIRE(plan.reachable);
+        REQUIRE(plan.firstLine.has_value());
+        CHECK(plan.lines == 1);
+        const auto& line = region->world.lines[*plan.firstLine];
+        CHECK(yalms(line.origin, trigger) < 0.5f);
+
+        // the walker's goal is the nearest ground to the spot (pawn_travel.cpp
+        // routeAvoiding), and it is hers
+        CHECK(line.leaves.piece == here);
+        CHECK(sz::pieceAt(mesh, pieces, line.leaves.at, sz::kLineExtents) == here);
+
+        // set down at the spot, she stands on the arrival's piece
+        CHECK(line.lands.piece != 0);
+        CHECK(region->piece(next, line.lands.at) == line.lands.piece);
+    }
+} // namespace
+
+namespace
+{
+    // The pieces with ground within `extents` of a point, biggest first, by
+    // their polygon count
+    auto piecesNear(const dtNavMesh& mesh, const sz::Pieces& pieces, const position_t& point, const float* extents) -> std::vector<std::pair<int, sz::Piece>>
     {
         dtNavMeshQuery                         query;
         std::vector<std::pair<int, sz::Piece>> found;
-        if (dtStatusFailed(query.init(z.mesh.get(), 64)))
+        if (dtStatusFailed(query.init(&mesh, 64)))
         {
             return found;
         }
         dtQueryFilter filter;
         filter.setExcludeFlags(cardian::route::kPolyDisabled);
-        const auto at = cardian::route::toDetour(p);
+        const auto at = cardian::route::toDetour(point);
         dtPolyRef  refs[1024];
         int        count = 0;
-        query.queryPolygons(at.data(), ext, &filter, refs, &count, 1024);
+        query.queryPolygons(at.data(), extents, &filter, refs, &count, 1024);
         std::map<sz::Piece, int> seen;
         for (int i = 0; i < count; ++i)
         {
-            const auto piece = z.pieces.of(*z.mesh, refs[i]);
+            const auto piece = pieces.of(mesh, refs[i]);
             if (piece != 0)
             {
-                seen[piece] = z.pieces.polys[piece];
+                seen[piece] = pieces.polys[piece];
             }
         }
         for (const auto& [piece, polys] : seen)
@@ -1052,234 +1253,270 @@ TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[ca
         }
         std::sort(found.rbegin(), found.rend());
         return found;
-    };
-    const float kColumn[] = { 1.5f, 60.0f, 1.5f };
-    const float kNear[]   = { 12.0f, 30.0f, 12.0f };
+    }
 
-    const auto describe = [&](Z& z, const position_t& p) -> std::pair<std::string, bool>
+    // An end the survey calls odd: off the mesh, or on a piece with one ten
+    // times its size within 12 yalms across and 30 up of its point
+    constexpr float kOddNear[] = { 12.0f, 30.0f, 12.0f };
+
+    auto oddEnd(const sz::Pieces& pieces, const sz::LineEnd& end, const std::vector<std::pair<int, sz::Piece>>& nearby) -> bool
     {
-        const auto  placed = place(z, p, sz::kLineExtents);
-        const auto  column = place(z, p, kColumn);
-        const auto  nearby   = around(z, p, kNear);
-        std::string text   = fmt::format("({:.1f}, {:.1f}, {:.1f}) placed on piece {} ({} polys) at ({:.1f}, {:.1f}, {:.1f}) {:.1f}y off; under it piece {} ({} polys) at y {:.1f}; nearby:",
-                                         p.x, p.y, p.z, placed.piece, placed.polys, placed.at.x, placed.at.y, placed.at.z, yalms(p, placed.at), column.piece,
-                                         column.polys, column.at.y);
+        return end.piece == 0 || (!nearby.empty() && end.piece != nearby[0].second && pieces.polys[end.piece] * 10 < nearby[0].first);
+    }
+
+    // An end the travel map uses at a spot other than its point: the ground
+    // under it (subzones.h lineEnd)
+    auto movedEnd(const position_t& point, const sz::LineEnd& end) -> bool
+    {
+        return yalms(point, end.at) > 0.01f;
+    }
+
+    // One end of a line, by its zone's folder name, which end, and the zone
+    // at the line's other end, as the guard and the survey name it
+    auto endName(const WholeWorld& whole, const sz::Line& line, const End which) -> std::string
+    {
+        const uint16 zone  = which == End::Origin ? line.zone : line.to;
+        const uint16 other = which == End::Origin ? line.to : line.zone;
+        return fmt::format("{} {} zone {}", whole.names.at(zone), which == End::Origin ? "origin to" : "arrival from", other);
+    }
+} // namespace
+
+TEST_CASE("Zone lines: a trigger over the path is taken from the ground under it, not a scrap of mesh beside it", "[cardian][route]")
+{
+    // ROADMAP T, "A line's ends": Jugner Forest's line to Davoi floats 9
+    // yalms over the path, a one-polygon scrap of mesh nearest it; the party
+    // stood at the gate with no walk into Davoi
+    takesLine("Jugner Forest to Davoi", { xi::ZoneId::JugnerForest, "Jugner_Forest" }, { xi::ZoneId::Davoi, "Davoi" }, { -240.440f, -16.683f, -597.493f, 0, 0 },
+              position_t{ -241.5f, -8.1f, -593.6f, 0, 0 });
+    takesLine("East Ronfaure to King Ranperre's Tomb", { xi::ZoneId::EastRonfaure, "East_Ronfaure" }, { xi::ZoneId::KingRanperresTomb, "King_Ranperres_Tomb" },
+              { 199.982f, -8.500f, -544.574f, 0, 0 });
+    takesLine("Beaucedine Glacier to Xarcabard", { xi::ZoneId::BeaucedineGlacier, "Beaucedine_Glacier" }, { xi::ZoneId::Xarcabard, "Xarcabard" },
+              { -251.957f, -86.893f, 260.655f, 0, 0 });
+}
+
+TEST_CASE("Zone lines: West Ronfaure reaches Northern San d'Oria from its main ground", "[cardian][route]")
+{
+    // OPEN_ISSUES #493: one of West Ronfaure's lines to Northern San d'Oria
+    // stands on ground the mesh leaves apart from the main ground; from the
+    // main ground the walk takes the other
+    takesLine("West Ronfaure to Northern San d'Oria", { xi::ZoneId::WestRonfaure, "West_Ronfaure" }, { xi::ZoneId::NorthernSanDoria, "Northern_San_dOria" },
+              { -157.666f, -66.124f, 379.960f, 0, 0 });
+}
+
+// Every zone line of the world as the travel map places it, so a change to
+// the placement, the meshes or the lines shows: the ends it uses at the
+// ground under their point named (the six triggers that float over the path
+// beside a scrap of mesh, ROADMAP T, "A line's ends"), the ends the survey
+// calls odd counted, and the ends on ground their zone's main ground does not
+// join counted. Most of those last stand on a region of their own, as they
+// should (an arena, a reach of a zone only the lines lead to); the rest are
+// the meshes' own faults (OPEN_ISSUES #493). The opt-in surveys below name
+// every one, in log/lines_survey.txt and log/lines_islands.txt
+TEST_CASE("Zone lines: the ends moved under their point named, and the odd ends and the ends apart from their zone's main ground counted", "[cardian][route]")
+{
+    // Of the 1,394 ends in zones with a mesh -- 697 origins and 697
+    // arrivals -- measured 2026-10-15
+    const std::vector<std::string> kMoved = {
+        "alzadaal_undersea_ruins origin to zone 79", "beaucedine_glacier origin to zone 112", "dangruf_wadi origin to zone 106",
+        "east_ronfaure origin to zone 190",          "jugner_forest origin to zone 149",     "velugannon_palace origin to zone 130",
+    };
+    constexpr int kOdd           = 75;
+    constexpr int kOriginsApart  = 265;
+    constexpr int kArrivalsApart = 224;
+
+    const auto whole = wholeWorld();
+    if (whole->meshes.empty())
+    {
+        SKIP("no navmeshes");
+    }
+    std::vector<std::string>                            moved;
+    int                                                 ends          = 0;
+    int                                                 odd           = 0;
+    int                                                 originsApart  = 0;
+    int                                                 arrivalsApart = 0;
+    std::map<std::pair<uint16, End>, std::vector<bool>> cache;
+    const auto                                          look = [&](const sz::Line& line, const End which)
+    {
+        const uint16 zone  = which == End::Origin ? line.zone : line.to;
+        const auto&  point = which == End::Origin ? line.origin : line.arrival;
+        const auto&  end   = which == End::Origin ? line.leaves : line.lands;
+        if (!whole->meshes.contains(zone) || mainPiece(whole->pieces.at(zone)) == 0)
+        {
+            return;
+        }
+        ++ends;
+        const auto& pieces = whole->pieces.at(zone);
+        if (movedEnd(point, end))
+        {
+            moved.push_back(endName(*whole, line, which));
+        }
+        if (oddEnd(pieces, end, piecesNear(*whole->meshes.at(zone), pieces, point, kOddNear)))
+        {
+            ++odd;
+        }
+        if (!joinsMain(*whole, zone, end, which, cache))
+        {
+            ++(which == End::Origin ? originsApart : arrivalsApart);
+        }
+    };
+    for (const auto& line : whole->world.lines)
+    {
+        look(line, End::Origin);
+        look(line, End::Arrival);
+    }
+    std::sort(moved.begin(), moved.end());
+    std::string movedText;
+    for (const auto& name : moved)
+    {
+        movedText += "\n  " + name;
+    }
+    INFO(ends << " line ends; the opt-in surveys (CARDIAN_LINES=1) name every end in log/lines_survey.txt and log/lines_islands.txt");
+    INFO("used at the ground under their point:" << movedText);
+    CHECK(moved == kMoved);
+    INFO("odd: " << odd);
+    CHECK(odd == kOdd);
+    INFO("apart from their zone's main ground: " << originsApart << " origins, " << arrivalsApart << " arrivals");
+    CHECK(originsApart == kOriginsApart);
+    CHECK(arrivalsApart == kArrivalsApart);
+}
+
+// Where the travel map places every zone line's two ends (subzones.h
+// lineEnd), beside the ground straight under each and the pieces near it.
+// An end is marked MOVED when the map uses it at the ground under its point,
+// and ODD as the guard above counts it. Written to log/lines_survey.txt
+// (OPEN_ISSUES #493)
+TEST_CASE("Zone lines: where each end is placed (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_LINES") == nullptr)
+    {
+        SKIP("the line survey runs with CARDIAN_LINES=1");
+    }
+    std::ofstream out("log/lines_survey.txt");
+    const auto    whole = wholeWorld();
+
+    // The ground straight under a point: its piece, and where
+    const float kColumn[] = { 1.5f, 60.0f, 1.5f };
+    struct Hit
+    {
+        sz::Piece  piece = 0;
+        position_t at{};
+        int        polys = 0;
+    };
+    const auto column = [&](const uint16 zone, const position_t& p) -> Hit
+    {
+        const auto&    mesh   = *whole->meshes.at(zone);
+        const auto&    pieces = whole->pieces.at(zone);
+        dtNavMeshQuery query;
+        Hit            hit;
+        if (dtStatusFailed(query.init(&mesh, 64)))
+        {
+            return hit;
+        }
+        dtQueryFilter filter;
+        filter.setExcludeFlags(cardian::route::kPolyDisabled);
+        const auto at  = cardian::route::toDetour(p);
+        dtPolyRef  ref = 0;
+        float      nearest[3]{};
+        if (dtStatusFailed(query.findNearestPoly(at.data(), kColumn, &filter, &ref, nearest)) || !ref)
+        {
+            return hit;
+        }
+        hit.piece = pieces.of(mesh, ref);
+        hit.at    = cardian::route::fromDetour(nearest);
+        hit.polys = pieces.polys[hit.piece];
+        return hit;
+    };
+
+    int        ends  = 0;
+    int        odd   = 0;
+    int        moved = 0;
+    const auto survey = [&](const sz::Line& line, const End which)
+    {
+        const uint16 zone  = which == End::Origin ? line.zone : line.to;
+        const uint16 other = which == End::Origin ? line.to : line.zone;
+        const auto&  p     = which == End::Origin ? line.origin : line.arrival;
+        const auto&  end   = which == End::Origin ? line.leaves : line.lands;
+        if (!whole->meshes.contains(zone))
+        {
+            return;
+        }
+        ++ends;
+        const auto& pieces = whole->pieces.at(zone);
+        const auto  under  = column(zone, p);
+        const auto  nearby = piecesNear(*whole->meshes.at(zone), pieces, p, kOddNear);
+        std::string text   = fmt::format("({:.1f}, {:.1f}, {:.1f}) placed on piece {} ({} polys) at ({:.1f}, {:.1f}, {:.1f}), {:.1f}y off; under it piece {} ({} polys) at y {:.1f}; nearby:",
+                                         p.x, p.y, p.z, end.piece, pieces.polys[end.piece], end.at.x, end.at.y, end.at.z, yalms(p, end.at), under.piece, under.polys,
+                                         under.at.y);
         for (std::size_t i = 0; i < nearby.size() && i < 4; ++i)
         {
             text += fmt::format(" {}({})", nearby[i].second, nearby[i].first);
         }
-        // odd: a much bigger piece lies nearby, and the line is not on it
-        const bool odd = !nearby.empty() && placed.piece != nearby[0].second && placed.polys * 10 < nearby[0].first;
-        return { text, odd || placed.piece == 0 };
+        const bool isMoved = movedEnd(p, end);
+        const bool isOdd   = oddEnd(pieces, end, nearby);
+        moved += isMoved ? 1 : 0;
+        odd += isOdd ? 1 : 0;
+        out << (isMoved ? "MOVED " : isOdd ? "ODD   " : "ok    ") << whole->names.at(zone) << " (" << zone << ") " << (which == End::Origin ? "-> " : "<- ") << other
+            << (which == End::Origin ? " origin  " : " arrival ") << text << (isMoved && isOdd ? " (odd)" : "") << "\n";
     };
-
-    int ends = 0;
-    int odd  = 0;
-    for (int z = 1; z < 300; ++z)
+    for (const auto& line : whole->world.lines)
     {
-        const auto settings = xi::data::loadZoneFile<Settings>(static_cast<xi::ZoneId>(z));
-        if (!settings)
-        {
-            continue;
-        }
-        for (const auto& line : settings->ZoneLines)
-        {
-            const int to = static_cast<int>(line.DestinationZone);
-            if (to == z)
-            {
-                continue;
-            }
-            auto* from = zoneOf(z);
-            auto* dest = zoneOf(to);
-            if (from != nullptr)
-            {
-                ++ends;
-                const auto [text, flagged] = describe(*from, line.Origin);
-                odd += flagged ? 1 : 0;
-                out << (flagged ? "ODD  " : "ok   ") << from->name << " (" << z << ") -> " << to << " origin  " << text << "\n";
-            }
-            if (dest != nullptr)
-            {
-                ++ends;
-                const auto [text, flagged] = describe(*dest, line.Destination);
-                odd += flagged ? 1 : 0;
-                out << (flagged ? "ODD  " : "ok   ") << dest->name << " (" << to << ") <- " << z << " arrival " << text << "\n";
-            }
-        }
+        survey(line, End::Origin);
+        survey(line, End::Arrival);
     }
-    out << "\n" << ends << " line ends, " << odd << " odd\n\n";
-
-    // Jugner Forest's Davoi entrance, as the party stood there
-    if (auto* jugner = zoneOf(104); jugner != nullptr)
-    {
-        out << "jugner_forest: " << jugner->pieces.polys.size() - 1 << " pieces, " << jugner->pieces.drops.size() << " drops\n";
-        for (const position_t at : { position_t{ -241.5f, -8.1f, -593.6f, 0, 0 }, position_t{ -237.3f, -8.0f, -598.2f, 0, 0 }, position_t{ -211.7f, -12.3f, -523.6f, 0, 0 } })
-        {
-            const auto body = place(*jugner, at, sz::kBodyExtents);
-            out << fmt::format("  a body at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), ground at y {:.1f}\n", at.x, at.y, at.z, body.piece, body.polys, body.at.y);
-            for (const auto& drop : jugner->pieces.drops)
-            {
-                if (drop.from == body.piece || drop.to == body.piece)
-                {
-                    out << fmt::format("    drop {} -> {}: ({:.1f}, {:.1f}, {:.1f}) down to ({:.1f}, {:.1f}, {:.1f})\n", drop.from, drop.to, drop.top.x, drop.top.y, drop.top.z,
-                                       drop.bottom.x, drop.bottom.y, drop.bottom.z);
-                }
-            }
-        }
-        const position_t line{ -240.440f, -16.683f, -597.493f, 0, 0 };
-        const auto       placed = place(*jugner, line, sz::kLineExtents);
-        const auto       body   = place(*jugner, position_t{ -241.5f, -8.1f, -593.6f, 0, 0 }, sz::kBodyExtents);
-        if (placed.piece != 0 && body.piece != 0 && placed.piece != body.piece)
-        {
-            out << "  the line's piece and the party's: " << closestSpots(*jugner->mesh, jugner->pieces, placed.piece, body.piece) << "\n";
-        }
-    }
-    if (auto* davoi = zoneOf(149); davoi != nullptr)
-    {
-        out << "davoi: " << davoi->pieces.polys.size() - 1 << " pieces, " << davoi->pieces.drops.size() << " drops\n";
-        const position_t arrival{ 218.468f, -2.302f, -3.871f, 0, 0 };
-        const float      wide[] = { 40.0f, 30.0f, 40.0f };
-        out << "  pieces within 40y of the arrival from Jugner:";
-        for (const auto& [polys, piece] : around(*davoi, arrival, wide))
-        {
-            out << " " << piece << "(" << polys << ")";
-        }
-        out << "\n";
-        for (const auto& drop : davoi->pieces.drops)
-        {
-            out << fmt::format("  drop {} -> {}: ({:.1f}, {:.1f}, {:.1f}) down to ({:.1f}, {:.1f}, {:.1f})\n", drop.from, drop.to, drop.top.x, drop.top.y, drop.top.z, drop.bottom.x,
-                               drop.bottom.y, drop.bottom.z);
-        }
-    }
-    WARN("line survey written to log/lines_survey.txt: " << ends << " ends, " << odd << " odd");
+    out << "\n" << ends << " line ends, " << moved << " used at the ground under their point, " << odd << " odd\n";
+    WARN("line survey written to log/lines_survey.txt: " << ends << " ends, " << moved << " moved, " << odd << " odd");
 }
 
-// Which zone lines stand on a piece their zone's biggest piece cannot reach
-// by walking and drops (origins), or that cannot reach it (arrivals), each
-// line placed on the ground under it first, with how near the two pieces
-// come. Written to log/lines_islands.txt (OPEN_ISSUES #466)
+// Which zone line ends stand on ground their zone's main ground does not
+// join, each placed as the travel map places it: an origin on a piece the
+// main ground does not reach by walking and drops, an arrival on a piece
+// that does not reach it, with how near its piece and the main ground come.
+// Written to log/lines_islands.txt (OPEN_ISSUES #493)
 TEST_CASE("Zone lines: islands (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
 {
     if (std::getenv("CARDIAN_LINES") == nullptr)
     {
         SKIP("the line survey runs with CARDIAN_LINES=1");
     }
-    using Settings = xi::data::datasets::zones::settings::Dataset;
     std::ofstream out("log/lines_islands.txt");
+    const auto    whole = wholeWorld();
 
-    struct Z
+    int                                                 origins = 0, originIslands = 0, arrivals = 0, arrivalIslands = 0;
+    std::map<std::pair<uint16, End>, std::vector<bool>> cache;
+    const auto                                          survey = [&](const sz::Line& line, const End which)
     {
-        MeshPtr     mesh{ nullptr, &dtFreeNavMesh };
-        sz::Pieces  pieces;
-        std::string name;
-        sz::Piece   main  = 0;
-        bool        tried = false;
-    };
-    std::map<int, Z> zones;
-    const auto       zoneOf = [&](const int z) -> Z*
-    {
-        auto& e = zones[z];
-        if (!e.tried)
+        const uint16 zone  = which == End::Origin ? line.zone : line.to;
+        const uint16 other = which == End::Origin ? line.to : line.zone;
+        const auto&  p     = which == End::Origin ? line.origin : line.arrival;
+        const auto&  end   = which == End::Origin ? line.leaves : line.lands;
+        if (!whole->meshes.contains(zone))
         {
-            e.tried = true;
-            e.name  = std::filesystem::path(xi::data::zoneFilePath(static_cast<xi::ZoneId>(z), "zone")).parent_path().filename().string();
-            e.mesh  = loadMesh(e.name);
-            if (e.mesh)
-            {
-                e.pieces = sz::piecesOf(*e.mesh);
-                for (std::size_t p = 1; p < e.pieces.polys.size(); ++p)
-                {
-                    if (e.main == 0 || e.pieces.polys[p] > e.pieces.polys[e.main])
-                    {
-                        e.main = static_cast<sz::Piece>(p);
-                    }
-                }
-            }
+            return;
         }
-        return e.mesh ? &e : nullptr;
-    };
-    const auto pieceOf = [&](Z& z, const position_t& p, const float* ext) -> sz::Piece
-    {
-        return sz::pieceAt(*z.mesh, z.pieces, p, ext);
-    };
-    const float kColumn[] = { 1.5f, 60.0f, 1.5f };
-    // the ground under the point first, else the nearest
-    const auto placed = [&](Z& z, const position_t& p) -> sz::Piece
-    {
-        const auto under = pieceOf(z, p, kColumn);
-        return under != 0 ? under : pieceOf(z, p, sz::kLineExtents);
-    };
-    // the pieces a body reaches from `start` by the zone's drops
-    const auto reach = [&](const Z& z, const sz::Piece start) -> std::vector<bool>
-    {
-        std::vector<bool>      seen(z.pieces.polys.size(), false);
-        std::vector<sz::Piece> todo{ start };
-        seen[start] = true;
-        while (!todo.empty())
+        const auto& pieces = whole->pieces.at(zone);
+        const auto  main   = mainPiece(pieces);
+        if (main == 0)
         {
-            const auto at = todo.back();
-            todo.pop_back();
-            for (const auto& drop : z.pieces.drops)
-            {
-                if (drop.from == at && !seen[drop.to])
-                {
-                    seen[drop.to] = true;
-                    todo.push_back(drop.to);
-                }
-            }
+            return;
         }
-        return seen;
+        ++(which == End::Origin ? origins : arrivals);
+        if (joinsMain(*whole, zone, end, which, cache))
+        {
+            return;
+        }
+        ++(which == End::Origin ? originIslands : arrivalIslands);
+        out << (which == End::Origin ? "ORIGIN  " : "ARRIVAL ") << whole->names.at(zone) << " (" << zone << ") " << (which == End::Origin ? "-> " : "<- ") << other
+            << fmt::format(" at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), main {} ({} polys): ", p.x, p.y, p.z, end.piece, pieces.polys[end.piece], main,
+                           pieces.polys[main])
+            << (pieces.polys[end.piece] < 600 ? closestSpots(*whole->meshes.at(zone), pieces, end.piece, main) : std::string("a large piece of its own")) << "\n";
     };
-
-    int origins = 0, originIslands = 0, arrivals = 0, arrivalIslands = 0;
-    std::map<int, std::vector<bool>> fromMain;
-    for (int z = 1; z < 300; ++z)
+    for (const auto& line : whole->world.lines)
     {
-        const auto settings = xi::data::loadZoneFile<Settings>(static_cast<xi::ZoneId>(z));
-        if (!settings)
-        {
-            continue;
-        }
-        for (const auto& line : settings->ZoneLines)
-        {
-            const int to = static_cast<int>(line.DestinationZone);
-            if (to == z)
-            {
-                continue;
-            }
-            if (auto* from = zoneOf(z); from != nullptr && from->main != 0)
-            {
-                ++origins;
-                if (!fromMain.contains(z))
-                {
-                    fromMain[z] = reach(*from, from->main);
-                }
-                const auto piece = placed(*from, line.Origin);
-                if (piece != 0 && !fromMain[z][piece])
-                {
-                    ++originIslands;
-                    out << "ORIGIN  " << from->name << " (" << z << ") -> " << to
-                        << fmt::format(" at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), main {} ({} polys): ", line.Origin.x, line.Origin.y, line.Origin.z, piece,
-                                       from->pieces.polys[piece], from->main, from->pieces.polys[from->main])
-                        << (from->pieces.polys[piece] < 600 ? closestSpots(*from->mesh, from->pieces, piece, from->main) : std::string("a large piece of its own")) << "\n";
-                }
-            }
-            if (auto* dest = zoneOf(to); dest != nullptr && dest->main != 0)
-            {
-                ++arrivals;
-                const auto piece = placed(*dest, line.Destination);
-                if (piece != 0 && !reach(*dest, piece)[dest->main])
-                {
-                    ++arrivalIslands;
-                    out << "ARRIVAL " << dest->name << " (" << to << ") <- " << z
-                        << fmt::format(" at ({:.1f}, {:.1f}, {:.1f}): piece {} ({} polys), main {} ({} polys): ", line.Destination.x, line.Destination.y,
-                                       line.Destination.z, piece, dest->pieces.polys[piece], dest->main, dest->pieces.polys[dest->main])
-                        << (dest->pieces.polys[piece] < 600 ? closestSpots(*dest->mesh, dest->pieces, piece, dest->main) : std::string("a large piece of its own")) << "\n";
-                }
-            }
-        }
+        survey(line, End::Origin);
+        survey(line, End::Arrival);
     }
-    out << "\n" << origins << " origins, " << originIslands << " on a piece the zone's main ground cannot reach; " << arrivals << " arrivals, " << arrivalIslands
-        << " on a piece that cannot reach it\n";
+    out << "\n"
+        << origins << " origins, " << originIslands << " on ground the zone's main ground does not reach; " << arrivals << " arrivals, " << arrivalIslands
+        << " on ground that does not reach it\n";
     WARN("islands written to log/lines_islands.txt: " << originIslands << " of " << origins << " origins, " << arrivalIslands << " of " << arrivals << " arrivals");
 }

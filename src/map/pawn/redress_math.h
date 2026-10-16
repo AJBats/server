@@ -1,8 +1,8 @@
 // Cardian: re-dressing a wild cardian at the auction house (pawn/redress.h),
-// its decisions as plain rules: when to ask the census, what its answer
-// raises, which pieces leave her bag, and what her support job takes. And
-// the live census's dings out of sight (redress.h, cardian_ding): what the
-// map does with a ding the census has planned.
+// its decisions as plain rules: when to ask the census and which pieces
+// leave her bag. And the live census's dings out of sight (redress.h,
+// cardian_ding): what the map does with a ding the census has planned, the
+// skills it raises and what her support job takes.
 #pragma once
 
 #include "club_math.h"
@@ -113,9 +113,9 @@ namespace cardian::redress
         auto operator==(const SkillValue&) const -> bool = default;
     };
 
-    // The census's skill values for her level, as it writes them into the row:
-    // "skillid:value" pairs joined by commas. A piece that does not read is
-    // left out
+    // The census's skill values for a ding, as it writes them into its row
+    // (cardian_ding.skills): "skillid:value" pairs joined by commas. A piece
+    // that does not read is left out
     inline auto parseSkills(const std::string_view text) -> std::vector<SkillValue>
     {
         std::vector<SkillValue> out;
@@ -185,16 +185,16 @@ namespace cardian::redress
     // The census's answer is put on her only at the level it was planned
     // for. One planned for another level -- she dinged after asking, or the
     // live census dinged her out of sight while it waited for her next
-    // stand -- is set aside, gear, spells, skills and support job alike, and
-    // she asks again at the next counter: its support job could take back
-    // the one the census gave her
+    // stand -- is set aside, gear, spells and food alike, and she asks again
+    // at the next counter: a plan for a lower level would take back gear
+    // the census gave her
     inline auto answerFits(const uint8_t answerLevel, const uint8_t levelNow) -> bool
     {
         return answerLevel != 0 && answerLevel == levelNow;
     }
 
-    // The support job the census planned for the level and the job's own
-    // level as she levelled it, ahead of the half the game shows (the row's
+    // The support job the census planned for a ding and the job's own level
+    // as she levelled it, ahead of the half the game shows (cardian_ding's
     // `sub` and `sublevel`; job 0 for none)
     struct SubPlan
     {
@@ -213,7 +213,7 @@ namespace cardian::redress
         uint32_t unlocked = 0;
     };
 
-    // What the re-dress writes: the unlocks with the support job's and the
+    // What the ding writes: the unlocks with the support job's and the
     // job's own bits added, and the job's level raised to the plan's, never
     // lowered. The game gives the support job the lesser of that level and
     // half her main (SetSLevel). `switchJob` when she carries another support

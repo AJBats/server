@@ -115,6 +115,10 @@ namespace cardian::link
     X(PARTY_ROLES, cl_party_roles) \
     X(PARTY_ROLE, cl_party_role) \
     X(SET_PARTY_ROLE, cl_set_party_role) \
+    X(SKILLCHAINS, cl_skillchains) \
+    X(SKILLCHAIN, cl_skillchain) \
+    X(SET_SKILLCHAIN, cl_set_skillchain) \
+    X(SKILLCHAIN_NOW, cl_skillchain_now) \
     X(QUEUE, cl_queue)           \
     X(NOTE, cl_note)             \
     X(OFFER, cl_offer)           \

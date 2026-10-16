@@ -37,17 +37,18 @@
 // zone's navmesh split into the pieces no walk joins, each zone line from
 // the piece its trigger stands on to the piece it lands on (the per-zone
 // zoneline datasets: the trigger-box centre in its own zone, the arrival box
-// in the destination), and the drops between a zone's pieces; a trek takes
-// the shortest walk across them, so she leaves by the right gate. Transport
-// links (boats, airships) are not zonelines and are naturally absent;
-// mog-house doors and intra-zone teleport pads are excluded as self-edges.
+// in the destination; each placed on the ground under it, subzones.h
+// lineEnd), and the drops between a zone's pieces; a trek takes the shortest
+// walk across them, so she leaves by the right gate. Transport links
+// (boats, airships) are not zonelines and are naturally absent; mog-house
+// doors and intra-zone teleport pads are excluded as self-edges.
 namespace pawn
 {
     struct TravelHop
     {
         xi::ZoneId destinationZone{};
-        position_t walkTo{};   // zone-line trigger centre in the current zone
-        position_t arriveAt{}; // arrival box centre in the destination zone
+        position_t walkTo{};   // where she takes the line: its trigger-box centre, or the ground under it where the mesh's nearest ground to the trigger is a piece of its own
+        position_t arriveAt{}; // where it sets her down: its arrival box centre, or the ground under it, the same way
     };
 
     namespace travel

@@ -21,6 +21,7 @@
 
 #include "fight_log.h"
 
+#include "skillchains.h"
 #include "tactics.h"
 
 #include "common/logging.h"
@@ -773,6 +774,12 @@ namespace pawn::tactics
             const auto* state = PAttacker->PAI->GetCurrentState();
             auto*       ws    = static_cast<const CWeaponSkillState*>(state)->GetSkill();
             ShowInfoFmt("tactics: {}'s {} lands on {} for {}", m.name, ws != nullptr ? ws->getName() : "weapon skill", r.mobName, landed);
+            // What it dealt, past the mob's death too: what the plan's worth
+            // prices her weapon skill at (skillchains.h wsLanded)
+            if (ws != nullptr)
+            {
+                pawn::chains::wsLanded(PAttacker, ws->getID(), amount);
+            }
         }
         if (attackType == xi::AttackType::Physical && !weaponSkill)
         {
@@ -810,6 +817,8 @@ namespace pawn::tactics
         {
             return;
         }
+        // A Skillchain now on it was that fight's (skillchains.h mobDied)
+        pawn::chains::mobDied(PMob->id);
         if (const auto i = openIndex(PMob->id); i < m_open.size() && !m_open[i].settling())
         {
             // Won; the cures that follow the kill still count for ten

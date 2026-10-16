@@ -43,6 +43,7 @@
 #include "pawn_controller.h"
 #include "pawn_travel.h"
 #include "pawn_gambits.h"
+#include "skillchains.h"
 #include "gambit_text.h"
 #include "live_controller.h"
 
@@ -171,7 +172,7 @@ namespace
             o.rules.maxCheck   = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
             o.rules.aggressive = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
             o.rules.links      = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
-            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio FROM cardian_orders WHERE charid = ?", ownerCharID);
+            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio, avoid_aggro FROM cardian_orders WHERE charid = ?", ownerCharID);
             if (rset && rset->next())
             {
                 o.rules.minCheck   = rset->get<uint8>("hunt_min");
@@ -180,6 +181,7 @@ namespace
                 o.rules.aggressive = rset->get<uint8>("aggressive") != 0;
                 o.rules.links      = rset->get<uint8>("links") != 0;
                 o.rules.preferBio  = rset->get<uint8>("prefer_bio") != 0;
+                o.rules.avoidAggro = rset->get<uint8>("avoid_aggro") != 0;
             }
         }
         return o;
@@ -993,6 +995,8 @@ namespace pawn
         // His stake waits for him: saved on him, set again at his login
         saveStake(PPlayer);
         clearStake(PPlayer->id, "signed out");
+        // His skillchain plan lasts his session, never saved (skillchains.h)
+        chains::signedOut(PPlayer->id);
 
         // His party (ROADMAP H): the last human out takes every cardian in
         // it out with him, where she stands -- his alts, another player's
@@ -1269,6 +1273,7 @@ namespace pawn
         }
         tactics::memberLeft(PMember, PParty);
         roster::memberLeft(PMember);
+        chains::memberLeft(PMember);
         // A real player out of the party takes every cardian of it with him:
         // the orders and the trek were his
         const bool playerLeft = !pawns.contains(PMember->id);
@@ -1828,9 +1833,11 @@ namespace pawn
                          "`aggressive` tinyint(1) unsigned NOT NULL DEFAULT '0', "
                          "`links` tinyint(1) unsigned NOT NULL DEFAULT '0', "
                          "`prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0', "
+                         "`avoid_aggro` tinyint(1) unsigned NOT NULL DEFAULT '1', "
                          "`updated` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP, "
                          "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `links`");
+        db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `avoid_aggro` tinyint(1) unsigned NOT NULL DEFAULT '1' AFTER `prefer_bio`");
     }
 
     auto setHuntRule(CCharEntity* POwner, const uint8 rule, const int value) -> uint16
@@ -1869,17 +1876,22 @@ namespace pawn
         {
             r.preferBio = value != 0;
         }
+        else if (rule == CL_HUNT_AVOID_AGGRO && check(value, 0, 1))
+        {
+            r.avoidAggro = value != 0;
+        }
         else
         {
             return CL_S_MALFORMED;
         }
-        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio) VALUES (?, ?, ?, ?, ?, ?, ?) "
+        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio, avoid_aggro) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
                          "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
-                         "aggressive = VALUES(aggressive), links = VALUES(links), prefer_bio = VALUES(prefer_bio)",
-                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0, r.preferBio ? 1 : 0);
-        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}; {} preferred", POwner->getName(),
+                         "aggressive = VALUES(aggressive), links = VALUES(links), prefer_bio = VALUES(prefer_bio), avoid_aggro = VALUES(avoid_aggro)",
+                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0, r.preferBio ? 1 : 0, r.avoidAggro ? 1 : 0);
+        ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}; {} preferred; his cardians' Avoid aggro {}", POwner->getName(),
                     magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
-                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided", r.preferBio ? "Bio" : "Dia");
+                    kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided", r.preferBio ? "Bio" : "Dia",
+                    r.avoidAggro ? "on" : "switched off");
         return CL_S_OK;
     }
 

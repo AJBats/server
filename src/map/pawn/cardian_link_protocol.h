@@ -34,7 +34,10 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 83: DBOX's loc, a stack sent from any
+// compatible, the user, 2026-09-14). 85: the Shortcuts menu's Skillchain
+// now -- SKILLCHAIN_NOW, CL_S_NO_PLAN and CL_S_NO_FIGHT; 84: the Shortcuts
+// menu -- ORDERS' avoidAggro, SET_HUNT's CL_HUNT_AVOID_AGGRO, SKILLCHAINS, SKILLCHAIN and
+// SET_SKILLCHAIN, and CL_S_NO_SKILLCHAIN; 83: DBOX's loc, a stack sent from any
 // bag of hers; 82: DBOX, a cardian's delivery box, and
 // CL_S_DBOX_BUSY to CL_S_ALREADY_SENT; 81: AH_REPRICE, a listing of his given a
 // new price; 80: selling on the auction house --
@@ -155,7 +158,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 83 };
+enum { CL_PROTOCOL = 85 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -374,6 +377,11 @@ enum
     CL_S_PARTLY_USED       = 0x0212, // an enchanted item with charges spent: the auction house takes it only full
     CL_S_NOT_A_FULL_STACK  = 0x0213, // a stack sells only full
     CL_S_LISTING_GONE      = 0x0214, // no listing of his on sale by that number: it sold, or came back to him
+
+    // The party's skillchains (a member out of his party: CL_S_NOT_IN_PARTY)
+    CL_S_NO_SKILLCHAIN     = 0x0220, // those two weapon skills make no skillchain, or a member cannot use hers now
+    CL_S_NO_PLAN           = 0x0221, // Skillchain now with no skillchain picked
+    CL_S_NO_FIGHT          = 0x0222, // Skillchain now with no mob being fought: by him, nor by his plan's opener or closer
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -1184,6 +1192,10 @@ enum
     CL_T_PARTY_ROLES    = 0x0413,
     CL_T_PARTY_ROLE     = 0x0414,
     CL_T_SET_PARTY_ROLE = 0x0415,
+    CL_T_SKILLCHAINS    = 0x0416,
+    CL_T_SKILLCHAIN     = 0x0417,
+    CL_T_SET_SKILLCHAIN = 0x0418,
+    CL_T_SKILLCHAIN_NOW = 0x0419,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1264,6 +1276,8 @@ typedef struct cl_orders
     uint8_t   staked;     // answered: 1 while a camp stands
     uint8_t   diaBio;     // answered: which of the two, which block each other, her tactician prefers: 0 Dia, 1 Bio
     uint16_t  stakeZone;  // answered: the camp's zone id
+    uint8_t   avoidAggro; // answered: 1 while his cardians' Avoid aggro rows speak, 0 while the Shortcuts menu has it switched off
+    uint8_t   spare[3];
 } cl_orders;
 
 enum
@@ -1288,6 +1302,7 @@ enum
     CL_HUNT_AGGRESSIVE = 3, // value: 0 or 1
     CL_HUNT_LINKS      = 4, // value: 0 or 1
     CL_HUNT_DIA_BIO    = 5, // value: 0 Dia, 1 Bio -- not a hunt rule but an order kept with them
+    CL_HUNT_AVOID_AGGRO = 6, // value: 0 off, 1 on -- the Shortcuts menu's switch for his cardians' Avoid aggro, an order kept with them
 };
 
 typedef struct cl_set_hunt
@@ -1486,6 +1501,68 @@ typedef struct cl_set_party_role
     uint8_t   role;     // CL_ROLE_*
     uint8_t   spare[3];
 } cl_set_party_role;
+
+// ---- the party's skillchains (ROADMAP, Road to subjob item 6, slice 3h) ----
+// One skillchain the party can make: one member's weapon skill opens it and
+// another's closes it, as the server would chain them. The members are the
+// player and each cardian of his party in his zone whose weapon skill is her
+// tactician's. An answer to SKILLCHAINS and to SET_SKILLCHAIN
+typedef struct cl_skillchain
+{
+    cl_header h;
+    uint32_t  opener;         // charid
+    uint32_t  closer;         // charid
+    uint32_t  burster;        // charid: the party's first member who can burst it -- a cardian whose nukes are her tactician's, a player who has learned one; 0 for none
+    uint16_t  openerSkill;    // the weapon skill (the client's ability table by the same number)
+    uint16_t  closerSkill;
+    uint16_t  elements;       // the elements that burst it, a bit each: 1 << element, 1 fire to 8 dark
+    uint8_t   chain;          // the skillchain, the server's numbers: 1 Transfixion .. 8 Impaction, 9 Gravitation .. 12 Fragmentation, 13 Light, 14 Darkness, 15 Light II, 16 Darkness II
+    uint8_t   tier;           // 1 to 4
+    uint8_t   picked;         // 1 for the plan he has picked
+    uint8_t   spare[3];
+    char      openerName[16];
+    char      closerName[16];
+    char      bursterName[16];
+} cl_skillchain;
+
+// The skillchains his party can make: each comes as a SKILLCHAIN answer
+// (CL_F_MORE), the ones it can burst first and the higher tier first, then this
+typedef struct cl_skillchains
+{
+    cl_header h;
+    uint8_t   count;   // answered: options sent
+    uint8_t   chain;   // answered: the chain of his plan, 0 for none; a plan none of the options is any more (a member's weapon changed) still answers it
+    uint8_t   spare[2];
+} cl_skillchains;
+
+// His pick: the plan his party's tacticians' weapon skills follow, the chain
+// the opener's weapon skill and the closer's make; opener 0 takes the plan
+// back. The options come back as they now stand (SKILLCHAIN, CL_F_MORE)
+// ahead of the outcome, refused or not. Refused: CL_S_NOT_IN_PARTY for a
+// member not among those the options read, CL_S_NO_SKILLCHAIN for weapon
+// skills that are not theirs now or make no chain
+typedef struct cl_set_skillchain
+{
+    cl_header h;
+    uint32_t  opener;      // charid, 0 for no plan
+    uint32_t  closer;      // charid
+    uint16_t  openerSkill;
+    uint16_t  closerSkill;
+    uint8_t   chain;       // answered: the chain of his plan as it now stands, 0 for none
+    uint8_t   spare[3];
+} cl_set_skillchain;
+
+// His Skillchain now: on the mob being fought -- his own, else the one his
+// plan's opener or closer fights -- the plan's members open and close as
+// soon as they can, whatever the tactician's estimate of its worth says, for
+// that fight. Refused: CL_S_NO_PLAN with no skillchain picked, CL_S_NO_FIGHT
+// with no mob being fought
+typedef struct cl_skillchain_now
+{
+    cl_header h;
+    uint16_t  targid;      // answered: the mob's target index in his zone, 0 when refused
+    uint8_t   spare[2];
+} cl_skillchain_now;
 
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 
