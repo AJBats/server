@@ -295,6 +295,13 @@ namespace pawn
         // marked Damage spell (any) row of hers runs; none otherwise. What a
         // Burn on her mob is priced against (spell_bank.cpp burnPlans)
         auto OfferedNukes() -> std::vector<SpellID>;
+        // The best burst she would land on a chain of these elements on this
+        // mob, at a chain of `count` links: her tactician's nuke of the
+        // chain's elements she has the MP for, priced as her nukes are, by
+        // the server's burst steps (BurstFactors). 0 while her tactician
+        // casts no nukes for her, or she is not in the fight on this mob.
+        // What the plan's worth counts her burst at (skillchains.cpp)
+        auto BurstEstimate(CBattleEntity* PMob, uint16 elements, uint8 count) -> double;
         // Her marked row of a tool that goes out right before her weapon
         // skill -- Boost, or Sneak Attack from the mob's back -- on, its
         // gate holding now, in any layer that runs (a wild Monk's brains
@@ -575,9 +582,11 @@ namespace pawn
         // Her tactician's weapon skill at a marked Weapon skill (best) row
         // (ROADMAP slice 3h, skillchain_math.h wsCall), on the foe its gate
         // found while she fights it: a chain closed, the player's plan
-        // opened or held for, else her best -- on a mob at half its HP or
-        // more when no chain comes of it. `closeOnly`: only a close goes (the
-        // tick's own check, below). Every hold is said once, as it changes.
+        // opened, held for, saved for the next fight or spared a weapon
+        // skill alone, else her best -- on a mob at half its HP or more when
+        // no chain comes of it. `closeOnly`: only a close goes (the tick's own
+        // check, below). Every hold is said once, as it changes; with no plan
+        // she may ask for one, and saving it she may say so (skillchains.h).
         // Whether it went out
         auto UseWeaponSkill(CBattleEntity* PTarget, bool engaged, std::size_t index, bool closeOnly) -> bool;
         // Her best weapon skill alone, as Weapon skill (best) chooses it:
@@ -677,14 +686,10 @@ namespace pawn
         std::string                             m_nukeHold;
         // Why her tactician's weapon skill holds, as last said (said as it changes)
         std::string                             m_wsHold;
-        // Since when she has held for the player's plan at a weapon skill's
-        // TP (skillchain_math.h kPlanHoldLimit); none while she is not
-        std::optional<timer::time_point>        m_planHoldSince;
         // The burst factors kept (BurstFactors): the mob and the chain's
         // links they were asked for; and her last try at a burst (BurstNow)
-        uint32                                  m_burstMob   = 0;
-        uint8                                   m_burstCount = 0;
-        std::map<uint16, double>                m_burstFactors;
+        uint32                                    m_burstMob = 0;
+        std::map<uint8, std::map<uint16, double>> m_burstFactors; // the chain's links -> spell -> factor
         timer::time_point                       m_lastBurstTry{};
         // NakedSneak's answer, as of her last think (NakedSneakNow)
         bool                                    m_nakedSneak = false;

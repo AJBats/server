@@ -35,8 +35,11 @@ class CCharEntity;
 // The party's skillchains and the bursts on them (ROADMAP, Road to subjob
 // item 6, slice 3h; the rules are skillchain_math.h): the player's plan, the
 // options his Shortcuts menu lists, each member's place in the plan, what is
-// on a mob, and the Black Mage's telepathy -- when the chain lands. The
-// game's own rules are asked of the server (battleutils), never copied.
+// on a mob, the plan's TP window and its worth on a mob, his Skillchain now,
+// what the party's cardians say of it, and the Black Mage's telepathy --
+// when the chain lands. The game's own rules are asked of the server
+// (battleutils, and its skillchain damage through tactics_bank.lua), never
+// copied.
 namespace pawn::chains
 {
     // The server's skillchain rules as the pure rules take them:
@@ -57,15 +60,8 @@ namespace pawn::chains
 
     // The player's plan (the Shortcuts menu's pick): the skillchain his
     // party's tacticians' weapon skills make. One per player, in memory for
-    // the session, as his strategy is
-    struct Plan
-    {
-        uint32 opener      = 0;
-        uint16 openerSkill = 0;
-        uint32 closer      = 0;
-        uint16 closerSkill = 0;
-        uint8  chain       = 0;
-    };
+    // his session, as his strategy is (skillchain_math.h PlanBook)
+    using Plan = cardian::chains::Plan;
     auto planOf(uint32 ownerCharID) -> std::optional<Plan>;
 
     // The skillchains his party can make now (skillchain_math.h options),
@@ -88,9 +84,29 @@ namespace pawn::chains
     // now or make no chain
     auto choose(CCharEntity* POwner, uint32 opener, uint16 openerSkill, uint32 closer, uint16 closerSkill) -> uint16;
 
-    // A member out of a party: a plan naming her ends, and so does a
-    // player's own as he leaves (pawn::leftParty)
+    // His Skillchain now (the Shortcuts menu, the user, 2026-10-16): on the
+    // mob being fought -- his own, else the one his plan's opener or closer
+    // fights -- the plan's members open and close as soon as they can,
+    // whatever its worth says, for that fight. CL_S_OK and the mob;
+    // CL_S_NO_PLAN with no plan; CL_S_NO_FIGHT with no mob being fought
+    struct Forced
+    {
+        uint16         status = 0;
+        CBattleEntity* PMob   = nullptr;
+    };
+    auto skillchainNow(CCharEntity* POwner) -> Forced;
+
+    // A member out of a party (pawn::leftParty, called for a member who
+    // leaves, is kicked, is released or sent away, or whose party breaks up;
+    // never for one who zones or is knocked out): a plan naming her ends,
+    // and so does a player's own as he leaves
     void memberLeft(const CBattleEntity* PMember);
+    // A mob dead (the fight log's death event): his Skillchain now on it
+    // ends with that fight, and the save line's once a fight with it
+    void mobDied(uint32 mobId);
+    // A player signing out: his plan ends with his session, and all the rest
+    // kept for him -- his Skillchain now, his cardians' ask (pawn::signOutClub)
+    void signedOut(uint32 playerCharID);
 
     // A member's place in the plan of the party she fights for, on her mob:
     // her seat and her weapon skill in it, the chain, and her partner --
@@ -98,9 +114,13 @@ namespace pawn::chains
     // tactician's Weapon skill (best) runs, her gambits on; the plan's
     // weapon skill his now), and with the TP for his weapon skill. Every
     // member, in it or not, knows what the plan's opening looks like and
-    // whether its closer plays his part on her mob
+    // whether its closer plays his part on her mob, and the plan on her mob
+    // as the tactician reads it: saved for the next fight (its worth), his
+    // Skillchain now, and when it can start; and a member of it, whether a
+    // weapon skill of hers alone now is spare (skillchain_math.h spareWs)
     struct Part
     {
+        bool                        planned       = false; // her player has a plan
         cardian::chains::Seat       seat          = cardian::chains::Seat::None;
         uint16                      skill         = 0;
         uint8                       chain         = 0;
@@ -110,17 +130,34 @@ namespace pawn::chains
         cardian::chains::Properties planOpening{};
         bool                        planCloserFights = false;
         std::string                 planCloser;
+        bool                        saving     = false;
+        bool                        forced     = false;
+        bool                        planComing = false;
+        std::optional<double>       startIn;
+        std::optional<double>       spareIn;
     };
     auto partOf(CCharEntity* PMember, CBattleEntity* PMob) -> Part;
 
+    // A member's hold for the plan (skillchain_math.h kPlanHoldSafety):
+    // noted as her weapon skill holds for it or stops, and how long it has
+    // lasted -- kept here so the others' readings of her (othersClose, the
+    // forecast) ask the same rule her own weapon skill does
+    void noteHold(const CBattleEntity* PMember, bool holding);
+    auto heldForPlan(const CBattleEntity* PMember) -> double;
+    // A member's weapon skill gone out on a mob: a spare one counts against
+    // kSparesPerHold, and playing her part in the plan (its opening, its own
+    // close) starts the count again, as does another mob
+    void noteSpent(const CBattleEntity* PMember, const CBattleEntity* PMob, bool spare, bool plays);
+
     // Telepathy: the chain open on a mob, or expected on it, as the Black
     // Mage's nukes read it -- a plan's only while both its members play
-    // their part on the mob, not on a mob under half its HP before the
-    // opening, and not once both have had the TP for longer than the
-    // opening takes with none come. `open`: a burst window open now and the seconds
-    // it has left; `in`: a chain expected in this many seconds; `count`: the
-    // chain's links, which the burst's damage grows with; `how`: how it was
-    // read, for the map log. Every member asked about has her TP sampled
+    // their part on the mob, not on a mob it does not fit (its worth; his
+    // Skillchain now aside), and not once both have had the TP for longer
+    // than the opening takes with none come. `open`: a burst window open now
+    // and the seconds it has left; `in`: a chain expected in this many
+    // seconds, from the plan's TP window; `count`: the chain's links, which
+    // the burst's damage grows with; `how`: how it was read, for the map
+    // log. Every member asked about has her TP sampled
     struct Forecast
     {
         uint8                 chain    = 0;
@@ -143,4 +180,18 @@ namespace pawn::chains
     // A member's TP, sampled for her rate (skillchain_math.h TpClock); every
     // gambit engine's tick samples its own, and the forecast those it asks about
     void noteTp(CBattleEntity* PMember);
+
+    // A member's weapon skill landed on a mob for this much (the fight log,
+    // as it lands), or missed (0, its use with no damage): what the chain's
+    // worth prices her weapon skill at
+    void wsLanded(const CBattleEntity* PMember, uint16 skill, int32 damage);
+
+    // What the party's cardians say of the plan, in the party's chat
+    // (skillchain_math.h kAskLines, kSaveLines). With no plan picked and the
+    // party able to make a skillchain, one of the player's cardians asks
+    // once a session, settled into one of its first fights (AskWatch); a
+    // member of the plan keeping her TP for the next fight says so once a
+    // fight. Asked by her weapon skill row; a played character never speaks
+    void askIfDue(CCharEntity* PSpeaker, CBattleEntity* PMob);
+    void saySaving(CCharEntity* PMember, CBattleEntity* PMob);
 } // namespace pawn::chains

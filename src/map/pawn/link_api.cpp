@@ -1697,6 +1697,16 @@ namespace pawn::linkapi
             reply.finish(answer, status);
         }
 
+        // His Skillchain now: the plan's members open and close on the mob
+        // being fought, whatever its worth says (skillchains.h skillchainNow)
+        void skillchainNow(CCharEntity* PChar, const cl_skillchain_now& ask, Reply& reply)
+        {
+            const auto forced = pawn::chains::skillchainNow(PChar);
+            auto       answer = ask;
+            answer.targid     = forced.PMob != nullptr ? forced.PMob->targid : 0;
+            reply.finish(answer, forced.status);
+        }
+
         // "On me": set, cleared, or the other way round from how it stands
         void retreat(CCharEntity* PChar, const cl_retreat& ask, Reply& reply)
         {
@@ -2890,6 +2900,7 @@ namespace pawn::linkapi
         handle<cl_set_party_role>(setPartyRole);
         handle<cl_skillchains>(skillchains);
         handle<cl_set_skillchain>(setSkillchain);
+        handle<cl_skillchain_now>(skillchainNow);
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);

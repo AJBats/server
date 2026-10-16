@@ -1479,6 +1479,35 @@ namespace pawn::tactics
             return out;
         }
 
+        auto chainShare(CBattleEntity* PCloser, CBattleEntity* PTarget, const uint8 chain, const uint8 tier, const uint8 count) -> std::optional<double>
+        {
+            if (PCloser == nullptr || PTarget == nullptr || chain == 0)
+            {
+                return std::nullopt;
+            }
+            auto fn = bankFunction("chainShare");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            auto res = (*fn)(CLuaBaseEntity(PCloser), CLuaBaseEntity(PTarget), chain, tier, count);
+            if (failed("chainShare", res) || res.get_type(0) != sol::type::number)
+            {
+                return std::nullopt;
+            }
+            return res.get<double>(0);
+        }
+
+        auto paceOf(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CMobEntity* PMob) -> Pace
+        {
+            if (PMob == nullptr)
+            {
+                return {};
+            }
+            const auto rt = ratesOf(r, spot, PMob, seconds(timer::now()), &members);
+            return Pace{ rt.remaining, rt.dealtPerSecond };
+        }
+
         auto curesNothing(const CBattleEntity* PTarget) -> bool
         {
             return PTarget->objtype != TYPE_MOB && PTarget->health.hp >= PTarget->GetMaxHP() &&

@@ -226,6 +226,90 @@ describe('Cardian tactics bank', function()
         mob:setMod(xi.mod.SENGIKORI_MB_DMG_DEBUFF, 0)
     end)
 
+    -- The chain's worth reads the server's own skillchain damage: a share of
+    -- the closing weapon skill that grows with the chain's level, and
+    -- nothing on the mob taken or left behind
+    it('chainShare is the server skillchain damage for each point of the closing weapon skill', function()
+        local war = xi.test.world:spawnPlayer({ job = xi.job.WAR, level = 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = war.entities:moveTo(17190976) -- a Forest Hare (data/zones/East_Ronfaure/mobs.yaml)
+        mob:respawn()
+        local hp = mob:getHP()
+
+        local share = xi.cardian.bank.chainShare
+        local one   = share(war, mob, xi.skillchainType.LIQUEFACTION, 1, 1)
+        local two   = share(war, mob, xi.skillchainType.FUSION, 2, 1)
+        local three = share(war, mob, xi.skillchainType.LIGHT, 3, 1)
+        assert(type(one) == 'number' and one > 0 and one < 1, string.format('a level 1 chain deals a share of its weapon skill: %s', tostring(one)))
+        assert(two > one, string.format('a level 2 chain deals more: %s against %s', tostring(two), tostring(one)))
+        assert(three > two, string.format('a level 3 chain more again: %s against %s', tostring(three), tostring(two)))
+        assert(share(war, mob, xi.skillchainType.LIQUEFACTION, 1, 2) > one, 'a longer chain deals more')
+
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+        assert(not mob:hasStatusEffect(xi.effect.SKILLCHAIN), 'and carries no chain after')
+    end)
+
+    -- The era module's skillchain damage (prod's) adds a resist roll, which
+    -- halves the damage up to three times by chance: the share prices it at
+    -- its average and never rolls, so it is the same whatever the dice say.
+    -- xi_test runs the dev profile, which loads no era module: its override
+    -- is read from the script itself and put in place for the test alone
+    it('chainShare prices the era formula\'s resist roll at its average, the same every time', function()
+        local before = #xi.module.registry
+        require('modules/era/lua/combat/skillchain')
+        local eraDamage = nil
+        for i = #xi.module.registry, 1, -1 do
+            local module = xi.module.registry[i]
+            if module.name == 'era_skillchain' then
+                for _, override in ipairs(module.overrides) do
+                    if override.name == 'xi.combat.skillchain.calculateSkillchainDamage' then
+                        eraDamage = override.func
+                    end
+                end
+                if i > before then
+                    table.remove(xi.module.registry, i) -- declared for this test only: no loader applies it
+                end
+            end
+        end
+        assert(eraDamage ~= nil, 'modules/era/lua/combat/skillchain.lua no longer overrides calculateSkillchainDamage')
+
+        local war = xi.test.world:spawnPlayer({ job = xi.job.WAR, level = 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = war.entities:moveTo(17190976) -- a Forest Hare (data/zones/East_Ronfaure/mobs.yaml)
+        mob:respawn()
+        local hp      = mob:getHP()
+        local current = xi.cardian.bank.chainShare(war, mob, xi.skillchainType.FUSION, 2, 1)
+
+        local upstream = xi.combat.skillchain.calculateSkillchainDamage
+        local roll     = xi.combat.magicHitRate.calculateResistRate
+        xi.combat.skillchain.calculateSkillchainDamage = eraDamage
+        local ok, err = pcall(function()
+            local first = xi.cardian.bank.chainShare(war, mob, xi.skillchainType.FUSION, 2, 1)
+            assert(type(first) == 'number' and first > 0, string.format('the era formula prices the chain: %s', tostring(first)))
+            -- its resist at its average: at most the formula without one
+            assert(first <= current + 1e-9, string.format('a resist never adds: %s against %s', tostring(first), tostring(current)))
+            for seed = 1, 20 do
+                xi.test.world:setSeed(seed)
+                local again = xi.cardian.bank.chainShare(war, mob, xi.skillchainType.FUSION, 2, 1)
+                assert(again == first, string.format('seed %d: %s, first %s: the resist was rolled', seed, tostring(again), tostring(first)))
+            end
+            -- and no die is thrown for it: the game's own fraction roll is
+            -- never reached
+            local randomFloat = math.randomFloat
+            local thrown      = 0
+            math.randomFloat  = function(...)
+                thrown = thrown + 1
+                return randomFloat(...)
+            end
+            local rolled, errRolled = pcall(xi.cardian.bank.chainShare, war, mob, xi.skillchainType.FUSION, 2, 1)
+            math.randomFloat = randomFloat
+            assert(rolled, errRolled)
+            assert(thrown == 0, string.format('the share rolled the dice %d times', thrown))
+        end)
+        xi.combat.skillchain.calculateSkillchainDamage = upstream
+        assert(ok, err)
+        assert(xi.combat.magicHitRate.calculateResistRate == roll, 'the resist roll is put back')
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+    end)
+
     it('debuffSubPower reads what Dia and Bio scripts put on a mob, overrides included', function()
         local bank = xi.cardian.bank
         assert(bank.debuffSubPower('dia', xi.effect.DIA) == 10, 'Dia lowers defence 10% in upstream\'s script')

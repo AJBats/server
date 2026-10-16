@@ -34,8 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 84: the Shortcuts menu -- ORDERS'
-// avoidAggro, SET_HUNT's CL_HUNT_AVOID_AGGRO, SKILLCHAINS, SKILLCHAIN and
+// compatible, the user, 2026-09-14). 85: the Shortcuts menu's Skillchain
+// now -- SKILLCHAIN_NOW, CL_S_NO_PLAN and CL_S_NO_FIGHT; 84: the Shortcuts
+// menu -- ORDERS' avoidAggro, SET_HUNT's CL_HUNT_AVOID_AGGRO, SKILLCHAINS, SKILLCHAIN and
 // SET_SKILLCHAIN, and CL_S_NO_SKILLCHAIN; 83: DBOX's loc, a stack sent from any
 // bag of hers; 82: DBOX, a cardian's delivery box, and
 // CL_S_DBOX_BUSY to CL_S_ALREADY_SENT; 81: AH_REPRICE, a listing of his given a
@@ -157,7 +158,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 84 };
+enum { CL_PROTOCOL = 85 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -379,6 +380,8 @@ enum
 
     // The party's skillchains (a member out of his party: CL_S_NOT_IN_PARTY)
     CL_S_NO_SKILLCHAIN     = 0x0220, // those two weapon skills make no skillchain, or a member cannot use hers now
+    CL_S_NO_PLAN           = 0x0221, // Skillchain now with no skillchain picked
+    CL_S_NO_FIGHT          = 0x0222, // Skillchain now with no mob being fought: by him, nor by his plan's opener or closer
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -1192,6 +1195,7 @@ enum
     CL_T_SKILLCHAINS    = 0x0416,
     CL_T_SKILLCHAIN     = 0x0417,
     CL_T_SET_SKILLCHAIN = 0x0418,
+    CL_T_SKILLCHAIN_NOW = 0x0419,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1547,6 +1551,18 @@ typedef struct cl_set_skillchain
     uint8_t   chain;       // answered: the chain of his plan as it now stands, 0 for none
     uint8_t   spare[3];
 } cl_set_skillchain;
+
+// His Skillchain now: on the mob being fought -- his own, else the one his
+// plan's opener or closer fights -- the plan's members open and close as
+// soon as they can, whatever the tactician's estimate of its worth says, for
+// that fight. Refused: CL_S_NO_PLAN with no skillchain picked, CL_S_NO_FIGHT
+// with no mob being fought
+typedef struct cl_skillchain_now
+{
+    cl_header h;
+    uint16_t  targid;      // answered: the mob's target index in his zone, 0 when refused
+    uint8_t   spare[2];
+} cl_skillchain_now;
 
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 
