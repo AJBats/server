@@ -26,6 +26,7 @@
 #include "auction.h"
 #include "cardian_link.h"
 #include "club.h"
+#include "dbox.h"
 #include "engage_math.h"
 #include "food.h"
 #include "gambit_wire.h"
@@ -252,13 +253,28 @@ namespace pawn::linkapi
             return gear;
         }
 
-        // Her storage bags, in the order the menu cycles them
-        auto bagsOf(CCharEntity* PPawn) -> cl_bags
+        // Which of her Mog House's bags are hers to reach now: none, unless
+        // his Mog House reaches her as her Mog House row has it; then her Mog
+        // Safe by a Nomad Moogle, and her Storage too in his Mog House, as
+        // the game's own rule gives a player his (pawn::items::MogHouseBags)
+        auto mogHouseReaches(CCharEntity* PPlayer, CCharEntity* PPawn) -> pawn::items::MogHouseBags
+        {
+            const auto place = pawn::moghouse::placeOf(PPlayer);
+            if (pawn::moghouse::reaches(place, PPlayer, PPawn) != CL_S_OK)
+            {
+                return pawn::items::MogHouseBags::None;
+            }
+            return place.mogHouse ? pawn::items::MogHouseBags::All : pawn::items::MogHouseBags::Safe;
+        }
+
+        // Her storage bags, in the order the menu cycles them; with
+        // mogHouse, the Mog House bags it reaches after them
+        auto bagsOf(CCharEntity* PPawn, const pawn::items::MogHouseBags mogHouse) -> cl_bags
         {
             auto bags    = make<cl_bags>();
             bags.cardian = PPawn->id;
             constexpr std::size_t kMax = sizeof(cl_bags::bags) / sizeof(cl_bag);
-            for (const auto& bag : pawn::items::bags(PPawn))
+            for (const auto& bag : pawn::items::bags(PPawn, mogHouse))
             {
                 if (bags.count >= kMax)
                 {
@@ -486,37 +502,39 @@ namespace pawn::linkapi
                 [&](CCharEntity* PPawn)
                 {
                     reply.more(inventoryOf(PPawn, ask.bag));
-                    reply.more(bagsOf(PPawn));
+                    reply.more(bagsOf(PPawn, mogHouseReaches(PChar, PPawn)));
                 });
         }
 
         // One of her containers merged and put in order; a worn piece may sit
-        // in a new slot, so her gear follows
+        // in a new slot, so her gear follows. Her Mog House's while his Mog
+        // House reaches her
         void sortContainer(CCharEntity* PChar, const cl_sort& ask, Reply& reply)
         {
             changeItems(
                 PChar, ask, reply, std::set<uint8>{ ask.bag },
-                [&](CCharEntity* PPawn, bool&) { return pawn::items::sortBag(PPawn, ask.bag); },
+                [&](CCharEntity* PPawn, bool&) { return pawn::items::sortBag(PPawn, ask.bag, mogHouseReaches(PChar, PPawn)); },
                 [&](CCharEntity* PPawn)
                 {
                     reply.more(inventoryOf(PPawn, ask.bag));
-                    reply.more(bagsOf(PPawn));
+                    reply.more(bagsOf(PPawn, mogHouseReaches(PChar, PPawn)));
                     reply.more(gearOf(PPawn));
                 });
         }
 
-        // A stack between her inventory and one of her bags; a worn piece
-        // carried into a wardrobe reports its new home in her gear
+        // A stack between her inventory and one of her bags -- her Mog
+        // House's while his Mog House reaches her; a worn piece carried into
+        // a wardrobe reports its new home in her gear
         void moveStack(CCharEntity* PChar, const cl_move& ask, Reply& reply)
         {
             changeItems(
                 PChar, ask, reply, std::set<uint8>{ ask.from, ask.to },
-                [&](CCharEntity* PPawn, bool& partly) { return pawn::items::moveItem(PPawn, ask.from, ask.slot, ask.to, ask.qty, &partly); },
+                [&](CCharEntity* PPawn, bool& partly) { return pawn::items::moveItem(PPawn, ask.from, ask.slot, ask.to, ask.qty, &partly, mogHouseReaches(PChar, PPawn)); },
                 [&](CCharEntity* PPawn)
                 {
                     reply.more(inventoryOf(PPawn, ask.from));
                     reply.more(inventoryOf(PPawn, ask.to));
-                    reply.more(bagsOf(PPawn));
+                    reply.more(bagsOf(PPawn, mogHouseReaches(PChar, PPawn)));
                     reply.more(gearOf(PPawn));
                 });
         }
@@ -2224,6 +2242,12 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_MALFORMED);
                 return;
             }
+            // her Mog House's bags only where they are hers to reach
+            if (pawn::items::isMogHouseBag(ask.loc) && !pawn::items::reachable(PPawn, ask.loc, mogHouseReaches(PChar, PPawn)))
+            {
+                reply.finish(ask, CL_S_NO_SUCH_BAG);
+                return;
+            }
             reply.finish(inventoryOf(PPawn, ask.loc, wildOnly), CL_S_OK);
         }
 
@@ -2235,7 +2259,7 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            reply.finish(bagsOf(PPawn), CL_S_OK);
+            reply.finish(bagsOf(PPawn, mogHouseReaches(PChar, PPawn)), CL_S_OK);
         }
 
         // What she cannot do yet: the seconds left on every spell and ability
@@ -2503,6 +2527,122 @@ namespace pawn::linkapi
             reply.finish(ask, status);
         }
 
+        // Her delivery box at the Mog House, as the job change reaches her
+        // (pawn/dbox.h): one request, one thing done by the game's own
+        // routine, then her inventory and her purse if they changed, and the
+        // box's eight slots as they stand
+        void deliveryBox(CCharEntity* PChar, const cl_dbox& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findManagedPawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            // the box's eight slots as they stand, then the outcome: every
+            // answer once she is found carries her box, refusals included
+            const auto finish = [&](const uint16 status)
+            {
+                auto answer    = ask;
+                answer.waiting = ask.box == 1 ? pawn::dbox::waitingFor(PPawn->id) : 0;
+                const auto box = pawn::dbox::slotsOf(PPawn->id, ask.box == 1 ? 1 : 2);
+                for (std::size_t i = 0; i < box.size(); ++i)
+                {
+                    answer.slots[i] = cl_dbox_slot{ box[i].item, box[i].state, 0, box[i].qty, {} };
+                    setText(answer.slots[i].name, box[i].name);
+                }
+                reply.finish(answer, status);
+            };
+            if (const auto where = pawn::moghouse::reaches(pawn::moghouse::placeOf(PChar), PChar, PPawn); where != CL_S_OK)
+            {
+                finish(where);
+                return;
+            }
+            if (PChar->isInEvent() || PPawn->isInEvent())
+            {
+                finish(CL_S_IN_EVENT);
+                return;
+            }
+            auto* scheduler = pawn::players::schedulerOf(PChar->id);
+            if (scheduler == nullptr)
+            {
+                finish(CL_S_REFUSED);
+                return;
+            }
+
+            // A stack from another bag of hers comes into her inventory first,
+            // by her own move, and goes into the box from the stack it landed
+            // in: the game's box sends from the inventory alone. Every refusal
+            // the set would give is asked first, so a refused set moves nothing
+            uint8 invSlot = ask.invSlot;
+            if (ask.action == CL_DBOX_SET && ask.loc != LOC_INVENTORY)
+            {
+                const auto   reach = mogHouseReaches(PChar, PPawn);
+                const auto*  PBag  = pawn::items::reachable(PPawn, ask.loc, reach) ? PPawn->getStorage(ask.loc) : nullptr;
+                const CItem* PItem = PBag != nullptr && ask.invSlot != 0 ? PBag->GetItem(ask.invSlot) : nullptr;
+                if (PItem == nullptr)
+                {
+                    finish(CL_S_NO_ITEM);
+                    return;
+                }
+                if (ask.box != 2)
+                {
+                    finish(CL_S_MALFORMED);
+                    return;
+                }
+                if (const auto why = pawn::dbox::setRefusal(PPawn, ask.slot, PItem, ask.qty, ask.to); why != CL_S_OK)
+                {
+                    finish(why);
+                    return;
+                }
+                // her inventory's stacks of it before the move, to know the
+                // one it lands in: one that took some of it, never one she
+                // wears or one a transaction holds
+                const uint16        itemId = PItem->getID();
+                auto*               PInv   = PPawn->getStorage(LOC_INVENTORY);
+                std::vector<uint32> before(PInv->GetSize() + 1, 0);
+                for (uint8 slot = 1; slot <= PInv->GetSize(); ++slot)
+                {
+                    const CItem* PHere = PInv->GetItem(slot);
+                    before[slot]       = PHere != nullptr && PHere->getID() == itemId ? PHere->getQuantity() : 0;
+                }
+                const auto moved = pawn::items::moveItem(PPawn, ask.loc, ask.invSlot, LOC_INVENTORY, ask.qty, nullptr, reach);
+                reply.more(inventoryOf(PPawn, ask.loc));
+                reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+                reply.more(bagsOf(PPawn, reach));
+                if (moved != CL_S_OK)
+                {
+                    finish(moved);
+                    return;
+                }
+                invSlot        = 0;
+                uint32 fullest = 0;
+                for (uint8 slot = 1; slot <= PInv->GetSize() && slot < before.size(); ++slot)
+                {
+                    const CItem* PHere = PInv->GetItem(slot);
+                    if (PHere != nullptr && PHere->getID() == itemId && PHere->getQuantity() > before[slot] && PHere->getQuantity() >= ask.qty &&
+                        PHere->state() != ItemState::Equipped && !PHere->isBusy() && PHere->getQuantity() > fullest)
+                    {
+                        invSlot = slot;
+                        fullest = PHere->getQuantity();
+                    }
+                }
+                if (invSlot == 0)
+                {
+                    finish(CL_S_REFUSED); // it landed split across her stacks: in her inventory now, to set from there
+                    return;
+                }
+            }
+
+            const auto status = pawn::dbox::act(PPawn, ask.box, ask.action, ask.slot, invSlot, ask.qty, ask.to, *scheduler);
+            if (status == CL_S_OK && (ask.action == CL_DBOX_TAKE || ask.action == CL_DBOX_SET))
+            {
+                reply.more(inventoryOf(PPawn, LOC_INVENTORY));
+                reply.more(statsOf(PPawn, true));
+            }
+            finish(status);
+        }
+
         // The combat or the magic skills her jobs can raise, each at its level
         // and its cap at her level: the higher of main and support job
         void skills(CCharEntity* PChar, const cl_skills& ask, Reply& reply)
@@ -2721,6 +2861,7 @@ namespace pawn::linkapi
         handle<cl_jobs>(jobs);
         handle<cl_skills>(skills);
         handle<cl_job_change>(jobChange);
+        handle<cl_dbox>(deliveryBox);
         handle<cl_offer_answer>(offerAnswer);
     }
 } // namespace pawn::linkapi

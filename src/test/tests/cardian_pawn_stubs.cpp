@@ -38,7 +38,9 @@
 #include "map/pause/pause.h"
 #include "map/pawn/ah_sell.h"
 #include "map/pawn/cardian_link_protocol.h"
+#include "map/pawn/dbox.h"
 #include "map/pawn/item_moves.h"
+#include "map/pawn/players.h"
 #include "map/pawn/errands.h"
 #include "map/pawn/ls_bank_moves.h"
 #include "map/pawn/pawn.h"
@@ -407,6 +409,58 @@ class CardianTestStubs : public CPPModule
             }
             return db::preparedStmt("CREATE TRIGGER cardian_test_refuse_listing BEFORE INSERT ON auction_house FOR EACH ROW "
                                     "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'") != nullptr;
+        };
+
+        // A cardian's delivery box as the Link's DBOX drives it
+        // (scripts/tests/cardian/dbox.lua, pawn/dbox.h), on players of the
+        // test's, the place they stand left out: one request on a box, its
+        // eight slots, and what waits beyond them
+        ::lua["xi"]["cardian"]["dbox"] = ::lua.create_table();
+        sol::table dbox                = ::lua["xi"]["cardian"]["dbox"];
+        dbox["status"]                 = ::lua.create_table_with(
+            "OK", CL_S_OK, "NO_ITEM", CL_S_NO_ITEM, "NO_SPACE", CL_S_NO_SPACE, "RARE_OWNED", CL_S_RARE_OWNED, "ITEM_EQUIPPED", CL_S_ITEM_EQUIPPED,
+            "BAD_QUANTITY", CL_S_BAD_QUANTITY, "REFUSED", CL_S_REFUSED, "DBOX_BUSY", CL_S_DBOX_BUSY, "NOT_DELIVERABLE", CL_S_NOT_DELIVERABLE,
+            "BOX_BACKLOGGED", CL_S_BOX_BACKLOGGED, "NO_RECIPIENT", CL_S_NO_RECIPIENT, "NO_SENDER", CL_S_NO_SENDER, "ALREADY_SENT", CL_S_ALREADY_SENT,
+            "MALFORMED", CL_S_MALFORMED);
+        dbox["action"] = ::lua.create_table_with(
+            "LOOK", CL_DBOX_LOOK, "TAKE", CL_DBOX_TAKE, "DROP", CL_DBOX_DROP, "RETURN", CL_DBOX_RETURN,
+            "SET", CL_DBOX_SET, "SEND", CL_DBOX_SEND, "RECALL", CL_DBOX_RECALL, "CLEAR", CL_DBOX_CLEAR);
+        dbox["state"] = ::lua.create_table_with(
+            "EMPTY", CL_DBOX_EMPTY, "WAITING", CL_DBOX_WAITING, "SENT", CL_DBOX_SENT, "DELIVERED", CL_DBOX_DELIVERED);
+        // one request; nil when the test's player has no session to lend its scheduler
+        dbox["act"] = [charOf](CLuaBaseEntity* PLua, const uint8 box, const uint8 action, const uint8 slot, const uint8 invSlot, const uint32 qty,
+                               const uint32 to) -> sol::optional<uint16>
+        {
+            auto* PChar     = charOf(PLua);
+            auto* scheduler = PChar != nullptr ? pawn::players::schedulerOf(PChar->id) : nullptr;
+            if (scheduler == nullptr)
+            {
+                return sol::nullopt;
+            }
+            return pawn::dbox::act(PChar, box, action, slot, invSlot, qty, to, *scheduler);
+        };
+        // { [0..7] = { item, state, qty, name } } of a character's box
+        dbox["slots"] = [](const uint32 charid, const uint8 box) -> sol::table
+        {
+            sol::table out = ::lua.create_table();
+            const auto all = pawn::dbox::slotsOf(charid, box);
+            for (std::size_t i = 0; i < all.size(); ++i)
+            {
+                out[i] = ::lua.create_table_with("item", all[i].item, "state", all[i].state, "qty", all[i].qty, "name", all[i].name);
+            }
+            return out;
+        };
+        dbox["waiting"] = [](const uint32 charid) -> uint8
+        {
+            return pawn::dbox::waitingFor(charid);
+        };
+        // why a set of the stack in a bag's slot would be refused, asked before
+        // anything moves
+        dbox["setRefusal"] = [charOf](CLuaBaseEntity* PLua, const uint8 slot, const uint8 loc, const uint8 invSlot, const uint32 qty, const uint32 to) -> uint16
+        {
+            auto* PChar = charOf(PLua);
+            auto* PBag  = PChar != nullptr ? PChar->getStorage(loc) : nullptr;
+            return pawn::dbox::setRefusal(PChar, slot, PBag != nullptr ? PBag->GetItem(invSlot) : nullptr, qty, to);
         };
     }
 };

@@ -42,6 +42,17 @@ class CItemEquipment;
 // cardian_link_protocol.h), which the addon words.
 namespace pawn::items
 {
+    // Which of her Mog House's bags a call reaches, by the game's own rule
+    // for a player's (packets/c2s/0x029_item_move.cpp): none; her Mog Safe,
+    // and her Mog Safe 2 once her Mog House's second floor is open, as by a
+    // Nomad Moogle; or those and her Storage, as in his own Mog House
+    enum class MogHouseBags : uint8
+    {
+        None,
+        Safe,
+        All,
+    };
+
     // Move qty from the player's LOC_INVENTORY slot into the pawn's
     // inventory. The item must be idle (not equipped, not in a bazaar, not
     // mid-transaction); rare/stack rules on the receiving side are the
@@ -68,7 +79,8 @@ namespace pawn::items
     // item objects move, so worn gear stays worn; the saved equip rows and
     // recast entries follow. Refused while any stack is mid-transaction or
     // an item use is in flight, and undone if the database does not follow.
-    auto sortBag(CCharEntity* PPawn, uint8 location) -> uint16;
+    // With mogHouse, the Mog House bags it reaches too (bags, below).
+    auto sortBag(CCharEntity* PPawn, uint8 location, MogHouseBags mogHouse = MogHouseBags::None) -> uint16;
 
     // The pawn uses the item in the given container's slot on itself
     // through its own AI -- cast time, job/level checks and spell learning
@@ -110,16 +122,26 @@ namespace pawn::items
 
     // Her storage bags, the ones a character reaches from the field: Mog
     // Case, the sized Mog Wardrobes, Satchel and Sack -- the item-move
-    // handler's own list for a player, minus the Mog House containers
-    // (Safe, Storage, Locker) a cardian never stands in. Inventory is not
-    // a bag; it is the other side of every move.
+    // handler's own list for a player, minus the Mog House containers.
+    // With mogHouse -- the player's Mog House reaches her, he in his own or
+    // by a Nomad Moogle (pawn::moghouse::reaches) -- the Mog House bags it
+    // reaches too (MogHouseBags), which her inventory page then lists, moves
+    // between and sorts; nothing else of hers uses them. Inventory is not a
+    // bag; it is the other side of every move.
     struct Bag
     {
         uint8 location = 0;
         uint8 size     = 0;
         uint8 used     = 0;
     };
-    auto bags(CCharEntity* PPawn) -> std::vector<Bag>;
+    auto bags(CCharEntity* PPawn, MogHouseBags mogHouse = MogHouseBags::None) -> std::vector<Bag>;
+
+    // One of her Mog House's bags: Mog Safe, Mog Safe 2 or Storage
+    auto isMogHouseBag(uint8 location) -> bool;
+
+    // The inventory, a bag she reaches from the field, or one of her Mog
+    // House's that mogHouse reaches
+    auto reachable(CCharEntity* PPawn, uint8 location, MogHouseBags mogHouse) -> bool;
 
     // The Mog Wardrobes: gear is worn from the inventory and these only
     auto isWardrobe(uint8 location) -> bool;
@@ -136,8 +158,9 @@ namespace pawn::items
     // it is between the inventory and a wardrobe, either way, and stays
     // worn; the storage-only bags take nothing worn. Each top-up commits by
     // itself, so a refusal can come after part of the stack has moved:
-    // partly, when given, says so.
-    auto moveItem(CCharEntity* PPawn, uint8 fromLoc, uint8 slot, uint8 toLoc, uint32 qty, bool* partly = nullptr) -> uint16;
+    // partly, when given, says so. With mogHouse, the Mog House bags it
+    // reaches too (bags, above).
+    auto moveItem(CCharEntity* PPawn, uint8 fromLoc, uint8 slot, uint8 toLoc, uint32 qty, bool* partly = nullptr, MogHouseBags mogHouse = MogHouseBags::None) -> uint16;
 
     // Her gil: the inventory's slot 0 (0 when it holds none, or not gil)
     auto gilOf(CCharEntity* PChar) -> uint32;

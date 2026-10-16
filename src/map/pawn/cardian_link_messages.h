@@ -135,6 +135,7 @@ namespace cardian::link
     X(AH_CANCEL, cl_ah_cancel)   \
     X(AH_REPRICE, cl_ah_reprice) \
     X(JOB_CHANGE, cl_job_change) \
+    X(DBOX, cl_dbox)             \
     X(CLUB, cl_club)             \
     X(CLUB_MEMBER, cl_club_member) \
     X(CLUB_INVITE, cl_club_invite) \
