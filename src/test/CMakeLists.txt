@@ -117,6 +117,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_walk_tests.cpp # CARDIAN: the one walker's route arithmetic (ROADMAP W)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_junk_tests.cpp # CARDIAN: the junk rule (junk_math.h)
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_ls_bank_tests.cpp # CARDIAN: the linkshell bank tests
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_gambit_spells_tests.cpp # CARDIAN: the spells a gambit editor offers: only those she has learned
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_skillchain_tests.cpp # CARDIAN: skillchains and magic bursts: the options, the tactician's weapon skill, the TP clock, the burst
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )

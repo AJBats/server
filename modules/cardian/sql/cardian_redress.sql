@@ -2,17 +2,18 @@
 -- One row per world body, the request channel between xi_map and the census
 -- watcher (tools/world/census.py watch), which share nothing else:
 --   asked  the map: she stands by an auction counter with the player, risen past
---          the level she was last dressed for; `level` is the level she has now
---   ready  the census: her wardrobe, spellbook and food for `level` written
---          (cardian_wardrobe, cardian_spells, cardian_food), her skill values for it
---          in `skills` ("skillid:value" pairs in the game's tenths, joined by commas),
---          the pieces and food it had issued her before this plan in `issued`
---          (item ids, joined by commas), and the support job of that level in
---          `sub`, with the job's own level as she levelled it in `sublevel` (ahead
---          of the half of her main the game shows; 0 for none)
+--          the level she was last dressed for; `level` is the level she has now,
+--          `sub` the support job she wears and `sublevel` the level the game shows
+--          it at (0 for none), which her plan is made for
+--   ready  the census: her wardrobe, spellbook and food for `level` and that
+--          support job written (cardian_wardrobe, cardian_spells, cardian_food), and
+--          the pieces and food it had issued her before this plan in `issued` (item
+--          ids, joined by commas)
 --   done   the map: the plan put on her while she stands -- the census never writes
 --          the character tables of a body the map holds; `level` is the level she
 --          was dressed for
+-- A re-dress is gear, spells and food only: her level, support job and skills grow
+-- out of sight (cardian_ding). `skills` is no longer written and stays empty.
 -- A row asked or ready is never asked again until it is done. xi_map also makes the
 -- table as it boots (pawn::redress::ensureTable), since dbtool's update skips module
 -- SQL on a database whose upstream SQL has not moved; so does the watcher. Must stay

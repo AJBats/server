@@ -21,6 +21,7 @@
 
 #include "pawn_gambits.h"
 #include "engage_math.h"
+#include "gambit_spells.h"
 #include "gambit_text.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -4160,10 +4161,11 @@ namespace pawn
             v.actions.push_back({ G_REACTION_BEHAVIOR, behaviour(pawn::Behavior::EatWithPlayer), 1, "Eat with the player", ActionGroup::Behaviours });
         }
 
-        // The actions of her main job and her support job, at every level, in
-        // a fixed order, each marked whether she can use it now (RESEARCH
-        // §14.13): what she has not learned yet reads greyed. The command
-        // window lists only what she can use.
+        // The actions of her main job and her support job, in a fixed order,
+        // each marked whether she can use it now (RESEARCH §14.13): the
+        // spells she has learned (gambit_spells.h), and the abilities and
+        // weapon skills of her jobs at every level, what she has not learned
+        // yet greyed. The command window lists only what she can use.
         v.mjob = static_cast<uint8>(PPawn->GetMJob());
         v.mlvl = PPawn->GetMLevel();
         v.sjob = static_cast<uint8>(PPawn->GetSJob());
@@ -4181,52 +4183,12 @@ namespace pawn
             return false;
         };
 
-        // Enfeeble heads her Magic when her jobs cast any of its enfeebles
-        // (tactician_line.h kEnfeebleOrder), usable once she can cast one
-        {
-            bool ofHers = false;
-            bool usable = false;
-            for (const auto id : cardian::tactician::kEnfeebleOrder)
-            {
-                auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
-                ofHers       = ofHers || (PSpell != nullptr && ofHerJobs(PSpell));
-                usable       = usable || (PSpell != nullptr && CSpellBook::Eligible(PPawn, PSpell));
-            }
-            if (ofHers)
-            {
-                VocabAction enfeeble{ G_REACTION::MA, pawn::G_SELECT_ENFEEBLE, 0, "Enfeeble", ActionGroup::Magic, TARGET_ENEMY };
-                enfeeble.usable = usable;
-                v.actions.push_back(std::move(enfeeble));
-            }
-        }
-
-        // Damage spell (any) follows when her jobs cast any damage spell
-        // (spell_bank.h isNuke), usable once she can cast one
-        {
-            bool ofHers = false;
-            bool usable = false;
-            for (uint16 id = 1; id < MAX_SPELL_ID && !usable; ++id)
-            {
-                auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
-                if (PSpell == nullptr || !pawn::tactics::bank::isNuke(PSpell) || !ofHerJobs(PSpell))
-                {
-                    continue;
-                }
-                ofHers = true;
-                usable = CSpellBook::Eligible(PPawn, PSpell);
-            }
-            if (ofHers)
-            {
-                VocabAction nuke{ G_REACTION::MA, G_SELECT::RANDOM, 0, "Damage spell (any)", ActionGroup::Magic, TARGET_ENEMY };
-                nuke.usable = usable;
-                v.actions.push_back(std::move(nuke));
-            }
-        }
-
-        // Magic in spell order, a family's "(best)" just before its first
-        // spell when she has more than one spell of it to choose among
-        std::vector<CSpell*> spells;
-        std::vector<SPELLFAMILY> hers;
+        // Her Magic: every spell of her jobs at any level weighed, and only
+        // what she has learned offered (gambit_spells.h) -- Enfeeble (its
+        // spells tactician_line.h kEnfeebleOrder), Damage spell (any) (any
+        // damage spell, spell_bank.h isNuke), then her spells in spell order,
+        // a family's "(best)" just before its first
+        std::vector<cardian::gambitspells::Spell> spells;
         for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
         {
             auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
@@ -4234,31 +4196,48 @@ namespace pawn
             {
                 continue;
             }
-            spells.push_back(PSpell);
-            if (PSpell->getSpellFamily() != SPELLFAMILY_NONE && CSpellBook::Eligible(PPawn, PSpell))
-            {
-                hers.push_back(PSpell->getSpellFamily());
-            }
+            spells.push_back({ .id       = id,
+                               .family   = static_cast<uint16>(PSpell->getSpellFamily()),
+                               .learned  = charutils::hasSpell(PPawn, id) != 0,
+                               .castable = CSpellBook::Eligible(PPawn, PSpell),
+                               .nuke     = pawn::tactics::bank::isNuke(PSpell),
+                               .enfeeble = cardian::tactician::isEnfeebleSpell(id) });
         }
-        std::vector<SPELLFAMILY> named;
-        for (auto* PSpell : spells)
+        for (const auto& entry : cardian::gambitspells::entries(spells))
         {
-            const auto family = PSpell->getSpellFamily();
-            const auto kin    = std::ranges::count_if(spells, [family](CSpell* PKin)
-                                                      {
-                                                          return PKin->getSpellFamily() == family;
-                                                      });
-            if (family != SPELLFAMILY_NONE && kin > 1 && std::ranges::find(named, family) == named.end())
+            switch (entry.kind)
             {
-                named.push_back(family);
-                VocabAction best{ G_REACTION::MA, G_SELECT::HIGHEST, static_cast<uint32>(family), familyName(static_cast<uint32>(family)) + " (best)", ActionGroup::Magic };
-                best.usable = std::ranges::find(hers, family) != hers.end();
-                v.actions.push_back(std::move(best));
+                case cardian::gambitspells::Kind::Enfeeble:
+                {
+                    VocabAction enfeeble{ G_REACTION::MA, pawn::G_SELECT_ENFEEBLE, 0, "Enfeeble", ActionGroup::Magic, TARGET_ENEMY };
+                    enfeeble.usable = entry.usable;
+                    v.actions.push_back(std::move(enfeeble));
+                    break;
+                }
+                case cardian::gambitspells::Kind::AnyNuke:
+                {
+                    VocabAction nuke{ G_REACTION::MA, G_SELECT::RANDOM, 0, "Damage spell (any)", ActionGroup::Magic, TARGET_ENEMY };
+                    nuke.usable = entry.usable;
+                    v.actions.push_back(std::move(nuke));
+                    break;
+                }
+                case cardian::gambitspells::Kind::FamilyBest:
+                {
+                    VocabAction best{ G_REACTION::MA, G_SELECT::HIGHEST, entry.arg, familyName(entry.arg) + " (best)", ActionGroup::Magic };
+                    best.usable = entry.usable;
+                    v.actions.push_back(std::move(best));
+                    break;
+                }
+                case cardian::gambitspells::Kind::Specific:
+                {
+                    auto*       PSpell = spell::GetSpell(static_cast<SpellID>(entry.arg));
+                    VocabAction spell{ G_REACTION::MA, G_SELECT::SPECIFIC, entry.arg, titleCase(PSpell->getName()), ActionGroup::Magic, PSpell->getValidTarget(),
+                                       PSpell->getMPCost() };
+                    spell.usable = entry.usable;
+                    v.actions.push_back(std::move(spell));
+                    break;
+                }
             }
-            const auto id = static_cast<uint16>(PSpell->getID());
-            VocabAction spell{ G_REACTION::MA, G_SELECT::SPECIFIC, id, titleCase(PSpell->getName()), ActionGroup::Magic, PSpell->getValidTarget(), PSpell->getMPCost() };
-            spell.usable = CSpellBook::Eligible(PPawn, PSpell);
-            v.actions.push_back(std::move(spell));
         }
 
         // Abilities, her main job's then her support job's, as each job's
