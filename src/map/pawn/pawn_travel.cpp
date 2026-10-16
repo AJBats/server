@@ -31,6 +31,7 @@
 #include "data/loader.h"
 #include "navmesh/detour_navmesh.h"
 #include "utils/zoneutils.h"
+#include "ximesh/ximesh.h"
 #include "zone.h"
 
 #include <algorithm>
@@ -97,6 +98,7 @@ namespace
         const dtNavMesh*      mesh{};
         sz::Pieces            pieces;
         cardian::route::Faces faces;
+        cardian::route::Seams seams;
     };
 
     // Leaked on purpose, as the zones they read are
@@ -122,7 +124,8 @@ namespace
     auto meshOf(const uint16 zone) -> const ZoneMesh*
     {
         const dtNavMesh* current = nullptr;
-        if (const auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(zone)); PZone != nullptr)
+        const auto*      PZone   = zoneutils::GetZone(static_cast<xi::ZoneId>(zone));
+        if (PZone != nullptr)
         {
             if (const auto* detour = dynamic_cast<const DetourNavMesh*>(PZone->navMesh()); detour != nullptr)
             {
@@ -139,7 +142,14 @@ namespace
         ZoneMesh   entry{ .mesh = current };
         if (current != nullptr)
         {
-            entry.pieces = sz::piecesOf(*current);
+            // the mesh's seams, kept where the zone's collision lets a body
+            // across, its invisible barriers included
+            const XiMesh* collision = PZone != nullptr ? PZone->xiMesh() : nullptr;
+            entry.seams             = cardian::route::seamsOf(*current, collision == nullptr ? cardian::route::SeamOpen{} : cardian::route::SeamOpen([collision](const position_t& a, const position_t& b)
+            {
+                return !collision->rayIntersect(Vector3{ a.x, a.y, a.z }, Vector3{ b.x, b.y, b.z }, IgnoreTransparentBarriers::No);
+            }));
+            entry.pieces = sz::piecesOf(*current, &entry.seams);
             entry.faces  = cardian::route::facesOf(*current);
         }
         auto& kept = meshes[zone] = std::move(entry);
@@ -187,6 +197,8 @@ namespace
         std::size_t pieces    = 0;
         std::size_t faces     = 0;
         std::size_t faceBytes = 0; // what the steep faces hold in memory, kept for good
+        std::size_t seams     = 0;
+        std::size_t seamBytes = 0; // what the seams hold in memory, kept for good
         for (const auto zoneId : zoneIds)
         {
             const auto zone = static_cast<uint16>(zoneId);
@@ -196,6 +208,9 @@ namespace
                 faces += zm->faces.faces.size();
                 faceBytes += zm->faces.faces.capacity() * sizeof(cardian::route::Face) +
                              (zm->faces.first.capacity() + zm->faces.base.capacity()) * sizeof(uint32_t);
+                seams += zm->seams.list.size();
+                seamBytes += zm->seams.list.capacity() * sizeof(cardian::route::Seam) +
+                             (zm->seams.first.capacity() + zm->seams.base.capacity() + zm->seams.index.capacity()) * sizeof(uint32_t);
                 if (!zm->pieces.drops.empty())
                 {
                     built.drops[zone] = zm->pieces.drops;
@@ -228,8 +243,9 @@ namespace
             drops += zoneDrops.size();
         }
         constexpr double kMB = 1024.0 * 1024.0;
-        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, {} steep faces ({:.1f} MB), the walk's tables ({:.1f} MB), in {} ms",
-                    zoneIds.size(), pieces, built.lines.size(), drops, faces, static_cast<double>(faceBytes) / kMB, static_cast<double>(built.graph.bytes()) / kMB,
+        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, {} steep faces ({:.1f} MB), {} seams ({:.1f} MB), the walk's tables ({:.1f} MB), in {} ms",
+                    zoneIds.size(), pieces, built.lines.size(), drops, faces, static_cast<double>(faceBytes) / kMB, seams, static_cast<double>(seamBytes) / kMB,
+                    static_cast<double>(built.graph.bytes()) / kMB,
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
     }
 
@@ -354,10 +370,10 @@ namespace pawn::travel
         {
             return std::nullopt;
         }
-        auto route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kBodyExtents, hazards, sight, within, &zm->faces);
+        auto route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kBodyExtents, hazards, sight, within, &zm->faces, &zm->seams);
         if (!route.has_value())
         {
-            route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kLineExtents, hazards, sight, within, &zm->faces);
+            route = cardian::route::searchSafeGround(*zm->mesh, from, sz::kLineExtents, hazards, sight, within, &zm->faces, &zm->seams);
         }
         return route;
     }
@@ -370,10 +386,10 @@ namespace pawn::travel
         {
             return std::nullopt;
         }
-        auto route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces);
+        auto route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces, &zm->seams);
         if (!route.has_value())
         {
-            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces);
+            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces, &zm->seams);
         }
         return route;
     }
