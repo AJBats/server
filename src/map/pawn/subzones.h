@@ -256,4 +256,57 @@ namespace cardian::subzones
         }
         return pieces.of(mesh, ref);
     }
+
+    // Where one end of a zone line stands on its zone's mesh: the piece, and
+    // the spot on it where a walk to take the line ends, or where the line
+    // sets her down
+    struct LineEnd
+    {
+        Piece      piece{};
+        position_t at{};
+    };
+
+    // The ground straight under a zone line's point: a trigger often floats
+    // some yalms over the path, nearer a scrap of mesh at its own height than
+    // the ground beneath it
+    constexpr float kColumnExtents[] = { 1.5f, 60.0f, 1.5f };
+
+    // A zone line's end -- its trigger, or where it sets her down -- placed
+    // on the mesh: on the nearest ground within kLineExtents, unless the
+    // ground straight under its point is another, bigger piece (a trigger
+    // floating over the path, nearest a scrap of mesh at its own height).
+    // Placed on the nearest ground, its spot is the point itself, as a walk
+    // to the point ends there; placed on the ground under it, its spot is
+    // that ground, so a walk to take the line ends on it, and the line sets
+    // her down on it
+    inline auto lineEnd(const dtNavMesh& mesh, const Pieces& pieces, const position_t& point) -> LineEnd
+    {
+        const LineEnd  none{ 0, point };
+        dtNavMeshQuery query;
+        if (dtStatusFailed(query.init(&mesh, 64)))
+        {
+            return none;
+        }
+        dtQueryFilter filter;
+        filter.setExcludeFlags(route::kPolyDisabled);
+        const auto at      = route::toDetour(point);
+        dtPolyRef  nearRef = 0;
+        if (dtStatusFailed(query.findNearestPoly(at.data(), kLineExtents, &filter, &nearRef, nullptr)) || !nearRef)
+        {
+            return none;
+        }
+        const Piece nearest   = pieces.of(mesh, nearRef);
+        dtPolyRef   groundRef = 0;
+        float       ground[3]{};
+        if (dtStatusFailed(query.findNearestPoly(at.data(), kColumnExtents, &filter, &groundRef, ground)) || !groundRef || pieces.of(mesh, groundRef) == 0)
+        {
+            return { nearest, point };
+        }
+        const Piece under = pieces.of(mesh, groundRef);
+        if (under != nearest && pieces.polys[under] > pieces.polys[nearest])
+        {
+            return { under, route::fromDetour(ground) };
+        }
+        return { nearest, point };
+    }
 } // namespace cardian::subzones

@@ -156,6 +156,14 @@ namespace
         return zm != nullptr ? sz::pieceAt(*zm->mesh, zm->pieces, point, extents) : 0;
     }
 
+    // Where a zone line's end stands on its zone's mesh (subzones.h lineEnd):
+    // piece 0, at its point, in a zone without a mesh
+    auto lineEnd(const uint16 zone, const position_t& point) -> sz::LineEnd
+    {
+        const auto* zm = meshOf(zone);
+        return zm != nullptr ? sz::lineEnd(*zm->mesh, zm->pieces, point) : sz::LineEnd{ 0, point };
+    }
+
     // A body's piece: the one she stands on, else the nearest the mesh reaches
     auto bodyPiece(const uint16 zone, const position_t& at) -> sz::Piece
     {
@@ -205,43 +213,45 @@ namespace
                     continue;
                 }
                 const auto to = static_cast<uint16>(line.DestinationZone);
-                built.lines.push_back({ .zone         = zone,
-                                        .to           = to,
-                                        .origin       = line.Origin,
-                                        .arrival      = line.Destination,
-                                        .originPiece  = pieceAt(zone, line.Origin, sz::kLineExtents),
-                                        .arrivalPiece = pieceAt(to, line.Destination, sz::kLineExtents) });
+                built.lines.push_back({ .zone    = zone,
+                                        .to      = to,
+                                        .origin  = line.Origin,
+                                        .arrival = line.Destination,
+                                        .leaves  = lineEnd(zone, line.Origin),
+                                        .lands   = lineEnd(to, line.Destination) });
             }
         }
+        sz::join(built);
         std::size_t drops = 0;
         for (const auto& [_, zoneDrops] : built.drops)
         {
             drops += zoneDrops.size();
         }
-        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, {} steep faces ({:.1f} MB), in {} ms", zoneIds.size(), pieces,
-                    built.lines.size(), drops, faces, static_cast<double>(faceBytes) / (1024.0 * 1024.0),
+        constexpr double kMB = 1024.0 * 1024.0;
+        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, {} steep faces ({:.1f} MB), the walk's tables ({:.1f} MB), in {} ms",
+                    zoneIds.size(), pieces, built.lines.size(), drops, faces, static_cast<double>(faceBytes) / kMB, static_cast<double>(built.graph.bytes()) / kMB,
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
     }
 
     // A zone's mesh changed: its lines out and in, and its drops, placed on
-    // its new pieces
+    // its new pieces, and the walk's tables joined again
     void rejoin(const uint16 zone)
     {
         auto&       built = world();
         const auto* zm    = zoneMeshes().contains(zone) ? &zoneMeshes().at(zone) : nullptr;
-        const auto  place = [&](const position_t& at) -> sz::Piece
+        const auto  place = [&](const position_t& at) -> sz::LineEnd
         {
-            return zm != nullptr && zm->mesh != nullptr ? sz::pieceAt(*zm->mesh, zm->pieces, at, sz::kLineExtents) : 0;
+            return zm != nullptr && zm->mesh != nullptr ? sz::lineEnd(*zm->mesh, zm->pieces, at) : sz::LineEnd{ 0, at };
         };
         for (auto& line : built.lines)
         {
             if (line.zone == zone)
             {
-                line.originPiece = place(line.origin);
+                line.leaves = place(line.origin);
             }
             if (line.to == zone)
             {
-                line.arrivalPiece = place(line.arrival);
+                line.lands = place(line.arrival);
             }
         }
         built.drops.erase(zone);
@@ -249,6 +259,8 @@ namespace
         {
             built.drops[zone] = zm->pieces.drops;
         }
+        ++built.version;
+        sz::join(built);
         ShowInfoFmt("pawn: travel sub-zones: zone {} has a new mesh, {} pieces", zone, zm != nullptr ? zm->pieces.polys.size() - 1 : 0);
     }
 } // namespace
@@ -302,7 +314,7 @@ namespace pawn::travel
         {
             for (const auto& line : built.lines)
             {
-                if (line.zone == fromKey && line.to == first->to && line.arrivalPiece == first->arrivalPiece && sz::detail::joins(here, line.originPiece) &&
+                if (line.zone == fromKey && line.to == first->to && line.lands.piece == first->lands.piece && sz::detail::joins(here, line.leaves.piece) &&
                     sz::detail::crow(line.origin, *prefer) < sz::detail::crow(first->origin, *prefer))
                 {
                     first = &line;
@@ -311,7 +323,7 @@ namespace pawn::travel
         }
         ShowInfoFmt("pawn: travel: zone {} (piece {}) to zone {} (piece {}): {} zone lines, some {:.0f} yalms; first the line to zone {} at {:.1f} {:.1f} {:.1f}",
                     fromKey, here, toKey, there.value_or(0), plan.lines, plan.length, first->to, first->origin.x, first->origin.y, first->origin.z);
-        return TravelHop{ static_cast<xi::ZoneId>(first->to), first->origin, first->arrival };
+        return TravelHop{ static_cast<xi::ZoneId>(first->to), first->leaves.at, first->lands.at };
     }
 
     auto cutOff(const xi::ZoneId zone, const position_t& a, const position_t& b) -> bool
