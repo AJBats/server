@@ -194,6 +194,23 @@ namespace pawn::tactics
         // formula could not answer
         auto burstFactors(CBattleEntity* PCaster, CBattleEntity* PTarget, const std::vector<CSpell*>& spells, uint8 count) -> std::optional<std::map<uint16, double>>;
 
+        // What a skillchain deals on this target for each point of the
+        // weapon skill this closer closes it with: the server's own
+        // skillchain damage at the chain's tier and count (tactics_bank.lua
+        // chainShare). Nothing when the formula could not answer
+        auto chainShare(CBattleEntity* PCloser, CBattleEntity* PTarget, uint8 chain, uint8 tier, uint8 count) -> std::optional<double>;
+
+        // The mob's life left at the party's rate, in seconds (below 0
+        // unknown), and the party's damage a second: the reading the nuke
+        // prices are made against (the fight's own once it has ten seconds,
+        // the spot's before, the formulas' with neither)
+        struct Pace
+        {
+            double remaining      = -1.0;
+            double dealtPerSecond = 0.0;
+        };
+        auto paceOf(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CMobEntity* PMob) -> Pace;
+
         // The same, as the lines printed when the fight opens
         auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>;
 

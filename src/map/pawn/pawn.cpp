@@ -995,6 +995,8 @@ namespace pawn
         // His stake waits for him: saved on him, set again at his login
         saveStake(PPlayer);
         clearStake(PPlayer->id, "signed out");
+        // His skillchain plan lasts his session, never saved (skillchains.h)
+        chains::signedOut(PPlayer->id);
 
         // His party (ROADMAP H): the last human out takes every cardian in
         // it out with him, where she stands -- his alts, another player's

@@ -86,6 +86,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(offsetof(cl_skillchain, openerName) == 40);
     STATIC_REQUIRE(sizeof(cl_skillchains) == 20);
     STATIC_REQUIRE(sizeof(cl_set_skillchain) == 32);
+    STATIC_REQUIRE(sizeof(cl_skillchain_now) == 20);
     STATIC_REQUIRE(sizeof(cl_ah_listing) == 16);
     STATIC_REQUIRE(sizeof(cl_ah_shelf) == 1064);
     STATIC_REQUIRE(sizeof(cl_ah_sale) == 40);

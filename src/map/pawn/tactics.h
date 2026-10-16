@@ -149,6 +149,22 @@ namespace pawn::tactics
     // a pull. No prices when the formula could not answer (the bank logs why)
     auto nukePrices(CCharEntity* PPawn, CBattleEntity* PTarget, const std::vector<SpellID>& spells) -> std::optional<cardian::tactics::NukePricing>;
 
+    // The party's pace on a mob of its fight, as her nuke prices read it
+    // (spell_bank.h paceOf): seconds of life it has left (below 0 unknown)
+    // and the party's damage a second. Nothing without a tactician, or
+    // before the party's fight on the mob is open
+    struct Pace
+    {
+        double remaining      = -1.0;
+        double dealtPerSecond = 0.0;
+    };
+    auto fightPace(CCharEntity* PPawn, CBattleEntity* PMob) -> std::optional<Pace>;
+    // One member's ordinary melee on a mob of the party's fight, a round, by
+    // the formulas (spell_bank.h melee, its sample kept on the fight).
+    // Nothing without a tactician, before the fight is open, or when the
+    // formulas cannot say
+    auto meleeRound(CCharEntity* PPawn, CBattleEntity* PMember, CBattleEntity* PMob) -> std::optional<double>;
+
     // How her Sneak Attack went on the fight with that mob (before her
     // weapon skill, naked, or ready and unused), and how long it stood
     // ready: booked for the fight's close line

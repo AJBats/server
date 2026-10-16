@@ -33,6 +33,7 @@
 #include "role_support.h"
 #include "rest_math.h"
 #include "rest_policy.h"
+#include "skillchains.h"
 #include "spell_bank.h"
 #include "tank_calls.h"
 
@@ -50,6 +51,7 @@
 #include "lua/lua_action.h"
 #include "lua/lua_base_entity.h"
 #include "lua/lua_spell.h"
+#include "lua/lua_weaponskill.h"
 #include "lua/luautils.h"
 #include "party.h"
 #include "recast_container.h"
@@ -920,6 +922,19 @@ namespace pawn::tactics
                                                           {
                                                               engage(entityOf(PMember), entityOf(target));
                                                           });
+        // A member's weapon skill used on a mob: one that dealt nothing, a
+        // miss, is a 0 in her weapon skill's price (skillchains.h wsLanded);
+        // one that dealt damage is counted as it lands (the fight log)
+        static const sol::function& onWeaponSkill = asFunction(
+            [](CLuaBaseEntity* PUser, const sol::optional<CLuaBaseEntity*> target, const sol::optional<CLuaWeaponSkill*> skill, const sol::object& /* tp */,
+               const sol::object& /* action */, const sol::optional<int32> damage)
+            {
+                const auto* PTarget = entityOf(target);
+                if (PTarget != nullptr && PTarget->objtype == TYPE_MOB && skill.has_value() && *skill != nullptr && damage.value_or(-1) == 0)
+                {
+                    pawn::chains::wsLanded(entityOf(PUser), (*skill)->getID(), 0);
+                }
+            });
 
         auto&      handler = PEntity->PAI->EventHandler;
         const bool mob     = PEntity->objtype == TYPE_MOB;
@@ -939,6 +954,7 @@ namespace pawn::tactics
             handler.addListener("MAGIC_INTERRUPTED", onMagicInterrupted, "cardian_tactics:MAGIC_INTERRUPTED");
             handler.addListener("ATTACKED", onAttacked, "cardian_tactics:ATTACKED");
             handler.addListener("ENGAGE", onEngage, "cardian_tactics:ENGAGE");
+            handler.addListener("WEAPONSKILL_USE", onWeaponSkill, "cardian_tactics:WEAPONSKILL_USE");
         }
         if (debug())
         {
@@ -1163,6 +1179,47 @@ namespace pawn::tactics
             const auto& spot   = spotAverages(r.zone, r.mobName);
             auto        priced = bank::priceNukes(r, spot, scope.members, PPawn, PMob, asked);
             return priced.has_value() ? std::move(*priced) : cardian::tactics::NukePricing{};
+        }
+        return std::nullopt;
+    }
+
+    auto fightPace(CCharEntity* PPawn, CBattleEntity* PMob) -> std::optional<Pace>
+    {
+        auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        auto* PFoe       = dynamic_cast<CMobEntity*>(PMob);
+        if (PTactician == nullptr || PFoe == nullptr)
+        {
+            return std::nullopt;
+        }
+        for (auto& r : PTactician->log().open())
+        {
+            if (r.mobId != PFoe->id || r.settling())
+            {
+                continue;
+            }
+            const auto scope = scopeOf(PPawn);
+            const auto pace  = bank::paceOf(r, spotAverages(r.zone, r.mobName), scope.members, PFoe);
+            return Pace{ pace.remaining, pace.dealtPerSecond };
+        }
+        return std::nullopt;
+    }
+
+    auto meleeRound(CCharEntity* PPawn, CBattleEntity* PMember, CBattleEntity* PMob) -> std::optional<double>
+    {
+        auto* PTactician = PPawn != nullptr && PMember != nullptr ? find(PPawn) : nullptr;
+        auto* PFoe       = dynamic_cast<CMobEntity*>(PMob);
+        if (PTactician == nullptr || PFoe == nullptr)
+        {
+            return std::nullopt;
+        }
+        for (auto& r : PTactician->log().open())
+        {
+            if (r.mobId != PFoe->id || r.settling())
+            {
+                continue;
+            }
+            const auto guess = bank::melee(r, PMember, PFoe, true);
+            return guess.has_value() ? std::optional<double>(guess->perRound) : std::nullopt;
         }
         return std::nullopt;
     }

@@ -118,6 +118,7 @@ namespace cardian::link
     X(SKILLCHAINS, cl_skillchains) \
     X(SKILLCHAIN, cl_skillchain) \
     X(SET_SKILLCHAIN, cl_set_skillchain) \
+    X(SKILLCHAIN_NOW, cl_skillchain_now) \
     X(QUEUE, cl_queue)           \
     X(NOTE, cl_note)             \
     X(OFFER, cl_offer)           \
