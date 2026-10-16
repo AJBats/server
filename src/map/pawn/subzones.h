@@ -280,19 +280,123 @@ namespace cardian::subzones
         position_t at{};
     };
 
-    // The ground straight under a zone line's point: a trigger often floats
-    // some yalms over the path, nearer a scrap of mesh at its own height than
-    // the ground beneath it
-    constexpr float kColumnExtents[] = { 1.5f, 60.0f, 1.5f };
+    // The ground straight under a zone line's point. A line's point is the
+    // centre of the box the game's client walks a player into, and the box
+    // rises from the ground the player walks on, so the point often floats
+    // some yalms over the path (17 at the most, East Ronfaure's line to West
+    // Ronfaure). Its ground is the highest floor the point stands over, at
+    // most kFloorBelow under it -- a floor up to kFloorSlack over the point
+    // counting as under it, the ground a point sits just below -- or else
+    // the lowest it stands over at most kFloorAbove over it. A floor whose
+    // edge alone comes within kFloorReach across is taken where the point
+    // stands over none in that direction, and at a ledge's lip: the ledge's
+    // own ground beside the point, higher than the floor below the drop, wins
+    // where it is a piece at least as big as that floor's, never a scrap
+    constexpr float kFloorReach = 1.5f;
+    constexpr float kFloorBelow = 20.0f;
+    constexpr float kFloorAbove = 5.0f;
+    constexpr float kFloorSlack = 1.0f;
+
+    namespace detail
+    {
+        // The floor under a point (Detour's coordinates, y up); `sizeOf`
+        // gives a polygon's piece's polygon count
+        template <typename SizeOf>
+        inline auto floorUnder(const dtNavMeshQuery& query, const dtQueryFilter& filter, const std::array<float, 3>& at, const SizeOf& sizeOf, dtPolyRef& ref,
+                               float* ground) -> bool
+        {
+            const float centre[3]{ at[0], at[1] + (kFloorAbove - kFloorBelow) * 0.5f, at[2] };
+            const float extents[3]{ kFloorReach, (kFloorAbove + kFloorBelow) * 0.5f, kFloorReach };
+            dtPolyRef   polys[128]{};
+            int         count = 0;
+            if (dtStatusFailed(query.queryPolygons(centre, extents, &filter, polys, &count, 128)))
+            {
+                return false;
+            }
+            struct Floor
+            {
+                dtPolyRef ref{};
+                float     at[3]{};
+                bool      over{};
+                int       size{};
+            };
+            std::vector<Floor> below;
+            std::vector<Floor> above;
+            for (int k = 0; k < count; ++k)
+            {
+                Floor f{ .ref = polys[k] };
+                if (dtStatusFailed(query.closestPointOnPoly(polys[k], at.data(), f.at, &f.over)) || std::hypot(f.at[0] - at[0], f.at[2] - at[2]) > kFloorReach)
+                {
+                    continue;
+                }
+                f.size = sizeOf(polys[k]);
+                if (f.at[1] <= at[1] + kFloorSlack)
+                {
+                    if (f.at[1] >= at[1] - kFloorBelow)
+                    {
+                        below.push_back(f);
+                    }
+                }
+                else if (f.at[1] <= at[1] + kFloorAbove)
+                {
+                    above.push_back(f);
+                }
+            }
+            // the best of a side: the floors the point stands over first, by
+            // `better`; an edge's floor where it stands over none
+            const auto pick = [](const std::vector<Floor>& floors, const auto& better) -> const Floor*
+            {
+                const Floor* best = nullptr;
+                for (const bool overOnly : { true, false })
+                {
+                    for (const auto& f : floors)
+                    {
+                        if ((!overOnly || f.over) && (best == nullptr || better(f, *best)))
+                        {
+                            best = &f;
+                        }
+                    }
+                    if (best != nullptr)
+                    {
+                        return best;
+                    }
+                }
+                return nullptr;
+            };
+            const Floor* best = pick(below, [](const Floor& a, const Floor& b) { return a.at[1] > b.at[1]; });
+            if (best != nullptr && best->over)
+            {
+                // a ledge's lip: higher ground beside the point, as big a piece
+                for (const auto& f : below)
+                {
+                    if (!f.over && f.at[1] > best->at[1] && f.size >= best->size)
+                    {
+                        best = &f;
+                    }
+                }
+            }
+            if (best == nullptr)
+            {
+                best = pick(above, [](const Floor& a, const Floor& b) { return a.at[1] < b.at[1]; });
+            }
+            if (best == nullptr)
+            {
+                return false;
+            }
+            ref = best->ref;
+            std::copy(best->at, best->at + 3, ground);
+            return true;
+        }
+    } // namespace detail
 
     // A zone line's end -- its trigger, or where it sets her down -- placed
-    // on the mesh: on the nearest ground within kLineExtents, unless the
-    // ground straight under its point is another, bigger piece (a trigger
-    // floating over the path, nearest a scrap of mesh at its own height).
-    // Placed on the nearest ground, its spot is the point itself, as a walk
-    // to the point ends there; placed on the ground under it, its spot is
-    // that ground, so a walk to take the line ends on it, and the line sets
-    // her down on it
+    // on the mesh: on the ground under its point (floorUnder), unless that
+    // ground is another piece than the nearest ground within kLineExtents
+    // and a smaller one (a scrap of mesh under a trigger beside the path),
+    // or there is none; then on the nearest point of the nearest ground. Its
+    // spot is always on the ground: a walk to take the line ends on it, a
+    // crossing is judged from it (TransferDistance), and the line sets her
+    // down on it
     inline auto lineEnd(const dtNavMesh& mesh, const Pieces& pieces, const position_t& point) -> LineEnd
     {
         const LineEnd  none{ 0, point };
@@ -305,22 +409,23 @@ namespace cardian::subzones
         filter.setExcludeFlags(route::kPolyDisabled);
         const auto at      = route::toDetour(point);
         dtPolyRef  nearRef = 0;
-        if (dtStatusFailed(query.findNearestPoly(at.data(), kLineExtents, &filter, &nearRef, nullptr)) || !nearRef)
+        float      nearAt[3]{};
+        if (dtStatusFailed(query.findNearestPoly(at.data(), kLineExtents, &filter, &nearRef, nearAt)) || !nearRef)
         {
             return none;
         }
         const Piece nearest   = pieces.of(mesh, nearRef);
         dtPolyRef   groundRef = 0;
         float       ground[3]{};
-        if (dtStatusFailed(query.findNearestPoly(at.data(), kColumnExtents, &filter, &groundRef, ground)) || !groundRef || pieces.of(mesh, groundRef) == 0)
+        const auto  sizeOf    = [&](const dtPolyRef ref) { return pieces.polys[pieces.of(mesh, ref)]; };
+        if (detail::floorUnder(query, filter, at, sizeOf, groundRef, ground) && pieces.of(mesh, groundRef) != 0)
         {
-            return { nearest, point };
+            const Piece under = pieces.of(mesh, groundRef);
+            if (under == nearest || pieces.polys[under] > pieces.polys[nearest])
+            {
+                return { under, route::fromDetour(ground) };
+            }
         }
-        const Piece under = pieces.of(mesh, groundRef);
-        if (under != nearest && pieces.polys[under] > pieces.polys[nearest])
-        {
-            return { under, route::fromDetour(ground) };
-        }
-        return { nearest, point };
+        return { nearest, route::fromDetour(nearAt) };
     }
 } // namespace cardian::subzones

@@ -47,8 +47,8 @@ namespace pawn
     struct TravelHop
     {
         xi::ZoneId destinationZone{};
-        position_t walkTo{};   // where she takes the line: its trigger-box centre, or the ground under it where the mesh's nearest ground to the trigger is a piece of its own
-        position_t arriveAt{}; // where it sets her down: its arrival box centre, or the ground under it, the same way
+        position_t walkTo{};   // where she takes the line: the ground under its trigger-box centre (subzones.h lineEnd)
+        position_t arriveAt{}; // where it sets her down: the ground under its arrival point, the same way
     };
 
     namespace travel
