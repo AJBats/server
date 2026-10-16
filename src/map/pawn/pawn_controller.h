@@ -193,6 +193,12 @@ public:
     void DropQueuedRest(std::string_view why); // a rest still queued for the release gives way to his later order
     void EndRestOrder(std::string_view why);
     auto WeaponSkill(EntityId target, uint16 wsid) -> bool override; // her rows' weapon skill; never tried beyond its reach (BoostOrWeaponSkill)
+    // Her rows' weapon skill closing a skillchain: at once, no Boost or Sneak
+    // Attack walk ahead of it -- the window is a few seconds
+    auto CloseWeaponSkill(EntityId target, uint16 wsid) -> bool;
+    // A weapon skill of her rows' held behind Boost or Sneak Attack, or
+    // behind her walk to the mob's back for it
+    auto WeaponSkillPending() const -> bool;
     auto Ability(EntityId target, uint16 abilityid) -> bool override;
     auto RangedAttack(EntityId target) -> bool override;
 
@@ -1701,6 +1707,23 @@ private:
     timer::time_point m_MagicHoldUntil{};    // her danger map counts the magic circles until then
     timer::time_point m_MagicHoldSince{};    // since when she has held her spells for it
     timer::time_point m_MagicSaidAt{};       // when she last told the party
+    // What was on a mob (its Skillchain effect) when her rows chose a weapon
+    // skill that then waits behind Boost or Sneak Attack: changed by the
+    // time it goes -- a chain closed, an opening come or gone -- and the
+    // choice is stale, the weapon skill let go for her rows to choose again
+    // (ChainMarkOn). None for his orders, which go whatever is on the mob
+    struct ChainMark
+    {
+        bool              on = false;
+        timer::time_point start{};
+        uint16            power = 0;
+        uint16            tier  = 0;
+        auto              operator==(const ChainMark&) const -> bool = default;
+    };
+    static auto              ChainMarkOn(const CBattleEntity* PMob) -> ChainMark;
+    std::optional<ChainMark> m_WsMark;
+    // Her held weapon skill's choice still stands: no mark, or the mob's the same
+    auto WsMarkHolds(const CBattleEntity* PMob) const -> bool;
     // Sneak Attack or Boost before weapon skills: the weapon skill held one
     // tick while the opener goes out first
     struct HeldWs

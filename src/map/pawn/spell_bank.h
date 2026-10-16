@@ -30,6 +30,8 @@
 #include "spell.h"
 
 #include <functional>
+#include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -184,6 +186,13 @@ namespace pawn::tactics
         // out; nothing when the formula cannot answer
         auto priceNukes(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CBattleEntity* PCaster, CMobEntity* PMob, const std::vector<CSpell*>& spells)
             -> std::optional<NukePricing>;
+
+        // What a magic burst multiplies each of these nukes by, from this
+        // caster on this target at a chain of `count` (the Skillchain
+        // effect's subPower): the server's own two burst steps
+        // (tactics_bank.lua burstFactors), by spell id. Nothing when the
+        // formula could not answer
+        auto burstFactors(CBattleEntity* PCaster, CBattleEntity* PTarget, const std::vector<CSpell*>& spells, uint8 count) -> std::optional<std::map<uint16, double>>;
 
         // The same, as the lines printed when the fight opens
         auto priceMember(FightRecord& r, const SpotAverages& spot, const Exchange& x, const std::vector<CBattleEntity*>& members, CBattleEntity* PMember, CMobEntity* PMob) -> std::vector<std::string>;

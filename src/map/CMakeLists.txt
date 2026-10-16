@@ -124,6 +124,9 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/item_moves.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/dbox.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/dbox.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/skillchain_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/skillchains.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/skillchains.cpp
 )
 
 set(MAP_CORE_SOURCES

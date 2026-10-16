@@ -207,10 +207,18 @@ TEST_CASE("tactician: a marked row is a tool when it names her cures, her priced
     CHECK(cardian::tactician::allowanceOf(row("0|101:0|100:14:1|0")) == cardian::tactician::Allowance::Rest);
     CHECK_FALSE(cardian::tactician::isSpellTool(cardian::tactician::Allowance::Rest));
 
+    // Her weapon skill: Weapon skill (best) on a Foe row, the skillchains'
+    // judgement (ROADMAP slice 3h, skillchain_math.h wsCall)
+    CHECK(stateOf(marked("2|0:0|4:0:0|0")) == State::Tool);          // * Foe -> Weapon skill (best)
+    CHECK(cardian::tactician::allowanceOf(row("2|101:0|4:0:0|0")) == cardian::tactician::Allowance::WeaponSkill);
+    CHECK_FALSE(cardian::tactician::isSpellTool(cardian::tactician::Allowance::WeaponSkill));
+    CHECK(stateOf(marked("0|0:0|4:0:0|0")) == State::NoJudgement);   // * Self -> Weapon skill (best): no foe of its own
+    CHECK(stateOf(marked("2|0:0|4:3:0|0")) == State::NoJudgement);   // * Foe -> Weapon skill (any)
+
     // Everything else the tactician has no judgement for: struck out
     CHECK(stateOf(marked("1|0:0|2:2:43|0")) == State::NoJudgement);  // Protect
     CHECK(stateOf(marked("2|0:0|2:2:144|0")) == State::NoJudgement); // Fire
-    CHECK(stateOf(marked("2|0:0|4:2:1|0")) == State::NoJudgement);   // a weapon skill
+    CHECK(stateOf(marked("2|0:0|4:2:1|0")) == State::NoJudgement);   // a weapon skill by name
     CHECK(stateOf(marked("2|0:0|1:0:0|0")) == State::NoJudgement);   // a ranged attack
     CHECK(stateOf(marked(kRest)) == State::NoJudgement);             // a behaviour row takes no mark
     CHECK(stateOf(marked("1|0:0|2:0:1+2:2:58|0")) == State::NoJudgement); // two actions
@@ -398,22 +406,22 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
     {
         mage.push_back(spec);
     }
-    // the tactician's tools first (her cures, her rest), then her orders,
-    // and her marked Attack row (off: the melee mage's switch) last
-    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Tool });
+    // the tactician's tools first (her cures, her rest), then her orders
+    // (her weapon skill, rest and eat with the player, avoid aggro), and her
+    // marked Attack row (off: the melee mage's switch) last
+    CHECK(statesOf(rows(mage)) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Tool });
 
+    // a melee set: the trio, her tactician's weapon skill (ROADMAP slice
+    // 3h), rest and eat with the player, avoid aggro
     std::vector<std::string> melee;
     for (const auto& [spec, on] : pawn::defaultRowsFor(xi::Job::PLD))
     {
         melee.push_back(spec);
     }
-    for (const auto state : statesOf(rows(melee)))
-    {
-        CHECK(state == State::Order);
-    }
+    CHECK(statesOf(rows(melee)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Order, State::Order, State::Order });
 
-    // a Monk's and a Warrior's: the trio, her three tools, her weapon
-    // skill, rest with the player and eat with the player
+    // a Monk's and a Warrior's: the trio, her three tools, her tactician's
+    // weapon skill, rest with the player, eat with the player, avoid aggro
     for (const auto job : { xi::Job::MNK, xi::Job::WAR })
     {
         std::vector<std::string> specs;
@@ -421,7 +429,8 @@ TEST_CASE("tactician: the default sets mean what they say", "[cardian][gambits][
         {
             specs.push_back(spec);
         }
-        CHECK(statesOf(rows(specs)) == std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order });
+        CHECK(statesOf(rows(specs)) ==
+              std::vector<State>{ State::Order, State::Order, State::Order, State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order });
     }
 }
 
@@ -579,11 +588,18 @@ TEST_CASE("tactician: a weapon skill row takes Sneak Attack only when it would f
     CHECK_FALSE(wsRowTakesSneak(row("2|2:50|4:2:19|0"), State::Order, true, takesIfHers));
     CHECK_FALSE(wsRowTakesSneak(row("2|2:50|4:2:17|0"), State::Order, true, takesIfHers));
 
-    // A row that never fires does not count: a marked weapon skill row has
-    // no judgement behind it, and a struck-out row does nothing
+    // Her tactician's Weapon skill (best) fires by its judgement, and takes
+    // Sneak Attack as Weapon skill (best) does
     const auto markedBest = row("2|101:0|4:0:0|0");
-    CHECK(cardian::tactician::stateOf(markedBest) == State::NoJudgement);
-    CHECK_FALSE(wsRowTakesSneak(markedBest, State::NoJudgement, true, takesIfHers));
+    CHECK(cardian::tactician::stateOf(markedBest) == State::Tool);
+    CHECK(wsRowTakesSneak(markedBest, State::Tool, true, takesIfHers));
+    CHECK_FALSE(wsRowTakesSneak(markedBest, State::Tool, false, takesIfHers));
+
+    // A row that never fires does not count: a marked row naming a weapon
+    // skill has no judgement behind it, and a struck-out row does nothing
+    const auto markedNamed = row("2|101:0|4:2:16|0");
+    CHECK(cardian::tactician::stateOf(markedNamed) == State::NoJudgement);
+    CHECK_FALSE(wsRowTakesSneak(markedNamed, State::NoJudgement, true, takesIfHers));
     CHECK_FALSE(wsRowTakesSneak(best, State::Misfit, true, takesIfHers));
 
     // A row with no weapon skill in it

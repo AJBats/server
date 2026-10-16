@@ -143,8 +143,8 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
     const auto wild  = layersFor<Row>(true, world, own);
     const auto party = layersFor<Row>(false, world, own);
 
-    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5", "6" });
-    CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5", "6" });
+    CHECK(order(wild) == std::vector<std::string>{ "w1", "w2", "w3", "1", "2", "3", "4", "5", "6", "7" });
+    CHECK(order(party) == std::vector<std::string>{ "1", "2", "3", "4", "5", "6", "7" });
 
     // The place is 1-based across both layers: the conveyor's order
     std::vector<std::size_t> places;
@@ -153,7 +153,7 @@ TEST_CASE("gambit layers: the world's rows run first in the wild, her own alone 
                    places.push_back(place);
                    return false;
                });
-    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8, 9 });
+    CHECK(places == std::vector<std::size_t>{ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 });
 
     // The first row to answer true ends the walk, in either layer
     std::vector<std::string> seen;
@@ -193,9 +193,10 @@ TEST_CASE("gambit layers: the first row to speak for a behaviour wins, across bo
     CHECK(behavior(behaviorsOf(layersFor<Row>(false, world, own)), pawn::Behavior::Rest) == uint16{ 1 });
     own.pop_back();
 
-    // With a player the world's rows are gone: no Avoid aggro, no Avoid links
+    // With a player the world's rows are gone: her own Avoid aggro speaks
+    // (every default set's, the user 2026-10-15), and no Avoid links
     const auto party = behaviorsOf(layersFor<Row>(false, world, own));
-    CHECK_FALSE(behavior(party, pawn::Behavior::AvoidAggro).has_value());
+    CHECK(behavior(party, pawn::Behavior::AvoidAggro) == uint16{ 1 });
     CHECK_FALSE(behavior(party, pawn::Behavior::AvoidLinks).has_value());
     CHECK(behavior(party, pawn::Behavior::RestWithPlayer) == uint16{ 1 });
 
@@ -396,10 +397,12 @@ TEST_CASE("gambit layers: Healer's bundle onto a melee list puts the tactician's
     auto   lent = lentRows(kHealer, next);
 
     // the role's marked Cure, -na, Enfeeble and Rest come first -- a role
-    // is the quick override -- and her six orders follow in her order
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5", "6" });
-    CHECK(fittedStates(own, lent) ==
-          std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Order, State::Order, State::Order });
+    // is the quick override -- and her seven rows follow in her order
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5", "6", "7" });
+    // her trio, her tactician's weapon skill, then rest and eat with the
+    // player and avoid aggro
+    CHECK(fittedStates(own, lent) == std::vector<State>{ State::Tool, State::Tool, State::Tool, State::Tool, State::Order, State::Order, State::Order, State::Tool,
+                                                         State::Order, State::Order, State::Order });
 
     // the lent rows are found by their ids among the running rows, her own
     // by theirs, and a lent id of a row the role did not lend is nobody's
@@ -407,7 +410,7 @@ TEST_CASE("gambit layers: Healer's bundle onto a melee list puts the tactician's
     CHECK(findRow(layers, "r2", idOf) == &lent[1]);
     CHECK(findRow(layers, "5", idOf) == &own[4]);
     CHECK(findRow(layers, "r9", idOf) == nullptr);
-    CHECK(order(layers) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5", "6" });
+    CHECK(order(layers) == std::vector<std::string>{ "r1", "r2", "r3", "r4", "1", "2", "3", "4", "5", "6", "7" });
 }
 
 TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the role's rows stand in her rows' places", "[cardian][gambits][layers][fit]")
@@ -419,7 +422,7 @@ TEST_CASE("gambit layers: Healer's bundle onto a default mage adds nothing: the 
     // the bundle's four stand in the places of her Cure (1), her -na (2),
     // her Enfeeble (3) and her Rest (4), under her numbers; the rest of her
     // list is untouched
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "5", "6", "7", "8" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "5", "6", "7", "8", "9" });
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
     CHECK(rows[1].row == &lent[1]);
     CHECK(rows[1].index == 2);
@@ -495,9 +498,9 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     // hers, and her Berserk and Aggressor stay her tactician's tools, the
     // seat deciding which of Berserk and Defender it uses
     // (tactician_line.h buffNow)
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "r3*", "6", "7", "8", "9" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "r3*", "6", "7", "8", "9", "10" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 10);
+    REQUIRE(states.size() == 11);
     CHECK(states[0] == State::Tool);  // * Foe -> Provoke
     CHECK(states[1] == State::Order); // Foe: party leader's target -> Attack
     CHECK(states[2] == State::Tool);  // * Foe: targeted by ally -> Attack, in her row's place: her tactician's melee
@@ -505,9 +508,10 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     CHECK(states[4] == State::Tool);  // * Self -> Berserk
     CHECK(states[5] == State::Tool);  // * Self -> Defender
     CHECK(states[6] == State::Tool);  // * Self -> Aggressor
-    CHECK(states[7] == State::Order); // her weapon skill
+    CHECK(states[7] == State::Tool);  // * Foe -> Weapon skill (best): her tactician's
     CHECK(states[8] == State::Order); // Rest with the player
     CHECK(states[9] == State::Order); // Eat with the player
+    CHECK(states[10] == State::Order); // Avoid aggro
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
     CHECK(rows[2].origin == Origin::Both);
     CHECK(rows[2].index == 2);
@@ -527,9 +531,9 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     // them out any more: one tactician, every tool a row), then her orders,
     // and her own marked Attack row last, off: "targeting ally" is not the
     // pull's finder, so the pull does not stand in it
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5", "6", "7", "8" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5", "6", "7", "8", "9" });
     const auto states = fittedStates(own, lent);
-    REQUIRE(states.size() == 11);
+    REQUIRE(states.size() == 12);
     CHECK(states[0] == State::Tool);  // the pull: the tank's melee
     CHECK(states[1] == State::Tool);  // Provoke
     CHECK(states[2] == State::Tool);  // Defender
@@ -540,10 +544,11 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     CHECK(states[7] == State::Order); // her weapon skill
     CHECK(states[8] == State::Order); // Rest with the player
     CHECK(states[9] == State::Order); // Eat with the player
-    CHECK(states[10] == State::Tool); // her own marked Attack row
+    CHECK(states[10] == State::Order); // Avoid aggro
+    CHECK(states[11] == State::Tool); // her own marked Attack row
     const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
-    CHECK_FALSE(rows[10].on);
-    CHECK(rows[10].origin == Origin::Own);
+    CHECK_FALSE(rows[11].on);
+    CHECK(rows[11].origin == Origin::Own);
 }
 
 TEST_CASE("gambit layers: an Attack row is its finder: a lent pull takes the same finder's row and leaves her other Attack rows standing", "[cardian][gambits][layers][fit]")
@@ -666,19 +671,22 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
 {
     uint32 next = 0;
 
-    SECTION("a default Monk has every row of it: the role's trio, Boost and Focus stand in hers, and her Dodge stays hers")
+    SECTION("a default Monk has every row of it: the role's trio, Boost, Focus and her tactician's weapon skill stand in hers, and her Dodge stays hers")
     {
         auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::MNK), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::MNK));
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "r5*", "6", "7", "8", "9" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1*", "r2*", "r3*", "r4*", "r5*", "6", "r6*", "8", "9", "10" });
     }
-    SECTION("a melee job with a hand-made list is lent the trio as orders, ahead of hers")
+    SECTION("a melee job with a hand-made list is lent the trio as orders, ahead of hers, and her own weapon skill row becomes her tactician's (ROADMAP slice 3h)")
     {
         auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::PLD), next);
         auto own  = ownRows({
             { "2|2:50|4:0:0|0", true }, // Foe: HP >= 50% -> Weapon skill (best)
         });
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "r4*" });
+        const auto states = fittedStates(own, lent);
+        REQUIRE(states.size() == 4);
+        CHECK(states[3] == cardian::tactician::State::Tool);
     }
     SECTION("the White and the Red Mage melee, enfeeble and nuke on the seat; the Black Mage enfeebles and nukes, and the Scholar and the Geomancer only nuke, their sub jobs' melee tools left out; every nuker rests on her tactician's pacing; the Summoner is lent nothing (RESEARCH §17.12, §17.13)")
     {
@@ -721,12 +729,12 @@ TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee 
         // Mage's own
         auto lent = lentRows(bundle(cardian::party::Role::Damage, xi::Job::BLM), next);
         auto own  = ownRows(pawn::defaultRowsFor(xi::Job::BLM));
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "r1*", "r2*", "r3*", "6", "7", "8", "9" });
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "1", "2", "r1*", "r2*", "r3*", "6", "7", "8", "9", "10" });
         // a Black Mage whose own rows have none of them (a Warrior's, kept
         // through a job change) is lent them: her MP pacing comes with the seat
         auto melee = ownRows(pawn::defaultRowsFor(xi::Job::WAR));
         auto again = lentRows(bundle(cardian::party::Role::Damage, xi::Job::BLM), next);
-        CHECK(fitted(melee, again) == std::vector<std::string>{ "r4", "r5", "r6", "1", "2", "3", "4", "5", "6", "7", "8", "9" });
+        CHECK(fitted(melee, again) == std::vector<std::string>{ "r4", "r5", "r6", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" });
     }
 }
 
@@ -754,7 +762,13 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
         }
         return out;
     };
-    const auto trio = specs(bundle(Role::Damage, xi::Job::PLD));
+    // a Paladin, who learns no tool of the seat's: the trio and her
+    // tactician's weapon skill (ROADMAP slice 3h), lent after the buffs
+    const std::string ws   = "2|101:0|4:0:0|0";
+    auto              trio = specs(bundle(Role::Damage, xi::Job::PLD));
+    REQUIRE(trio.size() == 4);
+    CHECK(trio.back() == ws);
+    trio.pop_back();
     const auto plus = [&](std::vector<std::string> rows, std::initializer_list<std::string> more)
     {
         rows.insert(rows.end(), more);
@@ -780,18 +794,18 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
 
     // Damage: a sub Warrior's Aggressor (45) is past a 75 server's sub jobs
     // (37), within a 99 server's (49)
-    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::WAR)) == plus(trio, { berserk, boost, focus }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::WAR, k99)) == plus(trio, { berserk, aggressor, boost, focus }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::WAR)) == plus(trio, { berserk, aggressor }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::MNK)) == plus(trio, { berserk, aggressor, boost, focus }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::RDM, xi::Job::WAR)) == plus(trio, { berserk, "2|101:0|2:100:0|0", "2|101:0|2:3:0|0", "0|101:0|100:14:1|0" }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::WAR)) == plus(trio, { berserk, boost, focus, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::WAR, k99)) == plus(trio, { berserk, aggressor, boost, focus, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::WAR)) == plus(trio, { berserk, aggressor, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::MNK)) == plus(trio, { berserk, aggressor, boost, focus, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::RDM, xi::Job::WAR)) == plus(trio, { berserk, ws, "2|101:0|2:100:0|0", "2|101:0|2:3:0|0", "0|101:0|100:14:1|0" }));
     // a Thief's Sneak Attack (15), from her main or her sub, to a main job
     // that melees; never to a Black Mage, whose seat is her nukes
     const std::string sneak = pawn::defaultRowsFor(xi::Job::THF)[3].first;
-    CHECK(specs(bundle(Role::Damage, xi::Job::THF)) == plus(trio, { sneak }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::THF, xi::Job::WAR)) == plus(trio, { berserk, sneak }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::THF)) == plus(trio, { berserk, aggressor, sneak }));
-    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::THF)) == plus(trio, { boost, sneak, focus }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::THF)) == plus(trio, { sneak, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::THF, xi::Job::WAR)) == plus(trio, { berserk, sneak, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::WAR, xi::Job::THF)) == plus(trio, { berserk, aggressor, sneak, ws }));
+    CHECK(specs(bundle(Role::Damage, xi::Job::MNK, xi::Job::THF)) == plus(trio, { boost, sneak, focus, ws }));
     CHECK(specs(bundle(Role::Damage, xi::Job::BLM, xi::Job::THF)) == std::vector<std::string>{ "2|101:0|2:100:0|0", "2|101:0|2:3:0|0", "0|101:0|100:14:1|0" });
 
     // Healer: a job that learns Cure is lent the Cure and the Rest, the -na
@@ -852,16 +866,19 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kHealer[2].first)) == cardian::tactician::Allowance::Debuff);
     CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kHealer[3].first)) == cardian::tactician::Allowance::Rest);
     CHECK(bundle(cardian::party::Role::Healer, xi::Job::WHM) == kHealer);
-    // Damage lends a melee job the melee defaults' trio, and a Warrior her
-    // own marked Berserk and Aggressor
+    // Damage lends a melee job the melee defaults' trio, a Warrior her own
+    // marked Berserk and Aggressor, and the melee defaults' tactician's
+    // weapon skill (ROADMAP slice 3h)
     const auto& melee   = pawn::defaultRowsFor(xi::Job::PLD);
     const auto& warrior = pawn::defaultRowsFor(xi::Job::WAR);
-    REQUIRE(kDamage.size() == 5);
+    REQUIRE(kDamage.size() == 6);
     CHECK(kDamage[0].first == melee[0].first);
     CHECK(kDamage[1].first == melee[1].first);
     CHECK(kDamage[2].first == melee[2].first);
     CHECK(kDamage[3].first == warrior[3].first);
     CHECK(kDamage[4].first == warrior[5].first);
+    CHECK(kDamage[5].first == melee[3].first);
+    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kDamage[5].first)) == cardian::tactician::Allowance::WeaponSkill);
     // Tank lends the pull, marked (the melee defaults' "targeted by ally"
     // finder, an ally being the player as much as a cardian, as the
     // tactician's melee), Provoke, marked (RESEARCH §17.11, §17.13), and a

@@ -63,6 +63,19 @@ namespace pawn
         virtual auto FreeToCast(CSpell* PSpell, CBattleEntity* PTarget) -> bool = 0;
         virtual auto Ability(EntityId target, uint16 ability) -> bool = 0;
         virtual auto WeaponSkill(EntityId target, uint16 skill) -> bool = 0;
+        // A weapon skill that closes a skillchain: its window is a few
+        // seconds, so nothing goes ahead of it (a cardian's Boost, or her
+        // walk to the mob's back for Sneak Attack)
+        virtual auto CloseWeaponSkill(EntityId target, uint16 skill) -> bool
+        {
+            return WeaponSkill(target, skill);
+        }
+        // A weapon skill of her rows' still on its way: held behind Boost or
+        // Sneak Attack, or behind her walk to the mob's back for it
+        virtual auto WeaponSkillPending() const -> bool
+        {
+            return false;
+        }
         virtual auto RangedAttack(EntityId target) -> bool = 0;
 
         // The behaviour layer: what her behaviour rows assert this tick

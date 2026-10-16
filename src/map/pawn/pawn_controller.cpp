@@ -158,6 +158,14 @@ namespace
         {
             return m_controller.WeaponSkill(target, skill);
         }
+        auto CloseWeaponSkill(const EntityId target, const uint16 skill) -> bool override
+        {
+            return m_controller.CloseWeaponSkill(target, skill);
+        }
+        auto WeaponSkillPending() const -> bool override
+        {
+            return m_controller.WeaponSkillPending();
+        }
         auto RangedAttack(const EntityId target) -> bool override
         {
             return m_controller.RangedAttack(target);
@@ -4501,7 +4509,20 @@ auto CPawnController::FormationSlot() const -> pawn::Slot
 
 auto CPawnController::IsAvoidingAggro() const -> bool
 {
-    return !m_Retreat && Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
+    if (m_Retreat || Behavior(pawn::Behavior::AvoidAggro).value_or(0) == 0)
+    {
+        return false;
+    }
+    // Her rows say so: unless her player has switched the party's Avoid
+    // aggro off in his Shortcuts menu, her rows kept as they are -- which a
+    // trek outlasts, its own rows keeping her clear on the way (pawn.h
+    // HuntRules::avoidAggro)
+    if (Trekking())
+    {
+        return true;
+    }
+    const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner));
+    return owner == 0 || pawn::huntRulesOf(owner).avoidAggro;
 }
 
 auto CPawnController::IsAvoidingLinks() const -> bool
@@ -4887,7 +4908,10 @@ void CPawnController::NoteAggro()
         else
         {
             const bool counted = std::any_of(m_DangerBalls.begin(), m_DangerBalls.end(), [&](const auto& b) { return b.mob == PMob; });
-            map                = !IsAvoidingAggro() && !KeepsClearOfAggro() ? "her Avoid aggro row is off" : counted ? "her danger map counted it" : "her danger map did not count it";
+            const bool rowOn   = Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
+            map                = !IsAvoidingAggro() && !KeepsClearOfAggro() ? (rowOn && !m_Retreat ? "her player's Avoid aggro is switched off" : "her Avoid aggro row is off")
+                                 : counted                                  ? "her danger map counted it"
+                                                                            : "her danger map did not count it";
         }
         ShowInfoFmt("pawn: {}: {} comes for her, {:.1f} y off ({}; she {}; it detects by {}; {})", POwner->getName(), PMob->getName(),
                     distance(POwner->loc.p, PMob->loc.p), PMob->PAI->PathFind != nullptr && PMob->PAI->PathFind->IsFollowingPath() ? "it was walking" : "it was standing",
@@ -5071,6 +5095,12 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         {
             m_HeldWs.reset();
         }
+        else if (!WsMarkHolds(PHeld))
+        {
+            m_HeldWs.reset();
+            m_WsMark.reset();
+            ShowInfoFmt("tactics: {} lets weapon skill {} go (what was on {} changed while it waited)", POwner->getName(), held.wsid, PHeld->getName());
+        }
         else if (ReadyToAct())
         {
             m_HeldWs.reset();
@@ -5112,6 +5142,12 @@ auto CPawnController::DoCombatTick(const timer::time_point tick) -> Task<void>
         if (PStep == nullptr || PStep->isDead() || PStep != PTarget)
         {
             m_SneakStep.reset();
+        }
+        else if (step.wsid != 0 && !WsMarkHolds(PStep))
+        {
+            m_SneakStep.reset();
+            m_WsMark.reset();
+            ShowInfoFmt("tactics: {} lets weapon skill {} go (what was on {} changed on her walk to its back)", POwner->getName(), step.wsid, PStep->getName());
         }
         else if (onHer || m_Tick - step.since > kSneakWalk)
         {
@@ -7615,6 +7651,38 @@ auto CPawnController::SneakPoint(const CBattleEntity* PTarget) const -> position
     return nearPosition(PTarget->loc.p, FightRadius(PTarget), std::numbers::pi_v<float>);
 }
 
+auto CPawnController::ChainMarkOn(const CBattleEntity* PMob) -> ChainMark
+{
+    const auto* PEffect = PMob != nullptr ? PMob->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Skillchain) : nullptr;
+    if (PEffect == nullptr)
+    {
+        return {};
+    }
+    return ChainMark{ true, PEffect->GetStartTime(), PEffect->GetPower(), PEffect->GetTier() };
+}
+
+auto CPawnController::WsMarkHolds(const CBattleEntity* PMob) const -> bool
+{
+    return !m_WsMark.has_value() || *m_WsMark == ChainMarkOn(PMob);
+}
+
+auto CPawnController::WeaponSkillPending() const -> bool
+{
+    return m_HeldWs.has_value() || (m_SneakStep.has_value() && m_SneakStep->wsid != 0);
+}
+
+auto CPawnController::CloseWeaponSkill(const EntityId target, const uint16 wsid) -> bool
+{
+    if (!PrepareRestAction())
+    {
+        return false;
+    }
+    m_WsMark.reset();
+    FaceTarget(target);
+    HeadLook(target.resolve<CBattleEntity>());
+    return FireWeaponSkill(target, wsid);
+}
+
 auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> bool
 {
     if (!PrepareRestAction())
@@ -7636,6 +7704,9 @@ auto CPawnController::WeaponSkill(const EntityId target, const uint16 wsid) -> b
     {
         return true; // on her way already, not turned to the mob (KeepsSneakForBack)
     }
+    // What is on the mob as her rows choose: a weapon skill that then waits
+    // behind Boost or Sneak Attack goes only if it is still the same
+    m_WsMark = ChainMarkOn(PTarget);
     // A Sneak Attack already on her -- primed for a mob that died before her
     // swing -- and the back not hers yet: the weapon skill waits for the
     // back and goes out the tick she reaches it, before her first swing can
@@ -7672,6 +7743,7 @@ auto CPawnController::OrderedWeaponSkill(const EntityId target, const uint16 wsi
     {
         return false;
     }
+    m_WsMark.reset(); // his order goes whatever is on the mob
     FaceTarget(target);
     HeadLook(target.resolve<CBattleEntity>());
     m_SneakStep.reset();
