@@ -122,6 +122,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ls_bank_moves.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/ah_sell.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/item_moves.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/dbox.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/dbox.h
 )
 
 set(MAP_CORE_SOURCES

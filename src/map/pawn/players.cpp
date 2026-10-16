@@ -21,6 +21,7 @@
 
 #include "players.h"
 
+#include "map_session.h"
 #include "map_session_container.h"
 #include "utils/zoneutils.h"
 
@@ -47,5 +48,11 @@ namespace pawn::players
             return true;
         }
         return zoneutils::GetChar(charid) != nullptr;
+    }
+
+    auto schedulerOf(const uint32 charid) -> Scheduler*
+    {
+        auto* PSession = sessions != nullptr ? sessions->getSessionByCharId(charid) : nullptr;
+        return PSession != nullptr ? PSession->scheduler : nullptr;
     }
 } // namespace pawn::players

@@ -24,6 +24,7 @@
 #include "common/cbasetypes.h"
 
 class MapSessionContainer;
+class Scheduler;
 
 // The map's real players, as the pawn code asks after them. A character's
 // body is destroyed at every zone line and loaded again when the client
@@ -43,4 +44,9 @@ namespace pawn::players
     // charid (possess.cpp); a dead client has neither once its session
     // times out
     auto online(uint32 charid) -> bool;
+
+    // The map's scheduler as his session holds it, for a call into the
+    // game's own code that wants one (the delivery box's); nullptr while he
+    // has no session
+    auto schedulerOf(uint32 charid) -> Scheduler*;
 } // namespace pawn::players

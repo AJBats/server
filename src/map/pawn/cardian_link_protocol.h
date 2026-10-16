@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 81: AH_REPRICE, a listing of his given a
+// compatible, the user, 2026-09-14). 83: DBOX's loc, a stack sent from any
+// bag of hers; 82: DBOX, a cardian's delivery box, and
+// CL_S_DBOX_BUSY to CL_S_ALREADY_SENT; 81: AH_REPRICE, a listing of his given a
 // new price; 80: selling on the auction house --
 // AH_QUOTES, AH_LISTINGS, AH_SELL and AH_CANCEL, AH_HISTORY's start, and
 // CL_S_NOT_AUCTIONABLE to CL_S_LISTING_GONE; 79: BANK_JUNK, the player's haul into
@@ -153,7 +155,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 81 };
+enum { CL_PROTOCOL = 83 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -328,6 +330,12 @@ enum
     CL_S_SAME_JOB          = 0x01C3, // the support job asked for is her main job
     CL_S_IN_A_FIGHT        = 0x01C4, // not while she fights
     CL_S_FAR_FROM_MOOGLE   = 0x01C5, // she stands beyond 20 yalms of the Nomad Moogle he stands by
+    CL_S_DBOX_BUSY         = 0x01C6, // her delivery box cannot open while an item use or a synthesis of hers holds its container
+    CL_S_NOT_DELIVERABLE   = 0x01C7, // the item may not be sent there: flagged so, or to another account only
+    CL_S_BOX_BACKLOGGED    = 0x01C8, // the box it would go to has too much waiting for it already
+    CL_S_NO_RECIPIENT      = 0x01C9, // no character by that charid
+    CL_S_NO_SENDER         = 0x01CA, // no sender to return it to: the auction house sent it
+    CL_S_ALREADY_SENT      = 0x01CB, // it is on its way: recall it first
 
     // The server's questions (OFFER)
     CL_S_OFFER_GONE        = 0x01D0, // the question is no longer open: answered, lapsed or withdrawn
@@ -2189,6 +2197,7 @@ typedef struct cl_ah_reprice
 enum
 {
     CL_T_JOB_CHANGE = 0x0901,
+    CL_T_DBOX       = 0x0902,
 };
 
 // Change her main job, her support job, or both; 0 keeps the one she has.
@@ -2202,6 +2211,64 @@ typedef struct cl_job_change
     uint8_t   subJob;  // a job id, or 0
     uint16_t  spare;
 } cl_job_change;
+
+// Her delivery box, by the game's own (utils/dboxutils), run on her as his
+// client runs it for him: each request opens her box, does its one thing
+// and closes it again. Box 1 is what was sent to her (Receive), box 2 what
+// she sends (Send); a box shows eight slots, and what comes for her past
+// them waits to be pulled in as slots free. The game's own rules hold: an
+// item flagged so goes only to a character of the same account, if at all;
+// a box with too much waiting takes no more. Answered with her inventory
+// (INVENTORY, CL_F_MORE) and her status pane (MEMBER_STATS: her gil) after
+// a take or a set -- a set from another bag first with that bag, her
+// inventory and her bag list (BAGS), the stack moved -- then this, with her
+// box's eight slots as their rows hold them: every answer once she is
+// found, refusals included, so a refusal never shows her box emptied.
+enum
+{
+    CL_DBOX_LOOK   = 0, // nothing but her box's slots
+    CL_DBOX_TAKE   = 1, // Receive: the slot's item, or gil, into her inventory; Send: an unsent one back
+    CL_DBOX_DROP   = 2, // Receive: the slot's item thrown away
+    CL_DBOX_RETURN = 3, // Receive: the slot's item sent back to whoever sent it
+    CL_DBOX_SET    = 4, // Send: qty of the stack in her inventory's invSlot, into the slot, for `to`
+    CL_DBOX_SEND   = 5, // Send: the slot's item sent
+    CL_DBOX_RECALL = 6, // Send: a sent item not yet received, called back
+    CL_DBOX_CLEAR  = 7, // Send: a delivered item's slot cleared
+};
+
+// A slot's state
+enum
+{
+    CL_DBOX_EMPTY     = 0,
+    CL_DBOX_WAITING   = 1, // Receive: an item for her; Send: set, not sent
+    CL_DBOX_SENT      = 2, // Send: on its way
+    CL_DBOX_DELIVERED = 3, // Send: received at the other end
+};
+
+typedef struct cl_dbox_slot
+{
+    uint16_t item;     // 0: empty; 65535: gil
+    uint8_t  state;    // CL_DBOX_*
+    uint8_t  spare;
+    uint32_t qty;      // a stack's count, or the gil
+    char     name[16]; // who sent it (Receive), or whom it is for (Send)
+} cl_dbox_slot;
+
+typedef struct cl_dbox
+{
+    cl_header    h;
+    uint32_t     cardian;  // charid
+    uint8_t      box;      // 1 Receive, 2 Send
+    uint8_t      action;   // CL_DBOX_*
+    uint8_t      slot;     // the box's slot, 0 to 7
+    uint8_t      invSlot;  // CL_DBOX_SET: the slot of her inventory it comes from
+    uint32_t     qty;      // CL_DBOX_SET: how many
+    uint32_t     to;       // CL_DBOX_SET: the charid it is for
+    uint8_t      waiting;  // answered, Receive: what waits for her beyond the eight slots
+    uint8_t      loc;      // CL_DBOX_SET: the bag invSlot is in, 0 her inventory; from another, the stack comes into her inventory first, by her own move
+    uint8_t      spare[2];
+    cl_dbox_slot slots[8]; // answered
+} cl_dbox;
 
 // ---- 0x0Axx: the linkshell -------------------------------------------------
 //

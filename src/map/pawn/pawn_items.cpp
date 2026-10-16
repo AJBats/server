@@ -49,6 +49,7 @@
 #include <algorithm>
 #include <array>
 #include <fmt/format.h>
+#include <optional>
 #include <stdexcept>
 #include <tuple>
 
@@ -209,7 +210,63 @@ namespace pawn::items
             LOC_MOGSATCHEL,
             LOC_MOGSACK,
         };
+
+        // Her Mog House's bags, after the rest in the menu's order
+        constexpr std::array<CONTAINER_ID, 3> kMogHouseOrder = {
+            LOC_MOGSAFE,
+            LOC_MOGSAFE2,
+            LOC_STORAGE,
+        };
+
+        // One of her bags as the menu lists it; nothing when she has none of it
+        auto bagOf(CCharEntity* PPawn, const CONTAINER_ID location) -> std::optional<Bag>
+        {
+            const auto* storage = PPawn->getStorage(location);
+            if (storage == nullptr || storage->GetSize() == 0)
+            {
+                return std::nullopt;
+            }
+            return Bag{ static_cast<uint8>(location), storage->GetSize(), static_cast<uint8>(storage->GetSize() - storage->GetFreeSlotsCount()) };
+        }
+
+        // Whether mogHouse reaches one of her Mog House's bags, as the game's
+        // own rule reaches a player's: her Mog Safe by a Nomad Moogle or in
+        // the Mog House, her Mog Safe 2 too once her second floor is open and
+        // the server opens second floors, her Storage in the Mog House alone
+        auto mogHouseReaches(const CCharEntity* PPawn, const CONTAINER_ID location, const MogHouseBags mogHouse) -> bool
+        {
+            switch (location)
+            {
+                case LOC_MOGSAFE:
+                    return mogHouse != MogHouseBags::None;
+                case LOC_MOGSAFE2:
+                    return mogHouse != MogHouseBags::None && (PPawn->profile.mhflag & 0x20) != 0 && settings::get<bool>("main.ENABLE_MOG_HOUSE_2F");
+                case LOC_STORAGE:
+                    return mogHouse == MogHouseBags::All;
+                default:
+                    return false;
+            }
+        }
     } // namespace
+
+    auto isMogHouseBag(const uint8 location) -> bool
+    {
+        return std::find(kMogHouseOrder.begin(), kMogHouseOrder.end(), static_cast<CONTAINER_ID>(location)) != kMogHouseOrder.end();
+    }
+
+    auto reachable(CCharEntity* PPawn, const uint8 location, const MogHouseBags mogHouse) -> bool
+    {
+        if (usableContainer(PPawn, location))
+        {
+            return true;
+        }
+        if (!isMogHouseBag(location))
+        {
+            return false;
+        }
+        const auto bag = static_cast<CONTAINER_ID>(location);
+        return mogHouseReaches(PPawn, bag, mogHouse) && bagOf(PPawn, bag).has_value();
+    }
 
     auto isWardrobe(const uint8 location) -> bool
     {
@@ -405,9 +462,9 @@ namespace pawn::items
         return merges;
     }
 
-    auto sortBag(CCharEntity* PPawn, const uint8 location) -> uint16
+    auto sortBag(CCharEntity* PPawn, const uint8 location, const MogHouseBags mogHouse) -> uint16
     {
-        if (!usableContainer(PPawn, location))
+        if (!reachable(PPawn, location, mogHouse))
         {
             return CL_S_NO_SUCH_BAG;
         }
@@ -721,24 +778,32 @@ namespace pawn::items
         return CL_S_OK;
     }
 
-    auto bags(CCharEntity* PPawn) -> std::vector<Bag>
+    auto bags(CCharEntity* PPawn, const MogHouseBags mogHouse) -> std::vector<Bag>
     {
         std::vector<Bag> out;
         for (const auto location : kBagOrder)
         {
-            const auto* storage = PPawn->getStorage(location);
-            if (storage == nullptr || storage->GetSize() == 0)
+            if (const auto bag = bagOf(PPawn, location))
             {
-                continue;
+                out.push_back(*bag);
             }
-            out.push_back({ static_cast<uint8>(location), storage->GetSize(), static_cast<uint8>(storage->GetSize() - storage->GetFreeSlotsCount()) });
+        }
+        for (const auto location : kMogHouseOrder)
+        {
+            if (mogHouseReaches(PPawn, location, mogHouse))
+            {
+                if (const auto bag = bagOf(PPawn, location))
+                {
+                    out.push_back(*bag);
+                }
+            }
         }
         return out;
     }
 
-    auto moveItem(CCharEntity* PPawn, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty, bool* partly) -> uint16
+    auto moveItem(CCharEntity* PPawn, const uint8 fromLoc, const uint8 slot, const uint8 toLoc, const uint32 qty, bool* partly, const MogHouseBags mogHouse) -> uint16
     {
-        if (fromLoc == toLoc || !usableContainer(PPawn, fromLoc) || !usableContainer(PPawn, toLoc))
+        if (fromLoc == toLoc || !reachable(PPawn, fromLoc, mogHouse) || !reachable(PPawn, toLoc, mogHouse))
         {
             return CL_S_NO_SUCH_BAG;
         }
