@@ -282,6 +282,323 @@ namespace cardian::route
         return out;
     }
 
+    // Where the mesh's builder left a wall the game does not have: two ground
+    // polygons whose outer edges -- edges no neighbour joins -- lie along one
+    // line, touching or overlapping across it, at one height. The builder
+    // simplified two regions' outlines apart and never joined them, and a
+    // player walks straight across. The search crosses along the stretch the
+    // two edges share.
+    // The meshes are built with no body radius, so a thin fence between two
+    // fields leaves its two edges as near: where the zone's collision is
+    // given, a seam is kept only where it lets a body across (SeamOpen)
+    constexpr float kSeamGap     = 0.1f;  // the widest gap between the two edges that is still a seam, in yalms
+    constexpr float kSeamOverlap = 1.0f;  // ... and the deepest overlap
+    constexpr float kSeamMin     = 0.5f;  // the shortest stretch they share that a body passes through
+    constexpr float kSeamAngle   = 0.17f; // the sine of the widest angle between the two edges: 10 degrees
+    constexpr float kSeamCell    = 8.0f;  // the side of the grid the edges are sorted into, in yalms
+    constexpr float kSeamSample  = 1.0f;  // the collision is asked across a seam this often along it, in yalms
+    constexpr float kSeamReach   = 0.5f;  // ... from this far one side of it to as far the other
+    constexpr float kSeamSpacing = 1.5f;  // the search's points along a seam, this far apart
+
+    // Whether a body passes from `from` to `to`, a straight line in the
+    // zone's own coordinates: the zone's collision, its invisible barriers
+    // included. Empty: every seam is taken as open
+    using SeamOpen = std::function<bool(const position_t& from, const position_t& to)>;
+
+    struct Seam
+    {
+        dtPolyRef            a{};
+        dtPolyRef            b{};
+        std::array<float, 3> from{}; // the stretch the two share, halfway between their edges (Detour's coordinates)
+        std::array<float, 3> to{};
+    };
+
+    struct Seams
+    {
+        std::vector<uint32_t> base;  // each tile's first polygon in `first`
+        std::vector<uint32_t> first; // per polygon, its first entry in `index`; the next polygon's first is where its entries end
+        std::vector<uint32_t> index; // each polygon's seams, as places in `list`
+        std::vector<Seam>     list;
+
+        // A polygon's seams: none on most
+        auto of(const dtNavMesh& mesh, const dtPolyRef ref) const -> std::span<const uint32_t>
+        {
+            unsigned int salt = 0;
+            unsigned int it   = 0;
+            unsigned int ip   = 0;
+            mesh.decodePolyId(ref, salt, it, ip);
+            if (it >= base.size())
+            {
+                return {};
+            }
+            const size_t i = static_cast<size_t>(base[it]) + ip;
+            if (i + 1 >= first.size())
+            {
+                return {};
+            }
+            return { index.data() + first[i], index.data() + first[i + 1] };
+        }
+    };
+
+    // A mesh's seams, worked out once: every outer edge of its walkable
+    // ground sorted into a grid, and each pair near enough tried; with the
+    // zone's collision, each seam split into the runs of it a body passes
+    inline auto seamsOf(const dtNavMesh& mesh, const SeamOpen& open = {}) -> Seams
+    {
+        struct Edge
+        {
+            dtPolyRef poly{};
+            float     px{}, py{}, pz{}; // its ends, Detour's coordinates
+            float     qx{}, qy{}, qz{};
+            float     ux{}, uz{}, len{}; // its way across the ground, a unit, and its length
+            float     nx{}, nz{};        // the unit across it into its polygon
+        };
+
+        Seams          out;
+        const int      maxTiles = mesh.getMaxTiles();
+        uint32_t       total    = 0;
+        out.base.resize(static_cast<size_t>(maxTiles));
+        std::vector<Edge> edges;
+        for (int t = 0; t < maxTiles; ++t)
+        {
+            out.base[t]            = total;
+            const dtMeshTile* tile = mesh.getTile(t);
+            if (tile == nullptr || tile->header == nullptr)
+            {
+                continue;
+            }
+            total += static_cast<uint32_t>(tile->header->polyCount);
+            const dtPolyRef tileBase = mesh.getPolyRefBase(tile);
+            for (int p = 0; p < tile->header->polyCount; ++p)
+            {
+                const dtPoly& poly = tile->polys[p];
+                if (poly.getType() != DT_POLYTYPE_GROUND || (poly.flags & kPolyDisabled) != 0 || poly.vertCount < 3)
+                {
+                    continue;
+                }
+                float cx = 0.0f;
+                float cz = 0.0f;
+                for (int v = 0; v < poly.vertCount; ++v)
+                {
+                    cx += tile->verts[poly.verts[v] * 3];
+                    cz += tile->verts[poly.verts[v] * 3 + 2];
+                }
+                cx /= static_cast<float>(poly.vertCount);
+                cz /= static_cast<float>(poly.vertCount);
+                for (int j = 0; j < poly.vertCount; ++j)
+                {
+                    // an outer edge: a border, or a tile's edge Detour linked to nothing
+                    bool outer = poly.neis[j] == 0;
+                    if ((poly.neis[j] & DT_EXT_LINK) != 0)
+                    {
+                        outer = true;
+                        for (unsigned int l = poly.firstLink; l != DT_NULL_LINK; l = tile->links[l].next)
+                        {
+                            if (tile->links[l].edge == j)
+                            {
+                                outer = false;
+                                break;
+                            }
+                        }
+                    }
+                    if (!outer)
+                    {
+                        continue;
+                    }
+                    const float* v0  = &tile->verts[poly.verts[j] * 3];
+                    const float* v1  = &tile->verts[poly.verts[(j + 1) % poly.vertCount] * 3];
+                    const float  dx  = v1[0] - v0[0];
+                    const float  dz  = v1[2] - v0[2];
+                    const float  len = std::sqrt(dx * dx + dz * dz);
+                    if (len < kSeamMin)
+                    {
+                        continue;
+                    }
+                    Edge e{ .poly = tileBase | static_cast<dtPolyRef>(p), .px = v0[0], .py = v0[1], .pz = v0[2], .qx = v1[0], .qy = v1[1], .qz = v1[2],
+                            .ux = dx / len, .uz = dz / len, .len = len };
+                    e.nx = -e.uz;
+                    e.nz = e.ux;
+                    if ((cx - e.px) * e.nx + (cz - e.pz) * e.nz < 0.0f)
+                    {
+                        e.nx = -e.nx;
+                        e.nz = -e.nz;
+                    }
+                    edges.push_back(e);
+                }
+            }
+        }
+
+        // The edges by grid cell, each in every cell its box touches, the box
+        // widened by half as far as its partner may stand across it (a gap or
+        // an overlap), so two such boxes always meet in a cell: one list of
+        // (cell, edge), sorted by cell
+        constexpr float slack  = std::max(kSeamGap, kSeamOverlap) * 0.5f;
+        const auto      cellOf = [](const float v) { return static_cast<int32_t>(std::floor(v / kSeamCell)); };
+        const auto keyOf  = [](const int32_t x, const int32_t z) { return (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 32) | static_cast<uint32_t>(z); };
+        std::vector<std::pair<uint64_t, uint32_t>> grid;
+        grid.reserve(edges.size() * 2);
+        for (uint32_t i = 0; i < edges.size(); ++i)
+        {
+            const Edge& e = edges[i];
+            for (int32_t x = cellOf(std::min(e.px, e.qx) - slack); x <= cellOf(std::max(e.px, e.qx) + slack); ++x)
+            {
+                for (int32_t z = cellOf(std::min(e.pz, e.qz) - slack); z <= cellOf(std::max(e.pz, e.qz) + slack); ++z)
+                {
+                    grid.emplace_back(keyOf(x, z), i);
+                }
+            }
+        }
+        std::sort(grid.begin(), grid.end());
+        // Pairs along one line with their polygons on either side of it, the
+        // cheap tests first: most edges near each other turn some other way
+        std::vector<std::pair<uint32_t, uint32_t>> pairs;
+        for (size_t from = 0; from < grid.size();)
+        {
+            size_t to = from + 1;
+            while (to < grid.size() && grid[to].first == grid[from].first)
+            {
+                ++to;
+            }
+            for (size_t i = from; i < to; ++i)
+            {
+                const Edge& e = edges[grid[i].second];
+                for (size_t k = i + 1; k < to; ++k)
+                {
+                    const Edge& f = edges[grid[k].second];
+                    if (e.poly == f.poly || std::fabs(e.ux * f.uz - e.uz * f.ux) > kSeamAngle || e.nx * f.nx + e.nz * f.nz > -0.9f)
+                    {
+                        continue;
+                    }
+                    pairs.emplace_back(std::min(grid[i].second, grid[k].second), std::max(grid[i].second, grid[k].second));
+                }
+            }
+            from = to;
+        }
+        std::sort(pairs.begin(), pairs.end());
+        pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
+
+        for (const auto& [first, second] : pairs)
+        {
+            const Edge& e = edges[first];
+            const Edge& f = edges[second];
+            // f's ends along e, and the stretch the two share
+            const float s0 = (f.px - e.px) * e.ux + (f.pz - e.pz) * e.uz;
+            const float s1 = (f.qx - e.px) * e.ux + (f.qz - e.pz) * e.uz;
+            const float lo = std::max(0.0f, std::min(s0, s1));
+            const float hi = std::min(e.len, std::max(s0, s1));
+            if (hi - lo < kSeamMin)
+            {
+                continue;
+            }
+            // at each end of the stretch: f's offset out of e's polygon (a
+            // gap above zero, an overlap below), and the two heights
+            std::array<float, 3> ends[2]{};
+            bool                 holds = true;
+            for (int end = 0; end < 2 && holds; ++end)
+            {
+                const float s  = end == 0 ? lo : hi;
+                const float tf = (s - s0) / (s1 - s0);
+                const float fx = f.px + (f.qx - f.px) * tf;
+                const float fy = f.py + (f.qy - f.py) * tf;
+                const float fz = f.pz + (f.qz - f.pz) * tf;
+                const float te = s / e.len;
+                const float ex = e.px + (e.qx - e.px) * te;
+                const float ey = e.py + (e.qy - e.py) * te;
+                const float ez = e.pz + (e.qz - e.pz) * te;
+                const float gap = -((fx - ex) * e.nx + (fz - ez) * e.nz);
+                holds           = gap <= kSeamGap && gap >= -kSeamOverlap && std::fabs(fy - ey) <= kClimbStep;
+                ends[end]       = { (ex + fx) * 0.5f, (ey + fy) * 0.5f, (ez + fz) * 0.5f };
+            }
+            if (!holds)
+            {
+                continue;
+            }
+            if (!open)
+            {
+                out.list.push_back({ .a = e.poly, .b = f.poly, .from = ends[0], .to = ends[1] });
+                continue;
+            }
+            // Across it every kSeamSample yalms, at a knee's height and a
+            // chest's: each run of open samples long enough to pass through
+            // is a seam of its own
+            const float span   = std::hypot(ends[1][0] - ends[0][0], ends[1][2] - ends[0][2]);
+            const int   steps  = std::max(1, static_cast<int>(std::ceil(span / kSeamSample)));
+            const auto  sample = [&](const int step) -> std::array<float, 3>
+            {
+                const float t = static_cast<float>(step) / static_cast<float>(steps);
+                return { ends[0][0] + (ends[1][0] - ends[0][0]) * t, ends[0][1] + (ends[1][1] - ends[0][1]) * t, ends[0][2] + (ends[1][2] - ends[0][2]) * t };
+            };
+            const auto passes = [&](const std::array<float, 3>& at) -> bool
+            {
+                for (const float up : { 0.5f, 1.2f }) // Detour's y is up
+                {
+                    const float one[3]{ at[0] + e.nx * kSeamReach, at[1] + up, at[2] + e.nz * kSeamReach };
+                    const float two[3]{ at[0] - e.nx * kSeamReach, at[1] + up, at[2] - e.nz * kSeamReach };
+                    if (!open(fromDetour(one), fromDetour(two)))
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            const auto keep = [&](const int fromStep, const int toStep)
+            {
+                const auto from = sample(fromStep);
+                const auto to   = sample(toStep);
+                if (std::hypot(to[0] - from[0], to[2] - from[2]) >= kSeamMin)
+                {
+                    out.list.push_back({ .a = e.poly, .b = f.poly, .from = from, .to = to });
+                }
+            };
+            int runFrom = -1;
+            for (int step = 0; step <= steps; ++step)
+            {
+                if (passes(sample(step)))
+                {
+                    runFrom = runFrom < 0 ? step : runFrom;
+                }
+                else if (runFrom >= 0)
+                {
+                    keep(runFrom, step - 1);
+                    runFrom = -1;
+                }
+            }
+            if (runFrom >= 0)
+            {
+                keep(runFrom, steps);
+            }
+        }
+
+        // By polygon
+        std::vector<uint32_t> counts(static_cast<size_t>(total) + 1, 0);
+        const auto            flat = [&](const dtPolyRef ref) -> size_t
+        {
+            unsigned int salt = 0;
+            unsigned int it   = 0;
+            unsigned int ip   = 0;
+            mesh.decodePolyId(ref, salt, it, ip);
+            return static_cast<size_t>(out.base[it]) + ip;
+        };
+        for (const auto& seam : out.list)
+        {
+            ++counts[flat(seam.a)];
+            ++counts[flat(seam.b)];
+        }
+        out.first.resize(static_cast<size_t>(total) + 1, 0);
+        for (size_t i = 0; i < total; ++i)
+        {
+            out.first[i + 1] = out.first[i] + counts[i];
+        }
+        out.index.resize(out.first[total]);
+        std::vector<uint32_t> filled(out.first.begin(), out.first.end() - 1);
+        for (uint32_t s = 0; s < out.list.size(); ++s)
+        {
+            out.index[filled[flat(out.list[s].a)]++] = s;
+            out.index[filled[flat(out.list[s].b)]++] = s;
+        }
+        return out;
+    }
+
     namespace detail
     {
         using Vec = std::array<float, 3>; // Detour's coordinates
@@ -576,6 +893,7 @@ namespace cardian::route
             bool      danger = false; // the step to it from its parent passes through danger
             bool      link   = false; // the step to it from its parent crosses an off-mesh link
             int8_t    end    = -1;    // an off-mesh link's end it stands on: 0 where the link starts, 1 where it ends
+            bool      seam   = false; // a point on a seam (Seams): halfway across its gap, up to half of kSeamGap past each polygon's edge
         };
 
         constexpr uint8_t kLink   = 1; // a polygon that is an off-mesh link
@@ -845,8 +1163,8 @@ namespace cardian::route
     // given; without one, to the nearest point out of every reach, walking at
     // most `within` yalms (Dijkstra, the greed off)
     inline auto searchCore(const dtNavMesh& mesh, const position_t& from, const std::optional<position_t>& to, const float* fromExtents, const float* toExtents,
-                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within, const Faces* faces)
-        -> std::optional<Route>
+                           const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within, const Faces* faces,
+                           const Seams* seams = nullptr) -> std::optional<Route>
     {
         using detail::apart;
         using detail::Node;
@@ -974,6 +1292,29 @@ namespace cardian::route
             return faces != nullptr && detail::climbsFaces(*faces, mesh, polys, count, a, b);
         };
 
+        // A walk the mesh joins in a straight line -- no wall, nothing a
+        // player cannot climb, no danger -- is that straight line. The
+        // search's points stand at the polygons' corners, and a polygon whose
+        // corners lie only up its steep faces would otherwise refuse a
+        // straight that crosses none of them
+        if (!safeGround && !inDanger.startsInside() && apart(origin, target) <= kShortcutReach)
+        {
+            float     t = 0.0f;
+            float     normal[3]{};
+            dtPolyRef path[kRayPolys]{};
+            int       count = 0;
+            if (dtStatusSucceed(query.raycast(startRef, origin.data(), target.data(), &filter, &t, normal, path, &count, kRayPolys)) && t == FLT_MAX && count > 0 &&
+                path[count - 1] == goalRef && !detail::tooSteep(origin, target) && !climbsCliff(path, count, origin, target) && !inDanger(origin, target))
+            {
+                Route straightRoute;
+                straightRoute.complete = true;
+                straightRoute.length   = apart(origin, target);
+                straightRoute.polys    = count;
+                straightRoute.points.push_back(fromDetour(target.data()));
+                return straightRoute;
+            }
+        }
+
         auto& nodes = ws.nodes;
         nodes.clear();
         nodes.push_back(Node{ .at = origin, .polys = { startRef, 0 }, .g = 0.0f }); // the start
@@ -1098,12 +1439,19 @@ namespace cardian::route
                 const Vec right{ v0[0] + (v1[0] - v0[0]) * tmax, v0[1] + (v1[1] - v0[1]) * tmax, v0[2] + (v1[2] - v0[2]) * tmax };
 
                 // Points along it, kPortalSpacing apart where either polygon
-                // lies near danger, the end ones a little in from the
+                // lies near danger, kSeamSpacing where either has a seam (a
+                // way across a seam goes on through its polygon's other
+                // edges as straight), the end ones a little in from the
                 // corners; elsewhere its two ends alone, where a shortest way
                 // turns (its middle, on an edge too short for two)
-                const float len   = apart(left, right);
-                const bool  fine  = nearOf(r, tile, poly) || nearOf(n, nextTile, nextPoly);
-                const int   count = fine ? std::max(1, static_cast<int>(std::ceil(len / kPortalSpacing))) : (len > 1.0f ? 2 : 1);
+                const float len     = apart(left, right);
+                const bool  seamed  = seams != nullptr && (!seams->of(mesh, ref).empty() || !seams->of(mesh, next).empty());
+                const bool  fine    = seamed || nearOf(r, tile, poly) || nearOf(n, nextTile, nextPoly);
+                const float spacing = seamed ? kSeamSpacing : kPortalSpacing;
+                const int   ends    = len > 1.0f ? 2 : 1;
+                const int   count   = seamed ? std::max(ends, static_cast<int>(std::ceil(len / spacing)) + 1)
+                                      : fine ? std::max(1, static_cast<int>(std::ceil(len / spacing)))
+                                             : ends;
                 const float inset = len > 0.0f ? std::min(0.3f, len * 0.1f) / len : 0.0f;
                 for (int k = 0; k < count; ++k)
                 {
@@ -1113,6 +1461,49 @@ namespace cardian::route
                     const int id = static_cast<int>(nodes.size()) - 1;
                     listOf(r).push_back(id);
                     listOf(n).push_back(id);
+                }
+            }
+
+            // The mesh's seams (Seams): the stretch two polygons share where
+            // the builder left them unjoined, crossed as their edge would be
+            if (seams != nullptr && !isLink)
+            {
+                for (const uint32_t s : seams->of(mesh, ref))
+                {
+                    const Seam&     seam = seams->list[s];
+                    const dtPolyRef next = seam.a == ref ? seam.b : seam.a;
+                    const uint32_t  n    = indexOf(next);
+                    const auto&     mine = listOf(r);
+                    if (ws.madeIn[n] == stamp &&
+                        std::any_of(mine.begin(), mine.end(), [&](const int id) { return nodes[id].end < 0 && (nodes[id].polys[0] == next || nodes[id].polys[1] == next); }))
+                    {
+                        continue; // made by the other polygon, or joined to it by an edge already
+                    }
+                    const dtMeshTile* nextTile = nullptr;
+                    const dtPoly*     nextPoly = nullptr;
+                    mesh.getTileAndPolyByRefUnsafe(next, &nextTile, &nextPoly);
+                    if ((nextPoly->flags & kPolyDisabled) != 0)
+                    {
+                        continue;
+                    }
+                    const Vec   left{ seam.from[0], seam.from[1], seam.from[2] };
+                    const Vec   right{ seam.to[0], seam.to[1], seam.to[2] };
+                    // Points every kSeamSpacing along it: no straight is
+                    // drawn over a seam (Detour's ray stops at it), so its
+                    // ends alone would send her round by one of them
+                    const float len   = apart(left, right);
+                    const int   count = std::max(1, static_cast<int>(std::ceil(len / kSeamSpacing)) + 1);
+                    const float inset = len > 0.0f ? std::min(0.3f, len * 0.1f) / len : 0.0f;
+                    for (int k = 0; k < count; ++k)
+                    {
+                        const float t = count == 1 ? 0.5f : inset + (1.0f - 2.0f * inset) * static_cast<float>(k) / static_cast<float>(count - 1);
+                        nodes.push_back(Node{ .at = { left[0] + (right[0] - left[0]) * t, left[1] + (right[1] - left[1]) * t, left[2] + (right[2] - left[2]) * t },
+                                              .polys = { ref, next },
+                                              .seam  = true });
+                        const int id = static_cast<int>(nodes.size()) - 1;
+                        listOf(r).push_back(id);
+                        listOf(n).push_back(id);
+                    }
                 }
             }
         };
@@ -1268,8 +1659,14 @@ namespace cardian::route
             float     normal[3]{};
             dtPolyRef path[kRayPolys]{};
             int       count = 0;
-            if (dtStatusFailed(query.raycast(nodes[raw[a + 1]].via, from_.at.data(), to_.at.data(), &filter, &t, normal, path, &count, kRayPolys)) ||
-                t != FLT_MAX || count == 0)
+            if (dtStatusFailed(query.raycast(nodes[raw[a + 1]].via, from_.at.data(), to_.at.data(), &filter, &t, normal, path, &count, kRayPolys)) || count == 0)
+            {
+                return false;
+            }
+            // A seam's point stands halfway across its gap, as much as half of
+            // kSeamGap past either polygon's edge: a ray that edge stops so
+            // short of it reaches it
+            if (t != FLT_MAX && !(to_.seam && (1.0f - t) * apart(from_.at, to_.at) <= kSeamGap))
             {
                 return false;
             }
@@ -1347,10 +1744,10 @@ namespace cardian::route
 
     // The route from `from` to `to` that keeps out of danger (searchCore)
     inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
-                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f, const Faces* faces = nullptr)
-        -> std::optional<Route>
+                               const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f, const Faces* faces = nullptr,
+                               const Seams* seams = nullptr) -> std::optional<Route>
     {
-        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces);
+        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces, seams);
     }
 
     // The way from `from` to the nearest ground out of every reach, walking
@@ -1359,8 +1756,9 @@ namespace cardian::route
     // the fewest steps of it. Complete and empty when `from` is out of every
     // reach already; not complete when no such ground lies within
     inline auto searchSafeGround(const dtNavMesh& mesh, const position_t& from, const float* fromExtents, const std::vector<Hazard>& hazards,
-                                 const HazardSight& sight, const float within, const Faces* faces = nullptr) -> std::optional<Route>
+                                 const HazardSight& sight, const float within, const Faces* faces = nullptr, const Seams* seams = nullptr)
+        -> std::optional<Route>
     {
-        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within, faces);
+        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within, faces, seams);
     }
 } // namespace cardian::route

@@ -23,10 +23,12 @@
 #include "data/loader.h"
 #include "map/navmesh/detour_navmesh.h"
 #include "map/pawn/subzone_graph.h"
+#include "map/ximesh/ximesh_impl.h"
 
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
@@ -148,6 +150,67 @@ namespace
         return out;
     }
 
+    // A zone's collision, as the map loads it, and the seam test the travel
+    // map makes of it (pawn_travel.cpp meshOf); none without the file
+    auto loadCollision(const std::string& zone) -> std::unique_ptr<XiMesh>
+    {
+        // the file the map names for the zone (CZone::LoadXiMesh's renames),
+        // on the zone's name in lower case: the files are found whatever the case
+        std::string name = zone;
+        std::transform(name.begin(), name.end(), name.begin(), [](const unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (name.size() >= 2 && name.ends_with("_u"))
+        {
+            name.replace(name.size() - 2, 2, "_[u]");
+        }
+        if (name.starts_with("escha_"))
+        {
+            name.replace(5, 1, "-");
+        }
+        if (name.starts_with("desuetia_"))
+        {
+            name.replace(8, 1, "-");
+        }
+        if (name == "ship_bound_for_selbina_pirates")
+        {
+            name = "ship_bound_for_selbina_id-227";
+        }
+        else if (name == "ship_bound_for_mhaura_pirates")
+        {
+            name = "ship_bound_for_mhaura_id-228";
+        }
+        if (name.starts_with("maquette_abdhaljs-legion_"))
+        {
+            name.erase(name.size() - 2, 1);
+        }
+        const auto file = fmt::format("ximeshes/{}.ximesh", name);
+        if (!std::filesystem::exists(file))
+        {
+            return nullptr;
+        }
+        return std::make_unique<XiMeshImpl>(file);
+    }
+
+    auto seamOpen(const XiMesh* collision) -> cardian::route::SeamOpen
+    {
+        if (collision == nullptr)
+        {
+            return {};
+        }
+        return [collision](const position_t& a, const position_t& b)
+        {
+            return !collision->rayIntersect(Vector3{ a.x, a.y, a.z }, Vector3{ b.x, b.y, b.z }, IgnoreTransparentBarriers::No);
+        };
+    }
+
+    // A zone's pieces as the map cuts them (pawn_travel.cpp meshOf): its
+    // seams joined where its collision lets a body across
+    auto piecesAsTheMapCuts(const std::string& zone, const dtNavMesh& mesh) -> sz::Pieces
+    {
+        const auto collision = loadCollision(zone);
+        const auto seams     = cardian::route::seamsOf(mesh, seamOpen(collision.get()));
+        return sz::piecesOf(mesh, &seams);
+    }
+
     // A walk across one zone, by the whole-zone search
     void walks(const char* zone, const char* what, const position_t& from, const position_t& to)
     {
@@ -193,7 +256,7 @@ namespace
             {
                 return std::nullopt;
             }
-            region.pieces[static_cast<uint16>(id)] = sz::piecesOf(*mesh);
+            region.pieces[static_cast<uint16>(id)] = piecesAsTheMapCuts(name, *mesh);
             region.meshes.emplace(static_cast<uint16>(id), std::move(mesh));
         }
         for (const auto& [id, _] : zones)
@@ -316,7 +379,7 @@ namespace
             }
             if (auto mesh = loadMesh(out->names[zone]); mesh)
             {
-                out->pieces[zone] = sz::piecesOf(*mesh);
+                out->pieces[zone] = piecesAsTheMapCuts(out->names[zone], *mesh);
                 out->meshes.emplace(zone, std::move(mesh));
             }
         }
@@ -1315,14 +1378,16 @@ TEST_CASE("Zone lines: West Ronfaure reaches Northern San d'Oria from its main g
 TEST_CASE("Zone lines: the ends moved under their point named, and the odd ends and the ends apart from their zone's main ground counted", "[cardian][route]")
 {
     // Of the 1,394 ends in zones with a mesh -- 697 origins and 697
-    // arrivals -- measured 2026-10-15
+    // arrivals -- measured 2026-10-15; the seams (route::Seams, 2026-10-16)
+    // joined Labyrinth of Onzozo's line to Buburimu Peninsula and two of
+    // Cirdas Caverns' ends to their zones' main ground
     const std::vector<std::string> kMoved = {
         "alzadaal_undersea_ruins origin to zone 79", "beaucedine_glacier origin to zone 112", "dangruf_wadi origin to zone 106",
         "east_ronfaure origin to zone 190",          "jugner_forest origin to zone 149",     "velugannon_palace origin to zone 130",
     };
-    constexpr int kOdd           = 75;
-    constexpr int kOriginsApart  = 265;
-    constexpr int kArrivalsApart = 224;
+    constexpr int kOdd           = 73;
+    constexpr int kOriginsApart  = 263;
+    constexpr int kArrivalsApart = 223;
 
     const auto whole = wholeWorld();
     if (whole->meshes.empty())
@@ -1519,4 +1584,169 @@ TEST_CASE("Zone lines: islands (opt-in, CARDIAN_LINES=1)", "[cardian][route]")
         << origins << " origins, " << originIslands << " on ground the zone's main ground does not reach; " << arrivals << " arrivals, " << arrivalIslands
         << " on ground that does not reach it\n";
     WARN("islands written to log/lines_islands.txt: " << originIslands << " of " << origins << " origins, " << arrivalIslands << " of " << arrivals << " arrivals");
+}
+
+// A walk the mesh joins in a straight line is that line (#465): by the La
+// Theine line in West Ronfaure, every corner of the polygons round two yalms
+// of flat ground lay up a steep face, and the search, which steps between
+// corners, refused the walk the straight crosses no face of
+TEST_CASE("Route slopes: two yalms of flat ground between steep corners are walked straight", "[cardian][route]")
+{
+    const auto mesh = loadMesh("West_Ronfaure");
+    if (!mesh)
+    {
+        SKIP("no navmesh for West_Ronfaure");
+    }
+    const auto       faces = cardian::route::facesOf(*mesh);
+    const position_t from(-560.7f, 0.2f, -606.6f, 0, 0);
+    const position_t to(-560.9f, 0.4f, -608.6f, 0, 0);
+    const auto       route = cardian::route::searchAvoiding(*mesh, from, to, sz::kBodyExtents, sz::kLineExtents, {}, {}, yalms(from, to) * 1.5f + 30.0f, &faces);
+    REQUIRE(route.has_value());
+    CHECK(route->complete);
+    CHECK(route->points.size() == 1);
+    CHECK(route->length < 2.5f);
+}
+
+// La Theine Plateau's seam (#465): from its pond north along x -7, two of
+// the mesh's polygons overlap without a link between them, so the mesh walks
+// round some 285 yalms from the east side to the west where a player walks
+// straight across. Read as a seam, it is crossed
+TEST_CASE("Route seams: La Theine Plateau's pond seam is walked across both ways", "[cardian][route]")
+{
+    const auto mesh = loadMesh("La_Theine_Plateau");
+    if (!mesh)
+    {
+        SKIP("no navmesh for La_Theine_Plateau");
+    }
+    const auto faces     = cardian::route::facesOf(*mesh);
+    const auto collision = loadCollision("La_Theine_Plateau");
+    REQUIRE(collision != nullptr);
+    const auto seams = cardian::route::seamsOf(*mesh, seamOpen(collision.get())); // as the travel map makes them
+    REQUIRE_FALSE(seams.list.empty());
+
+    struct Walk
+    {
+        const char* what;
+        position_t  from;
+        position_t  to;
+    };
+    const Walk walks[] = {
+        { "the party's stall, west to east (2026-10-13)", position_t(-8.4f, 15.7f, 39.1f, 0, 0), position_t(10.0f, 16.7f, 36.9f, 0, 0) },
+        { "Kestrel's 1.2 yalms, east to west (2026-10-16)", position_t(-6.2f, 16.1f, 43.5f, 0, 0), position_t(-7.3f, 16.4f, 43.1f, 0, 0) },
+        { "Jevyak's 11 yalms, east to west (2026-10-16)", position_t(-4.6f, 16.0f, 42.1f, 0, 0), position_t(-14.3f, 16.2f, 47.4f, 0, 0) },
+    };
+    for (const auto& w : walks)
+    {
+        INFO(w.what);
+        const float span  = yalms(w.from, w.to);
+        const auto  bare  = cardian::route::searchAvoiding(*mesh, w.from, w.to, sz::kBodyExtents, sz::kLineExtents, {}, {}, 0.0f, &faces);
+        const auto  route = cardian::route::searchAvoiding(*mesh, w.from, w.to, sz::kBodyExtents, sz::kLineExtents, {}, {}, span * 1.5f + 30.0f, &faces, &seams);
+        REQUIRE(bare.has_value());
+        CHECK((!bare->complete || bare->length > span + 25.0f)); // the mesh alone walks round, or not at all
+        REQUIRE(route.has_value());
+        CHECK(route->complete);
+        CHECK(route->length < span + 3.0f);
+    }
+
+    // the two sides are one piece with the seams, as the search walks
+    const auto pieces = sz::piecesOf(*mesh, &seams);
+    CHECK(sz::pieceAt(*mesh, pieces, position_t(-6.2f, 16.1f, 43.5f, 0, 0), sz::kBodyExtents) ==
+          sz::pieceAt(*mesh, pieces, position_t(-7.3f, 16.4f, 43.1f, 0, 0), sz::kBodyExtents));
+}
+
+// Every zone's seams, the mesh's body radius beside them: how common the
+// builder's fault is, how many the zone's collision closes (a fence, a wall,
+// an invisible barrier), and the longest it keeps, to look at. Written to
+// log/seams_survey.txt (OPEN_ISSUES #465). Opt-in: it loads every mesh
+TEST_CASE("Route seams: every zone's (opt-in, CARDIAN_SEAMS=1)", "[cardian][route]")
+{
+    if (std::getenv("CARDIAN_SEAMS") == nullptr)
+    {
+        SKIP("the seam survey runs with CARDIAN_SEAMS=1");
+    }
+    using Settings = xi::data::datasets::zones::settings::Dataset;
+    std::ofstream out("log/seams_survey.txt");
+    int           zones  = 0;
+    int           with   = 0;
+    size_t        total  = 0;
+    size_t        kept   = 0;
+    int           blind  = 0; // zones with no collision file under the mesh's name
+    int           bigJoins = 0; // seams joining two pieces of 50 polygons or more the mesh alone keeps apart
+    for (int z = 1; z < 300; ++z)
+    {
+        const auto id       = static_cast<xi::ZoneId>(z);
+        const auto settings = xi::data::loadZoneFile<Settings>(id);
+        if (!settings)
+        {
+            continue;
+        }
+        const std::string name = std::filesystem::path(xi::data::zoneFilePath(id, "zone")).parent_path().filename().string();
+        const auto        mesh = loadMesh(name);
+        if (!mesh)
+        {
+            continue;
+        }
+        ++zones;
+        const auto collision = loadCollision(name);
+        blind += collision == nullptr ? 1 : 0;
+        const auto bare  = std::chrono::steady_clock::now();
+        const auto all   = cardian::route::seamsOf(*mesh);
+        const auto plain = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - bare).count();
+        const auto began = std::chrono::steady_clock::now();
+        const auto seams = cardian::route::seamsOf(*mesh, seamOpen(collision.get()));
+        const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+        if (all.list.empty())
+        {
+            continue;
+        }
+        ++with;
+        total += all.list.size();
+        kept += seams.list.size();
+        float radius = 0.0f;
+        for (int t = 0; t < mesh->getMaxTiles(); ++t)
+        {
+            if (const dtMeshTile* tile = std::as_const(*mesh).getTile(t); tile != nullptr && tile->header != nullptr)
+            {
+                radius = tile->header->walkableRadius;
+                break;
+            }
+        }
+        std::vector<const cardian::route::Seam*> longest;
+        for (const auto& seam : seams.list)
+        {
+            longest.push_back(&seam);
+        }
+        const auto lengthOf = [](const cardian::route::Seam* s) { return std::hypot(s->to[0] - s->from[0], s->to[2] - s->from[2]); };
+        std::sort(longest.begin(), longest.end(), [&](const auto* a, const auto* b) { return lengthOf(a) > lengthOf(b); });
+        out << fmt::format("{} ({}): {} seams, {} runs of them open to the collision{}, body radius {:.2f}, worked out in {} ms; the longest open:", name, z,
+                           all.list.size(), seams.list.size(), collision == nullptr ? " (no collision file: all kept)" : "", radius, took);
+        out << fmt::format(" [the mesh alone {} us]", plain);
+
+        // the pieces a seam joins that the mesh alone keeps apart, each
+        // side's size: two big ones joined is a join to look at by eye
+        const auto apart  = sz::piecesOf(*mesh);
+        const auto joined = sz::piecesOf(*mesh, &seams);
+        out << fmt::format("; pieces {} alone, {} with the seams", apart.polys.size() - 1, joined.polys.size() - 1);
+        for (const auto& seam : seams.list)
+        {
+            const auto pa = apart.of(*mesh, seam.a);
+            const auto pb = apart.of(*mesh, seam.b);
+            if (pa != 0 && pb != 0 && pa != pb && std::min(apart.polys[pa], apart.polys[pb]) >= 50)
+            {
+                ++bigJoins;
+                out << fmt::format("\n    JOINS pieces of {} and {} polygons at ({:.1f}, {:.1f}, {:.1f})", apart.polys[pa], apart.polys[pb], seam.from[0], -seam.from[1], -seam.from[2]);
+            }
+        }
+        for (size_t i = 0; i < longest.size() && i < 5; ++i)
+        {
+            const auto* s = longest[i];
+            out << fmt::format(" ({:.1f}, {:.1f}, {:.1f}) to ({:.1f}, {:.1f}, {:.1f}) {:.1f}y;", s->from[0], -s->from[1], -s->from[2], s->to[0], -s->to[1], -s->to[2],
+                               lengthOf(s));
+        }
+        out << "\n";
+    }
+    out << "\n"
+        << zones << " zones with a mesh, " << with << " with seams, " << total << " seams in all, " << kept << " runs of them open to the collision; " << blind
+        << " zones without a collision file under the mesh's name; " << bigJoins << " seams join two pieces of 50 polygons or more\n";
+    WARN("seams written to log/seams_survey.txt: " << total << " in " << with << " of " << zones << " zones, " << kept << " open runs");
 }

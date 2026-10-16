@@ -85,8 +85,9 @@ namespace cardian::subzones
         }
     } // namespace detail
 
-    // The pieces of a zone's mesh
-    inline auto piecesOf(const dtNavMesh& mesh) -> Pieces
+    // The pieces of a zone's mesh; with its seams (route::Seams), the two
+    // sides of each are one piece, as the route search walks across
+    inline auto piecesOf(const dtNavMesh& mesh, const route::Seams* seams = nullptr) -> Pieces
     {
         Pieces out;
         out.tileBase.reserve(mesh.getMaxTiles() + 1);
@@ -198,6 +199,19 @@ namespace cardian::subzones
                 else if (back)
                 {
                     oneWays.push_back({ end, start, route::fromDetour(atEnd), route::fromDetour(atStart) });
+                }
+            }
+        }
+
+        if (seams != nullptr)
+        {
+            for (const auto& seam : seams->list)
+            {
+                const uint32_t a = flat(seam.a);
+                const uint32_t b = flat(seam.b);
+                if (ground(a) && ground(b))
+                {
+                    parent[detail::root(parent, a)] = detail::root(parent, b);
                 }
             }
         }
