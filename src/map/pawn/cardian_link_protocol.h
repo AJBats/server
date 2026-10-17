@@ -1291,7 +1291,7 @@ typedef struct cl_orders
     uint8_t   staked;     // answered: 1 while a camp stands
     uint8_t   diaBio;     // answered: which of the two, which block each other, her tactician prefers: 0 Dia, 1 Bio
     uint16_t  stakeZone;  // answered: the camp's zone id
-    uint8_t   avoidAggro; // answered: 1 while his cardians' Avoid aggro rows speak, 0 while the Shortcuts menu has it switched off
+    uint8_t   avoidAggro; // answered: the Shortcuts menu's switch, 1 on (every member of his party avoids aggro, whatever her row says), 0 off (none does)
     uint8_t   spare[3];
 } cl_orders;
 
@@ -1317,7 +1317,7 @@ enum
     CL_HUNT_AGGRESSIVE = 3, // value: 0 or 1
     CL_HUNT_LINKS      = 4, // value: 0 or 1
     CL_HUNT_DIA_BIO    = 5, // value: 0 Dia, 1 Bio -- not a hunt rule but an order kept with them
-    CL_HUNT_AVOID_AGGRO = 6, // value: 0 off, 1 on -- the Shortcuts menu's switch for his cardians' Avoid aggro, an order kept with them
+    CL_HUNT_AVOID_AGGRO = 6, // value: 0 off, 1 on -- the Shortcuts menu's switch: Avoid aggro for every member of his party, an order kept with them
 };
 
 typedef struct cl_set_hunt

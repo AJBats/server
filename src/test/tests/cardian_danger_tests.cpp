@@ -126,6 +126,31 @@ TEST_CASE("counts: an aggressive mob that also links is only its link circle whe
     REQUIRE_THAT(circle(false, false), WithinAbs(0.0f, 0.001f));
 }
 
+TEST_CASE("avoidsAggro: in a real player's party his switch decides alone, her row everywhere else", "[cardian][avoid]")
+{
+    // avoidsAggro(retreating, trekking, inPlayersParty, partySwitch, ownRow)
+
+    // In his party the switch lends Avoid aggro to a member whose row is
+    // off or missing, and takes it from one whose row is on
+    CHECK(avoidsAggro(false, false, true, true, false));
+    CHECK(avoidsAggro(false, false, true, true, true));
+    CHECK_FALSE(avoidsAggro(false, false, true, false, true));
+    CHECK_FALSE(avoidsAggro(false, false, true, false, false));
+
+    // In no real player's party, her own row
+    CHECK(avoidsAggro(false, false, false, false, true));
+    CHECK_FALSE(avoidsAggro(false, false, false, false, false));
+
+    // A trek always avoids, the switch off and her row off
+    CHECK(avoidsAggro(false, true, true, false, false));
+    CHECK(avoidsAggro(false, true, false, false, false));
+
+    // A retreat never does, whatever lends it
+    CHECK_FALSE(avoidsAggro(true, false, true, true, true));
+    CHECK_FALSE(avoidsAggro(true, false, false, false, true));
+    CHECK_FALSE(avoidsAggro(true, true, true, true, true));
+}
+
 TEST_CASE("radiusFor: sneak and invisible hide from sound and sight unless the mob truly detects", "[cardian][avoid]")
 {
     Profile p   = Profile::worstCase();

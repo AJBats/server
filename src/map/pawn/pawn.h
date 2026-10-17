@@ -330,10 +330,10 @@ namespace pawn
         // Plain rows ignore it (role_support.cpp)
         bool preferBio = false;
         // An order kept with them too (the user, 2026-10-15): the Shortcuts
-        // menu's Avoid aggro. Off, a cardian under these orders avoids no
-        // aggro while her rows say she would -- her rows untouched -- unless
-        // she is on a trek, whose own rows keep her clear
-        // (CPawnController::IsAvoidingAggro)
+        // menu's Avoid aggro, which decides alone for every member of his
+        // party (the user, 2026-10-17): on, each avoids aggro whatever her
+        // own Avoid aggro row says; off, none does, her rows untouched. A
+        // trek always avoids (CPawnController::IsAvoidingAggro)
         bool avoidAggro = true;
         // A world body's home pull (ROADMAP D3, user): the farther she is from
         // her starting point, the more the errand favours prey that leads back

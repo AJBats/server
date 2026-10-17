@@ -37,6 +37,7 @@
 #include "map/pause/input_gate.h"
 #include "map/pause/pause.h"
 #include "map/pawn/ah_sell.h"
+#include "map/pawn/auction.h"
 #include "map/pawn/cardian_link_protocol.h"
 #include "map/pawn/dbox.h"
 #include "map/pawn/item_moves.h"
@@ -46,6 +47,7 @@
 #include "map/pawn/pawn.h"
 #include "map/pawn/pawn_loot.h"
 #include "map/pawn/world.h"
+#include "map/utils/itemutils.h"
 #include "map/utils/moduleutils.h"
 
 #include <tuple>
@@ -408,6 +410,47 @@ class CardianTestStubs : public CPPModule
                 return true;
             }
             return db::preparedStmt("CREATE TRIGGER cardian_test_refuse_listing BEFORE INSERT ON auction_house FOR EACH ROW "
+                                    "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'") != nullptr;
+        };
+
+        // A cardian's bid with the player's purse behind hers, as the Auction
+        // House screen's bid makes it once its gates have passed
+        // (scripts/tests/cardian/ah_buy.lua, pawn::auction::purchaseShared),
+        // on players of the test's: the cheapest listing at or under the bid
+        // bought, `fromPurse` of the price from the purse's gil. Its faults
+        // are item_moves.h's, armed through xi.cardian.ahsell
+        ::lua["xi"]["cardian"]["ahbuy"] = ::lua.create_table();
+        sol::table buy                  = ::lua["xi"]["cardian"]["ahbuy"];
+        buy["purchase"]                 = [charOf](CLuaBaseEntity* PBuyer, CLuaBaseEntity* PPurse, const uint16 itemId, const bool stack, const uint32 price, const uint32 fromPurse) -> bool
+        {
+            const CItem* PKind    = xi::items::lookup(itemId);
+            const uint32 quantity = stack && PKind != nullptr ? PKind->getStackSize() : 1;
+            return pawn::auction::purchaseShared(charOf(PBuyer), charOf(PPurse), itemId, stack, quantity, price, fromPurse);
+        };
+        // Whom a listing was sold to, by id and name, and what it sold for:
+        // 0, '' and 0 while it is on sale
+        buy["soldTo"] = [](const uint32 listing) -> std::tuple<uint32, std::string, uint32>
+        {
+            const auto rset = db::preparedStmt("SELECT COALESCE(buyer, 0) AS buyer, COALESCE(buyer_name, '') AS buyer_name, sale FROM auction_house WHERE id = ?", listing);
+            if (rset && rset->next())
+            {
+                return { rset->get<uint32>("buyer"), rset->get<std::string>("buyer_name"), rset->get<uint32>("sale") };
+            }
+            return { 0, std::string{}, 0 };
+        };
+        // Every item given into a character's bags refused by the database
+        // while on -- a trigger of the test database's, as a statement the
+        // server refuses after the purses have paid (a purchase writes no
+        // other row of char_inventory: its payments are updates). True once
+        // it stands as asked
+        buy["refuseGives"] = [](const bool on) -> bool
+        {
+            db::preparedStmt("DROP TRIGGER IF EXISTS cardian_test_refuse_give");
+            if (!on)
+            {
+                return true;
+            }
+            return db::preparedStmt("CREATE TRIGGER cardian_test_refuse_give BEFORE INSERT ON char_inventory FOR EACH ROW "
                                     "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'refused by the test'") != nullptr;
         };
 

@@ -74,7 +74,8 @@ namespace pawn::ahsell
         }
 
         // The listing's work on the characters, across two of them, as the
-        // shared purchase's (pawn/auction.cpp): his fee paid, her piece taken
+        // shared purchase's (pawn/auction_purchase.cpp): his fee paid, her
+        // piece taken
         class Listing final : public Transaction
         {
         public:
