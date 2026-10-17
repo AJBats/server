@@ -39,6 +39,7 @@
 #include "seats.h"
 #include "supplies.h"
 #include "tactics.h"
+#include "town_errands.h"
 #include "world.h"
 #include "pawn_controller.h"
 #include "pawn_travel.h"
@@ -2608,6 +2609,12 @@ namespace pawn
         return it != travelOrders.end() ? std::optional{ it->second.zone } : std::nullopt;
     }
 
+    auto travelMeetOf(const uint32 pawnCharID) -> uint32
+    {
+        const auto it = travelOrders.find(pawnCharID);
+        return it != travelOrders.end() ? it->second.meet : 0;
+    }
+
     void clearTravelOrder(const uint32 pawnCharID)
     {
         travelOrders.erase(pawnCharID);
@@ -2827,6 +2834,18 @@ namespace pawn
             return false;
         }
         return true;
+    }
+
+    void carryFromHere(const CCharEntity* PPawn)
+    {
+        if (PPawn == nullptr || PPawn->loc.zone == nullptr)
+        {
+            return;
+        }
+        if (const auto it = carriedFrom.find(PPawn->id); it != carriedFrom.end())
+        {
+            it->second = static_cast<uint16>(PPawn->getZone());
+        }
     }
 
     auto partyPlayer(const CCharEntity* PPawn) -> CCharEntity*
@@ -3220,6 +3239,7 @@ namespace pawn
                         answer.process(nullptr, PPawn.get());
                         if (yes)
                         {
+                            pawn::town::noteJoined(charid);
                             gatherOrHold(PPawn.get());
                         }
                     }
@@ -3253,6 +3273,7 @@ namespace pawn
         together::tick();
         supplies::tick(PZone);
         errands::tick();
+        town::tick(PZone);
         professions::tick();
         sales::tick();
         world::noteModuleTick(PZone, realtime::now() - started, pawnsHere);

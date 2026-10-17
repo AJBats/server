@@ -534,6 +534,9 @@ namespace pawn
     // never while he is in his Mog House or zoning. False once she has left
     // that zone by any road, or he has come to her
     auto carriedToPlayer(const CCharEntity* PPawn) -> bool;
+    // Her errands in town (town_errands.h) took her to another zone of her
+    // city: still carried, from where they left her
+    void carryFromHere(const CCharEntity* PPawn);
 
     // Order the named pawn to travel to a zone. The order takes precedence
     // over follow behavior and clears on arrival. `meet`: the trek is to
@@ -543,6 +546,7 @@ namespace pawn
     bool orderTravelByName(const std::string& targetName, uint16 zoneId, uint32 meet);
 
     auto travelOrderOf(uint32 pawnCharID) -> std::optional<xi::ZoneId>;
+    auto travelMeetOf(uint32 pawnCharID) -> uint32; // the player her travel order goes to meet; 0 for a fixed zone, or no order
     void clearTravelOrder(uint32 pawnCharID);
 
     // Her travel order as it stands, followed through: a trek to meet her

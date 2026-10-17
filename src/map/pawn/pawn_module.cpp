@@ -43,7 +43,6 @@
 #include "food.h"
 #include "pull.h"
 #include "spell_bank.h"
-#include "supplies.h"
 #include "tactics.h"
 #include "view.h"
 #include "warp_together.h"
@@ -742,15 +741,13 @@ class PawnModule : public CPPModule
     // stand -- is a body the fight log's hitch must be on if she is routed.
     // A played character gets his gambits (live_controller.h): the zone
     // loaded him afresh with upstream's player controller, and this one is
-    // that controller and his gambit engine. A player's zone-in is also an
-    // arrival his cardians may speak of their conquest supplies at, and marks
-    // the character his account plays now (professions.h), and where he is
+    // that controller and his gambit engine. A player's zone-in also marks
+    // the character his account plays now (professions.h), and is where he is
     // told that logging in as a member ended her errand (errands.h)
     void OnCharZoneIn(CCharEntity* PChar) override
     {
         pawn::tactics::zoneIn(PChar);
         CLiveController::InstallOn(PChar);
-        pawn::supplies::zonedIn(PChar);
         pawn::professions::zonedIn(PChar);
         pawn::errands::zonedIn(PChar);
     }

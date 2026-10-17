@@ -34,6 +34,16 @@ TEST_CASE("Redress: a request on its way is never asked over", "[cardian][redres
     CHECK_FALSE(shouldAsk(25, Record{ 20, State::Ready }));
 }
 
+TEST_CASE("Redress: her jobs changed in town, she is asked for afresh at the level she has", "[cardian][redress]")
+{
+    CHECK(asksAfresh(18, std::nullopt));
+    CHECK(asksAfresh(18, Record{ 30, State::Done })); // her Ninja at 18, dressed for her Warrior at 30
+    CHECK(asksAfresh(30, Record{ 30, State::Done }));
+    CHECK_FALSE(asksAfresh(18, Record{ 30, State::Asked })); // on its way already
+    CHECK_FALSE(asksAfresh(18, Record{ 30, State::Ready }));
+    CHECK_FALSE(asksAfresh(0, std::nullopt));
+}
+
 TEST_CASE("Redress: the row's state reads by its three words", "[cardian][redress]")
 {
     CHECK(stateOf("asked") == State::Asked);
@@ -169,6 +179,30 @@ TEST_CASE("Redress: an answer is put on her only at the level it was planned for
     CHECK_FALSE(answerFits(29, 31));
     CHECK_FALSE(answerFits(31, 30)); // a level lost to death since
     CHECK_FALSE(answerFits(0, 0));
+}
+
+TEST_CASE("Town errands: her career's jobs, from the ding the census planned", "[cardian][redress][town]")
+{
+    // a Warrior 30 on Monk whose session goes to her Ninja: Ninja, with the Warrior support planned for it
+    const auto take = careerJobs({ .job = kNIN, .level = 19, .gear = true }, kWAR, kWAR, kMNK);
+    REQUIRE(take.has_value());
+    CHECK(*take == CareerJobs{ kNIN, kWAR });
+    // the same with no support job planned: her main alone
+    CHECK(careerJobs({ .job = kNIN, .level = 19 }, 0, kWAR, kMNK) == CareerJobs{ kNIN, 0 });
+    // a support job planned as her new main is no support job
+    CHECK(careerJobs({ .job = kNIN, .level = 19 }, kNIN, kWAR, kMNK) == CareerJobs{ kNIN, 0 });
+
+    // a dress at her level on her main: its support job, when she wears another
+    CHECK(careerJobs({ .dress = true, .job = kWAR, .level = 30, .gear = true }, kNIN, kWAR, kMNK) == CareerJobs{ 0, kNIN });
+    CHECK_FALSE(careerJobs({ .dress = true, .job = kWAR, .level = 30 }, kMNK, kWAR, kMNK).has_value()); // worn already
+    CHECK_FALSE(careerJobs({ .dress = true, .job = kWAR, .level = 30 }, 0, kWAR, kMNK).has_value());    // none planned: never taken away
+
+    // a level's ding on the job she plays waits for the ding, its support job with it
+    CHECK_FALSE(careerJobs({ .job = kWAR, .level = 31 }, kNIN, kWAR, kMNK).has_value());
+    CHECK_FALSE(careerJobs({ .job = 0, .level = 31 }, kNIN, kWAR, kMNK).has_value());
+    // past the last job: none
+    CHECK_FALSE(careerJobs({ .job = 23, .level = 1 }, 0, kWAR, kMNK).has_value());
+    CHECK(careerJobs({ .job = kNIN, .level = 19 }, 23, kWAR, kMNK) == CareerJobs{ kNIN, 0 });
 }
 
 TEST_CASE("Live census: a ding's state reads by its four words", "[cardian][redress][live]")

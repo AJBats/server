@@ -31,7 +31,6 @@
 #include "ai/states/magic_state.h"
 #include "common/logging.h"
 #include "common/timer.h"
-#include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -62,25 +61,15 @@ namespace pawn::supplies
         constexpr uint16 kInstantWarp    = 4181;
         constexpr uint16 kInstantReraise = 4182;
 
-        // The scrolls she keeps, and the bit each is in SUPPLIES' missing
+        // The scrolls she keeps, a bit each
         constexpr std::array<std::pair<uint16, uint8>, 2> kScrolls{ { { kInstantWarp, 1 }, { kInstantReraise, 2 } } };
 
-        constexpr float kBeside      = 12.0f;                   // yalms from him: she is at the guard with him
-        constexpr auto  kSpeakAgain  = std::chrono::minutes(3); // a guard that would not sell to her, said again
-        constexpr auto  kCaughtUp    = 8s;                      // after he arrives in a city: the party has come in behind him
-        constexpr auto  kLookEvery   = 2s;
+        constexpr float kBeside    = 12.0f;                   // yalms from him: she is at the guard with him
+        constexpr auto  kAskAgain  = std::chrono::minutes(3); // a guard that would not sell to her, asked again
+        constexpr auto  kLookEvery = 2s;
 
-        // His arrival in a zone, and whether a cardian has spoken of the shop there
-        struct Arrival
-        {
-            uint16            zone   = 0;
-            timer::time_point at{};
-            bool              spoken = false;
-        };
-
-        std::unordered_map<uint32, Arrival>                                  arrivals; // by his charid
-        std::map<std::pair<uint32, std::string>, timer::time_point>          refused;  // (her charid, the guard) -> when he last would not sell
-        std::unordered_map<uint16, timer::time_point>                        looked;   // by zone
+        std::map<std::pair<uint32, std::string>, timer::time_point> refused; // (her charid, the guard) -> when he last would not sell
+        std::unordered_map<uint16, timer::time_point>               looked;  // by zone
 
         auto pointsOf(CCharEntity* PChar) -> int32
         {
@@ -125,7 +114,7 @@ namespace pawn::supplies
             return known[itemId] = stock;
         }
 
-        // The scrolls she lacks, by SUPPLIES' bits
+        // The scrolls she lacks, by their bits (kScrolls)
         auto lacking(CCharEntity* PPawn) -> uint8
         {
             uint8 bits = 0;
@@ -185,13 +174,11 @@ namespace pawn::supplies
             return out;
         }
 
-        void tell(const CCharEntity* PPlayer, const CCharEntity* PPawn, const uint8 kind, const uint8 missing = 0, const uint16 item = 0, const uint16 price = 0)
+        void tell(const CCharEntity* PPlayer, const CCharEntity* PPawn, const uint8 kind, const uint16 item, const uint16 price)
         {
             auto msg    = cardian::link::make<cl_supplies>();
             msg.cardian = PPawn->id;
             msg.kind    = kind;
-            msg.nation  = PPawn->profile.nation;
-            msg.missing = missing;
             msg.item    = item;
             msg.price   = price;
             cardian::link::send(PPlayer->id, msg);
@@ -207,8 +194,8 @@ namespace pawn::supplies
 
         // What she can buy of what she lacks, through the guard's own sale:
         // each scroll she lacks and can pay for, while her bag has room. The
-        // player told of each purchase, and of a foreign guard's refusal,
-        // when given. How many she bought, and whether the guard refused her
+        // player told of each purchase when given. How many she bought, and
+        // whether the guard refused her
         struct Bought
         {
             uint32      count   = 0;
@@ -246,10 +233,6 @@ namespace pawn::supplies
                     out.refused = true;
                     out.refusal = *refusal;
                     ShowInfoFmt("supplies: {} cannot buy {} from {} ({})", PPawn->getName(), name, guard.name, *refusal);
-                    if (PTell != nullptr && (*refusal == "OUTRANKED" || *refusal == "FOREIGN_PLACE"))
-                    {
-                        tell(PTell, PPawn, CL_SUPPLIES_FOREIGN);
-                    }
                     return out;
                 }
                 points = static_cast<int32>(sale->get_or<uint32>("cp", 0));
@@ -257,7 +240,7 @@ namespace pawn::supplies
                 ShowInfoFmt("supplies: {} buys {} from {} for {} conquest points ({} left)", PPawn->getName(), name, guard.name, stock->price, points);
                 if (PTell != nullptr)
                 {
-                    tell(PTell, PPawn, CL_SUPPLIES_BOUGHT, 0, itemId, static_cast<uint16>(stock->price));
+                    tell(PTell, PPawn, CL_SUPPLIES_BOUGHT, itemId, static_cast<uint16>(stock->price));
                 }
             }
             return out;
@@ -265,7 +248,7 @@ namespace pawn::supplies
 
         // She buys what she lacks from the guard he stands by, through the
         // guard's own sale; a guard who will not sell to her is left alone
-        // for kSpeakAgain, and his refusal said if it is her nation's
+        // for kAskAgain
         void shopAt(CCharEntity* PPlayer, const guards::Guard& guard, CCharEntity* PPawn, const timer::time_point now)
         {
             if (leaving(PPlayer) || leaving(PPawn))
@@ -273,51 +256,14 @@ namespace pawn::supplies
                 return;
             }
             const auto key = std::make_pair(PPawn->id, std::string(guard.name));
-            if (const auto it = refused.find(key); it != refused.end() && now - it->second < kSpeakAgain)
+            if (const auto it = refused.find(key); it != refused.end() && now - it->second < kAskAgain)
             {
                 return;
             }
             if (purchase(PPawn, guard, PPlayer).refused)
             {
-                refused[key] = now; // not asked again at this guard for kSpeakAgain
+                refused[key] = now; // not asked again at this guard for kAskAgain
             }
-        }
-
-        // His arrival in a city, once the party has come in behind him: one
-        // of his cardians there who lacks a scroll and could pay for it says
-        // she wants the conquest shop
-        void arrivedIn(CCharEntity* PPlayer, const timer::time_point now)
-        {
-            // his zone-in is the arrival (zonedIn); a zone he is found in
-            // without one -- the map started under him -- is one too
-            auto& arrival = arrivals[PPlayer->id];
-            if (arrival.zone != static_cast<uint16>(PPlayer->getZone()))
-            {
-                arrival = Arrival{ static_cast<uint16>(PPlayer->getZone()), now, false };
-            }
-            // a city with a conquest shop: Jeuno's, the nations', not Selbina's or Mhaura's
-            const bool city = (PPlayer->loc.zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown &&
-                              guards::zoneHasGuard(PPlayer->loc.zone->getName());
-            if (!city || arrival.spoken || now - arrival.at < kCaughtUp || PPlayer->inMogHouse())
-            {
-                return;
-            }
-            arrival.spoken = true;
-            std::vector<std::pair<CCharEntity*, uint8>> wanting;
-            for (auto* PPawn : partyWith(PPlayer, std::nullopt))
-            {
-                if (const uint8 lacks = lacking(PPawn); lacks != 0 && canPay(PPawn, lacks))
-                {
-                    wanting.emplace_back(PPawn, lacks);
-                }
-            }
-            if (wanting.empty())
-            {
-                return;
-            }
-            const auto& [PPawn, lacks] = wanting[xirand::GetRandomNumber(wanting.size())];
-            ShowInfoFmt("supplies: {} wants the conquest shop in {} (lacks {})", PPawn->getName(), PPlayer->loc.zone->getName(), lacks);
-            tell(PPlayer, PPawn, CL_SUPPLIES_WANTED, lacks);
         }
     } // namespace
 
@@ -335,12 +281,19 @@ namespace pawn::supplies
         return bought.count;
     }
 
-    void zonedIn(const CCharEntity* PPlayer)
+    auto wants(CCharEntity* PPawn) -> bool
     {
-        if (PPlayer != nullptr && !isPawn(PPlayer) && PPlayer->loc.zone != nullptr)
+        if (PPawn == nullptr || leaving(PPawn))
         {
-            arrivals[PPlayer->id] = Arrival{ static_cast<uint16>(PPlayer->getZone()), timer::now(), false };
+            return false;
         }
+        const uint8 lacks = lacking(PPawn);
+        return lacks != 0 && canPay(PPawn, lacks);
+    }
+
+    auto lacks(CCharEntity* PPawn) -> uint8
+    {
+        return PPawn != nullptr ? lacking(PPawn) : 0;
     }
 
     void tick(CZone* PZone)
@@ -359,7 +312,6 @@ namespace pawn::supplies
             {
                 return;
             }
-            arrivedIn(PChar, now);
             if (const auto* PGuard = guards::guardNear(PChar); PGuard != nullptr)
             {
                 for (auto* PPawn : partyWith(PChar, kBeside))

@@ -22,6 +22,7 @@
 #include "gate_guards.h"
 
 #include "pawn.h"
+#include "pawn_travel.h"
 
 #include "common/utils.h"
 #include "entities/char_entity.h"
@@ -153,10 +154,18 @@ namespace pawn::guards
         {
             return std::nullopt; // one of hers stands in her zone
         }
+        // The nearest by zone lines, so a walk there never passes another
         std::optional<Elsewhere> found;
+        uint32                   fewest = 0;
+        const auto               hops   = pawn::travel::hops({ static_cast<xi::ZoneId>(PZone->GetID()) });
         zoneutils::ForEachZone([&](CZone* POther)
                                {
-                                   if (found.has_value() || POther == nullptr || POther == PZone || !pawn::sameCity(PZone, POther))
+                                   if (POther == nullptr || POther == PZone || !pawn::sameCity(PZone, POther))
+                                   {
+                                       return;
+                                   }
+                                   const auto away = hops.find(static_cast<uint16>(POther->GetID()));
+                                   if (away == hops.end() || (found.has_value() && away->second >= fewest))
                                    {
                                        return;
                                    }
@@ -165,7 +174,8 @@ namespace pawn::guards
                                    {
                                        if (guard.nation == nation && guard.zone == there)
                                        {
-                                           found = Elsewhere{ &guard, static_cast<uint16>(POther->GetID()) };
+                                           found  = Elsewhere{ &guard, static_cast<uint16>(POther->GetID()) };
+                                           fewest = away->second;
                                            return;
                                        }
                                    }
