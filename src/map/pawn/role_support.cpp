@@ -229,7 +229,17 @@ namespace pawn::tactics::role
         // (tactician_line.h). What she has, not what she can afford this
         // moment: a need she cannot serve is still a need another mage can.
         // Which tier she casts is the conveyor's (pickWhole)
-        const auto tiers = bank::cureTiers(PHolder, bank::CureAvailability::Eligible);
+        // A Black Mage cures as routine only from the Healer seat (the user,
+        // 2026-10-17): seated anywhere else she joins the cures for first aid
+        // alone, which the party's tick chooses apart (chooseFirstAid). With
+        // no seat taken she cures as any mage does
+        const auto seat         = pawn::roster::roleOf(PHolder);
+        const bool routineCures = PHolder->GetMJob() != xi::Job::BLM || seat == cardian::party::Role::Healer || seat == cardian::party::Role::None;
+        auto       tiers        = bank::cureTiers(PHolder, bank::CureAvailability::Eligible);
+        if (!routineCures)
+        {
+            tiers.clear();
+        }
         for (auto* PMember : scope.members)
         {
             if (!curable(PHolder, PMember))
@@ -327,11 +337,6 @@ namespace pawn::tactics::role
         }
     }
 
-    void cycleOpened(CCharEntity* PHolder, Pace& pace)
-    {
-        pace.opened(PHolder->health.mp);
-    }
-
     void cycleClosed(CCharEntity* PHolder, const int32 spent, Pace& pace)
     {
         pace.closed(PHolder->health.mp, spent);
@@ -356,7 +361,8 @@ namespace pawn::tactics::role
         if (behind != pace.toldBehind && pawn::roster::roleOf(PHolder) == cardian::party::Role::Healer)
         {
             pace.toldBehind = behind;
-            sayParty(PHolder, behind ? fmt::format("Behind pace: a fight here costs me ~{:.0f} MP and I net {:+.0f} between fights.", pace.spent.mean, pace.regained.mean)
+            sayParty(PHolder, behind ? (pace.regained.mean >= 0.5 ? fmt::format("Behind pace: a fight here costs me ~{:.0f} MP and I only get back ~{:.0f}.", pace.spent.mean, pace.regained.mean)
+                                                                  : fmt::format("Behind pace: a fight here costs me ~{:.0f} MP and I get nothing back.", pace.spent.mean))
                                      : std::string("Back on pace."));
         }
     }

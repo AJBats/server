@@ -171,8 +171,9 @@ namespace cardian::redress
     // What a re-dress leaves in a body of the world's bags, by the census's own
     // rule for her character tables (census.py fill_bags): Mog Wardrobe 1
     // holds the census's gear alone, so a piece there the plan has no place
-    // for goes, worn or not; her inventory keeps her gil, what the plan wants
-    // (her food, and her pieces where her gear lives in it), the reraise
+    // for goes, worn or not; anywhere, what the plan wants -- her pieces, her
+    // food, and her pulling kit, the census's and the map's pebbles and the
+    // rest (pull.h keptIds); her inventory keeps her gil, the reraise
     // and warp items she buys for herself (`kept`: items::usableOnWild) and
     // a linkshell's items, the pearl she wears for her linkshell above all
     // (club.h; worn, a re-dress never takes it off), and nothing else --

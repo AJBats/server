@@ -42,6 +42,7 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "players.h"
+#include "pull.h"
 #include "account_wide.h"
 #include "pawn_items.h"
 #include "view.h"
@@ -1707,6 +1708,64 @@ namespace pawn::linkapi
             reply.finish(answer, forced.status);
         }
 
+        // The Pull page's rows (pull.h kindsAround), each as an answer: the
+        // kinds round his camp, his list's first; `answer` says how many and
+        // the level their con is read at
+        // Every row an answer of its own, at most as many as a change of the
+        // list can send back (cl_set_pull_list, 24: his list's own rows
+        // first, then the nearest -- the user, 2026-10-17: far more than any
+        // pull list wants); the header the rows make, which a read finishes with
+        auto sendPullKinds(CCharEntity* PChar, Reply& reply, cl_pull_kinds answer) -> cl_pull_kinds
+        {
+            const auto kinds = pawn::pull::kindsAround(PChar);
+            answer.count     = 0;
+            answer.level     = kinds.level;
+            answer.staked    = kinds.staked ? 1 : 0;
+            for (const auto& k : kinds.rows)
+            {
+                if (answer.count == std::size(cl_set_pull_list{}.names))
+                {
+                    break;
+                }
+                auto msg = make<cl_pull_kind>();
+                setText(msg.name, k.name);
+                msg.conLow   = k.conLow;
+                msg.conHigh  = k.conHigh;
+                msg.count    = k.count;
+                msg.on       = k.on ? 1 : 0;
+                msg.distance = k.distance;
+                reply.more(msg);
+                ++answer.count;
+            }
+            return answer;
+        }
+
+        void pullKinds(CCharEntity* PChar, const cl_pull_kinds& ask, Reply& reply)
+        {
+            reply.finish(sendPullKinds(PChar, reply, ask), CL_S_OK);
+        }
+
+        // His list as the page leaves it: the rows come back as they now
+        // stand, then its outcome, the change echoed (the rows' header is a
+        // read's, not this answer's)
+        void setPullList(CCharEntity* PChar, const cl_set_pull_list& ask, Reply& reply)
+        {
+            if (ask.count > std::size(ask.names))
+            {
+                sendPullKinds(PChar, reply, make<cl_pull_kinds>());
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
+            std::vector<cardian::pull::ListRow> rows;
+            for (uint8 i = 0; i < ask.count; ++i)
+            {
+                rows.push_back({ std::string(textOf(ask.names[i])), ask.on[i] != 0 });
+            }
+            pawn::setPullList(PChar, rows);
+            sendPullKinds(PChar, reply, make<cl_pull_kinds>());
+            reply.finish(ask, CL_S_OK);
+        }
+
         // "On me": set, cleared, or the other way round from how it stands
         void retreat(CCharEntity* PChar, const cl_retreat& ask, Reply& reply)
         {
@@ -1813,10 +1872,20 @@ namespace pawn::linkapi
             reply.finish(answer, status);
         }
 
-        // The player's preferences the server applies to him (account_wide.h)
+        // The player's preferences the server applies to him: the shared
+        // maps (account_wide.h), his puller's call sound (pull.h) and his
+        // skillchain plan's (skillchains.h); a call past the game's count is
+        // refused
         void prefs(CCharEntity* PChar, const cl_prefs& ask, Reply& reply)
         {
+            if (ask.pullCall > cardian::chat::kCallCount || ask.chainCall > cardian::chat::kCallCount || ask.readyCall > cardian::chat::kCallCount)
+            {
+                reply.finish(ask, CL_S_MALFORMED);
+                return;
+            }
             pawn::accountwide::setSharedMaps(PChar, ask.sharedMaps != 0);
+            pawn::pull::setCall(PChar->id, ask.pullCall);
+            pawn::chains::setCalls(PChar->id, ask.chainCall, ask.readyCall);
             reply.finish(ask, CL_S_OK);
         }
 
@@ -1934,6 +2003,11 @@ namespace pawn::linkapi
                     line.action.kind != CL_AK_NONE || line.running.action.kind != CL_AK_NONE || line.lane.action.kind != CL_AK_NONE)
                 {
                     reply.more(line);
+                }
+                // her pull badge, which a bound addon is otherwise told only as it changes
+                if (const auto pull = PController->PullStateLine(); pull.state != CL_PULL_NONE)
+                {
+                    reply.more(pull);
                 }
             }
             reply.finish(ask, CL_S_OK);
@@ -2901,6 +2975,8 @@ namespace pawn::linkapi
         handle<cl_skillchains>(skillchains);
         handle<cl_set_skillchain>(setSkillchain);
         handle<cl_skillchain_now>(skillchainNow);
+        handle<cl_pull_kinds>(pullKinds);
+        handle<cl_set_pull_list>(setPullList);
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);

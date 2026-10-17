@@ -21,6 +21,9 @@
 
 #pragma once
 
+#include "chat_codes.h"
+#include "ws_phrases.h"
+
 #include "common/cbasetypes.h"
 
 #include <fmt/format.h>
@@ -835,7 +838,7 @@ namespace cardian::chains
         "Anyone want to set up a skillchain? My TP's ready to go.",
         "Our weapon skills could link up nicely. Which chain are we going for?",
         "Should I be opening or closing? We haven't picked a skillchain yet.",
-        "We could chain these. Want to call one?",
+        "Our weapon skills can make a skillchain. Want to pick one?",
     };
 
     // The plan's members keeping their TP for the next fight (worth): one of
@@ -846,8 +849,54 @@ namespace cardian::chains
         "This one's going down anyway. Saving our skillchain.",
         "Let's build TP here and chain the next one.",
         "Not worth a skillchain. Holding it for the next fight.",
-        "Easy one. Keeping my TP for the next pull.",
+        "No need on this one. Saving my TP for the next fight.",
     };
+
+    // The plan's calls, as a player's macros make them (the user,
+    // 2026-10-17, from his own party chat): its opener as she opens it,
+    // "Starting {Skillchain}! {Wasp Sting}! Brutal Sheep <call12>" -- the
+    // weapon skill in the game's braces when the dictionary has it
+    // (ws_phrases.h), plain otherwise, and the mob where his macro has <t>
+    // -- and its closer, with the TP for her close, once a fight while she
+    // holds it: "{Ready!} 1240 TP <call14>". The calls are his choice
+    // (Settings), none for 0
+    inline constexpr uint8_t kSkillchainPhraseGroup = 8; // "Skillchain"
+    inline constexpr uint8_t kSkillchainPhraseEntry = 45;
+    inline constexpr uint8_t kReadyPhraseGroup      = 5; // "Ready!"
+    inline constexpr uint8_t kReadyPhraseEntry      = 5;
+
+    inline auto openingLine(const std::string_view weaponSkill, const std::string_view mob, const uint8_t call) -> std::string
+    {
+        const uint8_t entry = cardian::chat::weaponSkillEntry(weaponSkill);
+        std::string   line  = "Starting " + cardian::chat::autoTranslate(kSkillchainPhraseGroup, kSkillchainPhraseEntry) + "! ";
+        line += entry != 0 ? cardian::chat::autoTranslate(cardian::chat::kWeaponSkillGroup, entry) : std::string(weaponSkill);
+        line += "! ";
+        line += mob;
+        if (const auto sound = cardian::chat::callBytes(call); !sound.empty())
+        {
+            line += " " + sound;
+        }
+        return line;
+    }
+
+    inline auto readyLine(const int32 tp, const uint8_t call) -> std::string
+    {
+        std::string line = cardian::chat::autoTranslate(kReadyPhraseGroup, kReadyPhraseEntry) + " " + std::to_string(tp) + " TP";
+        if (const auto sound = cardian::chat::callBytes(call); !sound.empty())
+        {
+            line += " " + sound;
+        }
+        return line;
+    }
+
+    // A member of the plan not engaged yet is counted in as joining the
+    // fight for this long, while she is this near the mob and on no other
+    // (skillchains.cpp joining): from when the camp's tank has the mob
+    // placed, or the plan first counts on her with no tank placing it. 7 s
+    // to start with (the user, 2026-10-17): the map log says how long each
+    // took, to tune it by
+    inline constexpr double kJoinGrace = 7.0;
+    inline constexpr float  kJoinReach = 30.0f;
 
     // The ask is said within the session's first fights, once its speaker
     // has been in the fight this long -- settled in, never on the first swing

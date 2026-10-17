@@ -127,6 +127,11 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/skillchain_math.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/skillchains.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/skillchains.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pull_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/chat_codes.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pull.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pull.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_pull.cpp
 )
 
 set(MAP_CORE_SOURCES

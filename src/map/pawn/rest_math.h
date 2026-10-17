@@ -280,6 +280,7 @@ namespace cardian::rest
         bool want = false;
         bool withPlayer = false; // explicit Rest With Player request, independent of MP pacing
         bool urgent = false;
+        bool burst = false;   // a skillchain's window to burst (CGambits::BurstWorthStanding): a reason to be up that lapses with it
         bool blocked = false; // unsafe, acting, ordered away, unable to recover
         bool moving = false;
         bool routinePosition = false; // an ongoing rest may defer this move
@@ -358,9 +359,10 @@ namespace cardian::rest
             // down she stays down while any request holds -- MP pacing's, the
             // player's rest, her own row's -- and reaching her MP target is
             // no reason to rise. She rises for a reason to: first aid's call
-            // (urgent), danger or an order (blocked), a walk she cannot put
-            // off, or the request ending (her MP full)
-            const bool reason = f.urgent || f.blocked || movementRequiresStand || (!f.want && !f.withPlayer && !f.ordered);
+            // (urgent), a skillchain's window to burst (burst), danger or an
+            // order (blocked), a walk she cannot put off, or the request
+            // ending (her MP full)
+            const bool reason = f.urgent || f.burst || f.blocked || movementRequiresStand || (!f.want && !f.withPlayer && !f.ordered);
             // A stand this rule asked while she was still kneeling down lapses
             // with its reason (the user, 2026-10-07: she gets up only for a
             // reason that still holds) -- first aid's call excepted, which a

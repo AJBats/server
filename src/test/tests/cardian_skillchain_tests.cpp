@@ -1007,3 +1007,24 @@ TEST_CASE("skillchains: a member of the plan keeps her TP for it rather than clo
     s.inPlan = false;
     CHECK_FALSE(keepsForPlan(s));
 }
+
+TEST_CASE("The plan's calls read as a player's macros", "[cardian][skillchains]")
+{
+    using cardian::chat::autoTranslate;
+    // the dictionary's weapon skills by either spelling (ws_phrases.h)
+    CHECK(cardian::chat::weaponSkillEntry("wasp_sting") == 19);
+    CHECK(cardian::chat::weaponSkillEntry("Combo") == 37);
+    CHECK(cardian::chat::weaponSkillEntry("blade_chi") == cardian::chat::weaponSkillEntry("Blade: Chi"));
+    CHECK(cardian::chat::weaponSkillEntry("Blade: Chi") != 0);
+    CHECK(cardian::chat::weaponSkillEntry("Nothing Like It") == 0);
+
+    // the opener's: "Starting {Skillchain}! {Wasp Sting}! Brutal Sheep <call12>"
+    CHECK(cardian::chains::openingLine("Wasp Sting", "Brutal Sheep", 12) ==
+          "Starting " + autoTranslate(8, 45) + "! " + autoTranslate(33, 19) + "! Brutal Sheep <call12>");
+    // a weapon skill the dictionary lacks is said plainly; no call, no sound
+    CHECK(cardian::chains::openingLine("Nothing Like It", "Brutal Sheep", 0) == "Starting " + autoTranslate(8, 45) + "! Nothing Like It! Brutal Sheep");
+
+    // the closer's: "{Ready!} 1240 TP <call14>"
+    CHECK(cardian::chains::readyLine(1240, 14) == autoTranslate(5, 5) + " 1240 TP <call14>");
+    CHECK(cardian::chains::readyLine(1000, 0) == autoTranslate(5, 5) + " 1000 TP");
+}

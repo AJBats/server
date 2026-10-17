@@ -179,6 +179,13 @@ TEST_CASE("Party roles: the puller's order is a Thief, a Ranger, a Bard, then an
     }
 
     CHECK(pullerRank(member(1, xi::Job::NONE)) == std::nullopt);
+
+    // A Puppetmaster wears no ranged weapon: never the puller, by the rule
+    // or by the player's choice (canPull)
+    CHECK(pullerRank(member(1, xi::Job::PUP)) == std::nullopt);
+    CHECK_FALSE(cardian::party::canPull(xi::Job::PUP));
+    CHECK(cardian::party::canPull(xi::Job::WAR));
+    CHECK(rolesOf({ member(1, xi::Job::PUP), member(2, xi::Job::MNK) }) == Roles{ Role::Damage, Role::Puller });
 }
 
 TEST_CASE("Party roles: only Puller is one member's, and every role has its name", "[cardian][party_roles]")

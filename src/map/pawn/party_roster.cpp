@@ -256,6 +256,11 @@ namespace pawn::roster
         // The rule's own bookkeeping decides who else the choice touches (a
         // role only one member holds is taken from his earlier choice)
         auto facts = factsOf(PPlayer, members);
+        if (role == Role::Puller &&
+            std::ranges::any_of(facts, [memberId](const cardian::party::Member& m) { return m.id == memberId && !cardian::party::canPull(m.job); }))
+        {
+            return CL_S_CANNOT_PULL;
+        }
         cardian::party::choose(facts, memberId, role);
 
         settledFor.erase(PPlayer->id);

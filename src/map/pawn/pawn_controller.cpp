@@ -29,6 +29,7 @@
 #include "pawn.h"
 #include "world.h"
 #include "pawn_danger.h"
+#include "pull.h"
 #include "pawn_doors.h"
 #include "role_support.h"
 #include "spell_bank.h"
@@ -40,6 +41,7 @@
 #include "pawn_gambits.h"
 #include "pawn_items.h"
 #include "pawn_rules.h"
+#include "pull_math.h"
 
 #include "common/lua.h"
 #include "common/settings.h"
@@ -181,6 +183,14 @@ namespace
         auto SneakAttackNow(const CBattleEntity* PTarget) -> bool override
         {
             return m_controller.SneakAttackNow(PTarget);
+        }
+        auto SneakAttackWait(const CBattleEntity* PTarget, const uint16 skill) -> std::optional<std::string> override
+        {
+            return m_controller.SneakAttackWait(PTarget, skill);
+        }
+        auto TankPlacingWait(const CBattleEntity* PTarget) -> std::optional<std::string> override
+        {
+            return m_controller.TankPlacingWait(PTarget);
         }
         auto HasQueuedOrder() const -> bool override
         {
@@ -376,6 +386,8 @@ auto CPawnController::modeName(const Mode mode) -> const char*
             return "Roam";
         case Mode::Approach:
             return "Approach";
+        case Mode::Pull:
+            return "Pull";
         case Mode::Hold:
             return "Hold";
         case Mode::Fight:
@@ -575,6 +587,12 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     {
         m_PlayersOrder.reset();
     }
+    // Out of a pull by any door (her own end, his order, a stand-down) the
+    // run is over
+    if (from == Mode::Pull && to != Mode::Pull)
+    {
+        m_Pull.reset();
+    }
     if (from == Mode::Attend && to != Mode::Attend)
     {
         m_Attended.reset();
@@ -670,7 +688,7 @@ void CPawnController::StandDown(const std::string_view why)
     {
         POwner->PAI->Internal_Disengage();
     }
-    if (m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend)
+    if (m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend || m_Mode == Mode::Pull)
     {
         Transition(IdleMode(), why);
     }
@@ -4195,7 +4213,7 @@ auto CPawnController::PartyInFight() const -> bool
     }
     cardian::glance::Fight fight;
     fight.own = POwner->PAI->IsEngaged() || m_Approach.has_value() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Attend ||
-                m_Mode == Mode::Approach || m_Mode == Mode::Retreat;
+                m_Mode == Mode::Approach || m_Mode == Mode::Retreat || m_Mode == Mode::Pull;
 
     std::vector<uint32> members;
     POwner->ForParty([&](CBattleEntity* PMember)
@@ -4589,7 +4607,10 @@ auto CPawnController::KeepsClearOfAggro() const -> bool
     // (the user, 2026-10-07). Only those: the spot search (IsClear) and the
     // walk her attend or camp spot proposes (Intent::keepsClear) read it;
     // her rests, her other walks and her held spells stay her switches'
-    return !m_Retreat && (m_Mode == Mode::Attend || (m_Mode == Mode::Follow && Staked() && WaitsAtCampSpot()));
+    // So does the puller on her way out to her pull: her walk wakes nothing
+    // but the mob she means to tag
+    return !m_Retreat && (m_Mode == Mode::Attend || (m_Mode == Mode::Follow && Staked() && WaitsAtCampSpot()) ||
+                          (m_Mode == Mode::Pull && m_Pull.has_value() && m_Pull->step != PullRun::Step::Back));
 }
 
 auto CPawnController::RestsWithPlayer() const -> bool
@@ -4727,6 +4748,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         FireOrderedEngage();
         NoteTowsLanded();
         FoodTick(); // her food: eaten with the player, a body of the world's topped up
+        KitTick();  // her pulling kit: worn in the Puller seat, put back out of it, its ammunition topped up
 
         // Mobs check a character for aggro only when that character's client
         // sends a position or action packet (CZoneEntities::tapMobAggro). A
@@ -4772,7 +4794,13 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
-    if (engaged)
+    // Her badge beside his party list, told as it changes, a KO's too
+    ShowPullState();
+
+    // The camp's puller leaves a fight when the next pull is due (pull P2):
+    // the roam tick sets her out at once. Off for now (pull_math.h
+    // kLeavesFightsEarly): she finishes her fight first
+    if (engaged && !(cardian::pull::kLeavesFightsEarly && PullLeavesFight()))
     {
         co_await DoCombatTick(tick);
     }
@@ -5849,7 +5877,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // Her eyes: on the fight, on whoever she emotes at, on the player now
     // and then, else ahead (IdleLook). Walking in on a mob, they are on it
     // (ApproachTick)
-    if (!m_Approach.has_value())
+    if (!m_Approach.has_value() && !m_Pull.has_value())
     {
         IdleLook(PPlayer);
     }
@@ -5859,14 +5887,24 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // she has neither, whatever the party's plan. The hunt is the party's
     // strategy, not a gambit, so her gambit switch does not gate it; a
     // mage whose rows take no fight never pulls, since she attends
-    // (RESEARCH §12.15), and one with an Attack row fights her own pull
+    // (RESEARCH §12.15), and one with an Attack row fights her own pull.
+    // At a camp only the Puller seat hunts, whatever her job, her own way
+    // (pull_math.h hunts, PullTick)
     const Place* place         = CurrentPlace(PPlayer);
     const bool   somewhereToGo = place != nullptr && !m_Waiting;
-    const bool   hunting       = somewhereToGo && PPlayer != nullptr && IsHunting() &&
-                         cardian::engage::huntsForParty(pawn::tactics::offersSpells(POwner), TakesFights());
+    const bool   hunting       = somewhereToGo && PPlayer != nullptr &&
+                         cardian::pull::hunts(IsHunting(), Staked(), PullerSeat(),
+                                              cardian::engage::huntsForParty(pawn::tactics::offersSpells(POwner), TakesFights()));
 
     TidyBag();
     m_Gambits->TickBehaviors();
+
+    // The camp's puller out after a mob or bringing it in: the tick is the
+    // pull's, and the fight's door waits until she has handed it on
+    if (PullTick(place, PPlayer, hunting))
+    {
+        co_return;
+    }
 
     // The engage door (engage_math.h): the fight her Attack rows take
     // (EngageChoice), drawn on through the one door (Draw) -- the rules,
@@ -6077,7 +6115,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     // to: the choice is never throttled, only the draw. Resting on an
     // order, or with her Rest row asking for one (RestTick, below the
     // pick), she picks nothing
-    if (hunting && !m_Approach.has_value() && !m_RestOrder.active() && !RestRowDue())
+    if (hunting && !Staked() && !m_Approach.has_value() && !m_RestOrder.active() && !RestRowDue())
     {
         const auto blocker = HuntBlocker(PPlayer);
         if (blocker.empty())
@@ -6101,10 +6139,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
             if (m_Tick - m_LastHuntLogTime > 15s)
             {
                 m_LastHuntLogTime = m_Tick;
-                const auto rules = pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)));
-                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; band {}..{}, idle and unclaimed{}{}){}",
-                            POwner->getName(), settings::get<float>("pawn.HUNT_RADIUS"), PPlayer->getName(), PPlayer->GetMLevel(),
-                            magic_enum::enum_name(static_cast<EMobDifficulty>(rules.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(rules.maxCheck)),
+                const auto owner  = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner));
+                const auto rules  = pawn::huntRulesOf(owner);
+                const auto band   = cardian::pull::anyOn(pawn::pullListOf(owner))
+                                        ? std::string("the Pull page's list")
+                                        : fmt::format("band {}..{}", magic_enum::enum_name(static_cast<EMobDifficulty>(rules.minCheck)),
+                                                      magic_enum::enum_name(static_cast<EMobDifficulty>(rules.maxCheck)));
+                ShowInfoFmt("pawn: {} finds nothing to hunt within {} y of {} (level {}; {}, idle and unclaimed{}{}){}",
+                            POwner->getName(), settings::get<float>("pawn.HUNT_RADIUS"), PPlayer->getName(), PPlayer->GetMLevel(), band,
                             rules.aggressive ? "" : ", aggressive company avoided", rules.links ? "" : ", links avoided",
                             skipped.empty() ? "" : "; skipped " + skipped);
             }
@@ -6732,7 +6774,8 @@ auto CPawnController::DisengageOrder() -> uint16
         }
         return CL_S_OK;
     }
-    const bool fighting = POwner->PAI->IsEngaged() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend;
+    const bool fighting = POwner->PAI->IsEngaged() || m_Mode == Mode::Fight || m_Mode == Mode::Hold || m_Mode == Mode::Approach || m_Mode == Mode::Attend ||
+                          m_Mode == Mode::Pull;
     if (!fighting)
     {
         return CL_S_NOT_FIGHTING;
@@ -7445,7 +7488,7 @@ void CPawnController::AggroWatch()
         return;
     }
     m_WalkHated = true;
-    if (POwner->PAI->IsEngaged() || m_Approach.has_value())
+    if (POwner->PAI->IsEngaged() || m_Approach.has_value() || m_Pull.has_value())
     {
         return;
     }
@@ -7582,6 +7625,78 @@ auto CPawnController::SneakAttackNow(const CBattleEntity* PTarget) -> bool
         return false;
     }
     return SneakAttackReady();
+}
+
+auto CPawnController::StillPlacing(const CBattleEntity* PMob) const -> bool
+{
+    return PMob != nullptr && TowsAtStake() && POwner->PAI->IsEngaged() && POwner->GetBattleTarget() == PMob && !(m_PlacedMob.has_value() && *m_PlacedMob == PMob);
+}
+
+auto CPawnController::PartyTankPlacing(const CBattleEntity* PSelf, const CBattleEntity* PMob) -> const CBattleEntity*
+{
+    if (PSelf == nullptr || PMob == nullptr || PSelf->PParty == nullptr)
+    {
+        return nullptr;
+    }
+    for (auto* PMember : PSelf->PParty->members)
+    {
+        auto* PTanker = PMember != PSelf && PMember->objtype == TYPE_PC && PMember->isAlive() && PMember->loc.zone == PSelf->loc.zone
+                            ? dynamic_cast<CPawnController*>(PMember->PAI->GetController())
+                            : nullptr;
+        if (PTanker != nullptr && PTanker->StillPlacing(PMob))
+        {
+            return PMember;
+        }
+    }
+    return nullptr;
+}
+
+auto CPawnController::TankPlacingWait(const CBattleEntity* PMob) -> std::optional<std::string>
+{
+    // Bounded: a tank who never gets there holds nobody's weapon skill for good
+    const auto* PTank = PartyTankPlacing(POwner, PMob);
+    if (PTank == nullptr || !WaitStill(m_PlaceWait, PMob))
+    {
+        return std::nullopt;
+    }
+    return fmt::format("{} is still placing {}", PTank->getName(), PMob->getName());
+}
+
+auto CPawnController::SneakAttackWait(const CBattleEntity* PTarget, const uint16 wsid) -> std::optional<std::string>
+{
+    // Cheapest first: the mob on her, her Sneak Attack ready and a weapon
+    // skill that takes it; then a member in the Tank seat fighting the mob,
+    // who will turn it. With nobody to turn it the weapon skill goes alone
+    if (PTarget == nullptr || PTarget->GetBattleTarget() != POwner || POwner->PParty == nullptr || !SneakAttackReady() || !TakesSneakAttack(wsid))
+    {
+        return std::nullopt;
+    }
+    for (auto* PMember : POwner->PParty->members)
+    {
+        if (PMember != POwner && PMember->objtype == TYPE_PC && PMember->isAlive() && PMember->loc.zone == POwner->loc.zone && PMember->GetBattleTarget() == PTarget &&
+            pawn::roster::roleOf(static_cast<CCharEntity*>(PMember)) == cardian::party::Role::Tank)
+        {
+            // Bounded, once a mob (the review, 2026-10-17): a tank who never
+            // takes it off her leaves her weapon skill to go alone
+            if (!WaitStill(m_SneakWait, PTarget))
+            {
+                return std::nullopt;
+            }
+            return fmt::format("{} is on her: her Sneak Attack waits for {} to take it", PTarget->getName(), PMember->getName());
+        }
+    }
+    return std::nullopt;
+}
+
+auto CPawnController::WaitStill(std::optional<std::pair<uint32, timer::time_point>>& wait, const CBattleEntity* PMob) -> bool
+{
+    // kWsWait a mob, counted from her first wait on it; a wait on the same
+    // id a minute old is its next spawn's, a fight of its own
+    if (!wait.has_value() || wait->first != PMob->id || m_Tick - wait->second > 60s)
+    {
+        wait = std::pair{ PMob->id, m_Tick };
+    }
+    return m_Tick - wait->second <= kWsWait;
 }
 
 void CPawnController::RestSneak(const CBattleEntity* PTarget)
@@ -7849,10 +7964,16 @@ auto CPawnController::RangedAttack(const EntityId target) -> bool
     {
         return false;
     }
+    // Her shots are paced by her ranged weapon's delay, or with ammunition
+    // thrown by itself (pebbles, shuriken) the ammunition's
     timer::duration rangedDelay = 10s;
     if (const auto* PRange = dynamic_cast<CItemWeapon*>(POwner->m_Weapons[SLOT_RANGED]))
     {
         rangedDelay = std::chrono::milliseconds(PRange->getDelay());
+    }
+    else if (const auto* PAmmo = dynamic_cast<CItemWeapon*>(POwner->m_Weapons[SLOT_AMMO]); PAmmo != nullptr && PAmmo->isThrowing())
+    {
+        rangedDelay = std::chrono::milliseconds(PAmmo->getDelay());
     }
 
     if (m_Tick - m_LastRangedAttackTime < rangedDelay)
@@ -8049,9 +8170,11 @@ auto CPawnController::CampBlocker() const -> std::string
     return "";
 }
 
-auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level, const pawn::HuntRules& rules, std::string* skipped) const -> CMobEntity*
+auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level, const pawn::HuntRules& rules, std::string* skipped,
+                                     const std::span<const uint32> passOver, const std::span<const cardian::pull::ListRow> list, const float reach) const
+    -> CMobEntity*
 {
-    // What was in the band but not pulled, and why: a few, for the log
+    // What was in the band, or on the list, but not pulled, and why: a few, for the log
     int        skips = 0;
     const auto skip  = [&](const CMobEntity* PWhom, const std::string& why)
     {
@@ -8067,7 +8190,8 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
         ++skips;
     };
 
-    const auto  radius      = settings::get<float>("pawn.HUNT_RADIUS");
+    const bool  listed      = cardian::pull::anyOn(list); // the Pull page's list decides in place of the band
+    const auto  radius      = reach > 0.0f ? reach : settings::get<float>("pawn.HUNT_RADIUS");
     const auto  cleanRadius = settings::get<float>("pawn.HUNT_CLEAN_RADIUS");
     auto*       entities    = pawn::entitiesAround(POwner);
 
@@ -8079,11 +8203,18 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
     profile.extraBuffer = cardian::rules::kClearance; // padded as the pull rule pads
     const auto balls    = pawn::danger::spheres(entities, around, scan, profile);
 
-    // An idle, unclaimed, ordinary field mob in the band, within the hunt
-    // radius of the anchor
+    // The camp's puller, picking from the Pull page's list at its reach,
+    // weighs the way back from each mob to the landing point
+    const bool planBack = listed && reach > 0.0f && m_Stake.has_value();
+    const auto landing  = planBack ? nearPosition(m_Stake->at, cardian::stake::kMobAhead, 0.0f) : around;
+
+    // An idle, unclaimed, ordinary field mob in the band -- or of a kind on
+    // the list -- within the radius of the anchor, and none the hunter has
+    // just given up
     const auto eligible = [&](CMobEntity* PMob) -> bool
     {
-        return huntable(PMob, level, rules) && distance(around, PMob->loc.p) <= radius;
+        const bool kind = listed ? fairGame(PMob) && cardian::pull::rankOf(list, pawn::pull::kindOf(PMob)).has_value() : huntable(PMob, level, rules);
+        return kind && distance(around, PMob->loc.p) <= radius && std::ranges::find(passOver, PMob->id) == passOver.end();
     };
 
     // A linking family member (aggressive or not) within the clean radius
@@ -8103,10 +8234,16 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
         return found;
     };
 
-    // The pull order: easiest first (the lowest thing that still pays --
-    // the signet sweet spot), nearest, or toughest; distance breaks ties
+    // The pull order: with the list, its first kind first unless a lower
+    // kind stands nearer by kYalmsPerPlace a place (the walk's score,
+    // below); else easiest first (the lowest thing that still pays -- the
+    // signet sweet spot), nearest, or toughest; distance breaks ties
     const auto keyOf = [&](const CMobEntity* PMob) -> int
     {
+        if (listed)
+        {
+            return 0;
+        }
         switch (rules.pullFirst)
         {
             case 1:
@@ -8174,6 +8311,16 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
             skip(pick, "kin nearby");
             return;
         }
+        // The camp's puller plans the run back too: a mob whose chase home
+        // would pass its linking kin is no pull (pull.h wayBackKin)
+        if (planBack)
+        {
+            if (const auto* PKin = pawn::pull::wayBackKin(pick, pick->loc.p, landing); PKin != nullptr)
+            {
+                skip(pick, fmt::format("its way back passes {}", PKin->getName()));
+                return;
+            }
+        }
 
         const float toHunter = distance(POwner->loc.p, pick->loc.p);
         const int   key      = keyOf(pick);
@@ -8181,14 +8328,16 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
         {
             return;
         }
-        ranked.push_back({ pick, key, toHunter });
+        const auto  rank     = listed ? cardian::pull::rankOf(list, pawn::pull::kindOf(pick)).value_or(list.size()) : 0;
+        ranked.push_back({ pick, key, cardian::pull::pickScore(toHunter, rank) });
     };
     pawn::forEachMobNear(entities, around, radius, consider);
 
     // The pick in order is confirmed by the route she would walk to it, the
     // test the pull itself is judged by (PullBlocker), so the pick and the
     // pull never disagree; a few at most, a hunt check being made many times
-    constexpr size_t kRouteChecks = 3;
+    // (more for the camp's puller, whose look is made once a few seconds)
+    const size_t kRouteChecks = planBack ? 6 : 3;
     std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) { return a.key != b.key ? a.key < b.key : a.dist < b.dist; });
     std::vector<const CMobEntity*> asked;
     for (const auto& r : ranked)
@@ -8217,12 +8366,7 @@ auto CPawnController::PickHuntTarget(const position_t& around, const uint8 level
 // the farmer's errand
 auto CPawnController::huntable(CMobEntity* PMob, const uint8 level, const pawn::HuntRules& rules) -> bool
 {
-    const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
-                         (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
-                         (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
-                         (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
-    if (special || PMob->PMaster != nullptr || !PMob->isAlive() || pawn::isUnderground(PMob) ||
-        PMob->PAI->IsEngaged() || PMob->allegiance != xi::Allegiance::Mob || !PMob->PEnmityContainer->GetEnmityList()->empty())
+    if (!fairGame(PMob))
     {
         return false;
     }
@@ -8230,9 +8374,23 @@ auto CPawnController::huntable(CMobEntity* PMob, const uint8 level, const pawn::
     return check >= rules.minCheck && check <= rules.maxCheck;
 }
 
+auto CPawnController::fairGame(CMobEntity* PMob) -> bool
+{
+    const bool special = (PMob->m_Type & xi::MobType::Event) != xi::MobType::Normal ||
+                         (PMob->m_Type & xi::MobType::Fished) != xi::MobType::Normal ||
+                         (PMob->m_Type & xi::MobType::Battlefield) != xi::MobType::Normal ||
+                         (PMob->m_Type & xi::MobType::Notorious) != xi::MobType::Normal;
+    return !special && PMob->PMaster == nullptr && PMob->isAlive() && !pawn::isUnderground(PMob) && !PMob->PAI->IsEngaged() &&
+           PMob->allegiance == xi::Allegiance::Mob && PMob->PEnmityContainer->GetEnmityList()->empty();
+}
+
+// The free-roaming hunt round the player: the Pull page's list when it has
+// a kind on, else the Orders page's band
 auto CPawnController::PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped) const -> CMobEntity*
 {
-    return PickHuntTarget(PPlayer->loc.p, PPlayer->GetMLevel(), pawn::huntRulesOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner))), skipped);
+    const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner));
+    const auto list  = pawn::pullListOf(owner);
+    return PickHuntTarget(PPlayer->loc.p, PPlayer->GetMLevel(), pawn::huntRulesOf(owner), skipped, {}, list);
 }
 
 auto CPawnController::GetTopEnmity() const -> CBattleEntity*
@@ -9364,6 +9522,17 @@ auto CPawnController::TowIntent(CBattleEntity* PTarget) -> Intent
     const bool seated = !confirming && !m_Towing && inReach && intent.kind == Intent::Kind::Stand &&
                         isWithinDistance(POwner->loc.p, point, settings::get<float>("pawn.FIGHT_SEAT_DEADBAND")) &&
                         !POwner->PAI->PathFind->IsFollowingPath();
+    // Placed once she first stands at her seat on it, and placed it stays
+    // for that mob: her steps round the seat after never hold the melee's
+    // weapon skills again (the review, 2026-10-17)
+    if (newMob)
+    {
+        m_PlacedMob.reset();
+    }
+    if (seated)
+    {
+        m_PlacedMob = EntityId(PTarget);
+    }
     if (auto backoff = StepBackIntent(PTarget, seated); backoff.has_value())
     {
         intent = *backoff;

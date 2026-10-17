@@ -158,6 +158,8 @@ namespace
         bool                      retreat  = false;
         std::optional<pawn::Stake> stake;
         pawn::HuntRules            rules;
+        // the Pull page's list, loaded with the hunt rules
+        std::vector<cardian::pull::ListRow> pullList;
         bool                      loaded = false;
     };
     std::unordered_map<uint32, PartyOrders> ordersByOwner;
@@ -172,7 +174,8 @@ namespace
             o.rules.maxCheck   = settings::get<uint8>("pawn.HUNT_CHECK_MAX");
             o.rules.aggressive = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
             o.rules.links      = !settings::get<bool>("pawn.HUNT_CLEAN_PULLS");
-            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio, avoid_aggro FROM cardian_orders WHERE charid = ?", ownerCharID);
+            const auto rset    = db::preparedStmt("SELECT hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio, avoid_aggro, pull_list FROM cardian_orders WHERE charid = ?",
+                                                  ownerCharID);
             if (rset && rset->next())
             {
                 o.rules.minCheck   = rset->get<uint8>("hunt_min");
@@ -182,6 +185,7 @@ namespace
                 o.rules.links      = rset->get<uint8>("links") != 0;
                 o.rules.preferBio  = rset->get<uint8>("prefer_bio") != 0;
                 o.rules.avoidAggro = rset->get<uint8>("avoid_aggro") != 0;
+                o.pullList         = cardian::pull::parseList(rset->get<std::string>("pull_list"));
             }
         }
         return o;
@@ -1606,10 +1610,11 @@ namespace pawn
             const bool  binds  = PController->SetRetreat(orders.retreat);
             const bool  starts = orders.strategy == 1 && !binds;
             PController->SetStake(binds ? std::nullopt : orders.stake);
-            // Starting a fight from a place is the puller's job, and the
-            // puller is its own design, deliberately last. Until it lands
-            // the order is held and only the roam obeys it
-            PController->SetHunting(starts && !orders.stake.has_value());
+            // At a camp, starting a fight is the puller's job: the order
+            // reaches every cardian, and only the one in the Puller seat acts
+            // on it there (pull_math.h hunts, read on her tick, since the
+            // seat can change hands with no change of orders)
+            PController->SetHunting(starts);
         }
     }
 
@@ -1838,6 +1843,55 @@ namespace pawn
                          "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `prefer_bio` tinyint(1) unsigned NOT NULL DEFAULT '0' AFTER `links`");
         db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `avoid_aggro` tinyint(1) unsigned NOT NULL DEFAULT '1' AFTER `prefer_bio`");
+        db::preparedStmt("ALTER TABLE `cardian_orders` ADD COLUMN IF NOT EXISTS `pull_list` varchar(1024) NOT NULL DEFAULT '' AFTER `avoid_aggro`");
+    }
+
+    namespace
+    {
+        // His orders as they stand, written whole: a first row is never left
+        // with the table's defaults for what he never touched
+        void saveOrders(const uint32 ownerCharID)
+        {
+            const auto& o = ordersFor(ownerCharID);
+            const auto& r = o.rules;
+            db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio, avoid_aggro, pull_list) "
+                             "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                             "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
+                             "aggressive = VALUES(aggressive), links = VALUES(links), prefer_bio = VALUES(prefer_bio), avoid_aggro = VALUES(avoid_aggro), "
+                             "pull_list = VALUES(pull_list)",
+                             ownerCharID, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0, r.preferBio ? 1 : 0, r.avoidAggro ? 1 : 0,
+                             cardian::pull::listText(o.pullList));
+        }
+    } // namespace
+
+    auto pullListOf(const uint32 ownerCharID) -> std::vector<cardian::pull::ListRow>
+    {
+        return ordersFor(ownerCharID).pullList;
+    }
+
+    void setPullList(CCharEntity* POwner, const std::vector<cardian::pull::ListRow>& sent)
+    {
+        if (POwner == nullptr)
+        {
+            return;
+        }
+        auto& o    = ordersFor(POwner->id);
+        o.pullList = cardian::pull::mergeList(sent, o.pullList);
+        // a list that does not fit its column keeps its head: the kinds he wants most
+        while (!o.pullList.empty() && cardian::pull::listText(o.pullList).size() > 1024)
+        {
+            o.pullList.pop_back();
+        }
+        saveOrders(POwner->id);
+        std::string on;
+        for (const auto& row : o.pullList)
+        {
+            if (row.on)
+            {
+                on += (on.empty() ? "" : ", ") + row.name;
+            }
+        }
+        ShowInfoFmt("pawn: {} pulls {}", POwner->getName(), on.empty() ? std::string("nothing (the list has nothing on)") : on);
     }
 
     auto setHuntRule(CCharEntity* POwner, const uint8 rule, const int value) -> uint16
@@ -1884,10 +1938,7 @@ namespace pawn
         {
             return CL_S_MALFORMED;
         }
-        db::preparedStmt("INSERT INTO cardian_orders (charid, hunt_min, hunt_max, pull_first, aggressive, links, prefer_bio, avoid_aggro) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
-                         "ON DUPLICATE KEY UPDATE hunt_min = VALUES(hunt_min), hunt_max = VALUES(hunt_max), pull_first = VALUES(pull_first), "
-                         "aggressive = VALUES(aggressive), links = VALUES(links), prefer_bio = VALUES(prefer_bio), avoid_aggro = VALUES(avoid_aggro)",
-                         POwner->id, r.minCheck, r.maxCheck, r.pullFirst, r.aggressive ? 1 : 0, r.links ? 1 : 0, r.preferBio ? 1 : 0, r.avoidAggro ? 1 : 0);
+        saveOrders(POwner->id);
         ShowInfoFmt("pawn: {} hunts {}..{}, {} first, aggressive company {}, links {}; {} preferred; his cardians' Avoid aggro {}", POwner->getName(),
                     magic_enum::enum_name(static_cast<EMobDifficulty>(r.minCheck)), magic_enum::enum_name(static_cast<EMobDifficulty>(r.maxCheck)),
                     kPullFirstNames[r.pullFirst], r.aggressive ? "allowed" : "avoided", r.links ? "allowed" : "avoided", r.preferBio ? "Bio" : "Dia",
