@@ -33,6 +33,12 @@
 --     -> what a skillchain deals for each point of the weapon skill that
 --        closes it: the server's own skillchain damage, run on a stand-in of
 --        the target that carries the chain and changes nothing.
+--   xi.cardian.bank.wsExpected(attacker, target, wsId, name, tp)
+--     -> what a weapon skill deals the target on average: the weapon skill's
+--        own script and xi.weaponskills, run on stand-ins that change
+--        nothing, many times over dice of the bank's own (a seeded
+--        sequence: the same answer every time, the server's dice untouched),
+--        the mean of what each run would have dealt.
 --   xi.cardian.bank.debuffSubPower(scriptName, effectId)
 --     -> the subPower a debuff's own script puts on its effect (Dia's
 --        defence down, Bio's attack down, in percent), read by running the
@@ -791,6 +797,178 @@ xi.cardian.bank.chainShare = function(closer, target, chain, tier, count)
     end
 
     return dealt / base
+end
+
+-----------------------------------
+-- The weapon skill's price (#496)
+-----------------------------------
+
+-- Methods of an entity or an effect that only read, by name: what a weapon
+-- skill's damage chain asks of its actor and its target. Anything else it
+-- calls -- TP added, an effect spent, damage taken, a skill-up, a message --
+-- does nothing on a stand-in and answers nil. The three damage reductions
+-- go through to the server: they read the target's mods (and would spend a
+-- mob's Migawari or Fan Dance, which mobs do not carry)
+local kReads = { physicalDmgTaken = true, rangedDmgTaken = true, handleSevereDamage = true }
+
+local function reads(method)
+    return kReads[method] or method:find('^get') ~= nil or method:find('^has') ~= nil or method:find('^is') ~= nil or
+        method:find('^can') ~= nil or method:find('^check') ~= nil
+end
+
+local function inertEffect(effect)
+    return setmetatable({}, {
+        __index = function(self, method)
+            local call = function() return nil end
+            if reads(method) then
+                call = function(_, ...)
+                    return effect[method](effect, ...)
+                end
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
+-- An entity a run of the server's code may ask anything and change nothing:
+-- its reads asked once (remembered), its effects handed back inert, every
+-- other method a no-op. `answers` replaces some reads outright
+local function inert(entity, answers)
+    local seen  = remembered(entity)
+    local proxy = {}
+    entityOf[proxy] = entity
+    return setmetatable(proxy, {
+        __index = function(self, method)
+            local call
+            if answers ~= nil and answers[method] ~= nil then
+                local answer = answers[method]
+                call = function()
+                    return answer
+                end
+            elseif method == 'getStatusEffect' then
+                call = function(_, ...)
+                    local effect = seen:getStatusEffect(...)
+                    return effect ~= nil and inertEffect(effect) or nil
+                end
+            elseif reads(method) then
+                call = seen[method]
+            else
+                call = function()
+                    return nil
+                end
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
+-- The bank's own dice for runs of the server's code that roll many times:
+-- the minimal standard generator (Park and Miller), seeded the same every
+-- time, so its answer is the same every time it is asked. math.random,
+-- randomInt, randomFloat and randomNormal as the server binds them
+-- (src/map/lua/luautils.cpp), the server's own put back after
+local kSeed = 20261017
+
+local function onSeededDice(step)
+    local x = kSeed
+    local function u()
+        x = (x * 16807) % 2147483647
+        return x / 2147483647
+    end
+
+    local function int(lo, hi)
+        lo, hi = math.floor(lo + 0.5), math.floor(hi + 0.5)
+        return lo + math.floor(u() * (hi - lo + 1))
+    end
+
+    local random, randomInt, randomFloat, randomNormal = math.random, math.randomInt, math.randomFloat, math.randomNormal
+    math.random = function(lo, hi)
+        if lo == nil then
+            return u()
+        end
+        if hi == nil then
+            return int(1, lo)
+        end
+        return int(lo, hi)
+    end
+    math.randomInt   = int
+    math.randomFloat = function(lo, hi)
+        return lo + u() * (hi - lo)
+    end
+    math.randomNormal = function(mean, sd, lower, upper)
+        local z = math.sqrt(-2 * math.log(u())) * math.cos(2 * math.pi * u())
+        return utils.clamp(mean + sd * z, lower or -math.huge, upper or math.huge)
+    end
+    local ok, result = pcall(step)
+    math.random, math.randomInt, math.randomFloat, math.randomNormal = random, randomInt, randomFloat, randomNormal
+    if not ok then
+        error(result, 0)
+    end
+    return result
+end
+
+-- Runs of a weapon skill the price is the mean of: its error is about a
+-- weapon skill's own spread over eight
+local kWsRuns = 64
+xi.cardian.bank.wsRuns = kWsRuns
+
+-- What a weapon skill deals the target on average (#496; ROADMAP, Road to
+-- subjob item 6, slice 3h: the chain's worth weighs each member's weapon
+-- skill): the weapon skill's own script (xi.actions.weaponskills[name]) and
+-- xi.weaponskills, the server's whole chain -- its hits and their accuracy,
+-- the multi-attacks, criticals, pDIF, its magic and the target's
+-- reductions -- run kWsRuns times on stand-ins that change nothing, over the
+-- bank's own seeded dice, the mean of what each run would have dealt. The
+-- dice are not taken at each one's expectation as a nuke's are: a weapon
+-- skill's hits each roll to land and to crit and are cut short at the
+-- target's HP, which no single die stands for, and copying the chain to
+-- split it would be a copy of upstream's to keep. A run stops where the
+-- game's own last step (takeWeaponskillDamage) takes the damage; the
+-- target answers its maximum HP for what it has left, so the price is the
+-- whole weapon skill whatever the mob has left (the worth weighs that
+-- itself). Left out: what the actor's state would add when it lands -- a
+-- Sneak Attack not yet up, the TP she holds over `tp` -- and the game's
+-- last step (a mob's Phalanx, Stoneskin, damage cap). nil when the weapon
+-- skill has no script
+xi.cardian.bank.wsExpected = function(attacker, target, wsId, name, tp)
+    local scripts = xi.actions and xi.actions.weaponskills
+    local script  = scripts ~= nil and scripts[name] or nil
+    if script == nil or type(script.onUseWeaponSkill) ~= 'function' then
+        return nil
+    end
+
+    local actor  = inert(attacker)
+    local foe    = inert(target, { getHP = target:getMaxHP() })
+    local action = setmetatable({}, {
+        __index = function()
+            return function() end
+        end,
+    })
+
+    local take = xi.weaponskills.takeWeaponskillDamage
+    local dealt
+    xi.weaponskills.takeWeaponskillDamage = function(_, _, _, _, _, results)
+        dealt = results.finalDmg or 0
+        return dealt
+    end
+    local ok, mean = pcall(onSeededDice, function()
+        local sum = 0
+        for _ = 1, kWsRuns do
+            dealt = nil
+            local _, _, _, damage = script.onUseWeaponSkill(actor, foe, wsId, tp, true, action, nil)
+            local run = dealt or damage or 0
+            sum = sum + math.max(0, run)
+        end
+        return sum / kWsRuns
+    end)
+    xi.weaponskills.takeWeaponskillDamage = take
+    if not ok then
+        error(mean, 0)
+    end
+
+    return mean
 end
 
 -- A debuff spell's own script, run on stand-ins: the caster answers 0 to

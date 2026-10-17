@@ -68,6 +68,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <iterator>
 #include <list>
 #include <set>
@@ -678,6 +679,9 @@ namespace pawn
         // Her TP as it rises, for the party's telepathy of when a skillchain
         // comes (skillchains.h forecast)
         pawn::chains::noteTp(POwner);
+        // Her cast under way as the server timed it, for a burst started
+        // ahead of the chain (CastSeconds)
+        NoteCast();
 
         // A played character's stances are judged as they go up, while what
         // his tactician fired is still fresh (PlayersBuff), and forgotten as
@@ -2241,7 +2245,11 @@ namespace pawn
         // seconds off may be one on its recast this instant
         const auto           chain = pawn::chains::forecast(POwner, PTarget);
         std::vector<SpellID> asked = spells;
-        if (chain.has_value())
+        if (!chain.has_value())
+        {
+            NoteBurstPlan(nullptr, std::nullopt);
+        }
+        else
         {
             for (const auto id : OfferedNukes())
             {
@@ -2286,6 +2294,9 @@ namespace pawn
         {
             const auto  weighed = WeighBurst(PTarget, *pricing, spells, pick, *chain);
             const auto& call    = weighed.call;
+            // The burst she plans, timed: the tick's own check comes back to
+            // it as its cast comes due (BurstNow)
+            NoteBurstPlan(PTarget, call.move == cardian::chains::NukeMove::Burst ? std::nullopt : call.burstIn);
             if (call.move == cardian::chains::NukeMove::Hold || call.spell == 0)
             {
                 hold(call.why, call.detail.empty() ? chain->how : fmt::format("{}; {}", call.detail, chain->how));
@@ -2392,7 +2403,7 @@ namespace pawn
             n.dealt       = p.dealt;
             const auto f  = factors.find(p.id);
             n.burst       = f != factors.end() ? std::min(p.expected * f->second, static_cast<double>(std::max<int32>(PTarget->health.hp, 0))) : 0.0;
-            n.cast        = std::chrono::duration<double>(PPriced->getCastTime()).count();
+            n.cast        = CastSeconds(PPriced);
             n.seconds     = p.seconds;
             n.mp          = p.mp;
             n.recast      = std::chrono::duration<double>(PPriced->getRecastTime()).count();
@@ -2432,16 +2443,38 @@ namespace pawn
 
     auto CGambits::BurstWorthStanding(const double after) -> std::optional<std::string>
     {
-        // Cheap first, as BurstNow asks: her tactician's nukes run, a chain's
-        // window is on her mob, and nothing would keep her from casting into it
+        // Asked every tick by her rest and her routine assignment, and a
+        // chain on its way is priced for it: its answer stands as long as
+        // the burst's own check waits between asks (kBurstCheckEvery)
+        const auto now   = timer::now();
+        const auto every = std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(cardian::chains::kBurstCheckEvery));
+        if (m_standMemo.has_value() && now - m_standMemo->at < every && std::abs(m_standMemo->after - after) < cardian::chains::kBurstCheckEvery / 2.0)
+        {
+            return m_standMemo->answer;
+        }
+        auto answer = WeighStanding(after);
+        m_standMemo = StandMemo{ now, after, answer };
+        return answer;
+    }
+
+    auto CGambits::WeighStanding(const double after) -> std::optional<std::string>
+    {
+        // Cheap first, as BurstNow asks: her tactician's nukes run, and
+        // nothing would keep her from casting
         auto* PMob = FightTarget();
         if (!m_masterOn || !Offers().nukes || PMob == nullptr || PMob->isDead() || PMob->GetBattleTarget() == POwner)
         {
             return std::nullopt;
         }
-        const auto* PEffect = PMob->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Skillchain);
-        if (PEffect == nullptr || PEffect->GetTier() == 0 || POwner->StatusEffectContainer->HasPreventActionEffect() ||
-            POwner->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Silence, xi::StatusEffect::Mute }) || !pawn::tactics::has(POwner))
+        if (POwner->StatusEffectContainer->HasPreventActionEffect() || POwner->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::Silence, xi::StatusEffect::Mute }) ||
+            !pawn::tactics::has(POwner))
+        {
+            return std::nullopt;
+        }
+        // A chain's window on her mob, or a chain on its way (the party's
+        // telepathy: a skillchain plan's TP window, an opening on the mob)
+        auto chain = pawn::chains::forecast(POwner, PMob);
+        if (!chain.has_value() || (!chain->open.has_value() && !chain->in.has_value()))
         {
             return std::nullopt;
         }
@@ -2450,15 +2483,34 @@ namespace pawn
         {
             return std::nullopt;
         }
-        // The window as she would find it once up, and her nuke row's call
-        // in it: the nukes she has the MP and recast for now, her free pick
-        // among them, and a burst over it
-        auto chain = pawn::chains::forecast(POwner, PMob);
-        if (!chain.has_value() || !chain->open.has_value() || *chain->open <= after)
+        // The chain as she would find it once up: a window with what it has
+        // left then; a chain on its way, that much nearer -- or landed by
+        // then, its window open -- and her nuke row's call there: the nukes
+        // she has the MP and recast for now, her free pick among them, and a
+        // burst over it, cast then: in the window, or ahead of the chain
+        // timed to land at its middle (#491)
+        if (chain->open.has_value())
         {
-            return std::nullopt;
+            if (*chain->open <= after)
+            {
+                return std::nullopt;
+            }
+            chain->open = *chain->open - after;
         }
-        chain->open       = *chain->open - after;
+        else if (*chain->in > after)
+        {
+            chain->in = *chain->in - after;
+        }
+        else
+        {
+            const double left = cardian::chains::kChainLasts - (after - *chain->in);
+            if (left <= 0.0)
+            {
+                return std::nullopt;
+            }
+            chain->open = left;
+            chain->in.reset();
+        }
         const auto spells = NukeSpells();
         if (spells.empty())
         {
@@ -2485,6 +2537,9 @@ namespace pawn
         {
             return std::nullopt;
         }
+        // Her burst as she will find it once up: the tick's own check comes
+        // to it then, whether or not her nuke row has had a think meanwhile
+        NoteBurstPlan(PMob, after);
         return fmt::format("{} ~{:.0f} on {}, {}", it->spell, weighed.burst, PMob->getName(), weighed.call.detail);
     }
 
@@ -3839,11 +3894,21 @@ namespace pawn
         {
             return false;
         }
+        // Outside the player's plan, an order's weapon skill keeps off its
+        // chain under way on her mob as her tactician's would, whatever her
+        // seat (#503; skillchain_math.h orderHold): a hold of her marked row
+        // lets the think go on down her rows, and this one would break it
+        if (const auto why = OrderedWsHold(PTarget); why.has_value())
+        {
+            SayWsHold(*why);
+            return false;
+        }
         if (!m_host->WeaponSkill(PTarget->entityId(), wsid))
         {
             return false;
         }
 
+        SayWsHold("");
         Debug("weapon skill", wsid, PTarget);
         return true;
     }
@@ -3914,23 +3979,59 @@ namespace pawn
         return at.has_value() && UseWeaponSkill(at->target, engaged, at->index, true);
     }
 
+    void CGambits::NoteCast()
+    {
+        const auto* PMagic = dynamic_cast<const CMagicState*>(POwner->PAI->GetCurrentState());
+        if (PMagic == nullptr || PMagic->IsInstantCast() || PMagic->GetSpell() == nullptr)
+        {
+            return;
+        }
+        const double base = std::chrono::duration<double>(PMagic->GetSpell()->getCastTime()).count();
+        const double cast = std::chrono::duration<double>(PMagic->GetCastTime()).count();
+        if (base > 0.0 && cast > 0.0)
+        {
+            m_castRatio[static_cast<uint16>(PMagic->GetSpell()->getSkillType())] = cast / base;
+        }
+    }
+
+    auto CGambits::CastSeconds(const CSpell* PSpell) const -> double
+    {
+        const double base = std::chrono::duration<double>(PSpell->getCastTime()).count();
+        const auto   it   = m_castRatio.find(static_cast<uint16>(PSpell->getSkillType()));
+        return it != m_castRatio.end() ? base * it->second : base;
+    }
+
+    void CGambits::NoteBurstPlan(const CBattleEntity* PMob, const std::optional<double> in)
+    {
+        if (PMob == nullptr || !in.has_value())
+        {
+            m_burstAt.reset();
+            return;
+        }
+        m_burstAt = std::pair{ PMob->id, timer::now() + std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(std::max(0.0, *in))) };
+    }
+
     auto CGambits::BurstNow(const bool engaged) -> bool
     {
-        // Cheap first: her tactician's nukes run, and a chain is on her mob
+        // Cheap first: her tactician's nukes run, and on her mob a chain's
+        // window, an opening -- which brings its chain into sight -- or the
+        // cast of a burst she planned ahead of the chain coming due (#491)
         auto* PMob = FightTarget();
         if (!engaged || !Offers().nukes || PMob == nullptr)
         {
             return false;
         }
-        const auto* PEffect = PMob->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Skillchain);
-        if (PEffect == nullptr || PEffect->GetTier() == 0)
+        const auto every   = std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(cardian::chains::kBurstCheckEvery));
+        const auto now     = timer::now();
+        const bool onMob   = PMob->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Skillchain);
+        const bool planned = m_burstAt.has_value() && m_burstAt->first == PMob->id && now + every >= m_burstAt->second;
+        if (!onMob && !planned)
         {
             return false;
         }
         // Twice a second at most: a hold in the window is asked again, a
         // pricing each time
-        const auto now = timer::now();
-        if (now - m_lastBurstTry < 500ms)
+        if (now - m_lastBurstTry < every)
         {
             return false;
         }
@@ -3939,20 +4040,69 @@ namespace pawn
         return at.has_value() && at->target == PMob && CastNuke(at->target, engaged, at->index, true);
     }
 
+    void CGambits::SayWsHold(std::string why)
+    {
+        if (why == m_wsHold)
+        {
+            return;
+        }
+        m_wsHold = std::move(why);
+        if (!m_wsHold.empty())
+        {
+            ShowInfoFmt("tactics: {} holds her weapon skill ({})", POwner->getName(), m_wsHold);
+        }
+    }
+
+    auto CGambits::ReadPlan(CBattleEntity* PMob, cardian::chains::WsView& v) -> pawn::chains::Part
+    {
+        const auto part    = pawn::chains::partOf(POwner, PMob);
+        v.seat             = part.seat;
+        v.planSkill        = part.skill;
+        v.planChain        = part.chain;
+        v.partnerFights    = part.partnerFights;
+        v.partnerReady     = part.partnerReady;
+        v.partner          = part.partner;
+        v.planOpening      = part.planOpening;
+        v.planCloserFights = part.planCloserFights;
+        v.planCloser       = part.planCloser;
+        v.saving           = part.saving;
+        v.forced           = part.forced;
+        v.planComing       = part.planComing;
+        v.startIn          = part.startIn;
+        v.spareIn          = part.spareIn;
+        v.heldFor          = pawn::chains::heldForPlan(POwner);
+        // Outside the plan, its chain on her mob is left to its burster: who
+        // will burst it is read only then (skillchain_math.h leavesChainBe)
+        if (part.planned && part.seat == cardian::chains::Seat::None && v.resonance.has_value() && v.resonance->tier > 0 &&
+            v.resonance->props[0] == part.chain && !v.burstComing)
+        {
+            v.burstComing = pawn::chains::burstComing(POwner, *v.resonance);
+        }
+        return part;
+    }
+
+    auto CGambits::OrderedWsHold(CBattleEntity* PMob) -> std::optional<std::string>
+    {
+        if (PMob == nullptr || PMob == POwner || POwner->health.tp < cardian::chains::kWsTp)
+        {
+            return std::nullopt;
+        }
+        cardian::chains::WsView v;
+        v.tp        = POwner->health.tp;
+        v.resonance = pawn::chains::resonanceOn(PMob);
+        if (!ReadPlan(PMob, v).planned)
+        {
+            return std::nullopt;
+        }
+        return cardian::chains::orderHold(v);
+    }
+
     auto CGambits::UseWeaponSkill(CBattleEntity* PTarget, const bool engaged, const std::size_t index, const bool closeOnly) -> bool
     {
         // Why her weapon skill holds, said as it changes, not every think
         const auto hold = [this](std::string why)
         {
-            if (why == m_wsHold)
-            {
-                return;
-            }
-            m_wsHold = std::move(why);
-            if (!m_wsHold.empty())
-            {
-                ShowInfoFmt("tactics: {} holds her weapon skill ({})", POwner->getName(), m_wsHold);
-            }
+            SayWsHold(std::move(why));
         };
         // A weapon skill of hers already on its way (behind Boost or Sneak
         // Attack) is busy, not asked again
@@ -4003,22 +4153,7 @@ namespace pawn
                 v.burstComing = !v.othersClose && pawn::chains::burstComing(POwner, *v.resonance);
             }
         }
-        const auto part    = pawn::chains::partOf(POwner, PTarget);
-        v.seat             = part.seat;
-        v.planSkill        = part.skill;
-        v.planChain        = part.chain;
-        v.partnerFights    = part.partnerFights;
-        v.partnerReady     = part.partnerReady;
-        v.partner          = part.partner;
-        v.planOpening      = part.planOpening;
-        v.planCloserFights = part.planCloserFights;
-        v.planCloser       = part.planCloser;
-        v.saving           = part.saving;
-        v.forced           = part.forced;
-        v.planComing       = part.planComing;
-        v.startIn          = part.startIn;
-        v.spareIn          = part.spareIn;
-        v.heldFor          = pawn::chains::heldForPlan(POwner);
+        const auto part = ReadPlan(PTarget, v);
         // With no plan, one of his cardians asks for one, once, as the party
         // settles into its first fights (skillchains.h askIfDue)
         if (!part.planned && !closeOnly && v.tp >= cardian::chains::kWsTp)
@@ -4110,18 +4245,27 @@ namespace pawn
         {
             return 0.0;
         }
-        // Her nukes of the chain's elements she has the MP for
-        std::vector<SpellID> asked;
-        for (const auto id : OfferedNukes())
+        return BurstPrice(PMob, AffordableBursts(OfferedNukes(), elements), count);
+    }
+
+    auto CGambits::AffordableBursts(const std::vector<SpellID>& nukes, const uint16 elements) const -> std::vector<SpellID>
+    {
+        std::vector<SpellID> out;
+        for (const auto id : nukes)
         {
             auto* PSpell = spell::GetSpell(id);
             if (PSpell != nullptr && (cardian::chains::elementBit(static_cast<uint8>(PSpell->getElement())) & elements) != 0 &&
                 battleutils::CalculateSpellCost(POwner, PSpell) <= POwner->health.mp)
             {
-                asked.push_back(id);
+                out.push_back(id);
             }
         }
-        if (asked.empty())
+        return out;
+    }
+
+    auto CGambits::BurstPrice(CBattleEntity* PMob, const std::vector<SpellID>& asked, const uint8 count) -> double
+    {
+        if (PMob == nullptr || asked.empty() || !pawn::tactics::has(POwner))
         {
             return 0.0;
         }

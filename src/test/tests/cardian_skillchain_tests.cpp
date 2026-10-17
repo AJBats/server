@@ -1028,3 +1028,217 @@ TEST_CASE("The plan's calls read as a player's macros", "[cardian][skillchains]"
     CHECK(cardian::chains::readyLine(1240, 14) == autoTranslate(5, 5) + " 1240 TP <call14>");
     CHECK(cardian::chains::readyLine(1000, 0) == autoTranslate(5, 5) + " 1000 TP");
 }
+
+TEST_CASE("skillchains: a tank outside the plan holds her weapon skill while its chain is going, her tactician's and an order's alike", "[cardian][skillchains]")
+{
+    // #503 (the user, 2026-10-17): the Tank seat lends Weapon skill (best),
+    // and a member who is not one of the plan's steps -- a tank as much as
+    // a Damage seat -- keeps out of its way. A Warrior tanking, 1000 TP,
+    // Fast Blade her best; the plan is Burning Blade, then Misha's Combo
+    // (Fusion), and she could close the opening herself with Combo
+    using cardian::chains::orderHold;
+    const Skill fragment{ 6, { SC_FRAGMENTATION, 0, 0 } }; // closes Fusion as Light
+    auto        tank      = warrior();
+    tank.skills           = { fastBlade, combo, fragment };
+    tank.best             = kFastBlade;
+    tank.planOpening      = burningBlade.props;
+    tank.planChain        = SC_FUSION;
+    tank.planCloserFights = true;
+    tank.planCloser       = "Misha";
+
+    // between the opener and the closer: the plan's opening on the mob
+    tank.resonance = opening(burningBlade.props, 1.0);
+    CHECK(call(tank).move == WsMove::Hold);
+    CHECK(orderHold(tank).has_value());
+    tank.resonance = opening(burningBlade.props, 4.0); // its window open: still his
+    CHECK(call(tank).move == WsMove::Hold);
+    CHECK(orderHold(tank).has_value());
+
+    // the chain it made, a burst coming: no weapon skill of hers ends or
+    // moves its window, not even one that would chain on it
+    tank.resonance   = Resonance{ { SC_FUSION, 0, 0 }, 2, 4.0, 5.0 };
+    tank.burstComing = true;
+    CHECK(call(tank).move == WsMove::Hold);
+    CHECK(orderHold(tank).has_value());
+    // nobody to burst it: chaining on it is damage, and nothing is lost
+    tank.burstComing = false;
+    auto c           = call(tank);
+    CHECK(c.move == WsMove::Close);
+    CHECK(c.chain == SC_LIGHT);
+    CHECK_FALSE(orderHold(tank).has_value());
+
+    // the chain due: her opening would sit on the mob as its opener opens
+    tank.resonance.reset();
+    tank.startIn = 6.0;
+    CHECK(call(tank).move == WsMove::Hold);
+    CHECK(orderHold(tank).has_value());
+    // far enough off: her weapon skill goes as ever
+    tank.startIn = cardian::chains::kWsLands + cardian::chains::kOpeningLasts + 1.0;
+    CHECK(call(tank).move == WsMove::Free);
+    CHECK_FALSE(orderHold(tank).has_value());
+
+    // a step of the plan is held by its own rules, never these; short of a
+    // weapon skill's TP there is nothing to hold
+    tank.startIn   = 6.0;
+    tank.seat      = Seat::Opener;
+    tank.planSkill = kBurningBlade;
+    CHECK_FALSE(orderHold(tank).has_value());
+    tank.seat = Seat::None;
+    tank.tp   = 900;
+    CHECK_FALSE(orderHold(tank).has_value());
+
+    // no plan: nothing to keep out of
+    auto alone      = warrior();
+    alone.resonance = opening(burningBlade.props, 4.0);
+    CHECK_FALSE(orderHold(alone).has_value());
+}
+
+TEST_CASE("skillchains: a weapon skill is priced by its landings once there are enough, else by the server's own weapon skill", "[cardian][skillchains]")
+{
+    // #496: the prior multiple of her melee is gone
+    using cardian::chains::WsLanded;
+    using cardian::chains::wsPrice;
+    const WsLanded none;
+    // nothing landed: the server's own weapon skill at its expectation
+    CHECK(wsPrice(none, 420.0, none) == 420.0);
+    // one or two landings (one a miss) do not outweigh the formula
+    CHECK(wsPrice({ 150.0, 1 }, 420.0, { 150.0, 1 }) == 420.0);
+    CHECK(wsPrice({ 0.0, 2 }, 420.0, none) == 420.0);
+    // enough of them: measured beats the formula
+    CHECK(wsPrice({ 380.0, cardian::chains::kWsLandedTrusted }, 420.0, none) == 380.0);
+    // the formula could not answer: what that weapon skill landed, else any of hers
+    CHECK(wsPrice({ 150.0, 1 }, std::nullopt, { 300.0, 5 }) == 150.0);
+    CHECK(wsPrice(none, std::nullopt, { 300.0, 5 }) == 300.0);
+    CHECK(wsPrice(none, std::nullopt, none) == 0.0);
+}
+
+TEST_CASE("skillchains: the chain's worth counts a player's burst by hand in full when he knows a nuke of its elements and has the MP", "[cardian][skillchains]")
+{
+    // #497 (the user, 2026-10-17): the same test the Shortcuts list names a
+    // burster by
+    using cardian::chains::BursterView;
+    using cardian::chains::burstCounted;
+    BursterView mage;
+    mage.tactician  = true;
+    mage.tacticians = 300.0;
+    CHECK(burstCounted(mage) == 300.0);
+
+    BursterView hand;
+    hand.player    = true;
+    hand.atFight   = true;
+    hand.knowsNuke = true;
+    hand.mpForOne  = true;
+    hand.byHand    = 250.0;
+    CHECK(burstCounted(hand) == 250.0);
+    // no MP for one, no nuke of the chain's elements, away from the fight: none
+    auto broke     = hand;
+    broke.mpForOne = false;
+    CHECK(burstCounted(broke) == 0.0);
+    auto unlearned      = hand;
+    unlearned.knowsNuke = false;
+    CHECK(burstCounted(unlearned) == 0.0);
+    auto away    = hand;
+    away.atFight = false;
+    CHECK(burstCounted(away) == 0.0);
+    // on autopilot, the better of his tactician's and his own
+    auto both       = hand;
+    both.tactician  = true;
+    both.tacticians = 200.0;
+    CHECK(burstCounted(both) == 250.0);
+}
+
+TEST_CASE("skillchains: the burst's moment is the middle of the chain's window, one rule both ways", "[cardian][skillchains]")
+{
+    // #491: from a chain landing in 3 s, the burst lands 4.5 s into its 9 s
+    // window; and a burst meant for that moment wants the chain then
+    using cardian::chains::burstMoment;
+    using cardian::chains::castStartFor;
+    using cardian::chains::chainWantedFor;
+    CHECK(burstMoment(3.0) == 3.0 + cardian::chains::kChainLasts / 2.0);
+    CHECK(chainWantedFor(burstMoment(3.0)) == 3.0);
+    CHECK(burstMoment(3.0, 8.0) == 7.0); // a longer chain's shorter window
+    CHECK(castStartFor(burstMoment(3.0), 6.0) == 1.5);
+}
+
+TEST_CASE("skillchains: a burst on its way is cast ahead of the chain, timed to land in the middle of its window", "[cardian][skillchains]")
+{
+    // A Black Mage with Fire (1 s cast) and Stone II (2 s), and a slow
+    // Stone IV (6 s) that deals the most
+    auto list = nukes();
+    Nuke stoneIv;
+    stoneIv.id      = 162;
+    stoneIv.element = ELEMENT_EARTH;
+    stoneIv.dealt   = 400.0;
+    stoneIv.burst   = 750.0;
+    stoneIv.cast    = 6.0;
+    stoneIv.seconds = 8.5;
+    stoneIv.mp      = 88;
+    stoneIv.recast  = 20.0;
+    stoneIv.now     = true;
+    list.push_back(stoneIv);
+    BurstView v;
+    v.mp       = 200;
+    v.elements = kEarth;
+    v.chain    = SC_SCISSION;
+
+    // the chain in 3 s: Stone IV lands at the window's middle, 7.5 s from
+    // now, if its 6 s cast starts in 1.5 s: she saves for it until then
+    v.chainIn = 3.0;
+    auto c    = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Hold);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 1.5);
+
+    // its start come, the chain still 1.5 s off: she casts it now, ahead
+    v.chainIn = 1.5;
+    c         = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Burst);
+    CHECK(c.spell == 162);
+    CHECK(c.ahead);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 0.0);
+    // and so with her free pick in hand: Stone II now would push it past its moment
+    c = cardian::chains::nukeCall(list, byId(list, 160), v);
+    CHECK(c.move == NukeMove::Burst);
+    CHECK(c.spell == 162);
+
+    // late: the chain lands in 0.5 s, so cast now it lands 5.5 s into the
+    // window, past its middle and still inside it
+    v.chainIn = 0.5;
+    c         = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Burst);
+    CHECK(c.spell == 162);
+
+    // a cast too slow to land inside the window is no burst: the quicker one
+    // is planned instead, after the chain has landed, so she waits for it
+    list[2].cast = 12.0;
+    v.chainIn    = 0.5;
+    c            = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Hold);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 0.5 + cardian::chains::kChainLasts / 2.0 - 2.0); // Stone II's start
+    list[2].cast = 6.0;
+
+    // a chain far off: her free pick first, Stone IV still cast at its moment
+    v.chainIn = 20.0;
+    c         = cardian::chains::nukeCall(list, byId(list, 144), v);
+    CHECK(c.move == NukeMove::Free);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 20.0 + cardian::chains::kChainLasts / 2.0 - 6.0);
+
+    // a burst's start falls between the checks: due within half of one
+    v.chainIn = 1.5 + cardian::chains::kBurstCheckEvery / 2.0;
+    c         = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Burst);
+    v.chainIn = 1.5 + cardian::chains::kBurstCheckEvery;
+    c         = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Hold);
+
+    // short of the MP as its cast would start: no Stone IV, Stone II planned
+    v.mp      = 60;
+    v.chainIn = 1.5;
+    c         = cardian::chains::nukeCall(list, nullptr, v);
+    CHECK(c.move == NukeMove::Hold);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 1.5 + cardian::chains::kChainLasts / 2.0 - 2.0);
+}

@@ -310,6 +310,144 @@ describe('Cardian tactics bank', function()
         assert(mob:getHP() == hp, 'the mob takes nothing')
     end)
 
+    -- A weapon skill's price (#496): the server's own weapon skill, its
+    -- script and xi.weaponskills, run on stand-ins over the bank's seeded
+    -- dice -- the same answer every time, the server's dice put back, and
+    -- nothing on the actor or the mob spent, taken or added
+    local function swordsman()
+        local war = xi.test.world:spawnPlayer({ job = xi.job.WAR, level = 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = war.entities:moveTo(17190976) -- a Forest Hare (data/zones/East_Ronfaure/mobs.yaml)
+        mob:respawn()
+        war.entities:moveTo(17190976) -- beside it where it respawned
+        war:setSkillLevel(xi.skill.SWORD, 1500)
+        war:addItem(xi.item.BRONZE_SWORD)
+        war:equipItem(xi.item.BRONZE_SWORD, nil, xi.slot.MAIN)
+        return war, mob
+    end
+
+    it('wsExpected prices a weapon skill by its own script, the same every time, changing nothing', function()
+        local war, mob = swordsman()
+        war:setTP(1500)
+        war:addStatusEffect(xi.effect.SNEAK_ATTACK, { power = 1, duration = 60, origin = war })
+        war:addStatusEffect(xi.effect.BOOST, { power = 1, duration = 60, origin = war })
+        local hp = mob:getHP()
+        local ce = mob:getCE(war)
+
+        local bank                           = xi.cardian.bank
+        local random, randomInt, randomFloat = math.random, math.randomInt, math.randomFloat
+        local take                           = xi.weaponskills.takeWeaponskillDamage
+        local fast                           = bank.wsExpected(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 1000)
+        local burning                        = bank.wsExpected(war, mob, xi.weaponskill.BURNING_BLADE, 'burning_blade', 1000)
+        assert(math.random == random and math.randomInt == randomInt and math.randomFloat == randomFloat, 'the dice are put back')
+        assert(xi.weaponskills.takeWeaponskillDamage == take, 'the game\'s own last step is put back')
+
+        assert(type(fast) == 'number' and fast > 0, string.format('Fast Blade prices to a positive number: %s', tostring(fast)))
+        assert(type(burning) == 'number' and burning > 0, string.format('Burning Blade (magical) prices to a positive number: %s', tostring(burning)))
+        assert(bank.wsExpected(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 1000) == fast, 'the same answer twice')
+        -- more TP, a bigger fTP: Fast Blade's 1.0 at 1000 rises to 1.5 at 2000
+        local fast2000 = bank.wsExpected(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 2000)
+        assert(fast2000 > fast, string.format('more TP deals more: %.1f at 2000 against %.1f at 1000', fast2000, fast))
+        assert(bank.wsExpected(war, mob, 0, 'no_such_weaponskill', 1000) == nil, 'a weapon skill without a script prices nil')
+
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+        assert(mob:getCE(war) == ce, 'and gains no enmity')
+        assert(not mob:hasStatusEffect(xi.effect.SKILLCHAIN), 'and carries no opening')
+        assert(war:getTP() == 1500, string.format('her TP is untouched: %d', war:getTP()))
+        assert(war:hasStatusEffect(xi.effect.SNEAK_ATTACK), 'her Sneak Attack is not spent')
+        assert(war:hasStatusEffect(xi.effect.BOOST), 'her Boost is not spent')
+    end)
+
+    -- The price against the real thing: the mean of what the weapon skill
+    -- lands when used, within three standard errors of the two means -- the
+    -- landed one's and the price's own runs' -- read off the landings' own
+    -- spread, so the bound holds whatever the server's dice are seeded to
+    it('wsExpected agrees with the weapon skill used for real', function()
+        local war, mob = swordsman()
+        -- a mob that outlasts every weapon skill: none is cut short at its
+        -- HP (a mod is 16 bits; set, so a retry does not add it again)
+        mob:setMod(xi.mod.HP, 30000)
+        mob:updateHealth()
+        mob:setHP(mob:getMaxHP())
+        assert(mob:getMaxHP() > 20000, string.format('the mob should carry the HP: %d', mob:getMaxHP()))
+
+        local landed = {}
+        war:addListener('WEAPONSKILL_USE', 'CARDIAN_WS_PRICE_TEST', function(_, _, skill, _, _, damage)
+            local id           = skill:getID()
+            local dealt        = damage or 0
+            landed[id]         = landed[id] or { sum = 0, squares = 0, uses = 0 }
+            landed[id].sum     = landed[id].sum + dealt
+            landed[id].squares = landed[id].squares + dealt * dealt
+            landed[id].uses    = landed[id].uses + 1
+        end)
+        war.actions:engage(mob)
+        xi.test.world:skipTime(2)
+
+        local kUses = 80
+        local ok, err = pcall(function()
+            for _, ws in ipairs({ { xi.weaponskill.FAST_BLADE, 'fast_blade' }, { xi.weaponskill.BURNING_BLADE, 'burning_blade' } }) do
+                local price = xi.cardian.bank.wsExpected(war, mob, ws[1], ws[2], 1000)
+                -- one asked too soon after the last is refused: asked again
+                for _ = 1, 3 * kUses do
+                    if landed[ws[1]] ~= nil and landed[ws[1]].uses >= kUses then
+                        break
+                    end
+                    -- beside it and fighting it, at full HP, with a weapon skill's TP
+                    if war:checkDistance(mob) > 3 then
+                        war.entities:moveTo(17190976)
+                    end
+                    if not war:isEngaged() then
+                        war.actions:engage(mob)
+                        xi.test.world:skipTime(1)
+                    end
+                    mob:setHP(mob:getMaxHP())
+                    war:setTP(1000)
+                    war.actions:useWeaponskill(mob, ws[1])
+                    xi.test.world:skipTime(3)
+                end
+                local got = landed[ws[1]]
+                assert(got ~= nil and got.uses == kUses, string.format('%s: used %s times, not %d', ws[2], tostring(got and got.uses), kUses))
+                local mean      = got.sum / got.uses
+                local spread    = math.sqrt(math.max(0, got.squares / got.uses - mean * mean))
+                local tolerance = 3 * spread * math.sqrt(1 / kUses + 1 / xi.cardian.bank.wsRuns) + 1
+                assert(math.abs(mean - price) <= tolerance,
+                    string.format('%s: priced %.1f, landed %.1f on average over %d (spread %.1f, allowed %.1f)', ws[2], price, mean, kUses, spread, tolerance))
+            end
+        end)
+        war:removeListener('CARDIAN_WS_PRICE_TEST')
+        mob:setMod(xi.mod.HP, 0)
+        mob:updateHealth()
+        assert(ok, err)
+    end)
+
+    -- Every weapon skill script in the game, priced on stand-ins: none
+    -- asks a stand-in something it cannot answer, and none changes the
+    -- actor or the mob
+    it('wsExpected prices every weapon skill script without error, changing nothing', function()
+        local war, mob = swordsman()
+        war:setTP(2000)
+        local hp     = mob:getHP()
+        local ce     = mob:getCE(war)
+        local failed = {}
+        local priced = 0
+        for name, script in pairs(xi.actions.weaponskills) do
+            if type(script) == 'table' and type(script.onUseWeaponSkill) == 'function' then
+                local id         = xi.weaponskill[string.upper(name)] or 0
+                local ok, answer = pcall(xi.cardian.bank.wsExpected, war, mob, id, name, 1000)
+                if not ok or type(answer) ~= 'number' or answer < 0 then
+                    table.insert(failed, string.format('%s: %s', name, tostring(answer)))
+                else
+                    priced = priced + 1
+                end
+            end
+        end
+        assert(#failed == 0, string.format('%d weapon skills would not price: %s', #failed, table.concat(failed, '; ')))
+        assert(priced > 150, string.format('the game has its weapon skills: only %d priced', priced))
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+        assert(mob:getCE(war) == ce, 'and gains no enmity')
+        assert(not mob:hasStatusEffect(xi.effect.SKILLCHAIN), 'and carries no opening')
+        assert(war:getTP() == 2000, string.format('her TP is untouched: %d', war:getTP()))
+    end)
+
     it('debuffSubPower reads what Dia and Bio scripts put on a mob, overrides included', function()
         local bank = xi.cardian.bank
         assert(bank.debuffSubPower('dia', xi.effect.DIA) == 10, 'Dia lowers defence 10% in upstream\'s script')

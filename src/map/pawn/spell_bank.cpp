@@ -40,6 +40,7 @@
 #include "status_effect.h"
 #include "status_effect_container.h"
 #include "utils/battleutils.h"
+#include "weapon_skill.h"
 #include "ximesh/ximesh.h"
 #include "zone.h"
 
@@ -1492,6 +1493,30 @@ namespace pawn::tactics
             }
             auto res = (*fn)(CLuaBaseEntity(PCloser), CLuaBaseEntity(PTarget), chain, tier, count);
             if (failed("chainShare", res) || res.get_type(0) != sol::type::number)
+            {
+                return std::nullopt;
+            }
+            return res.get<double>(0);
+        }
+
+        auto wsExpected(CBattleEntity* PAttacker, CBattleEntity* PTarget, const uint16 skill, const int32 tp) -> std::optional<double>
+        {
+            auto* PSkill = battleutils::GetWeaponSkill(skill);
+            if (PAttacker == nullptr || PTarget == nullptr || PSkill == nullptr)
+            {
+                return std::nullopt;
+            }
+            auto fn = bankFunction("wsExpected");
+            if (!fn.has_value())
+            {
+                return std::nullopt;
+            }
+            const std::string name = PSkill->getName();
+            auto              res  = (*fn)(CLuaBaseEntity(PAttacker), CLuaBaseEntity(PTarget), skill, name, tp);
+            // Said once a weapon skill: a script a stand-in cannot answer is
+            // its own, and the rest still price
+            const std::string asked = "wsExpected (" + name + ")";
+            if (failed(asked.c_str(), res) || res.get_type(0) != sol::type::number)
             {
                 return std::nullopt;
             }

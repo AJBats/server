@@ -159,11 +159,6 @@ namespace pawn::tactics
         double dealtPerSecond = 0.0;
     };
     auto fightPace(CCharEntity* PPawn, CBattleEntity* PMob) -> std::optional<Pace>;
-    // One member's ordinary melee on a mob of the party's fight, a round, by
-    // the formulas (spell_bank.h melee, its sample kept on the fight).
-    // Nothing without a tactician, before the fight is open, or when the
-    // formulas cannot say
-    auto meleeRound(CCharEntity* PPawn, CBattleEntity* PMember, CBattleEntity* PMob) -> std::optional<double>;
 
     // How her Sneak Attack went on the fight with that mob (before her
     // weapon skill, naked, or ready and unused), and how long it stood

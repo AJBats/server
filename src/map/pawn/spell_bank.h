@@ -200,6 +200,13 @@ namespace pawn::tactics
         // chainShare). Nothing when the formula could not answer
         auto chainShare(CBattleEntity* PCloser, CBattleEntity* PTarget, uint8 chain, uint8 tier, uint8 count) -> std::optional<double>;
 
+        // What a weapon skill of this attacker's deals this target on
+        // average at this TP: the server's own weapon skill, its script and
+        // xi.weaponskills, run on stand-ins over the bank's seeded dice
+        // (tactics_bank.lua wsExpected). Nothing when the formula could not
+        // answer
+        auto wsExpected(CBattleEntity* PAttacker, CBattleEntity* PTarget, uint16 skill, int32 tp) -> std::optional<double>;
+
         // The mob's life left at the party's rate, in seconds (below 0
         // unknown), and the party's damage a second: the reading the nuke
         // prices are made against (the fight's own once it has ten seconds,

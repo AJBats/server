@@ -1211,26 +1211,6 @@ namespace pawn::tactics
         return std::nullopt;
     }
 
-    auto meleeRound(CCharEntity* PPawn, CBattleEntity* PMember, CBattleEntity* PMob) -> std::optional<double>
-    {
-        auto* PTactician = PPawn != nullptr && PMember != nullptr ? find(PPawn) : nullptr;
-        auto* PFoe       = dynamic_cast<CMobEntity*>(PMob);
-        if (PTactician == nullptr || PFoe == nullptr)
-        {
-            return std::nullopt;
-        }
-        for (auto& r : PTactician->log().open())
-        {
-            if (r.mobId != PFoe->id || r.settling())
-            {
-                continue;
-            }
-            const auto guess = bank::melee(r, PMember, PFoe, true);
-            return guess.has_value() ? std::optional<double>(guess->perRound) : std::nullopt;
-        }
-        return std::nullopt;
-    }
-
     void notePull(CCharEntity* PPuller, CBattleEntity* PMob)
     {
         if (PPuller != nullptr && PMob != nullptr)

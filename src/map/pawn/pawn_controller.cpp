@@ -7662,11 +7662,17 @@ auto CPawnController::PartyTankPlacing(const CBattleEntity* PSelf, const CBattle
 
 auto CPawnController::TankPlacingWait(const CBattleEntity* PMob) -> std::optional<std::string>
 {
-    // Bounded: a tank who never gets there holds nobody's weapon skill for good
-    const auto* PTank = PartyTankPlacing(POwner, PMob);
+    // Bounded: a tank who never gets there holds nobody's weapon skill for
+    // good. The tank's own waits too, now that her seat lends her the plan's
+    // weapon skill (#503): one would stop her walk with the mob
+    const auto* PTank = StillPlacing(PMob) ? static_cast<const CBattleEntity*>(POwner) : PartyTankPlacing(POwner, PMob);
     if (PTank == nullptr || !WaitStill(m_PlaceWait, PMob))
     {
         return std::nullopt;
+    }
+    if (PTank == POwner)
+    {
+        return fmt::format("she is still placing {}", PMob->getName());
     }
     return fmt::format("{} is still placing {}", PTank->getName(), PMob->getName());
 }

@@ -488,7 +488,7 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     using cardian::tactician::State;
     uint32 next = 0;
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::WAR));
-    auto   lent = lentRows(kTank, next); // r1 the pull, r2 Provoke, r3 Defender
+    auto   lent = lentRows(kTank, next); // r1 the pull, r2 Provoke, r3 Defender, r4 the weapon skill
 
     // the role's marked Provoke first -- the tank tactician's tool -- and
     // its marked pull standing in the place of her own "targeted by ally"
@@ -498,7 +498,7 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     // hers, and her Berserk and Aggressor stay her tactician's tools, the
     // seat deciding which of Berserk and Defender it uses
     // (tactician_line.h buffNow)
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "r3*", "6", "7", "8", "9", "10" });
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r2", "1", "r1*", "3", "4", "r3*", "6", "r4*", "8", "9", "10" });
     const auto states = fittedStates(own, lent);
     REQUIRE(states.size() == 11);
     CHECK(states[0] == State::Tool);  // * Foe -> Provoke
@@ -508,7 +508,7 @@ TEST_CASE("gambit layers: Tank's bundle onto a Warrior puts the marked pull and 
     CHECK(states[4] == State::Tool);  // * Self -> Berserk
     CHECK(states[5] == State::Tool);  // * Self -> Defender
     CHECK(states[6] == State::Tool);  // * Self -> Aggressor
-    CHECK(states[7] == State::Tool);  // * Foe -> Weapon skill (best): her tactician's
+    CHECK(states[7] == State::Tool);  // * Foe -> Weapon skill (best): the seat's, in her row's place (#503)
     CHECK(states[8] == State::Order); // Rest with the player
     CHECK(states[9] == State::Order); // Eat with the player
     CHECK(states[10] == State::Order); // Avoid aggro
@@ -524,14 +524,15 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     using cardian::tactician::State;
     uint32 next = 0;
     auto   own  = ownRows(pawn::defaultRowsFor(xi::Job::RDM));
-    auto   lent = lentRows(bundle(cardian::party::Role::Tank, xi::Job::RDM, xi::Job::WAR), next); // the pull, Provoke, Defender
+    auto   lent = lentRows(bundle(cardian::party::Role::Tank, xi::Job::RDM, xi::Job::WAR), next); // the pull, Provoke, Defender, the weapon skill
 
     // the role's marked pull, Provoke and Defender first; her marked Cure,
     // -na, Enfeeble and Rest stay her tactician's tools (no line strikes
-    // them out any more: one tactician, every tool a row), then her orders,
-    // and her own marked Attack row last, off: "targeting ally" is not the
-    // pull's finder, so the pull does not stand in it
-    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "5", "6", "7", "8", "9" });
+    // them out any more: one tactician, every tool a row), then her orders
+    // -- her own weapon skill row with the seat's tactician's standing in
+    // it (#503) -- and her own marked Attack row last, off: "targeting
+    // ally" is not the pull's finder, so the pull does not stand in it
+    CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2", "3", "4", "r4*", "6", "7", "8", "9" });
     const auto states = fittedStates(own, lent);
     REQUIRE(states.size() == 12);
     CHECK(states[0] == State::Tool);  // the pull: the tank's melee
@@ -541,7 +542,7 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
     CHECK(states[4] == State::Tool);  // -na (best)
     CHECK(states[5] == State::Tool);  // Enfeeble
     CHECK(states[6] == State::Tool);  // Rest
-    CHECK(states[7] == State::Order); // her weapon skill
+    CHECK(states[7] == State::Tool);  // her weapon skill, the seat's tactician's in its place
     CHECK(states[8] == State::Order); // Rest with the player
     CHECK(states[9] == State::Order); // Eat with the player
     CHECK(states[10] == State::Order); // Avoid aggro
@@ -554,22 +555,24 @@ TEST_CASE("gambit layers: Tank's bundle onto a default Red Mage / Warrior keeps 
 TEST_CASE("gambit layers: an Attack row is its finder: a lent pull takes the same finder's row and leaves her other Attack rows standing", "[cardian][gambits][layers][fit]")
 {
     uint32 next = 0;
-    auto   lent = lentRows(kTank, next); // r1 the pull, r2 Provoke, r3 Defender
+    auto   lent = lentRows(kTank, next); // r1 the pull, r2 Provoke, r3 Defender, r4 the weapon skill
     SECTION("her 'targeting ally' order stays beside the lent 'targeted by ally' pull (played 2026-10-01: the pull had swallowed it)")
     {
         auto own = ownRows({
             { "102|0:0|0:0:0|0", true }, // Foe: targeting ally -> Attack
             { "2|2:50|4:0:0|0", true },  // Foe: HP >= 50% -> Weapon skill (best)
         });
-        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "2" });
+        // her plain weapon skill row is the seat's tactician's while she
+        // holds it (#503)
+        CHECK(fitted(own, lent) == std::vector<std::string>{ "r1", "r2", "r3", "1", "r4*" });
     }
     SECTION("her own 'targeted by ally' row, marked or not, is the one the pull stands in")
     {
         auto plain = ownRows({ { "101|0:0|0:0:0|0", true } });
-        CHECK(fitted(plain, lent) == std::vector<std::string>{ "r2", "r3", "r1*" });
+        CHECK(fitted(plain, lent) == std::vector<std::string>{ "r2", "r3", "r4", "r1*" });
         auto marked = ownRows({ { "101|101:0|0:0:0|0", false } });
-        CHECK(fitted(marked, lent) == std::vector<std::string>{ "r2", "r3", "r1*" });
-        CHECK(fit<Row>(marked, lent, gambitOf, enabledOf)[2].on);
+        CHECK(fitted(marked, lent) == std::vector<std::string>{ "r2", "r3", "r4", "r1*" });
+        CHECK(fit<Row>(marked, lent, gambitOf, enabledOf)[3].on);
     }
 }
 
@@ -784,13 +787,17 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
     CHECK(subLevelAt(1, 1) == 1);
 
     // Tank: the pull for anyone; a Warrior's tools from her main or her sub
-    // (Provoke at 5, Defender at 25), a Monk's Focus (25) and Dodge (15)
-    CHECK(specs(bundle(Role::Tank, xi::Job::WHM)) == std::vector<std::string>{ pull });
-    CHECK(specs(bundle(Role::Tank, xi::Job::WHM, xi::Job::WAR)) == std::vector<std::string>{ pull, provoke, defender });
-    CHECK(specs(bundle(Role::Tank, xi::Job::WAR, xi::Job::MNK)) == std::vector<std::string>{ pull, provoke, defender, focus, dodge });
-    CHECK(specs(bundle(Role::Tank, xi::Job::PLD, xi::Job::NIN)) == std::vector<std::string>{ pull });
+    // (Provoke at 5, Defender at 25), a Monk's Focus (25) and Dodge (15);
+    // and, last, her tactician's weapon skill to a main job that melees, as
+    // the Damage seat lends it (#503: the plan's skillchain), never to one
+    // whose seat is her nukes
+    CHECK(specs(bundle(Role::Tank, xi::Job::WHM)) == std::vector<std::string>{ pull, ws });
+    CHECK(specs(bundle(Role::Tank, xi::Job::WHM, xi::Job::WAR)) == std::vector<std::string>{ pull, provoke, defender, ws });
+    CHECK(specs(bundle(Role::Tank, xi::Job::WAR, xi::Job::MNK)) == std::vector<std::string>{ pull, provoke, defender, focus, dodge, ws });
+    CHECK(specs(bundle(Role::Tank, xi::Job::PLD, xi::Job::NIN)) == std::vector<std::string>{ pull, ws });
+    CHECK(specs(bundle(Role::Tank, xi::Job::BLM, xi::Job::WAR)) == std::vector<std::string>{ pull, provoke, defender });
     // a server without sub jobs lends a sub job nothing
-    CHECK(specs(bundle(Role::Tank, xi::Job::WHM, xi::Job::WAR, { 75, 0 })) == std::vector<std::string>{ pull });
+    CHECK(specs(bundle(Role::Tank, xi::Job::WHM, xi::Job::WAR, { 75, 0 })) == std::vector<std::string>{ pull, ws });
 
     // Damage: a sub Warrior's Aggressor (45) is past a 75 server's sub jobs
     // (37), within a 99 server's (49)
@@ -884,9 +891,10 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kDamage[5].first)) == cardian::tactician::Allowance::WeaponSkill);
     // Tank lends the pull, marked (the melee defaults' "targeted by ally"
     // finder, an ally being the player as much as a cardian, as the
-    // tactician's melee), Provoke, marked (RESEARCH §17.11, §17.13), and a
-    // Warrior her own marked Defender
-    REQUIRE(kTank.size() == 3);
+    // tactician's melee), Provoke, marked (RESEARCH §17.11, §17.13), a
+    // Warrior her own marked Defender, and last the melee defaults'
+    // tactician's weapon skill (#503)
+    REQUIRE(kTank.size() == 4);
     const auto pull = *pawn::text::parseRow(kTank[0].first);
     CHECK(cardian::tactician::isMarked(pull));
     CHECK(cardian::tactician::stateOf(pull) == cardian::tactician::State::Tool);
@@ -895,6 +903,8 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(cardian::tactician::allowsAbility(*pawn::text::parseRow(kTank[1].first), 35));
     CHECK(cardian::tactician::isMarked(*pawn::text::parseRow(kTank[1].first)));
     CHECK(kTank[2].first == warrior[4].first);
+    CHECK(kTank[3].first == melee[3].first);
+    CHECK(cardian::tactician::allowanceOf(*pawn::text::parseRow(kTank[3].first)) == cardian::tactician::Allowance::WeaponSkill);
     // Puller lends Avoid links -- her run back keeps clear of the chaser's
     // linking kin -- ahead of what Damage does, job for job
     const auto withLinks = [&](const xi::Job main, const xi::Job sub)
