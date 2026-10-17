@@ -849,11 +849,20 @@ namespace pawn::redress
         }
 
         // A ding set aside goes back to the census unworn, its reason in the
-        // note: a plan of gear written for it is still owed her
+        // note: a plan of gear written for it is still owed her. A ding to
+        // level 0 is the census's give of her foundation (census.py
+        // Live.give_owed), set aside because the map holds her body: the
+        // census gives it once she is out of sight
         void setAsideDing(const Ding& ding, const std::string& why)
         {
-            db::preparedStmt("UPDATE cardian_ding SET state = 'applied', dressed = 0, note = ?, done_at = NOW() WHERE charid = ? AND state = 'planned'", why,
-                             ding.charid);
+            const bool give = !ding.plan.dress && ding.plan.level == 0;
+            db::preparedStmt("UPDATE cardian_ding SET state = 'applied', dressed = 0, note = ?, done_at = NOW() WHERE charid = ? AND state = 'planned'",
+                             give ? std::string("the map holds her body") : why, ding.charid);
+            if (give)
+            {
+                ShowInfoFmt("world: {}'s foundation is given once she is out of sight: the map holds her body", pawn::seats::nameOf(ding.charid));
+                return;
+            }
             ShowInfoFmt("world: {}'s ding to level {} is set aside: {}", pawn::seats::nameOf(ding.charid), ding.plan.level, why);
         }
 

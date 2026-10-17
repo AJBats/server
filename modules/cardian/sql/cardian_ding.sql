@@ -17,6 +17,11 @@
 --            why. The census pays the level's conquest points (none for a ding set aside)
 --            and marks it done
 --   done     over: written by the census, applied and paid, or set aside (`note` says why)
+-- A ding to level 0 is a give of her foundation (census.py Live.give_owed, OPEN_ISSUES #522): it
+-- names no job, no support job and no dress, so the map must never read it as a change of her jobs
+-- nor apply it. The map claims it where it holds no body of hers, and the census writes it; holding
+-- one, it sets it aside as a level she has (dingStep), touching nothing, and the census asks again
+-- later, waiting longer each time. Nothing but a give plans level 0.
 -- xi_map makes the table as it boots (pawn::redress::ensureTable), and so does the watcher,
 -- since dbtool's update skips module SQL on a database whose upstream SQL has not moved.
 

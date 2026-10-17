@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
   `cohort2`   int(10) unsigned    NOT NULL DEFAULT '0',     --   the cohort she follows on it, 0 none (its pace and target are then a share of her first's character's)
   `target2`   tinyint(3) unsigned NOT NULL DEFAULT '0',     --   what its ladder says she should be on it now
   `later_jobs` varchar(64)        NOT NULL DEFAULT '',      -- the jobs her support windows had her take up after it, "job:target" joined by commas (census.py take_up)
+  `foundation` tinyint(3) unsigned NOT NULL DEFAULT '0',    -- an advanced first job's foundation, the basic job that opened it (census.py foundation_of, #522): recorded once minted, 0 none
   PRIMARY KEY (`name`),
   KEY `idx_cardian_census_charid` (`charid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
