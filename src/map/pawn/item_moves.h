@@ -36,8 +36,9 @@ class Transaction;
 
 // A move that changes characters' items in memory and their rows in the
 // database together, kept whole when the database fails partway (#478): the
-// shell's bank's moves (ls_bank_moves.h) and the Sell page's listings
-// (ah_sell.h).
+// shell's bank's moves (ls_bank_moves.h), the Sell page's listings
+// (ah_sell.h) and a cardian's bid with the player's purse behind hers
+// (auction.h purchaseShared, #481).
 //
 // A move is one database transaction (Txn), its characters changed through
 // the game's own item transaction on the same connection. It can fail before
@@ -48,7 +49,8 @@ class Transaction;
 // failed is settled by asking whether the mark is there (commitMove): there,
 // the move happened and its item transaction lets go; not there, it did not,
 // and its characters are put back as their rows are (abandon). Proven by
-// xi_test's scripts/tests/cardian/ls_bank_commit.lua and ah_sell.lua.
+// xi_test's scripts/tests/cardian/ls_bank_commit.lua, ah_sell.lua and
+// ah_buy.lua.
 //
 // xi_test links this file without the pawn module, so it calls nothing in the
 // pawn module's own sources: only the game's code and header-only Cardian files.

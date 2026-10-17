@@ -142,6 +142,18 @@ namespace pawn::auction
     // listed at or under the bid, no purchase is tried.
     auto bid(CCharEntity* PChar, CCharEntity* PPurse, uint16 itemId, bool stack, uint32 price, uint8 location, uint8 equipSlot, bool equip) -> BidResult;
 
+    // A cardian's purchase with the player's purse behind hers (the user,
+    // 2026-09-26: gil moves only on a won bid), bid's once its gates have
+    // passed: the game's own purchase copied (auctionutils::PurchasingItems)
+    // -- the cheapest listing at or under the bid marked sold to her at the
+    // bid, the payment and her piece of `quantity` -- with the payment split,
+    // hers first and `fromPurse` of it his. All of it, or none: one move of
+    // item_moves.h, kept whole when the database fails partway (#481). A
+    // copy, so compare it with PurchasingItems at every merge from base; its
+    // transaction handling is item_moves.h's, not the copy's. In
+    // auction_purchase.cpp, which xi_test links (scripts/tests/cardian/ah_buy.lua)
+    auto purchaseShared(CCharEntity* PChar, CCharEntity* PPurse, uint16 itemId, bool stack, uint32 quantity, uint32 price, uint32 fromPurse) -> bool;
+
     // The auction counter within the player's reach (8 yalms, a gate
     // guard's), nullptr for none
     auto counterNear(const CCharEntity* PPlayer) -> const CBaseEntity*;
