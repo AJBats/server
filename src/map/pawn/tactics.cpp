@@ -462,6 +462,18 @@ namespace pawn::tactics
             // gives up
             auto kneelRisk(const Conveyor::Scope& scope, const CCharEntity* PKneeler, const double at) -> std::optional<KneelRisk>
             {
+                return riskWithout(scope, PKneeler, at, cardian::rest::kKneelSeconds + 2.0 * settings::get<uint8>("map.HEALING_TICK_DELAY"));
+            }
+
+            // What her pace has measured a fight here to cost her; negative before it has
+            auto fightCostMp(const uint32 id) const -> double
+            {
+                const auto it = m_pace.find(id);
+                return it != m_pace.end() && it->second.spent.n > 0 ? it->second.spent.mean : -1.0;
+            }
+
+            auto riskWithout(const Conveyor::Scope& scope, const CCharEntity* PKneeler, const double at, const double horizon) -> std::optional<KneelRisk>
+            {
                 const auto targets = riskTargets(scope, at);
                 if (targets.empty())
                 {
@@ -491,8 +503,7 @@ namespace pawn::tactics
                 {
                     promised.push_back(*option);
                 }
-                const double horizon = cardian::rest::kKneelSeconds + 2.0 * settings::get<uint8>("map.HEALING_TICK_DELAY");
-                const auto   risk    = cardian::cure::atRisk(targets, horizon, promised);
+                const auto risk = cardian::cure::atRisk(targets, horizon, promised);
                 if (!risk.has_value())
                 {
                     return std::nullopt;
@@ -581,9 +592,9 @@ namespace pawn::tactics
             }
 
             // The role holders' pace at the spot (role_support.h): one cycle
-            // per stretch of fighting, from the first record opening to the
-            // last closing; what each holder spent over the cycle against
-            // her MP's net change since the last. Said once each way it turns
+            // per stretch of fighting, measured at each last closing; what
+            // each holder spent over the cycle against what she got back in
+            // it (conveyor_math.h Pace). Said once each way it turns
             void pace(const Conveyor::Scope& scope)
             {
                 const auto closed = m_log.closedCount();
@@ -613,11 +624,7 @@ namespace pawn::tactics
                     }
                     auto* PChar = static_cast<CCharEntity*>(PMember);
                     auto& pace  = m_pace[PChar->id];
-                    if (fighting)
-                    {
-                        role::cycleOpened(PChar, pace);
-                    }
-                    else
+                    if (!fighting)
                     {
                         role::cycleClosed(PChar, m_cycleSpent[PChar->id], pace);
                         role::speakPace(PChar, pace);
@@ -1224,6 +1231,14 @@ namespace pawn::tactics
         return std::nullopt;
     }
 
+    void notePull(CCharEntity* PPuller, CBattleEntity* PMob)
+    {
+        if (PPuller != nullptr && PMob != nullptr)
+        {
+            engage(PPuller, PMob);
+        }
+    }
+
     void noteSneakAttack(CCharEntity* PPawn, const uint32 mobId, const cardian::tactics::SneakUse use, const double seconds)
     {
         if (auto* PTactician = PPawn != nullptr ? find(PPawn) : nullptr; PTactician != nullptr)
@@ -1337,6 +1352,18 @@ namespace pawn::tactics
     {
         auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
         return tactician != nullptr ? tactician->kneelRisk(scopeOf(PPawn), PPawn, seconds(timer::now())) : std::nullopt;
+    }
+
+    auto riskWithout(CCharEntity* PPawn, const double horizon) -> std::optional<KneelRisk>
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr ? tactician->riskWithout(scopeOf(PPawn), PPawn, seconds(timer::now()), horizon) : std::nullopt;
+    }
+
+    auto fightCostMp(const CCharEntity* PPawn) -> double
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr ? tactician->fightCostMp(PPawn->id) : -1.0;
     }
 
     auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double

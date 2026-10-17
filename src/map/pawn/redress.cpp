@@ -27,6 +27,7 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_items.h"
+#include "pull.h"
 #include "seats.h"
 #include "world.h"
 
@@ -286,6 +287,10 @@ namespace pawn::redress
             }
             std::set<uint16> wanted = food;
             wanted.insert(pieces.begin(), pieces.end());
+            // her pulling kit, the census's and the map's own, whatever she
+            // wears (pull.h)
+            const auto pulling = pawn::pull::keptIds(PPawn->getName());
+            wanted.insert(pulling.begin(), pulling.end());
 
             const auto keeps = [&](const CItem* PItem, const uint8 location)
             {
@@ -453,6 +458,10 @@ namespace pawn::redress
                 }
             }
             clearOut();
+            // Her census pull kit laid beside her gear, never worn; and what
+            // she wore before her kit, if she wore it, is the plan's now
+            pawn::pull::layKit(PPawn, gearLocation);
+            pawn::pull::forgetWorn(PPawn);
 
             if (out.worn > 0 || out.moved > 0 || out.dropped > 0 || out.bared > 0)
             {

@@ -23,6 +23,7 @@
 
 #include "cardian_link_messages.h"
 #include "pawn.h"
+#include "pawn_controller.h"
 #include "pawn_gambits.h"
 #include "pawn_spellbook.h"
 #include "role_support.h"
@@ -31,6 +32,7 @@
 
 #include "common/logging.h"
 #include "common/timer.h"
+#include "common/utils.h"
 #include "common/xirand.h"
 #include "entities/battle_entity.h"
 #include "entities/char_entity.h"
@@ -44,6 +46,7 @@
 #include "weapon_skill.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <list>
 #include <map>
@@ -112,6 +115,70 @@ namespace pawn::chains
         };
         std::unordered_map<uint32, Said> savesSaid;
         constexpr double                 kSaveSaidLasts = 180.0;
+
+        // member charid -> the fight her opening call, and her ready call,
+        // were said in (sayOpening, sayReady): once a fight each
+        std::unordered_map<uint32, Said> openingsSaid;
+        std::unordered_map<uint32, Said> readiesSaid;
+
+        // (member, mob) -> when the plan first counted on a member near the
+        // mob who had not engaged it yet (joining), when her grace started,
+        // and whether its end was said
+        struct Joining
+        {
+            double first    = 0.0;
+            double since    = 0.0;
+            bool   saidOver = false;
+        };
+        std::map<std::pair<uint32, uint32>, Joining> joins;
+
+        // player charid -> the call sounds his plan's calls end with (PREFS)
+        struct Calls
+        {
+            uint8 opening = 0;
+            uint8 ready   = 0;
+        };
+        std::unordered_map<uint32, Calls> callsOf;
+
+        // A fight's first say, for one of the once-a-fight calls: false when
+        // it was said in this fight already. The mob's death forgets it
+        // (mobDied); the age is a guard for a death never heard, its id
+        // back with a later spawn
+        constexpr double kCallSaidLasts = 900.0;
+        auto firstInFight(std::unordered_map<uint32, Said>& said, const uint32 member, const uint32 mob) -> bool
+        {
+            const double now  = std::chrono::duration<double>(timer::now().time_since_epoch()).count();
+            auto&        mine = said[member];
+            if (mine.mob == mob && now - mine.at < kCallSaidLasts)
+            {
+                return false;
+            }
+            mine = Said{ mob, now };
+            return true;
+        }
+
+        // A name as the chat shows it: "Brutal_Sheep" and "wasp_sting" in
+        // words, each capitalised
+        auto wordsOf(const std::string_view name) -> std::string
+        {
+            std::string out(name);
+            bool        start = true;
+            for (char& c : out)
+            {
+                if (c == '_')
+                {
+                    c     = ' ';
+                    start = true;
+                    continue;
+                }
+                if (start)
+                {
+                    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+                }
+                start = c == ' ';
+            }
+            return out;
+        }
 
         // A member's weapon skill damage as it lands (wsLanded), a miss as 0,
         // a running mean over her last eight while the map server runs: per
@@ -253,11 +320,64 @@ namespace pawn::chains
             return PGambits != nullptr && PGambits->OffersWeaponSkill();
         }
 
+        // A member on her way into the fight on this mob: alive, near it, on
+        // no mob yet, for the first cardian::chains::kJoinGrace seconds the
+        // plan counts on her there -- a fight's first moments, before
+        // everyone has engaged (the user, 2026-10-17: a closer not engaged
+        // yet read as out of the plan, and the opener spent her TP alone).
+        // Her joining, or the grace running out, is said in the map log
+        auto joining(const CCharEntity* PChar, const CBattleEntity* PMob) -> bool
+        {
+            if (PChar == nullptr || PMob == nullptr || PChar->isDead() || PMob->isDead() || PChar->loc.zone != PMob->loc.zone ||
+                (PChar->PAI != nullptr && PChar->PAI->IsEngaged()) || distance(PChar->loc.p, PMob->loc.p) > cardian::chains::kJoinReach)
+            {
+                return false;
+            }
+            const double now = secondsNow();
+            // what a mob that never died left behind, swept as a new one comes
+            std::erase_if(joins, [now](const auto& kv) { return now - kv.second.first > 300.0; });
+            const auto [it, counting] = joins.try_emplace({ PChar->id, PMob->id }, Joining{ now, now });
+            if (counting)
+            {
+                ShowInfoFmt("chains: the plan counts {} in on {}: not engaged yet, {:.0f} s to join", PChar->getName(), PMob->getName(), cardian::chains::kJoinGrace);
+            }
+            // The camp's tank still placing the mob holds every weapon skill
+            // but a close (TankPlacingWait, kWsWait at most): the grace starts
+            // once she has it placed (the review, 2026-10-17)
+            const double placingLasts = std::chrono::duration<double>(CPawnController::kWsWait).count();
+            if (now - it->second.first <= placingLasts && CPawnController::PartyTankPlacing(PChar, PMob) != nullptr)
+            {
+                it->second.since = now;
+            }
+            if (now - it->second.since < cardian::chains::kJoinGrace)
+            {
+                return true;
+            }
+            if (!it->second.saidOver)
+            {
+                it->second.saidOver = true;
+                ShowInfoFmt("chains: {} has not engaged {} {:.0f} s on: the plan goes on without her", PChar->getName(), PMob->getName(), cardian::chains::kJoinGrace);
+            }
+            return false;
+        }
+
         // A member of the plan who will play her part on this mob: she
-        // fights it, follows the plan, and the plan's weapon skill is hers
+        // fights it, or is joining the fight on it, follows the plan, and the
+        // plan's weapon skill is hers
         auto playsPart(CCharEntity* PChar, const CBattleEntity* PMob, const uint16 skill) -> bool
         {
-            return fights(PChar, PMob) && follows(PChar) && usable(PChar, skill);
+            const bool fighting = fights(PChar, PMob);
+            if (fighting && PMob != nullptr)
+            {
+                // the time a member counted in as joining took, for tuning kJoinGrace
+                if (const auto it = joins.find({ PChar->id, PMob->id }); it != joins.end() && !it->second.saidOver)
+                {
+                    ShowInfoFmt("chains: {} engages {} {:.1f} s after the plan counted her in, {:.1f} s after the tank had it placed", PChar->getName(), PMob->getName(),
+                                secondsNow() - it->second.first, secondsNow() - it->second.since);
+                    it->second.saidOver = true;
+                }
+            }
+            return (fighting || joining(PChar, PMob)) && follows(PChar) && usable(PChar, skill);
         }
 
         // The members the options read (optionsFor): the player first, then
@@ -781,6 +901,8 @@ namespace pawn::chains
         forgetStates(POwner->id);
         ShowInfoFmt("chains: {} calls Skillchain now on {}: the plan's {} goes whatever its worth", POwner->getName(), PMob->getName(),
                     cardian::chains::chainName(plan->chain));
+        // Its opener sounds off at once, as she would opening it
+        sayOpening(POpener, PMob);
         out.status = CL_S_OK;
         out.PMob   = PMob;
         return out;
@@ -801,6 +923,12 @@ namespace pawn::chains
         tpClocks.erase(PMember->id);
         holdSince.erase(PMember->id);
         spares.erase(PMember->id);
+        openingsSaid.erase(PMember->id);
+        readiesSaid.erase(PMember->id);
+        std::erase_if(joins, [PMember](const auto& kv)
+                      {
+                          return kv.first.first == PMember->id;
+                      });
     }
 
     void mobDied(const uint32 mobId)
@@ -812,6 +940,18 @@ namespace pawn::chains
                           return kv.second.mob == mobId;
                       });
         std::erase_if(savesSaid, [mobId](const auto& kv)
+                      {
+                          return kv.second.mob == mobId;
+                      });
+        std::erase_if(openingsSaid, [mobId](const auto& kv)
+                      {
+                          return kv.second.mob == mobId;
+                      });
+        std::erase_if(joins, [mobId](const auto& kv)
+                      {
+                          return kv.first.second == mobId;
+                      });
+        std::erase_if(readiesSaid, [mobId](const auto& kv)
                       {
                           return kv.second.mob == mobId;
                       });
@@ -873,6 +1013,7 @@ namespace pawn::chains
         savesSaid.erase(playerCharID);
         holdSince.erase(playerCharID);
         spares.erase(playerCharID);
+        callsOf.erase(playerCharID);
     }
 
     auto partOf(CCharEntity* PMember, CBattleEntity* PMob) -> Part
@@ -1076,6 +1217,51 @@ namespace pawn::chains
         }
         const auto line = cardian::chains::kSaveLines[xirand::GetRandomNumber(cardian::chains::kSaveLines.size())];
         pawn::tactics::role::sayParty(PMember, std::string(line));
+    }
+
+    void sayOpening(CCharEntity* PMember, CBattleEntity* PMob)
+    {
+        if (PMember == nullptr || PMob == nullptr || PMember->PSession != nullptr || PMember->PParty == nullptr)
+        {
+            return;
+        }
+        const uint32 owner = ownerOf(PMember);
+        const auto   plan  = book.find(owner);
+        if (owner == 0 || !plan.has_value() || plan->opener != PMember->id || !firstInFight(openingsSaid, PMember->id, PMob->id))
+        {
+            return;
+        }
+        auto*       PSkill = battleutils::GetWeaponSkill(plan->openerSkill);
+        const auto  call   = callsOf.contains(owner) ? callsOf[owner].opening : uint8{ 0 };
+        const auto  line   = cardian::chains::openingLine(PSkill != nullptr ? wordsOf(PSkill->getName()) : std::string("my weapon skill"), wordsOf(PMob->getName()), call);
+        ShowInfoFmt("chains: {} calls the opening of {} on {}{}", PMember->getName(), cardian::chains::chainName(plan->chain), PMob->getName(),
+                    call != 0 ? fmt::format(" (call {})", call) : std::string());
+        pawn::tactics::role::sayParty(PMember, line);
+    }
+
+    void sayReady(CCharEntity* PMember, CBattleEntity* PMob)
+    {
+        if (PMember == nullptr || PMob == nullptr || PMember->PSession != nullptr || PMember->PParty == nullptr ||
+            PMember->health.tp < cardian::chains::kWsTp)
+        {
+            return;
+        }
+        const uint32 owner = ownerOf(PMember);
+        const auto   plan  = book.find(owner);
+        if (owner == 0 || !plan.has_value() || plan->closer != PMember->id || !firstInFight(readiesSaid, PMember->id, PMob->id))
+        {
+            return;
+        }
+        const auto call = callsOf.contains(owner) ? callsOf[owner].ready : uint8{ 0 };
+        ShowInfoFmt("chains: {} calls ready to close {} on {} at {} TP{}", PMember->getName(), cardian::chains::chainName(plan->chain), PMob->getName(),
+                    PMember->health.tp, call != 0 ? fmt::format(" (call {})", call) : std::string());
+        pawn::tactics::role::sayParty(PMember, cardian::chains::readyLine(PMember->health.tp, call));
+    }
+
+    void setCalls(const uint32 playerCharID, const uint8 opening, const uint8 ready)
+    {
+        const auto kept = [](const uint8 call) { return call <= cardian::chat::kCallCount ? call : uint8{ 0 }; };
+        callsOf[playerCharID] = Calls{ kept(opening), kept(ready) };
     }
 
     auto forecast(CCharEntity* PNuker, CBattleEntity* PMob) -> std::optional<Forecast>

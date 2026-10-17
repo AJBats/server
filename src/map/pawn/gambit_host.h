@@ -28,6 +28,9 @@
 #include "data/enums/status_effect.h"
 #include "entities/entity_id.h"
 
+#include <optional>
+#include <string>
+
 class CBattleEntity;
 class CCharEntity;
 class CSpell;
@@ -75,6 +78,22 @@ namespace pawn
         virtual auto WeaponSkillPending() const -> bool
         {
             return false;
+        }
+        // Why a weapon skill of her rows waits for her Sneak Attack (the
+        // user, 2026-10-17): the mob is on her, so its back is not to be had,
+        // and the party's tank fights it and will turn it -- as her nukes
+        // hold while a mob is on her. None when it goes now
+        virtual auto SneakAttackWait(const CBattleEntity* /*PTarget*/, uint16 /*skill*/) -> std::optional<std::string>
+        {
+            return std::nullopt;
+        }
+        // Why a weapon skill of her rows waits for the party's tank, still
+        // placing the mob at the camp, so it is still turning (the user,
+        // 2026-10-17: melee wait for the tank to have it where it should
+        // be). None when it goes now
+        virtual auto TankPlacingWait(const CBattleEntity* /*PTarget*/) -> std::optional<std::string>
+        {
+            return std::nullopt;
         }
         virtual auto RangedAttack(EntityId target) -> bool = 0;
 

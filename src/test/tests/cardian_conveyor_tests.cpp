@@ -334,26 +334,22 @@ TEST_CASE("cureWanted", "[cardian][tactics][conveyor]")
     CHECK(cureWanted(22, 22));
 }
 
-TEST_CASE("Pace: a cycle's spend against the net MP between cycles, behind by a fifth, back once resting wins", "[cardian][tactics][conveyor]")
+TEST_CASE("Pace: a cycle's spend against what it got back, end to end, behind by a fifth, back once resting wins", "[cardian][tactics][conveyor]")
 {
     Pace p;
-    p.opened(50); // no close on record: nothing to measure the rest against
+    p.closed(60, 30); // the first end: nothing to measure the rest against
     CHECK(p.regained.n == 0);
     CHECK_FALSE(p.measured());
     CHECK_FALSE(p.behind());
 
-    p.closed(60, 30);
-    p.opened(78);
+    // each cycle 30 spent and 12 lower at its end: 18 back
+    p.closed(48, 30);
     CHECK(p.regained.n == 1);
     CHECK_THAT(p.regained.mean, WithinAbs(18.0, 1e-9));
     CHECK_FALSE(p.measured());
-
-    for (int i = 0; i < 2; ++i)
-    {
-        p.closed(60, 30);
-        p.opened(78);
-    }
-    CHECK(p.spent.n == 3);
+    p.closed(36, 30);
+    p.closed(24, 30);
+    CHECK(p.spent.n == 4);
     CHECK(p.regained.n == 3);
     CHECK_THAT(p.spent.mean, WithinAbs(30.0, 1e-9));
     CHECK_THAT(p.regained.mean, WithinAbs(18.0, 1e-9));
@@ -361,14 +357,26 @@ TEST_CASE("Pace: a cycle's spend against the net MP between cycles, behind by a 
     CHECK(p.behind()); // 30 against 18 * 1.2 + 2
     CHECK_THAT(p.line("Zapp"), ContainsSubstring("Zapp"));
     CHECK_THAT(p.line("Zapp"), ContainsSubstring("behind pace"));
-    CHECK_THAT(p.line("Zapp"), ContainsSubstring("net +18"));
+    CHECK_THAT(p.line("Zapp"), ContainsSubstring("~18 back"));
+
+    // the mage who kneels on into the next fight and is full again at
+    // every end: all she spends comes back (2026-10-17: read as netting
+    // nothing when only the gap between fights counted)
+    Pace refills;
+    for (int i = 0; i < 4; ++i)
+    {
+        refills.closed(200, 29);
+    }
+    REQUIRE(refills.measured());
+    CHECK_THAT(refills.regained.mean, WithinAbs(29.0, 1e-9));
+    CHECK_FALSE(refills.behind());
 
     // the hysteresis: a fifth to fall behind, but only even to come back
     Pace close;
-    for (int i = 0; i < 3; ++i)
+    close.closed(60, 20);
+    for (int i = 1; i <= 3; ++i)
     {
-        close.closed(60, 20);
-        close.opened(78);
+        close.closed(60 - 2 * i, 20);
     }
     REQUIRE(close.measured());
     CHECK_THAT(close.spent.mean, WithinAbs(20.0, 1e-9));
@@ -380,19 +388,18 @@ TEST_CASE("Pace: a cycle's spend against the net MP between cycles, behind by a 
     CHECK(close.behind()); // said once, it holds until resting wins outright
     CHECK_THAT(close.line("Zapp"), ContainsSubstring("behind pace"));
 
-    // a spot where the fights outrun the rest entirely
+    // a spot where the fights outrun the rest entirely: 40 lower each end
     Pace losing;
-    for (int i = 0; i < 3; ++i)
+    losing.closed(200, 30);
+    for (int i = 1; i <= 3; ++i)
     {
-        losing.closed(60, 30);
-        losing.opened(50);
+        losing.closed(200 - 40 * i, 30);
     }
     REQUIRE(losing.measured());
     CHECK_THAT(losing.regained.mean, WithinAbs(-10.0, 1e-9));
     CHECK(losing.behind());
-    CHECK_THAT(losing.line("Zapp"), ContainsSubstring("net -10"));
+    CHECK_THAT(losing.line("Zapp"), ContainsSubstring("nothing back (-10)"));
 }
-
 TEST_CASE("Pace is an EWMA after three samples", "[cardian][tactics][conveyor]")
 {
     // Running::fold weighs max(0.3, 1/n): a plain mean over the first three,

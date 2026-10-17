@@ -34,7 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 85: the Shortcuts menu's Skillchain
+// compatible, the user, 2026-09-14). 88: PREFS' chainCall and readyCall, the
+// call sounds of the skillchain plan's calls (Settings); 87: the Pull page and the puller's badge --
+// PULL_KINDS, PULL_KIND, SET_PULL_LIST, PULL_STATE and CL_S_CANNOT_PULL;
+// 86: PREFS' pullCall, the call sound of
+// the puller's pull line (Settings, Pull call); 85: the Shortcuts menu's Skillchain
 // now -- SKILLCHAIN_NOW, CL_S_NO_PLAN and CL_S_NO_FIGHT; 84: the Shortcuts
 // menu -- ORDERS' avoidAggro, SET_HUNT's CL_HUNT_AVOID_AGGRO, SKILLCHAINS, SKILLCHAIN and
 // SET_SKILLCHAIN, and CL_S_NO_SKILLCHAIN; 83: DBOX's loc, a stack sent from any
@@ -158,7 +162,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 85 };
+enum { CL_PROTOCOL = 88 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -382,6 +386,9 @@ enum
     CL_S_NO_SKILLCHAIN     = 0x0220, // those two weapon skills make no skillchain, or a member cannot use hers now
     CL_S_NO_PLAN           = 0x0221, // Skillchain now with no skillchain picked
     CL_S_NO_FIGHT          = 0x0222, // Skillchain now with no mob being fought: by him, nor by his plan's opener or closer
+
+    // The party's pulling
+    CL_S_CANNOT_PULL       = 0x0230, // that member's job does not pull: a Puppetmaster, for now
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -514,7 +521,9 @@ typedef struct cl_prefs
 {
     cl_header h;
     uint8_t   sharedMaps; // 1 (the default): the maps any character of his account holds are shown to him too; 0: only his own
-    uint8_t   spare[3];
+    uint8_t   pullCall;   // the call sound his puller's pull line ends with: 0 (the default) none, else <call1> to <call21>
+    uint8_t   chainCall;  // the call sound the skillchain plan's opener ends "Starting {Skillchain}!" with: 0 none, else <call1> to <call21>
+    uint8_t   readyCall;  // and its closer her "{Ready!} N TP": 0 none, else <call1> to <call21>
 } cl_prefs;
 
 // ---- 0x01xx: a cardian's state --------------------------------------------
@@ -1196,6 +1205,10 @@ enum
     CL_T_SKILLCHAIN     = 0x0417,
     CL_T_SET_SKILLCHAIN = 0x0418,
     CL_T_SKILLCHAIN_NOW = 0x0419,
+    CL_T_PULL_KINDS     = 0x041A,
+    CL_T_PULL_KIND      = 0x041B,
+    CL_T_SET_PULL_LIST  = 0x041C,
+    CL_T_PULL_STATE     = 0x041D,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1563,6 +1576,79 @@ typedef struct cl_skillchain_now
     uint16_t  targid;      // answered: the mob's target index in his zone, 0 when refused
     uint8_t   spare[2];
 } cl_skillchain_now;
+
+// ---- the party's pulling (ROADMAP, Pulling) ----
+// One kind of mob round the camp, a row of the Pull page: every mob of the
+// name, or of a beastman race ("Goblins"), within CL_PULL_REACH of the camp
+// (of the player, with no camp); 24 rows at most, as many as SET_PULL_LIST
+// carries back. An answer to PULL_KINDS and to SET_PULL_LIST. The one
+// exception to the rule that text is for people: a kind has no id of its
+// own, so its name is the row's key, sent back in SET_PULL_LIST's names and
+// kept in his list as written
+typedef struct cl_pull_kind
+{
+    cl_header h;
+    char      name[32];  // the kind's key: the name as the game holds it, underscores and all ("Forest_Hare"), or the race ("Goblins")
+    uint8_t   conLow;    // the easiest and the toughest of them, the /check: 0 Too Weak .. 7 Incredibly Tough
+    uint8_t   conHigh;
+    uint8_t   count;     // how many stand round the camp
+    uint8_t   on;        // 1 while his list has it on: his puller brings it in
+    float     distance;  // their average distance from him, in yalms
+} cl_pull_kind;
+
+enum
+{
+    CL_PULL_REACH = 200, // yalms round the camp the page lists, and the puller picks within
+};
+
+// The Pull page's rows: each kind as a PULL_KIND answer (CL_F_MORE), the
+// kinds on his list in its order first, then the others nearest first, then
+// this. The con is read against `level`: the party's average level under
+// Cardian's exp rule, else his own
+typedef struct cl_pull_kinds
+{
+    cl_header h;
+    uint8_t   count;  // answered: kinds sent
+    uint8_t   level;  // answered: the level the con is read against
+    uint8_t   staked; // answered: 1 when the kinds are round the camp, 0 round him (no camp)
+    uint8_t   spare;
+} cl_pull_kinds;
+
+// His list as the page leaves it: the kinds in his order of preference, each
+// on or off. Kinds of his list the page did not show (another camp's) are
+// kept after them. The rows come back as they now stand (PULL_KIND,
+// CL_F_MORE), then the outcome
+typedef struct cl_set_pull_list
+{
+    cl_header h;
+    uint8_t   count;      // rows sent, at most 24
+    uint8_t   spare[3];
+    uint8_t   on[24];     // 1 on, 0 off, by row
+    char      names[24][32];
+} cl_set_pull_list;
+
+enum
+{
+    CL_PULL_NONE     = 0, // off the seat, or the party not pulling at a camp: no badge
+    CL_PULL_WAITING  = 1, // waiting for the party to be ready, or for a mob to stand within reach
+    CL_PULL_OUT      = 2, // out after a mob
+    CL_PULL_BRINGING = 3, // bringing it in
+};
+
+// One-way, whenever it changes, and answering QUEUES for an addon that has
+// just bound: a puller's badge beside the party list, its state and what she
+// pulls with -- an item (her ranged weapon, else her ammunition), or for a
+// Bard the song
+typedef struct cl_pull_state
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   state;   // CL_PULL_*
+    uint8_t   spare;
+    uint16_t  item;    // 0 for none
+    uint16_t  spell;   // 0 for none
+    uint16_t  spare2;
+} cl_pull_state;
 
 // ---- 0x05xx: the pause and the server's other notices ---------------------
 

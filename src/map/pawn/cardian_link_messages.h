@@ -119,6 +119,10 @@ namespace cardian::link
     X(SKILLCHAIN, cl_skillchain) \
     X(SET_SKILLCHAIN, cl_set_skillchain) \
     X(SKILLCHAIN_NOW, cl_skillchain_now) \
+    X(PULL_KINDS, cl_pull_kinds) \
+    X(PULL_KIND, cl_pull_kind)   \
+    X(SET_PULL_LIST, cl_set_pull_list) \
+    X(PULL_STATE, cl_pull_state) \
     X(QUEUE, cl_queue)           \
     X(NOTE, cl_note)             \
     X(OFFER, cl_offer)           \

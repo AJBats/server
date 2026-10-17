@@ -156,7 +156,8 @@ namespace pawn::tactics
             a.readyMp = body->GetMaxMP(); // readiness display until history exists; pacing has its own startup reserve
             if (a.knownCost)
             {
-                a.readyMp = cardian::rest::fightBudget(std::move(costs));
+                a.meanCostMp = std::accumulate(costs.begin(), costs.end(), 0.0) / static_cast<double>(costs.size());
+                a.readyMp    = cardian::rest::fightBudget(std::move(costs));
             }
             for (const auto& fight : log.open())
             {

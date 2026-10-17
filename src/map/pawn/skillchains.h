@@ -194,4 +194,14 @@ namespace pawn::chains
     // fight. Asked by her weapon skill row; a played character never speaks
     void askIfDue(CCharEntity* PSpeaker, CBattleEntity* PMob);
     void saySaving(CCharEntity* PMember, CBattleEntity* PMob);
+
+    // The plan's calls in the party's chat, as a player's macros make them
+    // (skillchain_math.h openingLine, readyLine), once a fight each: its
+    // opener's as she opens it -- or the moment he calls Skillchain now --
+    // and its closer's once she has the TP for her close, in every fight
+    // while she holds it. A played character never speaks. The call sounds
+    // are his (PREFS), none until his addon sends them
+    void sayOpening(CCharEntity* PMember, CBattleEntity* PMob);
+    void sayReady(CCharEntity* PMember, CBattleEntity* PMob);
+    void setCalls(uint32 playerCharID, uint8 opening, uint8 ready);
 } // namespace pawn::chains

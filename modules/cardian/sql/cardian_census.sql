@@ -67,6 +67,21 @@ CREATE TABLE IF NOT EXISTS `cardian_food` (
   PRIMARY KEY (`name`, `role`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+-- CARDIAN: the pull kit -- what each adventurer pulls with while she holds
+-- the party's Puller seat (ROADMAP, Pulling), one row per slot (2 the
+-- ranged weapon, 3 its ammunition), picked by the census tool with her
+-- wardrobe from her job's pull skills (jobs.yaml `pull`). Laid in her
+-- wardrobe beside her gear and worn only in that seat; none for a job that
+-- shoots with her own gear or has no ranged weapon to pull with (the map
+-- gives a puller pebbles). The census tool and the map both make the table
+-- where it is missing.
+CREATE TABLE IF NOT EXISTS `cardian_pull_kit` (
+  `name`   varchar(15)          NOT NULL,
+  `slot`   tinyint(3) unsigned  NOT NULL,
+  `itemid` smallint(5) unsigned NOT NULL,
+  PRIMARY KEY (`name`, `slot`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 -- CARDIAN: the live census's pace (RESEARCH.md §11.11, tools/world/pace.py). Out of
 -- sight a body of the world levels at the pace of the real character's job her
 -- cohort follows: these keep what the census watcher needs across a restart. The

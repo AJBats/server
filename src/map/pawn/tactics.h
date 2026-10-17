@@ -170,6 +170,13 @@ namespace pawn::tactics
     // ready: booked for the fight's close line
     void noteSneakAttack(CCharEntity* PPawn, uint32 mobId, cardian::tactics::SneakUse use, double seconds);
 
+    // The camp's puller has brought a mob onto the party with her ranged
+    // attack (pawn_pull.cpp): the party's fight on it opens as if she had
+    // drawn on it, so the tank's picture holds the mob while it runs in and
+    // her Provoke takes it as it comes in range (tank_calls.h, the pull),
+    // whether or not the shot drew blood
+    void notePull(CCharEntity* PPuller, CBattleEntity* PMob);
+
     // The tank tactician's call on her think (RESEARCH §17.11; tank_calls.h
     // has the rules): the mob to Provoke now and why, or none and why not,
     // in words her engine logs as they change. Asked by a holder of a Tank
@@ -191,6 +198,7 @@ namespace pawn::tactics
         bool wake = false;
         bool knownCost = false;
         double readyMp = 0.0;
+        double meanCostMp = 0.0; // her average MP a fight in this zone, of the same fights readyMp reads (the puller's pacing, pull_math.h)
         bool recover = false;
         bool criticalMp = false;
         double spentPerSecond = 0.0;
@@ -221,6 +229,14 @@ namespace pawn::tactics
         uint32      mob       = 0;    // the fight's mob, the longest-lived when more than one
     };
     auto kneelRisk(CCharEntity* PPawn) -> std::optional<KneelRisk>;
+    // The same question over any horizon: a member at risk within `horizon`
+    // seconds if her own cures wait -- the cures in flight and each other
+    // cardian mage's next on her feet counted. What a burst asks before a
+    // routine cure of hers waits for it (CGambits::CastAssignment)
+    auto riskWithout(CCharEntity* PPawn, double horizon) -> std::optional<KneelRisk>;
+    // What a fight here costs her in MP, as her pace measures it (role
+    // holders only); negative before one is measured
+    auto fightCostMp(const CCharEntity* PPawn) -> double;
     // Seconds of life a mob of her party's fight has left at the party's
     // rate (the same reading as KneelRisk's fightLeft); negative: unknown
     auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double;

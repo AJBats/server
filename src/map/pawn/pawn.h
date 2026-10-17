@@ -22,6 +22,7 @@
 #pragma once
 
 #include "pawn_travel.h"
+#include "pull_math.h"
 #include <array>
 #include <string_view>
 
@@ -251,7 +252,8 @@ namespace pawn
 
     // The party strategy channel (M3.9): one set of orders per player, read
     // by every cardian in their party, theirs and wild alike. Strategy 0 =
-    // Hold, 1 = Pull (the hunters pull). Retreat is the "on me" switch over
+    // Hold, 1 = Pull (the hunters pull; at a camp, the Puller seat alone).
+    // Retreat is the "on me" switch over
     // it: nobody engages, nobody avoids aggro, hunting pauses, until it
     // clears. Orders live in memory; a map restart starts everyone at Hold.
     constexpr uint16 kStrategyCount = 2;
@@ -276,7 +278,8 @@ namespace pawn
     // set where he stands and facing his way, held until dissolved. The
     // camp holds independently of Hold/Pull; Retreat suspends it. Every
     // set, move or break selects Hold, so changing camp never starts a
-    // fight. Pulling from camp is deferred. It dissolves by command,
+    // fight. Under Pull, the Puller seat pulls to it (ROADMAP, Pulling;
+    // CPawnController::PullTick). It dissolves by command,
     // when the whole party has left its zone (stakeSweep, from the zone
     // tick) and at his sign-out. In memory, like the strategy.
     struct Stake
@@ -341,8 +344,8 @@ namespace pawn
     };
     constexpr std::array<std::string_view, 3> kPullFirstNames{ "Nearest", "Easiest", "Toughest" };
     auto huntRulesOf(uint32 ownerCharID) -> HuntRules;
-    // cardian_orders as this build reads and writes it, the Dia or Bio and
-    // the Avoid aggro columns included: made, or a column added, at boot. The same as
+    // cardian_orders as this build reads and writes it, the Dia or Bio, the
+    // Avoid aggro and the pull list columns included: made, or a column added, at boot. The same as
     // modules/cardian/sql/cardian_orders.sql, which dbtool's update skips on
     // a database whose upstream SQL has not moved
     void ensureOrdersTable();
@@ -350,6 +353,12 @@ namespace pawn
     // CL_S_MALFORMED for a rule or value out of range. A band end pushed past
     // the other drags it along.
     auto setHuntRule(CCharEntity* POwner, uint8 rule, int value) -> uint16;
+    // The Pull page's list (pull_math.h ListRow): the kinds of mob his
+    // puller brings in, in his order, each on or off; kept in
+    // cardian_orders.pull_list. setPullList keeps the kinds of his old list
+    // the page did not show after the rows it sent (mergeList)
+    auto pullListOf(uint32 ownerCharID) -> std::vector<cardian::pull::ListRow>;
+    void setPullList(CCharEntity* POwner, const std::vector<cardian::pull::ListRow>& sent);
 
 
     // A dead pawn home points: revived the way a home point revives a

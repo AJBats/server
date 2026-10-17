@@ -814,10 +814,13 @@ TEST_CASE("gambit layers: a seat lends the tools her two jobs can ever use, the 
     CHECK(bundle(Role::Healer, xi::Job::WAR).empty());
     CHECK(bundle(Role::Healer, xi::Job::WAR, xi::Job::MNK).empty());
     CHECK(specs(bundle(Role::Healer, xi::Job::WAR, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, mage[3].first });
-    CHECK(specs(bundle(Role::Healer, xi::Job::RDM)) == std::vector<std::string>{ mage[0].first, mage[2].first, mage[3].first });
+    // a Red Mage healer bursts the window too, through her tactician's nukes
+    // -- bursts alone from the Healer seat -- after her cures (burstsAsHealer)
+    const std::string burst = "2|101:0|2:3:0|0";
+    CHECK(specs(bundle(Role::Healer, xi::Job::RDM)) == std::vector<std::string>{ mage[0].first, burst, mage[2].first, mage[3].first });
     CHECK(specs(bundle(Role::Healer, xi::Job::PLD)) == std::vector<std::string>{ mage[0].first, mage[3].first });
     CHECK(specs(bundle(Role::Healer, xi::Job::PLD, xi::Job::BLM)) == std::vector<std::string>{ mage[0].first, mage[2].first, mage[3].first });
-    CHECK(specs(bundle(Role::Healer, xi::Job::RDM, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, mage[2].first, mage[3].first });
+    CHECK(specs(bundle(Role::Healer, xi::Job::RDM, xi::Job::WHM)) == std::vector<std::string>{ mage[0].first, mage[1].first, burst, mage[2].first, mage[3].first });
     // a Summoner heals through her sub job alone: a White Mage's gives her
     // the seat's every row; a Black Mage's enfeebles are no healer's, and
     // she is lent nothing
@@ -892,9 +895,16 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(cardian::tactician::allowsAbility(*pawn::text::parseRow(kTank[1].first), 35));
     CHECK(cardian::tactician::isMarked(*pawn::text::parseRow(kTank[1].first)));
     CHECK(kTank[2].first == warrior[4].first);
-    // Puller lends what Damage does, job for job
-    CHECK(bundle(cardian::party::Role::Puller, xi::Job::THF, xi::Job::WAR) == bundle(cardian::party::Role::Damage, xi::Job::THF, xi::Job::WAR));
-    CHECK(bundle(cardian::party::Role::Puller, xi::Job::BLM, xi::Job::WHM) == bundle(cardian::party::Role::Damage, xi::Job::BLM, xi::Job::WHM));
-    CHECK(bundle(cardian::party::Role::Puller, xi::Job::SMN, xi::Job::WAR).empty());
+    // Puller lends Avoid links -- her run back keeps clear of the chaser's
+    // linking kin -- ahead of what Damage does, job for job
+    const auto withLinks = [&](const xi::Job main, const xi::Job sub)
+    {
+        auto out = bundle(cardian::party::Role::Damage, main, sub);
+        out.insert(out.begin(), { "0|0:0|100:13:1|0", true });
+        return out;
+    };
+    CHECK(bundle(cardian::party::Role::Puller, xi::Job::THF, xi::Job::WAR) == withLinks(xi::Job::THF, xi::Job::WAR));
+    CHECK(bundle(cardian::party::Role::Puller, xi::Job::BLM, xi::Job::WHM) == withLinks(xi::Job::BLM, xi::Job::WHM));
+    CHECK(bundle(cardian::party::Role::Puller, xi::Job::SMN, xi::Job::WAR) == withLinks(xi::Job::SMN, xi::Job::WAR));
     CHECK(bundle(cardian::party::Role::None, xi::Job::WAR, xi::Job::WHM).empty());
 }

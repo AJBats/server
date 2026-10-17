@@ -46,6 +46,7 @@
 #include <deque>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -102,6 +103,7 @@ public:
         Walk,
         Roam,
         Approach,
+        Pull, // the camp's puller out after a mob and bringing it in (PullTick)
         Hold,
         Fight,
         Attend,
@@ -377,6 +379,26 @@ public:
     // is engaged on this mob, the mob faces someone else (its back away
     // from her side), and no give-up of hers rests on it (m_SneakRest)
     auto SneakAttackNow(const CBattleEntity* PTarget) -> bool;
+    // Why her rows' weapon skill waits for Sneak Attack: the mob on her,
+    // her Sneak Attack ready, the weapon skill one that takes it, and a
+    // member in the Tank seat fighting the mob to turn it (GambitHost)
+    auto SneakAttackWait(const CBattleEntity* PTarget, uint16 wsid) -> std::optional<std::string>;
+    // The camp's tank still placing this mob -- towing it to the frontline
+    // or on her way to her seat on it, so it is still turning (TowIntent)
+    auto StillPlacing(const CBattleEntity* PMob) const -> bool;
+    // Why her rows' weapon skill waits for the party's tank to have the mob
+    // where she wants it (the user, 2026-10-17: telepathy in the tank's
+    // mind, as players wait for the tank to settle it), at most kPlaceWait
+    // a mob; none when it goes now (GambitHost)
+    auto TankPlacingWait(const CBattleEntity* PMob) -> std::optional<std::string>;
+    // Whether one of those waits still holds on this mob: kWsWait a mob
+    // from her first wait on it (m_PlaceWait, m_SneakWait)
+    auto WaitStill(std::optional<std::pair<uint32, timer::time_point>>& wait, const CBattleEntity* PMob) -> bool;
+    static constexpr auto kWsWait = std::chrono::seconds(10);
+    // The cardian of her party in the Tank seat still placing this mob at
+    // the camp (StillPlacing), nullptr for none: what TankPlacingWait holds
+    // for, and what the skillchain plan's join grace starts after
+    static auto PartyTankPlacing(const CBattleEntity* PSelf, const CBattleEntity* PMob) -> const CBattleEntity*;
     // A weapon skill Sneak Attack works with: one whose script goes through
     // the server's physical path (tactician_line.h scriptTakesSneakAttack),
     // read once per weapon skill. Any other spends it all the same
@@ -442,6 +464,9 @@ public:
     // words it from the list it holds. It is told whenever this changes, and the
     // player can take the order back.
     auto QueueLine() const -> cl_queue;
+    // Her pull badge as it stands (PULL_STATE; pull_math.h Badge), for QUEUES
+    // and for ShowPullState
+    auto PullStateLine() const -> cl_pull_state;
     auto CancelQueuedOrder() -> bool;
     // The player's cancel on a spell of his she is still casting ("Executing:"
     // on her line): she breaks it off as a player does, by kneeling -- the
@@ -1151,8 +1176,14 @@ private:
     // quiet hunt's line
     auto PickHuntTarget(const CCharEntity* PPlayer, std::string* skipped = nullptr) const -> CMobEntity*;
     // The same pick round any point, for a level, under the rules given:
-    // the world's farmers (ROADMAP D1) measure from their route point
-    auto PickHuntTarget(const position_t& around, uint8 level, const pawn::HuntRules& rules, std::string* skipped = nullptr) const -> CMobEntity*;
+    // the world's farmers (ROADMAP D1) measure from their route point, the
+    // camp's puller from the flag, passing over the mobs she gave up. With
+    // a Pull page list that has a kind on (`list`), the list decides in
+    // place of the band: only its kinds that are on, the first kind on it
+    // first, the nearest within a kind; `reach` (0: pawn.HUNT_RADIUS) is
+    // how far round the point she looks
+    auto PickHuntTarget(const position_t& around, uint8 level, const pawn::HuntRules& rules, std::string* skipped = nullptr,
+                        std::span<const uint32> passOver = {}, std::span<const cardian::pull::ListRow> list = {}, float reach = 0.0f) const -> CMobEntity*;
 
     // The walk in on a mob and the draw at the door, shared by party pawns
     // and world bodies (see the definition). True when the tick was hers
@@ -1161,6 +1192,8 @@ private:
     // The hunt's eligibility (idle, unclaimed, ordinary, in the band), and
     // the nearest such mob within a radius of a point: the farmer's errand
     static auto huntable(CMobEntity* PMob, uint8 level, const pawn::HuntRules& rules) -> bool;
+    // The same without the band: idle, unclaimed and ordinary
+    static auto fairGame(CMobEntity* PMob) -> bool;
     auto        NearestPrey(const position_t& around, float radius, uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*;
     auto        NearestPreyInZone(uint8 level, const pawn::HuntRules& rules) const -> CMobEntity*;
 
@@ -1403,6 +1436,12 @@ private:
     cardian::stake::Route       m_TowRoute;
     timer::time_point          m_LastTowRouteDebug{};
     std::optional<EntityId>     m_TowingMob;
+    std::optional<EntityId>     m_PlacedMob; // the mob she has where she wants it: towed in, her seat on it reached (StillPlacing)
+    // Her own weapon skill waiting on the tank's placing (TankPlacingWait),
+    // and for her Sneak Attack while the mob is on her (SneakAttackWait):
+    // the mob, and since when; each bounded once a mob
+    std::optional<std::pair<uint32, timer::time_point>> m_PlaceWait;
+    std::optional<std::pair<uint32, timer::time_point>> m_SneakWait;
     std::optional<EntityId>     m_ReceiveMob;
     cardian::stake::Receive     m_Receive;
     std::unordered_map<uint32, cardian::stake::Receive> m_PullsIn; // PullIn's memory, by mob id
@@ -1654,6 +1693,106 @@ private:
     void                  FoodTick();
     auto                  EatCookieBeforeKneel(bool aboutToKneel, bool shortOfMp) -> bool;
     void                  SayFood(const std::string& line);
+
+    // The puller (ROADMAP, Pulling; pawn_pull.cpp, the rules pull_math.h's).
+    // At a camp, under the party's order Pull, the member in the Puller seat
+    // alone hunts: once the party is ready she picks a mob round the flag,
+    // walks out through the walker to where her ranged attack reaches it in
+    // sight, tags it, says the pull line and runs back to the landing point,
+    // where the tank's Provoke takes it off her; she then fights as the
+    // Damage seat does. Her pulling kit is worn while she holds the seat
+    // (KitTick), what she wore before put back once she leaves it
+    struct PullRun
+    {
+        enum class Step : uint8
+        {
+            Out,   // walking to where she can shoot it
+            Shoot, // tagging it
+            Back,  // running it in
+        };
+        EntityId          mob;
+        Step              step = Step::Out;
+        timer::time_point setOffAt{}; // her beat after the pick: she looks at it until then
+        timer::time_point stepAt{};   // when this step began
+        timer::time_point shotAt{};   // the last shot
+        uint8             shots = 0;
+        std::string       refused;          // the shot's last refusal, said once
+        double            outLimit  = 0.0;  // seconds the walk out may take (pull_math.h outSeconds)
+        double            backLimit = 0.0;  // and the run back (backSeconds)
+        // The pipeline (pull P2): when the mob should land, and her shot held
+        // at the spot until tagging it lands it then
+        timer::time_point arriveAt{};
+        timer::time_point holdSince{};
+        bool              timingReady = true;
+        std::string       timingWhy;
+        // The mobs the party was fighting as she set out: never a mob that
+        // catches her on the way
+        std::vector<uint32> camp;
+        // Where she runs it in to: past the landing point on her way in (pull_math.h pastLanding)
+        std::optional<position_t> backTo;
+        timer::time_point         cleanAt{};  // the walk out's next judgement of the pull's route (PullBlocker)
+        timer::time_point         kinSince{}; // her shot held for kin on the way back, since
+    };
+    // A mob on the party fighting her now, her own pull aside: she does not
+    // leave a fight, nor set out, with one on her -- it would follow her out
+    auto MobOnHer() const -> CMobEntity*;
+    // A mob the party is fighting round the camp: the puller sets out only
+    // once there is none, while leaving a fight early is off (pull_math.h
+    // kLeavesFightsEarly)
+    auto CampFight() const -> CMobEntity*;    // When the next mob should land (pull P2; pull_math.h wantArrive), read
+    // off the party's mages and the fight under way; `ready` false, and
+    // `why`, while there is no plan: a member down, two mobs on the party,
+    // a fight whose length is not known yet
+    struct PullTiming
+    {
+        bool        ready = false;
+        std::string why;
+        double      fightLeft = 0.0;
+        double      arriveIn  = 0.0;
+        std::string pacer; // the mage the timing waits on, empty for the fight's end alone
+    };
+    auto PullTimingNow() -> PullTiming;
+    // The mob she should set out after now, nullptr until the pipeline says
+    // go: looked at once a second, the candidate picked again every few
+    // seconds (PullDue); and her leaving a fight for it (PullLeavesFight,
+    // asked by the tick before the fight's)
+    auto                    PullDue(CCharEntity* PPlayer) -> CMobEntity*;
+    auto                    PullLeavesFight() -> bool;
+    auto                    PullCanGo() -> bool; // free to set out now: the one test both ask
+    // Another mob she can pull now, the one she holds for passed over: picked as the set-out picks, and kept as the next candidate
+    auto                    PullInstead(CCharEntity* PPlayer, const CMobEntity* PHeld) -> CMobEntity*;
+    std::string             m_PullSkipped;       // what the last pick passed over and why, said as she sets out
+    std::optional<EntityId> m_PullGo;            // the mob the last look said to go for, until the next look
+    double                  m_PullGoArrive = 0.0; // and when it should land, seconds from that look
+    std::optional<EntityId> m_PullCandidate;     // the next pull, as last picked
+    timer::time_point       m_PullCandidateAt{};
+    std::optional<PullRun>                            m_Pull;
+    std::vector<std::pair<uint32, timer::time_point>> m_PullPassOver; // mobs she gave up, not picked again until then
+    timer::time_point                                 m_KitAt{};      // her kit's next look
+    timer::time_point                                 m_KitTopUpAt{}; // her ammunition's next top-up
+    bool                                              m_KitReady = false; // what she wears can make a ranged attack, as of the last look
+    std::string                                       m_PullSaid;     // what her pull last said while it waits, said once
+    std::string                                       m_KitSaid;      // what her kit last said, said once
+    timer::time_point                                 m_PullQuietAt{}; // a pull with nothing to pick says so at most every 15 s
+    timer::time_point                                 m_PullLookAt{};  // her next look round the camp for a mob, after one that found none
+    // Her badge beside the party list as his addon was last told it
+    // (PULL_STATE): sent again whenever it changes
+    cl_pull_state m_PullShown{};
+    bool          m_PullShownOnce = false;
+    void          ShowPullState();
+    auto          PullBadge() const -> cardian::pull::Badge;
+    // What she pulls with, as of her kit's last look (pull.h toolOf): her
+    // song (a Bard), else her ranged weapon or her ammunition
+    uint16 m_PullItem  = 0;
+    uint16 m_PullSpell = 0;
+    auto   SingPull(CMobEntity* PMob) -> bool; // a Bard's pull: her song on the mob
+    auto   PullReach(CMobEntity* PMob) const -> float; // how far her song or her shot reaches it
+    auto PullerSeat() const -> bool; // she holds the party's Puller seat
+    auto PullTick(const Place* place, CCharEntity* PPlayer, bool hunting) -> bool;
+    void GiveUpPull(const CMobEntity* PMob, std::string_view why, double passOverSeconds = cardian::pull::kPassOverSeconds);
+    void EndPull(std::string_view why);
+    void KitTick();
+    void SayPull(const std::string& line);
 
     // An order that started, the game's word on it heard for kHeels after:
     // its name for the log, its key for the note, when it was tried, and the

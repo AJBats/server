@@ -140,10 +140,22 @@ namespace cardian::party
         }
     }
 
-    // Puller: a Thief, a Ranger, a Bard, then any other melee, who pulls
-    // with a ranged attack or pebbles. A mage never pulls by the rule
+    // Who may hold the Puller seat at all: a Puppetmaster wears no ranged
+    // weapon of any kind, and is kept off it for now (the user, 2026-10-16)
+    constexpr auto canPull(const xi::Job job) -> bool
+    {
+        return job != xi::Job::NONE && job != xi::Job::PUP;
+    }
+
+    // Puller: a Thief, a Ranger, a Bard (with a song), then any other melee,
+    // who pulls with a ranged attack or pebbles. A mage never pulls by the
+    // rule, nor a Puppetmaster at all (canPull)
     constexpr auto pullerRank(const Member& m) -> std::optional<int>
     {
+        if (!canPull(m.job))
+        {
+            return std::nullopt;
+        }
         switch (m.job)
         {
             case xi::Job::THF:
@@ -152,8 +164,6 @@ namespace cardian::party
                 return 1;
             case xi::Job::BRD:
                 return 2;
-            case xi::Job::NONE:
-                return std::nullopt;
             default:
                 return pawn::isMageJob(m.job) ? std::nullopt : std::optional<int>(3);
         }

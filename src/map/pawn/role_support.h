@@ -56,11 +56,10 @@ namespace pawn::tactics::role
     // it, while she is in the fight
     void think(CCharEntity* PHolder, FightLog& log, Conveyor& conveyor, const Conveyor::Scope& scope, bool engaged, double now);
 
-    // Her pace at the spot, one cycle per stretch of fighting: what the
-    // cycle cost her against her MP's net change since the last, said
-    // once each way it turns, in the map log and, from the Healer seat, to
-    // the party (sayPace)
-    void cycleOpened(CCharEntity* PHolder, Pace& pace);
+    // Her pace at the spot, one cycle per stretch of fighting, end to end:
+    // what the cycle cost her against what she got back in it
+    // (conveyor_math.h Pace), said once each way it turns, in the map log
+    // and, from the Healer seat, to the party (sayPace)
     void cycleClosed(CCharEntity* PHolder, int32 spent, Pace& pace);
     void speakPace(CCharEntity* PHolder, Pace& pace);
 

@@ -362,6 +362,16 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool impossible = Acting() || noRecovery || POwner->isDead() || POwner->PAI->IsEngaged() || SneakingBy();
     const bool deliberate = ordered && !m_RestOrder.byRow;
     const bool rowRest    = ordered && m_RestOrder.byRow;
+    // A skillchain's window her nuke row would burst once she is up
+    // (CGambits::BurstWorthStanding) stands her from her own kneel with more
+    // than a quarter of her MP, and keeps her from kneeling whatever her MP
+    // (the user, 2026-10-17: up already, she bursts). Never against an order
+    std::optional<std::string> burstCall;
+    if (!ordered && (healing != nullptr ? POwner->GetMPP() > 25 : (want || withPlayer)))
+    {
+        burstCall = m_Gambits->BurstWorthStanding(m_Rest.readyIn(now, healing != nullptr));
+    }
+    const bool wakes = urgent || burstCall.has_value();
     // The player's own Attack keeps her up until the fight it named is over
     // An order of his waiting on its recast leaves her down until it can
     // start (QueuedOrderHoldsHer); her own row's rest stands a fighter for the
@@ -377,7 +387,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // §19.6): about to kneel short of MP, with the player's food on and none
     // of her own, she eats it first and kneels once it is down, so a fresh
     // cookie covers the kneel
-    const bool aboutToKneel = healing == nullptr && (want || withPlayer || ordered) && !blocked && !walkBlocks && !urgent && stationary && !m_Rest.standPending &&
+    const bool aboutToKneel = healing == nullptr && (want || withPlayer || ordered) && !blocked && !walkBlocks && !wakes && stationary && !m_Rest.standPending &&
                               m_Rest.canAct(now, false);
     const bool eatsFirst = EatCookieBeforeKneel(aboutToKneel, mpMissing);
     // An ongoing support rest, or one the player ordered, defers formation
@@ -388,7 +398,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     const bool deferPosition = routinePosition && ((support && (place != nullptr || healing != nullptr)) || ordered || (withPlayer && healing != nullptr));
     const auto decision = m_Rest.decide({.now = now, .resting = healing != nullptr, .want = want,
         .withPlayer = withPlayer,
-        .urgent = urgent, .blocked = blocked || eatsFirst || walkBlocks,
+        .urgent = urgent, .burst = burstCall.has_value(), .blocked = blocked || eatsFirst || walkBlocks,
         .moving = !stationary, .routinePosition = deferPosition,
         .ordered = ordered});
 
@@ -411,6 +421,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         hold(noRecovery, "she cannot recover");
         hold(POwner->PAI->IsEngaged(), "engaged");
         hold(urgent, "first aid calls her");
+        hold(burstCall.has_value(), "a skillchain to burst");
         hold(!deliberate && unsafe, "danger");
         hold(!deliberate && m_Retreat, "the retreat");
         hold(!deliberate && m_Mode == Mode::Travel, "travelling");
@@ -461,6 +472,10 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
             if (urgent)
             {
                 return advice->why;
+            }
+            if (burstCall.has_value())
+            {
+                return fmt::format("a skillchain to burst: {}", *burstCall);
             }
             if (!deliberate && unsafe)
             {

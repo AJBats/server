@@ -68,6 +68,7 @@ namespace pawn::bundles
         bool   melee  = false; // only for a main job that melees
         bool   nuker  = false; // only for a main job that nukes
         bool   healer = false; // only for a main or sub job that learns Cure
+        bool   burster = false; // only for a main job that bursts from the Healer seat (burstsAsHealer)
     };
 
     // A row a seat lends, and what it needs
@@ -142,6 +143,16 @@ namespace pawn::bundles
         }
     }
 
+    // Whether a healer of this main job bursts the party's skillchains too
+    // (the user, 2026-10-16: "rdm should also try to magic burst if they
+    // can, they need to load balance that with healing"): a Red Mage, a
+    // Scholar, a Geomancer -- mages with nukes of their own, not the White
+    // Mage, whose damage is Banish
+    constexpr auto burstsAsHealer(const xi::Job main) -> bool
+    {
+        return main == xi::Job::RDM || main == xi::Job::SCH || main == xi::Job::GEO;
+    }
+
     // The game's ids the tools need (static_assert'ed against the game's
     // enums in pawn_gambits.cpp)
     inline constexpr uint16 kSpellCure    = 1;
@@ -155,7 +166,7 @@ namespace pawn::bundles
     template <typename LevelOf>
     auto reaches(const Need need, const xi::Job main, const xi::Job sub, const Caps caps, LevelOf&& levelOf) -> bool
     {
-        if ((need.melee && !meleesOnDamage(main)) || (need.nuker && !nukesOnDamage(main)))
+        if ((need.melee && !meleesOnDamage(main)) || (need.nuker && !nukesOnDamage(main)) || (need.burster && !burstsAsHealer(main)))
         {
             return false;
         }
@@ -181,7 +192,13 @@ namespace pawn::bundles
 
     // A seat's tools, every one, in the bundle's order of priority.
     //  - Healer: the marked rows the tactician cures and takes ailments off
-    //    through, its enfeebles, and her marked Rest, its MP pacing -- for a
+    //    through, then, for a main job that bursts as a healer, her
+    //    tactician's nukes, marked (`Damage spell (any)`, burstsAsHealer):
+    //    from the Healer seat they go for a burst alone, the Black Mage's
+    //    judgement of it, and a routine cure of hers waits for a burst due
+    //    when nobody is at risk meanwhile (the user, 2026-10-17;
+    //    CGambits::CastNuke, CastAssignment); then its enfeebles,
+    //    and her marked Rest, its MP pacing -- for a
     //    job that learns Cure (the -na, one that learns a -na; the enfeebles,
     //    a pair of jobs that learns Cure and a priced debuff): on a default
     //    mage every one is hers already, and the fit adds nothing.
@@ -213,6 +230,7 @@ namespace pawn::bundles
         static const std::vector<Tool> healer{
             { "1|101:0|2:0:1|0", { K::Spell, kSpellCure } },       // * Ally -> Cure (best)
             { "1|101:0|2:0:4|0", { K::Spell, kSpellPoisona } },    // * Ally -> -na (best)
+            { "2|101:0|2:3:0|0", { K::Anyone, 0, false, false, false, true } }, // * Foe -> Damage spell (any): her bursts
             { "2|101:0|2:100:0|0", { K::Enfeeble, 0, false, false, true } }, // * Foe -> Enfeeble
             { "0|101:0|100:14:1|0", { K::Spell, kSpellCure } },    // * Self -> Rest
         };
@@ -237,6 +255,15 @@ namespace pawn::bundles
             { "2|101:0|2:3:0|0", { K::Anyone, 0, false, true } },        // * Foe -> Damage spell (any)
             { "0|101:0|100:14:1|0", { K::Anyone, 0, false, true } },     // * Self -> Rest
         };
+        // Puller: Avoid links ahead of the Damage seat's tools -- her run back
+        // with a mob on her keeps clear of its linking kin, so the chaser
+        // passes them by (ROADMAP P, the way back)
+        static const std::vector<Tool> puller = [&]
+        {
+            std::vector<Tool> out{ { "0|0:0|100:13:1|0", { K::Anyone, 0 } } }; // Self -> Avoid links
+            out.insert(out.end(), damage.begin(), damage.end());
+            return out;
+        }();
         switch (role)
         {
             case cardian::party::Role::Healer:
@@ -244,8 +271,9 @@ namespace pawn::bundles
             case cardian::party::Role::Tank:
                 return tank;
             case cardian::party::Role::Damage:
-            case cardian::party::Role::Puller:
                 return damage;
+            case cardian::party::Role::Puller:
+                return puller;
             default:
                 return {};
         }

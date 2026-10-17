@@ -57,6 +57,17 @@ class CBattleEntity;
 class CCharEntity;
 class CSpell;
 
+namespace cardian::tactics
+{
+    struct NukePrice;
+    struct NukePricing;
+} // namespace cardian::tactics
+
+namespace pawn::chains
+{
+    struct Forecast;
+} // namespace pawn::chains
+
 namespace pawn
 {
     // A character's first rows are her job's defaults, defaultRowsFor
@@ -302,6 +313,13 @@ namespace pawn
         // casts no nukes for her, or she is not in the fight on this mob.
         // What the plan's worth counts her burst at (skillchains.cpp)
         auto BurstEstimate(CBattleEntity* PMob, uint16 elements, uint8 count) -> double;
+        // A burst worth rising for, `after` seconds of rising (the user,
+        // 2026-10-17): a chain's window open on her mob, the mob not on her,
+        // and her nuke row's own call in the window left by then a burst --
+        // over her free nuke, with the MP and recast for it now. The burst
+        // in words for the map log; none when there is none. What stands a
+        // kneeling nuker and keeps one up (CPawnController::RestTick)
+        auto BurstWorthStanding(double after) -> std::optional<std::string>;
         // Her marked row of a tool that goes out right before her weapon
         // skill -- Boost, or Sneak Attack from the mob's back -- on, its
         // gate holding now, in any layer that runs (a wild Monk's brains
@@ -578,6 +596,25 @@ namespace pawn
         // chain of `count` links (spell_bank.h burstFactors), kept for the
         // mob and the count
         auto BurstFactors(CBattleEntity* PMob, const std::vector<CSpell*>& spells, uint8 count) -> const std::map<uint16, double>&;
+        // The burst weighed in (skillchain_math.h nukeCall) on a chain open
+        // on the mob or on its way, for her cast (CastNuke) and her kneel
+        // (BurstWorthStanding) alike: her priced nukes -- each one's burst
+        // on this chain capped at the mob's HP, whether she can cast it now
+        // (`castable`) -- against her free pick, `pick`, with what she
+        // regains while she waits. The call, and the burst it names
+        struct BurstWeighing;
+        // From the Healer seat her nukes go for a burst alone and leave her
+        // this much MP for her cures (the user, 2026-10-17): a fight's cost
+        // here as her pace measures it, a quarter of her MP at the least;
+        // none on any other seat
+        auto HealerReserve() -> std::optional<double>;
+        // A burst due now goes ahead of a routine assignment of hers: a
+        // debuff always, a cure while nobody is at risk over its cast
+        // without her cures -- another healer on her feet covers it, or the
+        // patient can wait (CastAssignment; #495)
+        auto BurstAhead(bool cure) -> bool;
+        auto WeighBurst(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
+                        const cardian::tactics::NukePrice* pick, const pawn::chains::Forecast& chain) -> BurstWeighing;
 
         // Her tactician's weapon skill at a marked Weapon skill (best) row
         // (ROADMAP slice 3h, skillchain_math.h wsCall), on the foe its gate
@@ -684,6 +721,8 @@ namespace pawn
         bool                                    m_tankOnDuty = false;
         // Why her nukes hold, as last said (said as it changes)
         std::string                             m_nukeHold;
+        // Whether a burst went ahead of her routine assignment, or why not, as last said (BurstAhead)
+        std::string                             m_burstWaitSaid;
         // Why her tactician's weapon skill holds, as last said (said as it changes)
         std::string                             m_wsHold;
         // The burst factors kept (BurstFactors): the mob and the chain's

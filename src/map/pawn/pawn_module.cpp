@@ -41,6 +41,7 @@
 #include "pawn_gambits.h"
 #include "redress.h"
 #include "food.h"
+#include "pull.h"
 #include "spell_bank.h"
 #include "supplies.h"
 #include "tactics.h"
@@ -270,6 +271,8 @@ class PawnModule : public CPPModule
         // house, likewise (redress.h)
         pawn::redress::ensureTable();
         pawn::food::ensureTable();
+        // The census's pull kits, likewise (pull.h)
+        pawn::pull::ensureTable();
         // The linkshell's errands, likewise, read into memory, and who wears
         // which shell's pearl, off the items (club.h, errands.h)
         pawn::club::load();

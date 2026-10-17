@@ -400,12 +400,15 @@ namespace cardian::tactics
         return tierHeals > 0 && missing >= tierHeals;
     }
 
-    // A mage's pace at a spot, one cycle per stretch of fighting: what the
-    // fights cost her from the first open to the last close, against her
-    // MP's net change from that close to the next open (rest, less what
-    // she cast between). Behind once three cycles say spending beats
-    // resting by a fifth; back on pace once resting beats spending. Said
-    // once each way it turns
+    // A mage's pace at a spot, one cycle per stretch of fighting, from the
+    // end of one to the end of the next: what her casts cost her in it,
+    // against what she got back in it -- her MP's change between the two
+    // ends with what she spent added back -- wherever she rested, between
+    // the fights or kneeling on into the next (the user, 2026-10-17: the
+    // pull timing has mages kneel into the next fight, and resting counted
+    // only between them read as nothing). Behind once three cycles say
+    // spending beats resting by a fifth; back on pace once resting beats
+    // spending. Said once each way it turns
     struct Pace
     {
         Running spent;
@@ -414,17 +417,13 @@ namespace cardian::tactics
         bool    saidBehind = false;
         bool    toldBehind = false; // what the party last heard, from the Healer seat
 
-        void opened(const int32 mp)
-        {
-            if (mpAtClose >= 0)
-            {
-                regained.fold(mp - mpAtClose);
-            }
-        }
-
         void closed(const int32 mp, const int32 spentThisCycle)
         {
             spent.fold(spentThisCycle);
+            if (mpAtClose >= 0)
+            {
+                regained.fold(mp - mpAtClose + spentThisCycle);
+            }
             mpAtClose = mp;
         }
 
@@ -442,10 +441,12 @@ namespace cardian::tactics
             return saidBehind ? spent.mean > regained.mean : spent.mean > regained.mean * 1.2 + 2.0;
         }
 
-        // "Zapp: behind pace, ~30 MP a fight here, net -12 between fights"
+        // "Zapp: behind pace, ~30 MP a fight here, ~18 back"; nothing back
+        // when her MP fell by more than she cast (a drain), the net signed
         auto line(const std::string_view name) const -> std::string
         {
-            return fmt::format("{}: {} pace, ~{:.0f} MP a fight here, net {:+.0f} between fights", name, behind() ? "behind" : "on", spent.mean, regained.mean);
+            return fmt::format("{}: {} pace, ~{:.0f} MP a fight here, {}", name, behind() ? "behind" : "on", spent.mean,
+                               regained.mean >= 0.5 ? fmt::format("~{:.0f} back", regained.mean) : fmt::format("nothing back ({:+.0f})", regained.mean));
         }
     };
 } // namespace cardian::tactics
