@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 89: SUPPLIES' WANTED and FOREIGN
+// compatible, the user, 2026-09-14). 90: PREFS' three calls are the game's
+// <call0> to <call20> by their own numbers, and CL_CALL_NONE (0xFF) is none,
+// apart from Call 0; 89: SUPPLIES' WANTED and FOREIGN
 // retired, and its nation and missing with them -- a cardian runs her own
 // errands in town; 88: PREFS' chainCall and readyCall, the
 // call sounds of the skillchain plan's calls (Settings); 87: the Pull page and the puller's badge --
@@ -164,7 +166,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 89 };
+enum { CL_PROTOCOL = 90 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -518,14 +520,22 @@ typedef struct cl_unbound
 
 // The player's preferences the server applies to him, from his addon after
 // each bind and whenever one changes; without an addon each is the server's
-// default. Answered by the outcome.
+// default. Answered by the outcome. A call is the game's own number, 0 to
+// CL_CALL_LAST for <call0> to <call20>, or CL_CALL_NONE for none (the
+// default); any other number is refused as malformed.
+enum
+{
+    CL_CALL_LAST = 20,
+    CL_CALL_NONE = 0xFF,
+};
+
 typedef struct cl_prefs
 {
     cl_header h;
     uint8_t   sharedMaps; // 1 (the default): the maps any character of his account holds are shown to him too; 0: only his own
-    uint8_t   pullCall;   // the call sound his puller's pull line ends with: 0 (the default) none, else <call1> to <call21>
-    uint8_t   chainCall;  // the call sound the skillchain plan's opener ends "Starting {Skillchain}!" with: 0 none, else <call1> to <call21>
-    uint8_t   readyCall;  // and its closer her "{Ready!} N TP": 0 none, else <call1> to <call21>
+    uint8_t   pullCall;   // the call sound his puller's pull line ends with: <call0> to <call20>, or CL_CALL_NONE
+    uint8_t   chainCall;  // the call sound the skillchain plan's opener ends "Starting {Skillchain}!" with: <call0> to <call20>, or CL_CALL_NONE
+    uint8_t   readyCall;  // and its closer her "{Ready!} N TP": <call0> to <call20>, or CL_CALL_NONE
 } cl_prefs;
 
 // ---- 0x01xx: a cardian's state --------------------------------------------

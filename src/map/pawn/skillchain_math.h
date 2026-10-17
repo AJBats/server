@@ -950,7 +950,7 @@ namespace cardian::chains
     // (ws_phrases.h), plain otherwise, and the mob where his macro has <t>
     // -- and its closer, with the TP for her close, once a fight while she
     // holds it: "{Ready!} 1240 TP <call14>". The calls are his choice
-    // (Settings), none for 0
+    // (Settings), none for chat::kNoCall
     inline constexpr uint8_t kSkillchainPhraseGroup = 8; // "Skillchain"
     inline constexpr uint8_t kSkillchainPhraseEntry = 45;
     inline constexpr uint8_t kReadyPhraseGroup      = 5; // "Ready!"

@@ -1022,11 +1022,12 @@ TEST_CASE("The plan's calls read as a player's macros", "[cardian][skillchains]"
     CHECK(cardian::chains::openingLine("Wasp Sting", "Brutal Sheep", 12) ==
           "Starting " + autoTranslate(8, 45) + "! " + autoTranslate(33, 19) + "! Brutal Sheep <call12>");
     // a weapon skill the dictionary lacks is said plainly; no call, no sound
-    CHECK(cardian::chains::openingLine("Nothing Like It", "Brutal Sheep", 0) == "Starting " + autoTranslate(8, 45) + "! Nothing Like It! Brutal Sheep");
+    CHECK(cardian::chains::openingLine("Nothing Like It", "Brutal Sheep", cardian::chat::kNoCall) == "Starting " + autoTranslate(8, 45) + "! Nothing Like It! Brutal Sheep");
 
     // the closer's: "{Ready!} 1240 TP <call14>"
     CHECK(cardian::chains::readyLine(1240, 14) == autoTranslate(5, 5) + " 1240 TP <call14>");
-    CHECK(cardian::chains::readyLine(1000, 0) == autoTranslate(5, 5) + " 1000 TP");
+    CHECK(cardian::chains::readyLine(1000, cardian::chat::kNoCall) == autoTranslate(5, 5) + " 1000 TP");
+    CHECK(cardian::chains::readyLine(1000, 0) == autoTranslate(5, 5) + " 1000 TP <call0>");
 }
 
 TEST_CASE("skillchains: a tank outside the plan holds her weapon skill while its chain is going, her tactician's and an order's alike", "[cardian][skillchains]")
