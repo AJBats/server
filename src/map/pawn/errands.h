@@ -22,12 +22,15 @@
 #pragma once
 
 #include "common/cbasetypes.h"
+#include "common/types/position.h"
 #include "errand_math.h"
 
 #include <optional>
 #include <string>
 
+class CBaseEntity;
 class CCharEntity;
+class CZone;
 
 // The linkshell's errands (RESEARCH §11.13): the player sends a member of his
 // club (club.h) off to do something, and she comes back with it done. One
@@ -99,6 +102,14 @@ namespace pawn::errands
     // Why gear up cannot go now for a member of his (CL_S_*), CL_S_OK when it
     // can: standing, up, out of a fight, in a zone with an auction counter
     auto gearRefusal(uint32 charid) -> uint16;
+
+    // Where an errand walks in town (here, and town_errands.h): the nearest
+    // auction counter of her zone, nullptr for none; and the zone's floor a
+    // step short of an NPC, on the side `from` stands -- a counter or a guard
+    // often stands behind a desk the mesh leaves out -- nothing when the mesh
+    // has no floor near it
+    auto counterIn(const CCharEntity* PPawn) -> const CBaseEntity*;
+    auto shortOf(CZone* PZone, const position_t& npc, const position_t& from) -> std::optional<position_t>;
 
     // Her nation and her rank in it, as the game holds them
     struct Rank

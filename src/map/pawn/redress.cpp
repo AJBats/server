@@ -36,7 +36,6 @@
 #include "common/logging.h"
 #include "common/timer.h"
 #include "entities/char_entity.h"
-#include "enums/chat_message_type.h"
 #include "enums/item_state.h"
 #include "item_container.h"
 #include "items/item.h"
@@ -45,7 +44,6 @@
 #include "job_points.h"
 #include "latent_effect_container.h"
 #include "packets/c2s/0x100_myroom_job.h"
-#include "packets/s2c/0x017_chat_std.h"
 #include "party.h"
 #include "utils/charutils.h"
 #include "utils/itemutils.h"
@@ -590,9 +588,10 @@ namespace pawn::redress
         }
 
         // The census's answer put on her: her gear, her food laid in her bag
-        // and her spells, her health recomputed for them; the player she is
-        // with told. Gear and supplies only: her level, her support job and
-        // her skills grow slowly out of sight (applyDing), never at a counter
+        // and her spells, her health recomputed for them -- said in the map
+        // log alone, the re-dress being her own. Gear and supplies only: her
+        // level, her support job and her skills grow slowly out of sight
+        // (applyDing), never at a counter
         void apply(CCharEntity* PPawn, const Answer& answer)
         {
             const auto plan = planOf(PPawn->getName());
@@ -611,10 +610,6 @@ namespace pawn::redress
 
             ShowInfoFmt("world: {} is dressed for level {} at the auction house ({} pieces put on, {} taken off, {} moved to Mog Wardrobe 1, {} spells learned)",
                         PPawn->getName(), answer.level, dressed.worn, dressed.dropped + dressed.bared, dressed.moved, learned);
-            if (auto* PPlayer = pawn::partyPlayer(PPawn); PPlayer != nullptr)
-            {
-                PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PPlayer, MESSAGE_SYSTEM_3, fmt::format("{} is dressed for level {}.", PPawn->getName(), answer.level));
-            }
         }
 
         // Every answer the census has given, put on whoever it is for that
@@ -699,6 +694,36 @@ namespace pawn::redress
                                 .state    = *state });
             }
             return out;
+        }
+
+        // The jobs her planned ding wants her on now (redress_math.h
+        // careerJobs), with the support job's own level and the ding's level
+        // for the log; nothing for one who is not the world's, or with no plan
+        struct PlannedJobs
+        {
+            cardian::redress::CareerJobs jobs;
+            uint8                        sublevel = 0;
+            uint8                        level    = 0;
+        };
+
+        auto plannedJobs(const CCharEntity* PPawn) -> std::optional<PlannedJobs>
+        {
+            if (PPawn == nullptr || !pawn::seats::isWorlds(PPawn->id))
+            {
+                return std::nullopt;
+            }
+            const auto rset = db::preparedStmt("SELECT kind, job, level, sub, sublevel FROM cardian_ding WHERE charid = ? AND state = 'planned'", PPawn->id);
+            if (!rset || !rset->next())
+            {
+                return std::nullopt;
+            }
+            const DingPlan plan{ .dress = rset->get<std::string>("kind") == "dress", .job = rset->get<uint8>("job"), .level = rset->get<uint8>("level") };
+            const auto     jobs = cardian::redress::careerJobs(plan, rset->get<uint8>("sub"), static_cast<uint8>(PPawn->GetMJob()), static_cast<uint8>(PPawn->GetSJob()));
+            if (!jobs.has_value())
+            {
+                return std::nullopt;
+            }
+            return PlannedJobs{ *jobs, rset->get<uint8>("sublevel"), plan.level };
         }
 
         auto inCity(const CCharEntity* PPawn) -> bool
@@ -1018,7 +1043,17 @@ namespace pawn::redress
                          "ADD COLUMN IF NOT EXISTS `sublevel` tinyint(3) unsigned NOT NULL DEFAULT '0' AFTER `sub`");
     }
 
-    auto askFor(const CCharEntity* PPawn) -> bool
+    auto due(const CCharEntity* PPawn) -> bool
+    {
+        if (PPawn == nullptr || !pawn::seats::isWorlds(PPawn->id))
+        {
+            return false;
+        }
+        const auto looked = recordOf(PPawn->id);
+        return looked.read && cardian::redress::shouldAsk(levelOf(PPawn), looked.record);
+    }
+
+    auto askFor(const CCharEntity* PPawn, const bool afresh) -> bool
     {
         if (PPawn == nullptr || !pawn::seats::isWorlds(PPawn->id))
         {
@@ -1030,12 +1065,54 @@ namespace pawn::redress
         {
             return false;
         }
-        if (cardian::redress::shouldAsk(level, looked.record))
+        if (cardian::redress::shouldAsk(level, looked.record) || (afresh && cardian::redress::asksAfresh(level, looked.record)))
         {
             ask(PPawn, level);
             return true;
         }
         return looked.record.has_value() && looked.record->state != State::Done;
+    }
+
+    auto careerWants(const CCharEntity* PPawn) -> bool
+    {
+        return plannedJobs(PPawn).has_value();
+    }
+
+    auto takeCareerJobs(CCharEntity* PPawn) -> std::optional<std::string>
+    {
+        if (PPawn == nullptr || !canDress(PPawn))
+        {
+            return std::nullopt;
+        }
+        const auto planned = plannedJobs(PPawn);
+        if (!planned.has_value())
+        {
+            return std::nullopt;
+        }
+        const auto before   = fmt::format("{} {}/{} {}", magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel(), magic_enum::enum_name(PPawn->GetSJob()),
+                                          PPawn->GetSLevel());
+        const bool switched = planned->jobs.main != 0 && switchMain(PPawn, planned->jobs.main, planned->jobs.sub);
+        const bool subbed   = planned->jobs.sub != 0 && takeSub(PPawn, planned->level, planned->jobs.sub, planned->sublevel);
+        if (!switched && !subbed)
+        {
+            return std::nullopt;
+        }
+        // Seen, she plays her new job by its own rows: seeded from it, as at
+        // her next stand -- a set the player gave her as his guest stays his.
+        // The game's job change takes her gear off and puts back only a set
+        // saved for the new job, so the census is asked for her gear for it
+        // now, over any request still on its way for the old one: its answer
+        // is put on her wherever she stands (applyReady), at a counter or not
+        if (switched)
+        {
+            pawn::reloadBrain(PPawn);
+            ask(PPawn, levelOf(PPawn));
+            pawn::world::noteLevel(PPawn->id, PPawn->GetMLevel());
+        }
+        PPawn->UpdateHealth();
+        PPawn->clearPacketList();
+        return fmt::format("{} {}/{} {} (was {})", magic_enum::enum_name(PPawn->GetMJob()), PPawn->GetMLevel(), magic_enum::enum_name(PPawn->GetSJob()),
+                           PPawn->GetSLevel(), before);
     }
 
     auto settled(const uint32 charid) -> bool

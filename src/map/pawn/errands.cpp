@@ -532,26 +532,6 @@ namespace pawn::errands
             return *snapped;
         }
 
-        // A step short of an NPC, on her side of it, on the zone's floor: a
-        // counter or a guard often stands behind a desk the mesh leaves out
-        auto shortOf(CZone* PZone, const position_t& npc, const position_t& from) -> std::optional<position_t>
-        {
-            position_t  want = npc;
-            const float dx   = from.x - npc.x;
-            const float dz   = from.z - npc.z;
-            const float len  = std::sqrt(dx * dx + dz * dz);
-            if (len > 0.01f)
-            {
-                want.x += dx / len * kShortOf;
-                want.z += dz / len * kShortOf;
-            }
-            if (auto at = snap(PZone, want, kAtNpc); at.has_value())
-            {
-                return at;
-            }
-            return snap(PZone, npc, kAtNpc + kShortOf);
-        }
-
         // The zone line she leaves by: toward the first zone of her route
         // that is not hers, where a walk leads there
         auto lineToward(const CCharEntity* PPawn, const std::vector<uint16_t>& route) -> std::optional<position_t>
@@ -569,27 +549,6 @@ namespace pawn::errands
                 }
             }
             return std::nullopt;
-        }
-
-        // The nearest auction counter of her zone
-        auto counterIn(CCharEntity* PPawn) -> const CBaseEntity*
-        {
-            const CBaseEntity* PNearest = nullptr;
-            float              nearest  = 0.0f;
-            for (const auto* PCounter : PPawn->loc.zone->queryEntitiesByName("Auction_Counter"))
-            {
-                if (PCounter == nullptr)
-                {
-                    continue;
-                }
-                const float away = distance(PPawn->loc.p, PCounter->loc.p);
-                if (PNearest == nullptr || away < nearest)
-                {
-                    PNearest = PCounter;
-                    nearest  = away;
-                }
-            }
-            return PNearest;
         }
 
         void walkTo(Record& r, const position_t& there, const std::optional<position_t>& goal, const float within)
@@ -1418,6 +1377,48 @@ namespace pawn::errands
             reply.finish(answer, CL_S_OK);
         }
     } // namespace
+
+    auto shortOf(CZone* PZone, const position_t& npc, const position_t& from) -> std::optional<position_t>
+    {
+        position_t  want = npc;
+        const float dx   = from.x - npc.x;
+        const float dz   = from.z - npc.z;
+        const float len  = std::sqrt(dx * dx + dz * dz);
+        if (len > 0.01f)
+        {
+            want.x += dx / len * kShortOf;
+            want.z += dz / len * kShortOf;
+        }
+        if (auto at = snap(PZone, want, kAtNpc); at.has_value())
+        {
+            return at;
+        }
+        return snap(PZone, npc, kAtNpc + kShortOf);
+    }
+
+    auto counterIn(const CCharEntity* PPawn) -> const CBaseEntity*
+    {
+        if (PPawn == nullptr || PPawn->loc.zone == nullptr)
+        {
+            return nullptr;
+        }
+        const CBaseEntity* PNearest = nullptr;
+        float              nearest  = 0.0f;
+        for (const auto* PCounter : PPawn->loc.zone->queryEntitiesByName("Auction_Counter"))
+        {
+            if (PCounter == nullptr)
+            {
+                continue;
+            }
+            const float away = distance(PPawn->loc.p, PCounter->loc.p);
+            if (PNearest == nullptr || away < nearest)
+            {
+                PNearest = PCounter;
+                nearest  = away;
+            }
+        }
+        return PNearest;
+    }
 
     // cardian_errands, a row an errand: made here, read at boot. A row is
     // written as she is sent (state 'going', `started` the game clock then),

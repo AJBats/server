@@ -37,17 +37,12 @@ class CZone;
 //     beside him who lacks a scroll and has the points buys it, through the
 //     guard's own sale (modules/cardian/lua/conquest_exchange.lua). A guard of
 //     another nation sells her nothing unless her nation outranks his in the
-//     conquest tally: she says so, that her own nation's consulate would sell,
-//     once in kSpeakAgain at that guard.
-//   - Arriving in a city with a conquest shop (any zone-in, a warp home
-//     within the city included): once the party has caught up, one cardian
-//     of his party in the city with him who lacks a scroll and could buy
-//     one, picked at random, says she wants to visit the conquest shop. One
-//     who has both, cannot pay for either or has no room in her bag says
-//     nothing.
-// What she does is told to the player's addon (the Link's SUPPLIES), which
-// words it: the purchase as the conquest exchange's own line, the rest as her
-// line in party chat.
+//     conquest tally, and is not asked again for a while.
+//   - On her own, in a city: she walks to a guard who sells to her, or, in
+//     his party, to her own nation's consulate, and buys them there
+//     (town_errands.h).
+// A purchase is told to the player's addon (the Link's SUPPLIES), which words
+// it as the conquest exchange's own line.
 namespace pawn::guards
 {
     struct Guard;
@@ -57,13 +52,19 @@ namespace pawn::supplies
 {
     // From each zone's module tick
     void tick(CZone* PZone);
-    // The gear-up errand's stop at a guard (errands.h): she, standing at
-    // this guard, buys the scrolls she lacks through the guard's own sale as
-    // she would at his side; the player told (his addon's SUPPLIES) when
-    // given. How many she bought; `refusal`, when given, the guard's reason
-    // for turning her away in the exchange's terms (OUTRANKED: another
-    // nation's guard, his nation outranking hers), empty when none
+    // An errand's stop at a guard -- the linkshell's gear-up (errands.h), her
+    // own in town (town_errands.h): she, standing at this guard, buys the
+    // scrolls she lacks through the guard's own sale as she would at his
+    // side; the player told (his addon's SUPPLIES) when given. How many she
+    // bought; `refusal`, when given, the guard's reason for turning her away
+    // in the exchange's terms (OUTRANKED: another nation's guard, his nation
+    // outranking hers), empty when none
     auto buyAt(CCharEntity* PPawn, const guards::Guard& guard, const CCharEntity* PTell, std::string* refusal = nullptr) -> uint32;
-    // A real player's zone-in (the pawn module's): an arrival, wherever from
-    void zonedIn(const CCharEntity* PPlayer);
+    // She lacks a scroll she could buy now: an Instant Warp or an Instant
+    // Reraise missing from her bags, the points to pay for it, and room for it
+    // (her points are read from the database)
+    auto wants(CCharEntity* PPawn) -> bool;
+    // The scrolls missing from her bags, a bit each, whatever she could pay:
+    // read from her bags alone
+    auto lacks(CCharEntity* PPawn) -> uint8;
 } // namespace pawn::supplies

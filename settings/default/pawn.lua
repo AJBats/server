@@ -95,6 +95,11 @@ xi.settings.pawn =
     AUTO_RESCUE_SECONDS = 10,
     AUTO_RESCUE_RADIUS  = 4,
 
+    -- A cardian's own errands in town (ROADMAP D, "Town errands"): in a city
+    -- she walks to the auction counter, a gate guard or her consulate, and a
+    -- Mog House door herself, and is ready before she sets out with him.
+    TOWN_ERRANDS = true,
+
     -- The party finder's shout is heard by the wild cardians online in
     -- every city and town, wherever the player shouts from; one within this
     -- many levels of the player fits the goal, one outside it says why not

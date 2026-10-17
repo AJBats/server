@@ -67,6 +67,14 @@ namespace cardian::redress
         return record->state == State::Done && levelNow > record->level;
     }
 
+    // Her jobs changed in town (pawn/town_errands.h): the census plans her
+    // gear for the jobs she wears, so it is asked again at the level she has,
+    // whatever she was dressed for -- unless a request is on its way already
+    inline auto asksAfresh(const uint8_t levelNow, const std::optional<Record>& record) -> bool
+    {
+        return levelNow != 0 && (!record.has_value() || record->state == State::Done);
+    }
+
     namespace detail
     {
         template <typename T>
@@ -295,6 +303,34 @@ namespace cardian::redress
         uint8_t level = 0;
         bool    gear  = false;
     };
+
+    // The jobs her career wants her on now (pawn/town_errands.h), from a ding
+    // the census has planned and the map holds back while she is seen: the
+    // plan's job when she plays another, with the support job planned for it;
+    // or, on a dress at the level she has, its support job when she wears
+    // another. A level's ding on the job she plays waits for the ding, its
+    // support job with it. 0 keeps the one she has
+    struct CareerJobs
+    {
+        uint8_t main = 0;
+        uint8_t sub  = 0;
+
+        auto operator==(const CareerJobs&) const -> bool = default;
+    };
+
+    inline auto careerJobs(const DingPlan& plan, const uint8_t planSub, const uint8_t mainNow, const uint8_t subNow) -> std::optional<CareerJobs>
+    {
+        const uint8_t sub = planSub <= kLastJob ? planSub : 0;
+        if (plan.job != 0 && plan.job <= kLastJob && plan.job != mainNow)
+        {
+            return CareerJobs{ plan.job, sub != plan.job ? sub : static_cast<uint8_t>(0) };
+        }
+        if (plan.dress && sub != 0 && sub != subNow && sub != mainNow)
+        {
+            return CareerJobs{ 0, sub };
+        }
+        return std::nullopt;
+    }
 
     // Where she is now, as the map sees her
     struct DingNow

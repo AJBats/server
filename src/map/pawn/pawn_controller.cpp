@@ -42,6 +42,7 @@
 #include "pawn_items.h"
 #include "pawn_rules.h"
 #include "pull_math.h"
+#include "town_errands.h"
 
 #include "common/lua.h"
 #include "common/settings.h"
@@ -728,6 +729,11 @@ auto CPawnController::ServerExitReason() -> std::string
 auto CPawnController::IsWaiting() const -> bool
 {
     return m_Waiting;
+}
+
+auto CPawnController::HoldsOnOrder() const -> bool
+{
+    return m_Waiting && m_WaitOrdered;
 }
 
 auto CPawnController::HoldNow() const -> cardian::hold::Hold
@@ -1555,7 +1561,7 @@ auto CPawnController::Staked() const -> bool
 
 auto CPawnController::Treks() const -> bool
 {
-    return !m_Waiting && !Staked();
+    return !m_Waiting && !Staked() && !pawn::town::busy(POwner->id);
 }
 
 auto CPawnController::PlayerPlace::anchor(const float predictScale) const -> Anchor
@@ -5733,8 +5739,11 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
 
     // Resting on his order, or her Rest row's, she finishes before she sets
     // out after him. A trek to meet him follows him, and ends where he
-    // already is (meetTrek)
-    if (!m_RestOrder.active() && pawn::meetTrek(static_cast<const CCharEntity*>(POwner)).has_value())
+    // already is (meetTrek); it waits on her errands in town, which are done
+    // before she sets out (town_errands.h) -- her own trek to her consulate
+    // is one of them, and goes
+    const bool meetsHim = pawn::travelMeetOf(POwner->id) != 0;
+    if (!m_RestOrder.active() && !(meetsHim && pawn::town::busy(POwner->id)) && pawn::meetTrek(static_cast<const CCharEntity*>(POwner)).has_value())
     {
         if (m_Mode != Mode::Travel)
         {
