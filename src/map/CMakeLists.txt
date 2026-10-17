@@ -132,6 +132,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pull.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pull.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_pull.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/town_errands.cpp
 )
 
 set(MAP_CORE_SOURCES

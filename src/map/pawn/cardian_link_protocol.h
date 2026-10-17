@@ -34,7 +34,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 88: PREFS' chainCall and readyCall, the
+// compatible, the user, 2026-09-14). 89: SUPPLIES' WANTED and FOREIGN
+// retired, and its nation and missing with them -- a cardian runs her own
+// errands in town; 88: PREFS' chainCall and readyCall, the
 // call sounds of the skillchain plan's calls (Settings); 87: the Pull page and the puller's badge --
 // PULL_KINDS, PULL_KIND, SET_PULL_LIST, PULL_STATE and CL_S_CANNOT_PULL;
 // 86: PREFS' pullCall, the call sound of
@@ -162,7 +164,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 88 };
+enum { CL_PROTOCOL = 89 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1837,25 +1839,23 @@ typedef struct cl_offer_answer
 } cl_offer_answer;
 
 // What a cardian did about her conquest supplies, the scrolls she buys at a
-// conquest guard (pawn/supplies.h)
+// conquest guard (pawn/supplies.h). 1 and 2 were her asking to be taken to
+// the conquest shop, or to her nation's consulate: she walks there herself
+// now (pawn/town_errands.h), and they are not used again
 enum
 {
-    CL_SUPPLIES_BOUGHT  = 0, // she bought item for price conquest points
-    CL_SUPPLIES_WANTED  = 1, // arrived in a city lacking scrolls she can pay for: missing says which
-    CL_SUPPLIES_FOREIGN = 2, // a guard of another nation would not sell to her: nation is hers
+    CL_SUPPLIES_BOUGHT = 0, // she bought item for price conquest points
 };
 
 // One-way, to the player: what a cardian of his party did about her conquest
 // supplies. The server names it; the addon words it -- a purchase as the
-// conquest exchange's own line, the rest as her line in party chat.
+// conquest exchange's own line.
 typedef struct cl_supplies
 {
     cl_header h;
     uint32_t  cardian; // charid
     uint8_t   kind;    // CL_SUPPLIES_*
-    uint8_t   nation;  // hers (xi.nation): FOREIGN's line names its consulate
-    uint8_t   missing; // WANTED: what she lacks, 1 an Instant Warp, 2 an Instant Reraise
-    uint8_t   spare;
+    uint8_t   spare[3];
     uint16_t  item;    // BOUGHT: the item
     uint16_t  price;   // BOUGHT: what it cost her, in conquest points
 } cl_supplies;

@@ -68,8 +68,8 @@ namespace pawn::guards
 
     // Her own nation's guard in another zone of her city -- a consulate:
     // San d'Oria's Bastok and Windurst guards stand in Northern San d'Oria
-    // -- and the zone it stands in; nothing when her zone has one of hers,
-    // or her city none
+    // -- and the zone it stands in, the nearest by zone lines; nothing when
+    // her zone has one of hers, or her city none
     struct Elsewhere
     {
         const Guard* guard = nullptr;

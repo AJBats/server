@@ -257,7 +257,9 @@ public:
     void SetStake(std::optional<pawn::Stake> stake);
 
     auto Staked() const -> bool;
-    // She follows the player through zone lines: not waiting, not staked
+    // She follows the player through zone lines: not waiting, not staked,
+    // and not on her own errands in town (town_errands.h), which she
+    // finishes first
     auto Treks() const -> bool;
 
     // The steer tick's step (pawn/view.h, every kSteerPeriodMs; the pawn
@@ -313,6 +315,7 @@ public:
     // other hold or follow given here is not the automatic one.
     void SetWaiting(bool on, bool ordered, std::string_view why = {}); // `why` is the transition's reason; empty takes a plain one
     auto IsWaiting() const -> bool;
+    auto HoldsOnOrder() const -> bool; // holding on the player's own order, not a warp's automatic hold
     void HoldForWarp(std::string_view why);
     void Carried(); // carried off by a warp or a teleport: she holds where she lands until the player is in her zone with her
     void ArriveWith(const position_t& landing); // set down beside the player by an event (pawn::landWithPlayer): she stands until he is seen there
