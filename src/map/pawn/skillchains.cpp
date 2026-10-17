@@ -135,8 +135,8 @@ namespace pawn::chains
         // player charid -> the call sounds his plan's calls end with (PREFS)
         struct Calls
         {
-            uint8 opening = 0;
-            uint8 ready   = 0;
+            uint8 opening = cardian::chat::kNoCall;
+            uint8 ready   = cardian::chat::kNoCall;
         };
         std::unordered_map<uint32, Calls> callsOf;
 
@@ -1232,10 +1232,10 @@ namespace pawn::chains
             return;
         }
         auto*       PSkill = battleutils::GetWeaponSkill(plan->openerSkill);
-        const auto  call   = callsOf.contains(owner) ? callsOf[owner].opening : uint8{ 0 };
+        const auto  call   = callsOf.contains(owner) ? callsOf[owner].opening : cardian::chat::kNoCall;
         const auto  line   = cardian::chains::openingLine(PSkill != nullptr ? wordsOf(PSkill->getName()) : std::string("my weapon skill"), wordsOf(PMob->getName()), call);
         ShowInfoFmt("chains: {} calls the opening of {} on {}{}", PMember->getName(), cardian::chains::chainName(plan->chain), PMob->getName(),
-                    call != 0 ? fmt::format(" (call {})", call) : std::string());
+                    call != cardian::chat::kNoCall ? fmt::format(" (call {})", call) : std::string());
         pawn::tactics::role::sayParty(PMember, line);
     }
 
@@ -1252,16 +1252,15 @@ namespace pawn::chains
         {
             return;
         }
-        const auto call = callsOf.contains(owner) ? callsOf[owner].ready : uint8{ 0 };
+        const auto call = callsOf.contains(owner) ? callsOf[owner].ready : cardian::chat::kNoCall;
         ShowInfoFmt("chains: {} calls ready to close {} on {} at {} TP{}", PMember->getName(), cardian::chains::chainName(plan->chain), PMob->getName(),
-                    PMember->health.tp, call != 0 ? fmt::format(" (call {})", call) : std::string());
+                    PMember->health.tp, call != cardian::chat::kNoCall ? fmt::format(" (call {})", call) : std::string());
         pawn::tactics::role::sayParty(PMember, cardian::chains::readyLine(PMember->health.tp, call));
     }
 
     void setCalls(const uint32 playerCharID, const uint8 opening, const uint8 ready)
     {
-        const auto kept = [](const uint8 call) { return call <= cardian::chat::kCallCount ? call : uint8{ 0 }; };
-        callsOf[playerCharID] = Calls{ kept(opening), kept(ready) };
+        callsOf[playerCharID] = Calls{ cardian::chat::keptCall(opening), cardian::chat::keptCall(ready) };
     }
 
     auto forecast(CCharEntity* PNuker, CBattleEntity* PMob) -> std::optional<Forecast>

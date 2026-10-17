@@ -1874,11 +1874,13 @@ namespace pawn::linkapi
 
         // The player's preferences the server applies to him: the shared
         // maps (account_wide.h), his puller's call sound (pull.h) and his
-        // skillchain plan's (skillchains.h); a call past the game's count is
-        // refused
+        // skillchain plan's (skillchains.h); a call the game has not, other
+        // than none, is refused
+        static_assert(cardian::chat::kNoCall == CL_CALL_NONE && cardian::chat::kCallCount == CL_CALL_LAST + 1);
         void prefs(CCharEntity* PChar, const cl_prefs& ask, Reply& reply)
         {
-            if (ask.pullCall > cardian::chat::kCallCount || ask.chainCall > cardian::chat::kCallCount || ask.readyCall > cardian::chat::kCallCount)
+            const auto callOk = [](const uint8 call) { return call < cardian::chat::kCallCount || call == cardian::chat::kNoCall; };
+            if (!callOk(ask.pullCall) || !callOk(ask.chainCall) || !callOk(ask.readyCall))
             {
                 reply.finish(ask, CL_S_MALFORMED);
                 return;

@@ -31,21 +31,30 @@
 // IPC message a player's own party chat rides) hands the bytes on untouched.
 namespace cardian::chat
 {
-    // The call sounds the Pull call setting offers: <call1> to <call21>
+    // The game's call sounds, <call0> to <call20>, by their own numbers: the
+    // ones the Settings calls offer. kNoCall is none (the Link's
+    // CL_CALL_NONE), apart from Call 0
     constexpr uint8_t kCallCount = 21;
+    constexpr uint8_t kNoCall    = 0xFF;
 
     // A call sound inside a chat line. The client sends one as the plain
     // text "<callN>" -- the player's "<call11>" reached the server as the
     // bytes 3C 63 61 6C 6C 31 31 3E -- and the client that receives the line
-    // turns the text into the sound. 0, or a number past kCallCount, is no
-    // call: nothing
+    // turns the text into the sound. kNoCall, or any number the game has no
+    // call for, is no call: nothing
     inline auto callBytes(const uint8_t call) -> std::string
     {
-        if (call == 0 || call > kCallCount)
+        if (call >= kCallCount)
         {
             return {};
         }
         return "<call" + std::to_string(call) + ">";
+    }
+
+    // A call kept as given when the game has it, else none
+    inline auto keptCall(const uint8_t call) -> uint8_t
+    {
+        return call < kCallCount ? call : kNoCall;
     }
 
     // An auto-translate phrase inside a chat line: six raw bytes, FD 02 02,

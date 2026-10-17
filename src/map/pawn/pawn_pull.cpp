@@ -765,7 +765,7 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
             pawn::tactics::notePull(static_cast<CCharEntity*>(POwner), PMob);
             ShowInfoFmt("pull: {} brings {} in ({} at level {}, on {}, {:.0f} y out{})", POwner->getName(), PMob->getName(), pull::conWord(check), level,
                         POn != nullptr ? POn->getName() : std::string("nobody"), distance(m_Stake->at, PMob->loc.p),
-                        call != 0 ? fmt::format(", call {}", call) : std::string());
+                        call != cardian::chat::kNoCall ? fmt::format(", call {}", call) : std::string());
             m_Pull->step   = Step::Back;
             m_Pull->stepAt = m_Tick;
             m_Pull->backTo = pull::pastLanding(nearPosition(m_Stake->at, cardian::stake::kMobAhead, 0.0f), PMob->loc.p);
