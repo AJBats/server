@@ -295,6 +295,41 @@ TEST_CASE("Live census: a claim lapses after two minutes", "[cardian][redress][l
     CHECK(claimLapsed(kClaimLapseSeconds));
 }
 
+TEST_CASE("Live census: a give of her foundation is never put on a body the map holds", "[cardian][redress][live]")
+{
+    // census.py Live.give_owed: a ding to level 0 on job 0, no dress. The census writes it where the
+    // map holds no body of hers; standing, wherever she is and whatever she does, the map never applies
+    // it -- it waits, or is set aside as a level she has
+    const DingPlan give{ .dress = false, .job = 0, .level = 0, .gear = false };
+    CHECK(dingStep(give, {}) == DingStep::Claim);
+    for (const bool inCity : { true, false })
+    {
+        for (const bool seen : { true, false })
+        {
+            for (const bool busy : { true, false })
+            {
+                for (const bool farming : { true, false })
+                {
+                    for (const uint8_t jobLevel : { uint8_t{ 0 }, uint8_t{ 1 }, uint8_t{ 75 } })
+                    {
+                        auto now     = standingFree();
+                        now.inCity   = inCity;
+                        now.seen     = seen;
+                        now.busy     = busy;
+                        now.farming  = farming;
+                        now.jobLevel = jobLevel;
+                        CHECK(dingStep(give, now) != DingStep::Apply);
+                    }
+                }
+            }
+        }
+    }
+    CHECK(dingStep(give, standingFree()) == DingStep::SetAside);
+    auto field   = standingFree();
+    field.inCity = false;
+    CHECK(dingStep(give, field) == DingStep::SetAside);
+}
+
 TEST_CASE("Careers: her target is the one of the job she plays", "[cardian][redress][careers]")
 {
     constexpr uint8_t kRNG = 11;
