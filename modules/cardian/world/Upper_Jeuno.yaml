@@ -39,6 +39,96 @@ slots:
     dwell: [3, 10]
     enter: rulude_gardens
     exit: any
+  # -- The auction house at Wise Wolf, Shama Pikholo: the player's own sellers first; the town's
+  # crowd gathers just before the clerks (walked by the user, 2026-10-18), so the square stands there,
+  # close and full
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [-64.4, 1.0, 16.9]
+    spread: 1.5
+    face: [-66.3, 1.0, 16.2]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [-66.1, 1.0, 19.1]
+    spread: 1.5
+    face: [-68.1, 1.0, 19.3]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  # The square: the crowd that is just there, in little groups
+  - activity: stand
+    band: [1, 75]
+    count: 14
+    at: [-63.3, 1.0, 18.0]
+    spread: 8
+    dwell: [120, 900]
+    enter: any
+    exit: any
+    cliques: [1, 4]
+    lounge: true
+  # Seeking party: off to the side
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [-55.9, 1.0, 24.2]
+    spread: 5
+    dwell: [300, 900]
+    enter: any
+    exit: batallia_downs
+    cliques: [1, 2]
+    lounge: true
+  # Coming home: in from the field, a stop in the square, then to the Mog House
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [-63.3, 1.0, 18.0]
+    spread: 7
+    dwell: [30, 120]
+    enter: batallia_downs
+    exit: mog_house
+    cliques: [1, 2]
+    lounge: true
+  # -- The auction house at Indika, Ulesa, by the chocobo stables: thinner than the one at Wise Wolf
+  # (the user, 2026-10-18: out of the way, and most use the other), so one seller at each clerk and a
+  # small square, no seeking-party corner and no stop on the way home
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-41.3, 8.0, 98.8]
+    spread: 1.5
+    face: [-39.5, 8.0, 99.6]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  - activity: stand
+    band: [1, 75]
+    count: 1
+    at: [-38.1, 8.0, 93.2]
+    spread: 1.5
+    face: [-37.0, 8.0, 94.9]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  # The square: a few who are just there
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [-46.2, 8.0, 93.1]
+    spread: 7
+    dwell: [120, 900]
+    enter: any
+    exit: any
+    cliques: [1, 2]
+    lounge: true
   # -- AFK: one kneeler at each home point
   - activity: stand
     band: [1, 75]

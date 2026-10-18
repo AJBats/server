@@ -41,6 +41,80 @@ slots:
     dwell: [3, 10]
     enter: lower_jeuno
     exit: any
+  # -- The auction house at Basmus, Kouang, Rilve-Hitolve, Sapladrepoin: the player's own sellers first
+  - activity: stand
+    band: [1, 75]
+    count: 2
+    at: [-42.9, 8.0, -2.0]
+    spread: 1.5
+    face: [-43.0, 8.0, -4.0]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  - activity: stand
+    band: [1, 75]
+    count: 2
+    at: [-36.2, 8.0, -2.4]
+    spread: 1.5
+    face: [-35.0, 8.0, -4.0]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  - activity: stand
+    band: [1, 75]
+    count: 2
+    at: [-30.8, 8.0, 1.8]
+    spread: 1.5
+    face: [-31.0, 8.0, 3.7]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  - activity: stand
+    band: [1, 75]
+    count: 2
+    at: [-37.0, 8.0, 3.4]
+    spread: 1.5
+    face: [-38.9, 8.0, 3.8]
+    dwell: [20, 90]
+    enter: any
+    exit: any
+    prefer: sellers
+  # The square: the crowd that is just there, in little groups
+  - activity: stand
+    band: [1, 75]
+    count: 10
+    at: [-42.4, 6.2, 7.1]
+    spread: 14
+    dwell: [120, 900]
+    enter: any
+    exit: any
+    cliques: [1, 4]
+    lounge: true
+  # Seeking party: off to the side (two yalms aside of the generator's point, which is off the mesh)
+  - activity: stand
+    band: [1, 75]
+    count: 3
+    at: [-46.4, 8.0, 9.1]
+    spread: 5
+    dwell: [300, 900]
+    enter: any
+    exit: sauromugue_champaign
+    cliques: [1, 2]
+    lounge: true
+  # Coming home: in from the field, a stop in the square, then to the Mog House
+  - activity: stand
+    band: [1, 75]
+    count: 4
+    at: [-42.4, 6.2, 7.1]
+    spread: 7
+    dwell: [30, 120]
+    enter: sauromugue_champaign
+    exit: mog_house
+    cliques: [1, 2]
+    lounge: true
   # -- AFK: one kneeler at each home point
   - activity: stand
     band: [1, 75]
