@@ -202,10 +202,16 @@ namespace pawn::tactics
 
         // What a weapon skill of this attacker's deals this target on
         // average at this TP: the server's own weapon skill, its script and
-        // xi.weaponskills, run on stand-ins over the bank's seeded dice
-        // (tactics_bank.lua wsExpected). Nothing when the formula could not
-        // answer
-        auto wsExpected(CBattleEntity* PAttacker, CBattleEntity* PTarget, uint16 skill, int32 tp) -> std::optional<double>;
+        // xi.weaponskills, run on stand-ins with its dice read
+        // (tactics_bank.lua wsExpected), or -- where that read fails, said
+        // once in the map log -- sampled over the bank's seeded dice.
+        // Nothing when the formula could not answer
+        struct WsPrice
+        {
+            double value = 0.0;
+            bool   read  = true; // its dice read; else sampled
+        };
+        auto wsExpected(CBattleEntity* PAttacker, CBattleEntity* PTarget, uint16 skill, int32 tp) -> std::optional<WsPrice>;
 
         // The mob's life left at the party's rate, in seconds (below 0
         // unknown), and the party's damage a second: the reading the nuke
