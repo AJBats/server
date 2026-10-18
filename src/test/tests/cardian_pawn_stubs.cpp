@@ -109,6 +109,12 @@ class CardianTestStubs : public CPPModule
 {
     void OnInit() override
     {
+        // The test triggers that refuse a row (ah_sell.lua, ah_buy.lua) are
+        // switched off by their own files; a run that died with one on would
+        // leave it in the test database for every suite of the next run
+        db::preparedStmt("DROP TRIGGER IF EXISTS cardian_test_refuse_listing");
+        db::preparedStmt("DROP TRIGGER IF EXISTS cardian_test_refuse_give");
+
         ::lua["CBaseEntity"]["isCardian"] = [](CLuaBaseEntity* /* PLuaBaseEntity */) -> bool
         {
             return false;

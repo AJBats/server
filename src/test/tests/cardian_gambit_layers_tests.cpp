@@ -670,6 +670,27 @@ TEST_CASE("gambit layers: two lent rows never stand in one row of hers", "[cardi
     CHECK(ids(place<Row>(own, lent, Binds{ std::size_t{ 0 }, std::size_t{ 0 } }, enabledOf)) == std::vector<std::string>{ "r2", "r1*" });
 }
 
+TEST_CASE("gambit layers: a lent row runs as its own checkbox says: the party's Avoid aggro forced off stands in hers, off", "[cardian][gambits][layers][fit]")
+{
+    uint32 next = 0;
+    auto   lent = lentRows({ { "0|0:0|100:1:1|0", false } }, next); // Self -> Avoid aggro, lent off
+    auto   own  = ownRows({ { "0|0:0|100:1:1|0", true } });          // hers, on
+
+    const auto rows = fit<Row>(own, lent, gambitOf, enabledOf);
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].origin == Origin::Both);
+    CHECK_FALSE(rows[0].on);
+
+    // and lent on, with nothing of hers to stand in, it runs on
+    uint32 next2 = 0;
+    auto   on    = lentRows({ { "0|0:0|100:1:1|0", true } }, next2);
+    std::vector<Row> none;
+    const auto alone = fit<Row>(none, on, gambitOf, enabledOf);
+    REQUIRE(alone.size() == 1);
+    CHECK(alone[0].origin == Origin::Lent);
+    CHECK(alone[0].on);
+}
+
 TEST_CASE("gambit layers: Damage's bundle is the role's for her jobs: the melee tools for a main job that melees, nothing for a Black Mage", "[cardian][gambits][layers][fit]")
 {
     uint32 next = 0;
@@ -917,4 +938,15 @@ TEST_CASE("gambit layers: a bundle's rows are rows the editor could make, and He
     CHECK(bundle(cardian::party::Role::Puller, xi::Job::BLM, xi::Job::WHM) == withLinks(xi::Job::BLM, xi::Job::WHM));
     CHECK(bundle(cardian::party::Role::Puller, xi::Job::SMN, xi::Job::WAR) == withLinks(xi::Job::SMN, xi::Job::WAR));
     CHECK(bundle(cardian::party::Role::None, xi::Job::WAR, xi::Job::WHM).empty());
+}
+
+TEST_CASE("gambit layers: the party's Avoid aggro is lent to a cardian in a real player's party alone, as his switch says", "[cardian][gambits][layers]")
+{
+    using cardian::layers::partyLend;
+    CHECK(partyLend(false, false, false, 42, true) == 1);
+    CHECK(partyLend(false, false, false, 42, false) == 2);
+    CHECK(partyLend(false, false, false, 0, true) == 0);  // in no real player's party
+    CHECK(partyLend(true, false, false, 42, true) == 0);  // out in the wild
+    CHECK(partyLend(false, true, false, 42, false) == 0); // on a trek, whose own rows stand
+    CHECK(partyLend(false, false, true, 42, true) == 0);  // the player's own set: it never moves him
 }

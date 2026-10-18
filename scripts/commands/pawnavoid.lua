@@ -32,7 +32,7 @@ commandObj.onTrigger = function(player, line)
     if err ~= '' then
         player:printToPlayer(string.format('Cannot set aggro avoidance: %s.', err))
     else
-        player:printToPlayer(string.format('%s aggro avoidance %s.', name, mode))
+        player:printToPlayer(string.format('%s aggro avoidance %s. In your party, the Shortcuts switch decides.', name, mode))
     end
 end
 

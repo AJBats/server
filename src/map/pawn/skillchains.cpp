@@ -1220,16 +1220,36 @@ namespace pawn::chains
         return false;
     }
 
-    auto burstComing(CCharEntity* PSelf, const cardian::chains::Resonance& r) -> bool
+    auto burstComing(CCharEntity* PSelf, CBattleEntity* PMob, const cardian::chains::Resonance& r) -> bool
     {
-        if (PSelf == nullptr || r.tier == 0)
+        if (PSelf == nullptr || PMob == nullptr || r.tier == 0)
         {
             return false;
         }
         const uint16 elements = elementsOf(r.props[0]);
-        const auto   bursts   = [&](CCharEntity* PChar)
+        // A member who can burst it: alive, at the fight on this mob, with a
+        // nuke of its elements and the MP for one -- as burstIn counts him
+        const auto bursts = [&](CCharEntity* PChar)
         {
-            return PChar != nullptr && !PChar->isDead() && PChar->loc.zone == PSelf->loc.zone && (burstsOf(PChar) & elements) != 0;
+            if (PChar == nullptr || PChar->isDead() || PChar->loc.zone != PSelf->loc.zone || (burstsOf(PChar) & elements) == 0)
+            {
+                return false;
+            }
+            if (PChar->GetBattleTarget() != PMob && distance(PChar->loc.p, PMob->loc.p) > cardian::chains::kJoinReach)
+            {
+                return false;
+            }
+            auto nukes = pawn::tactics::nukesOf(PChar);
+            if (nukes.empty() && PChar->PSession != nullptr)
+            {
+                nukes = learnedNukes(PChar);
+            }
+            return std::ranges::any_of(nukes, [&](const SpellID id)
+                                       {
+                                           auto* PSpell = spell::GetSpell(id);
+                                           return PSpell != nullptr && (cardian::chains::elementBit(static_cast<uint8>(PSpell->getElement())) & elements) != 0 &&
+                                                  battleutils::CalculateSpellCost(PChar, PSpell) <= PChar->health.mp;
+                                       });
         };
         if (PSelf->PParty == nullptr)
         {

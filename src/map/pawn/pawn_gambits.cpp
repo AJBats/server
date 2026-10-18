@@ -563,9 +563,18 @@ namespace pawn
         // sub job as she has set it, a zone's restriction of it aside: the
         // rows stay put, and a restricted tool is never usable anyway. A trek
         // lends its rows while it lasts
-        const auto role = wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner);
-        const RoleKey key{ role, POwner->GetMJob(), POwner->GetSJob(true), !wild && m_host->Trekking() };
-        if (!m_roleKey.has_value() || *m_roleKey != key)
+        // The party's Avoid aggro is lent to a cardian alone: it never moves
+        // the player, whose own set has no such row (the user, 2026-10-18)
+        const auto    role  = wild ? cardian::party::Role::None : pawn::roster::roleOf(POwner);
+        const bool    trek  = !wild && m_host->Trekking();
+        const auto    owner = wild || trek || m_host->OwnClient() ? 0u : pawn::ordersOwnerOf(POwner);
+        const uint8_t party = cardian::layers::partyLend(wild, trek, m_host->OwnClient(), owner, owner != 0 && pawn::huntRulesOf(owner).avoidAggro);
+        const RoleKey key{ role, POwner->GetMJob(), POwner->GetSJob(true), trek, party };
+        if (m_roleKey.has_value() && *m_roleKey != key && m_roleKey->party != 0 && party != 0 && RoleKey{ m_roleKey->role, m_roleKey->job, m_roleKey->sub, m_roleKey->trek, party } == key)
+        {
+            FlipPartyRow(party);
+        }
+        else if (!m_roleKey.has_value() || *m_roleKey != key)
         {
             RebuildRoleLayer(key);
         }
@@ -585,6 +594,7 @@ namespace pawn
         m_roleBinds.clear();
         m_roleTimers.clear();
         m_trekRowIds.clear();
+        m_partyRowIds.clear();
         // On a trek she keeps clear of every mob on the way, whatever her own
         // rows say (ROADMAP T): Avoid aggro and Avoid links, ahead of the
         // role's rows, standing in the place of hers that mean the same
@@ -595,6 +605,15 @@ namespace pawn
             rows.emplace_back("0|0:0|100:13:1|0", true); // Self -> Avoid links
         }
         const std::size_t trekRows = rows.size();
+        // In a real player's party his Shortcuts menu's Avoid aggro decides
+        // for every member (CPawnController::IsAvoidingAggro): its row is
+        // lent her on or off, standing in the place of hers, so her page
+        // shows what decides (the user, 2026-10-17)
+        if (key.party != 0)
+        {
+            rows.emplace_back("0|0:0|100:1:1|0", key.party == kPartyAvoids); // Self -> Avoid aggro
+        }
+        const std::size_t partyRows = rows.size() - trekRows;
         for (auto& lent : pawn::bundles::bundleFor(role, key.job, key.sub, seatCaps(), toolLevel))
         {
             rows.push_back(std::move(lent));
@@ -609,6 +628,10 @@ namespace pawn
                 {
                     m_trekRowIds.push_back(row->identifier);
                 }
+                else if (m_roleRows.size() < trekRows + partyRows)
+                {
+                    m_partyRowIds.push_back(row->identifier);
+                }
                 m_roleRows.push_back(GambitRow{ std::move(*row), enabled });
             }
             else
@@ -619,11 +642,15 @@ namespace pawn
         RowsChanged();
         if (!m_roleRows.empty())
         {
-            const std::size_t roleRows = m_roleRows.size() - m_trekRowIds.size();
+            const std::size_t roleRows = m_roleRows.size() - m_trekRowIds.size() - m_partyRowIds.size();
             std::string       lent     = roleRows > 0 ? fmt::format("the {} role's {} rows", cardian::party::roleName(role), roleRows) : std::string();
             if (!m_trekRowIds.empty())
             {
                 lent += fmt::format("{}her trek's {}", lent.empty() ? "" : " and ", m_trekRowIds.size());
+            }
+            if (!m_partyRowIds.empty())
+            {
+                lent += fmt::format("{}the party's Avoid aggro ({})", lent.empty() ? "" : " and ", key.party == kPartyAvoids ? "on" : "off");
             }
             ShowInfoFmt("pawn: {} runs {} with her own", POwner->getName(), lent);
         }
@@ -631,6 +658,20 @@ namespace pawn
         {
             ShowInfoFmt("pawn: {} runs her own rows alone again", POwner->getName());
         }
+    }
+
+    void CGambits::FlipPartyRow(const uint8_t party)
+    {
+        m_roleKey->party = party;
+        for (auto& row : m_roleRows)
+        {
+            if (std::ranges::find(m_partyRowIds, row.gambit.identifier) != m_partyRowIds.end())
+            {
+                row.enabled = party == kPartyAvoids;
+            }
+        }
+        RowsChanged();
+        ShowInfoFmt("pawn: {} runs the party's Avoid aggro {} now", POwner->getName(), party == kPartyAvoids ? "on" : "off");
     }
 
     void CGambits::RebuildWorldLayer()
@@ -906,13 +947,17 @@ namespace pawn
 
     auto CGambits::BurstAhead(const bool cure) -> bool
     {
-        // The burst's cast and its landing, about: what the patient waits
-        constexpr double kBurstWait = 3.0;
+        // What the patient waits: the burst's own cast and a moment after it,
+        // never under kBurstWait -- a burst cast ahead of its chain is a long
+        // one (#491)
+        constexpr double kBurstWait  = 3.0;
+        constexpr double kAfterBurst = 0.5;
         if (!m_host->RestAllowsAction() || !readyToAct(POwner) || !BurstWorthStanding(0.0).has_value())
         {
             return false;
         }
-        if (const auto risk = cure ? pawn::tactics::riskWithout(static_cast<CCharEntity*>(POwner), kBurstWait) : std::nullopt; risk.has_value())
+        const double waits = std::max(kBurstWait, (m_standMemo.has_value() ? m_standMemo->cast : 0.0) + kAfterBurst);
+        if (const auto risk = cure ? pawn::tactics::riskWithout(static_cast<CCharEntity*>(POwner), waits) : std::nullopt; risk.has_value())
         {
             const auto line = fmt::format("{} would be at risk", risk->name);
             if (line != m_burstWaitSaid)
@@ -1851,8 +1896,9 @@ namespace pawn
         for (std::size_t i = 0; i < layers.rows.size(); ++i)
         {
             const auto& p    = layers.rows[i];
-            const bool  trek = p.origin != cardian::layers::Origin::Own && std::ranges::find(m_trekRowIds, p.row->gambit.identifier) != m_trekRowIds.end();
-            out.push_back({ p.row, p.origin, p.origin == cardian::layers::Origin::Lent ? 0 : p.index, states[worldRows + i], p.on, trek });
+            const bool  trek  = p.origin != cardian::layers::Origin::Own && std::ranges::find(m_trekRowIds, p.row->gambit.identifier) != m_trekRowIds.end();
+            const bool  party = p.origin != cardian::layers::Origin::Own && std::ranges::find(m_partyRowIds, p.row->gambit.identifier) != m_partyRowIds.end();
+            out.push_back({ p.row, p.origin, p.origin == cardian::layers::Origin::Lent ? 0 : p.index, states[worldRows + i], p.on, trek, party });
         }
         return out;
     }
@@ -2248,6 +2294,13 @@ namespace pawn
         if (!chain.has_value())
         {
             NoteBurstPlan(nullptr, std::nullopt);
+            // Asked for a burst alone (BurstNow, BurstAhead), with no chain
+            // in sight -- an opening nobody can close, a plan let go -- there
+            // is none to cast: her free pick waits for her own think
+            if (burstOnly)
+            {
+                return false;
+            }
         }
         else
         {
@@ -2452,12 +2505,13 @@ namespace pawn
         {
             return m_standMemo->answer;
         }
-        auto answer = WeighStanding(after);
-        m_standMemo = StandMemo{ now, after, answer };
+        double cast   = 0.0;
+        auto   answer = WeighStanding(after, cast);
+        m_standMemo   = StandMemo{ now, after, answer, cast };
         return answer;
     }
 
-    auto CGambits::WeighStanding(const double after) -> std::optional<std::string>
+    auto CGambits::WeighStanding(const double after, double& cast) -> std::optional<std::string>
     {
         // Cheap first, as BurstNow asks: her tactician's nukes run, and
         // nothing would keep her from casting
@@ -2540,6 +2594,7 @@ namespace pawn
         // Her burst as she will find it once up: the tick's own check comes
         // to it then, whether or not her nuke row has had a think meanwhile
         NoteBurstPlan(PMob, after);
+        cast = CastSeconds(PSpell);
         return fmt::format("{} ~{:.0f} on {}, {}", it->spell, weighed.burst, PMob->getName(), weighed.call.detail);
     }
 
@@ -4076,7 +4131,7 @@ namespace pawn
         if (part.planned && part.seat == cardian::chains::Seat::None && v.resonance.has_value() && v.resonance->tier > 0 &&
             v.resonance->props[0] == part.chain && !v.burstComing)
         {
-            v.burstComing = pawn::chains::burstComing(POwner, *v.resonance);
+            v.burstComing = pawn::chains::burstComing(POwner, PMob, *v.resonance);
         }
         return part;
     }
@@ -4150,7 +4205,7 @@ namespace pawn
             if (!sheCloses)
             {
                 v.othersClose = pawn::chains::othersClose(POwner, PTarget, *v.resonance);
-                v.burstComing = !v.othersClose && pawn::chains::burstComing(POwner, *v.resonance);
+                v.burstComing = !v.othersClose && pawn::chains::burstComing(POwner, PTarget, *v.resonance);
             }
         }
         const auto part = ReadPlan(PTarget, v);

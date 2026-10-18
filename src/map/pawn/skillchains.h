@@ -172,10 +172,10 @@ namespace pawn::chains
     // Somebody else will use what is on a mob, so a member who cannot close
     // it keeps her weapon skill off it (skillchain_math.h wsCall): another
     // member fighting it, with the TP, has a weapon skill that chains with
-    // it; or, for a chain, a member of the party in the zone can burst its
-    // elements
+    // it; or, for a chain, a member of the party at the fight on it can
+    // burst its elements, with the MP for one
     auto othersClose(CCharEntity* PSelf, CBattleEntity* PMob, const cardian::chains::Resonance& r) -> bool;
-    auto burstComing(CCharEntity* PSelf, const cardian::chains::Resonance& r) -> bool;
+    auto burstComing(CCharEntity* PSelf, CBattleEntity* PMob, const cardian::chains::Resonance& r) -> bool;
 
     // A member's TP, sampled for her rate (skillchain_math.h TpClock); every
     // gambit engine's tick samples its own, and the forecast those it asks about

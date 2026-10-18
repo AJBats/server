@@ -368,8 +368,9 @@ namespace pawn
             cardian::layers::Origin   origin = cardian::layers::Origin::Own;
             std::size_t               index  = 0;
             cardian::tactician::State state  = cardian::tactician::State::Order;
-            bool                      on     = true;  // as it runs: a row the role pins runs on whatever its checkbox
+            bool                      on     = true;  // as it runs: her checkbox, or a lent row's own (the party's Avoid aggro off while his switch is)
             bool                      trek   = false; // lent by her trek, not her party role
+            bool                      party  = false; // lent by the party's Avoid aggro switch
         };
         auto Shown() -> std::vector<ShownRow>;
         // Whether her own row at a 1-based place is pinned by her party role
@@ -522,14 +523,19 @@ namespace pawn
         // job and her sub job, since a seat lends the tools her two jobs can
         // ever use (role_bundles.h); and whether she is on a trek, which lends
         // its own rows ahead of the role's while it lasts (ROADMAP T)
+        // and, in a real player's party, his Shortcuts menu's Avoid aggro,
+        // which lends her its row on or off (kPartyAvoids, kPartyIgnores)
         struct RoleKey
         {
             cardian::party::Role role;
             xi::Job              job;
             xi::Job              sub;
-            bool                 trek = false;
+            bool                 trek  = false;
+            uint8_t              party = 0; // 0 in no real player's party, or on a trek; kPartyAvoids or kPartyIgnores
             auto                 operator==(const RoleKey&) const -> bool = default;
         };
+        static constexpr uint8_t kPartyAvoids  = 1; // gambit_layers.h partyLend's
+        static constexpr uint8_t kPartyIgnores = 2;
 
         // The layers that run for her now (gambit_layers.h): her world rows
         // while she is in the wild, compiled on first need and again whenever
@@ -540,6 +546,10 @@ namespace pawn
         auto RunningLayers() -> cardian::layers::Layers<GambitRow>;
         void RebuildWorldLayer();
         void RebuildRoleLayer(RoleKey key);
+        // The party's switch flipped, nothing else: its lent row turned on or
+        // off where it stands, the role's rows, their bindings and their
+        // timers kept
+        void FlipPartyRow(uint8_t party);
         auto Candidates(gambits::G_TARGET selector) -> std::vector<CBattleEntity*>;
         // Whether a target is one a row's selector names: Candidates as a
         // question about one entity, over her whole alliance for the party
@@ -632,8 +642,9 @@ namespace pawn
         // without her cures -- another healer on her feet covers it, or the
         // patient can wait (CastAssignment; #495)
         auto BurstAhead(bool cure) -> bool;
-        // BurstWorthStanding's own reckoning, asked afresh
-        auto WeighStanding(double after) -> std::optional<std::string>;
+        // BurstWorthStanding's own reckoning, asked afresh; `cast`, with an
+        // answer, the burst's own cast in seconds
+        auto WeighStanding(double after, double& cast) -> std::optional<std::string>;
         auto WeighBurst(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
                         const cardian::tactics::NukePrice* pick, const pawn::chains::Forecast& chain) -> BurstWeighing;
 
@@ -755,6 +766,7 @@ namespace pawn
         std::vector<std::string>                m_roleBinds;
         std::optional<RoleKey>                  m_roleKey;
         std::vector<std::string>                m_trekRowIds; // the lent rows her trek lends, ahead of the role's (ROADMAP T)
+        std::vector<std::string>                m_partyRowIds; // the row the party's Avoid aggro switch lends, on or off
         uint32                                  m_rowsGeneration = 0; // moves with every change to her rows or her layers
         mutable std::optional<Offered>          m_offers;
         uint32                                  m_nextRoleId = 0;
@@ -785,6 +797,7 @@ namespace pawn
             timer::time_point          at;
             double                     after = 0.0;
             std::optional<std::string> answer;
+            double                     cast = 0.0; // the burst's own cast, seconds, with an answer
         };
         std::optional<StandMemo>                m_standMemo;
         // Her casts' resolved time over the spell's own, by skill (NoteCast)

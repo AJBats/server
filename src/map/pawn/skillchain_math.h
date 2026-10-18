@@ -1219,7 +1219,7 @@ namespace cardian::chains
     //    counted, so a chain far off leaves her nuking freely; else she holds
     //    when that burst is worth more than the free nuke and whatever burst
     //    she could still make after it. A chain that does not come leaves her
-    //    a nuke cast unbursted: the same as her free pick, no more
+    //    that nuke cast unbursted, its MP and time spent as a burst's
     //  - Nothing on the way: her free pick.
     inline auto nukeCall(const std::vector<Nuke>& nukes, const Nuke* free, const BurstView& v) -> NukeCall
     {

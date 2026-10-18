@@ -98,7 +98,8 @@ namespace cardian::layers
     // under; a lent row: its place in the bundle; the role's in her place:
     // her number, so an edit of its content that names it is refused, and
     // a move of it moves her row, the role's going with it), and whether it
-    // runs: her own row's checkbox, and always for the role's
+    // runs: her own row's checkbox, and a lent row's own -- on for her party
+    // role's and her trek's, as his switch says for the party's Avoid aggro
     template <typename Row>
     struct Placed
     {
@@ -232,11 +233,24 @@ namespace cardian::layers
     // role is the quick override (the user, 2026-09-30; RESEARCH §17.13),
     // so what it lends outranks what she has. A lent row bound to a row of
     // hers (`binds`, from bindLent above), whatever her checkbox or condition,
-    // takes her row's place instead (Both): the role's row runs there, on,
-    // pinned, while she holds the role, and hers is kept underneath and
+    // takes her row's place instead (Both): the lent row runs there, pinned,
+    // as its own checkbox says, while she holds the role, and hers is kept underneath and
     // comes back when the role goes. A bind out of her rows' range, or onto
     // a row another lent row holds, counts as none. enabledOf(row) reads a
     // row's checkbox
+    // The party's Avoid aggro row a member is lent (#492): none out in the
+    // wild, on a trek (whose own rows stand), in the player's own set (it
+    // never moves him) or in no real player's party (`owner` 0); else on
+    // (1) or off (2) as his Shortcuts switch says
+    inline auto partyLend(const bool wild, const bool trek, const bool ownClient, const uint32_t owner, const bool switchOn) -> uint8_t
+    {
+        if (wild || trek || ownClient || owner == 0)
+        {
+            return 0;
+        }
+        return switchOn ? 1 : 2;
+    }
+
     template <typename Row, typename EnabledOf>
     auto place(const std::span<Row> own, const std::span<Row> lent, const std::span<const std::optional<std::size_t>> binds, EnabledOf&& enabledOf)
         -> std::vector<Placed<Row>>
@@ -258,7 +272,7 @@ namespace cardian::layers
         {
             if (!lentOut[li])
             {
-                out.push_back({ &lent[li], Origin::Lent, li + 1, true });
+                out.push_back({ &lent[li], Origin::Lent, li + 1, static_cast<bool>(enabledOf(lent[li])) });
             }
         }
         // Her row at oi, or the role's standing in its place under her number
@@ -266,7 +280,7 @@ namespace cardian::layers
         {
             if (standsIn[oi].has_value())
             {
-                out.push_back({ &lent[*standsIn[oi]], Origin::Both, oi + 1, true });
+                out.push_back({ &lent[*standsIn[oi]], Origin::Both, oi + 1, static_cast<bool>(enabledOf(lent[*standsIn[oi]])) });
             }
             else
             {

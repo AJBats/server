@@ -24,7 +24,6 @@
 #include "pawn_items.h"
 
 #include "common/database.h"
-#include "common/earth_time.h"
 #include "common/logging.h"
 #include "common/settings.h"
 #include "common/timer.h"
@@ -36,7 +35,6 @@
 #include "item_container.h"
 #include "items/item_equipment.h"
 #include "items/item_weapon.h"
-#include "items/transaction.h"
 #include "items/transactions/item_claim.h"
 #include "lua/luautils.h"
 #include "packets/c2s/0x04e_auc.h"
