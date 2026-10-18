@@ -213,12 +213,16 @@ TEST_CASE("Emergency Cure prediction uses actual recast and recovery timing", "[
     CHECK(cureBeforeRecovery(30, 2, 40));
 }
 
-TEST_CASE("Short of MP means a tick's worth, half the pool at most", "[cardian][rest]")
+TEST_CASE("Short of MP means the base tick's worth, half the pool at most", "[cardian][rest]")
 {
     const double tick = mpAtTick(2, 0, 0); // 12
+    CHECK(tick == kBaseTickMp);
     CHECK_FALSE(shortOfMp(78, 85, tick));  // 7 short: no tick's worth (Zapp at 92%)
     CHECK(shortOfMp(73, 85, tick));        // 12 short: one tick fills it
-    CHECK(shortOfMp(73, 85, mpAtTick(2, 0, 3)) == false); // an MPHEAL food makes the tick 15
+    // Her food never moves the line: 12 short is short with a cookie on or
+    // off, so a cookie wearing off never asks her down (Dadirgann, 2026-10-18)
+    CHECK(shortOfMp(73, 85));
+    CHECK_FALSE(shortOfMp(74, 85));
     // A pool of 20 holds no whole tick: half of it is the line
     CHECK_FALSE(shortOfMp(11, 20, tick));
     CHECK(shortOfMp(10, 20, tick));

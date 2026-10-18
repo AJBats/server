@@ -6221,10 +6221,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     ClaimSpot(proposal);
     // A follower on another member's spot is no stand either: the walker
     // steps her off it first (Walk, the courtesy's settle), and a kneel
-    // there would keep the two on one pixel
-    const bool stationary = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
+    // there would keep the two on one pixel -- unless the walker has found
+    // her no clearer ground, and she has stood still crowded a while
+    const bool crowded          = proposal.kind == Intent::Kind::Formation && Crowded();
+    const bool stuck            = CrowdedAndStuck(crowded);
+    const bool crowdedUnsettled = crowded && !stuck;
+    const bool stationary       = (proposal.kind == Intent::Kind::Stand || proposal.kind == Intent::Kind::Keep ||
                              distance(POwner->loc.p, proposal.point) <= proposal.tolerance) &&
-                            !POwner->PAI->PathFind->IsFollowingPath() && !(proposal.kind == Intent::Kind::Formation && Crowded());
+                            !POwner->PAI->PathFind->IsFollowingPath() && !crowdedUnsettled;
     // A mage's safety spot as planned, the battle she faces from it, and
     // where she stands before her move (FaceBattleOnArrival): taken before
     // a kneel stands her where she is
@@ -6401,6 +6405,39 @@ auto CPawnController::Crowded() const -> bool
     const float radius = settings::get<float>("pawn.COURTESY_MEMBER_RADIUS");
     const auto  spots  = MemberSpots(GetLivePlayer());
     return std::any_of(spots.begin(), spots.end(), [&](const position_t& at) { return distance(POwner->loc.p, at, true) < radius; });
+}
+
+auto CPawnController::CrowdedAndStuck(const bool crowded) -> bool
+{
+    constexpr auto  kCrowdedStill = 3s;
+    constexpr float kStill        = 0.3f; // yalms she may drift and still be standing where she stood
+    // Asked only while she follows: back from a pull, an order or a trek,
+    // her clock starts again, so she tries to clear the crowd first
+    const bool lapsed = m_Tick - m_CrowdedLook > 2s;
+    m_CrowdedLook     = m_Tick;
+    if (!crowded || lapsed || POwner->PAI->PathFind->IsFollowingPath())
+    {
+        m_CrowdedSince.reset();
+        m_CrowdedSaid = false;
+        return false;
+    }
+    if (!m_CrowdedSince.has_value() || distance(POwner->loc.p, m_CrowdedAt, true) > kStill)
+    {
+        m_CrowdedSince = m_Tick;
+        m_CrowdedAt    = POwner->loc.p;
+        m_CrowdedSaid  = false;
+        return false;
+    }
+    if (m_Tick - *m_CrowdedSince < kCrowdedStill)
+    {
+        return false;
+    }
+    if (!m_CrowdedSaid)
+    {
+        m_CrowdedSaid = true;
+        ShowInfoFmt("pawn: {} stands crowded with nowhere clearer to go, so she counts as settled where she is", POwner->getName());
+    }
+    return true;
 }
 
 auto CPawnController::CourtesyStep(const position_t& point, const float settle) -> position_t

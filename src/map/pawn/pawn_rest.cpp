@@ -241,9 +241,8 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // With Player stays an explicit input beside it; neither overwrites
     // the other with the MP decision
     const bool supportRecovery = support && advice->recover;
-    // Short of MP by a tick's worth at least (rest_math.h shortOfMp)
-    const bool mpMissing = cardian::rest::shortOfMp(POwner->health.mp, POwner->GetMaxMP(),
-                                                    cardian::rest::mpAtTick(2, POwner->getMod(xi::Mod::CLEAR_MIND), POwner->getMod(xi::Mod::MPHEAL)));
+    // Short of MP by the base tick's worth at least (rest_math.h shortOfMp)
+    const bool mpMissing = cardian::rest::shortOfMp(POwner->health.mp, POwner->GetMaxMP());
     // At a camp with no fight on, a mage short of MP kneels whatever her
     // pace says: ticks between pulls are free (the user, 2026-10-03: mages
     // are greedy for their ticks). Following the player, her pace alone

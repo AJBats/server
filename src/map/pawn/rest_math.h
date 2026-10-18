@@ -149,11 +149,17 @@ namespace cardian::rest
         return tick < 2 ? 0.0 : std::max(0, 12 + (tick - 2) * (1 + clearMind) + mpHeal);
     }
 
-    // Short of MP by a tick's worth at least -- her first paying tick, half
-    // her pool at most for a mage too young to hold a whole one. Less than
-    // that a kneel cannot pay for: she neither kneels for it nor stays down
-    // for the last few points (the user, 2026-10-04: no resting at full MP)
-    inline auto shortOfMp(const double mp, const double maximum, const double tickMp) -> bool
+    // The first paying tick with no bonus of hers: what her rest's decisions
+    // are judged by. Whether she rests never turns on her food or her MP
+    // while healing (the user, 2026-10-18); those speed her recovery, and
+    // only the estimates of how fast count them
+    inline constexpr double kBaseTickMp = 12.0;
+
+    // Short of MP by a tick's worth at least -- the base tick, half her pool
+    // at most for a mage too young to hold a whole one. Less than that she
+    // neither kneels for it nor stays down for the last few points (the
+    // user, 2026-10-04: no resting at full MP)
+    inline auto shortOfMp(const double mp, const double maximum, const double tickMp = kBaseTickMp) -> bool
     {
         return maximum - mp >= std::max(1.0, std::min(tickMp, 0.5 * maximum));
     }

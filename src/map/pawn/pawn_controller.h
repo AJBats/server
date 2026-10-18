@@ -1060,6 +1060,15 @@ private:
     auto CourtesyStep(const position_t& point, float settle = 0.0f) -> position_t;
     auto MemberSpots(const CCharEntity* PPlayer) const -> std::vector<position_t>; // the courtesy's members: where each other member stands, and where each cardian goes
     auto Crowded() const -> bool;                                                  // within COURTESY_MEMBER_RADIUS of another member's spot
+    // Crowded (`crowded`, this tick's judgement), and still where she has
+    // stood for kCrowdedStill: the walker found her no clearer ground (the
+    // mesh ending at a zone line, a narrow ledge), so she may kneel where
+    // she is. Called once every follow tick, crowded or not
+    auto CrowdedAndStuck(bool crowded) -> bool;
+    std::optional<timer::time_point> m_CrowdedSince;        // crowded, still, since
+    position_t                       m_CrowdedAt{};         // where she stood still
+    bool                             m_CrowdedSaid = false; // the map log has heard it, this time
+    timer::time_point                m_CrowdedLook{};       // her last look: a clock not looked at since is started afresh
 
     // The walk in on a mob: to within RoamDistance of it
     auto ApproachIntent(const CBattleEntity* PTarget) const -> Intent;
@@ -1719,6 +1728,7 @@ private:
         timer::time_point stepAt{};   // when this step began
         timer::time_point shotAt{};   // the last shot
         uint8             shots = 0;
+        uint32            called = 0;       // the mob her pull line named, said as her first shot left
         std::string       refused;          // the shot's last refusal, said once
         double            outLimit  = 0.0;  // seconds the walk out may take (pull_math.h outSeconds)
         double            backLimit = 0.0;  // and the run back (backSeconds)
@@ -1735,6 +1745,7 @@ private:
         std::optional<position_t> backTo;
         timer::time_point         cleanAt{};  // the walk out's next judgement of the pull's route (PullBlocker)
         timer::time_point         kinSince{}; // her shot held for kin on the way back, since
+        timer::time_point         blockedSince{}; // her walk out held near it, its route unclean, since
     };
     // A mob on the party fighting her now, her own pull aside: she does not
     // leave a fight, nor set out, with one on her -- it would follow her out
@@ -1753,6 +1764,8 @@ private:
         double      fightLeft = 0.0;
         double      arriveIn  = 0.0;
         std::string pacer; // the mage the timing waits on, empty for the fight's end alone
+        double      missingHp = 0.0; // the party's missing HP its curers were charged for, between fights
+        double      debtEach  = 0.0; // and the MP each curer owes for it
     };
     auto PullTimingNow() -> PullTiming;
     // The mob she should set out after now, nullptr until the pipeline says
@@ -1774,6 +1787,9 @@ private:
     timer::time_point                                 m_KitAt{};      // her kit's next look
     timer::time_point                                 m_KitTopUpAt{}; // her ammunition's next top-up
     bool                                              m_KitReady = false; // what she wears can make a ranged attack, as of the last look
+    bool                                              m_KitSeat     = false; // she held the Puller seat at the last look
+    bool                                              m_KitPulling  = false; // and the party was pulling at its camp
+    bool                                              m_KitTellOwed = false; // the seat taken or pulling switched on since: her kit is to be told of at the next quiet look
     std::string                                       m_PullSaid;     // what her pull last said while it waits, said once
     std::string                                       m_KitSaid;      // what her kit last said, said once
     timer::time_point                                 m_PullQuietAt{}; // a pull with nothing to pick says so at most every 15 s
@@ -1796,6 +1812,9 @@ private:
     void EndPull(std::string_view why);
     void KitTick();
     void SayPull(const std::string& line);
+    // Her pull line in party chat, naming `PMob` (pull_math.h pullLine): its
+    // con at the level the Pull page reads it at, and his call sound
+    void CallPull(const CMobEntity* PMob, const CCharEntity* PPlayer);
 
     // An order that started, the game's word on it heard for kHeels after:
     // its name for the log, its key for the note, when it was tried, and the

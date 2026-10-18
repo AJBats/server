@@ -110,7 +110,7 @@ namespace pawn::tactics
             const double firstRecovery = 2.0 * settings::get<uint8>("map.HEALING_TICK_DELAY");
             const auto pace = cardian::rest::pacing(member->health.mp, member->GetMaxMP(), rates,
                 a.readyMp, a.knownCost, member->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing),
-                firstRecovery, cardian::rest::mpAtTick(2, member->getMod(xi::Mod::CLEAR_MIND), member->getMod(xi::Mod::MPHEAL)), a.cheapestCureMp, a.fightSpentMp);
+                firstRecovery, cardian::rest::kBaseTickMp, a.cheapestCureMp, a.fightSpentMp);
             a.recover = pace.recover;
             a.criticalMp = pace.critical;
             a.spentPerSecond = rates.spent;

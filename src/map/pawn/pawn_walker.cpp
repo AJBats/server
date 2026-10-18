@@ -1430,10 +1430,17 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
                              (out.action != AvoidAction::Slot || shortOfSlot);
 
                     // The camp's line: normal positioning stays behind it; a
-                    // walk shaped by danger overrides it
+                    // walk shaped by danger overrides it. A courtesy step is a
+                    // waypoint on her way, not its end: the line judges the
+                    // way's end at her point, so one standing out in front
+                    // walks back round the party
+                    std::vector<position_t> ahead(m_Plan.route.begin() + static_cast<std::ptrdiff_t>(std::min(m_Plan.next, m_Plan.route.size())), m_Plan.route.end());
+                    if (!ahead.empty() && distance(goal, intent.point, true) > 0.05f)
+                    {
+                        ahead.push_back(intent.point);
+                    }
                     const bool campRefuses = out.outcome != Outcome::NoRoute && intent.rearBoundary.has_value() && action == AvoidAction::None &&
-                                             !CampLineHolds(std::vector<position_t>(m_Plan.route.begin() + static_cast<std::ptrdiff_t>(std::min(m_Plan.next, m_Plan.route.size())), m_Plan.route.end()),
-                                                            *intent.rearBoundary);
+                                             !CampLineHolds(ahead, *intent.rearBoundary);
                     if (campRefuses)
                     {
                         PPathFind->Clear();
