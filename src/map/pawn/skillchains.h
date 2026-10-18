@@ -185,6 +185,11 @@ namespace pawn::chains
     // as it lands), or missed (0, its use with no damage): what the chain's
     // worth prices her weapon skill at
     void wsLanded(const CBattleEntity* PMember, uint16 skill, int32 damage);
+    // A weapon skill of hers the game reports as dealing nothing: a miss, a 0
+    // in its price -- unless the same weapon skill of hers landed damage this
+    // moment, a skillchain's close, which the game reports as nothing once
+    // the chain's own damage lands
+    void wsMissed(const CBattleEntity* PMember, uint16 skill);
 
     // What the party's cardians say of the plan, in the party's chat
     // (skillchain_math.h kAskLines, kSaveLines). With no plan picked and the

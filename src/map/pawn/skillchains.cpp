@@ -36,6 +36,7 @@
 #include "common/xirand.h"
 #include "entities/battle_entity.h"
 #include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "party.h"
 #include "spell.h"
 #include "status_effect.h"
@@ -196,6 +197,18 @@ namespace pawn::chains
         };
         std::map<std::pair<uint32, uint16>, Mean> wsMeans;
         std::unordered_map<uint32, Mean>          wsMeansAll;
+
+        // member charid -> her last weapon skill that landed damage, and when
+        // (wsMissed): the game reports a weapon skill that closes a
+        // skillchain as dealing nothing -- the chain's own damage clears what
+        // it reports -- while the fight log has its damage already
+        struct Landed
+        {
+            uint16 skill = 0;
+            double at    = 0.0;
+        };
+        std::unordered_map<uint32, Landed> lastLanded;
+        constexpr double                   kSameWs = 1.0;
 
         // The chain's damage for each point of the closing weapon skill,
         // asked of the server once per closer, mob and chain and kept ten
@@ -539,24 +552,35 @@ namespace pawn::chains
         }
 
         // The server's own weapon skill at its expectation, asked of the bank
-        // once per member, mob, weapon skill and TP band and kept ten minutes
-        // (formulaOf), as the chain's share is: her gear and the mob at that
-        // id (its next spawn) may change
+        // once per member, kind of mob, its level, weapon skill and TP band and
+        // kept ten minutes (formulaOf), as the chain's share is: a second mob
+        // of the same kind and level (the user, 2026-10-17) prices nothing,
+        // and her gear may change. A mob's kind is its pool; anything else is
+        // its own kind
         struct Formula
         {
             std::optional<double> value;
             double                at = 0.0;
         };
-        std::map<std::tuple<uint32, uint32, uint16, int32>, Formula> formulas;
-        constexpr std::size_t                                       kFormulasKept = 512;
+        std::map<std::tuple<uint32, uint32, uint8, uint16, int32>, Formula> formulas;
+        constexpr std::size_t                                               kFormulasKept = 512;
         // The TP a weapon skill is priced at: hers now, within a weapon
         // skill's and the cap, by this much
         constexpr int32 kFormulaTpBand = 250;
 
+        auto kindOf(const CBattleEntity* PMob) -> uint32
+        {
+            if (const auto* PFoe = dynamic_cast<const CMobEntity*>(PMob); PFoe != nullptr && PFoe->m_Pool != 0)
+            {
+                return PFoe->m_Pool;
+            }
+            return 0x80000000u | PMob->id;
+        }
+
         auto formulaOf(CCharEntity* PMember, CBattleEntity* PMob, const uint16 skill) -> std::optional<double>
         {
             const int32  tp  = std::clamp<int32>(PMember->health.tp, cardian::chains::kWsTp, cardian::chains::kTpCap) / kFormulaTpBand * kFormulaTpBand;
-            const auto   key = std::make_tuple(PMember->id, PMob->id, skill, tp);
+            const auto   key = std::make_tuple(PMember->id, kindOf(PMob), PMob->GetMLevel(), skill, tp);
             const double now = secondsNow();
             if (const auto it = formulas.find(key); it != formulas.end() && now - it->second.at < kShareFresh)
             {
@@ -566,15 +590,20 @@ namespace pawn::chains
             {
                 formulas.clear();
             }
-            const auto value = pawn::tactics::bank::wsExpected(PMember, PMob, skill, tp);
-            formulas[key]    = Formula{ value, now };
-            if (value.has_value())
+            // The TP the server hands the weapon skill's script: hers, with
+            // her TP bonus and a one-handed fighter's Fencer (the server's own
+            // battleutils::CalculateWeaponSkillTP)
+            auto*       PWeaponSkill = battleutils::GetWeaponSkill(skill);
+            const int32 scriptTp     = PWeaponSkill != nullptr ? battleutils::CalculateWeaponSkillTP(PMember, PWeaponSkill, static_cast<int16>(tp)) : tp;
+            const auto  price        = pawn::tactics::bank::wsExpected(PMember, PMob, skill, scriptTp);
+            formulas[key]    = Formula{ price.has_value() ? std::optional<double>(price->value) : std::nullopt, now };
+            if (price.has_value())
             {
-                auto* PSkill = battleutils::GetWeaponSkill(skill);
-                ShowInfoFmt("chains: {}'s {} priced at ~{:.0f} on {} at {} TP (the server's own weapon skill)", PMember->getName(),
-                            PSkill != nullptr ? wordsOf(PSkill->getName()) : std::string("?"), *value, PMob->getName(), tp);
+                ShowInfoFmt("chains: {}'s {} priced at ~{:.0f} on a level {} {} at {} TP (the server's own weapon skill, {})", PMember->getName(),
+                            PWeaponSkill != nullptr ? wordsOf(PWeaponSkill->getName()) : std::string("?"), price->value, PMob->GetMLevel(), PMob->getName(), scriptTp,
+                            price->read ? "its odds read" : "64 seeded runs");
             }
-            return value;
+            return formulas[key].value;
         }
 
         // What her weapon skill deals, as the chain's worth prices it
@@ -1001,6 +1030,7 @@ namespace pawn::chains
         }
         tpClocks.erase(PMember->id);
         holdSince.erase(PMember->id);
+        lastLanded.erase(PMember->id);
         spares.erase(PMember->id);
         openingsSaid.erase(PMember->id);
         readiesSaid.erase(PMember->id);
@@ -1234,6 +1264,25 @@ namespace pawn::chains
         }
         wsMeans[{ PMember->id, skill }].add(static_cast<double>(damage));
         wsMeansAll[PMember->id].add(static_cast<double>(damage));
+        if (damage > 0)
+        {
+            lastLanded[PMember->id] = Landed{ skill, secondsNow() };
+        }
+    }
+
+    void wsMissed(const CBattleEntity* PMember, const uint16 skill)
+    {
+        if (PMember == nullptr || skill == 0)
+        {
+            return;
+        }
+        // The same weapon skill of hers landed this moment: what reported
+        // nothing was a close, its damage counted already
+        if (const auto it = lastLanded.find(PMember->id); it != lastLanded.end() && it->second.skill == skill && secondsNow() - it->second.at < kSameWs)
+        {
+            return;
+        }
+        wsLanded(PMember, skill, 0);
     }
 
     void askIfDue(CCharEntity* PSpeaker, CBattleEntity* PMob)

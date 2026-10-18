@@ -193,6 +193,23 @@ namespace pawn::tactics
             return true;
         }
 
+        // A price the bank fell back to sampling for, said once for each
+        // reason its read failed: an upstream change names itself once, not
+        // once a weapon skill or a spell
+        void saySampled(const sol::protected_function_result& res, const std::size_t at, const std::string& instead)
+        {
+            if (res.return_count() <= static_cast<int>(at + 1) || res.get_type(static_cast<int>(at)) != sol::type::string)
+            {
+                return;
+            }
+            static std::set<std::string> said;
+            const auto                   why = res.get<std::string>(static_cast<int>(at + 1));
+            if (said.insert(why).second)
+            {
+                ShowWarningFmt("tactics: bank: could not read the odds ({}); {}", why, instead);
+            }
+        }
+
         // What a debuff's own script puts on a mob as its effect's subPower
         // (Dia's defence down, Bio's attack down, in percent), read by the
         // bank's dry run of the script on stand-ins: the profile's own
@@ -739,6 +756,7 @@ namespace pawn::tactics
                 s["skillType"]  = static_cast<uint8>(spells[i]->getSkillType());
                 s["spellGroup"] = static_cast<uint8>(spells[i]->getSpellGroup());
                 s["family"]     = static_cast<uint16>(spells[i]->getSpellFamily());
+                s["name"]       = spells[i]->getName(); // its script, where the read falls back to dry runs of it
                 ask[i + 1]      = s;
             }
             auto res = (*fn)(CLuaBaseEntity(PCaster), CLuaBaseEntity(PMob), ask, intDown);
@@ -746,6 +764,7 @@ namespace pawn::tactics
             {
                 return std::nullopt;
             }
+            saySampled(res, 2, "her nukes are priced by 64 seeded dry runs of their own scripts instead");
             Seeded           out;
             const sol::table now = res.get<sol::table>(0);
             for (auto* PSpell : spells)
@@ -1499,7 +1518,7 @@ namespace pawn::tactics
             return res.get<double>(0);
         }
 
-        auto wsExpected(CBattleEntity* PAttacker, CBattleEntity* PTarget, const uint16 skill, const int32 tp) -> std::optional<double>
+        auto wsExpected(CBattleEntity* PAttacker, CBattleEntity* PTarget, const uint16 skill, const int32 tp) -> std::optional<WsPrice>
         {
             auto* PSkill = battleutils::GetWeaponSkill(skill);
             if (PAttacker == nullptr || PTarget == nullptr || PSkill == nullptr)
@@ -1520,7 +1539,14 @@ namespace pawn::tactics
             {
                 return std::nullopt;
             }
-            return res.get<double>(0);
+            WsPrice price;
+            price.value = res.get<double>(0);
+            price.read  = !(res.return_count() > 1 && res.get_type(1) == sol::type::string && res.get<std::string>(1) == "sampled");
+            if (!price.read)
+            {
+                saySampled(res, 1, "the weapon skills it cannot read are priced by 64 seeded runs of their own scripts instead");
+            }
+            return price;
         }
 
         auto paceOf(FightRecord& r, const SpotAverages& spot, const std::vector<CBattleEntity*>& members, CMobEntity* PMob) -> Pace
