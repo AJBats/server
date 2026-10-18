@@ -800,6 +800,7 @@ namespace pawn
             double                     cast = 0.0; // the burst's own cast, seconds, with an answer
         };
         std::optional<StandMemo>                m_standMemo;
+        std::string                             m_standRefusal; // why a chain on her mob was no reason to stand, as last said: the reason's name, not its numbers
         // Her casts' resolved time over the spell's own, by skill (NoteCast)
         std::map<uint16, double>                m_castRatio;
         // NakedSneak's answer, as of her last think (NakedSneakNow)

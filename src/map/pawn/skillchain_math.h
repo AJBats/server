@@ -1210,7 +1210,8 @@ namespace cardian::chains
     // burst"). `free` is her pick without a burst (bank_math.h pickNuke over
     // the nukes she can cast now), nullptr for none.
     //  - A window open: the burst that deals the most a second of hers, cast
-    //    now and ending inside it, unless her free pick deals more a second.
+    //    now and ending inside it, unless her free pick deals more a second;
+    //    with none castable now, one off its recast in time is waited for.
     //  - A chain expected before the mob falls: her best burst on it, its
     //    cast started so it lands at burstMoment, the middle of the chain's
     //    window (#491) -- now, ahead of the chain, once that start has come.
@@ -1249,7 +1250,27 @@ namespace cardian::chains
             }
             if (b == nullptr)
             {
-                return freeCall(fmt::format("no nuke of hers can burst {} in time", chainName(v.chain)));
+                // None bursts it this instant, but one coming off its recast
+                // may still land inside the window: she keeps herself free and
+                // her MP for it, her free pick cast only when it leaves her
+                // free, and the MP, by the burst's start
+                const auto mpNow = [&v](const double at) { return v.mpAt(v.mp, at); };
+                const auto later = bestBurst(nukes, v.elements, mpNow, 0.0, 0.0, 0.0, *v.open, asIs);
+                if (later.nuke == nullptr || (free != nullptr && free->dealt >= later.nuke->burst))
+                {
+                    return freeCall(fmt::format("no nuke of hers can burst {} in time", chainName(v.chain)));
+                }
+                call.burstIn = later.start;
+                if (free != nullptr && free->id != later.nuke->id && free->seconds <= later.start && v.mpAt(v.mp - free->mp, later.start) >= later.nuke->mp)
+                {
+                    return freeCall(fmt::format("free before her {} burst's cast, the burst still in reach", chainName(v.chain)));
+                }
+                call.move   = NukeMove::Hold;
+                call.spell  = 0;
+                call.why    = fmt::format("saving for the {} burst", chainName(v.chain));
+                call.detail = fmt::format("its window open {:.1f} s more, her cast starting in ~{:.1f} s; ~{:.0f} burst against ~{:.0f} now", *v.open, later.start,
+                                          later.nuke->burst, free != nullptr ? free->dealt : 0.0);
+                return call;
             }
             if (free != nullptr && free->id != b->id && free->freeRate() > b->burstRate())
             {
@@ -1313,10 +1334,12 @@ namespace cardian::chains
         }
 
         // After her free pick: its MP spent, what she regains by her burst's
-        // cast, her seconds on it, its recast
+        // cast, her seconds on it, its recast -- which the server starts as
+        // its cast ends (CBattleEntity::OnCastFinished), so the burst nuke
+        // cast free now is ready again its cast and its recast from now
         const auto afterFree = [free](const Nuke& n)
         {
-            return n.id == free->id ? free->recast : n.readyIn;
+            return n.id == free->id ? free->cast + free->recast : n.readyIn;
         };
         const auto mpAfter = [&v, free](const double at) { return v.mpAt(v.mp - free->mp, at); };
         const auto after   = bestBurst(nukes, v.elements, mpAfter, free->seconds, t, aim, until, afterFree);

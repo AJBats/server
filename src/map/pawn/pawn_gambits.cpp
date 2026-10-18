@@ -2542,12 +2542,25 @@ namespace pawn
         auto chain = pawn::chains::forecast(POwner, PMob);
         if (!chain.has_value() || (!chain->open.has_value() && !chain->in.has_value()))
         {
+            m_standRefusal.clear(); // the next chain's reasons are said afresh
             return std::nullopt;
         }
+        // From here a chain is on her mob or on its way: why it is no reason
+        // to stand is said in the map log, once for each reason -- `key`
+        // names the reason, `why` says it with its numbers as they are now
+        const auto no = [&](const std::string& key, const std::string& why) -> std::optional<std::string>
+        {
+            if (key != m_standRefusal)
+            {
+                m_standRefusal = key;
+                ShowInfoFmt("chains: {} stays as she is for the chain on {}: {}", POwner->getName(), PMob->getName(), why);
+            }
+            return std::nullopt;
+        };
         const auto at = ToolRow(cardian::tactician::Allowance::Nuke);
         if (!at.has_value() || at->target != PMob)
         {
-            return std::nullopt;
+            return no("row", "her nuke row is not on this mob");
         }
         // The chain as she would find it once up: a window with what it has
         // left then; a chain on its way, that much nearer -- or landed by
@@ -2559,7 +2572,7 @@ namespace pawn
         {
             if (*chain->open <= after)
             {
-                return std::nullopt;
+                return no("closes", fmt::format("its window closes in {:.1f} s, before she is up ({:.1f} s)", *chain->open, after));
             }
             chain->open = *chain->open - after;
         }
@@ -2572,7 +2585,7 @@ namespace pawn
             const double left = cardian::chains::kChainLasts - (after - *chain->in);
             if (left <= 0.0)
             {
-                return std::nullopt;
+                return no("over", fmt::format("its window would be over before she is up ({:.1f} s)", after));
             }
             chain->open = left;
             chain->in.reset();
@@ -2580,29 +2593,31 @@ namespace pawn
         const auto spells = NukeSpells();
         if (spells.empty())
         {
-            return std::nullopt;
+            return no("none", "no nuke she can cast now");
         }
         const auto pricing = pawn::tactics::nukePrices(POwner, PMob, spells);
         if (!pricing.has_value() || pricing->prices.empty())
         {
-            return std::nullopt;
+            return no("unpriced", "her nukes could not be priced");
         }
         const auto weighed = WeighBurst(PMob, *pricing, spells, cardian::tactics::pickNuke(pricing->prices), *chain);
         const auto it      = std::ranges::find_if(pricing->prices, [&weighed](const cardian::tactics::NukePrice& p) { return p.id == weighed.call.spell; });
         if (weighed.call.move != cardian::chains::NukeMove::Burst || it == pricing->prices.end())
         {
-            return std::nullopt;
+            return no("call:" + weighed.call.why,
+                      weighed.call.detail.empty() ? fmt::format("no burst now: {}", weighed.call.why) : fmt::format("no burst now: {} ({})", weighed.call.why, weighed.call.detail));
         }
         // Where she could cast it from, and with the MP a healer keeps
         auto* PSpell = spell::GetSpell(static_cast<SpellID>(it->id));
         if (PSpell == nullptr || distance(POwner->loc.p, PMob->loc.p) > pawn::tactics::bank::castRange(POwner, PSpell, PMob) || !pawn::tactics::bank::inSight(POwner, PMob))
         {
-            return std::nullopt;
+            return no("reach", fmt::format("{} is out of her cast's reach or sight ({:.1f} y)", PMob->getName(), distance(POwner->loc.p, PMob->loc.p)));
         }
         if (const auto reserve = HealerReserve(); reserve.has_value() && static_cast<double>(POwner->health.mp - it->mp) < *reserve)
         {
-            return std::nullopt;
+            return no("reserve", fmt::format("the burst would take her under a healer's reserve of {:.0f} MP", *reserve));
         }
+        m_standRefusal.clear();
         // Her burst as she will find it once up: the tick's own check comes
         // to it then, whether or not her nuke row has had a think meanwhile
         NoteBurstPlan(PMob, after);

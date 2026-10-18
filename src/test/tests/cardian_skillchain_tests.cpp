@@ -688,6 +688,51 @@ TEST_CASE("skillchains: a burst window open, she bursts with the chain's element
     CHECK(c.move == NukeMove::Free);
 }
 
+TEST_CASE("skillchains: a burst window open, she waits for a burst coming off its recast in time rather than cast across it", "[cardian][skillchains]")
+{
+    auto      list = nukes();
+    BurstView v;
+    v.mp       = 200;
+    v.elements = kFire; // Liquefaction, say
+    v.chain    = SC_LIQUEFACTION;
+
+    // Fire on its recast for 2 s, the window open 6 s more: Stone II now
+    // would keep her busy 4.5 s, past Fire's start; she holds for the burst
+    list[0].now     = false;
+    list[0].readyIn = 2.0;
+    v.open          = 6.0;
+    auto c          = cardian::chains::nukeCall(list, byId(list, 160), v);
+    CHECK(c.move == NukeMove::Hold);
+    CHECK(c.spell == 0);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 2.0);
+
+    // Fire ready in 5 s, the window open 9 s more: Stone II leaves her free
+    // by then, so she casts it and bursts after
+    list[0].readyIn = 5.0;
+    v.open          = 9.0;
+    c               = cardian::chains::nukeCall(list, byId(list, 160), v);
+    CHECK(c.move == NukeMove::Free);
+    CHECK(c.spell == 160);
+    REQUIRE(c.burstIn.has_value());
+    CHECK(*c.burstIn == 5.0);
+
+    // Fire ready too late to land inside the window: her free pick
+    list[0].readyIn = 5.5;
+    v.open          = 6.0;
+    c               = cardian::chains::nukeCall(list, byId(list, 160), v);
+    CHECK(c.move == NukeMove::Free);
+    CHECK(c.spell == 160);
+    CHECK_FALSE(c.burstIn.has_value());
+
+    // a free pick that deals more than the burst is not given up for it
+    list[0].readyIn = 2.0;
+    list[1].dealt   = 200.0;
+    c               = cardian::chains::nukeCall(list, byId(list, 160), v);
+    CHECK(c.move == NukeMove::Free);
+    CHECK(c.spell == 160);
+}
+
 TEST_CASE("skillchains: a chain on its way, she nukes freely when the burst stays in reach and saves when it would not", "[cardian][skillchains]")
 {
     const auto list = nukes();
@@ -724,11 +769,20 @@ TEST_CASE("skillchains: a chain on its way, she nukes freely when the burst stay
     c         = cardian::chains::nukeCall(list, byId(list, 160), v);
     CHECK(c.move == NukeMove::Hold);
 
-    // with the MP for both, Stone II now and Stone II burst inside the
-    // window after it (its recast ends 6 s in, the window at 10 s): free
+    // with the MP for both, Stone II cast now is ready again 8 s in -- its
+    // 2 s cast, then its 6 s recast, which the server starts as the cast
+    // ends -- so a burst after it would land at 10 s, past the window's end
+    // less its margin: she saves Stone II for the burst
     v.mp = 200;
     c    = cardian::chains::nukeCall(list, byId(list, 160), v);
+    CHECK(c.move == NukeMove::Hold);
+
+    // the chain 2 s later: Stone II now, and Stone II again inside the
+    // window after it: free
+    v.chainIn = 3.0;
+    c         = cardian::chains::nukeCall(list, byId(list, 160), v);
     CHECK(c.move == NukeMove::Free);
+    v.chainIn = 1.0;
 
     // nothing castable now: she saves for the burst
     c = cardian::chains::nukeCall(list, nullptr, v);
