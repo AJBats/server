@@ -49,6 +49,9 @@
 #include <set>
 
 #include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <optional>
 
 namespace pawn::auction
@@ -648,6 +651,88 @@ namespace pawn::auction
         constexpr float kShopReach    = 15.0f; // yalms, a member to the counter the player stands at
     } // namespace
 
+    namespace
+    {
+        // A script that opens the auction menu, by name; gated when it opens
+        // it only under a condition of its own (Tavnazian Safehold's clerks,
+        // after a Promathia mission): its call sits deeper than its
+        // function's own body, which upstream's formatter indents four spaces
+        struct Auctioneer
+        {
+            std::string name;
+            bool        gated = false;
+        };
+
+        auto auctioneersOf(CZone* PZone) -> const std::vector<Auctioneer>&
+        {
+            static std::unordered_map<uint16, std::vector<Auctioneer>> byZone;
+            const auto zoneId = static_cast<uint16>(PZone->GetID());
+            if (const auto known = byZone.find(zoneId); known != byZone.end())
+            {
+                return known->second;
+            }
+            std::vector<Auctioneer> found;
+            std::error_code         error;
+            for (const auto& file : std::filesystem::directory_iterator(fmt::format("./scripts/zones/{}/npcs", PZone->getName()), error))
+            {
+                if (file.path().extension() != ".lua")
+                {
+                    continue;
+                }
+                std::ifstream in(file.path(), std::ios::binary);
+                std::string   line;
+                bool          opens = false;
+                bool          gated = true;
+                while (std::getline(in, line))
+                {
+                    if (line.find("menuType.AUCTION") != std::string::npos)
+                    {
+                        opens = true;
+                        gated = gated && line.find_first_not_of(' ') > 4;
+                    }
+                }
+                if (opens)
+                {
+                    found.push_back({ file.path().stem().string(), gated });
+                }
+            }
+            if (!found.empty())
+            {
+                std::string list;
+                for (const auto& a : found)
+                {
+                    list += fmt::format("{}{}{}", list.empty() ? "" : ", ", a.name, a.gated ? " (gated: the crowd's, not the player's)" : "");
+                }
+                ShowInfoFmt("auction: {}'s auction counters: {}", PZone->getName(), list);
+            }
+            return byZone.emplace(zoneId, std::move(found)).first->second;
+        }
+    } // namespace
+
+    auto countersIn(CZone* PZone, const bool withGated) -> std::vector<const CBaseEntity*>
+    {
+        std::vector<const CBaseEntity*> counters;
+        if (PZone == nullptr)
+        {
+            return counters;
+        }
+        for (const auto& a : auctioneersOf(PZone))
+        {
+            if (a.gated && !withGated)
+            {
+                continue;
+            }
+            for (const auto* PEntity : PZone->queryEntitiesByName(a.name))
+            {
+                if (PEntity != nullptr && PEntity->status != xi::Status::Disappear)
+                {
+                    counters.push_back(PEntity);
+                }
+            }
+        }
+        return counters;
+    }
+
     auto counterNear(const CCharEntity* PPlayer) -> const CBaseEntity*
     {
         if (PPlayer == nullptr || PPlayer->loc.zone == nullptr)
@@ -656,7 +741,7 @@ namespace pawn::auction
         }
         const CBaseEntity* PNearest = nullptr;
         float              nearest  = kCounterReach;
-        for (const auto* PCounter : PPlayer->loc.zone->queryEntitiesByName("Auction_Counter"))
+        for (const auto* PCounter : countersIn(PPlayer->loc.zone, false))
         {
             if (PCounter == nullptr)
             {

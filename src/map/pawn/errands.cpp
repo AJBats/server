@@ -22,6 +22,7 @@
 #include "errands.h"
 
 #include "angler.h"
+#include "auction.h"
 
 #include "cardian_link.h"
 #include "club.h"
@@ -1404,7 +1405,7 @@ namespace pawn::errands
         }
         const CBaseEntity* PNearest = nullptr;
         float              nearest  = 0.0f;
-        for (const auto* PCounter : PPawn->loc.zone->queryEntitiesByName("Auction_Counter"))
+        for (const auto* PCounter : pawn::auction::countersIn(PPawn->loc.zone))
         {
             if (PCounter == nullptr)
             {

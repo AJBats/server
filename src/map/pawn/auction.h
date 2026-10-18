@@ -30,6 +30,7 @@
 
 class CBaseEntity;
 class CCharEntity;
+class CZone;
 
 // The Auction House screen's server half (ROADMAP L): what the auction
 // house has for a member of the party -- to wear, to learn, or anything on
@@ -154,8 +155,18 @@ namespace pawn::auction
     // auction_purchase.cpp, which xi_test links (scripts/tests/cardian/ah_buy.lua)
     auto purchaseShared(CCharEntity* PChar, CCharEntity* PPurse, uint16 itemId, bool stack, uint32 quantity, uint32 price, uint32 fromPurse) -> bool;
 
+    // The zone's auction counters: every NPC shown in it whose own script
+    // opens the game's auction menu (xi.menuType.AUCTION) -- a city's Auction
+    // Counters, and the clerks who are the auction house in Upper and Port
+    // Jeuno, Norg, Rabao, Kazham and the rest. A zone's scripts are read once.
+    // `withGated`: also the clerks who open it only under a condition of
+    // their own (Tavnazian Safehold's, after a Promathia mission), which the
+    // world's people use whatever their own progress (the user, 2026-10-18)
+    auto countersIn(CZone* PZone, bool withGated = true) -> std::vector<const CBaseEntity*>;
+
     // The auction counter within the player's reach (8 yalms, a gate
-    // guard's), nullptr for none
+    // guard's), nullptr for none; never a gated clerk, whose own condition
+    // the player has not been asked
     auto counterNear(const CCharEntity* PPlayer) -> const CBaseEntity*;
 
     // Whether a member of his party may shop there now: CL_S_OK, or why not
