@@ -63,6 +63,13 @@ xi.settings.cardian =
     -- nobody at each tally
     CONQUEST_SIMULATION = true,
 
+    -- The Goblin Bounty Hunters, retail's deterrent to fishing bots, patrol the
+    -- shores of six zones far above their level
+    -- (modules/cardian/lua/no_bounty_hunters.lua): false keeps them out of the
+    -- world, each leaving as it first spawns; true brings them back at the
+    -- next start
+    GOBLIN_BOUNTY_HUNTERS = false,
+
     -- A player's major progression is his account's (ROADMAP N;
     -- src/map/pawn/account_wide.cpp): the support job, the level cap, the
     -- gate crystals and Limit Breaker, and the outposts' warps any character

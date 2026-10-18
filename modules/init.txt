@@ -65,3 +65,5 @@ cardian/lua/exp_spread.lua
 cardian/lua/party_warp.lua
 # CARDIAN: a grant of major progression reaches the whole account (ROADMAP N)
 cardian/lua/account_wide.lua
+# CARDIAN: the Goblin Bounty Hunters, retail's fishing deterrents, kept out of the world
+cardian/lua/no_bounty_hunters.lua
