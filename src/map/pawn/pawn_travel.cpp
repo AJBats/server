@@ -24,11 +24,13 @@
 #include "subzone_graph.h"
 
 #include "common/logging.h"
+#include "common/lua.h"
 #include "common/settings.h"
 #include "common/utils.h"
 
 #include "data/datasets/zones/settings/dataset.h"
 #include "data/loader.h"
+#include "entities/base_entity.h"
 #include "navmesh/detour_navmesh.h"
 #include "utils/zoneutils.h"
 #include "ximesh/ximesh.h"
@@ -37,6 +39,9 @@
 #include <algorithm>
 #include <chrono>
 #include <deque>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -181,19 +186,109 @@ namespace
         return piece != 0 ? piece : pieceAt(zone, at, sz::kLineExtents);
     }
 
+    // A stable placed on the ground: where she stands to rent, a step before
+    // the NPC, and its set-down, each as a line's end is placed
+    void placeStable(sz::Rental& stable)
+    {
+        const auto spot = lineEnd(stable.zone, stable.stand);
+        const auto land = lineEnd(stable.to, stable.setDown);
+        stable.piece    = spot.piece;
+        stable.at       = spot.at;
+        stable.lands    = land.piece;
+        stable.landsAt  = land.at;
+    }
+
+    // The cities' stables (ROADMAP T, "Chocobos on the trek"): each NPC whose
+    // own script rents a chocobo (xi.chocobo.renterOnTrigger), in a zone whose
+    // row of xi.chocobo.chocoboInfo sets a rider down in another zone (`pos`)
+    // and is not of the past; a stable in the field, which mounts her where
+    // she stands, comes later (#529). Read from the game's own Lua, which the
+    // map has loaded by now
+    void addStables(sz::World& built, const std::vector<CZone*>& zones)
+    {
+        constexpr float   kStableFront = 2.5f; // yalms before the NPC, the way it faces
+        const sol::object chocobo      = ::lua["xi"]["chocobo"];
+        const sol::object infos        = chocobo.get_type() == sol::type::table ? chocobo.as<sol::table>()["chocoboInfo"] : sol::object{};
+        if (infos.get_type() != sol::type::table)
+        {
+            ShowWarning("pawn: travel: xi.chocobo.chocoboInfo is not loaded, so no stable is on the trek's map");
+            return;
+        }
+        for (CZone* PZone : zones)
+        {
+            const auto        zone = static_cast<uint16>(PZone->GetID());
+            const sol::object row  = infos.as<sol::table>()[zone];
+            if (row.get_type() != sol::type::table)
+            {
+                continue;
+            }
+            const auto        info = row.as<sol::table>();
+            const sol::object pos  = info["pos"];
+            if (info.get_or("past", false) || pos.get_type() != sol::type::table)
+            {
+                continue;
+            }
+            const auto p = pos.as<sol::table>();
+            position_t setDown{};
+            setDown.x       = p.get<sol::optional<float>>(1).value_or(0.0f);
+            setDown.y       = p.get<sol::optional<float>>(2).value_or(0.0f);
+            setDown.z       = p.get<sol::optional<float>>(3).value_or(0.0f);
+            const auto to   = p.get<sol::optional<uint16>>(5).value_or(uint16{ 0 });
+            std::error_code error;
+            for (const auto& file : std::filesystem::directory_iterator(fmt::format("./scripts/zones/{}/npcs", PZone->getName()), error))
+            {
+                if (file.path().extension() != ".lua")
+                {
+                    continue;
+                }
+                std::ifstream     in(file.path(), std::ios::binary);
+                const std::string text{ std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>() };
+                if (text.find("renterOnTrigger") == std::string::npos)
+                {
+                    continue;
+                }
+                for (const auto* PNpc : PZone->queryEntitiesByName(file.path().stem().string()))
+                {
+                    if (PNpc == nullptr || PNpc->status == xi::Status::Disappear)
+                    {
+                        continue;
+                    }
+                    sz::Rental stable{};
+                    stable.zone    = zone;
+                    stable.to      = to;
+                    stable.stand   = nearPosition(PNpc->loc.p, kStableFront, 0.0f);
+                    stable.setDown = setDown;
+                    placeStable(stable);
+                    built.rentals.push_back(stable);
+                    ShowInfoFmt("pawn: travel: the stable at {} in {} sets a rider down in zone {} at {:.1f} {:.1f} {:.1f}", PNpc->getName(), PZone->getName(),
+                                to, setDown.x, setDown.y, setDown.z);
+                }
+            }
+        }
+    }
+
     void buildWorld()
     {
         worldBuilt         = true;
         const auto started = std::chrono::steady_clock::now();
 
         std::vector<xi::ZoneId> zoneIds;
+        std::vector<CZone*>     zones;
         zoneutils::ForEachZone([&](CZone* PZone)
         {
             zoneIds.push_back(PZone->GetID());
+            zones.push_back(PZone);
         });
 
         auto& built = world();
         built       = {};
+        for (const auto* PZone : zones)
+        {
+            if (PZone->CanUseMisc(xi::ZoneMisc::Mount))
+            {
+                built.mountZones.insert(static_cast<uint16>(PZone->GetID()));
+            }
+        }
         std::size_t pieces    = 0;
         std::size_t faces     = 0;
         std::size_t faceBytes = 0; // what the steep faces hold in memory, kept for good
@@ -236,6 +331,12 @@ namespace
                                         .lands   = lineEnd(to, line.Destination) });
             }
         }
+        addStables(built, zones);
+        if (built.rentals.empty())
+        {
+            ShowWarning("pawn: travel: no stable found -- xi.chocobo.chocoboInfo's rows or the renters' scripts (renterOnTrigger) have changed shape; "
+                        "the treks ride nowhere");
+        }
         sz::join(built);
         std::size_t drops = 0;
         for (const auto& [_, zoneDrops] : built.drops)
@@ -243,8 +344,8 @@ namespace
             drops += zoneDrops.size();
         }
         constexpr double kMB = 1024.0 * 1024.0;
-        ShowInfoFmt("pawn: travel sub-zones built: {} zones, {} pieces, {} lines, {} drops, {} steep faces ({:.1f} MB), {} seams ({:.1f} MB), the walk's tables ({:.1f} MB), in {} ms",
-                    zoneIds.size(), pieces, built.lines.size(), drops, faces, static_cast<double>(faceBytes) / kMB, seams, static_cast<double>(seamBytes) / kMB,
+        ShowInfoFmt("pawn: travel sub-zones built: {} zones ({} allow a mount), {} pieces, {} lines, {} stables, {} drops, {} steep faces ({:.1f} MB), {} seams ({:.1f} MB), the walk's tables ({:.1f} MB), in {} ms",
+                    zoneIds.size(), built.mountZones.size(), pieces, built.lines.size(), built.rentals.size(), drops, faces, static_cast<double>(faceBytes) / kMB, seams, static_cast<double>(seamBytes) / kMB,
                     static_cast<double>(built.graph.bytes()) / kMB,
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - started).count());
     }
@@ -275,6 +376,13 @@ namespace
         {
             built.drops[zone] = zm->pieces.drops;
         }
+        for (auto& stable : built.rentals)
+        {
+            if (stable.zone == zone || stable.to == zone)
+            {
+                placeStable(stable);
+            }
+        }
         ++built.version;
         sz::join(built);
         ShowInfoFmt("pawn: travel sub-zones: zone {} has a new mesh, {} pieces", zone, zm != nullptr ? zm->pieces.polys.size() - 1 : 0);
@@ -291,8 +399,8 @@ namespace pawn::travel
         }
     }
 
-    auto nextHop(const xi::ZoneId from, const position_t& at, const xi::ZoneId to, const std::optional<position_t> toPoint, const std::optional<position_t> prefer)
-        -> std::optional<TravelHop>
+    auto nextHop(const xi::ZoneId from, const position_t& at, const xi::ZoneId to, const std::optional<position_t> toPoint, const std::optional<position_t> prefer,
+                 const TravelRide& ride) -> std::optional<TravelHop>
     {
         const auto      fromKey = static_cast<uint16>(from);
         const auto      toKey   = static_cast<uint16>(to);
@@ -307,14 +415,27 @@ namespace pawn::travel
             buildWorld();
         }
 
-        const auto& built = world();
-        auto        plan  = sz::plan(built, fromKey, here, at, toKey, there, toPoint);
-        if ((!plan.reachable || !plan.firstLine.has_value()) && there.has_value() && from != to)
+        const auto&    built = world();
+        const sz::Ride rider{ ride.mayRent, ride.mounted, ride.rideFactor };
+        auto           plan  = sz::plan(built, fromKey, here, at, toKey, there, toPoint, rider);
+        const auto     moves = [](const sz::Plan& p)
+        {
+            return p.reachable && (p.firstLine.has_value() || p.firstRental.has_value());
+        };
+        if (!moves(plan) && there.has_value() && from != to)
         {
             // His piece is one no line lands on or leads to (a scrap of mesh
             // he stands on): the walk goes to his zone, and on from there
             ShowInfoFmt("pawn: travel: no line reaches piece {} of zone {}, so the walk goes to the zone", *there, toKey);
-            plan = sz::plan(built, fromKey, here, at, toKey, std::nullopt, std::nullopt);
+            plan = sz::plan(built, fromKey, here, at, toKey, std::nullopt, std::nullopt, rider);
+        }
+        if (plan.firstRental.has_value())
+        {
+            const sz::Rental& stable = built.rentals[*plan.firstRental];
+            ShowInfoFmt("pawn: travel: zone {} (piece {}) to zone {} (piece {}): some {:.0f} yalms on foot's time; first the stable at {:.1f} {:.1f} {:.1f}, "
+                        "which sets her down in zone {}",
+                        fromKey, here, toKey, there.value_or(0), plan.length, stable.at.x, stable.at.y, stable.at.z, stable.to);
+            return TravelHop{ static_cast<xi::ZoneId>(stable.to), stable.at, stable.landsAt, true };
         }
         if (!plan.reachable || !plan.firstLine.has_value())
         {
