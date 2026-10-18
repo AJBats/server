@@ -722,6 +722,14 @@ namespace pawn
             pawn::chains::noteHold(POwner, false);
         }
 
+        // On her chocobo her rows ask nothing: a cast ends a ride (the mount's
+        // magic_end), and an item or a kneel takes her off it (ROADMAP T,
+        // "Chocobos on the trek"). A fight gets her down first (RideTick)
+        if (POwner->isMounted())
+        {
+            return;
+        }
+
         // Her TP as it rises, for the party's telepathy of when a skillchain
         // comes (skillchains.h forecast)
         pawn::chains::noteTp(POwner);

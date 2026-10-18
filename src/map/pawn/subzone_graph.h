@@ -32,6 +32,7 @@
 #include <optional>
 #include <queue>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // The world's sub-zones joined (the travel walk): every zone line from the
@@ -41,9 +42,18 @@
 // she leaves it, and a zone line's crossing -- so she leaves by the right
 // gate. A piece of 0 is one no navmesh knows (a zone without one): it takes
 // and reaches every line of its zone, as travel did before sub-zones.
+//
+// A rider (ROADMAP T, "Chocobos on the trek") plans in time: a city's stable
+// is one more way out of its piece, to the spot its rental sets a rider
+// down in another zone, taken only by one who may rent and is on foot; and
+// a yalm ridden in a zone that allows a mount costs her run over her ride.
+// A zone that allows none gets her down as she enters it. The search's
+// states are each place on foot and mounted; one who neither rides nor may
+// rent never leaves the first half, and plans as before.
 namespace cardian::subzones
 {
     constexpr float kLineCost = 50.0f; // a zone line's crossing, in yalms: the load, and the gate
+    constexpr float kRentCost = 30.0f; // a rental's own time, in yalms on foot: the stable, the mount, the set-down
 
     struct Line
     {
@@ -53,6 +63,30 @@ namespace cardian::subzones
         position_t arrival{}; // where it sets her down, as the zone's data places it
         LineEnd    leaves;    // the trigger's piece of `zone`, and the spot she walks to to take it (subzones.h lineEnd)
         LineEnd    lands;     // the arrival's piece of `to`, and the spot it sets her down on
+    };
+
+    // A city's stable: a walk to `at` in its zone, then its rental sets her
+    // down on her chocobo at `landsAt` in the zone `to`
+    struct Rental
+    {
+        uint16     zone{};
+        Piece      piece{};   // the stable's piece of `zone`
+        position_t at{};      // where she stands to rent
+        uint16     to{};      // the zone the rental sets her down in
+        Piece      lands{};   // the set-down's piece of `to`
+        position_t landsAt{}; // where it sets her down
+        position_t stand{};   // the points they were placed from: before the NPC, and the stable's own set-down,
+        position_t setDown{}; // placed again when either zone's mesh changes
+    };
+
+    // How she travels: whether she may rent at a stable (she holds the
+    // license), whether she rides already, and a yalm ridden's cost in
+    // yalms on foot (her run over her ride)
+    struct Ride
+    {
+        bool  mayRent    = false;
+        bool  mounted    = false;
+        float rideFactor = 1.0f;
     };
 
     // The search's fixed half, built by `join` from the world's lines and
@@ -65,7 +99,8 @@ namespace cardian::subzones
             uint16      zone{};
             Piece       piece{};
             position_t  at{};
-            std::size_t line = SIZE_MAX; // the line that sets her down here; SIZE_MAX at a drop's foot
+            std::size_t line   = SIZE_MAX; // the line that sets her down here; SIZE_MAX at a drop's foot or a rental's set-down
+            std::size_t rental = SIZE_MAX; // the rental that sets her down here
         };
 
         // A way out of a piece: a walk to `at`, then a line's crossing or a
@@ -76,6 +111,7 @@ namespace cardian::subzones
             float       cost{};  // past the walk: kLineCost for a line, the fall for a drop
             std::size_t to{};    // its place, in `places`
             int         lines{}; // the zone lines it crosses
+            bool        rents{}; // a stable's rental: taken only by one who may rent, on foot
         };
 
         uint64_t                                               version = UINT64_MAX; // the world's version it was joined at; UINT64_MAX before a join
@@ -108,7 +144,9 @@ namespace cardian::subzones
     struct World
     {
         std::vector<Line>                              lines;
-        std::unordered_map<uint16, std::vector<Drop>> drops; // by zone
+        std::unordered_map<uint16, std::vector<Drop>> drops;      // by zone
+        std::vector<Rental>                            rentals;    // the cities' stables
+        std::unordered_set<uint16>                     mountZones; // the zones that allow a mount
 
         // Raised by whoever changes `lines` or `drops`, who then joins them
         // again: `plan` warns when its tables were joined at another version
@@ -117,14 +155,16 @@ namespace cardian::subzones
     };
 
     // Where a trek goes next: the first zone line of the shortest walk, or
-    // none when the goal is in her own zone and piece already, or reached by
-    // a drop she walks to; `reachable` false when no walk joins them at all
+    // the stable whose rental comes first on it, or neither when the goal is
+    // in her own zone and piece already, or reached by a drop she walks to;
+    // `reachable` false when no walk joins them at all
     struct Plan
     {
         bool                       reachable{};
-        std::optional<std::size_t> firstLine;
-        float                      length{};
-        int                        lines{}; // the zone lines crossed
+        std::optional<std::size_t> firstLine;   // when a zone line comes first
+        std::optional<std::size_t> firstRental; // when a stable comes first, in `rentals`
+        float                      length{};    // in yalms on foot
+        int                        lines{};     // the zone lines crossed
     };
 
     namespace detail
@@ -167,13 +207,20 @@ namespace cardian::subzones
                 graph.places.push_back({ zone, drop.to, drop.bottom });
             }
         }
+        for (std::size_t i = 0; i < world.rentals.size(); ++i)
+        {
+            const Rental& rental = world.rentals[i];
+            addExit(rental.zone, rental.piece, { rental.at, kRentCost, graph.places.size(), 0, true });
+            graph.places.push_back({ rental.to, rental.lands, rental.landsAt, SIZE_MAX, i });
+        }
         world.graph = std::move(graph);
     }
 
     // The shortest walk from `at` (in `zone`, on `piece`) to `toZone` -- on
-    // `toPiece` when given, and as near `toPoint` as it can end when given
+    // `toPiece` when given, and as near `toPoint` as it can end when given --
+    // or, for a rider, the quickest way (`ride`)
     inline auto plan(const World& world, const uint16 zone, const Piece piece, const position_t& at, const uint16 toZone, const std::optional<Piece> toPiece,
-                     const std::optional<position_t> toPoint) -> Plan
+                     const std::optional<position_t> toPoint, const Ride& ride = {}) -> Plan
     {
         if (world.graph.version != world.version)
         {
@@ -183,13 +230,14 @@ namespace cardian::subzones
                            world.graph.version, world.version);
             World joined = world;
             join(joined);
-            return plan(joined, zone, piece, at, toZone, toPiece, toPoint);
+            return plan(joined, zone, piece, at, toZone, toPiece, toPoint, ride);
         }
         const Graph& graph = world.graph;
 
-        // The states: 0 the start, 1 + i at graph.places[i]. Their tables are
-        // kept from one plan to the next -- the world's drops make them some
-        // 365,000 long -- and a plan puts back only the entries it touched
+        // The states: each place on foot (2 * s) and mounted (2 * s + 1), the
+        // place 0 the start and 1 + i graph.places[i]. Their tables are kept
+        // from one plan to the next -- the world's drops make them some
+        // 730,000 long -- and a plan puts back only the entries it touched
         constexpr float kNever = std::numeric_limits<float>::infinity();
         struct Scratch
         {
@@ -199,7 +247,7 @@ namespace cardian::subzones
             std::vector<std::size_t> touched;
         };
         thread_local Scratch scratch;
-        const std::size_t    states = 1 + graph.places.size();
+        const std::size_t    states = 2 * (1 + graph.places.size());
         if (scratch.cost.size() < states)
         {
             scratch.cost.resize(states, kNever);
@@ -229,30 +277,42 @@ namespace cardian::subzones
         {
             return s == 0 ? Graph::Place{ zone, piece, at } : graph.places[s - 1];
         };
+        const auto mountable = [&](const uint16 z)
+        {
+            return world.mountZones.contains(z);
+        };
+        // A yalm walked here, mounted or not, in yalms on foot
+        const auto pace = [&](const bool mounted, const uint16 z)
+        {
+            return mounted && mountable(z) ? ride.rideFactor : 1.0f;
+        };
         using Entry = std::pair<float, std::size_t>;
         std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
-        cost[0] = 0.0f;
-        touched.push_back(0);
-        open.push({ 0.0f, 0 });
+        const std::size_t start = ride.mounted && mountable(zone) ? 1 : 0;
+        cost[start] = 0.0f;
+        touched.push_back(start);
+        open.push({ 0.0f, start });
 
         float       best    = kNever;
         std::size_t bestEnd = SIZE_MAX;
         while (!open.empty())
         {
-            const auto [c, s] = open.top();
+            const auto [c, st] = open.top();
             open.pop();
-            if (c > cost[s] || c >= best)
+            if (c > cost[st] || c >= best)
             {
                 continue;
             }
-            const Graph::Place here = placeOf(s);
+            const std::size_t  s       = st / 2;
+            const bool         mounted = st % 2 == 1;
+            const Graph::Place here    = placeOf(s);
             if (here.zone == toZone && (!toPiece.has_value() || detail::joins(here.piece, *toPiece)))
             {
-                const float total = c + (toPoint.has_value() ? detail::crow(here.at, *toPoint) : 0.0f);
+                const float total = c + (toPoint.has_value() ? detail::crow(here.at, *toPoint) * pace(mounted, here.zone) : 0.0f);
                 if (total < best)
                 {
                     best    = total;
-                    bestEnd = s;
+                    bestEnd = st;
                 }
             }
             const auto take = [&](const auto& ways, const auto key)
@@ -265,8 +325,16 @@ namespace cardian::subzones
                 for (const std::size_t e : it->second)
                 {
                     const Graph::Exit& exit = graph.exits[e];
-                    const std::size_t  next = 1 + exit.to;
-                    const float        step = c + detail::crow(here.at, exit.at) + exit.cost;
+                    if (exit.rents && (!ride.mayRent || mounted))
+                    {
+                        continue;
+                    }
+                    // a rental sets her down mounted; a zone that allows no
+                    // mount gets her down as she enters it
+                    const uint16      landsIn = graph.places[exit.to].zone;
+                    const bool        rides   = (exit.rents || mounted) && mountable(landsIn);
+                    const std::size_t next    = 2 * (1 + exit.to) + (rides ? 1 : 0);
+                    const float       step    = c + detail::crow(here.at, exit.at) * pace(mounted, here.zone) + exit.cost;
                     if (step < cost[next])
                     {
                         if (cost[next] == kNever)
@@ -274,8 +342,8 @@ namespace cardian::subzones
                             touched.push_back(next);
                         }
                         cost[next]    = step;
-                        via[next]     = s;
-                        crossed[next] = crossed[s] + exit.lines;
+                        via[next]     = st;
+                        crossed[next] = crossed[st] + exit.lines;
                         open.push({ step, next });
                     }
                 }
@@ -299,12 +367,19 @@ namespace cardian::subzones
         out.reachable = true;
         out.length    = best;
         out.lines     = crossed[bestEnd];
-        // the first zone line on the way back from the end to the start
-        for (std::size_t s = bestEnd; s != 0 && s != SIZE_MAX; s = via[s])
+        // the first zone line or rental on the way back from the end to the start
+        for (std::size_t st = bestEnd; st / 2 != 0 && st != SIZE_MAX; st = via[st])
         {
-            if (const auto line = graph.places[s - 1].line; line != SIZE_MAX)
+            const Graph::Place& place = graph.places[st / 2 - 1];
+            if (place.line != SIZE_MAX)
             {
-                out.firstLine = line;
+                out.firstLine   = place.line;
+                out.firstRental = std::nullopt;
+            }
+            else if (place.rental != SIZE_MAX)
+            {
+                out.firstRental = place.rental;
+                out.firstLine   = std::nullopt;
             }
         }
         return out;

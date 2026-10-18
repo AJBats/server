@@ -74,7 +74,7 @@ namespace
 {
     // The account's lists, by name in the game's own key item table
     // (scripts/enum/key_item.codegen.lua, xi.keyItem), read once Lua has it:
-    // copied, every *_GATE_CRYSTAL and LIMIT_BREAKER; shared as a view, every
+    // copied, every *_GATE_CRYSTAL, LIMIT_BREAKER and CHOCOBO_LICENSE; shared as a view, every
     // MAP_OF_*. Logged as read, so the list can be checked against the game's
     struct Lists
     {
@@ -104,7 +104,7 @@ namespace
             }
             const auto name = key.as<std::string>();
             const auto id   = value.as<uint16>();
-            if (name.ends_with("_GATE_CRYSTAL") || name == "LIMIT_BREAKER")
+            if (name.ends_with("_GATE_CRYSTAL") || name == "LIMIT_BREAKER" || name == "CHOCOBO_LICENSE")
             {
                 l.shared.push_back(id);
                 named.emplace_back(id, name);

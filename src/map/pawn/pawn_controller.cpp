@@ -42,6 +42,8 @@
 #include "pawn_items.h"
 #include "pawn_rules.h"
 #include "pull_math.h"
+#include "riding.h"
+#include "riding_math.h"
 #include "town_errands.h"
 
 #include "common/lua.h"
@@ -4749,6 +4751,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         NoteTowsLanded();
         FoodTick(); // her food: eaten with the player, a body of the world's topped up
         KitTick();  // her pulling kit: worn in the Puller seat, put back out of it, its ammunition topped up
+        RideTick(); // her chocobo: got down from in a fight and beside the player on foot
 
         // Mobs check a character for aggro only when that character's client
         // sends a position or action packet (CZoneEntities::tapMobAggro). A
@@ -7169,9 +7172,20 @@ void CPawnController::TravelTick()
         m_LastTravelDebugTime = m_Tick;
     }
 
-    // Her crossings: she rests on the far side (DoRoamTick)
+    // Her crossings: she rests on the far side (DoRoamTick). A stable's hop
+    // is rented first, standing at it, and then crossed like a line, to the
+    // stable's set-down; one she cannot rent (out of reach, her purse and
+    // his short) is not looked for again for a while, and the way is chosen
+    // afresh (RentAt)
     const auto cross = [&](const pawn::TravelHop& line)
     {
+        if (line.rents)
+        {
+            if (!RentAt(line))
+            {
+                return;
+            }
+        }
         m_TrekCrossedFrom = POwner->getZone();
         pawn::requestTransfer(POwner->id, line);
     };
@@ -7274,7 +7288,7 @@ void CPawnController::TravelTick()
         {
             toPoint = PLeader->loc.p;
         }
-        m_TravelHop         = pawn::travel::nextHop(POwner->getZone(), POwner->loc.p, targetZone, toPoint, prefer);
+        m_TravelHop         = pawn::travel::nextHop(POwner->getZone(), POwner->loc.p, targetZone, toPoint, prefer, TravelRide());
         m_TravelHopHeels    = false;
         m_TravelHopKnown    = true;
         m_TravelHopFrom     = POwner->getZone();
@@ -7282,7 +7296,13 @@ void CPawnController::TravelTick()
         m_TravelHopChosenAt = m_Tick;
         chose               = true;
         const float took    = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - began).count();
-        if (m_TravelHop.has_value())
+        if (m_TravelHop.has_value() && m_TravelHop->rents)
+        {
+            ShowInfoFmt("pawn: travel {}: chose the stable in zone {}, {:.1f}y away, whose chocobo sets her down in zone {}, toward zone {} ({:.1f} ms)",
+                        POwner->getName(), static_cast<uint16>(POwner->getZone()), distance(POwner->loc.p, m_TravelHop->walkTo),
+                        static_cast<uint16>(m_TravelHop->destinationZone), static_cast<uint16>(targetZone), took);
+        }
+        else if (m_TravelHop.has_value())
         {
             ShowInfoFmt("pawn: travel {}: chose the line from zone {} to zone {}, {:.1f}y away, toward zone {} ({:.1f} ms)", POwner->getName(),
                         static_cast<uint16>(POwner->getZone()), static_cast<uint16>(m_TravelHop->destinationZone), distance(POwner->loc.p, m_TravelHop->walkTo),
@@ -7337,9 +7357,10 @@ void CPawnController::TravelTick()
     }
 
     // Fresh hop: start progress tracking anew
-    if (hop->destinationZone != m_TravelHopZone)
+    if (hop->destinationZone != m_TravelHopZone || distance(hop->walkTo, m_TravelHopWalkTo) > 1.0f)
     {
         m_TravelHopZone      = hop->destinationZone;
+        m_TravelHopWalkTo    = hop->walkTo;
         m_TravelBestDist     = distToLine;
         m_TravelProgressTime = m_Tick;
     }
@@ -8548,9 +8569,12 @@ auto CPawnController::PlayerAnchor(const CCharEntity* PPlayer, const float predi
 
 void CPawnController::RampCatchUp(const bool playerMoving, const position_t& point)
 {
-    const float normalSpeed = settings::get<float>("pawn.PAWN_SPEED");
+    // On her chocobo the run is her riding speed, and the sprint over it in
+    // the same proportion as on foot
+    const float onFoot      = settings::get<float>("pawn.PAWN_SPEED");
+    const float normalSpeed = static_cast<float>(pawn::riding::runSpeed(static_cast<const CCharEntity*>(POwner)));
     float       wanted      = cardian::formation::catchUpSpeed(distance(POwner->loc.p, point), playerMoving, normalSpeed,
-                                                               settings::get<float>("pawn.FORMATION_CATCHUP_SPEED"),
+                                                               settings::get<float>("pawn.FORMATION_CATCHUP_SPEED") * normalSpeed / onFoot,
                                                                settings::get<float>("pawn.FORMATION_CATCHUP_DISTANCE"));
     // Never a step faster than the player while a mob is on her
     if (wanted > normalSpeed && HatedByAnyMob())
@@ -8558,24 +8582,99 @@ void CPawnController::RampCatchUp(const bool playerMoving, const position_t& poi
         wanted = normalSpeed;
     }
 
-    const auto wantedSpeed = static_cast<uint8>(std::lround(wanted));
-    if (wantedSpeed != POwner->baseSpeed)
+    const auto wantedSpeed = static_cast<uint8>(std::lround(std::min(255.0f, wanted)));
+    m_Sprinting            = wantedSpeed > normalSpeed;
+    SetRunSpeed(wantedSpeed);
+}
+
+void CPawnController::SetRunSpeed(const uint8 wanted)
+{
+    if (POwner->isMounted())
     {
-        m_Sprinting       = wantedSpeed > normalSpeed;
-        POwner->baseSpeed = wantedSpeed;
+        const float mount = settings::get<uint8>("map.MOUNT_SPEED") / 2.0f;
+        const int16 gear  = static_cast<int16>(POwner->getMod(xi::Mod::MOUNT_MOVE) - m_RideMod);
+        const auto  need  = static_cast<int16>(std::lround((wanted / std::max(1.0f, mount) - 1.0f) * 100.0f) - gear);
+        if (need != m_RideMod)
+        {
+            POwner->delModifier(xi::Mod::MOUNT_MOVE, m_RideMod);
+            POwner->addModifier(xi::Mod::MOUNT_MOVE, need);
+            m_RideMod = need;
+            POwner->UpdateSpeed();
+        }
+        return;
+    }
+    if (m_RideMod != 0)
+    {
+        POwner->delModifier(xi::Mod::MOUNT_MOVE, m_RideMod);
+        m_RideMod = 0;
+    }
+    if (POwner->baseSpeed != wanted)
+    {
+        POwner->baseSpeed = wanted;
         POwner->UpdateSpeed();
     }
 }
 
 void CPawnController::RestoreNormalSpeed()
 {
-    const auto normalSpeed = settings::get<uint8>("pawn.PAWN_SPEED");
-    if (POwner->baseSpeed != normalSpeed)
-    {
-        POwner->baseSpeed = normalSpeed;
-        POwner->UpdateSpeed();
-    }
+    SetRunSpeed(pawn::riding::runSpeed(static_cast<const CCharEntity*>(POwner)));
     m_Sprinting = false;
+}
+
+auto CPawnController::RentAt(const pawn::TravelHop& stable) -> bool
+{
+    // She rents only standing at the stable: farther off, or with no way to
+    // it, she gives it up for a while and the way is chosen afresh
+    constexpr float kRentReach = 6.0f;
+    auto*           PSelf      = static_cast<CCharEntity*>(POwner);
+    if (distance(POwner->loc.p, stable.walkTo) <= kRentReach && pawn::riding::rent(PSelf, pawn::partyPlayer(PSelf)))
+    {
+        return true;
+    }
+    if (distance(POwner->loc.p, stable.walkTo) > kRentReach)
+    {
+        ShowInfoFmt("pawn: travel {}: cannot reach the stable ({:.1f}y from it), so she leaves it for a while", POwner->getName(),
+                    distance(POwner->loc.p, stable.walkTo));
+    }
+    m_RentRefusedAt  = m_Tick;
+    m_TravelHopKnown = false;
+    m_TravelHop.reset();
+    return false;
+}
+
+auto CPawnController::TravelRide() -> pawn::TravelRide
+{
+    // A stable she could not rent at is not planned again for kRentRetry
+    constexpr auto kRentRetry = 10min;
+    auto*          PSelf      = static_cast<CCharEntity*>(POwner);
+    const bool     mounted    = PSelf->isMounted();
+    const bool     refused    = m_RentRefusedAt.has_value() && m_Tick - *m_RentRefusedAt < kRentRetry;
+    return pawn::TravelRide{ .mayRent    = !mounted && !refused && pawn::riding::licensed(PSelf),
+                             .mounted    = mounted,
+                             .rideFactor = settings::get<float>("pawn.PAWN_SPEED") / std::max(1.0f, settings::get<float>("pawn.RIDE_SPEED")) };
+}
+
+void CPawnController::RideTick()
+{
+    auto* PSelf = static_cast<CCharEntity*>(POwner);
+    if (PSelf->isMounted())
+    {
+        const CCharEntity* PPlayer = GetLivePlayer();
+        const bool         engaged = POwner->PAI->IsEngaged();
+        const bool         reached = PPlayer != nullptr && PPlayer->loc.zone == POwner->loc.zone &&
+                             distance(POwner->loc.p, PPlayer->loc.p) <= cardian::riding::kReachedYalms;
+        if (cardian::riding::dismounts(engaged, PPlayer != nullptr && PPlayer->isMounted(), reached))
+        {
+            pawn::riding::dismount(PSelf, engaged ? "in a fight" : "beside the player, on foot");
+        }
+    }
+    // Mounted or got down -- by her rental, its end, or a zone that allows
+    // no mount -- her base speed changes with it
+    if (const bool riding = PSelf->isMounted(); riding != m_Riding)
+    {
+        m_Riding = riding;
+        RestoreNormalSpeed();
+    }
 }
 
 void CPawnController::FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& a, const position_t& point)

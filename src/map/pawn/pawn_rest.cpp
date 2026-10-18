@@ -187,6 +187,11 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
 {
     const double now = restSeconds(timer::now());
     auto* healing = POwner->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Healing);
+    // On her chocobo she kneels for nothing: a kneel takes her off it
+    if (POwner->isMounted() && healing == nullptr)
+    {
+        return false;
+    }
     if (m_RestOrder.metBy(POwner->health.hp, POwner->GetMaxHP(), POwner->health.mp, POwner->GetMaxMP()))
     {
         EndRestOrder(fmt::format("HP and MP at {}%, her gambits take over", m_RestOrder.percent));

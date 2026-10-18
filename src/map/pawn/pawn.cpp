@@ -2729,11 +2729,15 @@ namespace pawn
         {
             return;
         }
-        const bool walked = cardian::hold::walked(sinceZoneLine);
+        const bool crossed = cardian::hold::walked(sinceZoneLine);
+        // A ride out of a city's stable lands him on the chocobo he rented:
+        // a way out his party follows as it follows a walk, never a warp
+        // (ROADMAP T, "Chocobos on the trek")
+        const bool walked = crossed || PPlayer->isMounted();
         // His Mog House's exit is no crossing to follow through: where he
         // stood is inside it, and where it sets him down is decided only as
         // he arrives (the handler zeroes his position)
-        if (walked && !fromMogHouse)
+        if (crossed && !fromMogHouse)
         {
             // His position is the far side's already: the line's handler has set it
             exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, lineAt, PPlayer->loc.p };

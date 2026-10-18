@@ -1816,6 +1816,29 @@ private:
     // con at the level the Pull page reads it at, and his call sound
     void CallPull(const CMobEntity* PMob, const CCharEntity* PPlayer);
 
+    // Her chocobo (pawn/riding.h): she gets down in a fight, and once the
+    // player is on foot and she has reached him; her base speed follows
+    // whether she rides
+    void RideTick();
+    bool m_Riding = false; // she rode as of the last RideTick
+
+    // Her speed set: her base speed on foot; on her chocobo, which the game
+    // moves at map.MOUNT_SPEED / 2 scaled by Mod::MOUNT_MOVE whatever her
+    // base speed, the MOUNT_MOVE that makes it `wanted` (her gear's own
+    // kept, m_RideMod the share that is hers from here, taken back on foot)
+    void  SetRunSpeed(uint8 wanted);
+    int16 m_RideMod = 0;
+
+    // How her trek travels: by a stable's chocobo when she holds the license
+    // and is on foot, riding when she rides (pawn_travel.h TravelRide)
+    auto                                  TravelRide() -> pawn::TravelRide;
+    std::optional<timer::time_point>      m_RentRefusedAt; // the last stable she could not rent at
+    // A stable's hop reached: rents her chocobo, true then, the crossing to
+    // its set-down for the caller to make; else the stable is given up for a
+    // while and the way chosen afresh
+    auto       RentAt(const pawn::TravelHop& stable) -> bool;
+    position_t m_TravelHopWalkTo{}; // where the hop she tracks progress to stands
+
     // An order that started, the game's word on it heard for kHeels after:
     // its name for the log, its key for the note, when it was tried, and the
     // start of the action state it began (min when it began none)

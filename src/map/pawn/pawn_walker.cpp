@@ -1218,6 +1218,11 @@ void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLin
     if (distToLine < CrossingSlack)
     {
         m_TravelStuckSaid = false;
+        // a stable is rented standing at it, or given up (RentAt)
+        if (hop.rents && !RentAt(hop))
+        {
+            return;
+        }
         m_TrekCrossedFrom = POwner->getZone();
         pawn::requestTransfer(POwner->id, hop);
         return;
@@ -1255,8 +1260,10 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     const bool vetted     = intent.vet && !kneelsHere && !PlayersRestHolds() &&
                         (intent.trek || arriving || IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro()));
 
+    // No monster aggroes a rider (the game's own rule, CMobController): on
+    // her chocobo she plans round no danger at all
     Rules rules;
-    rules.danger = vetted;
+    rules.danger = vetted && !POwner->isMounted();
     if (intent.trek)
     {
         // A trek keeps every ring whole, walls or not (the game's sight ray,

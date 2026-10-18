@@ -40,6 +40,7 @@
 #include "offers.h"
 #include "pawn_gambits.h"
 #include "redress.h"
+#include "riding.h"
 #include "food.h"
 #include "pull.h"
 #include "spell_bank.h"
@@ -664,6 +665,25 @@ class PawnModule : public CPPModule
                 }
             }
             return pawn::offers::put(PChar, std::move(offer), std::chrono::seconds(seconds));
+        };
+
+        // The party rents with the player (modules/cardian/lua/chocobo_ride.lua):
+        // the cardians who rent with him at the stable he rents at (riding.h
+        // ridersBeside), asked before his rental moves him, each { id, free }:
+        // a body of the world rides free, his own pay their way
+        ::lua["CBaseEntity"]["cardianRidersBeside"] = [](CLuaBaseEntity* PLuaBaseEntity) -> sol::table
+        {
+            auto  riders = ::lua.create_table();
+            auto* PChar  = dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity());
+            if (PChar == nullptr || pawn::isPawn(PChar))
+            {
+                return riders;
+            }
+            for (const auto& rider : pawn::riding::ridersBeside(PChar))
+            {
+                riders.add(::lua.create_table_with("id", rider.charid, "free", rider.free));
+            }
+            return riders;
         };
 
         // His own warp, a scroll read or the spell cast, held while he says

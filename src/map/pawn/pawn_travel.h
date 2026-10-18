@@ -49,6 +49,18 @@ namespace pawn
         xi::ZoneId destinationZone{};
         position_t walkTo{};   // where she takes the line: the ground under its trigger-box centre (subzones.h lineEnd)
         position_t arriveAt{}; // where it sets her down: the ground under its arrival point, the same way
+        bool       rents{};    // a city's stable, not a line: she rents at walkTo, and the rental sets her down at arriveAt, mounted
+    };
+
+    // How she travels (ROADMAP T, "Chocobos on the trek"): whether she may
+    // rent a chocobo at a city's stable (she holds the license and is on
+    // foot), whether she rides already, and a yalm ridden's cost in yalms
+    // on foot (pawn.PAWN_SPEED over pawn.RIDE_SPEED)
+    struct TravelRide
+    {
+        bool  mayRent    = false;
+        bool  mounted    = false;
+        float rideFactor = 1.0f;
     };
 
     namespace travel
@@ -64,9 +76,10 @@ namespace pawn
         // or none is needed. Of the lines that land on the same piece of the
         // same next zone (West Ronfaure has more than one into East Ronfaure)
         // the one nearest `prefer` when given (the line her player just
-        // walked through), else the walk's own
+        // walked through), else the walk's own. A rider (`ride`) plans the
+        // quickest way instead, and her first hop may be a stable's rental
         auto nextHop(xi::ZoneId from, const position_t& at, xi::ZoneId to, std::optional<position_t> toPoint = std::nullopt,
-                     std::optional<position_t> prefer = std::nullopt) -> std::optional<TravelHop>;
+                     std::optional<position_t> prefer = std::nullopt, const TravelRide& ride = {}) -> std::optional<TravelHop>;
 
         // Two bodies in one zone that no walk joins: each stands on the
         // mesh, on a piece of its own (North Gustaberg's lowlands and its

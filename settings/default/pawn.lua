@@ -28,6 +28,13 @@ xi.settings.pawn =
     -- runs at the limit instead.
     PAWN_SPEED = 85,
 
+    -- A cardian on a chocobo (ROADMAP T, "Chocobos on the trek"): her base
+    -- speed while she rides, on the same step (speed/17 yalms a second).
+    -- A first figure, the game's MOUNT_SPEED (80) against its BASE_SPEED
+    -- (50) over PAWN_SPEED: about 8 yalms a second. To be measured against
+    -- the player's own chocobo, as PAWN_SPEED was against his run.
+    RIDE_SPEED = 136,
+
     -- Direct control (ROADMAP C): a steered cardian's position packet leads
     -- her by this much of her run, along her facing and never past the ring
     -- -- what the client takes to ease an entity onto a packet position, so
