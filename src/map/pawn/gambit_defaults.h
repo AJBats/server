@@ -88,10 +88,11 @@ namespace pawn
     // The weapon skill row is in every set (the user, 2026-09-26): it costs
     // nothing, and comes up only once she is engaged with the TP for one;
     // a melee set's is the tactician's (the damage kit, ROADMAP slice 3h), a
-    // mage's an order on a mob at half its HP or more. Every set avoids
-    // aggro (the user, 2026-10-15), after Eat with the player: the
-    // Shortcuts menu's switch turns it off for the party without taking the
-    // row away (pawn.h HuntRules::avoidAggro).
+    // mage's an order on a mob at half its HP or more. Every set carries
+    // Avoid aggro (the user, 2026-10-15), after Eat with the player. In a
+    // real player's party the row is not read: his Shortcuts menu's switch
+    // decides for every member (the user, 2026-10-17; pawn.h
+    // HuntRules::avoidAggro). A body in no real player's party follows it.
     inline auto defaultRowsFor(const xi::Job job) -> const std::vector<std::pair<std::string, bool>>&
     {
         static const std::vector<std::pair<std::string, bool>> melee{

@@ -41,6 +41,7 @@
 #include "skillchains.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "pawn_danger.h"
 #include "players.h"
 #include "pull.h"
 #include "account_wide.h"
@@ -52,6 +53,7 @@
 #include "common/logging.h"
 #include "common/settings.h"
 #include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "enums/item_flag.h"
 #include "items/item_linkshell.h"
 #include "lua/lua_base_entity.h"
@@ -691,6 +693,7 @@ namespace pawn::linkapi
                 msg.origin  = static_cast<uint8_t>(shown.origin);
                 msg.lender  = shown.origin == cardian::layers::Origin::Own ? CL_ROLE_NONE
                               : shown.trek                                 ? CL_LENDER_TREK
+                              : shown.party                                ? CL_LENDER_PARTY
                                                                            : static_cast<uint8_t>(set.LentBy());
                 const auto label = pawn::labelGambit(shown.row->gambit);
                 setText(msg.head, label.head);
@@ -1745,6 +1748,63 @@ namespace pawn::linkapi
             reply.finish(sendPullKinds(PChar, reply, ask), CL_S_OK);
         }
 
+        // The monsters alive near a member of his party, nearest her first
+        // (cl_mobs_near): a far pick's list, asked again while it is open
+        void mobsNear(CCharEntity* PChar, const cl_mobs_near& ask, Reply& reply)
+        {
+            auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
+            if (PPawn == nullptr)
+            {
+                reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            // The list is marked in his scene: from another zone, or between
+            // zones, there is nothing of hers to show him
+            if (PPawn->loc.zone == nullptr || PPawn->loc.zone != PChar->loc.zone)
+            {
+                reply.finish(ask, CL_S_OTHER_ZONE);
+                return;
+            }
+            std::vector<std::pair<float, CMobEntity*>> around;
+            pawn::forEachMobNear(pawn::entitiesAround(PPawn), PPawn->loc.p, static_cast<float>(CL_NEAR_REACH), [&](CMobEntity* PMob)
+            {
+                // Only what her Attack would take: alive, above ground and
+                // targetable, the world's own and nobody's pet
+                if (PMob == nullptr || PMob->isDead() || PMob->status == xi::Status::Disappear || PMob->GetHPP() == 0 || pawn::isUnderground(PMob) ||
+                    PMob->PMaster != nullptr || PMob->allegiance != xi::Allegiance::Mob)
+                {
+                    return;
+                }
+                const float away = distance(PPawn->loc.p, PMob->loc.p);
+                if (away <= static_cast<float>(CL_NEAR_REACH))
+                {
+                    around.emplace_back(away, PMob);
+                }
+            });
+            std::ranges::sort(around, {}, &std::pair<float, CMobEntity*>::first);
+            auto answer  = ask;
+            answer.count = 0;
+            for (const auto& [away, PMob] : around)
+            {
+                if (answer.count == CL_NEAR_MAX)
+                {
+                    break;
+                }
+                auto msg     = make<cl_mob_near>();
+                msg.targid   = PMob->targid;
+                msg.hpp      = PMob->GetHPP();
+                msg.x        = PMob->loc.p.x;
+                msg.y        = PMob->loc.p.y;
+                msg.z        = PMob->loc.p.z;
+                msg.radius   = PMob->modelHitboxSize;
+                msg.distance = away;
+                setText(msg.name, PMob->getName());
+                reply.more(msg);
+                ++answer.count;
+            }
+            reply.finish(answer, CL_S_OK);
+        }
+
         // His list as the page leaves it: the rows come back as they now
         // stand, then its outcome, the change echoed (the rows' header is a
         // read's, not this answer's)
@@ -1874,11 +1934,13 @@ namespace pawn::linkapi
 
         // The player's preferences the server applies to him: the shared
         // maps (account_wide.h), his puller's call sound (pull.h) and his
-        // skillchain plan's (skillchains.h); a call past the game's count is
-        // refused
+        // skillchain plan's (skillchains.h); a call the game has not, other
+        // than none, is refused
+        static_assert(cardian::chat::kNoCall == CL_CALL_NONE && cardian::chat::kCallCount == CL_CALL_LAST + 1);
         void prefs(CCharEntity* PChar, const cl_prefs& ask, Reply& reply)
         {
-            if (ask.pullCall > cardian::chat::kCallCount || ask.chainCall > cardian::chat::kCallCount || ask.readyCall > cardian::chat::kCallCount)
+            const auto callOk = [](const uint8 call) { return call < cardian::chat::kCallCount || call == cardian::chat::kNoCall; };
+            if (!callOk(ask.pullCall) || !callOk(ask.chainCall) || !callOk(ask.readyCall))
             {
                 reply.finish(ask, CL_S_MALFORMED);
                 return;
@@ -2977,6 +3039,7 @@ namespace pawn::linkapi
         handle<cl_skillchain_now>(skillchainNow);
         handle<cl_pull_kinds>(pullKinds);
         handle<cl_set_pull_list>(setPullList);
+        handle<cl_mobs_near>(mobsNear);
         handle<cl_retreat>(retreat);
         handle<cl_stake>(stake);
         handle<cl_engage>(engage);

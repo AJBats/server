@@ -172,10 +172,10 @@ namespace pawn::chains
     // Somebody else will use what is on a mob, so a member who cannot close
     // it keeps her weapon skill off it (skillchain_math.h wsCall): another
     // member fighting it, with the TP, has a weapon skill that chains with
-    // it; or, for a chain, a member of the party in the zone can burst its
-    // elements
+    // it; or, for a chain, a member of the party at the fight on it can
+    // burst its elements, with the MP for one
     auto othersClose(CCharEntity* PSelf, CBattleEntity* PMob, const cardian::chains::Resonance& r) -> bool;
-    auto burstComing(CCharEntity* PSelf, const cardian::chains::Resonance& r) -> bool;
+    auto burstComing(CCharEntity* PSelf, CBattleEntity* PMob, const cardian::chains::Resonance& r) -> bool;
 
     // A member's TP, sampled for her rate (skillchain_math.h TpClock); every
     // gambit engine's tick samples its own, and the forecast those it asks about
@@ -185,6 +185,11 @@ namespace pawn::chains
     // as it lands), or missed (0, its use with no damage): what the chain's
     // worth prices her weapon skill at
     void wsLanded(const CBattleEntity* PMember, uint16 skill, int32 damage);
+    // A weapon skill of hers the game reports as dealing nothing: a miss, a 0
+    // in its price -- unless the same weapon skill of hers landed damage this
+    // moment, a skillchain's close, which the game reports as nothing once
+    // the chain's own damage lands
+    void wsMissed(const CBattleEntity* PMember, uint16 skill);
 
     // What the party's cardians say of the plan, in the party's chat
     // (skillchain_math.h kAskLines, kSaveLines). With no plan picked and the

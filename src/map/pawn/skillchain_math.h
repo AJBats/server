@@ -50,14 +50,18 @@
 //  - wsCall: the tactician's Weapon skill (best) -- close what she can,
 //    keep clear of what she cannot, follow the player's plan (its TP window,
 //    a spare weapon skill alone, saving it for the next fight), else her best.
+//    orderHold: a weapon skill a row orders, held as wsCall holds one of a
+//    member outside the plan while its chain is under way.
 //  - TpClock, startIn and spareWs: each member's TP gain in the fight, when
 //    every member of the chain will be in the TP window, and whether one
 //    ahead of the rest can spend a weapon skill alone without delaying it.
 //  - worth: whether the plan's chain fits the mob -- its damage, a burst
-//    with it, against the HP the mob will have left when it lands.
+//    with it, against the HP the mob will have left when it lands; wsPrice
+//    and burstCounted, what its weapon skills and its burst are priced at.
 //  - AskWatch and the lines: what the party's cardians say of the plan.
 //  - nukeCall: the Black Mage's nuke against the burst -- cast now, burst
-//    now, or hold to keep herself free and her MP for the burst.
+//    now (ahead of the chain, timed to land at burstMoment), or hold to keep
+//    herself free and her MP for the burst.
 // The game's own rules -- which properties make which chain, its tier, the
 // elements that burst it, what a chain deals -- are never copied here: every
 // function that needs one takes it as a callable or a number the server
@@ -468,10 +472,41 @@ namespace cardian::chains
     // than that would be spent past the mob's death. A mob it does not fit is
     // a "TP mob": the chain is kept for the next
     inline constexpr double kFitShare = 0.75;
-    // A weapon skill none of hers has landed yet is priced at this many
-    // rounds of her melee by the formulas (a weapon skill's few hits at its
-    // fTP, near enough), until her first one lands and teaches it
-    inline constexpr double kWsPriorRounds = 2.5;
+
+    // What a member's weapon skill has landed while the map server runs (a
+    // miss as 0): the running mean of her last few, and how many it has seen
+    struct WsLanded
+    {
+        double mean  = 0.0;
+        uint32 count = 0;
+    };
+
+    // Landings of one weapon skill of hers that make its measured mean the
+    // price: one or two can be a miss, a critical, a mob nearly dead
+    inline constexpr uint32 kWsLandedTrusted = 3;
+
+    // A weapon skill's damage as the chain's worth prices it (#496): what
+    // hers of it have landed once there are kWsLandedTrusted of them --
+    // measured beats the formula, which leaves her gear's procs and a
+    // Sneak Attack out -- else the server's own weapon skill at its
+    // expectation (`formula`, tactics_bank.lua wsExpected), else what that
+    // weapon skill or any of hers has landed however few, else nothing
+    inline auto wsPrice(const WsLanded& thisSkill, const std::optional<double> formula, const WsLanded& anyOfHers) -> double
+    {
+        if (thisSkill.count >= kWsLandedTrusted)
+        {
+            return thisSkill.mean;
+        }
+        if (formula.has_value())
+        {
+            return std::max(0.0, *formula);
+        }
+        if (thisSkill.count > 0)
+        {
+            return thisSkill.mean;
+        }
+        return anyOfHers.count > 0 ? anyOfHers.mean : 0.0;
+    }
 
     struct Worth
     {
@@ -613,6 +648,60 @@ namespace cardian::chains
         return s.inPlan && !s.plansOwn && !s.spare && (s.saving || (s.planComing && s.heldFor < kPlanHoldSafety));
     }
 
+    // Outside the plan, its chain under way on her mob is left be (the user,
+    // 2026-10-17: a member who is not one of its steps stays out of its way,
+    // whatever her seat): its opening while its closer plays his part, so no
+    // weapon skill of hers lands between its opener and its closer; and the
+    // chain it made while somebody will burst it, whose window a weapon
+    // skill of hers would end or move. Why she holds; none when she need not
+    inline auto leavesChainBe(const WsView& v) -> std::optional<std::string>
+    {
+        if (v.seat != Seat::None || !v.resonance.has_value() || v.resonance->left <= kWsLands)
+        {
+            return std::nullopt;
+        }
+        const auto& r = *v.resonance;
+        if (r.tier == 0 && v.planCloserFights && r.props == v.planOpening)
+        {
+            return fmt::format("leaves the plan's opening to {}", v.planCloser);
+        }
+        if (r.tier > 0 && v.planChain != 0 && r.props[0] == v.planChain && v.burstComing)
+        {
+            return fmt::format("leaves the plan's {} to its burst", chainName(v.planChain));
+        }
+        return std::nullopt;
+    }
+
+    // Outside the plan, the mob is kept clear of an opening of hers while the
+    // plan's chain is due on it within the life of one: its opener would find
+    // hers there
+    inline auto leavesMobClear(const WsView& v) -> std::optional<std::string>
+    {
+        if (v.seat == Seat::None && v.startIn.has_value() && *v.startIn < kWsLands + kOpeningLasts)
+        {
+            return fmt::format("leaves the mob clear: the plan's {} is due", chainName(v.planChain));
+        }
+        return std::nullopt;
+    }
+
+    // A weapon skill a row of hers orders -- one naming a weapon skill, any,
+    // or a plain Weapon skill (best): not her tactician's, which wsCall
+    // judges -- holds while the plan's chain is under way on her mob, or due
+    // on it, and she is not one of its steps: wsCall's own holds for a member
+    // outside the plan, the same for every seat. Why; none when it may go
+    inline auto orderHold(const WsView& v) -> std::optional<std::string>
+    {
+        if (v.tp < kWsTp)
+        {
+            return std::nullopt;
+        }
+        if (auto why = leavesChainBe(v); why.has_value())
+        {
+            return why;
+        }
+        return leavesMobClear(v);
+    }
+
     // Her weapon skill now (ROADMAP slice 3h, the steps): outside the plan,
     // the plan's opening left to its closer; a close she can make, once the
     // window opens -- for a member of the plan only the plan's own close, or
@@ -652,18 +741,20 @@ namespace cardian::chains
             return call;
         };
 
+        // 0. Outside the plan, its chain under way on her mob is left be: its
+        // opening is its closer's while he fights the mob, and the chain it
+        // made is its burster's
+        if (auto why = leavesChainBe(v); why.has_value())
+        {
+            call.move = WsMove::Hold;
+            call.why  = std::move(*why);
+            return call;
+        }
+
         // 1. and 2. Something on her mob, with time left for a weapon skill
         // to land on it
         if (v.resonance.has_value() && v.resonance->left > kWsLands)
         {
-            // Outside the plan, its opening is its closer's while he fights
-            // the mob: nobody else closes it with a chain of her own
-            if (v.seat == Seat::None && v.planCloserFights && v.resonance->tier == 0 && v.resonance->props == v.planOpening)
-            {
-                call.move = WsMove::Hold;
-                call.why  = fmt::format("leaves the plan's opening to {}", v.planCloser);
-                return call;
-            }
             // The close she makes: the plan's weapon skill when she is its
             // closer, else the one making the highest-tier chain, her best
             // among equals
@@ -804,10 +895,10 @@ namespace cardian::chains
 
         // 5. Outside the plan while its chain is due on her mob: her own
         // opening would still be there when its opener opens
-        if (v.seat == Seat::None && v.startIn.has_value() && *v.startIn < kWsLands + kOpeningLasts)
+        if (auto why = leavesMobClear(v); why.has_value())
         {
             call.move = WsMove::Hold;
-            call.why  = fmt::format("leaves the mob clear: the plan's {} is due", chainName(v.planChain));
+            call.why  = std::move(*why);
             return call;
         }
 
@@ -859,7 +950,7 @@ namespace cardian::chains
     // (ws_phrases.h), plain otherwise, and the mob where his macro has <t>
     // -- and its closer, with the TP for her close, once a fight while she
     // holds it: "{Ready!} 1240 TP <call14>". The calls are his choice
-    // (Settings), none for 0
+    // (Settings), none for chat::kNoCall
     inline constexpr uint8_t kSkillchainPhraseGroup = 8; // "Skillchain"
     inline constexpr uint8_t kSkillchainPhraseEntry = 45;
     inline constexpr uint8_t kReadyPhraseGroup      = 5; // "Ready!"
@@ -969,6 +1060,62 @@ namespace cardian::chains
     // Refresh and the like come in that often
     inline constexpr double kRegenTick = 3.0;
 
+    // The moment a burst is meant to land (#491; the user, 2026-10-17: she
+    // "plans her cast start backwards from when she intends the magic burst
+    // to land"): the middle of the window the chain opens, so a chain that
+    // comes a little early or late -- a player's close by hand, a think late
+    // to come round -- still finds the burst inside its window. The server
+    // bursts a nuke whose damage resolves, at its cast's end, while the
+    // chain is on the mob (magic_burst.lua getMagicBurstTier), and a chain
+    // of two weapon skills stays kChainLasts from its landing
+    // (battleutils GetSkillChainEffect). Both ways round, from one rule: the
+    // burst for a chain landing in `chainIn` seconds, and the chain wanted
+    // for a burst meant for `burstAt` -- what a Black Mage who starts her
+    // cast first would tell the party to close by (not built)
+    inline auto burstMoment(const double chainIn, const double windowLasts = kChainLasts) -> double
+    {
+        return chainIn + windowLasts / 2.0;
+    }
+
+    inline auto chainWantedFor(const double burstAt, const double windowLasts = kChainLasts) -> double
+    {
+        return burstAt - windowLasts / 2.0;
+    }
+
+    // Her cast's start that lands it at `burstAt`: its resolved cast time
+    // before it
+    inline auto castStartFor(const double burstAt, const double cast) -> double
+    {
+        return burstAt - cast;
+    }
+
+    // Who the chain's worth counts a burst from (#497; the user,
+    // 2026-10-17): a member whose tactician casts her nukes -- a cardian, or
+    // a played character on autopilot -- as her tactician would land it; and
+    // a player bursting by hand, in full, when he knows a nuke of the
+    // chain's burst elements and has the MP for one -- the Shortcuts list's
+    // own test for naming him a burster -- and is at the fight
+    struct BursterView
+    {
+        bool   tactician = false; // her tactician casts her nukes, and she is in the fight on the mob
+        double tacticians = 0.0;  // what her tactician's best burst would land (CGambits::BurstEstimate)
+        bool   player    = false; // a real player, playing by hand or on autopilot
+        bool   atFight   = false; // near the mob, in its zone, alive
+        bool   knowsNuke = false; // a nuke of the chain's burst elements learned, at his jobs and level
+        bool   mpForOne  = false; // the MP for one of those
+        double byHand    = 0.0;   // what his best of those would land, priced as a cardian's are
+    };
+
+    inline auto burstCounted(const BursterView& b) -> double
+    {
+        double best = b.tactician ? std::max(0.0, b.tacticians) : 0.0;
+        if (b.player && b.atFight && b.knowsNuke && b.mpForOne)
+        {
+            best = std::max(best, b.byHand);
+        }
+        return best;
+    }
+
     struct BurstView
     {
         int32                 mp          = 0;
@@ -999,51 +1146,80 @@ namespace cardian::chains
     };
 
     // `why` names the call in words that stay put while it does (a hold is
-    // said as it changes); `detail` carries its numbers
+    // said as it changes); `detail` carries its numbers. `ahead`: a Burst
+    // started before the chain has landed, timed to land inside its window
+    // (#491). `burstIn`: seconds until the cast of the burst she plans
+    // starts -- 0 for one starting now; none when no burst is planned --
+    // which the tick's own check waits for (CGambits::BurstNow)
     struct NukeCall
     {
-        NukeMove    move  = NukeMove::Free;
-        uint16      spell = 0;
-        std::string why;
-        std::string detail;
+        NukeMove              move  = NukeMove::Free;
+        uint16                spell = 0;
+        bool                  ahead = false;
+        std::optional<double> burstIn;
+        std::string           why;
+        std::string           detail;
     };
 
-    // The best burst among her nukes: the chain's elements, affordable with
-    // `mp`, cast from `from` or once readyIn(nuke) says its recast is over,
-    // the cast ending before `until`; the most it deals. nullptr for none
-    template <typename ReadyIn>
-    auto bestBurst(const std::vector<Nuke>& nukes, const uint16 elements, const int32 mp, const double from, const double until, ReadyIn&& readyIn) -> const Nuke*
+    // A burst among her nukes, and when its cast starts
+    struct PlannedBurst
     {
-        const Nuke* best = nullptr;
+        const Nuke* nuke  = nullptr;
+        double      start = 0.0;
+    };
+
+    // The best burst among her nukes for a chain landing at `chainAt`, its
+    // window ending at `until`: the chain's elements, affordable with what
+    // mpAt(start) says she has as its cast starts, started no earlier than
+    // `from` (she is free) nor than readyIn(nuke) (its recast), and no
+    // earlier than `aim` less its cast -- landing at the moment the burst is
+    // meant for (burstMoment), later if she is busy until then; landing
+    // after the chain and before the window ends, kCastMargin to spare; the
+    // most it deals. No nuke for none
+    template <typename MpAt, typename ReadyIn>
+    auto bestBurst(const std::vector<Nuke>& nukes, const uint16 elements, MpAt&& mpAt, const double from, const double chainAt, const double aim, const double until,
+                   ReadyIn&& readyIn) -> PlannedBurst
+    {
+        PlannedBurst best;
         for (const auto& n : nukes)
         {
-            if ((elementBit(n.element) & elements) == 0 || n.mp > mp || n.burst <= 0.0)
+            if ((elementBit(n.element) & elements) == 0 || n.burst <= 0.0)
             {
                 continue;
             }
-            const double start = std::max(from, readyIn(n));
-            if (start + n.cast > until - kCastMargin)
+            const double start = std::max({ from, readyIn(n), castStartFor(aim, n.cast) });
+            const double lands = start + n.cast;
+            if (lands < chainAt || lands > until - kCastMargin || n.mp > mpAt(start))
             {
                 continue;
             }
-            if (best == nullptr || n.burst > best->burst || (n.burst == best->burst && n.mp < best->mp))
+            if (best.nuke == nullptr || n.burst > best.nuke->burst || (n.burst == best.nuke->burst && n.mp < best.nuke->mp))
             {
-                best = &n;
+                best = PlannedBurst{ &n, start };
             }
         }
         return best;
     }
+
+    // How often the tick's own check asks for a burst (CGambits::BurstNow): a
+    // burst whose cast is due within half of it starts now, so the cast
+    // starts as near its planned moment as the checks allow
+    inline constexpr double kBurstCheckEvery = 0.5;
 
     // Her nuke now, the burst weighed in (ROADMAP slice 3h, "The magic
     // burst"). `free` is her pick without a burst (bank_math.h pickNuke over
     // the nukes she can cast now), nullptr for none.
     //  - A window open: the burst that deals the most a second of hers, cast
     //    now and ending inside it, unless her free pick deals more a second.
-    //  - A chain expected before the mob falls: her free pick when it leaves
-    //    her free by then and her best burst still in reach -- the MP she
-    //    regains meanwhile counted, so a chain far off leaves her nuking
-    //    freely; else she holds when that burst is worth more than the free
-    //    nuke and whatever burst she could still make after it.
+    //  - A chain expected before the mob falls: her best burst on it, its
+    //    cast started so it lands at burstMoment, the middle of the chain's
+    //    window (#491) -- now, ahead of the chain, once that start has come.
+    //    Before then, her free pick when it leaves her free by the burst's
+    //    start with the burst still in reach -- the MP she regains meanwhile
+    //    counted, so a chain far off leaves her nuking freely; else she holds
+    //    when that burst is worth more than the free nuke and whatever burst
+    //    she could still make after it. A chain that does not come leaves her
+    //    that nuke cast unbursted, its MP and time spent as a burst's
     //  - Nothing on the way: her free pick.
     inline auto nukeCall(const std::vector<Nuke>& nukes, const Nuke* free, const BurstView& v) -> NukeCall
     {
@@ -1079,10 +1255,11 @@ namespace cardian::chains
             {
                 return freeCall(fmt::format("her free pick deals more a second than the {} burst", chainName(v.chain)));
             }
-            call.move   = NukeMove::Burst;
-            call.spell  = b->id;
-            call.why    = fmt::format("bursts {}", chainName(v.chain));
-            call.detail = fmt::format("~{:.0f} against ~{:.0f} unbursted, {:.1f} s of the window left", b->burst, b->dealt, *v.open);
+            call.move    = NukeMove::Burst;
+            call.spell   = b->id;
+            call.burstIn = 0.0;
+            call.why     = fmt::format("bursts {}", chainName(v.chain));
+            call.detail  = fmt::format("~{:.0f} against ~{:.0f} unbursted, {:.1f} s of the window left", b->burst, b->dealt, *v.open);
             return call;
         }
 
@@ -1095,16 +1272,43 @@ namespace cardian::chains
         {
             return freeCall(fmt::format("the mob falls before {} lands", chainName(v.chain)));
         }
-        const Nuke* b = bestBurst(nukes, v.elements, v.mpAt(v.mp, t), t, t + v.windowLasts, asIs);
-        if (b == nullptr)
+        const double aim   = burstMoment(t, v.windowLasts);
+        const double until = t + v.windowLasts;
+        const auto   mpNow = [&v](const double at) { return v.mpAt(v.mp, at); };
+        const auto   b     = bestBurst(nukes, v.elements, mpNow, 0.0, t, aim, until, asIs);
+        if (b.nuke == nullptr)
         {
             return freeCall(fmt::format("no nuke of hers can burst {}", chainName(v.chain)));
         }
+        // Her burst's cast, started now ahead of the chain to land at its
+        // planned moment: the window's middle, or later where she was busy
+        const auto burstNow = [&]()
+        {
+            call.move    = NukeMove::Burst;
+            call.spell   = b.nuke->id;
+            call.ahead   = true;
+            call.burstIn = 0.0;
+            call.why     = fmt::format("bursts {} ahead of the chain", chainName(v.chain));
+            call.detail  = fmt::format("~{:.0f} against ~{:.0f} unbursted: {} in ~{:.1f} s, her {:.1f} s cast landing ~{:.1f} s into its {:.0f} s window", b.nuke->burst,
+                                       b.nuke->dealt, chainName(v.chain), t, b.nuke->cast, b.start + b.nuke->cast - t, v.windowLasts);
+            return call;
+        };
+        const bool due = b.start <= kBurstCheckEvery / 2.0 && b.nuke->now;
+        // Due now and her free pick besides: cast now, it is the burst
+        if (due && free != nullptr && free->id == b.nuke->id)
+        {
+            return burstNow();
+        }
         if (free == nullptr)
         {
-            call.move   = NukeMove::Hold;
-            call.why    = fmt::format("saving for the {} burst", chainName(v.chain));
-            call.detail = fmt::format("in ~{:.0f} s", t);
+            if (due)
+            {
+                return burstNow();
+            }
+            call.move    = NukeMove::Hold;
+            call.burstIn = b.start;
+            call.why     = fmt::format("saving for the {} burst", chainName(v.chain));
+            call.detail  = fmt::format("in ~{:.0f} s, her cast starting in ~{:.1f} s", t, b.start);
             return call;
         }
 
@@ -1114,21 +1318,33 @@ namespace cardian::chains
         {
             return n.id == free->id ? free->recast : n.readyIn;
         };
-        const double freeAt = free->seconds;
-        const double from   = std::max(t, freeAt);
-        const Nuke*  after  = bestBurst(nukes, v.elements, v.mpAt(v.mp - free->mp, from), from, t + v.windowLasts, afterFree);
-        if (freeAt <= t && after != nullptr && after->burst >= b->burst)
+        const auto mpAfter = [&v, free](const double at) { return v.mpAt(v.mp - free->mp, at); };
+        const auto after   = bestBurst(nukes, v.elements, mpAfter, free->seconds, t, aim, until, afterFree);
+        // Free in time: her free pick leaves her the burst as planned, its
+        // cast starting at its moment and not pushed later by the free one
+        const bool onTime = after.nuke != nullptr && after.start <= castStartFor(aim, after.nuke->cast) + kBurstCheckEvery;
+        if (onTime && after.nuke->burst >= b.nuke->burst)
         {
-            return freeCall(fmt::format("free before {} lands, the burst still in reach", chainName(v.chain)));
+            call.burstIn = after.start;
+            return freeCall(fmt::format("free before her {} burst's cast, the burst still in reach", chainName(v.chain)));
         }
-        const double nukeNow = free->dealt + (after != nullptr ? after->burst : 0.0);
-        if (b->burst > nukeNow)
+        const double nukeNow = free->dealt + (after.nuke != nullptr ? after.nuke->burst : 0.0);
+        if (b.nuke->burst > nukeNow)
         {
-            call.move   = NukeMove::Hold;
-            call.why    = fmt::format("saving for the {} burst", chainName(v.chain));
-            call.detail = fmt::format("in ~{:.0f} s, ~{:.0f} burst against ~{:.0f} now{}", t, b->burst, free->dealt,
-                                      after != nullptr ? fmt::format(" and ~{:.0f} after", after->burst) : std::string(" and no burst after"));
+            if (due)
+            {
+                return burstNow();
+            }
+            call.move    = NukeMove::Hold;
+            call.burstIn = b.start;
+            call.why     = fmt::format("saving for the {} burst", chainName(v.chain));
+            call.detail  = fmt::format("in ~{:.0f} s, her cast starting in ~{:.1f} s; ~{:.0f} burst against ~{:.0f} now{}", t, b.start, b.nuke->burst, free->dealt,
+                                       after.nuke != nullptr ? fmt::format(" and ~{:.0f} after", after.nuke->burst) : std::string(" and no burst after"));
             return call;
+        }
+        if (after.nuke != nullptr)
+        {
+            call.burstIn = after.start;
         }
         return freeCall(fmt::format("her free pick and what she can burst after are worth more than saving for {}", chainName(v.chain)));
     }

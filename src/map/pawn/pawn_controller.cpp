@@ -4533,20 +4533,14 @@ auto CPawnController::FormationSlot() const -> pawn::Slot
 
 auto CPawnController::IsAvoidingAggro() const -> bool
 {
-    if (m_Retreat || Behavior(pawn::Behavior::AvoidAggro).value_or(0) == 0)
-    {
-        return false;
-    }
-    // Her rows say so: unless her player has switched the party's Avoid
-    // aggro off in his Shortcuts menu, her rows kept as they are -- which a
-    // trek outlasts, its own rows keeping her clear on the way (pawn.h
-    // HuntRules::avoidAggro)
-    if (Trekking())
-    {
-        return true;
-    }
+    // In a real player's party his Shortcuts menu's Avoid aggro decides for
+    // every member, her own row kept but unread: on lends it, off takes it
+    // (pawn.h HuntRules::avoidAggro). A body in no real player's party
+    // follows her own row. A trek always avoids, a retreat never
+    // (pawn_danger.h avoidsAggro)
     const auto owner = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner));
-    return owner == 0 || pawn::huntRulesOf(owner).avoidAggro;
+    return pawn::danger::avoidsAggro(m_Retreat, Trekking(), owner != 0, owner != 0 && pawn::huntRulesOf(owner).avoidAggro,
+                                     Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0);
 }
 
 auto CPawnController::IsAvoidingLinks() const -> bool
@@ -4941,9 +4935,11 @@ void CPawnController::NoteAggro()
         }
         else
         {
+            // Not avoiding: retreating, or, in a real player's party, his
+            // switch is off; in none, her own row is
             const bool counted = std::any_of(m_DangerBalls.begin(), m_DangerBalls.end(), [&](const auto& b) { return b.mob == PMob; });
-            const bool rowOn   = Behavior(pawn::Behavior::AvoidAggro).value_or(0) != 0;
-            map                = !IsAvoidingAggro() && !KeepsClearOfAggro() ? (rowOn && !m_Retreat ? "her player's Avoid aggro is switched off" : "her Avoid aggro row is off")
+            const bool inParty = pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)) != 0;
+            map                = !IsAvoidingAggro() && !KeepsClearOfAggro() ? (m_Retreat ? "she was retreating" : inParty ? "her player's Avoid aggro is switched off" : "her Avoid aggro row is off")
                                  : counted                                  ? "her danger map counted it"
                                                                             : "her danger map did not count it";
         }
@@ -7662,11 +7658,17 @@ auto CPawnController::PartyTankPlacing(const CBattleEntity* PSelf, const CBattle
 
 auto CPawnController::TankPlacingWait(const CBattleEntity* PMob) -> std::optional<std::string>
 {
-    // Bounded: a tank who never gets there holds nobody's weapon skill for good
-    const auto* PTank = PartyTankPlacing(POwner, PMob);
+    // Bounded: a tank who never gets there holds nobody's weapon skill for
+    // good. The tank's own waits too, now that her seat lends her the plan's
+    // weapon skill (#503): one would stop her walk with the mob
+    const auto* PTank = StillPlacing(PMob) ? static_cast<const CBattleEntity*>(POwner) : PartyTankPlacing(POwner, PMob);
     if (PTank == nullptr || !WaitStill(m_PlaceWait, PMob))
     {
         return std::nullopt;
+    }
+    if (PTank == POwner)
+    {
+        return fmt::format("she is still placing {}", PMob->getName());
     }
     return fmt::format("{} is still placing {}", PTank->getName(), PMob->getName());
 }

@@ -67,7 +67,7 @@ namespace pawn::pull
     auto layKit(CCharEntity* PChar, uint8 location) -> uint32;
 
     // The player's call sound for the pull line (Settings, Pull call; the
-    // Link's PREFS): 0 for none, else <call1> to <call21>. In memory, his
+    // Link's PREFS): <call0> to <call20>, or chat::kNoCall for none. In memory, his
     // addon sending it again at every bind
     void setCall(uint32 playerCharID, uint8 call);
     auto callOf(uint32 playerCharID) -> uint8;

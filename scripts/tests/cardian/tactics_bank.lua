@@ -310,6 +310,300 @@ describe('Cardian tactics bank', function()
         assert(mob:getHP() == hp, 'the mob takes nothing')
     end)
 
+    -- A weapon skill's price (#496): the server's own weapon skill, its
+    -- script and xi.weaponskills, run on stand-ins with its dice read -- the
+    -- same answer every time, everything it borrows put back, and nothing on
+    -- the actor or the mob spent, taken or added
+    -- A Warrior beside a Forest Hare (data/zones/East_Ronfaure/mobs.yaml), a
+    -- sword in her hand unless given another weapon and its skill, the
+    -- skill as high as her level allows (stored in tenths, read back at
+    -- the cap)
+    local function swordsman(level, weapon, skill)
+        local war = xi.test.world:spawnPlayer({ job = xi.job.WAR, level = level or 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = war.entities:moveTo(17190976)
+        mob:respawn()
+        war.entities:moveTo(17190976) -- beside it where it respawned
+        war:setSkillLevel(skill or xi.skill.SWORD, 5000)
+        war:addItem(weapon or xi.item.BRONZE_SWORD)
+        war:equipItem(weapon or xi.item.BRONZE_SWORD, nil, xi.slot.MAIN)
+        return war, mob
+    end
+
+    -- calculateRawWSDmg's own hit step, which the read finds by its name and
+    -- stands in for while it runs
+    local function hitStep()
+        for i = 1, 250 do
+            local name, value = debug.getupvalue(xi.weaponskills.calculateRawWSDmg, i)
+            if name == nil then
+                return nil
+            end
+            if name == 'getSingleHitDamage' then
+                return value
+            end
+        end
+    end
+
+    -- What a read borrows for its run, to see each one put back
+    local function borrowed()
+        return
+        {
+            math.random, math.randomInt, math.randomFloat, math.randomNormal, xi.weaponskills.takeWeaponskillDamage,
+            xi.combat.magicHitRate.calculateResistRate, xi.weaponskills.calculateRawWSDmg, hitStep(),
+        }
+    end
+
+    local function putBack(before)
+        local after = borrowed()
+        for i = 1, #before do
+            if after[i] ~= before[i] then
+                return false
+            end
+        end
+        return true
+    end
+
+    -- The odds are found where the bank reads them: an upstream rename fails
+    -- here, at the merge, not in play
+    it('wsExpected reads a weapon skill\'s odds, the same every time, changing nothing', function()
+        assert(hitStep() ~= nil, 'scripts/globals/weaponskills.lua: xi.weaponskills.calculateRawWSDmg no longer reaches getSingleHitDamage')
+
+        local war, mob = swordsman()
+        war:setTP(1500)
+        war:addStatusEffect(xi.effect.SNEAK_ATTACK, { power = 1, duration = 60, origin = war })
+        war:addStatusEffect(xi.effect.BOOST, { power = 1, duration = 60, origin = war })
+        local hp = mob:getHP()
+        local ce = mob:getCE(war)
+
+        local bank                 = xi.cardian.bank
+        local before               = borrowed()
+        local fast, fastHow, why   = bank.wsExpected(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 1000)
+        local burning, burningHow  = bank.wsExpected(war, mob, xi.weaponskill.BURNING_BLADE, 'burning_blade', 1000)
+        assert(putBack(before), 'the dice, the hit step, the resist roll and the game\'s own last step are put back')
+
+        assert(fastHow == 'read', string.format('Fast Blade\'s odds should be read: %s (%s)', tostring(fastHow), tostring(why)))
+        assert(burningHow == 'read', string.format('a magical weapon skill is read too: %s', tostring(burningHow)))
+        assert(type(fast) == 'number' and fast > 0, string.format('Fast Blade prices to a positive number: %s', tostring(fast)))
+        assert(type(burning) == 'number' and burning > 0, string.format('Burning Blade (magical) prices to a positive number: %s', tostring(burning)))
+        for seed = 1, 5 do
+            xi.test.world:setSeed(seed)
+            assert(bank.wsExpected(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 1000) == fast, string.format('seed %d: the read rolled the dice', seed))
+        end
+        -- more TP, a bigger fTP: Fast Blade's 1.0 at 1000 rises to 1.5 at 2000
+        local fast2000 = bank.wsExpected(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 2000)
+        assert(fast2000 > fast, string.format('more TP deals more: %.1f at 2000 against %.1f at 1000', fast2000, fast))
+        assert(bank.wsExpected(war, mob, 0, 'no_such_weaponskill', 1000) == nil, 'a weapon skill without a script prices nil')
+
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+        assert(mob:getCE(war) == ce, 'and gains no enmity')
+        assert(not mob:hasStatusEffect(xi.effect.SKILLCHAIN), 'and carries no opening')
+        assert(war:getTP() == 1500, string.format('her TP is untouched: %d', war:getTP()))
+        assert(war:hasStatusEffect(xi.effect.SNEAK_ATTACK), 'her Sneak Attack is not spent')
+        assert(war:hasStatusEffect(xi.effect.BOOST), 'her Boost is not spent')
+    end)
+
+    -- The read against the sampled price: within three standard errors of
+    -- the 64 runs' mean, by their own spread. Two hits; three; four whose
+    -- criticals vary with TP (the Warrior's Double Attack proccing on each);
+    -- and a magical one, which has no hit of its own to read
+    it('wsExpected\'s read agrees with the sampled price, for one hit, many hits and a magical weapon skill', function()
+        local war, mob = swordsman()
+        local bank     = xi.cardian.bank
+        for _, ws in ipairs({
+            { xi.weaponskill.FAST_BLADE, 'fast_blade' },
+            { xi.weaponskill.SWIFT_BLADE, 'swift_blade' },
+            { xi.weaponskill.VORPAL_BLADE, 'vorpal_blade' },
+            { xi.weaponskill.BURNING_BLADE, 'burning_blade' },
+        }) do
+            for _, tp in ipairs({ 1000, 3000 }) do
+                local read         = bank.wsRead(war, mob, ws[1], ws[2], tp)
+                local mean, spread = bank.wsSampled(war, mob, ws[1], ws[2], tp)
+                local tolerance    = 3 * spread / math.sqrt(bank.wsRuns) + 1
+                assert(type(read) == 'number' and read > 0, string.format('%s at %d TP: read %s', ws[2], tp, tostring(read)))
+                assert(math.abs(read - mean) <= tolerance,
+                    string.format('%s at %d TP: read %.1f, sampled %.1f (spread %.1f, allowed %.1f)', ws[2], tp, read, mean, spread, tolerance))
+            end
+        end
+    end)
+
+    -- Where the read cannot find what it reads, the 64 runs price the weapon
+    -- skill instead, and the answer says why
+    it('wsExpected falls back to the sampled price where the odds cannot be read, and says why', function()
+        local war, mob = swordsman()
+        local raw      = xi.weaponskills.calculateRawWSDmg
+        -- calculateRawWSDmg as an upstream change might leave it: no hit step
+        -- of that name the bank can find
+        xi.weaponskills.calculateRawWSDmg = function(...)
+            return raw(...)
+        end
+        local ok, price, how, why = pcall(xi.cardian.bank.wsExpected, war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 1000)
+        xi.weaponskills.calculateRawWSDmg = raw
+        assert(ok, price)
+        assert(how == 'sampled', string.format('the fallback says so: %s', tostring(how)))
+        assert(type(why) == 'string' and why:find('getSingleHitDamage', 1, true) and why:find('weaponskills.lua', 1, true),
+            string.format('and names the file and what it missed: %s', tostring(why)))
+        local mean = xi.cardian.bank.wsSampled(war, mob, xi.weaponskill.FAST_BLADE, 'fast_blade', 1000)
+        assert(price == mean, string.format('priced by the 64 runs: %s against %s', tostring(price), tostring(mean)))
+        assert(hitStep() ~= nil, 'the hit step is still there')
+    end)
+
+    -- The nukes' read of the resist roll, broken as an upstream change might
+    -- break it, prices each spell by dry runs of its own script instead
+    it('nukeSeeds falls back to dry runs of each spell\'s own script where the resist roll cannot be read, and says why', function()
+        local blm = xi.test.world:spawnPlayer({ job = xi.job.BLM, level = 30, zone = xi.zone.EAST_RONFAURE })
+        local mob = blm.entities:moveTo(17190976) -- a Forest Hare (data/zones/East_Ronfaure/mobs.yaml)
+        mob:respawn()
+        local hp = mob:getHP()
+
+        local function nuke(id, name, element, family)
+            return { id = id, name = name, element = element, skillType = xi.skill.ELEMENTAL_MAGIC, spellGroup = xi.magic.spellGroup.BLACK, family = family }
+        end
+
+        local spells =
+        {
+            nuke(xi.magic.spell.FIRE, 'fire', xi.element.FIRE, 1),
+            nuke(xi.magic.spell.FIRE_II, 'fire_ii', xi.element.FIRE, 1),
+            nuke(xi.magic.spell.STONE, 'stone', xi.element.EARTH, 2),
+        }
+        local read, _, readHow = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        assert(readHow == nil, 'the read itself says nothing')
+
+        -- calculateResistRate as an upstream change might leave it: the same
+        -- roll, but no calculateMagicHitRate of that name for the bank to find
+        local roll = xi.combat.magicHitRate.calculateResistRate
+        xi.combat.magicHitRate.calculateResistRate = function(...)
+            return roll(...)
+        end
+        local ok, seeds, moved, how, why = pcall(xi.cardian.bank.nukeSeeds, blm, mob, spells, 9)
+        xi.combat.magicHitRate.calculateResistRate = roll
+        assert(ok, seeds)
+        assert(how == 'sampled', string.format('the fallback says so: %s', tostring(how)))
+        assert(type(why) == 'string' and why:find('magic_hit_rate.lua', 1, true), string.format('and names the file: %s', tostring(why)))
+        for _, s in ipairs(spells) do
+            local got = seeds[s.id]
+            assert(type(got) == 'number' and got > 0, string.format('%s: a dry-run seed: %s', s.name, tostring(got)))
+            assert(math.abs(got - read[s.id]) <= 0.2 * read[s.id], string.format('%s: dry runs %.1f, read %.1f', s.name, got, read[s.id]))
+            assert(moved[s.id] >= got, string.format('%s: an INT down deals no less: %.1f against %.1f', s.name, moved[s.id], got))
+        end
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+        -- and the read is back once the roll is
+        local _, _, backHow = xi.cardian.bank.nukeSeeds(blm, mob, spells)
+        assert(backHow == nil, 'read again')
+    end)
+
+    -- The price against the real thing: the mean of what the weapon skill
+    -- deals when used, taken where the game takes it
+    -- (xi.weaponskills.takeWeaponskillDamage's answer), within three
+    -- standard errors of it by the uses' own spread, so the bound holds
+    -- whatever the server's dice are seeded to
+    it('wsExpected agrees with the weapon skill used for real', function()
+        -- level 75 Warriors: two hits and a magical one with a sword in one
+        -- hand; three hits whose criticals vary with TP, a great axe in both
+        local fighters =
+        {
+            { weapon = xi.item.BRONZE_SWORD, skill = xi.skill.SWORD, oneHanded = true, ws = { { xi.weaponskill.FAST_BLADE, 'fast_blade' }, { xi.weaponskill.BURNING_BLADE, 'burning_blade' } } },
+            { weapon = xi.item.GREATAXE, skill = xi.skill.GREAT_AXE, oneHanded = false, ws = { { xi.weaponskill.RAGING_RUSH, 'raging_rush' } } },
+        }
+        local kUses = 80
+        local take  = xi.weaponskills.takeWeaponskillDamage
+        for _, fighter in ipairs(fighters) do
+            local war, mob = swordsman(75, fighter.weapon, fighter.skill)
+            -- a mob that outlasts every weapon skill: none is cut short at its
+            -- HP (a mod is 16 bits; set, so a retry does not add it again)
+            mob:setMod(xi.mod.HP, 30000)
+            mob:updateHealth()
+            mob:setHP(mob:getMaxHP())
+            assert(mob:getMaxHP() > 20000, string.format('the mob should carry the HP: %d', mob:getMaxHP()))
+            war.actions:engage(mob)
+            xi.test.world:skipTime(2)
+
+            -- priced at the TP the server hands the script: the TP spent, her
+            -- TP bonus and, one-handed with nothing in the other hand, her
+            -- Fencer's (battleutils CalculateWeaponSkillTP), at most 3000
+            local fencer   = fighter.oneHanded and war:getMod(xi.mod.FENCER_TP_BONUS) or 0
+            local scriptTp = math.min(1000 + war:getMod(xi.mod.TP_BONUS) + fencer, 3000)
+            local ok, err  = pcall(function()
+                for _, ws in ipairs(fighter.ws) do
+                    local price, how = xi.cardian.bank.wsExpected(war, mob, ws[1], ws[2], scriptTp)
+                    assert(how == 'read', string.format('%s: read, not %s', ws[2], tostring(how)))
+                    local got = { sum = 0, squares = 0, uses = 0 }
+                    xi.weaponskills.takeWeaponskillDamage = function(...)
+                        local dealt = take(...)
+                        got.sum     = got.sum + dealt
+                        got.squares = got.squares + dealt * dealt
+                        got.uses    = got.uses + 1
+                        return dealt
+                    end
+                    -- one asked too soon after the last is refused: asked again
+                    for _ = 1, 3 * kUses do
+                        if got.uses >= kUses then
+                            break
+                        end
+                        -- beside it and fighting it, at full HP, with a weapon skill's TP
+                        if war:checkDistance(mob) > 3 then
+                            war.entities:moveTo(17190976)
+                        end
+                        if not war:isEngaged() then
+                            war.actions:engage(mob)
+                            xi.test.world:skipTime(1)
+                        end
+                        mob:setHP(mob:getMaxHP())
+                        war:setTP(1000)
+                        war.actions:useWeaponskill(mob, ws[1])
+                        xi.test.world:skipTime(3)
+                    end
+                    xi.weaponskills.takeWeaponskillDamage = take
+                    assert(got.uses >= kUses, string.format('%s: used %d times, not %d', ws[2], got.uses, kUses))
+                    local mean      = got.sum / got.uses
+                    local spread    = math.sqrt(math.max(0, got.squares / got.uses - mean * mean))
+                    local tolerance = 3 * spread / math.sqrt(got.uses) + 1
+                    assert(math.abs(mean - price) <= tolerance,
+                        string.format('%s: priced %.1f at %d TP, dealt %.1f on average over %d (spread %.1f, allowed %.1f)', ws[2], price, scriptTp, mean, got.uses, spread, tolerance))
+                end
+            end)
+            xi.weaponskills.takeWeaponskillDamage = take
+            war:disengage()
+            mob:setMod(xi.mod.HP, 0)
+            mob:updateHealth()
+            assert(ok, err)
+        end
+    end)
+
+    -- Every weapon skill script in the game, priced on stand-ins: none asks a
+    -- stand-in something it cannot answer, none changes the actor or the
+    -- mob, and every one is read, none left to the dice
+    it('wsExpected reads every weapon skill script without error, changing nothing', function()
+        local war, mob = swordsman()
+        war:setTP(2000)
+        local hp      = mob:getHP()
+        local ce      = mob:getCE(war)
+        local before  = borrowed()
+        local failed  = {}
+        local sampled = {}
+        local priced  = 0
+        for name, script in pairs(xi.actions.weaponskills) do
+            if type(script) == 'table' and type(script.onUseWeaponSkill) == 'function' then
+                local id                   = xi.weaponskill[string.upper(name)] or 0
+                local ok, answer, how, why = pcall(xi.cardian.bank.wsExpected, war, mob, id, name, 1000)
+                if not ok or type(answer) ~= 'number' or answer < 0 then
+                    table.insert(failed, string.format('%s: %s', name, tostring(answer)))
+                else
+                    priced = priced + 1
+                    if how ~= 'read' then
+                        table.insert(sampled, string.format('%s: %s', name, tostring(why)))
+                    end
+                end
+            end
+        end
+        assert(#failed == 0, string.format('%d weapon skills would not price: %s', #failed, table.concat(failed, '; ')))
+        assert(#sampled == 0, string.format('%d weapon skills were sampled, not read: %s', #sampled, table.concat(sampled, '; ')))
+        assert(priced > 150, string.format('the game has its weapon skills: only %d priced', priced))
+        assert(putBack(before), 'everything borrowed is put back')
+        assert(mob:getHP() == hp, 'the mob takes nothing')
+        assert(mob:getCE(war) == ce, 'and gains no enmity')
+        assert(not mob:hasStatusEffect(xi.effect.SKILLCHAIN), 'and carries no opening')
+        assert(war:getTP() == 2000, string.format('her TP is untouched: %d', war:getTP()))
+    end)
+
     it('debuffSubPower reads what Dia and Bio scripts put on a mob, overrides included', function()
         local bank = xi.cardian.bank
         assert(bank.debuffSubPower('dia', xi.effect.DIA) == 10, 'Dia lowers defence 10% in upstream\'s script')

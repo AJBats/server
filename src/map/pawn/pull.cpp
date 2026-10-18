@@ -392,8 +392,8 @@ namespace pawn::pull
 
     void setCall(const uint32 playerCharID, const uint8 call)
     {
-        const uint8 kept = call <= cardian::chat::kCallCount ? call : uint8{ 0 };
-        if (kept == 0)
+        const uint8 kept = cardian::chat::keptCall(call);
+        if (kept == cardian::chat::kNoCall)
         {
             calls().erase(playerCharID);
             return;
@@ -404,7 +404,7 @@ namespace pawn::pull
     auto callOf(const uint32 playerCharID) -> uint8
     {
         const auto it = calls().find(playerCharID);
-        return it != calls().end() ? it->second : uint8{ 0 };
+        return it != calls().end() ? it->second : cardian::chat::kNoCall;
     }
 
     auto canShoot(CCharEntity* PChar) -> bool

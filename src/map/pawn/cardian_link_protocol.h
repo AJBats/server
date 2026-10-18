@@ -34,7 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 89: SUPPLIES' WANTED and FOREIGN
+// compatible, the user, 2026-09-14). 91: MOBS_NEAR and MOB_NEAR, the monsters
+// near a party member as the server has them (a far pick's list), and
+// CL_LENDER_PARTY, the party's Avoid aggro lent on a gambit page; 90: PREFS' three calls are the game's
+// <call0> to <call20> by their own numbers, and CL_CALL_NONE (0xFF) is none,
+// apart from Call 0; 89: SUPPLIES' WANTED and FOREIGN
 // retired, and its nation and missing with them -- a cardian runs her own
 // errands in town; 88: PREFS' chainCall and readyCall, the
 // call sounds of the skillchain plan's calls (Settings); 87: the Pull page and the puller's badge --
@@ -164,7 +168,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 89 };
+enum { CL_PROTOCOL = 91 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -518,14 +522,22 @@ typedef struct cl_unbound
 
 // The player's preferences the server applies to him, from his addon after
 // each bind and whenever one changes; without an addon each is the server's
-// default. Answered by the outcome.
+// default. Answered by the outcome. A call is the game's own number, 0 to
+// CL_CALL_LAST for <call0> to <call20>, or CL_CALL_NONE for none (the
+// default); any other number is refused as malformed.
+enum
+{
+    CL_CALL_LAST = 20,
+    CL_CALL_NONE = 0xFF,
+};
+
 typedef struct cl_prefs
 {
     cl_header h;
     uint8_t   sharedMaps; // 1 (the default): the maps any character of his account holds are shown to him too; 0: only his own
-    uint8_t   pullCall;   // the call sound his puller's pull line ends with: 0 (the default) none, else <call1> to <call21>
-    uint8_t   chainCall;  // the call sound the skillchain plan's opener ends "Starting {Skillchain}!" with: 0 none, else <call1> to <call21>
-    uint8_t   readyCall;  // and its closer her "{Ready!} N TP": 0 none, else <call1> to <call21>
+    uint8_t   pullCall;   // the call sound his puller's pull line ends with: <call0> to <call20>, or CL_CALL_NONE
+    uint8_t   chainCall;  // the call sound the skillchain plan's opener ends "Starting {Skillchain}!" with: <call0> to <call20>, or CL_CALL_NONE
+    uint8_t   readyCall;  // and its closer her "{Ready!} N TP": <call0> to <call20>, or CL_CALL_NONE
 } cl_prefs;
 
 // ---- 0x01xx: a cardian's state --------------------------------------------
@@ -1005,11 +1017,11 @@ typedef struct cl_gambit_row
     cl_header h;
     uint32_t  cardian;   // charid
     uint8_t   index;     // 1-based among her own rows; 0 on a lent row
-    uint8_t   on;        // as it runs: her checkbox, or on for a row her party role pins
+    uint8_t   on;        // as it runs: her checkbox, or a lent row's own: on for her party role's and her trek's, off for the party's Avoid aggro while his switch is
     uint8_t   state;     // CL_GS_*: what the row means where it sits
     uint8_t   fits;       // 0: more than cl_gambit carries (a hand-made brain's), gambit left empty: shown, not rewritten
     uint8_t   origin;    // CL_GO_*
-    uint8_t   lender;    // CL_ROLE_*: the party role a lent row comes from, or that hers folds; CL_LENDER_TREK her trek's; CL_ROLE_NONE on her own
+    uint8_t   lender;    // CL_ROLE_*: the party role a lent row comes from, or that hers folds; CL_LENDER_TREK her trek's; CL_LENDER_PARTY the party's Avoid aggro switch's; CL_ROLE_NONE on her own
     cl_gambit gambit;
     char      head[64];   // the row as the player reads it: when, "Ally: HP < 50%"
     char      action[64]; // and what, "Cure (best)"
@@ -1211,6 +1223,8 @@ enum
     CL_T_PULL_KIND      = 0x041B,
     CL_T_SET_PULL_LIST  = 0x041C,
     CL_T_PULL_STATE     = 0x041D,
+    CL_T_MOBS_NEAR      = 0x041E,
+    CL_T_MOB_NEAR       = 0x041F,
 };
 
 // One-way, a stream like pos: direct control's walk order (pawn.h), walk her
@@ -1291,7 +1305,7 @@ typedef struct cl_orders
     uint8_t   staked;     // answered: 1 while a camp stands
     uint8_t   diaBio;     // answered: which of the two, which block each other, her tactician prefers: 0 Dia, 1 Bio
     uint16_t  stakeZone;  // answered: the camp's zone id
-    uint8_t   avoidAggro; // answered: 1 while his cardians' Avoid aggro rows speak, 0 while the Shortcuts menu has it switched off
+    uint8_t   avoidAggro; // answered: the Shortcuts menu's switch, 1 on (every member of his party avoids aggro, whatever her row says), 0 off (none does)
     uint8_t   spare[3];
 } cl_orders;
 
@@ -1317,7 +1331,7 @@ enum
     CL_HUNT_AGGRESSIVE = 3, // value: 0 or 1
     CL_HUNT_LINKS      = 4, // value: 0 or 1
     CL_HUNT_DIA_BIO    = 5, // value: 0 Dia, 1 Bio -- not a hunt rule but an order kept with them
-    CL_HUNT_AVOID_AGGRO = 6, // value: 0 off, 1 on -- the Shortcuts menu's switch for his cardians' Avoid aggro, an order kept with them
+    CL_HUNT_AVOID_AGGRO = 6, // value: 0 off, 1 on -- the Shortcuts menu's switch: Avoid aggro for every member of his party, an order kept with them
 };
 
 typedef struct cl_set_hunt
@@ -1464,7 +1478,8 @@ enum
 // A lent gambit row's lender that is no party role (GAMBIT_ROW's lender)
 enum
 {
-    CL_LENDER_TREK = 200, // her trek between zones: Avoid aggro and Avoid links, while it lasts
+    CL_LENDER_TREK  = 200, // her trek between zones: Avoid aggro and Avoid links, while it lasts
+    CL_LENDER_PARTY = 201, // his Shortcuts menu's Avoid aggro, lent on or off to every member of his party
 };
 
 // One member of his party, her role, and what her column of the party screen
@@ -1615,6 +1630,42 @@ typedef struct cl_pull_kinds
     uint8_t   staked; // answered: 1 when the kinds are round the camp, 0 round him (no camp)
     uint8_t   spare;
 } cl_pull_kinds;
+
+// The monsters within CL_NEAR_REACH yalms of a member of his party that her
+// Attack would take -- alive, above ground, targetable, nobody's pet --
+// nearest her first, as the server has them: the list a far pick chooses
+// from (OPEN_ISSUES #274, #500) -- the client knows only what stands near
+// him, and keeps a monster's last place after it has gone -- asked again
+// while the list is open, so it stays live. Each a MOB_NEAR (CL_F_MORE),
+// CL_NEAR_MAX at most, then this; CL_S_OTHER_ZONE while she is not in his
+// zone
+typedef struct cl_mob_near
+{
+    cl_header h;
+    uint16_t  targid;   // its index in the client's entity table: the order's target
+    uint8_t   hpp;      // its HP, percent
+    uint8_t   spare;
+    float     x;        // where it stands, in the server's axes (x, height, z)
+    float     y;
+    float     z;
+    float     radius;   // its body's radius, yalms (the hitbox the game measures reach by)
+    float     distance; // from her, yalms
+    char      name[32]; // for people, as the game holds it ("Forest_Hare"): the client may not know it
+} cl_mob_near;
+
+typedef struct cl_mobs_near
+{
+    cl_header h;
+    uint32_t  cardian; // charid
+    uint8_t   count;   // answered: monsters sent
+    uint8_t   spare[3];
+} cl_mobs_near;
+
+enum
+{
+    CL_NEAR_REACH = 30, // yalms round her the list reaches
+    CL_NEAR_MAX   = 24, // monsters it carries at most
+};
 
 // His list as the page leaves it: the kinds in his order of preference, each
 // on or off. Kinds of his list the page did not show (another camp's) are

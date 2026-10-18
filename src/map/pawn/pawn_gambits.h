@@ -63,9 +63,15 @@ namespace cardian::tactics
     struct NukePricing;
 } // namespace cardian::tactics
 
+namespace cardian::chains
+{
+    struct WsView;
+} // namespace cardian::chains
+
 namespace pawn::chains
 {
     struct Forecast;
+    struct Part;
 } // namespace pawn::chains
 
 namespace pawn
@@ -313,12 +319,25 @@ namespace pawn
         // casts no nukes for her, or she is not in the fight on this mob.
         // What the plan's worth counts her burst at (skillchains.cpp)
         auto BurstEstimate(CBattleEntity* PMob, uint16 elements, uint8 count) -> double;
+        // Of these nukes, those of the chain's elements (a bit each,
+        // skillchain_math.h elementBit) she has the MP for now
+        auto AffordableBursts(const std::vector<SpellID>& nukes, uint16 elements) const -> std::vector<SpellID>;
+        // The best of these nukes as a burst on this mob at a chain of
+        // `count` links, priced as her tactician's are -- the server's damage
+        // chain at its expectation, by the server's burst steps
+        // (BurstFactors) -- whoever casts it: her tactician, or a player by
+        // hand (#497, skillchains.cpp). 0 with none, or no tactician to
+        // price against
+        auto BurstPrice(CBattleEntity* PMob, const std::vector<SpellID>& asked, uint8 count) -> double;
         // A burst worth rising for, `after` seconds of rising (the user,
-        // 2026-10-17): a chain's window open on her mob, the mob not on her,
-        // and her nuke row's own call in the window left by then a burst --
-        // over her free nuke, with the MP and recast for it now. The burst
-        // in words for the map log; none when there is none. What stands a
-        // kneeling nuker and keeps one up (CPawnController::RestTick)
+        // 2026-10-17): a chain's window open on her mob, or a chain on its
+        // way to it, the mob not on her, and her nuke row's own call as she
+        // would find it by then a burst -- in the window left, or started
+        // ahead of the chain to land at its middle (#491) -- over her free
+        // nuke, with the MP and recast for it now. The burst in words for the
+        // map log; none when there is none. What stands a kneeling nuker and
+        // keeps one up (CPawnController::RestTick), and puts a burst due now
+        // ahead of a routine assignment (BurstAhead)
         auto BurstWorthStanding(double after) -> std::optional<std::string>;
         // Her marked row of a tool that goes out right before her weapon
         // skill -- Boost, or Sneak Attack from the mob's back -- on, its
@@ -349,8 +368,9 @@ namespace pawn
             cardian::layers::Origin   origin = cardian::layers::Origin::Own;
             std::size_t               index  = 0;
             cardian::tactician::State state  = cardian::tactician::State::Order;
-            bool                      on     = true;  // as it runs: a row the role pins runs on whatever its checkbox
+            bool                      on     = true;  // as it runs: her checkbox, or a lent row's own (the party's Avoid aggro off while his switch is)
             bool                      trek   = false; // lent by her trek, not her party role
+            bool                      party  = false; // lent by the party's Avoid aggro switch
         };
         auto Shown() -> std::vector<ShownRow>;
         // Whether her own row at a 1-based place is pinned by her party role
@@ -503,14 +523,19 @@ namespace pawn
         // job and her sub job, since a seat lends the tools her two jobs can
         // ever use (role_bundles.h); and whether she is on a trek, which lends
         // its own rows ahead of the role's while it lasts (ROADMAP T)
+        // and, in a real player's party, his Shortcuts menu's Avoid aggro,
+        // which lends her its row on or off (kPartyAvoids, kPartyIgnores)
         struct RoleKey
         {
             cardian::party::Role role;
             xi::Job              job;
             xi::Job              sub;
-            bool                 trek = false;
+            bool                 trek  = false;
+            uint8_t              party = 0; // 0 in no real player's party, or on a trek; kPartyAvoids or kPartyIgnores
             auto                 operator==(const RoleKey&) const -> bool = default;
         };
+        static constexpr uint8_t kPartyAvoids  = 1; // gambit_layers.h partyLend's
+        static constexpr uint8_t kPartyIgnores = 2;
 
         // The layers that run for her now (gambit_layers.h): her world rows
         // while she is in the wild, compiled on first need and again whenever
@@ -521,6 +546,10 @@ namespace pawn
         auto RunningLayers() -> cardian::layers::Layers<GambitRow>;
         void RebuildWorldLayer();
         void RebuildRoleLayer(RoleKey key);
+        // The party's switch flipped, nothing else: its lent row turned on or
+        // off where it stands, the role's rows, their bindings and their
+        // timers kept
+        void FlipPartyRow(uint8_t party);
         auto Candidates(gambits::G_TARGET selector) -> std::vector<CBattleEntity*>;
         // Whether a target is one a row's selector names: Candidates as a
         // question about one entity, over her whole alliance for the party
@@ -613,6 +642,9 @@ namespace pawn
         // without her cures -- another healer on her feet covers it, or the
         // patient can wait (CastAssignment; #495)
         auto BurstAhead(bool cure) -> bool;
+        // BurstWorthStanding's own reckoning, asked afresh; `cast`, with an
+        // answer, the burst's own cast in seconds
+        auto WeighStanding(double after, double& cast) -> std::optional<std::string>;
         auto WeighBurst(CBattleEntity* PTarget, const cardian::tactics::NukePricing& pricing, const std::vector<SpellID>& castable,
                         const cardian::tactics::NukePrice* pick, const pawn::chains::Forecast& chain) -> BurstWeighing;
 
@@ -626,6 +658,19 @@ namespace pawn
         // she may ask for one, and saving it she may say so (skillchains.h).
         // Whether it went out
         auto UseWeaponSkill(CBattleEntity* PTarget, bool engaged, std::size_t index, bool closeOnly) -> bool;
+        // Why her weapon skill holds, said in the map log as it changes ("" for
+        // none: it went), the tactician's and an order's alike
+        void SayWsHold(std::string why);
+        // The player's plan on this mob as her weapon skill reads it
+        // (skillchains.h partOf) into `v`, which carries what is on the mob:
+        // her place in it, her partner's, its TP window and its worth; and,
+        // outside it with its chain on the mob, whether somebody will burst
+        // that chain
+        auto ReadPlan(CBattleEntity* PMob, cardian::chains::WsView& v) -> pawn::chains::Part;
+        // An order's weapon skill on this mob holds while the plan's chain is
+        // under way on it, or due, and she is not one of its steps
+        // (skillchain_math.h orderHold, #503): why, or none
+        auto OrderedWsHold(CBattleEntity* PMob) -> std::optional<std::string>;
         // Her best weapon skill alone, as Weapon skill (best) chooses it:
         // the highest of hers, and one that takes Sneak Attack while Sneak
         // Attack can go (RESEARCH §17.13 item 5); 0 for none
@@ -642,10 +687,22 @@ namespace pawn
         auto ToolRow(cardian::tactician::Allowance kind) -> std::optional<ToolAt>;
         // The skillchain's moments, every tick ahead of her stagger, as the
         // tank's pull is: a window she can close, closed the tick it opens;
-        // a burst window, burst while it is open (no more than twice a
+        // a burst window, burst while it is open, and a burst cast ahead of
+        // the chain as its planned start comes (no more than twice a
         // second). Whether she acted
         auto CloseChainNow(bool engaged) -> bool;
         auto BurstNow(bool engaged) -> bool;
+        // Her cast under way, as the server resolved its time (CMagicState):
+        // its share of the spell's own cast time, kept by the spell's skill,
+        // which every cast of that skill shares -- her Fast Cast, Elemental
+        // Celerity, the arts. What her bursts are timed by (#491)
+        void NoteCast();
+        // A spell's cast for her, resolved: its own cast time by her share
+        // for its skill, the spell's own until she has cast one of the skill
+        auto CastSeconds(const CSpell* PSpell) const -> double;
+        // The burst she plans on this mob, its cast starting in `in`
+        // seconds (skillchain_math.h NukeCall::burstIn); none forgets it
+        void NoteBurstPlan(const CBattleEntity* PMob, std::optional<double> in);
 
         // A row's actions in order until one fires; `index` is the row's
         // 1-based place, the conveyor's order among her rows
@@ -709,6 +766,7 @@ namespace pawn
         std::vector<std::string>                m_roleBinds;
         std::optional<RoleKey>                  m_roleKey;
         std::vector<std::string>                m_trekRowIds; // the lent rows her trek lends, ahead of the role's (ROADMAP T)
+        std::vector<std::string>                m_partyRowIds; // the row the party's Avoid aggro switch lends, on or off
         uint32                                  m_rowsGeneration = 0; // moves with every change to her rows or her layers
         mutable std::optional<Offered>          m_offers;
         uint32                                  m_nextRoleId = 0;
@@ -730,6 +788,20 @@ namespace pawn
         uint32                                    m_burstMob = 0;
         std::map<uint8, std::map<uint16, double>> m_burstFactors; // the chain's links -> spell -> factor
         timer::time_point                       m_lastBurstTry{};
+        // The burst she plans ahead of a chain: its mob, and when its cast
+        // starts (NoteBurstPlan)
+        std::optional<std::pair<uint32, timer::time_point>> m_burstAt;
+        // BurstWorthStanding's last answer, when and for how long a rise
+        struct StandMemo
+        {
+            timer::time_point          at;
+            double                     after = 0.0;
+            std::optional<std::string> answer;
+            double                     cast = 0.0; // the burst's own cast, seconds, with an answer
+        };
+        std::optional<StandMemo>                m_standMemo;
+        // Her casts' resolved time over the spell's own, by skill (NoteCast)
+        std::map<uint16, double>                m_castRatio;
         // NakedSneak's answer, as of her last think (NakedSneakNow)
         bool                                    m_nakedSneak = false;
     };

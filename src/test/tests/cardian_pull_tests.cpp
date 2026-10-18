@@ -36,6 +36,8 @@
 using namespace cardian::pull;
 using cardian::chat::autoTranslate;
 using cardian::chat::callBytes;
+using cardian::chat::keptCall;
+using cardian::chat::kNoCall;
 
 TEST_CASE("Cardian pull: at a camp only the Puller seat hunts", "[cardian][pull]")
 {
@@ -77,8 +79,10 @@ TEST_CASE("Cardian pull: the con in the game's words and its phrase", "[cardian]
 
 TEST_CASE("Cardian chat: a call sound and an auto-translate phrase as the client writes them", "[cardian][pull]")
 {
-    CHECK(callBytes(0).empty());
-    CHECK(callBytes(22).empty());
+    // the game's calls run <call0> to <call20>; none is apart from Call 0
+    CHECK(callBytes(kNoCall).empty());
+    CHECK(callBytes(21).empty());
+    CHECK(callBytes(0) == "<call0>");
     CHECK(callBytes(11) == "<call11>");
     // the bytes the player's own "<call11>" arrived as
     const std::string eleven = callBytes(11);
@@ -89,7 +93,13 @@ TEST_CASE("Cardian chat: a call sound and an auto-translate phrase as the client
         CHECK(static_cast<uint8_t>(eleven[i]) == measured[i]);
     }
     CHECK(callBytes(1) == "<call1>");
-    CHECK(callBytes(21) == "<call21>");
+    CHECK(callBytes(20) == "<call20>");
+
+    // a call is kept as given when the game has it, else none
+    CHECK(keptCall(0) == 0);
+    CHECK(keptCall(20) == 20);
+    CHECK(keptCall(21) == kNoCall);
+    CHECK(keptCall(kNoCall) == kNoCall);
 
     // "Incredibly tough" as the player's client sent it: FD 02 02 04 03 FD
     const std::string phrase = autoTranslate(4, 3);
@@ -107,7 +117,9 @@ TEST_CASE("Cardian pull: the pull line", "[cardian][pull]")
     // the con as its phrase, the call after it
     CHECK(pullLine("Forest_Hare", 2, 14) == "Incoming! Forest Hare " + autoTranslate(4, 6) + " <call14>");
     // no call chosen: nothing after the con
-    CHECK(pullLine("Forest_Hare", 4, 0) == "Incoming! Forest Hare " + autoTranslate(4, 1));
+    CHECK(pullLine("Forest_Hare", 4, kNoCall) == "Incoming! Forest Hare " + autoTranslate(4, 1));
+    // Call 0 is a call of its own
+    CHECK(pullLine("Forest_Hare", 4, 0) == "Incoming! Forest Hare " + autoTranslate(4, 1) + " <call0>");
     // the con with no phrase, in plain words
     CHECK(pullLine("Bumblebee", 1, 3) == "Incoming! Bumblebee (Incredibly Easy Prey) <call3>");
 }

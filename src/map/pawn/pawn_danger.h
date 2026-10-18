@@ -92,7 +92,8 @@ namespace pawn::danger
         // to keep her near the edge
         float extraBuffer = 0.0f;
 
-        // A cardian's own profile, with her Avoid aggro and Avoid links rows
+        // A cardian's own profile, with whether she avoids aggro and links
+        // (CPawnController::IsAvoidingAggro, IsAvoidingLinks)
         static auto of(CCharEntity* PPawn, bool avoidAggro, bool avoidLinks) -> Profile;
         static auto party(CCharEntity* PPawn) -> Profile; // worst case, asked about every party member in her zone
         static auto worstCase() -> Profile
@@ -133,6 +134,24 @@ namespace pawn::danger
     constexpr auto counts(const bool avoidAggro, const bool avoidLinks, const bool wouldAggro, const bool kinFightHer) -> Counts
     {
         return { avoidAggro && wouldAggro, avoidLinks && kinFightHer };
+    }
+
+    // Whether she avoids aggro (CPawnController::IsAvoidingAggro). A retreat
+    // never does, and a trek always does. In a real player's party his
+    // Shortcuts menu's switch decides alone, whatever her own Avoid aggro row
+    // says (pawn.h HuntRules::avoidAggro); a body in no real player's party
+    // follows her own row
+    constexpr auto avoidsAggro(const bool retreating, const bool trekking, const bool inPlayersParty, const bool partySwitch, const bool ownRow) -> bool
+    {
+        if (retreating)
+        {
+            return false;
+        }
+        if (trekking)
+        {
+            return true;
+        }
+        return inPlayersParty ? partySwitch : ownRow;
     }
 
     // The radius rule: every detection the profile does not hide from is a

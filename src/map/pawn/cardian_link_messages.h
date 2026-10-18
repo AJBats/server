@@ -121,6 +121,8 @@ namespace cardian::link
     X(SKILLCHAIN_NOW, cl_skillchain_now) \
     X(PULL_KINDS, cl_pull_kinds) \
     X(PULL_KIND, cl_pull_kind)   \
+    X(MOBS_NEAR, cl_mobs_near)   \
+    X(MOB_NEAR, cl_mob_near)     \
     X(SET_PULL_LIST, cl_set_pull_list) \
     X(PULL_STATE, cl_pull_state) \
     X(QUEUE, cl_queue)           \

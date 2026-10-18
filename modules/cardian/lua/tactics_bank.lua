@@ -25,7 +25,9 @@
 --     -> what each nuke deals the target on average, rolling nothing: the
 --        server's damage chain with every die taken at its expectation;
 --        with intDown, a second table in the same pass, as if the target's
---        INT were that much lower (Burn).
+--        INT were that much lower (Burn). Where its read of the resist roll
+--        fails, the spells' own scripts run on stand-ins over seeded dice,
+--        and 'sampled' and why follow the two tables.
 --   xi.cardian.bank.burstFactors(caster, target, spells, count)
 --     -> what a magic burst multiplies each nuke by, the server's own two
 --        burst steps at the chain's count, read without consuming anything.
@@ -33,6 +35,14 @@
 --     -> what a skillchain deals for each point of the weapon skill that
 --        closes it: the server's own skillchain damage, run on a stand-in of
 --        the target that carries the chain and changes nothing.
+--   xi.cardian.bank.wsExpected(attacker, target, wsId, name, tp)
+--     -> what a weapon skill deals the target on average, and how: its own
+--        script and xi.weaponskills run on stand-ins that change nothing,
+--        its dice read rather than rolled -- each hit's chance to land and to
+--        crit off its calcParams, every other die by the comparison it is
+--        rolled into -- the same answer every time ('read'); where that
+--        read fails, the mean of 64 runs over seeded dice ('sampled', and
+--        why).
 --   xi.cardian.bank.debuffSubPower(scriptName, effectId)
 --     -> the subPower a debuff's own script puts on its effect (Dia's
 --        defence down, Bio's attack down, in percent), read by running the
@@ -635,7 +645,7 @@ end
 -- INT that much lower, as a Burn would leave it (higher when negative, as
 -- if one on it were lifted) -- only the base damage and the resist roll
 -- read the INT, so everything else is worked out once for both
-xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
+local function readNukeSeeds(caster, target, spells, intDown)
     local damage = xi.spells.damage
     local c      = remembered(caster)
     local t      = remembered(target)
@@ -695,6 +705,26 @@ xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
     end
 
     return seeds, seedsMoved
+end
+
+-- The nukes' fallback where the read fails (sampledNukes, with the weapon
+-- skills' below)
+local sampledNukes
+
+-- What each nuke deals the target on average, read (readNukeSeeds). Where
+-- the read cannot find what it reads -- an upstream change to the resist
+-- roll (scripts/combat/basic/magic_hit_rate.lua) -- each spell is priced by
+-- kWsRuns dry runs of its own script over the bank's seeded dice instead,
+-- and the answer says so: the seeds, the moved seeds, then 'sampled' and
+-- why the read failed. spells: as readNukeSeeds takes them, with each
+-- spell's name, which finds its script
+xi.cardian.bank.nukeSeeds = function(caster, target, spells, intDown)
+    local ok, seeds, seedsMoved = pcall(readNukeSeeds, caster, target, spells, intDown)
+    if ok then
+        return seeds, seedsMoved
+    end
+    local sampled, sampledMoved = sampledNukes(caster, target, spells, intDown)
+    return sampled, sampledMoved, 'sampled', tostring(seeds)
 end
 
 -- What a magic burst multiplies each nuke by (ROADMAP, Road to subjob item
@@ -791,6 +821,938 @@ xi.cardian.bank.chainShare = function(closer, target, chain, tier, count)
     end
 
     return dealt / base
+end
+
+-----------------------------------
+-- The weapon skill's price (#496)
+-----------------------------------
+
+-- Methods of an entity or an effect that only read, by name: what a weapon
+-- skill's damage chain asks of its actor and its target. Anything else it
+-- calls -- TP added, an effect spent, damage taken, a skill-up, a message --
+-- does nothing on a stand-in and answers nil. The three damage reductions
+-- go through to the server: they read the target's mods (and would spend a
+-- mob's Migawari or Fan Dance, which mobs do not carry)
+local kReads = { physicalDmgTaken = true, rangedDmgTaken = true, handleSevereDamage = true }
+
+local function reads(method)
+    return kReads[method] or method:find('^get') ~= nil or method:find('^has') ~= nil or method:find('^is') ~= nil or
+        method:find('^can') ~= nil or method:find('^check') ~= nil
+end
+
+-- Any object of the server's -- an effect, a spell -- as a run may hold it:
+-- its reads go through, anything else does nothing. Passed into a server
+-- call, it goes in as itself
+local function inertObject(object)
+    local proxy = {}
+    entityOf[proxy] = object
+    return setmetatable(proxy, {
+        __index = function(self, method)
+            local call = function() return nil end
+            if reads(method) then
+                call = function(_, ...)
+                    return object[method](object, ...)
+                end
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
+-- An entity a run of the server's code may ask anything and change nothing:
+-- its reads asked once (remembered), its effects handed back inert, every
+-- other method a no-op. `answers` replaces some reads outright: a value, or
+-- a function answering the call
+local function inert(entity, answers)
+    local seen  = remembered(entity)
+    local proxy = {}
+    entityOf[proxy] = entity
+    return setmetatable(proxy, {
+        __index = function(self, method)
+            local call
+            if answers ~= nil and answers[method] ~= nil then
+                local answer = answers[method]
+                call = type(answer) == 'function' and answer or function()
+                    return answer
+                end
+            elseif method == 'getStatusEffect' then
+                call = function(_, ...)
+                    local effect = seen:getStatusEffect(...)
+                    return effect ~= nil and inertObject(effect) or nil
+                end
+            elseif reads(method) then
+                call = seen[method]
+            else
+                call = function()
+                    return nil
+                end
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
+-- The bank's own dice for runs of the server's code that roll many times:
+-- the minimal standard generator (Park and Miller), seeded the same every
+-- time, so its answer is the same every time it is asked. math.random,
+-- randomInt, randomFloat and randomNormal as the server binds them
+-- (src/map/lua/luautils.cpp), the server's own put back after
+local kSeed = 20261017
+
+local function onSeededDice(step)
+    local x = kSeed
+    local function u()
+        x = (x * 16807) % 2147483647
+        return x / 2147483647
+    end
+
+    local function int(lo, hi)
+        lo, hi = math.floor(lo + 0.5), math.floor(hi + 0.5)
+        return lo + math.floor(u() * (hi - lo + 1))
+    end
+
+    local random, randomInt, randomFloat, randomNormal = math.random, math.randomInt, math.randomFloat, math.randomNormal
+    math.random = function(lo, hi)
+        if lo == nil then
+            return u()
+        end
+        if hi == nil then
+            return int(1, lo)
+        end
+        return int(lo, hi)
+    end
+    math.randomInt   = int
+    math.randomFloat = function(lo, hi)
+        return lo + u() * (hi - lo)
+    end
+    math.randomNormal = function(mean, sd, lower, upper)
+        local z = math.sqrt(-2 * math.log(u())) * math.cos(2 * math.pi * u())
+        return utils.clamp(mean + sd * z, lower or -math.huge, upper or math.huge)
+    end
+    local ok, result = pcall(step)
+    math.random, math.randomInt, math.randomFloat, math.randomNormal = random, randomInt, randomFloat, randomNormal
+    if not ok then
+        error(result, 0)
+    end
+    return result
+end
+
+-- Runs of the server's code a sampled price is the mean of (the fallback,
+-- below): its error is about the price's own spread over eight
+local kWsRuns = 64
+xi.cardian.bank.wsRuns = kWsRuns
+
+-- The stand-ins a weapon skill's script runs on: the target answers its
+-- maximum HP for what it has left, so the price is the whole weapon skill
+-- whatever the mob has left (the chain's worth weighs that itself)
+local function wsStage(attacker, target)
+    return
+    {
+        actor  = inert(attacker),
+        foe    = inert(target, { getHP = target:getMaxHP() }),
+        action = setmetatable({}, {
+            __index = function()
+                return function() end
+            end,
+        }),
+    }
+end
+
+-- One run of a weapon skill's script on its stage: what it would have
+-- dealt, taken where the game's own last step (takeWeaponskillDamage)
+-- would take it
+local function wsRun(stage, script, wsId, tp)
+    local take  = xi.weaponskills.takeWeaponskillDamage
+    local dealt = nil
+    xi.weaponskills.takeWeaponskillDamage = function(_, _, _, _, _, results)
+        dealt = results.finalDmg or 0
+        return dealt
+    end
+    local ok, damage = pcall(function()
+        local _, _, _, d = script.onUseWeaponSkill(stage.actor, stage.foe, wsId, tp, true, stage.action, nil)
+        return d
+    end)
+    xi.weaponskills.takeWeaponskillDamage = take
+    if not ok then
+        error(damage, 0)
+    end
+    return math.max(0, dealt or damage or 0)
+end
+
+-- The sampled price: kWsRuns runs over the bank's seeded dice, their mean
+-- and their spread
+local function wsSampled(attacker, target, wsId, script, tp)
+    local stage = wsStage(attacker, target)
+    return onSeededDice(function()
+        local sum, squares = 0, 0
+        for _ = 1, kWsRuns do
+            local run = wsRun(stage, script, wsId, tp)
+            sum       = sum + run
+            squares   = squares + run * run
+        end
+        local mean = sum / kWsRuns
+        return { mean = mean, spread = math.sqrt(math.max(0, squares / kWsRuns - mean * mean)) }
+    end)
+end
+
+-----------------------------------
+-- Reading the dice (#496; the user, 2026-10-17): a run of the server's
+-- code with each die it rolls answered by what it comes to on average --
+-- the way resistOf reads the resist roll, never by sampling. A die rolled
+-- into a comparison on its own line (`math.randomInt(1, 100) <= rate`,
+-- `x * 100 >= math.randomInt(1, 10000)`, `math.randomInt(0, 1) == 0`) is
+-- read there: its threshold worked out in the caller's own frame, and the
+-- run goes both ways, each weighed by its chance. A weapon skill hit's miss
+-- and critical rolls are read off its calcParams (wsRead, below). A die in
+-- no comparison is taken at its midpoint -- right for one used linearly,
+-- as pDIF's range and its random factor are -- and a die of 1 to 100 or to
+-- 10000 in no comparison the bank can read is an error: a percent die is a
+-- chance, and its odds unread would be priced wrong. A die of two values is
+-- run both ways
+-----------------------------------
+
+-- The server's scripts' lines, read once a file
+local sourceLines = {}
+
+local function lineOf(path, line)
+    local lines = sourceLines[path]
+    if lines == nil then
+        lines = {}
+        local file = io.open(path, 'r')
+        if file ~= nil then
+            for text in file:lines() do
+                lines[#lines + 1] = text
+            end
+            file:close()
+        end
+        sourceLines[path] = lines
+    end
+    return lines[line]
+end
+
+-- A frame as a die finds it, `level` counted as its caller counts: its
+-- function, where it stands, and its locals and upvalues (boxed, so a nil
+-- local still hides a global of its name)
+local function frameOf(level)
+    local at   = level + 1
+    local info = debug.getinfo(at, 'Slf')
+    if info == nil then
+        return nil
+    end
+    local frame = { func = info.func, vars = {}, where = '?' }
+    if type(info.source) == 'string' and info.source:sub(1, 1) == '@' then
+        frame.path  = info.source:sub(2)
+        frame.line  = info.currentline
+        frame.where = string.format('%s:%d', frame.path, frame.line or 0)
+    end
+    for i = 1, 250 do
+        local name, value = debug.getlocal(at, i)
+        if name == nil then
+            break
+        end
+        if name:sub(1, 1) ~= '(' then
+            frame.vars[name] = { value }
+        end
+    end
+    if info.func ~= nil then
+        for i = 1, 250 do
+            local name, value = debug.getupvalue(info.func, i)
+            if name == nil then
+                break
+            end
+            if frame.vars[name] == nil then
+                frame.vars[name] = { value }
+            end
+        end
+    end
+    return frame
+end
+
+-- The index of the bracket closing the one at `open`
+local function closing(text, open)
+    local depth = 0
+    for i = open, #text do
+        local c = text:sub(i, i)
+        if c == '(' or c == '[' or c == '{' then
+            depth = depth + 1
+        elseif c == ')' or c == ']' or c == '}' then
+            depth = depth - 1
+            if depth == 0 then
+                return i
+            end
+        end
+    end
+    return nil
+end
+
+-- The operand after a comparison, to the end of its expression
+local function operandAfter(text)
+    text = text:match('^%s*(.-)$')
+    local depth = 0
+    local i     = 1
+    while i <= #text do
+        local c = text:sub(i, i)
+        if c == '(' or c == '[' or c == '{' then
+            depth = depth + 1
+        elseif c == ')' or c == ']' or c == '}' then
+            if depth == 0 then
+                break
+            end
+            depth = depth - 1
+        elseif depth == 0 then
+            local rest = text:sub(i)
+            if
+                c == ',' or rest:find('^%-%-') or rest:find('^%s+then%f[%W]') or rest:find('^%s+or%f[%W]') or
+                rest:find('^%s+and%f[%W]') or rest:find('^%s+do%f[%W]')
+            then
+                break
+            end
+        end
+        i = i + 1
+    end
+    return (text:sub(1, i - 1):gsub('%s+$', ''))
+end
+
+-- The operand before a comparison, back to the start of its expression
+local kBefore = { 'if', 'elseif', 'or', 'and', 'not', 'return', 'then', 'while', 'until', 'local' }
+
+local function operandBefore(text)
+    text = text:gsub('%s+$', '')
+    local depth = 0
+    local i     = #text
+    while i >= 1 do
+        local c = text:sub(i, i)
+        if c == ')' or c == ']' or c == '}' then
+            depth = depth + 1
+        elseif c == '(' or c == '[' or c == '{' then
+            if depth == 0 then
+                break
+            end
+            depth = depth - 1
+        elseif depth == 0 then
+            if c == ',' or c == '=' then
+                break
+            end
+            if c:find('%s') then
+                local head = text:sub(1, i - 1)
+                local stop = false
+                for _, word in ipairs(kBefore) do
+                    if head:find('%f[%w_]' .. word .. '$') then
+                        stop = true
+                    end
+                end
+                if stop then
+                    break
+                end
+            end
+        end
+        i = i - 1
+    end
+    return (text:sub(i + 1):gsub('^%s+', ''))
+end
+
+-- A die's call as the server writes it, by kind
+local kCalls  = { int = 'math%.randomInt%s*%(', float = 'math%.randomFloat%s*%(', any = 'math%.random%s*%(' }
+local kOps    = { '<=', '>=', '==', '~=', '<', '>' }
+local kMirror = { ['<='] = '>=', ['>='] = '<=', ['<'] = '>', ['>'] = '<', ['=='] = '==', ['~='] = '~=' }
+
+-- The comparison a die is rolled into on its line, as `die op expr` (the
+-- die's divisor folded in), by where it is; false for none
+local comparisons = {}
+
+local function comparisonAt(frame, kind)
+    local key   = frame.where .. ':' .. kind
+    local known = comparisons[key]
+    if known ~= nil then
+        return known
+    end
+    known      = false
+    local text = frame.path ~= nil and lineOf(frame.path, frame.line) or nil
+    if text ~= nil then
+        text          = text:gsub('%-%-.*$', '')
+        local s, open = text:find(kCalls[kind])
+        if s ~= nil and text:find(kCalls[kind], open + 1) == nil then
+            local close = closing(text, open)
+            if close ~= nil then
+                local after   = text:sub(close + 1)
+                local divisor = 1
+                local d, rest = after:match('^%s*/%s*([%d%.]+)(.*)$')
+                if d ~= nil then
+                    divisor = tonumber(d)
+                    after   = rest
+                end
+                for _, op in ipairs(kOps) do
+                    local operand = after:match('^%s*' .. op .. '(.*)$')
+                    if operand ~= nil then
+                        known = { op = op, expr = operandAfter(operand), divisor = divisor }
+                        break
+                    end
+                end
+                if not known then
+                    local before = text:sub(1, s - 1)
+                    for _, op in ipairs(kOps) do
+                        local head = before:match('^(.-)%s*' .. op .. '%s*$')
+                        if head ~= nil then
+                            known = { op = kMirror[op], expr = operandBefore(head), divisor = 1 }
+                            break
+                        end
+                    end
+                end
+            end
+        end
+    end
+    comparisons[key] = known
+    return known
+end
+
+-- A comparison's operand worked out in the die's own frame
+local compiled = {}
+
+local function valueIn(frame, expr)
+    local chunk = compiled[expr]
+    if chunk == nil then
+        chunk = loadstring('return ' .. expr)
+        if chunk == nil then
+            error(string.format('%s: the bank cannot read "%s"', frame.where, expr), 0)
+        end
+        compiled[expr] = chunk
+    end
+    setfenv(chunk, setmetatable({}, {
+        __index = function(_, name)
+            local box = frame.vars[name]
+            if box ~= nil then
+                return box[1]
+            end
+            return _G[name]
+        end,
+    }))
+    local ok, value = pcall(chunk)
+    if not ok or type(value) ~= 'number' then
+        error(string.format('%s: the bank cannot read "%s": %s', frame.where, expr, tostring(value)), 0)
+    end
+    return value
+end
+
+-- The two ways a die rolled into `die op threshold` goes, as { value, chance }:
+-- whole numbers lo to hi for an integer die, lo up to hi for a fraction
+local function waysOf(whole, lo, hi, op, threshold)
+    local yes, no, chance
+    if whole then
+        local n     = hi - lo + 1
+        local count = 0
+        if op == '<=' then
+            count = math.floor(threshold) - lo + 1
+        elseif op == '<' then
+            count = math.ceil(threshold) - lo
+        elseif op == '>=' then
+            count = hi - math.ceil(threshold) + 1
+        elseif op == '>' then
+            count = hi - math.floor(threshold)
+        else
+            local hits = threshold == math.floor(threshold) and threshold >= lo and threshold <= hi
+            count = hits and 1 or 0
+            if op == '~=' then
+                count = n - count
+            end
+        end
+        chance = utils.clamp(count, 0, n) / n
+        if op == '<=' or op == '<' then
+            yes, no = lo, hi
+        elseif op == '>=' or op == '>' then
+            yes, no = hi, lo
+        else
+            local other = threshold == lo and hi or lo
+            if op == '==' then
+                yes, no = threshold, other
+            else
+                yes, no = other, threshold
+            end
+        end
+    else
+        local top = hi - (hi - lo) * 1e-9
+        local below = utils.clamp((threshold - lo) / (hi - lo), 0, 1)
+        if op == '<=' or op == '<' then
+            chance, yes, no = below, lo, top
+        elseif op == '>=' or op == '>' then
+            chance, yes, no = 1 - below, top, lo
+        else
+            chance = 0
+            yes, no = threshold, (threshold == lo and top or lo)
+            if op == '~=' then
+                chance, yes, no = 1, no, yes
+            end
+        end
+    end
+    return { { yes, chance }, { no, 1 - chance } }
+end
+
+-- The walk a die answers to: every way its dice can fall, each run from the
+-- start, weighed by the chances of the ways it took
+local walking = nil
+
+local function walkOver(step, limit)
+    local outer   = walking
+    local pending = { {} }
+    local total   = 0
+    local walked  = 0
+    local ok, err = pcall(function()
+        while #pending > 0 do
+            walked = walked + 1
+            if walked > limit then
+                error(string.format('the dice fall more than %d ways', limit), 0)
+            end
+            local walk = { prefix = table.remove(pending), choices = {}, weight = 1, pending = pending }
+            walking    = walk
+            local value = step(walk)
+            walking     = outer
+            total       = total + walk.weight * value
+        end
+    end)
+    walking = outer
+    if not ok then
+        error(err, 0)
+    end
+    return total
+end
+
+-- A die's ways, { value, chance } each: the way this run takes
+local function branch(ways)
+    local live = {}
+    for _, way in ipairs(ways) do
+        if way[2] > 0 then
+            live[#live + 1] = way
+        end
+    end
+    if #live == 0 then
+        error('a die that cannot fall', 0)
+    end
+    local walk = walking
+    if walk == nil then
+        return live[1][1]
+    end
+    local at   = #walk.choices + 1
+    local pick = walk.prefix[at]
+    if pick == nil then
+        pick = 1
+        for j = 2, #live do
+            local prefix = { unpack(walk.choices) }
+            prefix[at]   = j
+            walk.pending[#walk.pending + 1] = prefix
+        end
+    end
+    walk.choices[at] = pick
+    walk.weight      = walk.weight * live[pick][2]
+    return live[pick][1]
+end
+
+-- A weapon skill hit's own two rolls, read off what the hit step holds as
+-- it rolls them (scripts/globals/weaponskills.lua getSingleHitDamage): the
+-- miss (`math.randomFloat(0, 1) > calcParams.hitRate`, never with
+-- guaranteedHit, always with mustMiss), then the critical
+-- (`math.randomFloat(0, 1) <= calcParams.critRate` where wsParams.critVaries,
+-- always with forcedFirstCrit or mightyStrikesApplicable). The step being
+-- read and the rolls it has made
+local hitStep = nil
+local hitSeen = nil
+local kHitWhere = 'scripts/globals/weaponskills.lua getSingleHitDamage'
+
+local function hitRoll(frame)
+    if hitSeen == nil then
+        error(kHitWhere .. ': a roll outside a hit the bank reads, at ' .. frame.where, 0)
+    end
+    local calc = frame.vars.calcParams and frame.vars.calcParams[1]
+    if type(calc) ~= 'table' then
+        error(kHitWhere .. ': no local calcParams at its roll', 0)
+    end
+    if frame.vars.missChance == nil then
+        if type(calc.hitRate) ~= 'number' then
+            error(kHitWhere .. ': no calcParams.hitRate at its miss roll', 0)
+        end
+        hitSeen.miss = true
+        local lands = calc.mustMiss and 0 or (calc.guaranteedHit and 1 or utils.clamp(calc.hitRate, 0, 1))
+        return branch({ { 0, lands }, { 1, 1 - lands } })
+    end
+    if frame.vars.critChance == nil then
+        local ws = frame.vars.wsParams and frame.vars.wsParams[1]
+        if type(calc.critRate) ~= 'number' then
+            error(kHitWhere .. ': no calcParams.critRate at its critical roll', 0)
+        end
+        if type(ws) ~= 'table' then
+            error(kHitWhere .. ': no local wsParams at its critical roll', 0)
+        end
+        hitSeen.crit = true
+        local crits = (calc.forcedFirstCrit or calc.mightyStrikesApplicable) and 1 or (ws.critVaries and utils.clamp(calc.critRate, 0, 1) or 0)
+        return branch({ { 0, crits }, { 1, 1 - crits } })
+    end
+    error(kHitWhere .. ': a third roll the bank does not know', 0)
+end
+
+-- A die's answer in a read: a hit's own roll; one rolled into a comparison,
+-- both ways by its read chance; a die of two values, both ways; any other
+-- at its midpoint
+local function dieValue(kind, lo, hi, frame)
+    if frame == nil then
+        return (lo + hi) / 2
+    end
+    if kind == 'float' and hitStep ~= nil and frame.func == hitStep then
+        return hitRoll(frame)
+    end
+    local whole = kind ~= 'float' and kind ~= 'unit'
+    if whole then
+        lo, hi = math.floor(lo + 0.5), math.floor(hi + 0.5)
+    end
+    local cmp = comparisonAt(frame, kind == 'unit' and 'any' or kind)
+    if cmp then
+        local threshold = valueIn(frame, cmp.expr) * cmp.divisor
+        return branch(waysOf(whole, lo, hi, cmp.op, threshold))
+    end
+    if whole then
+        if lo == 1 and (hi == 100 or hi == 10000) then
+            error(string.format('%s: a die of 1 to %d in no comparison the bank reads', frame.where, hi), 0)
+        end
+        if hi - lo == 1 then
+            return branch({ { lo, 0.5 }, { hi, 0.5 } })
+        end
+    end
+    return (lo + hi) / 2
+end
+
+-- A step run with the read dice in place of the server's, put back after
+local function onReadDice(step)
+    local random, randomInt, randomFloat, randomNormal = math.random, math.randomInt, math.randomFloat, math.randomNormal
+    math.randomInt = function(lo, hi)
+        local value = dieValue('int', lo, hi, frameOf(2))
+        return value
+    end
+    math.randomFloat = function(lo, hi)
+        local value = dieValue('float', lo, hi, frameOf(2))
+        return value
+    end
+    math.random = function(lo, hi)
+        local value
+        if lo == nil then
+            value = dieValue('unit', 0, 1, frameOf(2))
+        elseif hi == nil then
+            value = dieValue('any', 1, lo, frameOf(2))
+        else
+            value = dieValue('any', lo, hi, frameOf(2))
+        end
+        return value
+    end
+    math.randomNormal = function(mean, _, lower, upper)
+        return utils.clamp(mean, lower or -math.huge, upper or math.huge)
+    end
+    local ok, result = pcall(step)
+    math.random, math.randomInt, math.randomFloat, math.randomNormal = random, randomInt, randomFloat, randomNormal
+    if not ok then
+        error(result, 0)
+    end
+    return result
+end
+
+-- calculateRawWSDmg's own hit step, found by its name (an upvalue of it),
+-- with where it sits; an error naming the file when it is gone
+local function hitStepOf()
+    local raw = xi.weaponskills.calculateRawWSDmg
+    if type(raw) ~= 'function' then
+        error('scripts/globals/weaponskills.lua: no xi.weaponskills.calculateRawWSDmg', 0)
+    end
+    for i = 1, 250 do
+        local name, value = debug.getupvalue(raw, i)
+        if name == nil then
+            break
+        end
+        if name == 'getSingleHitDamage' and type(value) == 'function' then
+            return raw, i, value
+        end
+    end
+    error('scripts/globals/weaponskills.lua: xi.weaponskills.calculateRawWSDmg no longer reaches getSingleHitDamage', 0)
+end
+
+-- calculateRawWSDmg with the read's own hit in place of its hit step: a twin
+-- of it (its own bytecode, loaded again) sharing every upvalue of it but
+-- that one, which the twin holds alone, put in xi.weaponskills for the read
+-- and taken out after. The server's own closure is never touched: LuaJIT
+-- compiles a closure's unchanging upvalues into its traces, so a hit step
+-- swapped in place there could go on being called, or not, from compiled
+-- code. Made once for each calculateRawWSDmg; the hit it calls is the read's
+-- (readingHit)
+local readingHit = nil
+local twins      = setmetatable({}, { __mode = 'k' })
+
+local function twinOf(raw, at)
+    local twin = twins[raw]
+    if twin ~= nil then
+        return twin
+    end
+    local dumped = loadstring(string.dump(raw))
+    if dumped == nil then
+        error('scripts/globals/weaponskills.lua: xi.weaponskills.calculateRawWSDmg cannot be loaded again', 0)
+    end
+    setfenv(dumped, getfenv(raw))
+    for i = 1, 250 do
+        local name = debug.getupvalue(raw, i)
+        if name == nil then
+            break
+        end
+        if i ~= at then
+            debug.upvaluejoin(dumped, i, raw, i)
+        end
+    end
+    debug.setupvalue(dumped, at, function(...)
+        return readingHit(...)
+    end)
+    twins[raw] = dumped
+    return dumped
+end
+
+-- Ways a hit's own dice can fall, and a weapon skill's outside its hits
+local kHitWays = 128
+local kWsWays  = 512
+
+-- The read price (the user's design, 2026-10-17): the weapon skill's own
+-- script on the stand-ins, its dice read. Each hit is its expectation --
+-- hit chance x (crit chance x its critical's damage + the rest x its
+-- ordinary damage), the hit step run every way its own dice fall (its miss
+-- and critical read off calcParams; pDIF's spike, its coin, a parry, a
+-- shadow, by their lines) -- worked out once a kind of hit and handed on in
+-- the hit's place, so what the script does with it after (the target's
+-- reductions, the weapon skill's bonuses, its floors) is the server's own.
+-- Outside its hits the run goes every way its dice fall -- a multi-attack's
+-- procs, a magical weapon skill's day and weather -- and the resist roll is
+-- taken at its average as the nukes' is (resistOf, resistFor). The same
+-- answer every time; an error naming what it could not find
+local function wsRead(attacker, target, wsId, script, tp)
+    local raw, at, step = hitStepOf()
+    local stage = wsStage(attacker, target)
+    local known = {}
+
+    local function expectedHit(actor, foe, dmg, ftp, wsParams, calcParams)
+        local info = calcParams.attackInfo or {}
+        local key  = table.concat({ tostring(dmg), tostring(ftp), tostring(calcParams.hitRate), tostring(calcParams.critRate), tostring(calcParams.guaranteedHit),
+            tostring(calcParams.mustMiss), tostring(calcParams.forcedFirstCrit), tostring(calcParams.mightyStrikesApplicable), tostring(info.slot),
+            tostring(info.weaponType), tostring(calcParams.attackType) }, ':')
+        local hit = known[key]
+        if hit == nil then
+            local pdif, landed = 0, 0
+            local value = walkOver(function(walk)
+                local copy = {}
+                for k, v in pairs(calcParams) do
+                    copy[k] = v
+                end
+                local outer = hitSeen
+                hitSeen     = { miss = false, crit = false }
+                local ok, d = pcall(step, actor, foe, dmg, ftp, wsParams, copy)
+                local seen  = hitSeen
+                hitSeen     = outer
+                if not ok then
+                    error(d, 0)
+                end
+                if not seen.miss then
+                    error(kHitWhere .. ': no longer rolls its miss with math.randomFloat', 0)
+                end
+                if d > 0 and not seen.crit then
+                    error(kHitWhere .. ': no longer rolls its critical with math.randomFloat', 0)
+                end
+                if d > 0 then
+                    pdif   = pdif + walk.weight * (copy.pdif or 0)
+                    landed = landed + walk.weight
+                end
+                return d
+            end, kHitWays)
+            hit        = { value = value, landed = landed, pdif = landed > 0 and pdif / landed or nil }
+            known[key] = hit
+        end
+        -- What the script reads of the hit after it: the pDIF a Sneak
+        -- Attack's DEX bonus is weighed by, and that it landed
+        if hit.pdif ~= nil then
+            calcParams.pdif = hit.pdif
+        end
+        if hit.landed > 0 then
+            calcParams.hitsLanded = (calcParams.hitsLanded or 0) + 1
+        end
+        return hit.value, calcParams
+    end
+
+    local resist = xi.combat.magicHitRate.calculateResistRate
+    local averaged
+    averaged = function(actor, foe, params)
+        xi.combat.magicHitRate.calculateResistRate = resist
+        local ok, rate = pcall(function()
+            return resistFor(resistOf(actor, foe, params), 0)
+        end)
+        xi.combat.magicHitRate.calculateResistRate = averaged
+        if not ok then
+            error(rate, 0)
+        end
+        return rate
+    end
+
+    local twin = twinOf(raw, at)
+    xi.weaponskills.calculateRawWSDmg          = twin
+    readingHit                                 = expectedHit
+    hitStep                                    = step
+    xi.combat.magicHitRate.calculateResistRate = averaged
+    local ok, price = pcall(onReadDice, function()
+        return walkOver(function()
+            return wsRun(stage, script, wsId, tp)
+        end, kWsWays)
+    end)
+    xi.combat.magicHitRate.calculateResistRate = resist
+    hitStep                                    = nil
+    readingHit                                 = nil
+    xi.weaponskills.calculateRawWSDmg          = raw
+    if not ok then
+        error(price, 0)
+    end
+    return price
+end
+
+local function wsScriptOf(name)
+    local scripts = xi.actions and xi.actions.weaponskills
+    local script  = scripts ~= nil and scripts[name] or nil
+    if script == nil or type(script.onUseWeaponSkill) ~= 'function' then
+        return nil
+    end
+    return script
+end
+
+-- What a weapon skill deals the target on average (#496; ROADMAP, Road to
+-- subjob item 6, slice 3h: the chain's worth weighs each member's weapon
+-- skill): its read price (wsRead), the same every time. Where the read
+-- cannot find what it reads -- an upstream change to weaponskills.lua, a
+-- die the bank cannot read -- the weapon skill is priced by kWsRuns runs of
+-- its own script over the bank's seeded dice instead, and the answer says
+-- so: the price, 'read' or 'sampled', and for a sampled one why the read
+-- failed. Left out: what the actor's state would add when it lands (a Sneak
+-- Attack not yet up, the TP she holds over `tp`) and the game's last step
+-- (a mob's Phalanx, Stoneskin, damage cap). nil when the weapon skill has
+-- no script
+xi.cardian.bank.wsExpected = function(attacker, target, wsId, name, tp)
+    local script = wsScriptOf(name)
+    if script == nil then
+        return nil
+    end
+    local ok, price = pcall(wsRead, attacker, target, wsId, script, tp)
+    if ok then
+        return price, 'read'
+    end
+    return wsSampled(attacker, target, wsId, script, tp).mean, 'sampled', tostring(price)
+end
+
+-- Each way alone, for the tests: the read price, erroring as it fails; the
+-- sampled one, its mean and its runs' spread
+xi.cardian.bank.wsRead = function(attacker, target, wsId, name, tp)
+    local script = wsScriptOf(name)
+    return script ~= nil and wsRead(attacker, target, wsId, script, tp) or nil
+end
+
+xi.cardian.bank.wsSampled = function(attacker, target, wsId, name, tp)
+    local script = wsScriptOf(name)
+    if script == nil then
+        return nil
+    end
+    local sampled = wsSampled(attacker, target, wsId, script, tp)
+    return sampled.mean, sampled.spread
+end
+
+-- The nukes' fallback (nukeSeeds, where its read of the resist roll fails):
+-- each spell's own script (xi.actions.spells, found by its name) run
+-- kWsRuns times on stand-ins over the bank's seeded dice, its damage chain
+-- whole, the mean of what each run would deal. The target carries no
+-- skillchain for it, so no run bursts; with intDown, the same runs on a
+-- target whose INT reads that much lower
+local function spellScriptOf(name)
+    local folders = xi.actions and xi.actions.spells
+    if folders == nil or name == nil then
+        return nil
+    end
+    for _, folder in pairs(folders) do
+        local script = type(folder) == 'table' and folder[name] or nil
+        if type(script) == 'table' and type(script.onSpellCast) == 'function' then
+            return script
+        end
+    end
+    return nil
+end
+
+local function spellStage(s, target)
+    local answers =
+    {
+        getID              = s.id,
+        getElement         = s.element,
+        getSkillType       = s.skillType,
+        getSpellGroup      = s.spellGroup,
+        getSpellFamily     = s.family,
+        getTotalTargets    = 1,
+        getPrimaryTargetID = target:getID(),
+        getFlag            = 0,
+        getAoE             = 0,
+        getRadius          = 0,
+        getMPCost          = 0,
+        getCastTime        = 0,
+        getKnockback       = 0,
+        isAoE              = false,
+        isConal            = false,
+        isCritical         = false,
+    }
+    return setmetatable({}, {
+        __index = function(self, method)
+            local answer = answers[method]
+            local call   = function()
+                return answer
+            end
+            rawset(self, method, call)
+            return call
+        end,
+    })
+end
+
+sampledNukes = function(caster, target, spells, intDown)
+    local actor = inert(caster)
+    local foe   = inert(target,
+    {
+        getHP           = target:getMaxHP(),
+        getStatusEffect = function(_, id, ...)
+            if id == xi.effect.SKILLCHAIN then
+                return nil
+            end
+            local effect = target:getStatusEffect(id, ...)
+            return effect ~= nil and inertObject(effect) or nil
+        end,
+        hasStatusEffect = function(_, id, ...)
+            if id == xi.effect.SKILLCHAIN then
+                return false
+            end
+            return target:hasStatusEffect(id, ...)
+        end,
+    })
+    local moved      = intDown ~= nil and intDown ~= 0 and withIntDown(foe, intDown) or nil
+    local seeds      = {}
+    local seedsMoved = moved ~= nil and {} or nil
+    local function mean(script, on, spell)
+        return onSeededDice(function()
+            local sum = 0
+            for _ = 1, kWsRuns do
+                local dealt = script.onSpellCast(actor, on, spell)
+                sum         = sum + math.max(0, type(dealt) == 'number' and dealt or 0)
+            end
+            return sum / kWsRuns
+        end)
+    end
+    for _, s in ipairs(spells) do
+        local script = spellScriptOf(s.name)
+        if script ~= nil and xi.spells.damage.pTable[s.id] ~= nil then
+            local spell = spellStage(s, target)
+            seeds[s.id] = mean(script, foe, spell)
+            if seedsMoved ~= nil then
+                seedsMoved[s.id] = mean(script, moved, spell)
+            end
+        end
+    end
+    return seeds, seedsMoved
 end
 
 -- A debuff spell's own script, run on stand-ins: the caster answers 0 to

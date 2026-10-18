@@ -36,6 +36,7 @@
 #include "common/xirand.h"
 #include "entities/battle_entity.h"
 #include "entities/char_entity.h"
+#include "entities/mob_entity.h"
 #include "party.h"
 #include "spell.h"
 #include "status_effect.h"
@@ -135,8 +136,8 @@ namespace pawn::chains
         // player charid -> the call sounds his plan's calls end with (PREFS)
         struct Calls
         {
-            uint8 opening = 0;
-            uint8 ready   = 0;
+            uint8 opening = cardian::chat::kNoCall;
+            uint8 ready   = cardian::chat::kNoCall;
         };
         std::unordered_map<uint32, Calls> callsOf;
 
@@ -196,6 +197,18 @@ namespace pawn::chains
         };
         std::map<std::pair<uint32, uint16>, Mean> wsMeans;
         std::unordered_map<uint32, Mean>          wsMeansAll;
+
+        // member charid -> her last weapon skill that landed damage, and when
+        // (wsMissed): the game reports a weapon skill that closes a
+        // skillchain as dealing nothing -- the chain's own damage clears what
+        // it reports -- while the fight log has its damage already
+        struct Landed
+        {
+            uint16 skill = 0;
+            double at    = 0.0;
+        };
+        std::unordered_map<uint32, Landed> lastLanded;
+        constexpr double                   kSameWs = 1.0;
 
         // The chain's damage for each point of the closing weapon skill,
         // asked of the server once per closer, mob and chain and kept ten
@@ -414,6 +427,22 @@ namespace pawn::chains
             return out;
         }
 
+        // Every nuke a character has learned at her jobs and level: what a
+        // real player can burst with by hand
+        auto learnedNukes(CCharEntity* PChar) -> std::vector<SpellID>
+        {
+            std::vector<SpellID> nukes;
+            for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
+            {
+                auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
+                if (PSpell != nullptr && charutils::hasSpell(PChar, id) && pawn::tactics::bank::isNuke(PSpell) && CSpellBook::Eligible(PChar, PSpell))
+                {
+                    nukes.push_back(static_cast<SpellID>(id));
+                }
+            }
+            return nukes;
+        }
+
         // The elements a member can burst with: her tactician's nukes; a real
         // player's, every nuke he has learned at his jobs and level
         auto burstsOf(CCharEntity* PChar) -> uint16
@@ -422,14 +451,7 @@ namespace pawn::chains
             auto   nukes = pawn::tactics::nukesOf(PChar);
             if (nukes.empty() && PChar->PSession != nullptr)
             {
-                for (uint16 id = 1; id < MAX_SPELL_ID; ++id)
-                {
-                    auto* PSpell = spell::GetSpell(static_cast<SpellID>(id));
-                    if (PSpell != nullptr && charutils::hasSpell(PChar, id) && pawn::tactics::bank::isNuke(PSpell) && CSpellBook::Eligible(PChar, PSpell))
-                    {
-                        nukes.push_back(static_cast<SpellID>(id));
-                    }
-                }
+                nukes = learnedNukes(PChar);
             }
             for (const auto id : nukes)
             {
@@ -529,21 +551,79 @@ namespace pawn::chains
             return true;
         }
 
-        // What her weapon skill deals, as the chain's worth prices it: her
-        // landings of it, else of any of hers, else her melee by the
-        // formulas for a few rounds (skillchain_math.h kWsPriorRounds)
-        auto wsEstimate(CCharEntity* PAsker, CCharEntity* PMember, const uint16 skill, CBattleEntity* PMob) -> double
+        // The server's own weapon skill at its expectation, asked of the bank
+        // once per member, kind of mob, its level, weapon skill and TP band and
+        // kept ten minutes (formulaOf), as the chain's share is: a second mob
+        // of the same kind and level (the user, 2026-10-17) prices nothing,
+        // and her gear may change. A mob's kind is its pool; anything else is
+        // its own kind
+        struct Formula
         {
-            if (const auto it = wsMeans.find({ PMember->id, skill }); it != wsMeans.end() && it->second.count > 0)
+            std::optional<double> value;
+            double                at = 0.0;
+        };
+        std::map<std::tuple<uint32, uint32, uint8, uint16, int32>, Formula> formulas;
+        constexpr std::size_t                                               kFormulasKept = 512;
+        // The TP a weapon skill is priced at: hers now, within a weapon
+        // skill's and the cap, by this much
+        constexpr int32 kFormulaTpBand = 250;
+
+        auto kindOf(const CBattleEntity* PMob) -> uint32
+        {
+            if (const auto* PFoe = dynamic_cast<const CMobEntity*>(PMob); PFoe != nullptr && PFoe->m_Pool != 0)
+            {
+                return PFoe->m_Pool;
+            }
+            return 0x80000000u | PMob->id;
+        }
+
+        auto formulaOf(CCharEntity* PMember, CBattleEntity* PMob, const uint16 skill) -> std::optional<double>
+        {
+            const int32  tp  = std::clamp<int32>(PMember->health.tp, cardian::chains::kWsTp, cardian::chains::kTpCap) / kFormulaTpBand * kFormulaTpBand;
+            const auto   key = std::make_tuple(PMember->id, kindOf(PMob), PMob->GetMLevel(), skill, tp);
+            const double now = secondsNow();
+            if (const auto it = formulas.find(key); it != formulas.end() && now - it->second.at < kShareFresh)
             {
                 return it->second.value;
             }
-            if (const auto it = wsMeansAll.find(PMember->id); it != wsMeansAll.end() && it->second.count > 0)
+            if (formulas.size() >= kFormulasKept)
             {
-                return it->second.value;
+                formulas.clear();
             }
-            const auto round = pawn::tactics::meleeRound(PAsker, PMember, PMob);
-            return round.has_value() ? *round * cardian::chains::kWsPriorRounds : 0.0;
+            // The TP the server hands the weapon skill's script: hers, with
+            // her TP bonus and a one-handed fighter's Fencer (the server's own
+            // battleutils::CalculateWeaponSkillTP)
+            auto*       PWeaponSkill = battleutils::GetWeaponSkill(skill);
+            const int32 scriptTp     = PWeaponSkill != nullptr ? battleutils::CalculateWeaponSkillTP(PMember, PWeaponSkill, static_cast<int16>(tp)) : tp;
+            const auto  price        = pawn::tactics::bank::wsExpected(PMember, PMob, skill, scriptTp);
+            formulas[key]    = Formula{ price.has_value() ? std::optional<double>(price->value) : std::nullopt, now };
+            if (price.has_value())
+            {
+                ShowInfoFmt("chains: {}'s {} priced at ~{:.0f} on a level {} {} at {} TP (the server's own weapon skill, {})", PMember->getName(),
+                            PWeaponSkill != nullptr ? wordsOf(PWeaponSkill->getName()) : std::string("?"), price->value, PMob->GetMLevel(), PMob->getName(), scriptTp,
+                            price->read ? "its odds read" : "64 seeded runs");
+            }
+            return formulas[key].value;
+        }
+
+        // What her weapon skill deals, as the chain's worth prices it
+        // (skillchain_math.h wsPrice, #496): her landings of it once there
+        // are enough of them, else the server's own weapon skill at her TP,
+        // else what hers have landed
+        auto wsEstimate(CCharEntity* PMember, const uint16 skill, CBattleEntity* PMob) -> double
+        {
+            cardian::chains::WsLanded mine;
+            cardian::chains::WsLanded any;
+            if (const auto it = wsMeans.find({ PMember->id, skill }); it != wsMeans.end())
+            {
+                mine = { it->second.value, it->second.count };
+            }
+            if (const auto it = wsMeansAll.find(PMember->id); it != wsMeansAll.end())
+            {
+                any = { it->second.value, it->second.count };
+            }
+            const auto formula = mine.count < cardian::chains::kWsLandedTrusted ? formulaOf(PMember, PMob, skill) : std::nullopt;
+            return cardian::chains::wsPrice(mine, formula, any);
         }
 
         // The chain's damage for each point of its closing weapon skill, the
@@ -567,13 +647,17 @@ namespace pawn::chains
         }
 
         // The best burst on this chain a member of the party fighting this
-        // mob would land: one whose tactician casts her nukes -- a cardian,
-        // or a played character on autopilot, whose marked nuke row bursts
-        // as hers does -- with the MP for one of the chain's elements
-        // (CGambits::BurstEstimate). A player bursting by hand is not counted
+        // mob would land (skillchain_math.h burstCounted): one whose
+        // tactician casts her nukes -- a cardian, or a played character on
+        // autopilot, whose marked nuke row bursts as hers does -- with the MP
+        // for one of the chain's elements (CGambits::BurstEstimate); and a
+        // real player bursting by hand, in full, at the fight with a nuke of
+        // the chain's elements learned and the MP for it -- the Shortcuts
+        // list's own test for naming him a burster (#497) -- his best of
+        // them priced as a cardian's is (CGambits::BurstPrice)
         auto burstIn(const CCharEntity* PAsker, CBattleEntity* PMob, const uint8 chain) -> double
         {
-            if (PAsker == nullptr || PAsker->PParty == nullptr)
+            if (PAsker == nullptr || PAsker->PParty == nullptr || PMob == nullptr)
             {
                 return 0.0;
             }
@@ -586,10 +670,34 @@ namespace pawn::chains
                 {
                     continue;
                 }
-                if (auto* PGambits = pawn::gambitsOf(PChar); PGambits != nullptr)
+                auto*                        PGambits = pawn::gambitsOf(PChar);
+                cardian::chains::BursterView b;
+                if (PGambits != nullptr)
                 {
-                    best = std::max(best, PGambits->BurstEstimate(PMob, elements, 1));
+                    b.tacticians = PGambits->BurstEstimate(PMob, elements, 1);
+                    b.tactician  = b.tacticians > 0.0;
                 }
+                if (PChar->PSession != nullptr)
+                {
+                    b.player  = true;
+                    b.atFight = PChar->GetBattleTarget() == PMob || distance(PChar->loc.p, PMob->loc.p) <= cardian::chains::kJoinReach;
+                    std::vector<SpellID> known;
+                    for (const auto id : learnedNukes(PChar))
+                    {
+                        if (auto* PSpell = spell::GetSpell(id); PSpell != nullptr && (cardian::chains::elementBit(static_cast<uint8>(PSpell->getElement())) & elements) != 0)
+                        {
+                            known.push_back(id);
+                        }
+                    }
+                    b.knowsNuke             = !known.empty();
+                    const auto affordable   = PGambits != nullptr ? PGambits->AffordableBursts(known, elements) : std::vector<SpellID>{};
+                    b.mpForOne              = !affordable.empty();
+                    if (b.atFight && b.mpForOne)
+                    {
+                        b.byHand = PGambits->BurstPrice(PMob, affordable, 1);
+                    }
+                }
+                best = std::max(best, cardian::chains::burstCounted(b));
             }
             return best;
         }
@@ -630,8 +738,8 @@ namespace pawn::chains
             // what the mob will have left as it lands
             const auto pace        = pawn::tactics::fightPace(PAsker, PMob);
             s.lifeLeft             = pace.has_value() ? pace->remaining : -1.0;
-            s.worth.openerWs       = wsEstimate(PAsker, POpener, plan.openerSkill, PMob);
-            s.worth.closerWs       = wsEstimate(PAsker, PCloser, plan.closerSkill, PMob);
+            s.worth.openerWs       = wsEstimate(POpener, plan.openerSkill, PMob);
+            s.worth.closerWs       = wsEstimate(PCloser, plan.closerSkill, PMob);
             s.worth.chainShare     = shareOf(PCloser, PMob, plan.chain);
             s.worth.burst          = burstIn(PAsker, PMob, plan.chain);
             s.worth.hp             = PMob->health.hp;
@@ -922,6 +1030,7 @@ namespace pawn::chains
         }
         tpClocks.erase(PMember->id);
         holdSince.erase(PMember->id);
+        lastLanded.erase(PMember->id);
         spares.erase(PMember->id);
         openingsSaid.erase(PMember->id);
         readiesSaid.erase(PMember->id);
@@ -1111,16 +1220,36 @@ namespace pawn::chains
         return false;
     }
 
-    auto burstComing(CCharEntity* PSelf, const cardian::chains::Resonance& r) -> bool
+    auto burstComing(CCharEntity* PSelf, CBattleEntity* PMob, const cardian::chains::Resonance& r) -> bool
     {
-        if (PSelf == nullptr || r.tier == 0)
+        if (PSelf == nullptr || PMob == nullptr || r.tier == 0)
         {
             return false;
         }
         const uint16 elements = elementsOf(r.props[0]);
-        const auto   bursts   = [&](CCharEntity* PChar)
+        // A member who can burst it: alive, at the fight on this mob, with a
+        // nuke of its elements and the MP for one -- as burstIn counts him
+        const auto bursts = [&](CCharEntity* PChar)
         {
-            return PChar != nullptr && !PChar->isDead() && PChar->loc.zone == PSelf->loc.zone && (burstsOf(PChar) & elements) != 0;
+            if (PChar == nullptr || PChar->isDead() || PChar->loc.zone != PSelf->loc.zone || (burstsOf(PChar) & elements) == 0)
+            {
+                return false;
+            }
+            if (PChar->GetBattleTarget() != PMob && distance(PChar->loc.p, PMob->loc.p) > cardian::chains::kJoinReach)
+            {
+                return false;
+            }
+            auto nukes = pawn::tactics::nukesOf(PChar);
+            if (nukes.empty() && PChar->PSession != nullptr)
+            {
+                nukes = learnedNukes(PChar);
+            }
+            return std::ranges::any_of(nukes, [&](const SpellID id)
+                                       {
+                                           auto* PSpell = spell::GetSpell(id);
+                                           return PSpell != nullptr && (cardian::chains::elementBit(static_cast<uint8>(PSpell->getElement())) & elements) != 0 &&
+                                                  battleutils::CalculateSpellCost(PChar, PSpell) <= PChar->health.mp;
+                                       });
         };
         if (PSelf->PParty == nullptr)
         {
@@ -1155,6 +1284,25 @@ namespace pawn::chains
         }
         wsMeans[{ PMember->id, skill }].add(static_cast<double>(damage));
         wsMeansAll[PMember->id].add(static_cast<double>(damage));
+        if (damage > 0)
+        {
+            lastLanded[PMember->id] = Landed{ skill, secondsNow() };
+        }
+    }
+
+    void wsMissed(const CBattleEntity* PMember, const uint16 skill)
+    {
+        if (PMember == nullptr || skill == 0)
+        {
+            return;
+        }
+        // The same weapon skill of hers landed this moment: what reported
+        // nothing was a close, its damage counted already
+        if (const auto it = lastLanded.find(PMember->id); it != lastLanded.end() && it->second.skill == skill && secondsNow() - it->second.at < kSameWs)
+        {
+            return;
+        }
+        wsLanded(PMember, skill, 0);
     }
 
     void askIfDue(CCharEntity* PSpeaker, CBattleEntity* PMob)
@@ -1232,10 +1380,10 @@ namespace pawn::chains
             return;
         }
         auto*       PSkill = battleutils::GetWeaponSkill(plan->openerSkill);
-        const auto  call   = callsOf.contains(owner) ? callsOf[owner].opening : uint8{ 0 };
+        const auto  call   = callsOf.contains(owner) ? callsOf[owner].opening : cardian::chat::kNoCall;
         const auto  line   = cardian::chains::openingLine(PSkill != nullptr ? wordsOf(PSkill->getName()) : std::string("my weapon skill"), wordsOf(PMob->getName()), call);
         ShowInfoFmt("chains: {} calls the opening of {} on {}{}", PMember->getName(), cardian::chains::chainName(plan->chain), PMob->getName(),
-                    call != 0 ? fmt::format(" (call {})", call) : std::string());
+                    call != cardian::chat::kNoCall ? fmt::format(" (call {})", call) : std::string());
         pawn::tactics::role::sayParty(PMember, line);
     }
 
@@ -1252,16 +1400,15 @@ namespace pawn::chains
         {
             return;
         }
-        const auto call = callsOf.contains(owner) ? callsOf[owner].ready : uint8{ 0 };
+        const auto call = callsOf.contains(owner) ? callsOf[owner].ready : cardian::chat::kNoCall;
         ShowInfoFmt("chains: {} calls ready to close {} on {} at {} TP{}", PMember->getName(), cardian::chains::chainName(plan->chain), PMob->getName(),
-                    PMember->health.tp, call != 0 ? fmt::format(" (call {})", call) : std::string());
+                    PMember->health.tp, call != cardian::chat::kNoCall ? fmt::format(" (call {})", call) : std::string());
         pawn::tactics::role::sayParty(PMember, cardian::chains::readyLine(PMember->health.tp, call));
     }
 
     void setCalls(const uint32 playerCharID, const uint8 opening, const uint8 ready)
     {
-        const auto kept = [](const uint8 call) { return call <= cardian::chat::kCallCount ? call : uint8{ 0 }; };
-        callsOf[playerCharID] = Calls{ kept(opening), kept(ready) };
+        callsOf[playerCharID] = Calls{ cardian::chat::keptCall(opening), cardian::chat::keptCall(ready) };
     }
 
     auto forecast(CCharEntity* PNuker, CBattleEntity* PMob) -> std::optional<Forecast>

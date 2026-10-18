@@ -205,7 +205,13 @@ namespace pawn::bundles
     //  - Tank: the pull, marked (the mob an ally is on, the player as much
     //    as a cardian: her tactician's melee), for anyone; then Provoke
     //    (tank_calls.h paces it; the Tank seat is what runs the tank
-    //    tactician), Defender, Focus and Dodge, marked.
+    //    tactician), Defender, Focus and Dodge, marked; then her
+    //    tactician's Weapon skill (best), marked, as the Damage seat lends
+    //    it and to the same main jobs (#503; the user, 2026-10-17): the
+    //    Shortcuts menu lists her for the plan's skillchain, she opens or
+    //    closes it as any member does, and outside it she keeps her weapon
+    //    skill off its chain (skillchain_math.h wsCall). Last, below her
+    //    hate tools.
     //  - Damage: the melee defaults' trio, orders, then Berserk, Aggressor,
     //    Boost, Sneak Attack and Focus, marked -- all of them melee tools,
     //    for a main job that melees (meleesOnDamage: a Black Mage / Warrior
@@ -240,6 +246,7 @@ namespace pawn::bundles
             { "0|101:0|3:2:33|0", { K::Ability, t::kDefender } }, // * Self -> Defender
             { "0|101:0|3:2:36|0", { K::Ability, t::kFocus } },    // * Self -> Focus
             { "0|101:0|3:2:37|0", { K::Ability, t::kDodge } },    // * Self -> Dodge
+            { "2|101:0|4:0:0|0", { K::Anyone, 0, true } },        // * Foe -> Weapon skill (best)
         };
         static const std::vector<Tool> damage{
             { "100|0:0|0:0:0|0", { K::Anyone, 0, true } },               // Foe: party leader's target -> Attack

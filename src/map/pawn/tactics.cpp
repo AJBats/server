@@ -930,8 +930,9 @@ namespace pawn::tactics
                                                               engage(entityOf(PMember), entityOf(target));
                                                           });
         // A member's weapon skill used on a mob: one that dealt nothing, a
-        // miss, is a 0 in her weapon skill's price (skillchains.h wsLanded);
-        // one that dealt damage is counted as it lands (the fight log)
+        // miss, is a 0 in her weapon skill's price (skillchains.h wsMissed:
+        // a close the game reports as nothing is not one); one that dealt
+        // damage is counted as it lands (the fight log)
         static const sol::function& onWeaponSkill = asFunction(
             [](CLuaBaseEntity* PUser, const sol::optional<CLuaBaseEntity*> target, const sol::optional<CLuaWeaponSkill*> skill, const sol::object& /* tp */,
                const sol::object& /* action */, const sol::optional<int32> damage)
@@ -939,7 +940,7 @@ namespace pawn::tactics
                 const auto* PTarget = entityOf(target);
                 if (PTarget != nullptr && PTarget->objtype == TYPE_MOB && skill.has_value() && *skill != nullptr && damage.value_or(-1) == 0)
                 {
-                    pawn::chains::wsLanded(entityOf(PUser), (*skill)->getID(), 0);
+                    pawn::chains::wsMissed(entityOf(PUser), (*skill)->getID());
                 }
             });
 
@@ -1207,26 +1208,6 @@ namespace pawn::tactics
             const auto scope = scopeOf(PPawn);
             const auto pace  = bank::paceOf(r, spotAverages(r.zone, r.mobName), scope.members, PFoe);
             return Pace{ pace.remaining, pace.dealtPerSecond };
-        }
-        return std::nullopt;
-    }
-
-    auto meleeRound(CCharEntity* PPawn, CBattleEntity* PMember, CBattleEntity* PMob) -> std::optional<double>
-    {
-        auto* PTactician = PPawn != nullptr && PMember != nullptr ? find(PPawn) : nullptr;
-        auto* PFoe       = dynamic_cast<CMobEntity*>(PMob);
-        if (PTactician == nullptr || PFoe == nullptr)
-        {
-            return std::nullopt;
-        }
-        for (auto& r : PTactician->log().open())
-        {
-            if (r.mobId != PFoe->id || r.settling())
-            {
-                continue;
-            }
-            const auto guess = bank::melee(r, PMember, PFoe, true);
-            return guess.has_value() ? std::optional<double>(guess->perRound) : std::nullopt;
         }
         return std::nullopt;
     }
