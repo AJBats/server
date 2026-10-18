@@ -1765,40 +1765,70 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_OTHER_ZONE);
                 return;
             }
-            std::vector<std::pair<float, CMobEntity*>> around;
-            pawn::forEachMobNear(pawn::entitiesAround(PPawn), PPawn->loc.p, static_cast<float>(CL_NEAR_REACH), [&](CMobEntity* PMob)
+            // what stands near her, nearest first: each its distance, the
+            // entity and whether it is one of his party
+            struct Near
             {
-                // Only what her Attack would take: alive, above ground and
-                // targetable, the world's own and nobody's pet
-                if (PMob == nullptr || PMob->isDead() || PMob->status == xi::Status::Disappear || PMob->GetHPP() == 0 || pawn::isUnderground(PMob) ||
-                    PMob->PMaster != nullptr || PMob->allegiance != xi::Allegiance::Mob)
+                float          away;
+                CBattleEntity* PEntity;
+                bool           ally;
+            };
+            std::vector<Near> around;
+            const auto        kinds = ask.kinds != 0 ? ask.kinds : static_cast<uint8_t>(CL_NEAR_MONSTERS);
+            if ((kinds & CL_NEAR_MONSTERS) != 0)
+            {
+                pawn::forEachMobNear(pawn::entitiesAround(PPawn), PPawn->loc.p, static_cast<float>(CL_NEAR_REACH), [&](CMobEntity* PMob)
                 {
-                    return;
-                }
-                const float away = distance(PPawn->loc.p, PMob->loc.p);
-                if (away <= static_cast<float>(CL_NEAR_REACH))
+                    // Only what her Attack would take: alive, above ground and
+                    // targetable, the world's own and nobody's pet
+                    if (PMob == nullptr || PMob->isDead() || PMob->status == xi::Status::Disappear || PMob->GetHPP() == 0 || pawn::isUnderground(PMob) ||
+                        PMob->PMaster != nullptr || PMob->allegiance != xi::Allegiance::Mob)
+                    {
+                        return;
+                    }
+                    const float away = distance(PPawn->loc.p, PMob->loc.p);
+                    if (away <= static_cast<float>(CL_NEAR_REACH))
+                    {
+                        around.push_back({ away, PMob, false });
+                    }
+                });
+            }
+            // the members of his party in her zone within her reach, herself
+            // and the fallen included (a Raise picks a fallen one)
+            if ((kinds & CL_NEAR_ALLIES) != 0 && PChar->PParty != nullptr)
+            {
+                for (auto* PMember : PChar->PParty->members)
                 {
-                    around.emplace_back(away, PMob);
+                    if (PMember == nullptr || PMember->loc.zone != PPawn->loc.zone)
+                    {
+                        continue;
+                    }
+                    const float away = distance(PPawn->loc.p, PMember->loc.p);
+                    if (away <= static_cast<float>(CL_NEAR_REACH))
+                    {
+                        around.push_back({ away, PMember, true });
+                    }
                 }
-            });
-            std::ranges::sort(around, {}, &std::pair<float, CMobEntity*>::first);
+            }
+            std::ranges::sort(around, {}, &Near::away);
             auto answer  = ask;
             answer.count = 0;
-            for (const auto& [away, PMob] : around)
+            for (const auto& n : around)
             {
                 if (answer.count == CL_NEAR_MAX)
                 {
                     break;
                 }
                 auto msg     = make<cl_mob_near>();
-                msg.targid   = PMob->targid;
-                msg.hpp      = PMob->GetHPP();
-                msg.x        = PMob->loc.p.x;
-                msg.y        = PMob->loc.p.y;
-                msg.z        = PMob->loc.p.z;
-                msg.radius   = PMob->modelHitboxSize;
-                msg.distance = away;
-                setText(msg.name, PMob->getName());
+                msg.targid   = n.PEntity->targid;
+                msg.hpp      = n.PEntity->isDead() ? 0 : n.PEntity->GetHPP();
+                msg.ally     = n.ally ? 1 : 0;
+                msg.x        = n.PEntity->loc.p.x;
+                msg.y        = n.PEntity->loc.p.y;
+                msg.z        = n.PEntity->loc.p.z;
+                msg.radius   = n.PEntity->modelHitboxSize;
+                msg.distance = n.away;
+                setText(msg.name, n.PEntity->getName());
                 reply.more(msg);
                 ++answer.count;
             }

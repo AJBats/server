@@ -440,7 +440,8 @@ namespace pawn
         }
 
         // A spell a row picked by what is on the target still answers it:
-        // a -na or Erase still has something to take off, an enfeeble is not
+        // a -na or Erase still has something to take off, a waking Cure
+        // still has a sleeper (ailments.h cures), an enfeeble is not
         // on already and nothing another caster landed since blocks it. The
         // conveyor asks every tick before it casts a request a row fed, so
         // only what can change in a request's short life is asked; the row's
@@ -453,6 +454,10 @@ namespace pawn
             }
             if (cardian::tactician::isRemovalAction(action))
             {
+                if (PTarget->isCharmed && cardian::ailments::isWakeCure(spellId))
+                {
+                    return false;
+                }
                 return cardian::ailments::cures(spellId, effectsOn(PTarget), spellId == cardian::ailments::kErase && erasableOn(PTarget));
             }
             if (action.select == pawn::G_SELECT_ENFEEBLE)
@@ -1360,7 +1365,7 @@ namespace pawn
             const auto effect = static_cast<xi::StatusEffect>(arg);
             if (effect == xi::StatusEffect::SleepI)
             {
-                return PEntity->StatusEffectContainer->HasStatusEffect({ xi::StatusEffect::SleepI, xi::StatusEffect::SleepIi, xi::StatusEffect::Lullaby });
+                return cardian::ailments::asleep(effectsOn(PEntity));
             }
             return PEntity->StatusEffectContainer->HasStatusEffect(effect);
         }
@@ -1717,16 +1722,23 @@ namespace pawn
             case G_SELECT::HIGHEST:
             {
                 // -na (best): the -na for the worst ailment on the target
-                // that she can cast now, Erase last (ailments.h); "can cast"
-                // at the spell's real MP cost, as the conveyor asks before it
-                // casts (bank::usable)
+                // that she can cast now, a sleeper's cheapest Cure in its
+                // place, Erase last (ailments.h); "can cast" at the spell's
+                // real MP cost, as the conveyor asks before it casts
+                // (bank::usable). A charmed member is never woken: a Cure on
+                // him does nothing, and his sleep is the party's answer to
+                // the charm
                 if (action.select_arg == cardian::ailments::kNaFamily)
                 {
                     if (PTarget == nullptr)
                     {
                         return std::nullopt;
                     }
-                    const auto spell = cardian::ailments::best(effectsOn(PTarget), erasableOn(PTarget), [this](const uint16 id)
+                    const auto has = [PTarget, on = effectsOn(PTarget)](const uint16 effect)
+                    {
+                        return on(effect) && !(PTarget->isCharmed && cardian::ailments::isSleep(effect));
+                    };
+                    const auto spell = cardian::ailments::best(has, erasableOn(PTarget), [this](const uint16 id)
                                                                {
                                                                    return pawn::tactics::bank::usable(POwner, static_cast<SpellID>(id));
                                                                });

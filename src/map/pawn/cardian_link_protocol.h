@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 91: MOBS_NEAR and MOB_NEAR, the monsters
+// compatible, the user, 2026-09-14). 92: MOBS_NEAR's kinds and MOB_NEAR's
+// ally, the members of his party near her too, for a friendly far pick; 91: MOBS_NEAR and MOB_NEAR, the monsters
 // near a party member as the server has them (a far pick's list), and
 // CL_LENDER_PARTY, the party's Avoid aggro lent on a gambit page; 90: PREFS' three calls are the game's
 // <call0> to <call20> by their own numbers, and CL_CALL_NONE (0xFF) is none,
@@ -168,7 +169,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 91 };
+enum { CL_PROTOCOL = 92 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -1631,20 +1632,22 @@ typedef struct cl_pull_kinds
     uint8_t   spare;
 } cl_pull_kinds;
 
-// The monsters within CL_NEAR_REACH yalms of a member of his party that her
-// Attack would take -- alive, above ground, targetable, nobody's pet --
-// nearest her first, as the server has them: the list a far pick chooses
-// from (OPEN_ISSUES #274, #500) -- the client knows only what stands near
-// him, and keeps a monster's last place after it has gone -- asked again
-// while the list is open, so it stays live. Each a MOB_NEAR (CL_F_MORE),
-// CL_NEAR_MAX at most, then this; CL_S_OTHER_ZONE while she is not in his
-// zone
+// What stands within CL_NEAR_REACH yalms of a member of his party, as the
+// server has it, nearest her first: the list a far pick chooses from
+// (OPEN_ISSUES #274, #500) -- the client knows only what stands near him,
+// and keeps a monster's last place after it has gone -- asked again while
+// the list is open, so it stays live. The kinds asked (CL_NEAR_*): the
+// monsters her Attack would take -- alive, above ground, targetable,
+// nobody's pet -- and the members of his party, herself and the fallen
+// included, for an order aimed at a friend (the user, 2026-10-18). Each a
+// MOB_NEAR (CL_F_MORE), CL_NEAR_MAX at most, then this; CL_S_OTHER_ZONE
+// while she is not in his zone
 typedef struct cl_mob_near
 {
     cl_header h;
     uint16_t  targid;   // its index in the client's entity table: the order's target
-    uint8_t   hpp;      // its HP, percent
-    uint8_t   spare;
+    uint8_t   hpp;      // its HP, percent: 0 for a fallen member
+    uint8_t   ally;     // 1: a member of his party; 0: a monster
     float     x;        // where it stands, in the server's axes (x, height, z)
     float     y;
     float     z;
@@ -1657,14 +1660,17 @@ typedef struct cl_mobs_near
 {
     cl_header h;
     uint32_t  cardian; // charid
-    uint8_t   count;   // answered: monsters sent
-    uint8_t   spare[3];
+    uint8_t   kinds;   // asked: CL_NEAR_MONSTERS, CL_NEAR_ALLIES, or both
+    uint8_t   count;   // answered: rows sent
+    uint8_t   spare[2];
 } cl_mobs_near;
 
 enum
 {
-    CL_NEAR_REACH = 30, // yalms round her the list reaches
-    CL_NEAR_MAX   = 24, // monsters it carries at most
+    CL_NEAR_MONSTERS = 1,  // the monsters near her
+    CL_NEAR_ALLIES   = 2,  // the members of his party near her
+    CL_NEAR_REACH    = 50, // yalms round her the list reaches: as far as his own target cursor reaches round him (measured, the user, 2026-10-18)
+    CL_NEAR_MAX      = 24, // rows it carries at most
 };
 
 // His list as the page leaves it: the kinds in his order of preference, each
