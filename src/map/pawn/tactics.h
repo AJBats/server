@@ -232,6 +232,12 @@ namespace pawn::tactics
     // What a fight here costs her in MP, as her pace measures it (role
     // holders only); negative before one is measured
     auto fightCostMp(const CCharEntity* PPawn) -> double;
+    // Her party's own cure efficiency, the rate the bank prices HP in MP at
+    // (bank_math.h Exchange: Cure II's floor until three cures are measured)
+    auto cureExchange(const CCharEntity* PPawn) -> cardian::tactics::Exchange;
+    // Whether her party's last fight to end was a link: another mob on the
+    // party while it lasted
+    auto lastFightLinked(const CCharEntity* PPawn) -> bool;
     // Seconds of life a mob of her party's fight has left at the party's
     // rate (the same reading as KneelRisk's fightLeft); negative: unknown
     auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double;

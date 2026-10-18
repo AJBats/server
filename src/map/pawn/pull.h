@@ -38,9 +38,10 @@ class CMobEntity;
 // leaves it, through the game's own equip (pawn::items::equip). A body of the
 // world's kit is the census's (cardian_pull_kit, written by
 // tools/world/census.py with her wardrobe), laid in her wardrobe beside her
-// own gear; anyone with nothing to pull with is given the map's own (a
-// coarse boomerang or pebbles for most), topped up while she holds the
-// seat. A Bard wears no kit: she pulls with a song (pullSong). Beside the
+// own gear; with nothing to pull with she is given the map's own (a coarse
+// boomerang or pebbles for most), topped up while she holds the seat. The
+// player's alts and his own cardians are given nothing: they pull with
+// what they carry. A Bard wears no kit: she pulls with a song (pullSong). Beside the
 // kit, what the Pull page reads: the kinds round the camp and the level
 // their con is read at.
 namespace pawn::pull
@@ -82,6 +83,7 @@ namespace pawn::pull
         bool        ready   = false;
         bool        changed = false;
         std::string said;
+        bool        nothing = false; // nothing she can throw, shoot or sing to pull with
     };
     // `rangedToo` false: only her ammunition slot may change -- refilled in a
     // fight, which costs no TP -- and a kit that wants another ranged weapon

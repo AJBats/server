@@ -327,8 +327,9 @@ namespace cardian::pull
     // The puller keeps the camp busy with no downtime: she plans the party's
     // whole conveyor. The next mob lands as the party's mages, resting from
     // the last fight, are a few rest ticks from having the MP it will cost
-    // them -- a mage stays down into a fight until the tank first needs a
-    // cure (kRestInto) -- and never before the current fight ends: one mob
+    // them, the party's missing HP cured besides -- a mage stays down into a
+    // fight until the tank first needs a cure (kRestInto), unless the last
+    // fight linked -- and never before the current fight ends: one mob
     // on the party at a time. She plans backward from there: she tags it so
     // it lands then, and sets out early enough to stand ready to tag it,
     // leaving the fight before it ends when the way is long (switched off,
@@ -357,16 +358,19 @@ namespace cardian::pull
     // at the spot. She finishes her fight, then sets out (OPEN_ISSUES #514)
     constexpr bool   kLeavesFightsEarly = false;
     // What the pipeline reads of one mage: her MP, what the next fight costs
-    // her (her average here; kUnknownCost of her pool before one is
-    // measured), her spending while the current fight lasts, and her kneel
-    // (rest_math.h's ticks: one every `interval`, the first paying at the
-    // second)
+    // her (what her own rest readies her for, a fight and a link's reserve;
+    // kUnknownCost of her pool before one is measured), her spending while
+    // the current fight lasts, her share of curing the party's missing HP
+    // (`debt`, counted against her MP, which it may take below nothing), and
+    // her kneel (rest_math.h's ticks: one every `interval`, the first paying
+    // at the second)
     struct Mage
     {
         double mp             = 0.0;
         double maxMp          = 0.0;
         double need           = 0.0;
         double spendPerSecond = 0.0;
+        double debt           = 0.0;
         bool   kneeling       = false;
         int    ticks          = 0;
         double nextTick       = 0.0;
@@ -375,42 +379,56 @@ namespace cardian::pull
         int    mpHeal         = 0;
     };
 
+    // The MP each curer owes for the party's missing HP: converted at the
+    // party's own cure efficiency (bank_math.h Exchange) and split evenly
+    // among the members who cure (the user, 2026-10-18); nothing with nobody
+    // to cure it
+    inline auto hpDebtEach(const double missingHp, const double hpPerMp, const std::size_t curers) -> double
+    {
+        return curers == 0 || hpPerMp <= 0.0 || missingHp <= 0.0 ? 0.0 : missingHp / hpPerMp / static_cast<double>(curers);
+    }
+
     // Seconds from now until she can stand with what the next fight costs
-    // her: kneeling, her kneel goes on, fight or not; standing with a fight
-    // on, she spends through it and kneels as it ends; standing between
-    // fights, she kneels now
+    // her, her share of the party's missing HP cured besides: kneeling, her
+    // kneel goes on, fight or not; standing with a fight on, she spends
+    // through it and kneels as it ends; standing between fights, she kneels
+    // now
     inline auto readyAt(const Mage& m, const double fightLeft) -> double
     {
         if (m.interval <= 0.0)
         {
             return 0.0;
         }
+        // Her need and her debt together, never more than she can hold: a
+        // debt she could not rest off at full MP would hold the pull for good
+        const double target = m.maxMp > 0.0 ? std::min(m.need + m.debt, m.maxMp) : m.need + m.debt;
         if (m.kneeling)
         {
-            return rest::timeToReady(m.need - m.mp, m.ticks, m.nextTick, m.interval, m.clearMind, m.mpHeal);
+            return rest::timeToReady(target - m.mp, m.ticks, m.nextTick, m.interval, m.clearMind, m.mpHeal);
         }
         if (fightLeft > 0.0)
         {
             const double atEnd = std::max(0.0, m.mp - m.spendPerSecond * fightLeft);
-            return fightLeft + rest::kKneelSeconds + rest::timeToReady(m.need - atEnd, 0, m.interval, m.interval, m.clearMind, m.mpHeal);
+            return fightLeft + rest::kKneelSeconds + rest::timeToReady(target - atEnd, 0, m.interval, m.interval, m.clearMind, m.mpHeal);
         }
-        const double missing = m.need - m.mp;
+        const double missing = target - m.mp;
         return missing <= 0.0 ? 0.0 : rest::kKneelSeconds + rest::timeToReady(missing, 0, m.interval, m.interval, m.clearMind, m.mpHeal);
     }
 
     // When the next mob should land, seconds from now, and the mage it waits
-    // on (-1: none, the fight's end alone)
+    // on (-1: none, the fight's end alone). `restInto`: how long a mage keeps
+    // kneeling into it -- kRestInto, and none after a fight that linked
     struct Arrival
     {
         double in    = 0.0;
         int    pacer = -1;
     };
-    inline auto wantArrive(const std::span<const Mage> mages, const double fightLeft) -> Arrival
+    inline auto wantArrive(const std::span<const Mage> mages, const double fightLeft, const double restInto = kRestInto) -> Arrival
     {
         Arrival out{ std::max(0.0, fightLeft), -1 };
         for (std::size_t i = 0; i < mages.size(); ++i)
         {
-            const double at = readyAt(mages[i], fightLeft) - kRestInto;
+            const double at = readyAt(mages[i], fightLeft) - restInto;
             if (at > out.in)
             {
                 out = { at, static_cast<int>(i) };
@@ -620,10 +638,12 @@ namespace cardian::pull
         bool     wearable = false;
     };
 
-    // The map's own, in its order: a coarse boomerang, which comes back, for
-    // a Warrior, a Thief or a Beastmaster from level 6; pebbles, which twelve
-    // of the eighteen jobs throw; darts (a Red Mage, a Corsair from level 7);
-    // a shortbow and stone arrows (a Paladin, a Samurai). A Puppetmaster, a
+    // The map's own, given to a body of the world alone -- the player's alts
+    // and his own cardians pull with what they carry (the user, 2026-10-18)
+    // -- in its order: a coarse boomerang, which comes back, for a Warrior, a
+    // Thief or a Beastmaster from level 6; pebbles, which twelve of the
+    // eighteen jobs throw; darts (a Red Mage, a Corsair from level 7); a
+    // shortbow and stone arrows (a Paladin, a Samurai). A Puppetmaster, a
     // Blue Mage under 15 and a Corsair under 7 wear none of them; a Bard
     // pulls with a song (kPullSongs)
     struct Gift
@@ -637,6 +657,17 @@ namespace cardian::pull
     constexpr uint16_t           kShortbow        = 17152;
     constexpr uint16_t           kStoneArrow      = 17330;
     constexpr std::array<Gift, 4> kGifts{ { { kCoarseBoomerang, 0 }, { 0, kPebble }, { 0, kDart }, { kShortbow, kStoneArrow } } };
+
+    // What a puller with nothing to throw, shoot or sing says in party chat:
+    // as she takes the seat, every time pulling is switched on, and as she
+    // runs out (the user, 2026-10-18), one picked at random each time
+    inline constexpr std::array<std::string_view, 5> kNoKitLines{
+        "I can't be puller, I have nothing to pull with!",
+        "I can't pull, I've got nothing to throw or shoot!",
+        "Nothing to pull with, so I can't be puller!",
+        "No bow, no ammo, nothing to throw... I can't pull!",
+        "I'd pull, but I have nothing to pull with!",
+    };
 
     // The kit: the ranged slot's weapon (0: that slot bare, for ammunition
     // thrown by itself) and the ammunition slot's (0: left as the game leaves

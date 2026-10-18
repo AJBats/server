@@ -341,6 +341,38 @@ TEST_CASE("Cardian pull: the pipeline lands the next mob as the mages can stand"
         CHECK(readyAt(full, 0.0) == Catch::Approx(0.0));
     }
 
+    SECTION("between fights, the party's missing HP is MP her cures have yet to spend")
+    {
+        // 100 HP missing at 2.5 HP a MP, two curers: 20 MP each
+        CHECK(hpDebtEach(100.0, 2.5, 2) == Catch::Approx(20.0));
+        CHECK(hpDebtEach(100.0, 2.5, 0) == 0.0); // nobody to cure it
+        CHECK(hpDebtEach(0.0, 2.5, 2) == 0.0);
+        // 20 short: the third tick (12 + 13) covers it, 30 s into a kneel
+        // begun a second from now; owing 20 more, 40 short: the fifth, 50 s
+        Mage owes = m;
+        CHECK(readyAt(owes, 0.0) == Catch::Approx(31.0));
+        owes.debt = 20.0;
+        CHECK(readyAt(owes, 0.0) == Catch::Approx(51.0));
+        // a debt deeper than her MP takes her below nothing, and further off
+        Mage broke = m;
+        broke.mp   = 10.0;
+        Mage deep  = broke;
+        deep.debt  = 30.0;
+        CHECK(readyAt(deep, 0.0) > readyAt(broke, 0.0));
+        // never more than she can hold: readied for her whole pool with a
+        // debt besides, she is ready once full, not never
+        Mage brim = m;
+        brim.need = 200.0;
+        brim.debt = 40.0;
+        brim.mp   = 200.0;
+        CHECK(readyAt(brim, 0.0) == 0.0);
+        brim.mp = 188.0; // 12 short: the second tick fills it
+        CHECK(readyAt(brim, 0.0) == Catch::Approx(21.0));
+        // after a link she does not kneel into the next fight: it lands as she is ready
+        CHECK(wantArrive(std::vector<Mage>{ owes }, 0.0, 0.0).in == Catch::Approx(51.0));
+        CHECK(wantArrive(std::vector<Mage>{ owes }, 0.0).in == Catch::Approx(51.0 - kRestInto));
+    }
+
     SECTION("the mage ready last paces the pull")
     {
         Mage early = m;

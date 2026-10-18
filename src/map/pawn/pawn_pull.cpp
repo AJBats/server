@@ -50,6 +50,7 @@
 #include "ai/states/range_state.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "party.h"
@@ -106,6 +107,15 @@ auto CPawnController::PullerSeat() const -> bool
     return pawn::roster::roleOf(static_cast<CCharEntity*>(POwner)) == cardian::party::Role::Puller;
 }
 
+void CPawnController::CallPull(const CMobEntity* PMob, const CCharEntity* PPlayer)
+{
+    const uint8 call  = pawn::pull::callOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)));
+    const uint8 level = PPlayer != nullptr ? pawn::pull::conLevel(PPlayer) : POwner->GetMLevel();
+    const auto  check = static_cast<uint8>(charutils::CheckMob(level, const_cast<CMobEntity*>(PMob)));
+    pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), cardian::pull::pullLine(PMob->getName(), check, call));
+    m_Pull->called = PMob->id;
+}
+
 void CPawnController::SayPull(const std::string& line)
 {
     if (line == m_PullSaid)
@@ -152,7 +162,10 @@ void CPawnController::KitTick()
     // off at the first free moment, as it does when she leaves the seat
     if (pawn::partyPlayer(PChar) == nullptr)
     {
-        m_KitReady = false;
+        m_KitReady    = false;
+        m_KitSeat     = false;
+        m_KitPulling  = false;
+        m_KitTellOwed = false;
         m_KitSaid.clear();
         m_PullItem  = 0;
         m_PullSpell = 0;
@@ -168,7 +181,7 @@ void CPawnController::KitTick()
 
     const bool puller = PullerSeat();
     // A body of the world in a real player's party: her planned ammunition,
-    // as her food, never runs out; anyone in the seat, the map's own
+    // as her food, never runs out, and in the seat the map's own kit too
     const bool world = pawn::seats::isWorlds(PChar->id) && pawn::withRealPlayer(PChar->id);
     if ((puller || world) && m_Tick >= m_KitTopUpAt)
     {
@@ -185,9 +198,19 @@ void CPawnController::KitTick()
     const bool free  = quiet && !POwner->PAI->IsEngaged() && !InManeuver() && PartyFightTarget() == nullptr && m_Mode != Mode::Pull;
     if (puller)
     {
+        // The seat newly hers, or the party's pulling switched on with her in
+        // it: whether she has anything to pull with is told at the next quiet look
+        const bool pulling = IsHunting() && m_Stake.has_value();
+        if (!m_KitSeat || (pulling && !m_KitPulling))
+        {
+            m_KitTellOwed = true;
+        }
+        m_KitSeat    = true;
+        m_KitPulling = pulling;
         if (quiet)
         {
-            const auto worn = pawn::pull::wearKit(PChar, free);
+            const bool wasReady = m_KitReady;
+            const auto worn     = pawn::pull::wearKit(PChar, free);
             auto       line = worn.said;
             if (line.empty() && !worn.ready)
             {
@@ -204,13 +227,24 @@ void CPawnController::KitTick()
                 ShowInfoFmt("pull: {} {}", POwner->getName(), line);
             }
             m_KitReady = worn.ready;
+            // Nothing to pull with, said to the party as she takes the seat,
+            // every time pulling is switched on, and as she runs out (the
+            // user, 2026-10-18): no cooldown
+            if (worn.nothing && (m_KitTellOwed || wasReady))
+            {
+                pawn::tactics::role::sayParty(PChar, std::string(xirand::GetRandomElement(cardian::pull::kNoKitLines)));
+            }
+            m_KitTellOwed = false;
         }
         const auto tool = pawn::pull::toolOf(PChar);
         m_PullItem      = tool.item;
         m_PullSpell     = tool.spell;
         return;
     }
-    m_KitReady = false;
+    m_KitReady    = false;
+    m_KitSeat     = false;
+    m_KitPulling  = false;
+    m_KitTellOwed = false;
     m_KitSaid.clear();
     m_PullItem  = 0;
     m_PullSpell = 0;
@@ -329,16 +363,19 @@ auto CPawnController::PullTimingNow() -> PullTiming
     // now (the player too), or a cardian whose marked Rest row kneels her
     // between pulls (tactics.h offersRest, as RestTick reads it). Anyone
     // else is as ready as she will be once the fight ends. A member the
-    // tactician has measured costs her average fight here; else kUnknownCost
-    // of her pool
+    // tactician has measured is readied as her own rest readies her, for a
+    // fight here and a link's reserve; else kUnknownCost of her pool
     std::vector<pull::Mage>  mages;
     std::vector<std::string> names;
-    const double             now = pawn::tactics::restSeconds(timer::now());
+    std::vector<std::size_t> curers;         // the resting mages who cure, by their place in `mages`
+    std::size_t              curerCount = 0; // every member who cures, resting or not: the debt's split
+    double                   missingHp = 0; // the party's, herself and the player included
+    const double             now       = pawn::tactics::restSeconds(timer::now());
     if (PPawn->PParty != nullptr)
     {
         for (auto* PMember : PPawn->PParty->members)
         {
-            if (PMember == POwner || PMember->loc.zone != POwner->loc.zone || PMember->objtype != TYPE_PC)
+            if (PMember->loc.zone != POwner->loc.zone || PMember->objtype != TYPE_PC)
             {
                 continue;
             }
@@ -347,7 +384,15 @@ auto CPawnController::PullTimingNow() -> PullTiming
                 out.why = fmt::format("{} is down", PMember->getName());
                 return out;
             }
+            missingHp += std::max(0, PMember->GetMaxHP() - PMember->health.hp);
             if (PMember->GetMaxMP() <= 0)
+            {
+                continue;
+            }
+            const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(PMember));
+            const bool cures  = advice.has_value() && advice->cheapestCureMp > 0.0;
+            curerCount += cures ? 1 : 0;
+            if (PMember == POwner)
             {
                 continue;
             }
@@ -364,10 +409,14 @@ auto CPawnController::PullTimingNow() -> PullTiming
             m.interval        = settings::get<uint8>("map.HEALING_TICK_DELAY");
             m.clearMind       = PMember->getMod(xi::Mod::CLEAR_MIND);
             m.mpHeal          = PMember->getMod(xi::Mod::MPHEAL);
-            if (const auto advice = pawn::tactics::restAdvice(static_cast<CCharEntity*>(PMember)); advice.has_value())
+            if (advice.has_value())
             {
-                m.need           = std::max(advice->knownCost ? advice->meanCostMp : m.need, advice->cheapestCureMp);
+                m.need           = std::max(advice->knownCost ? advice->readyMp : m.need, advice->cheapestCureMp);
                 m.spendPerSecond = advice->spentPerSecond;
+            }
+            if (cures)
+            {
+                curers.push_back(mages.size());
             }
             m.need = std::min(m.need, m.maxMp);
             if (healing != nullptr)
@@ -393,7 +442,23 @@ auto CPawnController::PullTimingNow() -> PullTiming
             return out;
         }
     }
-    const auto arrival = pull::wantArrive(mages, fightLeft);
+    // Between fights, the party's missing HP is MP its curers have yet to
+    // spend: each owes an even share, counted against her MP (the user,
+    // 2026-10-18), so a messy fight's wounds hold the next pull back. With a
+    // fight on, its cures are already in her spending
+    if (fights.empty())
+    {
+        const double each = pull::hpDebtEach(missingHp, pawn::tactics::cureExchange(PPawn).hpPerMp, curerCount);
+        for (const auto i : curers)
+        {
+            mages[i].debt = each;
+        }
+        out.missingHp = curerCount == 0 ? 0.0 : missingHp;
+        out.debtEach  = each;
+    }
+    // A mage keeps kneeling into the next fight only after one that went as
+    // planned: after a link, she stands ready for it
+    const auto arrival = pull::wantArrive(mages, fightLeft, pawn::tactics::lastFightLinked(PPawn) ? 0.0 : pull::kRestInto);
     out.ready          = true;
     out.fightLeft      = fightLeft;
     out.arriveIn       = arrival.in;
@@ -539,9 +604,11 @@ auto CPawnController::PullDue(CCharEntity* PPlayer) -> CMobEntity*
         if (m_Tick - m_PullQuietAt > std::chrono::seconds(10))
         {
             m_PullQuietAt = m_Tick;
-            ShowInfoFmt("pull: {} sets out after {} in {:.0f} s: it should land in {:.0f} s (the fight has {:.0f} s left{}); her way is {:.0f} y out and {:.0f} y back",
+            ShowInfoFmt("pull: {} sets out after {} in {:.0f} s: it should land in {:.0f} s (the fight has {:.0f} s left{}{}); her way is {:.0f} y out and {:.0f} y back",
                         POwner->getName(), PMob->getName(), leave, timing.arriveIn, timing.fightLeft,
-                        timing.pacer.empty() ? std::string() : fmt::format(", paced by {}'s MP", timing.pacer), out, back);
+                        timing.pacer.empty() ? std::string() : fmt::format(", paced by {}'s MP", timing.pacer),
+                        timing.debtEach > 0.0 ? fmt::format(", the party's {:.0f} missing HP costing each curer {:.0f} MP", timing.missingHp, timing.debtEach) : std::string(),
+                        out, back);
         }
         return nullptr;
     }
@@ -756,12 +823,16 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
         }
         if (onParty(POn))
         {
-            // Hers, or on the party: the pull line, its con at the level the
-            // Pull page reads it at, and she runs it in
+            // Hers, or on the party: she runs it in. Her pull line went as her
+            // first shot left; a mob that caught her on the way, coming in
+            // instead, is called now
             const uint8 call  = pawn::pull::callOf(pawn::ordersOwnerOf(static_cast<const CCharEntity*>(POwner)));
             const uint8 level = PPlayer != nullptr ? pawn::pull::conLevel(PPlayer) : POwner->GetMLevel();
             const auto  check = static_cast<uint8>(charutils::CheckMob(level, PMob));
-            pawn::tactics::role::sayParty(static_cast<CCharEntity*>(POwner), pull::pullLine(PMob->getName(), check, call));
+            if (m_Pull->called != PMob->id)
+            {
+                CallPull(PMob, PPlayer);
+            }
             pawn::tactics::notePull(static_cast<CCharEntity*>(POwner), PMob);
             ShowInfoFmt("pull: {} brings {} in ({} at level {}, on {}, {:.0f} y out{})", POwner->getName(), PMob->getName(), pull::conWord(check), level,
                         POn != nullptr ? POn->getName() : std::string("nobody"), distance(m_Stake->at, PMob->loc.p),
@@ -779,21 +850,61 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
         {
             return true;
         }
+        // A pull turned unclean on the way (a roamer over it, or over its way
+        // in) is waited for where she stands, as kin on the way back are at
+        // the spot (the user, 2026-10-18): each second she judges its route
+        // again, a route search being dear, and looks for one she can pull
+        // now instead; she goes on once its way is clean, and gives it up
+        // past kHoldSeconds
+        if (m_Tick >= m_Pull->cleanAt)
+        {
+            m_Pull->cleanAt    = m_Tick + std::chrono::seconds(1);
+            const auto unclean = PullBlocker(PMob);
+            const bool held    = m_Pull->blockedSince != timer::time_point{};
+            if (!unclean.empty())
+            {
+                if (!held)
+                {
+                    m_Pull->blockedSince = m_Tick;
+                    ShowInfoFmt("pull: {} waits near {} ({}); she looks for another meanwhile", POwner->getName(), PMob->getName(), unclean);
+                }
+                if (const auto* PElse = PullInstead(PPlayer, PMob); PElse != nullptr)
+                {
+                    ShowInfoFmt("pull: {} leaves {} for {}, which she can pull now", POwner->getName(), PMob->getName(), PElse->getName());
+                    GiveUpPull(PMob, unclean, pull::kKinPassOverSeconds);
+                    m_PullLookAt = m_Tick; // the next look sets her out after it at once
+                    return false;
+                }
+                if (seconds(m_Tick - m_Pull->blockedSince) > pull::kHoldSeconds)
+                {
+                    GiveUpPull(PMob, fmt::format("{} for {:.0f} s", unclean, pull::kHoldSeconds));
+                    return false;
+                }
+            }
+            else if (held)
+            {
+                // on again, with a walk of its own length from here
+                ShowInfoFmt("pull: {} goes on after {}: its way is clear again", POwner->getName(), PMob->getName());
+                m_Pull->blockedSince = {};
+                m_Pull->setOffAt     = m_Tick;
+                m_Pull->outLimit     = pull::outSeconds(distance(POwner->loc.p, PMob->loc.p));
+            }
+        }
+        if (m_Pull->blockedSince != timer::time_point{})
+        {
+            // Held, she stands where she is through the walker, whose escape
+            // stays hers: a roamer that comes onto her is stepped out of
+            RefreshDangers(PMob);
+            Intent hold;
+            hold.kind       = Intent::Kind::Stand;
+            hold.keepsClear = true;
+            Move(hold);
+            return true;
+        }
         if (seconds(m_Tick - m_Pull->setOffAt) > m_Pull->outLimit)
         {
             GiveUpPull(PMob, "no shot at it in time");
             return false;
-        }
-        // A pull turned unclean on the way (a guard roamed over it) is let
-        // go: its route judged once a second, a route search being dear
-        if (m_Tick >= m_Pull->cleanAt)
-        {
-            m_Pull->cleanAt = m_Tick + std::chrono::seconds(1);
-            if (const auto unclean = PullBlocker(PMob); !unclean.empty())
-            {
-                GiveUpPull(PMob, unclean);
-                return false;
-            }
         }
         const auto spot = pull::tagSpot(POwner->loc.p, PMob->loc.p, pull::shotReach(PullReach(PMob)), POwner->CanSeeTarget(PMob));
         if (spot.has_value())
@@ -828,6 +939,7 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
         // a walk of its own length from here
         if (distance(POwner->loc.p, PMob->loc.p) > PullReach(PMob) || !POwner->CanSeeTarget(PMob))
         {
+            m_Pull->called   = 0; // nothing came of the call: the shot that brings it is called again
             m_Pull->step     = Step::Out;
             m_Pull->stepAt   = m_Tick;
             m_Pull->setOffAt = m_Tick;
@@ -953,6 +1065,11 @@ auto CPawnController::PullTick(const Place* place, CCharEntity* PPlayer, const b
         }
         ++m_Pull->shots;
         m_Pull->shotAt = m_Tick;
+        // The pull called as her first shot leaves, as a player calls it
+        if (m_Pull->called != PMob->id)
+        {
+            CallPull(PMob, PPlayer);
+        }
         ShowInfoFmt("pull: {} tags {} ({} {}, {:.1f} y)", POwner->getName(), PMob->getName(),
                     m_PullSpell != 0 ? fmt::format("song {}", m_PullSpell) : std::string("shot"), m_Pull->shots, distance(POwner->loc.p, PMob->loc.p));
         return true;

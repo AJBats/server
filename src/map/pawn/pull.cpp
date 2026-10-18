@@ -207,9 +207,15 @@ namespace pawn::pull
             return out;
         }
 
+        // The map's own kit, a body of the world's alone (pull_math.h kGifts):
+        // nothing to fall back on for the player's alts and his own cardians
         auto fallbacksFor(const CCharEntity* PChar) -> std::vector<cardian::pull::Fallback>
         {
             std::vector<cardian::pull::Fallback> out;
+            if (!pawn::seats::isWorlds(PChar->id))
+            {
+                return out;
+            }
             for (const auto& gift : cardian::pull::kGifts)
             {
                 const bool ranged = gift.ranged == 0 || wears(PChar, xi::items::lookup<CItemEquipment>(gift.ranged));
@@ -458,7 +464,7 @@ namespace pawn::pull
             const auto song = pullSong(PChar);
             if (song == 0)
             {
-                return { false, false, "has no song to pull with yet" };
+                return { false, false, "has no song to pull with yet", true };
             }
             auto* PSpell = spell::GetSpell(static_cast<SpellID>(song));
             return { true, false, PSpell != nullptr ? fmt::format("pulls with {}", cardian::pull::mobWords(PSpell->getName())) : std::string() };
@@ -467,7 +473,7 @@ namespace pawn::pull
         const auto kit  = cardian::pull::chooseKit(held, fallbacksFor(PChar));
         if (!kit.has_value())
         {
-            return { false, false, "has nothing her job can throw or shoot to pull with" };
+            return { false, false, "has nothing her job can throw or shoot to pull with", true };
         }
         if (kit->given)
         {
@@ -550,8 +556,9 @@ namespace pawn::pull
     auto topUp(CCharEntity* PChar, const bool puller, const bool world) -> uint32
     {
         uint32 given = 0;
-        // a Bard pulls with a song: no kit to top up
-        if (puller && PChar->GetMJob() != xi::Job::BRD)
+        // a Bard pulls with a song: no kit to top up; and the map's own is a
+        // body of the world's alone, so his alts' and his own cardians' runs out
+        if (puller && PChar->GetMJob() != xi::Job::BRD && pawn::seats::isWorlds(PChar->id))
         {
             // the map's own, given or already in her bag, never runs out
             const auto gift = [](const uint16 id)

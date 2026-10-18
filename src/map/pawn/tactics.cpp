@@ -1347,6 +1347,18 @@ namespace pawn::tactics
         return tactician != nullptr ? tactician->fightCostMp(PPawn->id) : -1.0;
     }
 
+    auto cureExchange(const CCharEntity* PPawn) -> cardian::tactics::Exchange
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr ? tactician->log().exchange() : cardian::tactics::Exchange{};
+    }
+
+    auto lastFightLinked(const CCharEntity* PPawn) -> bool
+    {
+        auto* tactician = PPawn != nullptr ? find(PPawn) : nullptr;
+        return tactician != nullptr && !tactician->log().recent().empty() && tactician->log().recent().front().overlapping;
+    }
+
     auto lifeLeft(CCharEntity* PPawn, const CMobEntity* PMob) -> double
     {
         auto* tactician = PPawn != nullptr && PMob != nullptr ? find(PPawn) : nullptr;
