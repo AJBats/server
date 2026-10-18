@@ -138,7 +138,7 @@ TEST_CASE("ailments: -na (best) casts for the worst ailment she can cure, Erase 
 
     // Nothing on her, nothing to cast
     CHECK_FALSE(best(on({}), false, all).has_value());
-    CHECK_FALSE(best(on({ StatusEffect::SleepI }), false, all).has_value());
+    CHECK_FALSE(best(on({ StatusEffect::SleepI }), false, all).has_value()); // asleep, and no Cure learned
 }
 
 TEST_CASE("ailments: -na (best) passes over what she cannot cast to the next ailment", "[cardian][gambits][ailments]")
@@ -163,4 +163,41 @@ TEST_CASE("ailments: a removal spell cures only what it takes off", "[cardian][g
     CHECK(cures(id(SpellID::Erase), on({}), true));
     CHECK_FALSE(cures(id(SpellID::Erase), on({ StatusEffect::Poison }), false));
     CHECK_FALSE(cures(id(SpellID::Cure), on({ StatusEffect::Poison }), true));
+}
+
+TEST_CASE("ailments: -na (best) wakes a sleeper with her cheapest Cure, after Doom and Petrification", "[cardian][gambits][ailments]")
+{
+    // the sleeps are xi::StatusEffect's numbers, the Cures spell.h's
+    CHECK(cardian::ailments::kAsleep == std::array<uint16, 3>{ static_cast<uint16>(StatusEffect::SleepI), static_cast<uint16>(StatusEffect::SleepIi),
+                                                              static_cast<uint16>(StatusEffect::Lullaby) });
+    CHECK(cardian::ailments::kWakeCures == std::array<uint16, 4>{ id(SpellID::Cure), id(SpellID::Cure_II), id(SpellID::Cure_III), id(SpellID::Cure_IV) });
+
+    auto withCures = kWhiteMage;
+    withCures.insert({ SpellID::Cure, SpellID::Cure_II });
+    const auto healer = knows(withCures);
+    CHECK(best(on({ StatusEffect::SleepI }), false, healer) == std::optional<uint16>(id(SpellID::Cure)));
+    CHECK(best(on({ StatusEffect::Lullaby }), false, healer) == std::optional<uint16>(id(SpellID::Cure)));
+    // the cheapest she can cast now: Cure on its recast, Cure II
+    CHECK(best(on({ StatusEffect::SleepIi }), false, knows({ SpellID::Cure_II })) == std::optional<uint16>(id(SpellID::Cure_II)));
+    // ranked after Doom and Petrification, ahead of the rest
+    CHECK(best(on({ StatusEffect::Doom, StatusEffect::SleepI }), false, healer) == std::optional<uint16>(id(SpellID::Cursna)));
+    CHECK(best(on({ StatusEffect::Petrification, StatusEffect::SleepI }), false, healer) == std::optional<uint16>(id(SpellID::Stona)));
+    CHECK(best(on({ StatusEffect::Silence, StatusEffect::SleepI }), false, healer) == std::optional<uint16>(id(SpellID::Cure)));
+    CHECK(best(on({ StatusEffect::Poison, StatusEffect::SleepI }), false, healer) == std::optional<uint16>(id(SpellID::Cure)));
+
+    // the waking Cure answers while the sleep lasts, and is no removal spell
+    CHECK(cures(id(SpellID::Cure), on({ StatusEffect::SleepI }), false));
+    CHECK_FALSE(cures(id(SpellID::Cure), on({}), false));
+    CHECK_FALSE(isRemoval(id(SpellID::Cure)));
+    CHECK_FALSE(enfeebled(on({ StatusEffect::SleepI }), false)); // asleep is not of the Enfeeble group
+
+    // Doom she cannot take off yet: the wake comes next
+    CHECK(best(on({ StatusEffect::Doom, StatusEffect::SleepI }), false, knows({ SpellID::Cure })) == std::optional<uint16>(id(SpellID::Cure)));
+    // every waking Cure answers a sleeper; the sleeps are known by their numbers
+    for (const auto cure : { SpellID::Cure_II, SpellID::Cure_III, SpellID::Cure_IV })
+    {
+        CHECK(cures(id(cure), on({ StatusEffect::SleepIi }), false));
+    }
+    CHECK(cardian::ailments::isSleep(static_cast<uint16>(StatusEffect::Lullaby)));
+    CHECK_FALSE(cardian::ailments::isSleep(static_cast<uint16>(StatusEffect::Poison)));
 }

@@ -547,19 +547,26 @@ namespace pawn::tactics
                 }
             }
             note.toppedUp = PTarget->health.hp >= PTarget->GetMaxHP();
-            auto& memory  = cureMemory(PCaster->id, PSpell);
-            ++memory.tally.casts;
-            memory.tally.mpSpent += mp;
-            memory.tally.hpLanded += note.landed;
-            if (note.toppedUp)
+            // A Cure cast on a member at full HP woke him (-na (best),
+            // ailments.h): it heals nothing, and is left out of what the
+            // party's cures are measured and the debuffs priced by
+            const bool wake = missing <= 0;
+            auto& memory    = cureMemory(PCaster->id, PSpell);
+            if (!wake)
             {
-                ++memory.tally.toppedUp;
+                ++memory.tally.casts;
+                memory.tally.mpSpent += mp;
+                memory.tally.hpLanded += note.landed;
+                if (note.toppedUp)
+                {
+                    ++memory.tally.toppedUp;
+                }
+                memory.estimate.note(primary, note.toppedUp);
             }
-            memory.estimate.note(primary, note.toppedUp);
             // The formula against the cast (the user's acceptance test):
             // an uncapped cure lands what the sampler said, give or take
             // the day and weather roll, ten percent either way
-            if (!note.toppedUp && started && started->expected >= 0)
+            if (!wake && !note.toppedUp && started && started->expected >= 0)
             {
                 if (std::abs(started->expected - primary) > started->expected / 10 + 1)
                 {
@@ -570,11 +577,14 @@ namespace pawn::tactics
                     ShowInfoFmt("tactics: bank: {}'s {} landed {}, as the formula said", PCaster->getName(), PSpell->getName(), primary);
                 }
             }
-            overcure = note.toppedUp ? std::max<int32>(0, memory.estimate.predict() - primary) : 0;
+            overcure = !wake && note.toppedUp ? std::max<int32>(0, memory.estimate.predict() - primary) : 0;
             r        = recordForTarget(PTarget->id);
-            m_cureHp += note.landed;
-            m_cureMp += mp;
-            ++m_cureCasts;
+            if (!wake)
+            {
+                m_cureHp += note.landed;
+                m_cureMp += mp;
+                ++m_cureCasts;
+            }
         }
         else if (auto* PMob = asMob(PTarget); PMob != nullptr)
         {
