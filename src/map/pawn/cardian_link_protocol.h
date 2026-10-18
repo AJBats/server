@@ -34,7 +34,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 92: MOBS_NEAR's kinds and MOB_NEAR's
+// compatible, the user, 2026-09-14). 93: SHOUT_RESPONDER's sjob and slvl,
+// her support job on the shout's list; 92: MOBS_NEAR's kinds and MOB_NEAR's
 // ally, the members of his party near her too, for a friendly far pick; 91: MOBS_NEAR and MOB_NEAR, the monsters
 // near a party member as the server has them (a far pick's list), and
 // CL_LENDER_PARTY, the party's Avoid aggro lent on a gambit page; 90: PREFS' three calls are the game's
@@ -169,7 +170,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 92 };
+enum { CL_PROTOCOL = 93 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -2006,7 +2007,8 @@ typedef struct cl_shout_responder
     uint32_t  revealMs;
     uint32_t  decideMs;
     uint16_t  zone;         // the zone id
-    uint16_t  spare;
+    uint8_t   sjob;         // her support job, 0 for none
+    uint8_t   slvl;
     char      zoneName[32]; // for people
     char      line[96];     // for people
 } cl_shout_responder;

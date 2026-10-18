@@ -78,6 +78,8 @@ namespace pawn::finder
             uint16      posZone  = 0;
             uint8       job      = 0;
             uint8       level    = 0;
+            uint8       sjob     = 0;
+            uint8       slvl     = 0;
             uint32      seed     = 0;
             uint8       race     = 0;
             uint8       nation   = 0;
@@ -90,7 +92,7 @@ namespace pawn::finder
             missionlog_t missions[MAX_MISSIONAREA]{};
         };
 
-        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, c.missions, s.mjob, s.mlvl, x.seed, x.nation, l.race, "
+        constexpr auto kFactsQuery = "SELECT c.charid, c.charname, c.pos_zone, c.missions, s.mjob, s.mlvl, s.sjob, s.slvl, x.seed, x.nation, l.race, "
                                      "p.rank_sandoria, p.rank_bastok, p.rank_windurst, "
                                      "CAST(m.last_partied IS NOT NULL AS UNSIGNED) AS partied, "
                                      "CAST(COALESCE(m.affinity, 0) AS UNSIGNED) AS affinity, "
@@ -111,6 +113,8 @@ namespace pawn::finder
             f.posZone  = rset->template get<uint16>("pos_zone");
             f.job      = rset->template get<uint8>("mjob");
             f.level    = rset->template get<uint8>("mlvl");
+            f.sjob     = rset->template get<uint8>("sjob");
+            f.slvl     = rset->template get<uint8>("slvl");
             f.seed     = rset->template get<uint32>("seed");
             f.race     = rset->template get<uint8>("race");
             f.nation   = std::min<uint8>(rset->template get<uint8>("nation"), 2);
@@ -576,8 +580,10 @@ namespace pawn::finder
             }
             Candidate c;
             c.name     = f.name;
-            c.job      = f.job;
+            c.job      = PPawn != nullptr ? static_cast<uint8>(PPawn->GetMJob()) : f.job;
             c.level    = levelOf(PPawn, f.level);
+            c.sjob     = PPawn != nullptr ? static_cast<uint8>(PPawn->GetSJob()) : f.sjob;
+            c.slvl     = PPawn != nullptr ? PPawn->GetSLevel() : f.slvl;
             c.affinity = f.affinity;
             c.race     = f.race;
             c.nation   = f.nation;

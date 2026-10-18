@@ -75,6 +75,8 @@ namespace pawn::finder
         std::string name;
         uint8       job      = 0;
         uint8       level    = 0;
+        uint8       sjob     = 0; // her support job, 0 for none
+        uint8       slvl     = 0;
         uint8       race     = 0;
         uint8       nation   = 0;
         uint8       rank     = 1; // in her own nation

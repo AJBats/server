@@ -1052,6 +1052,8 @@ namespace pawn::linkapi
             setText(msg.name, c.name);
             msg.job      = c.job;
             msg.level    = c.level;
+            msg.sjob     = c.sjob;
+            msg.slvl     = c.slvl;
             msg.race     = c.race;
             msg.nation   = c.nation;
             msg.rank     = c.rank;
