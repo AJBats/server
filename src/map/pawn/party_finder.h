@@ -40,6 +40,7 @@
 #include <array>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 class CCharEntity;
@@ -182,6 +183,9 @@ namespace pawn::finder
     // She answered a shout that has not lapsed: the invite may still come,
     // so the world's clocks (a town seat's dwell) leave her where she is
     auto shoutedFor(const std::string& name) -> bool;
+    // Every name a shout that has not lapsed holds so, gathered in one walk
+    // of the shouts, for a caller asking after many names at once
+    auto shoutedNames() -> std::unordered_set<std::string>;
 
     // The pawn's answer to the solicit stamped on her: yes for an owned
     // cardian; for the world's, yes only when the finder asked her (invite

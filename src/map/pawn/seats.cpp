@@ -178,11 +178,11 @@ namespace pawn::seats
         lastRun = {};
     }
 
-    void offerWorld(const uint32 charid, const uint16 zone)
+    void offerWorld(const uint32 charid, const uint16 zone, const bool partyOnly)
     {
         if (ladder && charid != 0)
         {
-            ladder->offer(charid, Facts{ .zone = zone, .tier = worldTier(charid), .owner = 0 });
+            ladder->offer(charid, Facts{ .zone = zone, .tier = worldTier(charid), .owner = 0, .partyOnly = partyOnly });
         }
     }
 
@@ -199,6 +199,15 @@ namespace pawn::seats
         if (auto facts = factsOf(charid); facts.has_value() && facts->down != down)
         {
             facts->down = down;
+            ladder->offer(charid, *facts);
+        }
+    }
+
+    void setPartyOnly(const uint32 charid, const bool partyOnly)
+    {
+        if (auto facts = factsOf(charid); facts.has_value() && facts->partyOnly != partyOnly)
+        {
+            facts->partyOnly = partyOnly;
             ladder->offer(charid, *facts);
         }
     }
@@ -238,6 +247,16 @@ namespace pawn::seats
     bool has(const uint32 charid)
     {
         return ladder && ladder->entryOf(charid) != nullptr;
+    }
+
+    auto zoneSizes() -> std::unordered_map<uint16, uint32>
+    {
+        return ladder ? ladder->zoneSizes() : std::unordered_map<uint16, uint32>{};
+    }
+
+    auto fadedCapNow() -> uint32
+    {
+        return fadedCap();
     }
 
     void notePartied(const uint32 playerCharID, const uint32 pawnCharID)
@@ -288,6 +307,12 @@ namespace pawn::seats
         lastRun = timer::now();
         ladder->setCaps(standingCap(), fadedCap());
         ladder->run(timer::now());
+        // A town sign-in the run left with no session row is online in her town no longer: the world
+        // lets her go (world::signInDropped), withdrawing her from the ladder now that the run is over
+        for (const auto charid : ladder->partyOnlyOut())
+        {
+            pawn::world::signInDropped(charid);
+        }
     }
 
     bool isStanding(const uint32 charid)

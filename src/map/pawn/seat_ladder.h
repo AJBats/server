@@ -63,10 +63,11 @@ namespace pawn::seats
     // a recruit, a release, the world's KO timer
     struct Facts
     {
-        uint16 zone  = 0;           // where she would stand: her seat's zone, or where the game saved her
-        Tier   tier  = Tier::Crowd;
-        uint32 owner = 0;           // the player she stands under; 0 for one of the world's own
-        bool   down  = false;       // KO'd past the world's delay; the world's timer sets and clears it
+        uint16 zone      = 0;           // where she would stand: her seat's zone, or where the game saved her
+        Tier   tier      = Tier::Crowd;
+        uint32 owner     = 0;           // the player she stands under; 0 for one of the world's own
+        bool   down      = false;       // KO'd past the world's delay; the world's timer sets and clears it
+        bool   partyOnly = false;       // she stands only for a party: online with no seat (a town sign-in, cohort_play.h), she takes no standing slot by herself
 
         bool operator==(const Facts&) const = default;
     };
@@ -78,7 +79,7 @@ namespace pawn::seats
         int64  seq = 0; // offers count down from 0, touches count up: a total order, equals resolved the same way every run
 
         // looked up on every run
-        bool live    = false; // she may hold a body now: not down, not away on an errand, no stand of hers waiting on a retry, and a player in her zone or next door -- or she is owned, and her player's wherever she is, or in a real player's party, and theirs wherever she waits (the user, 2026-09-14)
+        bool live    = false; // she may hold a body now: not down, not away on an errand, no stand of hers waiting on a retry, and a player in her zone or next door -- or she is owned, and her player's wherever she is, or in a real player's party, and theirs wherever she waits (the user, 2026-09-14). One who stands only for a party is live by a player near only while the party's body is still hers
         bool nearby  = false; // a player in her zone itself
         bool inParty = false; // in a real player's party, or invited into one and not yet answered
 
@@ -118,12 +119,14 @@ namespace pawn::seats
         // and being the newest she outranks an older party mate of her
         // tier: with the cap full of party members the oldest fades for
         // her -- the user's call, 2026-09-13, an edge the shallow dev caps
-        // exist to exercise), then tier, then whether a player is in her
-        // own zone, then seq
+        // exist to exercise), then one who stands only for a party below
+        // everyone else of her class (a town sign-in never takes a seat
+        // holder's standing slot or her zone's faded room), then tier, then
+        // whether a player is in her own zone, then seq
         static bool defaultOrder(const Entry& a, const Entry& b)
         {
-            return std::tuple(a.live, a.inParty, a.facts.tier, a.nearby, a.seq) >
-                   std::tuple(b.live, b.inParty, b.facts.tier, b.nearby, b.seq);
+            return std::tuple(a.live, a.inParty, !a.facts.partyOnly, a.facts.tier, a.nearby, a.seq) >
+                   std::tuple(b.live, b.inParty, !b.facts.partyOnly, b.facts.tier, b.nearby, b.seq);
         }
 
         Ladder(Before before, Lookup lookup, Engine engine, const uint32 standsPerRun = 3, const timer::duration retryDelay = std::chrono::seconds(30))
@@ -352,6 +355,33 @@ namespace pawn::seats
             }
             return counts;
         }
+        // The entries of the world's own who stand only for a party and whom the last run left with no
+        // session row: past her zone's faded cap, and wanting no more (a stand rationed or failed in the
+        // run wants more, and is not one). Read straight after run(), before anything is offered: the
+        // adapter lets them go then
+        auto partyOnlyOut() const -> std::vector<uint32>
+        {
+            std::vector<uint32> out;
+            for (const auto& e : entries)
+            {
+                if (e.facts.partyOnly && e.facts.owner == 0 && e.step == Step::Absent && e.want == Step::Absent)
+                {
+                    out.push_back(e.charid);
+                }
+            }
+            return out;
+        }
+        // Per zone: every entry the ladder holds there, whatever her step -- the faded cap is read
+        // against her index among them, so a zone whose entries reach it has no faded room left
+        auto zoneSizes() const -> std::unordered_map<uint16, uint32>
+        {
+            std::unordered_map<uint16, uint32> sizes;
+            for (const auto& e : entries)
+            {
+                ++sizes[e.facts.zone];
+            }
+            return sizes;
+        }
 
     private:
         auto find(const uint32 charid) -> Entry*
@@ -377,7 +407,10 @@ namespace pawn::seats
                 }
                 e.nearby  = it->second.second;
                 e.inParty = lookup.inParty(e.charid);
-                e.live    = !e.facts.down && !(lookup.away && lookup.away(e.charid)) && now >= e.retryAfter && (e.facts.owner != 0 || e.inParty || it->second.first);
+                // A player near stands her, unless she stands only for a party: then he keeps
+                // standing the body a party gave her, and never stands her anew
+                const bool seen = it->second.first && (!e.facts.partyOnly || e.step == Step::Standing);
+                e.live          = !e.facts.down && !(lookup.away && lookup.away(e.charid)) && now >= e.retryAfter && (e.facts.owner != 0 || e.inParty || seen);
             }
         }
 

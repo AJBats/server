@@ -672,6 +672,16 @@ xi.settings.pawn =
     WORLD_PLACE_RATE     = 20,
     WORLD_STANDS_PER_RUN = 3,
 
+    -- The town sign-in (src/map/pawn/cohort_play.h): each city keeps the
+    -- cohorts in play -- the cohort each real player's current job rides --
+    -- online there at its regulars (the shared pools' bodies online there)
+    -- times this, seated and signed in together. A signed-in body has no
+    -- seat and stands only when a party brings her; search and the party
+    -- finder's shout find her. 1.0 makes the cohorts about half of who is
+    -- online in town; 0 turns the sign-in off. Paced by WORLD_PLACE_RATE,
+    -- after every seat waiting to be placed, within WORLD_FADED_CAP.
+    WORLD_COHORT_TOWN_SHARE = 1.0,
+
     -- The load line, always on: every WORLD_LOAD_REPORT seconds the map
     -- log says how many bodies stand in how many zones, what a body's
     -- tick costs, and the process's CPU and memory. 0 turns it off.

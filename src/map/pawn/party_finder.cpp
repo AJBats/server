@@ -917,6 +917,29 @@ namespace pawn::finder
         return false;
     }
 
+    auto shoutedNames() -> std::unordered_set<std::string>
+    {
+        std::unordered_set<std::string> names;
+        const auto                      now = timer::now();
+        for (auto it = shouts.begin(); it != shouts.end();)
+        {
+            if (now - it->second.madeAt > kShoutLifetime || zoneutils::GetChar(it->first) == nullptr)
+            {
+                it = shouts.erase(it);
+                continue;
+            }
+            for (const auto& r : it->second.shout.rows)
+            {
+                if (r.c.answer.yes)
+                {
+                    names.insert(r.c.name);
+                }
+            }
+            ++it;
+        }
+        return names;
+    }
+
     auto invite(CCharEntity* PPlayer, const uint32 charid, const Goal& goal, std::string& line) -> uint16
     {
         line.clear();
