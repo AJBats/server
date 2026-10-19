@@ -72,4 +72,7 @@ struct NavMeshConfig
     bool  generateOffMeshLinks{ true };
     float offMeshMaxDrop{ 5.0f };    // largest vertical drop (wu) a link may bridge
     float offMeshHorizReach{ 3.0f }; // largest horizontal ledge->landing offset (wu)
+
+    // CARDIAN: the collision walls, built in as barriers (pawn/collision_walls.h)
+    std::vector<std::array<float, 10>> cardianWalls{};
 };

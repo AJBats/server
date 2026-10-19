@@ -21,6 +21,8 @@
 
 #include "pawn_travel.h"
 
+#include "collision_walls.h"
+
 #include "subzone_graph.h"
 
 #include "common/logging.h"
@@ -121,6 +123,19 @@ namespace
 
     bool worldBuilt = false;
 
+    // A walled zone's seams, saved beside its navmesh for the development
+    // tools to draw (tools/walls/navlines.py): one a line, from x y z to x y z
+    // in FFXI's axes
+    void saveSeams(const uint16 zone, const cardian::route::Seams& seams)
+    {
+        std::ofstream out(cardian::walls::builtPath(zone, "seams"), std::ios::trunc);
+        out << "# The walker's seams over zone " << zone << "'s walled navmesh (pawn/route_search.h seamsOf)\n";
+        for (const auto& s : seams.list)
+        {
+            out << s.from[0] << ' ' << -s.from[1] << ' ' << -s.from[2] << ' ' << s.to[0] << ' ' << -s.to[1] << ' ' << -s.to[2] << '\n';
+        }
+    }
+
     void rejoin(uint16 zone);
 
     // The zone's mesh and pieces, none for a zone without a Detour mesh. A
@@ -148,12 +163,19 @@ namespace
         if (current != nullptr)
         {
             // the mesh's seams, kept where the zone's collision lets a body
-            // across, its invisible barriers included
+            // across, its invisible barriers included, and no collision wall
+            // stands (pawn/collision_walls.h)
             const XiMesh* collision = PZone != nullptr ? PZone->xiMesh() : nullptr;
-            entry.seams             = cardian::route::seamsOf(*current, collision == nullptr ? cardian::route::SeamOpen{} : cardian::route::SeamOpen([collision](const position_t& a, const position_t& b)
+            const auto*   walls     = cardian::walls::indexFor(zone);
+            entry.seams             = cardian::route::seamsOf(*current, collision == nullptr ? cardian::route::SeamOpen{} : cardian::route::SeamOpen([collision, walls](const position_t& a, const position_t& b)
             {
-                return !collision->rayIntersect(Vector3{ a.x, a.y, a.z }, Vector3{ b.x, b.y, b.z }, IgnoreTransparentBarriers::No);
+                return !collision->rayIntersect(Vector3{ a.x, a.y, a.z }, Vector3{ b.x, b.y, b.z }, IgnoreTransparentBarriers::No) &&
+                       (walls == nullptr || !walls->crosses(a.x, a.y, a.z, b.x, b.y, b.z));
             }));
+            if (walls != nullptr)
+            {
+                saveSeams(zone, entry.seams);
+            }
             entry.pieces = sz::piecesOf(*current, &entry.seams);
             entry.faces  = cardian::route::facesOf(*current);
         }

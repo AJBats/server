@@ -70,6 +70,14 @@ xi.settings.cardian =
     -- next start
     GOBLIN_BOUNTY_HUNTERS = false,
 
+    -- The collision walls (ROADMAP W, "Collision walls"; src/map/pawn/collision_walls.h):
+    -- true: a zone with a walls file in modules/cardian/walls, cut by tools/walls, builds
+    -- its navmesh at start with the walls in it as barriers, so routes go round the places
+    -- a running player cannot pass, and its drop links go one way, down. false loads every
+    -- zone's navmesh as upstream ships it. Off until a test shows what the walls fix (the
+    -- user, 2026-10-19: a debug switch, merged off, turned on in a world for its test)
+    COLLISION_WALLS = false,
+
     -- A player's major progression is his account's (ROADMAP N;
     -- src/map/pawn/account_wide.cpp): the support job, the level cap, the
     -- gate crystals and Limit Breaker, and the outposts' warps any character
