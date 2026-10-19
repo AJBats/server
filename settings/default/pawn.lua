@@ -112,6 +112,18 @@ xi.settings.pawn =
     -- many levels of the player fits the goal, one outside it says why not
     FINDER_BAND = 3,
 
+    -- Asking again wears the towns down: each of the player's shouts for a
+    -- goal in which anyone gave a soft no (one a mood could turn: not busy,
+    -- out of the band or short of the mission) adds one to the towns'
+    -- pressure for that goal, which halves every FINDER_WEAR_HALF_LIFE
+    -- seconds, and on his next shout for it every mood gains
+    -- FINDER_WEAR_STEP for each unit of it. Seven shouts in quick
+    -- succession turn the most reluctant into a yes at the eighth; half an
+    -- hour on the towns are nearly fresh, and a recruit joining from the
+    -- shout starts them over
+    FINDER_WEAR_HALF_LIFE = 480,
+    FINDER_WEAR_STEP      = 9,
+
     -- The party finder's shout can be repeated (a fresh crowd, a reroll
     -- for the picky) only this many seconds after the last one
     SHOUT_COOLDOWN = 30,

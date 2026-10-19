@@ -54,6 +54,7 @@ namespace pawn::finder
         bool        yes = false;
         MissionFit  fit = MissionFit::Free; // Behind is a no of its own kind: she has not reached the mission
         std::string line;                   // hers: why she comes, or why not
+        bool        hard = false;           // a no that no mood or asking changes: busy, out of the band, short of the mission
     };
 
     // Where she is, to the player: standing in his zone, standing elsewhere
@@ -89,20 +90,23 @@ namespace pawn::finder
     };
 
     // The shout: sixteen to twenty of the adventurers online in the cities
-    // and towns hear it (rules::pickHeard) -- a friend seat, an affinity
-    // seat, enough willing ones to fill the party when the crowd has them,
-    // up to three who cannot come (out of the level band, or short of the
-    // mission), the rest a mix of those who could -- and answer in their
-    // own time, nearest first: a reveal delay and a deciding time each,
-    // drawn so the replies trickle in unevenly. Each answer is the
-    // willingness question with a mood roll on its soft part, fixed when
-    // the shout is made, so a marginal no can flip on a re-shout and a hard
-    // no never does. A shout is a snapshot per player, good for
-    // SHOUT_LIFETIME: asked again with `again` false it is the same shout,
-    // so the screen can replay it; `again` true is a new one, refused inside
-    // SHOUT_COOLDOWN (the current one comes back, its waitMs saying how
-    // long). A shout with nobody in reach starts no cooldown. A no here
-    // records nothing against her
+    // and towns hear it (rules::pickHeard), those who have heard him least
+    // recently first -- a friend seat, an affinity seat, enough willing ones
+    // to fill the party when the crowd has them, up to three who cannot come
+    // (out of the level band, or short of the mission), the rest a mix of
+    // those who could -- and answer in their own time, nearest first: a
+    // reveal delay and a deciding time each, drawn so the replies trickle in
+    // unevenly. Each answer is the willingness question with a mood roll on
+    // its soft part, fixed when the shout is made, so a marginal no can flip
+    // on a re-shout and a hard no never does. A shout is a snapshot per
+    // player, good for SHOUT_LIFETIME: asked again with `again` false it is
+    // the same shout, so the screen can replay it; `again` true is a new
+    // one, refused inside SHOUT_COOLDOWN (the current one comes back, its
+    // waitMs saying how long). A shout with nobody in reach starts no
+    // cooldown. A no records nothing against the one who gave it; a shout
+    // with a soft no in it wears the towns down for his next shout for that
+    // goal (rules::Wear), and a recruit joining from his shout starts that
+    // goal's wear over
     struct Responder
     {
         Candidate c;
