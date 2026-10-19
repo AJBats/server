@@ -1,7 +1,8 @@
 // Cardian: the linkshell's errands (pawn/errands.h), their rules as plain
 // functions: the kinds and whom each is for, the row's words, the clock an
 // errand runs on and where it has her, what a call back keeps, the steps of
-// gearing up in town, and a finished quest or mission in her log.
+// gearing up in town, a level venture's bounds and the share of a level it
+// keeps, and a finished quest or mission in her log.
 #pragma once
 
 #include <algorithm>
@@ -10,6 +11,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -18,9 +20,9 @@
 namespace cardian::errand
 {
     // What she is sent to do: the Link's CL_ERRAND_* by value, and the row's
-    // kind by name. Level keeps its place in the row and on the Link for the
-    // live census's levelling, still to be built; nothing offers it until it
-    // is. Money is a venture at a profession of hers (professions.h)
+    // kind by name. Level is a level on one of her jobs, which the live
+    // census levels while she is away (census.py LevelVentures). Money is a
+    // venture at a profession of hers (professions.h)
     enum class Kind : uint8_t
     {
         None  = 0,
@@ -112,7 +114,7 @@ namespace cardian::errand
     // The kinds with behaviour behind them
     constexpr auto built(const Kind kind) -> bool
     {
-        return kind == Kind::Gear || kind == Kind::Quest || kind == Kind::Rank || kind == Kind::Money;
+        return kind == Kind::Gear || kind == Kind::Quest || kind == Kind::Rank || kind == Kind::Money || kind == Kind::Level;
     }
 
     // Whom a kind is for (the user, 2026-10-09, RESEARCH §11.13). Gear up is
@@ -440,6 +442,228 @@ namespace cardian::errand
     constexpr auto walks(const GearStep step) -> bool
     {
         return step == GearStep::ToCounter || step == GearStep::ToGuard || step == GearStep::Back;
+    }
+
+    // ---- a level venture ------------------------------------------------------
+
+    // The jobs a level venture levels: Warrior to Puppetmaster, the era's,
+    // which are the jobs the live census knows (census.py JOB_COLUMNS)
+    constexpr uint8_t kFirstLevelJob = 1;
+    constexpr uint8_t kLastLevelJob  = 18;
+
+    // A job unlocked in char_jobs.unlocked's mask (bit 0 is the support job)
+    constexpr auto jobUnlocked(const uint32_t mask, const uint8_t job) -> bool
+    {
+        return job < 32 && (mask & (1u << job)) != 0;
+    }
+
+    // Her level on a job she has unlocked: a job the game unlocked and she
+    // has never played reads 0, and starts at 1
+    constexpr auto levelOn(const uint8_t level) -> uint8_t
+    {
+        return level == 0 ? 1 : level;
+    }
+
+    // A level venture he may send her on: one of the jobs it levels,
+    // unlocked, to a level above hers on it and at most his highest level on
+    // any job of his (the user, 2026-10-18)
+    constexpr auto levelFits(const uint32_t unlockedMask, const uint8_t job, const uint8_t herLevel, const uint32_t target, const uint8_t hisHighest) -> bool
+    {
+        return job >= kFirstLevelJob && job <= kLastLevelJob && jobUnlocked(unlockedMask, job) && target > levelOn(herLevel) && target <= hisHighest;
+    }
+
+    // Any job of hers a level venture could raise now, her levels by job id
+    // as the Link carries them: the page offers Level while one can
+    inline auto anyLevelFits(const uint32_t unlockedMask, const std::span<const uint8_t> levels, const uint8_t hisHighest) -> bool
+    {
+        for (uint8_t job = kFirstLevelJob; job <= kLastLevelJob && job < levels.size(); ++job)
+        {
+            if (levelFits(unlockedMask, job, levels[job], static_cast<uint32_t>(levelOn(levels[job])) + 1, hisHighest))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // The share of a level she keeps as experience when he calls her back
+    // mid-level (the census's count of her next level, cardian_venture's
+    // progress): that share of the experience her next level asks, never the
+    // whole of it -- a ding is the census's, or the game's as she earns it
+    constexpr auto keptExp(const double share, const uint32_t toNext) -> uint32_t
+    {
+        if (toNext == 0 || !(share > 0.0))
+        {
+            return 0;
+        }
+        const double exp = share * static_cast<double>(toNext);
+        return exp >= static_cast<double>(toNext - 1) ? toNext - 1 : static_cast<uint32_t>(exp);
+    }
+
+    // The share of her next level as the page shows it, in hundredths: 0 to 99
+    constexpr auto sharePercent(const double share) -> uint8_t
+    {
+        if (!(share > 0.0))
+        {
+            return 0;
+        }
+        return static_cast<uint8_t>(std::clamp(static_cast<int>(share * 100.0), 0, 99));
+    }
+
+    // The conquest points a level venture earns her for experience behind
+    // its levels, or kept toward her next: the server's rate under Signet
+    // (conquest_system.cpp, census.py CP_RATE), all of it for his alt or his
+    // own cardian (census.py pay_venture_points, on what the venture gained
+    // her: ventureGain), the census's estimate of what a body still holds of
+    // it for one of the world's, whose levels alone are paid (CP_KEPT,
+    // pay_level)
+    constexpr double kVentureCpRate = 0.10;
+    constexpr double kVentureCpKept = 0.75;
+
+    constexpr auto venturePoints(const uint64_t exp, const bool worlds) -> uint32_t
+    {
+        const double points = static_cast<double>(exp) * kVentureCpRate * (worlds ? kVentureCpKept : 1.0);
+        return points >= 2147483647.0 ? 2147483647u : static_cast<uint32_t>(points);
+    }
+
+    // What a level venture gained her in experience on the job: the
+    // experience behind the levels it gave her and any kept toward her next,
+    // less what she already held toward her next as she set out. His alt's
+    // and his own cardian's conquest points are paid on this alone, so a
+    // call back pays nothing for experience she brought with her (census.py
+    // venture.gained_exp)
+    constexpr auto ventureGain(const uint64_t levelsExp, const uint64_t kept, const uint64_t had) -> uint64_t
+    {
+        const uint64_t total = levelsExp + kept;
+        return total > had ? total - had : 0;
+    }
+
+    // ---- a level venture's banked levels --------------------------------------
+
+    // A whole level in the census's count, give or take the floats (census.py
+    // pace.DING_AT)
+    constexpr double kWholeLevel = 1.0 - 1e-9;
+
+    // The census's count of a level venture with the time it has not counted
+    // yet added: `rate` levels an hour (cardian_venture.rate) over the real
+    // seconds from `countedAt` -- the row's counted_at; 0 before the census
+    // has run the count once, which adds nothing -- to `until`, at the census
+    // clock's `speed`, and never past the levels left to her target
+    constexpr auto ventureCount(const double progress, const double rate, const double countedAt, const double until, const double speed,
+                                const uint32_t levelsLeft) -> double
+    {
+        double count = progress > 0.0 ? progress : 0.0;
+        if (rate > 0.0 && speed > 0.0 && countedAt > 0.0 && until > countedAt)
+        {
+            count += rate * speed * (until - countedAt) / 3600.0;
+        }
+        return std::min(count, static_cast<double>(levelsLeft));
+    }
+
+    // The levels one ding of the venture lands: every whole level its count
+    // holds, up to the levels left to her target; 0 while no whole level is
+    // earned (census.py venture.levels_due)
+    constexpr auto wholeLevels(const double count, const uint32_t levelsLeft) -> uint32_t
+    {
+        if (levelsLeft == 0 || !(count >= kWholeLevel))
+        {
+            return 0;
+        }
+        const double capped = std::min(count, static_cast<double>(levelsLeft));
+        return std::clamp<uint32_t>(static_cast<uint32_t>(capped + (1.0 - kWholeLevel)), 1u, levelsLeft);
+    }
+
+    // A level venture he has called back is over only once what it banked
+    // has landed: no whole level left in its count, and no ding of it planned
+    // or being written in her rows
+    constexpr auto recallWaits(const double count, const uint32_t levelsLeft, const bool dingOpen) -> bool
+    {
+        return dingOpen || wholeLevels(count, levelsLeft) > 0;
+    }
+
+    // A level venture's pace as people speak of it: experience an hour at
+    // her level now, `levelsAnHour` times what her next level asks
+    constexpr auto expPerHour(const double levelsAnHour, const uint32_t toNext) -> uint32_t
+    {
+        if (!(levelsAnHour > 0.0))
+        {
+            return 0;
+        }
+        const double exp = levelsAnHour * static_cast<double>(toNext);
+        return exp >= 4294967295.0 ? 4294967295u : static_cast<uint32_t>(exp);
+    }
+
+    // The minutes her next level is still off: what is left of it at
+    // `levelsAnHour`, rounded up; 0 with no pace
+    constexpr auto minutesToNext(const double share, const double levelsAnHour) -> uint16_t
+    {
+        if (!(levelsAnHour > 0.0))
+        {
+            return 0;
+        }
+        const double left    = 1.0 - std::clamp(share, 0.0, 1.0);
+        const double minutes = left / levelsAnHour * 60.0;
+        const auto   whole   = static_cast<uint32_t>(minutes);
+        return static_cast<uint16_t>(std::min<uint32_t>(65535u, whole + (static_cast<double>(whole) < minutes ? 1u : 0u)));
+    }
+
+    // Her skills as a level venture's report keeps them: "skill:tenths,..."
+    inline auto skillsText(const std::map<uint16_t, uint16_t>& skills) -> std::string
+    {
+        std::string out;
+        for (const auto& [skill, value] : skills)
+        {
+            out += (out.empty() ? "" : ",") + std::to_string(skill) + ":" + std::to_string(value);
+        }
+        return out;
+    }
+
+    // And read back; a malformed pair is skipped
+    inline auto skillsOfText(const std::string_view text) -> std::map<uint16_t, uint16_t>
+    {
+        std::map<uint16_t, uint16_t> out;
+        std::size_t                  at = 0;
+        while (at < text.size())
+        {
+            const auto end   = std::min(text.find(',', at), text.size());
+            const auto pair  = text.substr(at, end - at);
+            const auto colon = pair.find(':');
+            uint16_t   skill = 0;
+            uint16_t   value = 0;
+            if (colon != std::string_view::npos && std::from_chars(pair.data(), pair.data() + colon, skill).ec == std::errc{} &&
+                std::from_chars(pair.data() + colon + 1, pair.data() + pair.size(), value).ec == std::errc{})
+            {
+                out[skill] = value;
+            }
+            at = end + 1;
+        }
+        return out;
+    }
+
+    // A skill a level venture raised: its id, and its value as she set out and now
+    struct SkillRise
+    {
+        uint16_t skill = 0;
+        uint16_t from  = 0;
+        uint16_t to    = 0;
+
+        constexpr auto operator==(const SkillRise&) const -> bool = default;
+    };
+
+    // The skills that rose between the two, by skill id
+    inline auto skillsRisen(const std::map<uint16_t, uint16_t>& before, const std::map<uint16_t, uint16_t>& after) -> std::vector<SkillRise>
+    {
+        std::vector<SkillRise> out;
+        for (const auto& [skill, value] : after)
+        {
+            const auto     it  = before.find(skill);
+            const uint16_t was = it != before.end() ? it->second : 0;
+            if (value > was)
+            {
+                out.push_back({ skill, was, value });
+            }
+        }
+        return out;
     }
 
     // ---- her log --------------------------------------------------------------

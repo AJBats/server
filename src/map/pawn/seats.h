@@ -17,6 +17,7 @@
 #include "common/cbasetypes.h"
 
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace pawn::seats
@@ -25,17 +26,26 @@ namespace pawn::seats
     void init();
 
     // What she is. A seat dealt to one of the world's own (her tier from
-    // the party memory); an owned cardian, an alt or a recruit, under her
-    // player (her tier from cardian_pawns); KO'd past the world's delay or
-    // up again; a zone line crossed; out of the waterfall for good
-    void offerWorld(uint32 charid, uint16 zone);
+    // the party memory), or one online with no seat who stands only for a
+    // party (`partyOnly`: a town sign-in, cohort_play.h); an owned cardian,
+    // an alt or a recruit, under her player (her tier from cardian_pawns);
+    // KO'd past the world's delay or up again; one who stands only for a
+    // party no longer (held for a player); a zone line crossed; out of the
+    // waterfall for good
+    void offerWorld(uint32 charid, uint16 zone, bool partyOnly = false);
     void offerOwned(uint32 charid, uint32 ownerCharID, uint16 zone);
     void setDown(uint32 charid, bool down);
+    void setPartyOnly(uint32 charid, bool partyOnly);
     void moved(uint32 charid, uint16 zone);
     void touch(uint32 charid);
     void withdraw(uint32 charid);
     auto ownedBy(uint32 ownerCharID) -> std::vector<uint32>; // every entry held under his name
     bool has(uint32 charid);
+
+    // Every zone's entries, whatever their step, and the faded cap as it
+    // stands now: a zone has faded room while its entries are under it
+    auto zoneSizes() -> std::unordered_map<uint16, uint32>;
+    auto fadedCapNow() -> uint32;
 
     // The party memory: the two of them were in a party, most recently
     // now. The row, her tier if she is the world's, and a touch

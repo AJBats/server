@@ -59,6 +59,14 @@ namespace pawn::riding
     // his alts and owned cardians pay their way
     auto ridesFree(const CCharEntity* PChar) -> bool;
 
+    // Whether she holds the license, read without her body, for a venture's
+    // way (venture_spots.h), as the game has it: a body of the world -- by
+    // the census, errands.h ofTheWorld -- once any of her jobs stands at
+    // kLicenseLevel or above, whatever key items she holds; anyone else only
+    // by the account's license, the key item, his or her own. Asks, and
+    // grants, nothing
+    auto licensedFor(const CCharEntity* PPlayer, uint32 charid) -> bool;
+
     // Her base speed on her feet or on her chocobo: pawn.PAWN_SPEED, or
     // pawn.RIDE_SPEED while she rides
     auto runSpeed(const CCharEntity* PPawn) -> uint8;

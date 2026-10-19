@@ -1001,6 +1001,20 @@ private:
     auto Move(Intent intent) -> AvoidAction;
     auto Walk(Intent intent) -> AvoidAction;
 
+    // The move trace (pawn.MOVE_TRACE, a development tool): once a tick, a
+    // place the navmesh does not join to her last tick's is said in the map
+    // log, with the last walk she was given and the leg of her path
+    void MoveTrace();
+    struct MoveTraceState
+    {
+        bool              has = false;
+        uint16            zone{}; // where `last` was: a zone change starts the trace afresh
+        position_t        last{};
+        Intent::Kind      kind = Intent::Kind::Stand; // the last walk Walk was given
+        position_t        point{};
+        timer::time_point at{};
+    } m_MoveTrace;
+
     // The formation mover, roaming or holding for the player's strike:
     // where this pawn belongs (the lead's point ahead of the place, or a
     // chain slot). PStandOff is a mob the party is holding on: no point is

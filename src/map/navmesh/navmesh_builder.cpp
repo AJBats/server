@@ -26,6 +26,8 @@
 
 #include <map/ximesh/ximesh.h>
 
+#include "pawn/collision_walls.h" // CARDIAN
+
 #include <DetourCommon.h>
 #include <DetourNavMesh.h>
 #include <DetourNavMeshBuilder.h>
@@ -380,7 +382,8 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
     out.rad.assign(out.count, linkRadius);
     out.flags.assign(out.count, SAMPLE_POLYFLAGS_WALK);
     out.areas.assign(out.count, RC_WALKABLE_AREA);
-    out.dir.assign(out.count, DT_OFFMESH_CON_BIDIR);
+    // CARDIAN: in a zone with collision walls they go one way, down: no player climbs a ledge they span
+    out.dir.assign(out.count, config.cardianWalls.empty() ? DT_OFFMESH_CON_BIDIR : 0);
 
     return out;
 }
@@ -958,6 +961,9 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
     {
         return {};
     }
+
+    // CARDIAN: the collision walls, built in as barriers
+    cardian::walls::append(config.cardianWalls, gatherBmin, gatherBmax, tileMesh.verts, tileMesh.indices, tileMesh.areas, RC_NULL_AREA, RC_WALKABLE_AREA);
 
     //
     // Transform gathered verts to Detour coordinate space (negate Y and Z)

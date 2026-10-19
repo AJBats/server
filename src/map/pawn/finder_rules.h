@@ -16,6 +16,7 @@
 #include "common/cbasetypes.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -151,6 +152,79 @@ namespace pawn::finder
             return score(fame, rankDiff, mood) >= threshold(seed, askOf(goal));
         }
 
+        // ---- asking again wears the towns down (the user, 2026-10-18) -------
+
+        // One pressure per player and goal, the towns' as a whole: each of
+        // his shouts for the goal in which anyone gave a soft no adds one,
+        // and it halves every `halfLife` seconds. On his next shout for it
+        // every mood gains `step` for each unit, so seven shouts in quick
+        // succession turn the most reluctant into a yes at the eighth, and a
+        // shout half an hour later finds the towns nearly fresh. A body is
+        // asked again only once the rotation has come round (pickHeard), so
+        // the pressure is the towns', never hers
+        struct Wear
+        {
+            double pressure = 0.0;
+            double at       = 0.0; // seconds, when it was last added to
+        };
+
+        // Below this the pressure is forgotten: it adds nothing to a mood
+        constexpr double kWearForgotten = 0.01;
+
+        // One answer to his shout, as the wear reads it
+        struct Reply
+        {
+            bool yes  = false;
+            bool hard = false; // a no that no mood or asking changes: busy, out of the band, short of the mission
+        };
+
+        // Does her answer wear the towns down: a soft no does, a no that
+        // mood or asking could turn; a yes and a hard no never do
+        inline auto wears(const Reply& r) -> bool
+        {
+            return !r.yes && !r.hard;
+        }
+
+        // Does his shout wear them: anyone who heard it gave a soft no
+        inline auto shoutWears(const std::vector<Reply>& heard) -> bool
+        {
+            return std::any_of(heard.begin(), heard.end(), [](const Reply& r) { return wears(r); });
+        }
+
+        // The pressure as it stands `now`
+        inline auto wornNow(const Wear& w, const double now, const double halfLife) -> double
+        {
+            if (!(halfLife > 0.0) || !(w.pressure > 0.0))
+            {
+                return 0.0;
+            }
+            return w.pressure * std::pow(0.5, std::max(0.0, now - w.at) / halfLife);
+        }
+
+        // The pressure after his shout `now`: one more when the shout wears
+        // the towns, however many soft nos it held; as it was otherwise
+        inline auto wornAfterShout(const Wear& w, const std::vector<Reply>& heard, const double now, const double halfLife) -> Wear
+        {
+            if (!shoutWears(heard))
+            {
+                return w;
+            }
+            return { wornNow(w, now, halfLife) + 1.0, now };
+        }
+
+        // What it adds to every mood on his next shout for the goal
+        inline auto wearBonus(const double pressure, const int step) -> int
+        {
+            return pressure > 0.0 ? static_cast<int>(pressure * static_cast<double>(std::max(0, step))) : 0;
+        }
+
+        // A worn yes: willing with the wear's bonus on her mood, a no
+        // without it
+        inline auto wornYes(const Goal& goal, const MissionFit fit, const uint8 fame, const int rankDiff, const int mood, const int wear, const uint32 seed) -> bool
+        {
+            return wear > 0 && willing(goal, fit, fame, rankDiff, mood + wear, seed) && !willing(goal, fit, fame, rankDiff, mood, seed);
+        }
+
         // ---- who is heard, and in what order --------------------------------
 
         // How many of those in reach hear one shout: a number drawn between
@@ -183,21 +257,33 @@ namespace pawn::finder
         };
 
         // The shout's crowd (the user, 2026-09-13 and 2026-10-02). `heard` of
-        // the pool hear it, drawn at random, with two seats kept: one for a
+        // the pool hear it, those who have heard him least recently first --
+        // never, then longest ago -- in a random order among equals, so each
+        // re-shout reaches people the last ones did not, and once everyone in
+        // reach has heard him it starts over from those who heard him first
+        // (the user, 2026-10-18); with two seats kept: one for a
         // friend -- the one longest unheard, so friendship shows on every
         // shout without crowding out new faces -- and one for whoever holds
         // the most affinity for the player after her; for either, one who
         // could come goes before one who cannot. Enough willing ones to fill
         // the party (`need`) when the pool has them, so one shout can form a
-        // party; up to kCannotMax who cannot come, the kept seats included;
-        // the rest a mix of those who could. Then nearest first, by zone lines from the player: the
-        // nearer voices are heard first. A kept seat with nobody for it is
-        // filled like the rest
+        // party; that quota is filled ahead of the rotation, so when those
+        // not yet heard hold too few yeses it reaches back to those who
+        // heard him recently. Up to kCannotMax who cannot come, the kept
+        // seats included; the rest a mix of those who could. Then nearest
+        // first, by zone lines from the player: the nearer voices are heard
+        // first. A kept seat with nobody for it is filled like the rest
         template <class Rng>
         auto pickHeard(std::vector<Seat> pool, const std::size_t heard, const std::size_t need, Rng& rng) -> Heard
         {
             Heard out;
-            std::shuffle(pool.begin(), pool.end(), rng);
+            // least recently heard first, shuffled among equals
+            const auto rotate = [&]()
+            {
+                std::shuffle(pool.begin(), pool.end(), rng);
+                std::stable_sort(pool.begin(), pool.end(), [](const Seat& a, const Seat& b) { return a.heardAt < b.heardAt; });
+            };
+            rotate();
 
             // The best of the pool by `before`, among those `eligible`; the
             // shuffle settles ties
@@ -281,10 +367,10 @@ namespace pawn::finder
             const auto cannotSoFar = static_cast<std::size_t>(std::count_if(out.seats.begin(), out.seats.end(), [](const Seat& s) { return s.cannot; }));
             takeWhile(kCannotMax > cannotSoFar ? kCannotMax - cannotSoFar : 0, [](const Seat& s) { return s.cannot; });
 
-            // The rest a mix of those who could, from a fresh shuffle: the
-            // sure yeses were the first in the old order, so what came
-            // before them there is all nos
-            std::shuffle(pool.begin(), pool.end(), rng);
+            // The rest a mix of those who could, from a fresh shuffle within
+            // the rotation: the sure yeses were the first in the old order,
+            // so what came before them there is all nos
+            rotate();
             takeWhile(heard, [](const Seat& s) { return !s.cannot; });
 
             // Nearest first; among equals the shuffle's order, so the kept

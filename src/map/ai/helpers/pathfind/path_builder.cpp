@@ -80,7 +80,11 @@ auto NavPathBuilder::findPath(const position_t& start, const position_t& end, co
                 const float closestGap = distance(*closestEnd, end);
                 if (closestGap < lastWaypointGap - 0.1f)
                 {
-                    result->points.emplace_back(pathpoint_t{ *closestEnd, 0s, false });
+                    // CARDIAN: only where the mesh walks from the path's end to it, not up onto a wall's top
+                    if (const auto walked = navMesh_.findFurthestValidPoint(result->points.back().position, *closestEnd); walked && distance(*walked, *closestEnd, true) < 0.2f)
+                    {
+                        result->points.emplace_back(pathpoint_t{ *closestEnd, 0s, false });
+                    }
                 }
             }
         }

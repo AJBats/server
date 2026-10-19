@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
@@ -379,4 +380,157 @@ TEST_CASE("Finder: the nearest are heard first", "[cardian][finder]")
     pool[5].hops     = std::numeric_limits<uint32>::max(); // no line reaches her: last
     const auto picked = pickHeard(pool, 20, 5, rng);
     CHECK(std::is_sorted(picked.seats.begin(), picked.seats.end(), [](const Seat& a, const Seat& b) { return a.hops < b.hops; }));
+}
+
+TEST_CASE("Finder: each re-shout reaches people the last ones did not, then starts over", "[cardian][finder]")
+{
+    // sixty in reach, no friends and no yes quota, so the rotation alone
+    // decides: three shouts of twenty hear everyone once, and the fourth
+    // goes back to those who heard the first, whatever the shuffle
+    for (uint32 seed = 0; seed < 20; ++seed)
+    {
+        std::mt19937      rng(seed);
+        std::vector<Seat> pool;
+        for (std::size_t i = 0; i < 60; ++i)
+        {
+            pool.push_back(stranger(i, i % 2 == 0));
+        }
+        std::set<std::size_t>              everyone;
+        std::vector<std::set<std::size_t>> shouts;
+        for (int shout = 1; shout <= 4; ++shout)
+        {
+            const auto picked = pickHeard(pool, 20, 0, rng);
+            REQUIRE(picked.seats.size() == 20);
+            shouts.push_back(indices(picked));
+            for (const auto& s : picked.seats)
+            {
+                pool[s.index].heardAt = shout; // heard at this shout
+                everyone.insert(s.index);
+            }
+            if (shout == 3)
+            {
+                CHECK(everyone.size() == 60); // nobody twice before everyone once
+            }
+        }
+        CHECK(shouts[3] == shouts[0]); // the fourth: those who heard him longest ago
+    }
+}
+
+TEST_CASE("Finder: the yes quota may reach back to those who heard him recently", "[cardian][finder]")
+{
+    // forty who never heard him, every one a no, and twenty who heard his
+    // last shout, every one a yes: five yeses to fill the party are taken
+    // from the twenty ahead of the rotation, and the rest of the shout from
+    // the forty
+    for (uint32 seed = 0; seed < 20; ++seed)
+    {
+        std::mt19937      rng(seed);
+        std::vector<Seat> pool;
+        for (std::size_t i = 0; i < 60; ++i)
+        {
+            Seat s = stranger(i, i >= 40);
+            if (i >= 40)
+            {
+                s.heardAt = 1;
+            }
+            pool.push_back(s);
+        }
+        const auto picked = pickHeard(pool, 20, 5, rng);
+        REQUIRE(picked.seats.size() == 20);
+        const auto again = std::count_if(picked.seats.begin(), picked.seats.end(), [](const Seat& s) { return s.heardAt == 1; });
+        CHECK(again == 5);
+    }
+}
+
+TEST_CASE("Finder: only a soft no wears the towns down, once a shout", "[cardian][finder]")
+{
+    constexpr double kHalfLife = 480.0;
+    CHECK(wears(Reply{}));                     // a soft no
+    CHECK_FALSE(wears(Reply{ .hard = true })); // a hard no adds nothing
+    CHECK_FALSE(wears(Reply{ .yes = true }));  // nor does a yes
+
+    // A shout of yeses and hard nos adds nothing, nor does a shout nobody heard
+    const std::vector<Reply> noSoftNo{ { .yes = true }, { .hard = true }, { .yes = true }, { .hard = true } };
+    CHECK_FALSE(shoutWears(noSoftNo));
+    const Wear before{ .pressure = 2.0, .at = 0.0 };
+    const Wear after = wornAfterShout(before, noSoftNo, 60.0, kHalfLife);
+    CHECK(after.pressure == before.pressure);
+    CHECK(after.at == before.at);
+    CHECK(wornAfterShout(Wear{}, noSoftNo, 60.0, kHalfLife).pressure == 0.0);
+    CHECK(wornAfterShout(Wear{}, {}, 60.0, kHalfLife).pressure == 0.0);
+
+    // One soft no among them is enough, and a shout of nothing else adds one all the same
+    std::vector<Reply> oneSoftNo = noSoftNo;
+    oneSoftNo.push_back(Reply{});
+    CHECK(shoutWears(oneSoftNo));
+    CHECK(wornAfterShout(Wear{}, oneSoftNo, 60.0, kHalfLife).pressure == 1.0);
+    CHECK(wornAfterShout(Wear{}, std::vector<Reply>(18, Reply{}), 60.0, kHalfLife).pressure == 1.0);
+}
+
+TEST_CASE("Finder: the towns' wear builds over quick shouts, and it fades", "[cardian][finder]")
+{
+    constexpr double         kHalfLife = 480.0;
+    constexpr int            kStep     = 9;
+    const std::vector<Reply> shout{ { .yes = true }, {}, { .hard = true } };
+    Wear                     w;
+    CHECK(wornNow(w, 0.0, kHalfLife) == 0.0);
+    // seven shouts thirty seconds apart, the cooldown: nearly six units at
+    // the eighth, worth over fifty of mood at nine a unit
+    for (int n = 0; n < 7; ++n)
+    {
+        w = wornAfterShout(w, shout, n * 30.0, kHalfLife);
+    }
+    const double at = 210.0;
+    CHECK(wornNow(w, at, kHalfLife) > 5.9);
+    CHECK(wearBonus(wornNow(w, at, kHalfLife), kStep) > 50);
+    // it halves every half life: a quarter after sixteen minutes, under a
+    // tenth after half an hour, forgotten after a day
+    CHECK(std::abs(wornNow(w, at + kHalfLife, kHalfLife) - wornNow(w, at, kHalfLife) / 2.0) < 1e-9);
+    CHECK(std::abs(wornNow(w, at + 960.0, kHalfLife) - wornNow(w, at, kHalfLife) / 4.0) < 1e-9);
+    CHECK(wornNow(w, at + 1800.0, kHalfLife) < wornNow(w, at, kHalfLife) / 10.0);
+    CHECK(wornNow(w, at + 86400.0, kHalfLife) < kWearForgotten);
+    CHECK(wearBonus(0.0, kStep) == 0);
+    CHECK(wornNow(w, 0.0, 0.0) == 0.0); // no half life: no wear
+}
+
+TEST_CASE("Finder: seven quick shouts turn the most reluctant stranger into a worn yes", "[cardian][finder]")
+{
+    // fame 1, his rank two below hers (the rank term's floor), her
+    // threshold the highest a seed gives (seed 39) and a quest asking more:
+    // no mood alone says yes
+    const Goal       quest{ Goal::Kind::Quest, 1 };
+    constexpr uint32 kSeed = 39;
+    for (int mood = kMoodMin; mood <= kMoodMax; ++mood)
+    {
+        CHECK_FALSE(willing(quest, MissionFit::Free, 1, -2, mood, kSeed));
+    }
+    const std::vector<Reply> shout{ {}, { .yes = true } };
+    Wear                     w;
+    // six shouts thirty seconds apart leave the seventh short, at the lowest mood
+    for (int n = 0; n < 6; ++n)
+    {
+        w = wornAfterShout(w, shout, n * 30.0, 480.0);
+    }
+    CHECK_FALSE(willing(quest, MissionFit::Free, 1, -2, kMoodMin + wearBonus(wornNow(w, 180.0, 480.0), 9), kSeed));
+    // a seventh, and the eighth tips her
+    w              = wornAfterShout(w, shout, 180.0, 480.0);
+    const int wear = wearBonus(wornNow(w, 210.0, 480.0), 9);
+    CHECK(willing(quest, MissionFit::Free, 1, -2, kMoodMin + wear, kSeed));
+    CHECK(wornYes(quest, MissionFit::Free, 1, -2, kMoodMin, wear, kSeed));
+}
+
+TEST_CASE("Finder: a worn yes is a yes the wear tipped, and nothing else", "[cardian][finder]")
+{
+    const Goal quest{ Goal::Kind::Quest, 1 };
+    // the most reluctant (above) needs 47 of mood at the lowest roll: a yes
+    // at 47 is worn, 46 leaves her a no
+    CHECK(wornYes(quest, MissionFit::Free, 1, -2, kMoodMin, 47, 39));
+    CHECK_FALSE(wornYes(quest, MissionFit::Free, 1, -2, kMoodMin, 46, 39));
+    CHECK_FALSE(wornYes(quest, MissionFit::Free, 1, -2, kMoodMin, 0, 39)); // no wear
+    // willing without it: a yes of her own
+    REQUIRE(willing(kExp, MissionFit::Free, 9, 3, kMoodMin, 39));
+    CHECK_FALSE(wornYes(kExp, MissionFit::Free, 9, 3, kMoodMin, 30, 39));
+    // on his mission she needs no asking, and behind it no wear moves her
+    CHECK_FALSE(wornYes(kBastokMission, MissionFit::On, 1, -2, kMoodMin, 60, 39));
+    CHECK_FALSE(wornYes(kBastokMission, MissionFit::Behind, 9, 3, kMoodMax, 200, 0));
 }

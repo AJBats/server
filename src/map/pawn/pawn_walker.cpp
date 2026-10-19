@@ -46,6 +46,7 @@
 #include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "navmesh/detour_navmesh.h"
 #include "roam_region.h"
 #include "status_effect_container.h"
 #include "utils/zoneutils.h"
@@ -59,6 +60,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 using namespace std::chrono_literals;
@@ -412,6 +414,12 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     // The claim board first (claim_board.h): no two party members aim for
     // one spot, whichever mover proposed it
     ClaimSpot(intent);
+    if (intent.kind != Intent::Kind::Keep)
+    {
+        m_MoveTrace.kind  = intent.kind;
+        m_MoveTrace.point = intent.point;
+        m_MoveTrace.at    = m_Tick;
+    }
 
     auto*       PPathFind    = POwner->PAI->PathFind.get();
     position_t  point        = intent.point;
@@ -728,4 +736,170 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     }
     m_LastAvoidAction = action;
     return action;
+}
+
+// The move trace (pawn.MOVE_TRACE, a development tool): once a tick, for a
+// cardian of a real player's party, whether the navmesh joins where she
+// stands to where she stood the tick before -- the polygon under her now
+// found among the polygons linked to her last one, within a few yalms of
+// it, jump links included -- whether her height is the mesh's there, and
+// whether she rose more than a slope the mesh walks. Any of them failing is
+// said in the map log, with the last walk she was given and the leg of her
+// path, so a move that left the navmesh names itself. A jump link used, where
+// no ground joins the two, is said too, as one
+void CPawnController::MoveTrace()
+{
+    const position_t here = POwner->loc.p;
+    auto*            zone = POwner->loc.zone;
+    if (!settings::get<bool>("pawn.MOVE_TRACE") || zone == nullptr || GetLivePlayer() == nullptr)
+    {
+        m_MoveTrace.has = false;
+        return;
+    }
+    const position_t from   = m_MoveTrace.last;
+    const auto       zoneId = static_cast<uint16>(zone->GetID());
+    const bool       had    = m_MoveTrace.has && m_MoveTrace.zone == zoneId;
+    m_MoveTrace.last        = here;
+    m_MoveTrace.zone        = zoneId;
+    m_MoveTrace.has         = true;
+    const float across      = distance(from, here, true);
+    if (!had || (across < 0.05f && std::abs(here.y - from.y) < 0.05f))
+    {
+        return;
+    }
+    const auto*      detour = dynamic_cast<const DetourNavMesh*>(zone->navMesh());
+    const dtNavMesh* mesh   = detour != nullptr ? detour->detourMesh() : nullptr;
+    // One query a thread, made again only for another mesh
+    thread_local dtNavMeshQuery   query;
+    thread_local const dtNavMesh* queryMesh = nullptr;
+    if (mesh == nullptr)
+    {
+        return;
+    }
+    if (queryMesh != mesh)
+    {
+        queryMesh = nullptr;
+        if (dtStatusFailed(query.init(mesh, 256)))
+        {
+            return;
+        }
+        queryMesh = mesh;
+    }
+    dtQueryFilter filter;
+    filter.setIncludeFlags(0xFFFF);
+    filter.setExcludeFlags(0); // switched-off polygons and links count as joined: the walker drops by them
+    const float extents[3]{ 0.5f, 1.5f, 0.5f };
+    const auto  a = cardian::route::toDetour(from);
+    const auto  b = cardian::route::toDetour(here);
+    dtPolyRef   fromRef{};
+    dtPolyRef   hereRef{};
+    float       fromAt[3]{};
+    float       hereAt[3]{};
+    query.findNearestPoly(a.data(), extents, &filter, &fromRef, fromAt);
+    query.findNearestPoly(b.data(), extents, &filter, &hereRef, hereAt);
+
+    std::vector<std::string> why;
+    bool                     byLink = false;
+    if (!hereRef)
+    {
+        why.emplace_back("no navmesh under her");
+    }
+    else if (fromRef && fromRef != hereRef)
+    {
+        // Out from her last polygon by its links, keeping to the polygons whose
+        // box comes within reach of where she was: over the ground alone
+        // first, then with the jump links
+        const float reach   = across + 2.0f;
+        const auto  joinsBy = [&](const bool links) -> bool
+        {
+            std::vector<dtPolyRef>        open{ fromRef };
+            std::unordered_set<dtPolyRef> seen{ fromRef };
+            for (size_t i = 0; i < open.size() && open.size() < 1024; ++i)
+            {
+                const dtMeshTile* tile = nullptr;
+                const dtPoly*     poly = nullptr;
+                mesh->getTileAndPolyByRefUnsafe(open[i], &tile, &poly);
+                for (unsigned int l = poly->firstLink; l != DT_NULL_LINK; l = tile->links[l].next)
+                {
+                    const dtPolyRef next = tile->links[l].ref;
+                    if (!next || !seen.insert(next).second)
+                    {
+                        continue;
+                    }
+                    const dtMeshTile* nextTile = nullptr;
+                    const dtPoly*     nextPoly = nullptr;
+                    mesh->getTileAndPolyByRefUnsafe(next, &nextTile, &nextPoly);
+                    if (!links && nextPoly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION)
+                    {
+                        continue;
+                    }
+                    if (next == hereRef)
+                    {
+                        return true;
+                    }
+                    float lo[2]{ std::numeric_limits<float>::max(), std::numeric_limits<float>::max() };
+                    float hi[2]{ std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest() };
+                    for (int v = 0; v < nextPoly->vertCount; ++v)
+                    {
+                        const float* p = &nextTile->verts[nextPoly->verts[v] * 3];
+                        lo[0]          = std::min(lo[0], p[0]);
+                        hi[0]          = std::max(hi[0], p[0]);
+                        lo[1]          = std::min(lo[1], p[2]);
+                        hi[1]          = std::max(hi[1], p[2]);
+                    }
+                    const float dx = std::max({ lo[0] - a[0], 0.0f, a[0] - hi[0] });
+                    const float dz = std::max({ lo[1] - a[2], 0.0f, a[2] - hi[1] });
+                    if (std::hypot(dx, dz) <= reach)
+                    {
+                        open.push_back(next);
+                    }
+                }
+            }
+            return false;
+        };
+        if (!joinsBy(false))
+        {
+            if (joinsBy(true))
+            {
+                byLink = true;
+            }
+            else
+            {
+                why.emplace_back("the navmesh does not join it to where she was");
+            }
+        }
+    }
+    if (hereRef && std::abs(hereAt[1] - b[1]) > 1.0f)
+    {
+        why.emplace_back(fmt::format("the navmesh's ground there is {:.1f}y {}", std::abs(hereAt[1] - b[1]), hereAt[1] > b[1] ? "above her" : "below her"));
+    }
+    const float rise = from.y - here.y; // y is down
+    if (rise > 1.0f + across)
+    {
+        why.emplace_back(fmt::format("she rose {:.1f}y over {:.1f}y", rise, across));
+    }
+    if (why.empty() && byLink)
+    {
+        why.emplace_back("by a jump link");
+    }
+    if (why.empty())
+    {
+        return;
+    }
+
+    auto*             PPathFind = POwner->PAI->PathFind.get();
+    const std::string path      = PPathFind != nullptr && PPathFind->IsFollowingPath()
+                                      ? fmt::format("her path finder walks to ({:.1f}, {:.1f}, {:.1f})", PPathFind->GetDestination().x, PPathFind->GetDestination().y, PPathFind->GetDestination().z)
+                                      : std::string("no path under her feet");
+    std::string       leg       = "no route";
+    if (m_Plan.walking && m_Plan.next > 0 && m_Plan.next < m_Plan.route.size())
+    {
+        const auto& p = m_Plan.route[m_Plan.next - 1];
+        const auto& q = m_Plan.route[m_Plan.next];
+        leg           = fmt::format("route leg ({:.1f}, {:.1f}, {:.1f}) -> ({:.1f}, {:.1f}, {:.1f})", p.x, p.y, p.z, q.x, q.y, q.z);
+    }
+    ShowInfoFmt("move trace: {} ({:.1f}, {:.1f}, {:.1f}) -> ({:.1f}, {:.1f}, {:.1f}), {:.1f}y across, {:+.1f}y up: {}; last walk {} to ({:.1f}, {:.1f}, {:.1f}) {:.1f}s ago; {}; {}",
+                POwner->getName(), from.x, from.y, from.z, here.x, here.y, here.z, across, rise, fmt::join(why, ", "),
+                magic_enum::enum_name(m_MoveTrace.kind), m_MoveTrace.point.x, m_MoveTrace.point.y, m_MoveTrace.point.z,
+                std::chrono::duration<float>(m_Tick - m_MoveTrace.at).count(), path, leg);
 }

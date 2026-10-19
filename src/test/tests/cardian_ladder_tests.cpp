@@ -506,3 +506,87 @@ TEST_CASE("Ladder: with no errand lookup, nobody is away", "[cardian][ladder]")
     ladder.run(t0);
     CHECK(ladder.stepOf(1) == Step::Standing);
 }
+
+TEST_CASE("Ladder: a town sign-in is online, stands only for a party, and keeps the body it gave her", "[cardian][ladder]")
+{
+    // Zone 1 is warm with room on both caps: a seat holder stands, the sign-in (party only) is
+    // signed in with no body. Invited, she ranks as a party member and stands; let go standing, she
+    // keeps the body while the zone stays warm; faded, a player near never stands her again
+    Rig rig(10, 10);
+    rig.crowd(1);
+    rig.ladder.offer(2, Facts{ .zone = 1, .tier = Tier::Crowd, .partyOnly = true });
+    auto log = rig.run();
+    CHECK(log == std::vector<std::string>{ "stand 1", "signIn 2" });
+    CHECK(rig.ladder.stepOf(2) == Step::Faded);
+    CHECK(rig.run(1s).empty());
+
+    rig.party.insert(2);
+    CHECK(rig.run(2s) == std::vector<std::string>{ "stand 2" });
+
+    rig.party.clear();
+    CHECK(rig.run(3s).empty());
+    CHECK(rig.stood(2));
+
+    rig.playerNear.clear();
+    rig.playerIn.clear();
+    rig.run(4s);
+    CHECK(rig.ladder.stepOf(2) == Step::Faded);
+    rig.playerNear = { 1, 2 };
+    rig.playerIn   = { 1 };
+    rig.run(5s);
+    CHECK(rig.stood(1));
+    CHECK(rig.ladder.stepOf(2) == Step::Faded);
+}
+
+TEST_CASE("Ladder: a town sign-in ranks below every other entry of her class", "[cardian][ladder]")
+{
+    // Cap 1, a sign-in let go standing and a newer seat holder: the seat holder takes the standing slot,
+    // the sign-in fades. In a cold zone at its faded cap, the newest seat holder keeps her row over an
+    // older sign-in, who signs out
+    Rig rig(1, 10);
+    rig.ladder.offer(2, Facts{ .zone = 1, .tier = Tier::Partied, .partyOnly = true });
+    rig.party.insert(2);
+    rig.run();
+    REQUIRE(rig.stood(2));
+    rig.party.clear();
+    rig.crowd(3);
+    rig.run(1s);
+    CHECK(rig.stood(3));
+    CHECK(rig.ladder.stepOf(2) == Step::Faded);
+
+    Rig cold(10, 1);
+    cold.ladder.offer(4, Facts{ .zone = 9, .tier = Tier::Crowd, .partyOnly = true });
+    cold.run();
+    REQUIRE(cold.ladder.stepOf(4) == Step::Faded);
+    cold.crowd(5, 9);
+    const auto log = cold.run(1s);
+    CHECK(log == std::vector<std::string>{ "signOut 4", "signIn 5" });
+    CHECK(cold.ladder.zoneSizes().at(9) == 2);
+}
+
+TEST_CASE("Ladder: a town sign-in the run signs out is listed for the world to let go", "[cardian][ladder]")
+{
+    // A cold zone at its faded cap: the sign-in keeps her row, so nobody is listed. A newer seat holder
+    // takes the row; the sign-in, signed out by the run, is listed, and the seat holder never is
+    Rig cold(10, 1);
+    cold.ladder.offer(4, Facts{ .zone = 9, .tier = Tier::Crowd, .partyOnly = true });
+    cold.run();
+    CHECK(cold.ladder.partyOnlyOut().empty());
+    cold.crowd(5, 9);
+    cold.run(1s);
+    CHECK(cold.ladder.partyOnlyOut() == std::vector<uint32>{ 4 });
+    cold.ladder.withdraw(4);
+    CHECK(cold.run(2s).empty());
+    CHECK(cold.ladder.partyOnlyOut().empty());
+
+    // Invited, a sign-in wants a body: one rationed out of this run's stands, or whose stand failed,
+    // has no row yet and is not listed
+    Rig busy(10, 10, 1);
+    busy.crowd(1);
+    busy.ladder.offer(2, Facts{ .zone = 1, .tier = Tier::Crowd, .partyOnly = true });
+    busy.party.insert(2);
+    busy.cannotStand.insert(2);
+    CHECK(busy.run() == std::vector<std::string>{ "stand 2" });
+    CHECK(busy.ladder.stepOf(2) == Step::Absent);
+    CHECK(busy.ladder.partyOnlyOut().empty());
+}

@@ -72,7 +72,18 @@ class CZone;
 //     (angler.h). Due or called back, the fishing stops, her kit comes off
 //     and she stands again where she left; what she caught sells on
 //     (venture_sales.h).
-// Level is kept in the row's shape and on the Link, not built.
+//   - A level venture: one of her unlocked jobs to a level he picks -- above
+//     hers, at most his highest on any of his jobs -- for any member of his
+//     club. She walks to the nearest zone line and leaves the world there, off
+//     the clock. Away, the live census levels her (census.py LevelVentures)
+//     at his best pace on any of his jobs times the census's most generous
+//     multiplier, with no breaks, through dings it plans and, with no body of
+//     hers held, writes in her rows -- one ding landing every whole level its
+//     count holds; its row of cardian_venture keeps that count. She is back
+//     once her rows reach the level. Called back, the census counts no more,
+//     but what it banked lands first -- a ding being written, the time it had
+//     not counted yet when he called, whole levels in its count -- and then
+//     the share of her next level is kept as experience on the job.
 namespace pawn::errands
 {
     void ensureTable();
@@ -95,9 +106,61 @@ namespace pawn::errands
         uint16                 zone         = 0; // away: the zone of her route she is crossing now
         uint8                  missionsDone = 0; // a rank catch-up away: the missions her time away has covered
         uint8                  missions     = 0; // a rank catch-up: the missions it takes her through
+        uint8                  levelJob     = 0; // a level venture: the job she levels
+        uint8                  levelFrom    = 0; // ... her level on it as she was sent
+        uint8                  levelNow     = 0; // ... her level on it now
+        uint8                  levelTarget  = 0; // ... the level she is back at
+        uint8                  levelShare   = 0; // ... the share of her next level earned, in hundredths
         std::string            title;            // a quest's or a mission's
     };
     auto viewOf(uint32 charid) -> std::optional<View>;
+
+    // A level venture's ceiling: the player's highest level on any of his
+    // jobs. A target is at most this, and above her level on the job
+    auto levelCap(const CCharEntity* PPlayer) -> uint8;
+
+    // A level venture's Venture Report (professions.cpp report): away, her
+    // levels and her pace as they stand; back, the venture as it ended. The
+    // conquest points it earned her, and each skill it raised
+    struct LevelReport
+    {
+        uint8                                    phase      = 0; // CL_VENTURE_WORKING away, CL_VENTURE_DONE back
+        uint8                                    job        = 0;
+        uint8                                    from       = 0; // her level on the job as she set out
+        uint8                                    now        = 0; // ... now, or as she came back
+        uint8                                    target     = 0;
+        uint8                                    share      = 0; // away: hundredths of her next level earned; back: kept as experience
+        uint32                                   minutes    = 0; // away so far, or in all, on the game clock
+        uint32                                   expPerHour = 0; // away: her pace in experience an hour at her level now
+        uint16                                   nextMinutes = 0; // away: the minutes her next level is still off at that pace
+        uint32                                   expKept    = 0; // called back: kept toward her next level
+        uint32                                   points     = 0;
+        std::vector<cardian::errand::SkillRise> skills;
+    };
+    // Her level venture's report: away on one, or back from one her player
+    // has not read since; none else. Reading it marks it read at its phase
+    auto levelReportOf(uint32 charid) -> std::optional<LevelReport>;
+    // She has a level venture's report to show
+    auto hasLevelReport(uint32 charid) -> bool;
+    // She is back from a level venture whose report her player has not read since
+    auto levelVentureDone(uint32 charid) -> bool;
+
+    // One of the world's by the census: a row of cardian_census, not
+    // recruited, whether the map holds a body of hers or not (away on a
+    // venture she has none). The test of who is paid the census's points for
+    // a level venture's levels alone, and of who holds the Chocobo License by
+    // her own jobs (riding.h licensedFor)
+    auto ofTheWorld(uint32 charid) -> bool;
+
+    // Her jobs as a level venture reads them: char_jobs.unlocked's mask and
+    // her level on each job, by job id -- her body's when she has one, else
+    // her rows'. Nothing when her rows cannot be read
+    struct Jobs
+    {
+        uint32 unlocked = 0;
+        uint8  levels[32]{};
+    };
+    auto jobsOf(uint32 charid) -> std::optional<Jobs>;
 
     // Why gear up cannot go now for a member of his (CL_S_*), CL_S_OK when it
     // can: standing, up, out of a fight, in a zone with an auction counter

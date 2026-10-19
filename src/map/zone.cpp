@@ -64,6 +64,7 @@ using RegionsDataset      = xi::data::datasets::zones::regions::Dataset;
 #include "monstrosity.h"
 #include "nominate_manager.h"
 #include "party.h"
+#include "pawn/collision_walls.h" // CARDIAN
 #include "recast_container.h"
 #include "roam_region.h"
 #include "spawn_handler.h"
@@ -483,6 +484,7 @@ void CZone::applyNavMeshOverrides(NavMeshConfig& config) const
     config.offMeshHorizReach    = data.OffMeshReach.value_or(config.offMeshHorizReach);
     config.walkableSlopeAngle   = data.WalkableSlopeAngle.value_or(config.walkableSlopeAngle);
     config.agentMaxClimb        = data.AgentMaxClimb.value_or(config.agentMaxClimb);
+    config.cardianWalls         = cardian::walls::load(static_cast<uint16>(GetID())); // CARDIAN: the collision walls
 
     const auto seed = [&](const position_t& position)
     {
@@ -537,8 +539,10 @@ auto CZone::LoadNavMesh() -> Task<void>
 {
     auto       navMesh = std::make_unique<DetourNavMesh>(static_cast<uint16>(GetID()));
     const auto file    = fmt::format("navmeshes/{}.nav", getName());
+    // CARDIAN: a zone with collision walls builds its navmesh with them, never writing upstream's file
+    const bool walled  = cardian::walls::present(static_cast<uint16>(GetID()));
 
-    if (!config_.rebuildNavmeshes && navMesh->load(file))
+    if (!walled && !config_.rebuildNavmeshes && navMesh->load(file)) // CARDIAN: walled
     {
         navMesh_ = std::move(navMesh);
         co_return;
@@ -553,7 +557,14 @@ auto CZone::LoadNavMesh() -> Task<void>
     auto* dtNavMesh = co_await builder.buildAsync(scheduler_, getName(), static_cast<uint16>(GetID()), config);
     if (dtNavMesh && navMesh->installNavMesh(dtNavMesh))
     {
-        navMesh->save(file);
+        // CARDIAN: a walled navmesh is saved apart, for the development tools to draw
+        navMesh->save(walled ? cardian::walls::builtPath(static_cast<uint16>(GetID())) : file);
+        navMesh_ = std::move(navMesh);
+        co_return;
+    }
+
+    if (walled && navMesh->load(file)) // CARDIAN: a walled build that failed falls back to upstream's file
+    {
         navMesh_ = std::move(navMesh);
         co_return;
     }
@@ -579,7 +590,8 @@ void CZone::RebuildNavMesh(const NavMeshConfig& configIn)
             auto  navMesh   = std::make_unique<DetourNavMesh>(zoneID);
             if (dtNavMesh && navMesh->installNavMesh(dtNavMesh))
             {
-                navMesh->save(fmt::format("navmeshes/{}.nav", zoneName));
+                // CARDIAN: a walled navmesh is saved apart, never over upstream's file
+                navMesh->save(config.cardianWalls.empty() ? fmt::format("navmeshes/{}.nav", zoneName) : cardian::walls::builtPath(zoneID));
                 navMesh_ = std::move(navMesh);
             }
         });
