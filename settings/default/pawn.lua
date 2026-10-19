@@ -145,6 +145,13 @@ xi.settings.pawn =
     -- it (the map log carries it always, as '[mission]')
     MISSION_TRACE = false,
 
+    -- The move trace in the map log: a cardian of a real player's party who
+    -- lands where the navmesh does not join to where she stood a tick
+    -- before -- a border crossed, a height off the mesh's, a rise past a
+    -- slope -- or who takes a jump link, with what moved her
+    -- (pawn_walker.cpp MoveTrace)
+    MOVE_TRACE = false,
+
     -- Trading with a cardian -- give, take, give and use -- reaches
     -- TRADE_RANGE yalms, in the same zone: no item teleportation.
     TRADE_RANGE = 20,

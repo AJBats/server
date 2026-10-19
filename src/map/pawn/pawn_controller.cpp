@@ -4655,6 +4655,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     TracyZoneString(POwner->getName());
 
     m_Tick = tick;
+    MoveTrace();
     m_Gambits->TickBehaviors();
     const bool kneelingNow = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
     if (m_Rest.observedDown && !kneelingNow)
