@@ -154,7 +154,9 @@ namespace pawn::porter
         // Where riders snagged, learned on every ride and kept
         // (cardian_porter_snags): every route in a zone keeps clear of its
         // spots, where the mesh goes and a client does not -- a tangle of
-        // little cliffs gathers several. A soak fills it ahead of play
+        // little cliffs gathers several. A soak fills it ahead of play.
+        // pawn.PORTER_LEARN_SNAGS off: none is read, none learned, the
+        // table kept as it is -- a ride on the navmesh (and its walls) alone
         struct Learned
         {
             uint32 id = 0;
@@ -185,6 +187,11 @@ namespace pawn::porter
                              "`hits` int(10) unsigned NOT NULL DEFAULT 1, "
                              "`last_hit` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, "
                              "PRIMARY KEY (`id`), KEY `zone` (`zone`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            if (!settings::get<bool>("pawn.PORTER_LEARN_SNAGS"))
+            {
+                ShowInfoFmt("porter: learned snag spots off (pawn.PORTER_LEARN_SNAGS): routes keep to the navmesh alone");
+                return;
+            }
             std::size_t count = 0;
             if (const auto rset = db::preparedStmt("SELECT DISTINCT zone FROM cardian_porter_snags"); rset)
             {
@@ -205,6 +212,11 @@ namespace pawn::porter
         // A snag where he stands: its spot counted again, or learned
         void learnSnag(const uint16 zone, const Point& at)
         {
+            if (!settings::get<bool>("pawn.PORTER_LEARN_SNAGS"))
+            {
+                ShowInfoFmt("porter: snag in zone {} at ({:.1f}, {:.1f}, {:.1f}), not learned (pawn.PORTER_LEARN_SNAGS off)", zone, at.x, at.y, at.z);
+                return;
+            }
             auto& spots = learned[zone];
             for (const auto& l : spots)
             {

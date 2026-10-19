@@ -35,6 +35,12 @@ xi.settings.pawn =
     -- the player's own chocobo, as PAWN_SPEED was against his run.
     RIDE_SPEED = 136,
 
+    -- The chocobo porter learns where riders snag (cardian_porter_snags) and
+    -- keeps every later route in that zone clear of the spots. false: no
+    -- spot is read or learned, the table kept as it is, so a ride keeps to
+    -- the navmesh (and its collision walls) alone -- the soak's baseline
+    PORTER_LEARN_SNAGS = true,
+
     -- Direct control (ROADMAP C): a steered cardian's position packet leads
     -- her by this much of her run, along her facing and never past the ring
     -- -- what the client takes to ease an entity onto a packet position, so
