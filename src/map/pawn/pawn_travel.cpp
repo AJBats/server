@@ -45,6 +45,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -513,6 +514,68 @@ namespace pawn::travel
             route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces, &zm->seams);
         }
         return route;
+    }
+
+    auto allowsMount(const xi::ZoneId zone) -> bool
+    {
+        if (!worldBuilt)
+        {
+            buildWorld();
+        }
+        return world().mountZones.contains(static_cast<uint16>(zone));
+    }
+
+    auto rideableCities() -> std::vector<xi::ZoneId>
+    {
+        if (!worldBuilt)
+        {
+            buildWorld();
+        }
+        const auto&                built = world();
+        std::unordered_set<uint16> seen;
+        std::vector<xi::ZoneId>    cities;
+        for (const auto& line : built.lines)
+        {
+            if (!built.mountZones.contains(line.zone) || seen.contains(line.to))
+            {
+                continue;
+            }
+            auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(line.to));
+            if (PZone == nullptr || (PZone->GetTypeMask() & xi::ZoneType::City) == xi::ZoneType::Unknown)
+            {
+                continue;
+            }
+            seen.insert(line.to);
+            cities.push_back(static_cast<xi::ZoneId>(line.to));
+        }
+        return cities;
+    }
+
+    auto rideCosts(const xi::ZoneId from, const position_t& at, const std::vector<RideGoal>& goals) -> std::vector<std::optional<float>>
+    {
+        if (!worldBuilt)
+        {
+            buildWorld();
+        }
+        const auto                    fromKey = static_cast<uint16>(from);
+        std::vector<sz::RideTarget>   targets;
+        targets.reserve(goals.size());
+        for (const auto& goal : goals)
+        {
+            const auto key = static_cast<uint16>(goal.zone);
+            targets.push_back({ .zone  = key,
+                                .piece = goal.point.has_value() ? std::optional<sz::Piece>(bodyPiece(key, *goal.point)) : std::nullopt,
+                                .point = goal.point });
+        }
+        // one search of the whole world graph on the map's thread: a slow one is said
+        const auto began = std::chrono::steady_clock::now();
+        auto       costs = sz::rideCosts(world(), fromKey, bodyPiece(fromKey, at), at, targets);
+        const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+        if (took >= 50)
+        {
+            ShowInfoFmt("pawn: travel: {} ride times from zone {} took {} ms", goals.size(), fromKey, took);
+        }
+        return costs;
     }
 
     auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>

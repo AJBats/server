@@ -135,6 +135,8 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/town_errands.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/auction_purchase.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/riding.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/walker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/porter.cpp
 )
 
 set(MAP_CORE_SOURCES

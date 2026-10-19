@@ -104,6 +104,29 @@ namespace pawn
         auto routeToSafeGround(xi::ZoneId zone, const position_t& from, const std::vector<cardian::route::Hazard>& hazards,
                                const cardian::route::HazardSight& sight, float within) -> std::optional<cardian::route::Route>;
 
+        // Whether a zone allows a mount, as the world's travel map was built
+        // from the zones' own flags
+        auto allowsMount(xi::ZoneId zone) -> bool;
+
+        // The cities a rider reaches through a line from a zone that allows a
+        // mount: every zone of type City such a line leads into (the porter's
+        // cities, porter.h)
+        auto rideableCities() -> std::vector<xi::ZoneId>;
+
+        // A place a rider is timed to: a zone, and the point in it the ride
+        // ends at, or none for a city, entered through its gate
+        struct RideGoal
+        {
+            xi::ZoneId                zone{};
+            std::optional<position_t> point;
+        };
+
+        // The chocobo porter's ride times (porter.h): from `at` in `from` to
+        // every goal at once, mounted through the zones that allow a mount
+        // (subzone_graph.h rideCosts), each in yalms ridden with a zone
+        // line's crossing as kLineCost of them; none where no ride reaches it
+        auto rideCosts(xi::ZoneId from, const position_t& at, const std::vector<RideGoal>& goals) -> std::vector<std::optional<float>>;
+
         // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
         // at 0 (BFS from all of them at once); a zone no line reaches is absent
         auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>;

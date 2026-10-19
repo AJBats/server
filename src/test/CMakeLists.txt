@@ -123,6 +123,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pull_tests.cpp # CARDIAN: the puller: the camp's gate, the con and the pull line, the tagging spot, the shot and the run, her kit
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_town_errand_tests.cpp # CARDIAN: the town errands: who goes, needs, stop order, lines, leaving the zone
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_riding_tests.cpp # CARDIAN: a cardian on a chocobo: the license and when she gets down
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_porter_tests.cpp # CARDIAN: the porter tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

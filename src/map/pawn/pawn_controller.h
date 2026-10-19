@@ -27,6 +27,7 @@
 #include "engage_math.h"
 #include "glance_math.h"
 #include "herd_math.h"
+#include "line_approach.h"
 #include "pawn.h"
 #include "pawn_danger.h"
 #include "pawn_gambits.h"
@@ -36,6 +37,7 @@
 #include "tp_clock.h"
 #include "rest_math.h"
 #include "safe_walk.h"
+#include "walker.h"
 #include "warp_hold.h"
 
 #include "ai/controllers/player_controller.h"
@@ -75,7 +77,7 @@ class CSpell;
 // interpreter over her rows (seeded once from her job's defaults), and the
 // fights she takes from her Attack rows (the engage door, engage_math.h);
 // an engaged pawn also auto-attacks via the stock battle engine.
-class CPawnController : public CPlayerController
+class CPawnController : public CPlayerController, private pawn::WalkHost
 {
 public:
     CPawnController(CCharEntity* PPawn);
@@ -567,8 +569,8 @@ public:
 
     static constexpr float RoamDistance     = 3.0f;
     static constexpr float LockOnSlack      = 2.0f; // lock-on holds this far beyond melee reach, so a step out of reach does not drop it
-    static constexpr float TransferDistance = 3.0f;
-    static constexpr float CrossingSlack    = 40.0f;
+    static constexpr float TransferDistance = cardian::trek::kTransferDistance;
+    static constexpr float CrossingSlack    = cardian::trek::kCrossingSlack;
 
 private:
     auto DoCombatTick(timer::time_point tick) -> Task<void>;
@@ -779,16 +781,8 @@ private:
     void FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& anchor, const position_t& point);
 
     // What the danger map made of a walk, the word the rest of her code
-    // reads: a spell is not cast while she steps out of a ring, a mover
-    // knows its point was moved
-    enum class AvoidAction : uint8
-    {
-        None,
-        Escape, // she stands in a ring: walking out of it first
-        Slot,   // her point is in a ring: walking to the safe ground nearest it
-        Hold,   // held short of a choke, or her fight's mob is in another's ring: waiting at the safe ground nearest it
-        Detour, // the way there goes round a ring, or sneaks by
-    };
+    // reads (walker.h)
+    using AvoidAction = pawn::WalkAction;
 
     // Movers propose an intent. Move applies spell positioning; Walk plans
     // and walks it round the danger map (pawn_walker.cpp), and keeps her
@@ -830,17 +824,11 @@ private:
     };
     auto OrderApproach() -> std::optional<Intent>; // the queued order's walk in, while one is on (see OrderOutOfReach)
 
-    // One walk's tick: planned, or planned again when the point moves, a mob
-    // comes onto her route or she stands in a ring, and handed to her path
-    // finder. `target` is where the walk goes now: the point, or with the
-    // point inside a ring the safe ground nearest it. Her path finder is
-    // set; Walk steps it
-    struct WalkResult
-    {
-        cardian::walk::Outcome outcome = cardian::walk::Outcome::Walking;
-        position_t             target{};
-        AvoidAction            action = AvoidAction::None; // what the danger map made of the walk, which her other code reads
-    };
+    // One walk's tick, through her walker (walker.h): planned, or planned
+    // again when the point moves, a mob comes onto her route or she stands
+    // in a ring, and handed to her path finder. Her path finder is set; Walk
+    // steps it
+    using WalkResult = pawn::Walker::Result;
     auto SafeWalk(const position_t& point, const cardian::walk::Rules& rules) -> WalkResult;
 
     // The danger map's balls for a walk, `scan` yalms round her, with her
@@ -850,13 +838,12 @@ private:
     // Her rows' danger profile, as the danger map reads it this tick
     auto DangerProfile(bool forceAvoid) -> pawn::danger::Profile;
 
-    // Holding short of a choke, once a second: a sneak-by past the mobs
-    // that hold it (pawn/sneak.h), toward the walk's target. True when she
-    // sets out on one
-    auto WalkSneakBy(const cardian::walk::Rules& rules) -> bool;
-
-    // A sneak-by under way: walked past the mobs; false once it is over
-    auto WalkHopTick(bool racing) -> bool;
+    // What her walker asks of her (walker.h WalkHost): her rows' balls
+    // (WalkSpheres); a sneak-by's step is no stall at her trek's line; past
+    // the choke she said she was stuck at, she says she got by
+    auto walkBalls(const cardian::walk::Rules& rules, float scan) -> std::vector<pawn::danger::Sphere> override;
+    void sneakStepped() override;
+    void sneakedThrough() override;
 
     // A trek's step through the walker (ROADMAP W2): the line proposed
     // as any mover proposes its point, and the walk's outcome read for what
@@ -886,9 +873,8 @@ private:
     void ApplyRetreat(bool on);          // the retreat bound on her, or lifted
 
     // Whether a ball's mob sees a point (no wall between), memoised per tick
+    // by her walker
     auto SeesBall(const pawn::danger::Sphere& sphere, const position_t& point) const -> bool;
-    mutable std::unordered_map<uint64_t, bool> m_BallSight;
-    mutable timer::time_point                  m_BallSightAt;
 
     // She stands in a ring whose mob sees her, by the rules' balls
     auto WalkExposed(const cardian::walk::Rules& rules) -> bool;
@@ -1332,11 +1318,12 @@ private:
     std::unique_ptr<pawn::CGambits>   m_Gambits;
     bool                              m_BrainLoaded = false;
 
+    // Her walker (walker.h): every walk of hers is planned and walked by it
+    pawn::Walker m_Walker;
+
     timer::time_point                 m_LastRangedAttackTime;
     timer::time_point                 m_LastTravelDebugTime;
-    timer::time_point                 m_TravelProgressTime;
-    float                             m_TravelBestDist = 0.0f;
-    xi::ZoneId                        m_TravelHopZone{};
+    cardian::trek::LineApproach       m_LineApproach; // her trek's approach to its line: when it is taken from short of it (line_approach.h)
     // The hop her travel chose as she set out, from this zone toward that
     // one, kept while she walks it (TravelTick): chosen afresh every tick, the
     // nearest line could change under her mid-walk. Let go once TravelTick
@@ -1368,52 +1355,14 @@ private:
 
     // The rings of the mobs near her at her trek's last look, for the log
     // alone: the moment one turns on her, how far inside its ring she stood
-    // (NoteAggro). Nothing she does reads it
-    struct TrekRing
-    {
-        uint32 mob    = 0;
-        float  radius = 0.0f;
-        float  off    = 0.0f; // how far the mob stood from her
-    };
-    std::vector<TrekRing> m_TrekRingsNear;
+    // (NoteAggro). Nothing she does reads it. Her walker's
+    using TrekRing = pawn::Walker::RingNear;
+    std::vector<TrekRing>& m_TrekRingsNear{ m_Walker.ringsNear };
 
     // The walker's walk (SafeWalk): its route, kept while it holds and
-    // planned again as the trek's was
-    struct PlannedWalk
-    {
-        std::vector<position_t>          route;          // her spot as it was planned, then its waypoints
-        size_t                           next   = 0;     // the waypoint she walks to next
-        int                              danger = -1;    // the first waypoint reached through a ring, -1 for none
-        int                              hold   = -1;    // the end of her walk while she holds short of it, -1 for no spot out of every ring
-        bool                             known  = false;
-        bool                             failed = false; // no route could be planned to `goal`: asked again in a while
-        bool                             detour = false; // the route goes round a ring the straight way would cross
-        position_t                       goal{};         // the point asked for
-        position_t                       target{};       // where the route goes: the point, or the safe ground nearest it
-        xi::ZoneId                       zone{};
-        cardian::walk::Rules             rules{};
-        timer::time_point                plannedAt;
-        timer::time_point                checkedAt;      // last held against where the mobs stand
-        timer::time_point                caughtLogAt;    // a plan for a ring on her, as logged: once a second
-        timer::time_point                loggedAt;       // the everyday walk's line, once a second
-        bool                             walking = false; // handed to her path finder
-        size_t                           end     = 0;     // ... up to here
-        std::optional<timer::time_point> heldSince;
-        position_t                       heldAt{};        // where she stood holding, last tick she held: a new plan holding her there holds on, its clock kept
-        std::vector<position_t>          backOff;        // the way to the nearest ground out of every ring, with no spot short of a choke that is
-        bool                             wholeHeld = false; // the last plan of the whole way found it held
-        timer::time_point                wholeAt;
-        std::vector<position_t>          hop;             // a sneak-by under way: her walk past the mobs, its end last
-        xi::ZoneId                       hopZone{};
-        timer::time_point                hopAt;
-        float                            hopSeconds = 0.0f;
-        bool                             hopWalking = false;
-        timer::time_point                sneakLookedAt;
-        timer::time_point                sneakSaidAt;
-        cardian::walk::Outcome           outcome = cardian::walk::Outcome::Walking; // what the walk came to at its last tick, for the mover that asked
-        timer::time_point                outcomeAt;
-    };
-    PlannedWalk          m_Plan;
+    // planned again as the trek's was. Her walker's
+    using PlannedWalk = pawn::Walker::Plan;
+    PlannedWalk&         m_Plan{ m_Walker.plan };
     const CBattleEntity* m_DangerIgnore = nullptr; // the fight's own mob, as the movers named it to RefreshDangers this tick
     timer::time_point    m_DangerIgnoreAt;
 
@@ -1822,12 +1771,13 @@ private:
     void RideTick();
     bool m_Riding = false; // she rode as of the last RideTick
 
-    // Her speed set: her base speed on foot; on her chocobo, which the game
-    // moves at map.MOUNT_SPEED / 2 scaled by Mod::MOUNT_MOVE whatever her
-    // base speed, the MOUNT_MOVE that makes it `wanted` (her gear's own
-    // kept, m_RideMod the share that is hers from here, taken back on foot)
+    // Her speed set: her base speed on foot. On her chocobo her speed stays
+    // the game's mount speed (map.MOUNT_SPEED / 2 by Mod::MOUNT_MOVE), the
+    // number every client is told and draws a rider by, as a real player's
+    // is; her path steps at `wanted` through its speed scale (SyncRideScale)
     void  SetRunSpeed(uint8 wanted);
-    int16 m_RideMod = 0;
+    void  SyncRideScale();
+    uint8 m_WantedSpeed = 0;
 
     // How her trek travels: by a stable's chocobo when she holds the license
     // and is on foot, riding when she rides (pawn_travel.h TravelRide)
@@ -1837,7 +1787,6 @@ private:
     // its set-down for the caller to make; else the stable is given up for a
     // while and the way chosen afresh
     auto       RentAt(const pawn::TravelHop& stable) -> bool;
-    position_t m_TravelHopWalkTo{}; // where the hop she tracks progress to stands
 
     // An order that started, the game's word on it heard for kHeels after:
     // its name for the log, its key for the note, when it was tried, and the

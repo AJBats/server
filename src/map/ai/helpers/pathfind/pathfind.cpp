@@ -408,6 +408,11 @@ auto CPathFind::SetStepScale(const float scale) -> void // CARDIAN
     stepScale_ = scale;
 }
 
+auto CPathFind::SetSpeedScale(const float scale) -> void // CARDIAN
+{
+    speedScale_ = scale;
+}
+
 auto CPathFind::StepBudget() const -> float
 {
     // Worms underground get a synthetic speed (their normal speed is 0).
@@ -422,7 +427,7 @@ auto CPathFind::StepBudget() const -> float
         return static_cast<float>(baseSpeed);
     }();
 
-    return speed * kYalmsPerSecondPerSpeed * std::chrono::duration<float>(kLogicUpdateInterval).count() * stepScale_; // CARDIAN: a steered cardian's fraction
+    return speed * kYalmsPerSecondPerSpeed * std::chrono::duration<float>(kLogicUpdateInterval).count() * stepScale_ * speedScale_; // CARDIAN: a steered cardian's fraction, a rider's pace
 }
 
 auto CPathFind::StepToInternal(const position_t& pos, bool run, float stopShort) -> void
