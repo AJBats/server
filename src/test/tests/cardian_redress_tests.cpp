@@ -253,6 +253,33 @@ TEST_CASE("Live census: a body standing takes a ding only out of sight, free and
     CHECK(dingStep({ .job = kWAR, .level = 21 }, partied) == DingStep::Wait);
 }
 
+TEST_CASE("Live census: a body held by his linkshell's pearl waits only in his party", "[cardian][redress][live]")
+{
+    // his party holds anyone back; his contract a body wearing no pearl
+    CHECK(dingWaitsForPlayer(true, false, false));
+    CHECK(dingWaitsForPlayer(true, true, true));
+    CHECK(dingWaitsForPlayer(false, true, false));
+    // his pearl holds her for him all the time -- after she leaves his party, after a visit, while he is
+    // logged out -- and her career goes on out of sight meanwhile
+    CHECK_FALSE(dingWaitsForPlayer(false, true, true));
+    CHECK_FALSE(dingWaitsForPlayer(false, false, false));
+    // held so and faded, the census writes her ding; standing, the world's own rules (out of his sight)
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, { .withPlayer = dingWaitsForPlayer(false, true, true) }) == DingStep::Claim);
+    auto standing       = standingFree();
+    standing.withPlayer = dingWaitsForPlayer(false, true, true);
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, standing) == DingStep::Apply);
+    standing.seen = true;
+    CHECK(dingStep({ .job = kWAR, .level = 21 }, standing) == DingStep::Wait);
+}
+
+TEST_CASE("Live census: a level venture's ding is only ever claimed for the census", "[cardian][redress][live]")
+{
+    CHECK(kVentureNote == "venture");
+    // the map holds no body of hers: the census writes it; a body it holds waits, never applied or set aside
+    CHECK(ventureDingStep(false) == DingStep::Claim);
+    CHECK(ventureDingStep(true) == DingStep::Wait);
+}
+
 TEST_CASE("Live census: a level she has already is set aside", "[cardian][redress][live]")
 {
     auto risen = standingFree();

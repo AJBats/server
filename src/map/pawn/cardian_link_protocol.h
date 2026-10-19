@@ -34,7 +34,11 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 93: SHOUT_RESPONDER's sjob and slvl,
+// compatible, the user, 2026-09-14). 95: a level venture's Venture Report --
+// VENTURE_REPORT's level*, expPerHour, expKept and points, VENTURE_SKILL;
+// 94: the level venture -- CLUB_MEMBER's
+// unlocked, levelCap and level* fields, CL_CAN_SEND_LEVEL, SEND_ERRAND's job
+// and level offered; 93: SHOUT_RESPONDER's sjob and slvl,
 // her support job on the shout's list; 92: MOBS_NEAR's kinds and MOB_NEAR's
 // ally, the members of his party near her too, for a friendly far pick; 91: MOBS_NEAR and MOB_NEAR, the monsters
 // near a party member as the server has them (a far pick's list), and
@@ -170,7 +174,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 93 };
+enum { CL_PROTOCOL = 95 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -363,7 +367,7 @@ enum
     CL_S_PEARLED_ELSEWHERE = 0x01E4, // she wears a pearl of another shell
     CL_S_ON_ERRAND         = 0x01E5, // she is away on an errand
     CL_S_NO_ERRAND         = 0x01E6, // she is on no errand
-    CL_S_NOT_OFFERED       = 0x01E7, // not an errand she can be sent on: a kind not built, or not for her, a quest he has not done, a rank not between hers and the cap
+    CL_S_NOT_OFFERED       = 0x01E7, // not an errand she can be sent on: a kind not built, or not for her, a quest he has not done, a rank not between hers and the cap, a job she has not unlocked or a level not above hers and at most his highest
     CL_S_DONE_ALREADY      = 0x01E8, // she has done that already
     CL_S_NOT_STANDING      = 0x01E9, // she has no body in the world now
     CL_S_NO_PEARL_TO_GIVE  = 0x01EA, // he holds no Linkpearl of his shell to trade: he makes one from his linkshell first
@@ -2530,6 +2534,7 @@ enum
     CL_T_VENTURE_ITEM     = 0x0A15,
     CL_T_VENTURE_NEWS     = 0x0A16,
     CL_T_PROFESSION_SLOT  = 0x0A17,
+    CL_T_VENTURE_SKILL    = 0x0A18,
 };
 
 // What she is to him
@@ -2556,7 +2561,7 @@ enum
     CL_ERRAND_NONE  = 0,
     CL_ERRAND_GEAR  = 1, // gear up: the auction house's re-dress, and her scrolls from her nation's guard
     CL_ERRAND_QUEST = 2, // a quest he has done, from his log
-    CL_ERRAND_LEVEL = 3, // a level on one of her jobs: reserved, not offered yet
+    CL_ERRAND_LEVEL = 3, // a level on one of her unlocked jobs, above hers and at most his highest on any job: away until she reaches it
     CL_ERRAND_MONEY = 4, // earning money at a profession of hers: a fishing venture, for now
     CL_ERRAND_RANK  = 5, // her nation's missions, to a rank he picks: at most his own
 };
@@ -2579,6 +2584,7 @@ enum
     CL_CAN_GIVE_PEARL  = 0x10, // she takes a pearl of his shell from him by the game's own trade (once he holds one and stands by her)
     CL_CAN_BREAK_PEARL = 0x20,
     CL_CAN_SEND_RANK   = 0x40, // her rank is below the catch-up's cap (rankCap)
+    CL_CAN_SEND_LEVEL  = 0x80, // one of her unlocked jobs is below his highest level on any job (levelCap): a level venture is hers to be sent on
 };
 
 // More of what the page may do with a member now: CLUB_MEMBER's can2
@@ -2624,7 +2630,15 @@ typedef struct cl_club_member
     uint16_t  affinity;           // one of the world's: her affinity with him (cardian_party_memory)
     uint16_t  missionsTogether;   // one of the world's: the story missions the two have completed together
     uint8_t   can2;               // CL_CAN2_*
-    uint8_t   ventureDone;        // CL_PROF_*: her last venture's, over and its report unread since; 0 none
+    uint8_t   ventureDone;        // CL_PROF_*: her last venture's, over and its report unread since (CL_PROF_LEVEL a level venture's); 0 none
+    uint32_t  unlocked;           // her jobs unlocked: char_jobs.unlocked, a bit per job id (bit 0 the support job)
+    uint8_t   levelCap;           // his highest level on any job: no level venture takes her past it
+    uint8_t   levelJob;           // a level venture: the job she levels; 0 on no level venture
+    uint8_t   levelFrom;          // ... her level on it as she was sent
+    uint8_t   levelNow;           // ... her level on it now
+    uint8_t   levelTarget;        // ... the level she is back at
+    uint8_t   levelShare;         // ... away: the share of her next level earned, in hundredths
+    uint8_t   spare3[2];
 } cl_club_member;
 
 // His club: each member a CLUB_MEMBER (CL_F_MORE), then each recruit, then
@@ -2697,8 +2711,8 @@ typedef struct cl_errands
 // Send her on an errand. CL_ERRAND_QUEST names its quest (goal, log, id);
 // CL_ERRAND_RANK the rank; CL_ERRAND_MONEY the profession, the spot (zone and
 // area, one of VENTURE_SPOTS'), the rod (one of PROFESSION_TOOLS'), the bait
-// (one of VENTURE_BAITS') and the hours; level and job are CL_ERRAND_LEVEL's,
-// reserved. Answered with the outcome
+// (one of VENTURE_BAITS') and the hours; CL_ERRAND_LEVEL the job and the
+// level to reach. Answered with the outcome
 typedef struct cl_send_errand
 {
     cl_header h;
@@ -2706,9 +2720,9 @@ typedef struct cl_send_errand
     uint8_t   errand;     // CL_ERRAND_*
     uint8_t   goal;       // CL_ERRAND_QUEST: CL_GOAL_QUEST
     uint8_t   log;
-    uint8_t   level;
+    uint8_t   level;      // CL_ERRAND_LEVEL: the level to reach on `job`
     uint16_t  id;
-    uint8_t   job;
+    uint8_t   job;        // CL_ERRAND_LEVEL: one of her unlocked jobs
     uint8_t   rank;       // CL_ERRAND_RANK: the rank to reach
     uint8_t   profession; // CL_ERRAND_MONEY: CL_PROF_*
     uint8_t   hours;      // CL_ERRAND_MONEY: 1 or 2, hours of the game clock (Earth hours, held by a pause)
@@ -2768,6 +2782,7 @@ enum
     CL_PROF_BONECRAFT    = 11,
     CL_PROF_ALCHEMY      = 12,
     CL_PROF_COOKING      = 13,
+    CL_PROF_LEVEL        = 0xFF, // no profession: a level venture's, as CLUB_MEMBER's ventureDone names it
 };
 
 // Where a profession stands with her
@@ -2998,8 +3013,10 @@ typedef struct cl_venture_item
     uint32_t  value;    // sold: what it fetched; else what it should fetch, estimated
 } cl_venture_item;
 
-// Her last money venture, and nothing of an earlier one: each thing of it a
-// VENTURE_ITEM (CL_F_MORE), then this with the venture's sums
+// Her last venture, and nothing of an earlier one. A money venture: each
+// thing of it a VENTURE_ITEM (CL_F_MORE), then this with its sums. A level
+// venture (levelJob not 0): each skill it raised a VENTURE_SKILL, then this
+// with its levels, its pace and the conquest points it earned
 typedef struct cl_venture_report
 {
     cl_header h;
@@ -3020,7 +3037,28 @@ typedef struct cl_venture_report
     uint32_t  supplies;    // answered: what it used up -- bait gone, rods broken -- at their prices
     uint32_t  spent;       // answered: the gil paid for its supplies, hers and his
     char      areaName[48]; // answered: the water's own name when its zone has several, for people; empty else
+    uint8_t   levelJob;    // answered: a level venture's job; 0 for a money venture
+    uint8_t   levelFrom;   // answered: her level on it as she set out
+    uint8_t   levelNow;    // answered: her level on it now, or as she came back
+    uint8_t   levelTarget; // answered: the level she was sent to reach
+    uint8_t   levelShare;  // answered: away, the percent of her next level earned; called back, the percent kept as experience
+    uint8_t   spare2;
+    uint16_t  nextMinutes; // answered: away, the minutes her next level is still off at her pace; 0 once back
+    uint32_t  expPerHour;  // answered: away, her pace in experience an hour at her level now; 0 once back
+    uint32_t  expKept;     // answered: called back, the experience kept toward her next level
+    uint32_t  points;      // answered: the conquest points the venture has earned her
 } cl_venture_report;
+
+// A skill a level venture raised, an answer to VENTURE_REPORT: her skill as
+// she set out and now, in tenths of a level as the game counts them
+typedef struct cl_venture_skill
+{
+    cl_header h;
+    uint16_t  skill; // the game's skill id
+    uint16_t  from;
+    uint16_t  to;
+    uint16_t  spare;
+} cl_venture_skill;
 
 // ---- 0x0Bxx: the linkshell bank --------------------------------------------
 //

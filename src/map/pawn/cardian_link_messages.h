@@ -167,6 +167,7 @@ namespace cardian::link
     X(VENTURE_PAID, cl_venture_paid)         \
     X(VENTURE_REPORT, cl_venture_report)     \
     X(VENTURE_ITEM, cl_venture_item)         \
+    X(VENTURE_SKILL, cl_venture_skill)       \
     X(VENTURE_NEWS, cl_venture_news)         \
     X(PROFESSION_SLOT, cl_profession_slot)   \
     X(BANK, cl_bank)                         \

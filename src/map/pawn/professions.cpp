@@ -460,7 +460,7 @@ namespace pawn::professions
                 return;
             }
             uint8 count = 0;
-            for (const auto& spot : pawn::venturespots::spotsOf(ask.cardian))
+            for (const auto& spot : pawn::venturespots::spotsOf(PChar, ask.cardian))
             {
                 if (count == UINT8_MAX)
                 {
@@ -566,12 +566,55 @@ namespace pawn::professions
         // sell -- it is cleared (hasReport)
         void report(CCharEntity* PChar, const cl_venture_report& ask, Reply& reply)
         {
-            if (!mayTakeUp(PChar, ask.cardian))
+            // his alts and his own cardians, and one of the world's wearing his
+            // pearl for a level venture's report alone
+            const auto member = pawn::club::memberOf(PChar, ask.cardian);
+            if (!member.has_value() || (*member != Member::Alt && *member != Member::Owned && *member != Member::Wild))
             {
                 reply.finish(ask, CL_S_NOT_IN_CLUB);
                 return;
             }
             auto done = ask;
+            // A level venture's report, away on one or back from one unread:
+            // its levels, its pace, its conquest points and each skill it raised
+            if (const auto level = pawn::errands::levelReportOf(ask.cardian); level.has_value())
+            {
+                done.phase       = level->phase;
+                done.levelJob    = level->job;
+                done.levelFrom   = level->from;
+                done.levelNow    = level->now;
+                done.levelTarget = level->target;
+                done.levelShare  = level->share;
+                done.minutes     = level->minutes;
+                done.expPerHour  = level->expPerHour;
+                done.nextMinutes = level->nextMinutes;
+                done.expKept     = level->expKept;
+                done.points      = level->points;
+                uint8 count      = 0;
+                for (const auto& rise : level->skills)
+                {
+                    if (count == UINT8_MAX)
+                    {
+                        break;
+                    }
+                    auto row  = make<cl_venture_skill>();
+                    row.skill = rise.skill;
+                    row.from  = rise.from;
+                    row.to    = rise.to;
+                    reply.more(row);
+                    ++count;
+                }
+                done.count = count;
+                reply.finish(done, CL_S_OK);
+                return;
+            }
+            if (*member == Member::Wild)
+            {
+                done.phase = CL_VENTURE_NONE;
+                done.count = 0;
+                reply.finish(done, CL_S_OK);
+                return;
+            }
             if (const auto rset = db::preparedStmt("SELECT profession, phase, zone, area, area_name, left_at, length, minutes, catches, skill_from, skill_to, "
                                                    "gil_earned, supplies, spent FROM cardian_venture_report WHERE charid = ?",
                                                    ask.cardian);
@@ -988,12 +1031,20 @@ namespace pawn::professions
 
     auto hasReport(const uint32 charid) -> bool
     {
+        if (pawn::errands::hasLevelReport(charid))
+        {
+            return true;
+        }
         const auto rset = db::preparedStmt("SELECT 1 FROM cardian_venture_report WHERE charid = ? AND seen < ?", charid, static_cast<uint8>(CL_VENTURE_DONE));
         return rset && rset->next();
     }
 
     auto ventureDone(const uint32 charid) -> uint8
     {
+        if (pawn::errands::levelVentureDone(charid))
+        {
+            return CL_PROF_LEVEL;
+        }
         const auto rset = db::preparedStmt("SELECT profession FROM cardian_venture_report WHERE charid = ? AND phase IN (?, ?) AND seen < ?", charid,
                                            static_cast<uint8>(CL_VENTURE_SELLING), static_cast<uint8>(CL_VENTURE_DONE), static_cast<uint8>(CL_VENTURE_SELLING));
         return rset && rset->next() ? rset->get<uint8>("profession") : 0;

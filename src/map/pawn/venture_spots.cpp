@@ -22,6 +22,7 @@
 #include "venture_spots.h"
 
 #include "pawn.h"
+#include "riding.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -145,9 +146,17 @@ namespace pawn::venturespots
             return out;
         }
 
+        // Whether a mount may enter a zone: the zones she rides through
+        auto mountable(const uint16 zone) -> bool
+        {
+            auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(zone));
+            return PZone != nullptr && PZone->CanUseMisc(xi::ZoneMisc::Mount);
+        }
+
         // The zones she can walk to from `start` at her level, each with the
-        // zone lines it lies away
-        auto walkable(const uint16 start, const uint8 level) -> std::unordered_map<uint16, uint8>
+        // zone lines it lies away; `rides`: on a chocobo, any zone a mount
+        // may enter whatever its monsters
+        auto walkable(const uint16 start, const uint8 level, const bool rides) -> std::unordered_map<uint16, uint8>
         {
             const auto never = neverZones();
             std::unordered_map<uint16, uint8> hops{ { start, 0 } };
@@ -168,7 +177,7 @@ namespace pawn::venturespots
                         {
                             continue;
                         }
-                        if (const auto usual = usualLevel(to); usual.has_value() && *usual > level)
+                        if (const auto usual = usualLevel(to); usual.has_value() && *usual > level && !(rides && mountable(to)))
                         {
                             continue;
                         }
@@ -238,7 +247,7 @@ namespace pawn::venturespots
         }
     } // namespace
 
-    auto spotsOf(const uint32 charid) -> std::vector<Spot>
+    auto spotsOf(const CCharEntity* PPlayer, const uint32 charid) -> std::vector<Spot>
     {
         std::vector<Spot> out;
         const auto        here = standing(charid);
@@ -246,7 +255,7 @@ namespace pawn::venturespots
         {
             return out;
         }
-        const auto hops  = walkable(here->first, here->second);
+        const auto hops  = walkable(here->first, here->second, pawn::riding::licensedFor(PPlayer, charid));
         const auto never = neverZones();
         for (const auto& w : waters())
         {
@@ -256,6 +265,12 @@ namespace pawn::venturespots
             }
             if (const auto it = hops.find(w.zone); it != hops.end())
             {
+                // she fishes there an hour or two: a zone at her level or
+                // below, however she came, the zone she stands in aside
+                if (const auto usual = usualLevel(w.zone); it->second > 0 && usual.has_value() && *usual > here->second)
+                {
+                    continue;
+                }
                 auto spot = w;
                 spot.hops = it->second;
                 out.push_back(std::move(spot));
@@ -265,9 +280,9 @@ namespace pawn::venturespots
         return out;
     }
 
-    auto reaches(const uint32 charid, const uint16 zone, const uint16 area) -> bool
+    auto reaches(const CCharEntity* PPlayer, const uint32 charid, const uint16 zone, const uint16 area) -> bool
     {
-        const auto spots = spotsOf(charid);
+        const auto spots = spotsOf(PPlayer, charid);
         return std::ranges::any_of(spots, [&](const Spot& s) { return s.zone == zone && s.area == area; });
     }
 
