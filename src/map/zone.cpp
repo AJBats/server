@@ -607,6 +607,14 @@ auto CZone::xiMesh() const -> XiMesh*
     return xiMesh_.get();
 }
 
+// CARDIAN: the zone's navmesh config with its overrides, for a navmesh of Cardian's own
+auto CZone::cardianNavMeshConfig() const -> NavMeshConfig
+{
+    auto config = NavMeshConfig{};
+    applyNavMeshOverrides(config);
+    return config;
+}
+
 auto CZone::roamRegion(const std::string& name) const -> const RoamRegion*
 {
     const auto region = roamRegions_.find(name);

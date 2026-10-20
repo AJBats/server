@@ -26,6 +26,7 @@
 
 #include <map/ximesh/ximesh.h>
 
+#include "pawn/client_navmesh.h"  // CARDIAN
 #include "pawn/collision_walls.h" // CARDIAN
 
 #include <DetourCommon.h>
@@ -382,8 +383,8 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
     out.rad.assign(out.count, linkRadius);
     out.flags.assign(out.count, SAMPLE_POLYFLAGS_WALK);
     out.areas.assign(out.count, RC_WALKABLE_AREA);
-    // CARDIAN: in a zone with collision walls they go one way, down: no player climbs a ledge they span
-    out.dir.assign(out.count, config.cardianWalls.empty() ? DT_OFFMESH_CON_BIDIR : 0);
+    // CARDIAN: with collision walls, or for the client, they go one way, down: no player climbs a ledge they span
+    out.dir.assign(out.count, config.cardianWalls.empty() && !config.cardianClient ? DT_OFFMESH_CON_BIDIR : 0);
 
     return out;
 }
@@ -962,7 +963,8 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         return {};
     }
 
-    // CARDIAN: the collision walls, built in as barriers
+    // CARDIAN: the collision walls, built in as barriers after the zone's own triangles
+    const auto gathered = tileMesh.indices.size() / 3;
     cardian::walls::append(config.cardianWalls, gatherBmin, gatherBmax, tileMesh.verts, tileMesh.indices, tileMesh.areas, RC_NULL_AREA, RC_WALKABLE_AREA);
 
     //
@@ -1227,6 +1229,8 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         }
 
         offMesh = buildOffMeshConnections(*pmesh, *dmesh, config, tx, ty, barriers);
+        // CARDIAN: for the client, no drop through a tree or a rock the link spans
+        cardian::client::clearDrops(offMesh, tileMesh.verts, tileMesh.indices, gathered, config.cardianClient);
     }
 
     //
