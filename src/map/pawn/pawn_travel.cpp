@@ -439,7 +439,7 @@ namespace pawn::travel
         }
 
         const auto&    built = world();
-        const sz::Ride rider{ ride.mayRent, ride.mounted, ride.rideFactor };
+        const sz::Ride rider{ ride.mayRent, ride.mounted, ride.rideFactor, ride.stayMounted };
         auto           plan  = sz::plan(built, fromKey, here, at, toKey, there, toPoint, rider);
         const auto     moves = [](const sz::Plan& p)
         {
@@ -534,6 +534,17 @@ namespace pawn::travel
         if (!route.has_value())
         {
             route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach, &zm->faces, &zm->seams);
+        }
+        return route;
+    }
+
+    auto routeOn(const dtNavMesh& mesh, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards)
+        -> std::optional<cardian::route::Route>
+    {
+        auto route = cardian::route::searchAvoiding(mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, {});
+        if (!route.has_value())
+        {
+            route = cardian::route::searchAvoiding(mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, {});
         }
         return route;
     }

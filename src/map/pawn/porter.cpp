@@ -28,6 +28,8 @@
 #include "pawn_travel.h"
 #include "players.h"
 #include "porter_math.h"
+#include "porter_mesh.h"
+#include "route_search.h"
 #include "safe_walk.h"
 
 #include "common/database.h"
@@ -38,6 +40,7 @@
 #include "common/utils.h"
 #include "entities/char_entity.h"
 #include "lua/lua_base_entity.h"
+#include "navmesh/detour_navmesh.h"
 #include "packets/s2c/0x05b_wpos.h"
 #include "pause/pause.h"
 #include "status_effect.h"
@@ -50,9 +53,12 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 #include <optional>
+#include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -100,6 +106,7 @@ namespace pawn::porter
 
             // His route across it, his spot as it was planned first
             std::vector<Point>               route;
+            cardian::porter::Ground          ground; // the ground's heights under its legs
             Ends                             ends    = Ends::Stop;
             bool                             planned = false;
             std::size_t                      next    = 0; // the waypoint he rides to next
@@ -138,6 +145,7 @@ namespace pawn::porter
             j.hop.reset();
             j.gotDown = false;
             j.route.clear();
+            j.ground.clear();
             j.planned = false;
             j.next    = 0;
             j.sentTo  = 0;
@@ -259,6 +267,126 @@ namespace pawn::porter
             return Point{ p.x, p.y, p.z };
         }
 
+        // The ground under each leg of `way` (porter_math.h Ground), read off
+        // the zone's mesh: each leg followed over its own polygons from its
+        // start, as Detour's raycast walks it, a height every kGroundStep
+        // yalms. Where the mesh stops the walk -- a seam the route crosses, a
+        // hole -- the walk takes up again on the mesh past it, near the
+        // height last found; where it finds none -- a drop, a line's mouth
+        // beyond the mesh's edge -- the straight line between the leg's
+        // points stands in
+        auto groundOf(const dtNavMesh* mesh, const std::vector<position_t>& way) -> cardian::porter::Ground
+        {
+            cardian::porter::Ground ground(way.size());
+            // One query a thread, made again only for another mesh
+            thread_local dtNavMeshQuery   query;
+            thread_local const dtNavMesh* queryMesh = nullptr;
+            if (mesh == nullptr)
+            {
+                return ground;
+            }
+            if (queryMesh != mesh)
+            {
+                queryMesh = nullptr;
+                if (dtStatusFailed(query.init(mesh, 256)))
+                {
+                    return ground;
+                }
+                queryMesh = mesh;
+            }
+            dtQueryFilter filter;
+            filter.setIncludeFlags(0xFFFF);
+            filter.setExcludeFlags(cardian::route::kPolyDisabled); // as the route search: never a buried surface under the ground
+            const float                         extents[3]{ 0.5f, 1.5f, 0.5f };
+            const float                         again[3]{ 0.5f, 2.0f, 0.5f }; // taking the walk up again past a break
+            thread_local std::vector<dtPolyRef> polys(4096);
+            for (std::size_t i = 1; i < way.size(); ++i)
+            {
+                const auto  a   = cardian::route::toDetour(way[i - 1]);
+                const auto  b   = cardian::route::toDetour(way[i]);
+                const float len = distance(way[i - 1], way[i], true);
+                const int   n   = std::max(2, static_cast<int>(std::ceil(len / cardian::porter::kGroundStep)) + 1);
+                auto&       h   = ground[i];
+                h.resize(n);
+                for (int k = 0; k < n; ++k)
+                {
+                    h[k] = way[i - 1].y + (way[i].y - way[i - 1].y) * static_cast<float>(k) / static_cast<float>(n - 1);
+                }
+                const auto pointAt = [&](const float t, float* p)
+                {
+                    p[0] = a[0] + (b[0] - a[0]) * t;
+                    p[1] = a[1] + (b[1] - a[1]) * t;
+                    p[2] = a[2] + (b[2] - a[2]) * t;
+                };
+
+                dtPolyRef ref{};
+                float     at[3]{};
+                if (dtStatusFailed(query.findNearestPoly(a.data(), extents, &filter, &ref, at)) || !ref)
+                {
+                    continue;
+                }
+                float from = 0.0f;     // the share of the leg walked so far
+                float last = at[1];    // the height last found, up-positive
+                int   k    = 0;        // the next sample
+                for (int piece = 0; piece < 8 && k < n; ++piece)
+                {
+                    int   count = 0;
+                    float hitT  = 0.0f;
+                    float normal[3]{};
+                    if (dtStatusFailed(query.raycast(ref, at, b.data(), &filter, &hitT, normal, polys.data(), &count, static_cast<int>(polys.size()))))
+                    {
+                        break;
+                    }
+                    const float to = hitT >= 1.0f ? 1.0f : from + (1.0f - from) * hitT; // FLT_MAX: on to the leg's end
+                    int         on = 0;                                               // the polygon of the walk the last height was found on
+                    for (; k < n; ++k)
+                    {
+                        const float t = static_cast<float>(k) / static_cast<float>(n - 1);
+                        if (t > to + 0.001f)
+                        {
+                            break;
+                        }
+                        float p[3]{};
+                        pointAt(t, p);
+                        for (int s = on; s < count; ++s)
+                        {
+                            float y = 0.0f;
+                            if (dtStatusSucceed(query.getPolyHeight(polys[s], p, &y)))
+                            {
+                                h[k] = -y;
+                                last = y;
+                                on   = s;
+                                break;
+                            }
+                        }
+                    }
+                    if (to >= 1.0f || len < 0.01f)
+                    {
+                        break;
+                    }
+                    // the mesh again past the break, a half-yalm step at a time, up to 3 yalms on
+                    ref = 0;
+                    for (float ahead = to + 0.5f / len; ahead <= std::min(1.0f, to + 3.0f / len) && !ref; ahead += 0.5f / len)
+                    {
+                        float p[3]{};
+                        pointAt(ahead, p);
+                        p[1] = last;
+                        if (dtStatusFailed(query.findNearestPoly(p, again, &filter, &ref, at)) || !ref)
+                        {
+                            ref = 0;
+                            continue;
+                        }
+                        from = ahead;
+                    }
+                    if (!ref)
+                    {
+                        break;
+                    }
+                }
+            }
+            return ground;
+        }
+
         auto positionOf(const Point& p) -> position_t
         {
             position_t out{};
@@ -271,6 +399,47 @@ namespace pawn::porter
         auto zoneName(const CCharEntity* PChar) -> std::string
         {
             return PChar->loc.zone != nullptr ? std::string(PChar->loc.zone->getName()) : std::string("?");
+        }
+
+        // The trace (pawn.PORTER_TRACE): a route's waypoints as it is
+        // planned, ten to a line, each by its number
+        void traceRoute(const CCharEntity* PChar, const Journey& j)
+        {
+            if (!settings::get<bool>("pawn.PORTER_TRACE"))
+            {
+                return;
+            }
+            std::string line;
+            for (std::size_t i = 0; i < j.route.size(); ++i)
+            {
+                line += fmt::format(" {}:({:.1f}, {:.1f}, {:.1f})", i, j.route[i].x, j.route[i].y, j.route[i].z);
+                if ((i + 1) % 10 == 0 || i + 1 == j.route.size())
+                {
+                    ShowInfoFmt("porter: trace: {}'s waypoints{}", PChar->getName(), line);
+                    line.clear();
+                }
+            }
+        }
+
+        // The trace at a stray: where he stood, the waypoint he was judged
+        // riding for and the waypoints sent, and each leg progress weighed --
+        // how far off it he stood and the ground's height at his nearest
+        // point of it, which kept it from him when more than kSameLevel off
+        void traceStray(const CCharEntity* PChar, const Journey& j, const Point& here)
+        {
+            if (!settings::get<bool>("pawn.PORTER_TRACE"))
+            {
+                return;
+            }
+            std::string legs;
+            for (std::size_t i = std::max<std::size_t>(j.next, 1); i < std::min(j.route.size(), j.next + 4); ++i)
+            {
+                float       along = 0.0f;
+                const float off   = cardian::porter::offLeg(j.route[i - 1], j.route[i], here, &along);
+                legs += fmt::format(" leg {}: {:.1f}y off, {:.0f}% along, the ground {:.1f};", i, off, along * 100.0f, cardian::porter::groundAt(j.route, j.ground, i, along));
+            }
+            ShowInfoFmt("porter: trace: {} at ({:.1f}, {:.1f}, {:.1f}) judged riding for waypoint {} of {}, {} sent:{}", PChar->getName(), here.x, here.y, here.z, j.next,
+                        j.route.size(), j.sentTo, legs);
         }
 
         // A ride's time, as Ride to shows it
@@ -320,6 +489,33 @@ namespace pawn::porter
         // the cities from the trek's world graph (travel::rideableCities), the
         // outposts and crags from the game's own scripts
         // (modules/cardian/lua/porter_places.lua). None before
+        auto places() -> const std::vector<Place>&;
+
+        // The zones a ride can plan a route in, for their navmeshes
+        // (porter_mesh.h): every place's, and every zone that allows a mount
+        // and that zone lines join to them -- not a mount zone apart from the
+        // world, as GM_Home is
+        auto riddenZones() -> std::vector<uint16>
+        {
+            std::set<uint16>        zones;
+            std::vector<xi::ZoneId> from;
+            for (const auto& place : places())
+            {
+                zones.insert(place.zone);
+                from.push_back(static_cast<xi::ZoneId>(place.zone));
+            }
+            const auto reached = pawn::travel::hops(from);
+            zoneutils::ForEachZone([&](CZone* PZone)
+            {
+                const auto zoneId = static_cast<uint16>(PZone->GetID());
+                if (pawn::travel::allowsMount(PZone->GetID()) && reached.contains(zoneId))
+                {
+                    zones.insert(zoneId);
+                }
+            });
+            return { zones.begin(), zones.end() };
+        }
+
         auto places() -> const std::vector<Place>&
         {
             static std::vector<Place> built;
@@ -573,9 +769,9 @@ namespace pawn::porter
             const auto  goal   = inZone ? spotOf(j.place) : j.hop->walkTo;
             const float slack  = line ? kLineSlack : kMeshEndYalms;
 
-            // The trek's route search over the zone's mesh: no monster aggroes
-            // a rider, so it goes round nothing but the spots he snagged at
-            // in this zone, where the mesh goes and his client does not
+            // The trek's route search: no monster aggroes a rider, so it goes
+            // round nothing but the spots he snagged at in this zone, where
+            // the mesh goes and his client does not
             std::vector<cardian::route::Hazard> snagged;
             if (const auto it = learned.find(static_cast<uint16>(zone)); it != learned.end())
             {
@@ -589,8 +785,24 @@ namespace pawn::porter
                     snagged.push_back(cardian::route::Hazard{ .at = positionOf(c.at), .radius = c.radius });
                 }
             }
+            // On the rider's own navmesh (porter_mesh.h), precalculated; the
+            // zone's where it is switched off or the zone has none
+            const dtNavMesh*        own    = settings::get<bool>("pawn.PORTER_NAVMESH") ? mesh::of(PChar->loc.zone) : nullptr;
+            const auto*             detour = own == nullptr && PChar->loc.zone != nullptr ? dynamic_cast<const DetourNavMesh*>(PChar->loc.zone->navMesh()) : nullptr;
+            const dtNavMesh*        walked = own != nullptr ? own : detour != nullptr ? detour->detourMesh() : nullptr; // the navmesh the route runs on
             std::vector<position_t> way(1, from);
-            const auto              route = pawn::travel::routeAvoiding(zone, from, goal, snagged, {}, 0.0f);
+            const auto              searchFrom = std::chrono::steady_clock::now(); // a stopwatch, for the route line: never game time
+            const auto              route      = own != nullptr ? pawn::travel::routeOn(*own, from, goal, snagged) : pawn::travel::routeAvoiding(zone, from, goal, snagged, {}, 0.0f);
+            const double            searchMs   = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchFrom).count();
+            if (own != nullptr && settings::get<bool>("pawn.PORTER_TRACE"))
+            {
+                // the same search on the zone's navmesh, timed beside it
+                const auto zoneFrom  = std::chrono::steady_clock::now();
+                const auto zoneRoute = pawn::travel::routeAvoiding(zone, from, goal, snagged, {}, 0.0f);
+                const auto zoneMs    = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - zoneFrom).count();
+                ShowInfoFmt("porter: trace: {}'s search took {:.1f} ms on the rider's navmesh, {:.1f} ms on the zone's ({})", PChar->getName(), searchMs, zoneMs,
+                            zoneRoute.has_value() && zoneRoute->complete ? fmt::format("{:.0f}y", cardian::walk::lengthOf(zoneRoute->points)) : std::string("no whole route"));
+            }
             if (route.has_value() && !route->points.empty() && (route->complete || distance(route->points.back(), goal) <= slack))
             {
                 way.insert(way.end(), route->points.begin(), route->points.end());
@@ -619,15 +831,21 @@ namespace pawn::porter
             {
                 j.route.push_back(pointOf(p));
             }
+            const auto groundFrom = std::chrono::steady_clock::now();
+            j.ground              = groundOf(walked, way);
+            const double groundMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - groundFrom).count();
             j.ends      = line && !gate ? Ends::Line : Ends::Stop;
-            j.next      = cardian::porter::progress(j.route, 1, pointOf(from));
+            j.next      = cardian::porter::progress(j.route, 1, pointOf(from), j.ground);
             j.sentTo    = 0;
             j.planned   = true;
             j.plannedAt = now;
             j.left      = cardian::walk::lengthOf(way);
             j.atLineSince.reset();
-            ShowInfoFmt("porter: {}'s route in {} ({}): {:.0f}y in {} waypoints to {}", PChar->getName(), zoneName(PChar), why, cardian::walk::lengthOf(way), way.size() - 1,
-                        inZone ? std::string("the place") : gate ? std::string("the city's gate") : fmt::format("the line to zone {}", static_cast<uint16>(j.hop->destinationZone)));
+            ShowInfoFmt("porter: {}'s route in {} ({}): {:.0f}y in {} waypoints to {}, on {}, searched in {:.1f} ms and its ground read in {:.1f} ms", PChar->getName(),
+                        zoneName(PChar), why, cardian::walk::lengthOf(way), way.size() - 1,
+                        inZone ? std::string("the place") : gate ? std::string("the city's gate") : fmt::format("the line to zone {}", static_cast<uint16>(j.hop->destinationZone)),
+                        own != nullptr ? "the rider's navmesh" : "the zone's navmesh", searchMs, groundMs);
+            traceRoute(PChar, j);
             sendRoute(charid, j);
             return true;
         }
@@ -637,7 +855,7 @@ namespace pawn::porter
         // ride ended after a few set-downs without getting on (porter_math.h)
         void snag(CCharEntity* PChar, const uint32 charid, Journey& j, const Point& at, const timer::time_point now)
         {
-            j.next             = cardian::porter::progress(j.route, j.next, at);
+            j.next             = cardian::porter::progress(j.route, j.next, at, j.ground);
             const auto  answer = cardian::porter::snagged(j.snags, at);
             learnSnag(static_cast<uint16>(PChar->getZone()), at);
             const Point toward = j.next < j.route.size() ? j.route[j.next] : (j.route.empty() ? at : j.route.back());
@@ -744,7 +962,7 @@ namespace pawn::porter
                 {
                     const std::optional<position_t> toPoint = j.place.kind == Kind::City ? std::nullopt : std::optional<position_t>(spot);
                     j.hop = pawn::travel::nextHop(PChar->getZone(), PChar->loc.p, static_cast<xi::ZoneId>(j.place.zone), toPoint, std::nullopt,
-                                                  TravelRide{ .mayRent = false, .mounted = PChar->isMounted(), .rideFactor = 1.0f });
+                                                  TravelRide{ .mayRent = false, .mounted = PChar->isMounted(), .rideFactor = 1.0f, .stayMounted = true });
                     if (!j.hop.has_value())
                     {
                         finish(PChar, charid, End::NoWay, "the trek's map knows no way from here");
@@ -785,7 +1003,7 @@ namespace pawn::porter
 
             const Point here = pointOf(PChar->loc.p);
             cardian::porter::rode(j.snags, here);
-            j.next           = cardian::porter::progress(j.route, j.next, here);
+            j.next           = cardian::porter::progress(j.route, j.next, here, j.ground);
             const bool atEnd = cardian::porter::atEnd(j.route, j.next, here);
 
             if (j.ends == Ends::Line)
@@ -830,6 +1048,7 @@ namespace pawn::porter
 
             if (cardian::porter::strayed(j.route, j.next, here) && now - j.plannedAt >= kReplanEvery)
             {
+                traceStray(PChar, j, here);
                 if (!plan(PChar, charid, j, PChar->loc.p, now, fmt::format("strayed {:.1f}y off it", cardian::porter::offRoute(j.route, j.next, here))))
                 {
                     return;
@@ -1082,6 +1301,18 @@ class PorterModule : public CPPModule
         {
             read = true;
             places();
+            // The rider's navmeshes (porter_mesh.h): built and written in the
+            // precalculation run, which the environment names -- never a
+            // setting, which a settings file could leave on -- else looked for
+            const char* precalc = std::getenv("CARDIAN_PORTER_NAVMESH_PRECALC");
+            if (precalc != nullptr && std::string_view(precalc) == "1")
+            {
+                mesh::precalc(riddenZones());
+            }
+            else if (settings::get<bool>("pawn.PORTER_NAVMESH"))
+            {
+                mesh::check(riddenZones());
+            }
         }
         std::vector<uint32> lost;
         for (auto it = journeys.begin(); it != journeys.end();)

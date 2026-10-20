@@ -58,9 +58,10 @@ namespace pawn
     // on foot (pawn.PAWN_SPEED over pawn.RIDE_SPEED)
     struct TravelRide
     {
-        bool  mayRent    = false;
-        bool  mounted    = false;
-        float rideFactor = 1.0f;
+        bool  mayRent     = false;
+        bool  mounted     = false;
+        float rideFactor  = 1.0f;
+        bool  stayMounted = false; // never gets down on the way: no zone that allows no mount but the one bound for (the porter)
     };
 
     namespace travel
@@ -96,6 +97,13 @@ namespace pawn
         // mesh or she stands off it
         auto routeAvoiding(xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                            const cardian::route::HazardSight& sight, float reach = 0.0f) -> std::optional<cardian::route::Route>;
+
+        // The same route over a navmesh of its own -- the porter's
+        // (pawn/porter_mesh.h) -- with no faces and no seams: that navmesh
+        // keeps to the client's rule by itself, so only its links cross its
+        // borders
+        auto routeOn(const dtNavMesh& mesh, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards)
+            -> std::optional<cardian::route::Route>;
 
         // The way from a body at `from` in `zone` to the nearest ground out
         // of every reach, `within` yalms of walk at most

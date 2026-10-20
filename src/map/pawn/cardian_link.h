@@ -73,6 +73,10 @@ namespace cardian::link
     // timeout paths in milliseconds.
     void start(Scheduler& scheduler, const Config& config = {});
 
+    // The map's scheduler, handed to start: the one way pawn code reaches
+    // the map's worker threads (the porter's navmesh build); nullptr before
+    auto scheduler() -> Scheduler*;
+
     struct Stats
     {
         uint32 accepted    = 0; // connections accepted since boot

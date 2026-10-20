@@ -874,17 +874,24 @@ namespace
     // Owned by the process: the scheduler's io_context is gone by the time
     // statics are destroyed, so the listener is never torn down (the same
     // arrangement as the pawn container).
-    Listener* g_listener = nullptr;
+    Listener*  g_listener  = nullptr;
+    Scheduler* g_scheduler = nullptr;
 } // namespace
 
 namespace cardian::link
 {
+    auto scheduler() -> Scheduler*
+    {
+        return g_scheduler;
+    }
+
     void start(Scheduler& scheduler, const Config& config)
     {
         if (g_listener != nullptr)
         {
             return;
         }
+        g_scheduler = &scheduler;
         cardian::view::startTimers(scheduler); // the steer tick (pawn/view.h): the map hands the scheduler to nobody else
 
         if (!settings::get<bool>("cardian.LINK_ENABLED"))

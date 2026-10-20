@@ -41,6 +41,22 @@ xi.settings.pawn =
     -- the navmesh (and its collision walls) alone -- the soak's baseline
     PORTER_LEARN_SNAGS = true,
 
+    -- The chocobo porter plans on a navmesh of its own, built for the
+    -- rider's client (pawn/porter_mesh.h): the client's step and slope, and
+    -- PORTER_WIDTH, in yalms, kept off every edge -- a gap narrower than
+    -- twice it is no way. false: on the zone's navmesh, as the cardians walk.
+    -- Precalculated, never built while the map serves: ./dev-servers.ps1
+    -- porter-navmeshes runs the map as a tool, which builds each zone's,
+    -- writes it and ends the map. A zone with none for these settings is
+    -- said loudly, and rides on the zone's
+    PORTER_NAVMESH = true,
+    PORTER_WIDTH   = 1.0,
+
+    -- The porter's trace in the map log: every route's waypoints as it is
+    -- planned, and at a stray where the rider stood and the legs he was
+    -- judged on (porter.cpp traceRoute, traceStray)
+    PORTER_TRACE = false,
+
     -- Direct control (ROADMAP C): a steered cardian's position packet leads
     -- her by this much of her run, along her facing and never past the ring
     -- -- what the client takes to ease an entity onto a packet position, so

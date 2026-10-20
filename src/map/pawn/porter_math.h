@@ -248,6 +248,8 @@ namespace cardian::porter
     constexpr std::size_t kWindow       = 32;   // the waypoints a PORTER_ROUTE carries
     constexpr std::size_t kRefillWithin = 8;    // ... and the next stretch is sent once he rides to one this near its last
     constexpr float       kReachYalms   = 2.0f; // a waypoint this near on the ground is reached
+    constexpr float       kSameLevel    = 2.0f; // yalms: a leg or a waypoint further above or below him is on another level
+    constexpr float       kGroundStep   = 2.0f; // yalms between the ground's heights kept along a leg (Ground)
     constexpr float       kStrayYalms   = 5.0f; // this far off the leg he rides, his route is planned again from where he is
     constexpr float       kEndReach     = 4.5f; // run past a route's last point this near it, he is at its end: his addon stops so within 4 (porter.lua kPassReach)
     constexpr float       kStallGain    = 3.0f; // a replan after straying that leaves his way no shorter than this has gained nothing
@@ -288,10 +290,30 @@ namespace cardian::porter
         return sentTo < routeSize && next + kRefillWithin >= sentTo;
     }
 
+    // The ground's height under a route's legs, read off the mesh as the
+    // route is planned: [i] holds leg i's, from point i-1 to point i, evenly
+    // spaced from its start to its end. A leg with none keeps the straight
+    // line between its two points, which a long leg over a rise or a hollow
+    // leaves yalms off the ground
+    using Ground = std::vector<std::vector<float>>;
+
+    // The height of leg i `along` its length (0 at its start, 1 at its end)
+    inline auto groundAt(const std::vector<Point>& route, const Ground& ground, const std::size_t i, const float along) -> float
+    {
+        if (i < ground.size() && ground[i].size() >= 2)
+        {
+            const auto&       h = ground[i];
+            const float       f = std::clamp(along, 0.0f, 1.0f) * static_cast<float>(h.size() - 1);
+            const std::size_t k = std::min(static_cast<std::size_t>(f), h.size() - 2);
+            return h[k] + (h[k + 1] - h[k]) * (f - static_cast<float>(k));
+        }
+        return route[i - 1].y + (route[i].y - route[i - 1].y) * along;
+    }
+
     // The waypoint he rides to next on a route whose first point is where he
     // set out: of the next few legs from `next`, the one he stands nearest,
     // and on past every waypoint he stands within kReachYalms of
-    inline auto progress(const std::vector<Point>& route, std::size_t next, const Point& here) -> std::size_t
+    inline auto progress(const std::vector<Point>& route, std::size_t next, const Point& here, const Ground& ground = {}) -> std::size_t
     {
         if (next == 0)
         {
@@ -301,18 +323,25 @@ namespace cardian::porter
         {
             return route.size();
         }
+        // The nearest of the next few legs on the ground -- of those on his
+        // level: a route that climbs round a cliff and comes back along its
+        // top passes near him in plan, a cliff's height away -- and within
+        // kStrayYalms of him: a leg further off is never his, however its
+        // level, so where none is near he keeps the one he rides
         std::size_t best   = next;
         float       bestAt = std::numeric_limits<float>::max();
         for (std::size_t i = next; i < std::min(route.size(), next + 4); ++i)
         {
-            const float d = offLeg(route[i - 1], route[i], here);
-            if (d < bestAt - 0.01f)
+            float       along = 0.0f;
+            const float d     = offLeg(route[i - 1], route[i], here, &along);
+            const float y     = groundAt(route, ground, i, along);
+            if (d <= kStrayYalms && std::abs(y - here.y) <= kSameLevel && d < bestAt - 0.01f)
             {
                 bestAt = d;
                 best   = i;
             }
         }
-        while (best < route.size() && flat(here, route[best]) <= kReachYalms)
+        while (best < route.size() && flat(here, route[best]) <= kReachYalms && std::abs(route[best].y - here.y) <= kSameLevel)
         {
             ++best;
         }

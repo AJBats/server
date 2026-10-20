@@ -131,6 +131,35 @@ TEST_CASE("Chocobos on the trek: she rides on through the field and walks once a
     CHECK_THAT(inCity.length, WithinAbs(40.0f, 0.01f));
 }
 
+TEST_CASE("The chocobo porter's way: a rider who stays mounted never cuts through a city on foot", "[cardian][riding][porter]")
+{
+    // A field (zone 2, a mount allowed) with a gate at x 100 into a city
+    // (zone 1, no mount) whose far gate at x 50 opens on a second field
+    // (zone 4); the fields' own line lies far off, at x 2000
+    sz::World world;
+    world.lines.push_back({ .zone = 2, .to = 1, .origin = at(100, 0), .arrival = at(0, 0), .leaves = { 1, at(100, 0) }, .lands = { 1, at(0, 0) } });
+    world.lines.push_back({ .zone = 1, .to = 4, .origin = at(50, 0), .arrival = at(0, 0), .leaves = { 1, at(50, 0) }, .lands = { 1, at(0, 0) } });
+    world.lines.push_back({ .zone = 2, .to = 4, .origin = at(2000, 0), .arrival = at(0, 0), .leaves = { 1, at(2000, 0) }, .lands = { 1, at(0, 0) } });
+    world.mountZones = { 2, 4 };
+    sz::join(world);
+
+    // mounted, through the city is quicker, on foot across it
+    const auto ride    = sz::Ride{ .mayRent = false, .mounted = true, .rideFactor = 0.5f };
+    const auto through = sz::plan(world, 2, 1, at(0, 0), 4, std::nullopt, at(10, 0), ride);
+    CHECK(through.firstLine == 0u);
+
+    // staying mounted, the fields' own line, however far
+    auto       stays = ride;
+    stays.stayMounted = true;
+    const auto round  = sz::plan(world, 2, 1, at(0, 0), 4, std::nullopt, at(10, 0), stays);
+    REQUIRE(round.reachable);
+    CHECK(round.firstLine == 2u);
+
+    // a city he is bound for he still enters
+    const auto intoCity = sz::plan(world, 2, 1, at(0, 0), 1, std::nullopt, at(10, 0), stays);
+    CHECK(intoCity.firstLine == 0u);
+}
+
 TEST_CASE("The chocobo porter's ride times: one search to every place, ridden through the zones that allow a mount alone", "[cardian][riding][porter]")
 {
     // A field (zone 2, a mount allowed) whose line at x 0 leads into a city

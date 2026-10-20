@@ -214,6 +214,51 @@ TEST_CASE("Porter: his progress along the route, and straying from it", "[cardia
     CHECK_FALSE(beyondEnd(way, Point{ 20, 0, 15 }, 40.0f)); // short of it
 }
 
+TEST_CASE("Porter: a leg on a cliff's top above him is not his, however near in plan", "[cardian][porter]")
+{
+    // north along the cliff's foot, up round its end, and back south along its
+    // top, 4 yalms above the foot and 10 yalms west of it
+    const std::vector<Point> way{ { 0, 7, 0 }, { 0, 7, 20 }, { -10, 3, 20 }, { -10, 3, 0 } };
+
+    // at the foot, 2 yalms from the top's leg in plan and 8 from his own: the
+    // top's is refused for its height, and his own, past kStrayYalms, kept
+    CHECK(progress(way, 1, Point{ -8, 7, 2 }) == 1);
+    // nor is a waypoint on the top reached from under it
+    CHECK(progress(way, 3, Point{ -10, 7, 0.5f }) == 3);
+    // once up there, the top's leg is his
+    CHECK(progress(way, 1, Point{ -9.5f, 3, 10 }) == 3);
+}
+
+TEST_CASE("Porter: a long leg over a rise is his by the ground's height, not its ends'", "[cardian][porter]")
+{
+    // a short leg, then 40 yalms north over a rise 5 yalms above both its
+    // ends, then east
+    const std::vector<Point> way{ { 0, 0, 0 }, { 0, 0, 10 }, { 0, 0, 50 }, { 10, 0, 50 } };
+    Ground                   ground(way.size());
+    ground[2] = { 0, -2.5f, -5, -2.5f, 0 };
+
+    // on top of the rise, halfway along: the straight line between its ends
+    // passes 5 yalms under him; the ground under it does not
+    CHECK(progress(way, 1, Point{ 0, -5, 30 }) == 1);
+    CHECK(progress(way, 1, Point{ 0, -5, 30 }, ground) == 2);
+    CHECK_THAT(groundAt(way, ground, 2, 0.5f), WithinAbs(-5.0f, 0.001f));
+    CHECK_THAT(groundAt(way, ground, 2, 0.375f), WithinAbs(-3.75f, 0.001f));
+    // a leg with no heights keeps the straight line
+    CHECK_THAT(groundAt(way, ground, 3, 0.5f), WithinAbs(0.0f, 0.001f));
+}
+
+TEST_CASE("Porter: a far leg on his level never takes him past the leg he rides", "[cardian][porter]")
+{
+    // a long leg whose ground is not known, over a rise; the legs after it
+    // run 120 yalms on, one of them at his height
+    const std::vector<Point> way{ { 0, 0, 0 }, { 0, -10, 100 }, { 0, -6, 140 }, { 0, -6, 150 } };
+
+    // 20 yalms along the first, 4 above its straight line: no leg near him
+    // is on his level, and the far one at his height is not his
+    CHECK(progress(way, 1, Point{ 0, -6, 20 }) == 1);
+    CHECK_FALSE(strayed(way, 1, Point{ 0, -6, 20 }));
+}
+
 TEST_CASE("Porter: a few yalms on along the route, for a set-down", "[cardian][porter]")
 {
     const auto way = route({ { 0, 0 }, { 20, 0 }, { 20, 20 } });

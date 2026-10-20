@@ -85,9 +85,10 @@ namespace cardian::subzones
     // yalms on foot (her run over her ride)
     struct Ride
     {
-        bool  mayRent    = false;
-        bool  mounted    = false;
-        float rideFactor = 1.0f;
+        bool  mayRent     = false;
+        bool  mounted     = false;
+        float rideFactor  = 1.0f;
+        bool  stayMounted = false; // a rider who never gets down on the way: no line into a zone that allows no mount, but the zone bound for
     };
 
     // The search's fixed half, built by `join` from the world's lines and
@@ -331,8 +332,13 @@ namespace cardian::subzones
                         continue;
                     }
                     // a rental sets her down mounted; a zone that allows no
-                    // mount gets her down as she enters it
+                    // mount gets her down as she enters it, which a rider
+                    // who stays mounted never takes on the way
                     const uint16      landsIn = graph.places[exit.to].zone;
+                    if (ride.stayMounted && !mountable(landsIn) && landsIn != toZone)
+                    {
+                        continue;
+                    }
                     const bool        rides   = (exit.rents || mounted) && mountable(landsIn);
                     const std::size_t next    = 2 * (1 + exit.to) + (rides ? 1 : 0);
                     const float       step    = c + detail::crow(here.at, exit.at) * pace(mounted, here.zone) + exit.cost;
