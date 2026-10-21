@@ -246,4 +246,10 @@ namespace pawn
     auto entitiesAround(const CBaseEntity* PEntity) -> CZoneEntities*;
 
     auto forEachMobNear(CZoneEntities* entities, const position_t& center, float radius, FnRef<void(CMobEntity*)> fn) -> void;
+
+    // A mob on this entity, as the game has it, within `reach` of it: one
+    // engaged with it as its target -- a mob that aggroes by sight or sound
+    // targets it and puts nothing on its hate list until it acts on the mob
+    // -- or one with it on its hate list
+    auto mobOn(const CBattleEntity* PEntity, float reach) -> bool;
 } // namespace pawn

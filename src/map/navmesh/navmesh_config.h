@@ -75,4 +75,7 @@ struct NavMeshConfig
 
     // CARDIAN: the collision walls, built in as barriers (pawn/collision_walls.h)
     std::vector<std::array<float, 10>> cardianWalls{};
+    // CARDIAN: a navmesh for the player's own client (pawn/client_navmesh.h)
+    bool cardianClient{};
+    float cardianBerth{}; // CARDIAN: and the berth from the edges it keeps where there is room, the strip inside it marked tight
 };

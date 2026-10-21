@@ -176,7 +176,13 @@ namespace cardian::link
     X(BANK_WITHDRAW, cl_bank_withdraw)       \
     X(BANK_GIL, cl_bank_gil)                 \
     X(BANK_RIGHTS, cl_bank_rights)           \
-    X(BANK_JUNK, cl_bank_junk)
+    X(BANK_JUNK, cl_bank_junk)               \
+    X(PORTER_PLACES, cl_porter_places)       \
+    X(PORTER_GO, cl_porter_go)               \
+    X(PORTER_STOP, cl_porter_stop)           \
+    X(PORTER_STATE, cl_porter_state)         \
+    X(PORTER_ROUTE, cl_porter_route)         \
+    X(PORTER_STUCK, cl_porter_stuck)
 
     template <typename T>
     struct MessageType;

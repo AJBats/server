@@ -31,6 +31,7 @@
 #include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // World travel for pawns, over sub-zones (pawn/subzone_graph.h): every
@@ -58,9 +59,10 @@ namespace pawn
     // on foot (pawn.PAWN_SPEED over pawn.RIDE_SPEED)
     struct TravelRide
     {
-        bool  mayRent    = false;
-        bool  mounted    = false;
-        float rideFactor = 1.0f;
+        bool  mayRent     = false;
+        bool  mounted     = false;
+        float rideFactor  = 1.0f;
+        bool  stayMounted = false; // never gets down on the way: no zone that allows no mount but the one bound for (the porter)
     };
 
     namespace travel
@@ -97,6 +99,13 @@ namespace pawn
         auto routeAvoiding(xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                            const cardian::route::HazardSight& sight, float reach = 0.0f) -> std::optional<cardian::route::Route>;
 
+        // The same route over a navmesh of its own -- the porter's
+        // (pawn/porter_mesh.h) -- with no faces and no seams: that navmesh
+        // keeps to the client's rule by itself, so only its links cross its
+        // borders
+        auto routeOn(const dtNavMesh& mesh, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards)
+            -> std::optional<cardian::route::Route>;
+
         // The way from a body at `from` in `zone` to the nearest ground out
         // of every reach, `within` yalms of walk at most
         // (pawn/route_search.h searchSafeGround); nullopt when the zone has
@@ -104,9 +113,37 @@ namespace pawn
         auto routeToSafeGround(xi::ZoneId zone, const position_t& from, const std::vector<cardian::route::Hazard>& hazards,
                                const cardian::route::HazardSight& sight, float within) -> std::optional<cardian::route::Route>;
 
+        // Whether a zone allows a mount, as the world's travel map was built
+        // from the zones' own flags
+        auto allowsMount(xi::ZoneId zone) -> bool;
+
+        // The cities a rider reaches through a line from a zone that allows a
+        // mount: every zone of type City such a line leads into (the porter's
+        // cities, porter.h)
+        auto rideableCities() -> std::vector<xi::ZoneId>;
+
+        // A place a rider is timed to: a zone, and the point in it the ride
+        // ends at, or none for a city, entered through its gate
+        struct RideGoal
+        {
+            xi::ZoneId                zone{};
+            std::optional<position_t> point;
+        };
+
+        // The chocobo porter's ride times (porter.h): from `at` in `from` to
+        // every goal at once, mounted through the zones that allow a mount
+        // (subzone_graph.h rideCosts), each in yalms ridden with a zone
+        // line's crossing as kLineCost of them; none where no ride reaches it
+        auto rideCosts(xi::ZoneId from, const position_t& at, const std::vector<RideGoal>& goals) -> std::vector<std::optional<float>>;
+
         // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
         // at 0 (BFS from all of them at once); a zone no line reaches is absent
         auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>;
+
+        // The zones a rider reaches from these without getting down: through
+        // lines into zones that allow a mount, one after another. A zone of
+        // these that allows none (a city) is a way in, never in the answer
+        auto rideRegion(const std::vector<xi::ZoneId>& from) -> std::unordered_set<uint16>;
 
         // The map's budget for treks, pawn.TREK_PLAN_BUDGET_MS of each 400 ms
         // logic tick: every trek's tick is timed into it, and the moment one

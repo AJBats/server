@@ -136,6 +136,9 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/auction_purchase.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/riding.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/cohort_play.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/walker.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/porter.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/porter_mesh.cpp
 )
 
 set(MAP_CORE_SOURCES

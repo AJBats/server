@@ -83,6 +83,8 @@ public:
     // CARDIAN: a fraction of a step per FollowPath, so a steered cardian steps
     // many times a logic tick at her own speed (ROADMAP C); 1 = upstream's whole step
     auto SetStepScale(float scale) -> void;
+    // CARDIAN: a riding cardian's pace over the mount speed her clients are told (riding.h)
+    auto SetSpeedScale(float scale) -> void;
 
     // True if the entity is on a waypoint.
     auto OnPoint() const -> bool;
@@ -169,6 +171,7 @@ private:
     std::vector<position_t>  turnPoints_;
     float                    distanceFromPoint_;
     float                    stepScale_ = 1.0f; // CARDIAN
+    float                    speedScale_ = 1.0f; // CARDIAN
 
     uint8        pathFlags_;
     uint8        patrolFlags_;

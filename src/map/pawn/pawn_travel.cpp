@@ -47,6 +47,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -438,7 +439,7 @@ namespace pawn::travel
         }
 
         const auto&    built = world();
-        const sz::Ride rider{ ride.mayRent, ride.mounted, ride.rideFactor };
+        const sz::Ride rider{ ride.mayRent, ride.mounted, ride.rideFactor, ride.stayMounted };
         auto           plan  = sz::plan(built, fromKey, here, at, toKey, there, toPoint, rider);
         const auto     moves = [](const sz::Plan& p)
         {
@@ -537,6 +538,79 @@ namespace pawn::travel
         return route;
     }
 
+    auto routeOn(const dtNavMesh& mesh, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards)
+        -> std::optional<cardian::route::Route>
+    {
+        auto route = cardian::route::searchAvoiding(mesh, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, {});
+        if (!route.has_value())
+        {
+            route = cardian::route::searchAvoiding(mesh, from, to, sz::kLineExtents, sz::kLineExtents, hazards, {});
+        }
+        return route;
+    }
+
+    auto allowsMount(const xi::ZoneId zone) -> bool
+    {
+        if (!worldBuilt)
+        {
+            buildWorld();
+        }
+        return world().mountZones.contains(static_cast<uint16>(zone));
+    }
+
+    auto rideableCities() -> std::vector<xi::ZoneId>
+    {
+        if (!worldBuilt)
+        {
+            buildWorld();
+        }
+        const auto&                built = world();
+        std::unordered_set<uint16> seen;
+        std::vector<xi::ZoneId>    cities;
+        for (const auto& line : built.lines)
+        {
+            if (!built.mountZones.contains(line.zone) || seen.contains(line.to))
+            {
+                continue;
+            }
+            auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(line.to));
+            if (PZone == nullptr || (PZone->GetTypeMask() & xi::ZoneType::City) == xi::ZoneType::Unknown)
+            {
+                continue;
+            }
+            seen.insert(line.to);
+            cities.push_back(static_cast<xi::ZoneId>(line.to));
+        }
+        return cities;
+    }
+
+    auto rideCosts(const xi::ZoneId from, const position_t& at, const std::vector<RideGoal>& goals) -> std::vector<std::optional<float>>
+    {
+        if (!worldBuilt)
+        {
+            buildWorld();
+        }
+        const auto                    fromKey = static_cast<uint16>(from);
+        std::vector<sz::RideTarget>   targets;
+        targets.reserve(goals.size());
+        for (const auto& goal : goals)
+        {
+            const auto key = static_cast<uint16>(goal.zone);
+            targets.push_back({ .zone  = key,
+                                .piece = goal.point.has_value() ? std::optional<sz::Piece>(bodyPiece(key, *goal.point)) : std::nullopt,
+                                .point = goal.point });
+        }
+        // one search of the whole world graph on the map's thread: a slow one is said
+        const auto began = std::chrono::steady_clock::now();
+        auto       costs = sz::rideCosts(world(), fromKey, bodyPiece(fromKey, at), at, targets);
+        const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - began).count();
+        if (took >= 50)
+        {
+            ShowInfoFmt("pawn: travel: {} ride times from zone {} took {} ms", goals.size(), fromKey, took);
+        }
+        return costs;
+    }
+
     auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>
     {
         if (!graphBuilt)
@@ -570,6 +644,47 @@ namespace pawn::travel
             }
         }
         return out;
+    }
+
+    auto rideRegion(const std::vector<xi::ZoneId>& from) -> std::unordered_set<uint16>
+    {
+        if (!graphBuilt)
+        {
+            buildGraph();
+        }
+        std::unordered_set<uint16> seen;
+        std::unordered_set<uint16> region;
+        std::deque<uint16>         frontier;
+        for (const auto zone : from)
+        {
+            if (seen.insert(static_cast<uint16>(zone)).second)
+            {
+                frontier.push_back(static_cast<uint16>(zone));
+            }
+        }
+        while (!frontier.empty())
+        {
+            const uint16 current = frontier.front();
+            frontier.pop_front();
+            if (allowsMount(static_cast<xi::ZoneId>(current)))
+            {
+                region.insert(current);
+            }
+            const auto it = graph.find(current);
+            if (it == graph.end())
+            {
+                continue;
+            }
+            for (const auto& edge : it->second)
+            {
+                const auto to = static_cast<uint16>(edge.to);
+                if (allowsMount(edge.to) && seen.insert(to).second)
+                {
+                    frontier.push_back(to);
+                }
+            }
+        }
+        return region;
     }
 
     void noteTrekTime(const std::string_view who, const std::chrono::steady_clock::duration took)

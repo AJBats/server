@@ -25,6 +25,7 @@
 
 #include "common/logging.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <functional>
@@ -84,9 +85,10 @@ namespace cardian::subzones
     // yalms on foot (her run over her ride)
     struct Ride
     {
-        bool  mayRent    = false;
-        bool  mounted    = false;
-        float rideFactor = 1.0f;
+        bool  mayRent     = false;
+        bool  mounted     = false;
+        float rideFactor  = 1.0f;
+        bool  stayMounted = false; // a rider who never gets down on the way: no line into a zone that allows no mount, but the zone bound for
     };
 
     // The search's fixed half, built by `join` from the world's lines and
@@ -330,8 +332,13 @@ namespace cardian::subzones
                         continue;
                     }
                     // a rental sets her down mounted; a zone that allows no
-                    // mount gets her down as she enters it
+                    // mount gets her down as she enters it, which a rider
+                    // who stays mounted never takes on the way
                     const uint16      landsIn = graph.places[exit.to].zone;
+                    if (ride.stayMounted && !mountable(landsIn) && landsIn != toZone)
+                    {
+                        continue;
+                    }
                     const bool        rides   = (exit.rents || mounted) && mountable(landsIn);
                     const std::size_t next    = 2 * (1 + exit.to) + (rides ? 1 : 0);
                     const float       step    = c + detail::crow(here.at, exit.at) * pace(mounted, here.zone) + exit.cost;
@@ -380,6 +387,161 @@ namespace cardian::subzones
             {
                 out.firstRental = place.rental;
                 out.firstLine   = std::nullopt;
+            }
+        }
+        return out;
+    }
+
+    // A place a rider is timed to (rideCosts): a zone, on its piece when
+    // given, and to its point when given -- a zone alone is reached as its
+    // line lands him in it (a city, entered through its gate)
+    struct RideTarget
+    {
+        uint16                    zone{};
+        std::optional<Piece>      piece;
+        std::optional<position_t> point;
+    };
+
+    // The chocobo porter's ride times (pawn/porter.h): a rider's quickest
+    // way from `at` (in `zone`, on `piece`) to every target at once, in one
+    // search, mounted all the way -- through the zones that allow a mount
+    // alone, since a zone that allows none gets him down as he enters it,
+    // so it ends a ride and never carries one on. Each target's cost in
+    // yalms ridden, kLineCost a crossing; none where no ride reaches it
+    inline auto rideCosts(const World& world, const uint16 zone, const Piece piece, const position_t& at, const std::vector<RideTarget>& targets)
+        -> std::vector<std::optional<float>>
+    {
+        if (world.graph.version != world.version)
+        {
+            ShowWarningFmt("travel: the walk's tables were joined at version {} of the world, which is at version {}; timing rides on a copy joined now",
+                           world.graph.version, world.version);
+            World joined = world;
+            join(joined);
+            return rideCosts(joined, zone, piece, at, targets);
+        }
+        const Graph& graph = world.graph;
+
+        std::vector<std::optional<float>> out(targets.size());
+        std::unordered_map<uint16, std::vector<std::size_t>> wanted; // the targets, by zone
+        for (std::size_t i = 0; i < targets.size(); ++i)
+        {
+            wanted[targets[i].zone].push_back(i);
+        }
+
+        // The states: place 0 the start and 1 + i graph.places[i]; their
+        // table kept from one search to the next, as plan's are
+        constexpr float kNever = std::numeric_limits<float>::infinity();
+        struct Scratch
+        {
+            std::vector<float>       cost;
+            std::vector<std::size_t> touched;
+        };
+        thread_local Scratch scratch;
+        const std::size_t    states = 1 + graph.places.size();
+        if (scratch.cost.size() < states)
+        {
+            scratch.cost.resize(states, kNever);
+        }
+        struct PutBack
+        {
+            Scratch& s;
+            ~PutBack()
+            {
+                for (const std::size_t t : s.touched)
+                {
+                    s.cost[t] = std::numeric_limits<float>::infinity();
+                }
+                s.touched.clear();
+            }
+        } putBack{ scratch };
+        auto& cost    = scratch.cost;
+        auto& touched = scratch.touched;
+
+        const auto placeOf = [&](const std::size_t s) -> Graph::Place
+        {
+            return s == 0 ? Graph::Place{ zone, piece, at } : graph.places[s - 1];
+        };
+        using Entry = std::pair<float, std::size_t>;
+        std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
+        cost[0] = 0.0f;
+        touched.push_back(0);
+        open.push({ 0.0f, 0 });
+
+        std::size_t found = 0;
+        float       worst = 0.0f; // the dearest target found: once every one is, nothing popped later is cheaper
+        while (!open.empty())
+        {
+            const auto [c, s] = open.top();
+            open.pop();
+            if (c > cost[s])
+            {
+                continue;
+            }
+            if (found == targets.size() && c >= worst)
+            {
+                break;
+            }
+            const Graph::Place here = placeOf(s);
+            if (const auto it = wanted.find(here.zone); it != wanted.end())
+            {
+                for (const std::size_t i : it->second)
+                {
+                    const auto& t = targets[i];
+                    if (t.piece.has_value() && !detail::joins(here.piece, *t.piece))
+                    {
+                        continue;
+                    }
+                    const float total = c + (t.point.has_value() ? detail::crow(here.at, *t.point) : 0.0f);
+                    if (!out[i].has_value())
+                    {
+                        ++found;
+                    }
+                    if (!out[i].has_value() || total < *out[i])
+                    {
+                        out[i] = total;
+                    }
+                    worst = std::max(worst, *out[i]);
+                }
+            }
+            if (!world.mountZones.contains(here.zone))
+            {
+                continue; // got down as he entered it: the ride ends here
+            }
+            const auto take = [&](const auto& ways, const auto key)
+            {
+                const auto it = ways.find(key);
+                if (it == ways.end())
+                {
+                    return;
+                }
+                for (const std::size_t e : it->second)
+                {
+                    const Graph::Exit& exit = graph.exits[e];
+                    if (exit.rents)
+                    {
+                        continue; // a rider rents no second chocobo
+                    }
+                    const std::size_t next = 1 + exit.to;
+                    const float       step = c + detail::crow(here.at, exit.at) + exit.cost;
+                    if (step < cost[next])
+                    {
+                        if (cost[next] == kNever)
+                        {
+                            touched.push_back(next);
+                        }
+                        cost[next] = step;
+                        open.push({ step, next });
+                    }
+                }
+            };
+            if (here.piece == 0)
+            {
+                take(graph.byZone, here.zone);
+            }
+            else
+            {
+                take(graph.byPiece, Graph::key(here.zone, here.piece));
+                take(graph.byPiece, Graph::key(here.zone, 0));
             }
         }
         return out;

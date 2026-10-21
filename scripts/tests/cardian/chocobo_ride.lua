@@ -103,6 +103,31 @@ describe('Cardian chocobo ride', function()
         assert(moved[partner:getID()] == nil, 'she was moved without a chocobo')
     end)
 
+    -- The chocobo porter's question, where to: put to him by his rental at a
+    -- city's stable, which sets him down in its field, and by nothing else
+    local function questionsKept()
+        local asked = {}
+        stub('CBaseEntity.cardianPorterAsk', function(entity)
+            asked[#asked + 1] = entity:getID()
+        end)
+        return asked
+    end
+
+    it("puts the porter's question to him as his rental sets him down", function()
+        local asked = questionsKept()
+        rent()
+        player.assert:hasEffect(xi.effect.MOUNTED)
+        assert(#asked == 1 and asked[1] == player:getID(), string.format('asked %d times', #asked))
+    end)
+
+    it('puts no question when he rents nothing', function()
+        local asked = questionsKept()
+        player:setLocalVar('[CHOCOBO]price', xi.chocobo.getPrice(player))
+        xi.chocobo.renterOnEventFinish(player, csid, 1, csid) -- he turned the rental down
+        player.assert.no:hasEffect(xi.effect.MOUNTED)
+        assert(#asked == 0, 'asked with no rental')
+    end)
+
     -- Her own rental on her trek, as pawn/riding.cpp asks it of the stable she
     -- has reached (the partner standing in for a cardian)
     describe('on her trek', function()

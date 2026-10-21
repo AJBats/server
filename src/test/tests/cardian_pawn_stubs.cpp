@@ -162,6 +162,13 @@ class CardianTestStubs : public CPPModule
             return ::lua.create_table();
         };
 
+        // The chocobo porter's question after his rental (modules/cardian/lua/
+        // chocobo_ride.lua): the porter is the pawn module's, not linked here; a
+        // test stubs it to see it put
+        ::lua["CBaseEntity"]["cardianPorterAsk"] = [](CLuaBaseEntity* /* PLuaBaseEntity */)
+        {
+        };
+
         // The combat pause is core, so this is the real manager, not a stub: what a
         // Lua test needs to hold the simulation and let it go (scripts/tests/cardian/
         // pause.lua). Held by nobody in particular, so no holder can go offline.
