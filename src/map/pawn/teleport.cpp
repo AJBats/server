@@ -228,9 +228,11 @@ namespace pawn::teleport
             pawn::tactics::role::sayParty(PMage, line);
         }
 
+        // Her goodbye, the same for every crag: only Holla, Dem and Mea are
+        // crags (the user, 2026-10-21, #558)
         auto thanksOf(const CCharEntity* PMage) -> std::string
         {
-            return pick(PMage->id, { "Safe travels!", "Glad I could help. Take care out there!", "Enjoy the view from the crag!" });
+            return pick(PMage->id, { "Safe travels!", "Glad I could help. Take care out there!", "Have a good trip!" });
         }
 
         // Her last line said: out of the party a moment later, so the line
