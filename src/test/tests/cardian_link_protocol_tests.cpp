@@ -195,8 +195,8 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_porter_go) == 20);
     STATIC_REQUIRE(sizeof(cl_porter_stop) == 16);
     STATIC_REQUIRE(sizeof(cl_porter_state) == 28);
-    STATIC_REQUIRE(sizeof(cl_porter_point) == 12);
-    STATIC_REQUIRE(sizeof(cl_porter_route) == 408);
+    STATIC_REQUIRE(sizeof(cl_porter_point) == 16);
+    STATIC_REQUIRE(sizeof(cl_porter_route) == 536);
     STATIC_REQUIRE(sizeof(cl_porter_stuck) == 32);
 }
 

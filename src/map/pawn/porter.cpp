@@ -54,9 +54,13 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <deque>
+#include <functional>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <set>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -106,6 +110,7 @@ namespace pawn::porter
 
             // His route across it, his spot as it was planned first
             std::vector<Point>               route;
+            std::vector<bool>                tight;  // by waypoint, one threading a bridge or a neck (route_search.h Route::tight), steered to closely
             cardian::porter::Ground          ground; // the ground's heights under its legs
             Ends                             ends    = Ends::Stop;
             bool                             planned = false;
@@ -145,6 +150,7 @@ namespace pawn::porter
             j.hop.reset();
             j.gotDown = false;
             j.route.clear();
+            j.tight.clear();
             j.ground.clear();
             j.planned = false;
             j.next    = 0;
@@ -412,7 +418,7 @@ namespace pawn::porter
             std::string line;
             for (std::size_t i = 0; i < j.route.size(); ++i)
             {
-                line += fmt::format(" {}:({:.1f}, {:.1f}, {:.1f})", i, j.route[i].x, j.route[i].y, j.route[i].z);
+                line += fmt::format(" {}:({:.1f}, {:.1f}, {:.1f}){}", i, j.route[i].x, j.route[i].y, j.route[i].z, i < j.tight.size() && j.tight[i] ? " tight" : "");
                 if ((i + 1) % 10 == 0 || i + 1 == j.route.size())
                 {
                     ShowInfoFmt("porter: trace: {}'s waypoints{}", PChar->getName(), line);
@@ -492,27 +498,20 @@ namespace pawn::porter
         auto places() -> const std::vector<Place>&;
 
         // The zones a ride can plan a route in, for their navmeshes
-        // (porter_mesh.h): every place's, and every zone that allows a mount
-        // and that zone lines join to them -- not a mount zone apart from the
-        // world, as GM_Home is
+        // (porter_mesh.h): the zones that allow a mount from which a rider
+        // reaches a place without getting down -- a crag's or an outpost's
+        // zone, or one with a line into a city, where the ride ends at the
+        // gate. A city, where no ride moves, and a zone whose rides could go
+        // nowhere (Mount Zhayolm, Attohwa Chasm, GM_Home) have none
         auto riddenZones() -> std::vector<uint16>
         {
-            std::set<uint16>        zones;
             std::vector<xi::ZoneId> from;
             for (const auto& place : places())
             {
-                zones.insert(place.zone);
                 from.push_back(static_cast<xi::ZoneId>(place.zone));
             }
-            const auto reached = pawn::travel::hops(from);
-            zoneutils::ForEachZone([&](CZone* PZone)
-            {
-                const auto zoneId = static_cast<uint16>(PZone->GetID());
-                if (pawn::travel::allowsMount(PZone->GetID()) && reached.contains(zoneId))
-                {
-                    zones.insert(zoneId);
-                }
-            });
+            const auto region = pawn::travel::rideRegion(from);
+            std::set<uint16> zones(region.begin(), region.end());
             return { zones.begin(), zones.end() };
         }
 
@@ -664,6 +663,7 @@ namespace pawn::porter
                 p.x     = j.route[i].x;
                 p.y     = j.route[i].y;
                 p.z     = j.route[i].z;
+                p.tight = i < j.tight.size() && j.tight[i] ? 1 : 0;
             }
             j.sentTo = seg.from + msg.count;
             j.resend = !send(charid, msg);
@@ -791,6 +791,7 @@ namespace pawn::porter
             const auto*             detour = own == nullptr && PChar->loc.zone != nullptr ? dynamic_cast<const DetourNavMesh*>(PChar->loc.zone->navMesh()) : nullptr;
             const dtNavMesh*        walked = own != nullptr ? own : detour != nullptr ? detour->detourMesh() : nullptr; // the navmesh the route runs on
             std::vector<position_t> way(1, from);
+            std::vector<bool>       tight(1, false); // by point of `way`: one threading a bridge or a neck
             const auto              searchFrom = std::chrono::steady_clock::now(); // a stopwatch, for the route line: never game time
             const auto              route      = own != nullptr ? pawn::travel::routeOn(*own, from, goal, snagged) : pawn::travel::routeAvoiding(zone, from, goal, snagged, {}, 0.0f);
             const double            searchMs   = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchFrom).count();
@@ -806,6 +807,8 @@ namespace pawn::porter
             if (route.has_value() && !route->points.empty() && (route->complete || distance(route->points.back(), goal) <= slack))
             {
                 way.insert(way.end(), route->points.begin(), route->points.end());
+                tight.insert(tight.end(), route->tight.begin(), route->tight.end());
+                tight.resize(way.size(), false);
                 if (!route->complete && line)
                 {
                     way.push_back(goal); // the mesh ends short of the line's mouth: straight on from its end
@@ -824,7 +827,9 @@ namespace pawn::porter
                 return false;
             }
             cardian::walk::cutShort(way, gate ? kGateGetDown : inZone ? kSpotCloseTo : 0.0f);
+            tight.resize(way.size(), false);
 
+            j.tight = std::move(tight);
             j.route.clear();
             j.route.reserve(way.size());
             for (const auto& p : way)
@@ -1097,39 +1102,220 @@ namespace pawn::porter
             reply.finish(placesMessage(PChar), CL_S_OK);
         }
 
-        void go(CCharEntity* PChar, const cl_porter_go& ask, Reply& reply)
+        // A leg of a ride's trip, as the trek's planner lays it out on the
+        // map's thread: in `zone`, from `from` to `goal`, reached within `slack`
+        struct Leg
         {
-            const auto& all = places();
-            if (ask.place >= all.size())
+            CZone*      zone = nullptr;
+            position_t  from{};
+            position_t  goal{};
+            float       slack = 0.0f;
+            std::string to; // what the goal is, for the log
+        };
+
+        // A trip's legs along the trek's way to `place`, from `zone` and `at`:
+        // from his spot, or where each line sets him down, to the next line's
+        // mouth, and in the place's zone to its spot -- or to a city's gate,
+        // where the ride gets down. `why` instead when the trek's map knows no
+        // way on. On the map's thread: the trek's world is its alone
+        struct Trip
+        {
+            std::vector<Leg>           legs;
+            std::optional<std::string> why;
+        };
+        auto tripOf(xi::ZoneId zone, position_t at, const Place& place) -> Trip
+        {
+            constexpr int kMostZones = 16;
+            const auto    toPoint    = place.kind == Kind::City ? std::nullopt : std::optional<position_t>(spotOf(place));
+            Trip          trip;
+            for (int z = 0; z < kMostZones; ++z)
             {
-                reply.finish(ask, CL_S_NO_SUCH_PLACE);
+                const bool                     inZone = static_cast<uint16>(zone) == place.zone;
+                std::optional<pawn::TravelHop> hop;
+                if (!inZone)
+                {
+                    hop = pawn::travel::nextHop(zone, at, static_cast<xi::ZoneId>(place.zone), toPoint, std::nullopt,
+                                                TravelRide{ .mayRent = false, .mounted = true, .rideFactor = 1.0f, .stayMounted = true });
+                    if (!hop.has_value())
+                    {
+                        trip.why = fmt::format("the trek's map knows no way on from zone {}", static_cast<uint16>(zone));
+                        return trip;
+                    }
+                }
+                trip.legs.push_back(Leg{ .zone  = zoneutils::GetZone(zone),
+                                         .from  = at,
+                                         .goal  = inZone ? spotOf(place) : hop->walkTo,
+                                         .slack = inZone ? kMeshEndYalms : kLineSlack,
+                                         .to    = inZone ? std::string("the place") : fmt::format("the line to zone {}", static_cast<uint16>(hop->destinationZone)) });
+                if (inZone || (place.kind == Kind::City && static_cast<uint16>(hop->destinationZone) == place.zone))
+                {
+                    return trip; // there, or at the city's gate
+                }
+                zone = hop->destinationZone;
+                at   = hop->arriveAt;
+            }
+            trip.why = fmt::format("more than {} zones away", kMostZones);
+            return trip;
+        }
+
+        // What a trip check cost: the navmeshes made ready (read from their
+        // files the first time) and the searches
+        struct TripCost
+        {
+            int    zones     = 0;
+            double readyMs   = 0.0;
+            double searchMs  = 0.0;
+            double slowestMs = 0.0;
+        };
+
+        // Why the rider's navmeshes do not carry a trip's legs -- the first
+        // they do not, said -- or nothing when they do: each leg searched on
+        // its zone's porter navmesh as the ride will plan it on entering. A
+        // zone without one rides on the zone's, and is not judged. On a
+        // worker thread: the navmeshes' cache is locked (porter_mesh.h), and
+        // each thread searches with workspaces of its own (route_search.h)
+        auto judge(const std::vector<Leg>& legs, TripCost& took) -> std::optional<std::string>
+        {
+            using Clock        = std::chrono::steady_clock; // a stopwatch, never game time
+            const auto msSince = [](const Clock::time_point from) { return std::chrono::duration<double, std::milli>(Clock::now() - from).count(); };
+            for (const auto& leg : legs)
+            {
+                const auto       ready = Clock::now();
+                const dtNavMesh* own   = settings::get<bool>("pawn.PORTER_NAVMESH") && leg.zone != nullptr ? mesh::of(leg.zone) : nullptr;
+                took.readyMs += msSince(ready);
+                ++took.zones;
+                if (own == nullptr || distance(leg.from, leg.goal) <= leg.slack)
+                {
+                    continue;
+                }
+                const auto searched = Clock::now();
+                const auto route    = pawn::travel::routeOn(*own, leg.from, leg.goal, {});
+                const auto ms       = msSince(searched);
+                took.searchMs += ms;
+                took.slowestMs = std::max(took.slowestMs, ms);
+                if (!route.has_value() || route->points.empty() || (!route->complete && distance(route->points.back(), leg.goal) > leg.slack))
+                {
+                    return fmt::format("no way on {}'s navmesh for the rider to {} {:.0f}y away", leg.zone->getName(), leg.to, distance(leg.from, leg.goal));
+                }
+            }
+            return std::nullopt;
+        }
+
+        // The trip checks asked and not yet worked, one at a time on a worker
+        // thread in the order asked -- the navmeshes one reads are in memory
+        // for the next, and many asked at once wait their turn -- each answer
+        // handed back to the map's thread. Leaked, so nothing is torn down
+        // under a worker at exit
+        struct TripChecks
+        {
+            std::mutex                        mutex;
+            std::deque<std::function<void()>> waiting;
+            bool                              working = false;
+        };
+
+        auto tripChecks() -> TripChecks&
+        {
+            static auto* checks = new TripChecks();
+            return *checks;
+        }
+
+        // `job` worked on a worker after the checks asked before it; at once,
+        // here, with no scheduler
+        void checkLater(std::function<void()> job)
+        {
+            auto* scheduler = cardian::link::scheduler();
+            if (scheduler == nullptr)
+            {
+                job();
                 return;
             }
+            auto& checks = tripChecks();
+            {
+                std::lock_guard lock(checks.mutex);
+                checks.waiting.push_back(std::move(job));
+                if (checks.working)
+                {
+                    return;
+                }
+                checks.working = true;
+            }
+            scheduler->postToWorkerThread(
+                []()
+                {
+                    auto& checks = tripChecks();
+                    for (;;)
+                    {
+                        std::function<void()> next;
+                        {
+                            std::lock_guard lock(checks.mutex);
+                            if (checks.waiting.empty())
+                            {
+                                checks.working = false;
+                                return;
+                            }
+                            next = std::move(checks.waiting.front());
+                            checks.waiting.pop_front();
+                        }
+                        next();
+                    }
+                });
+        }
+
+        // Whether he may ride to `place` now, and its ride in yalms when he
+        // may: asked as he picks it and again as the trip check answers
+        auto refusal(CCharEntity* PChar, const Place& place, float& cost) -> uint16
+        {
             if (!PChar->isMounted())
             {
-                reply.finish(ask, CL_S_NOT_RIDING);
-                return;
+                return CL_S_NOT_RIDING;
             }
             if (PChar->isInEvent())
             {
-                reply.finish(ask, CL_S_IN_EVENT);
-                return;
+                return CL_S_IN_EVENT;
             }
             if (pawn::mobOn(PChar, kMobOnReach))
             {
-                reply.finish(ask, CL_S_UNDER_ATTACK);
-                return;
+                return CL_S_UNDER_ATTACK;
             }
-            const Place& place   = all[ask.place];
-            const auto   offers  = offersFor(PChar);
-            const bool   offered = std::any_of(offers.begin(), offers.end(), [&](const auto& o) { return o.place.number == place.number; });
-            const auto   cost    = offered ? pawn::travel::rideCosts(PChar->getZone(), PChar->loc.p, { goalOf(place) }).front() : std::nullopt;
-            if (!cost.has_value())
+            const auto offers  = offersFor(PChar);
+            const bool offered = std::any_of(offers.begin(), offers.end(), [&](const auto& o) { return o.place.number == place.number; });
+            const auto costs   = offered ? pawn::travel::rideCosts(PChar->getZone(), PChar->loc.p, { goalOf(place) }).front() : std::nullopt;
+            if (!costs.has_value())
             {
+                return CL_S_NO_WAY;
+            }
+            cost = *costs;
+            return CL_S_OK;
+        }
+
+        // The ride begun, once its trip check has answered: he is asked again
+        // whether he may ride, since the check took a moment
+        void answered(const uint32 charid, const Place& place, const cl_porter_go& ask, Reply& reply, const std::optional<std::string>& why, const TripCost& took,
+                      const std::chrono::steady_clock::time_point asked)
+        {
+            auto* PChar = zoneutils::GetChar(charid);
+            if (PChar == nullptr)
+            {
+                return; // signed out meanwhile, his link with him
+            }
+            ShowInfoFmt("porter: {}'s trip to the {} in zone {} checked on a worker, answered in {:.1f} ms: {} zones, their navmeshes ready in {:.1f} ms, "
+                        "searched in {:.1f} ms (the slowest leg {:.1f} ms)",
+                        PChar->getName(), kindName(place.kind), place.zone, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count(),
+                        took.zones, took.readyMs, took.searchMs, took.slowestMs);
+            if (why.has_value())
+            {
+                ShowInfoFmt("porter: {} asks for the {} in zone {} (place {}), which the rider's navmeshes do not reach: {}", PChar->getName(), kindName(place.kind),
+                            place.zone, place.number, *why);
                 reply.finish(ask, CL_S_NO_WAY);
                 return;
             }
-            const auto seconds = cardian::porter::rideSeconds(*cost, ridePace());
+            float cost = 0.0f;
+            if (const auto status = refusal(PChar, place, cost); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+            const auto seconds = cardian::porter::rideSeconds(cost, ridePace());
             const auto left    = rentalLeft(PChar);
             if (!cardian::porter::rentalCovers(seconds, left))
             {
@@ -1149,6 +1335,53 @@ namespace pawn::porter
                         place.number, j.ride, clockOf(seconds), left.has_value() ? clockOf(*left) : std::string("no end"));
             reply.finish(ask, CL_S_OK);
             send(PChar->id, stateMessage(&place, j.ride, true, 0));
+        }
+
+        // His pick on Ride to: the quick refusals at once; then the trip,
+        // laid out by the trek's planner here, checked on the rider's
+        // navmeshes on a worker (checkLater), and answered on a later tick,
+        // the ride begun or refused (answered)
+        void go(CCharEntity* PChar, const cl_porter_go& ask, Reply& reply)
+        {
+            const auto& all = places();
+            if (ask.place >= all.size())
+            {
+                reply.finish(ask, CL_S_NO_SUCH_PLACE);
+                return;
+            }
+            const Place place = all[ask.place];
+            float       cost  = 0.0f;
+            if (const auto status = refusal(PChar, place, cost); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+            auto trip = tripOf(PChar->getZone(), PChar->loc.p, place);
+            if (trip.why.has_value())
+            {
+                ShowInfoFmt("porter: {} asks for the {} in zone {} (place {}), which the trek's map does not reach: {}", PChar->getName(), kindName(place.kind), place.zone,
+                            place.number, *trip.why);
+                reply.finish(ask, CL_S_NO_WAY);
+                return;
+            }
+            checkLater(
+                [charid = PChar->id, place, ask, later = reply.later(), legs = std::move(trip.legs), asked = std::chrono::steady_clock::now()]()
+                {
+                    TripCost   took;
+                    const auto why    = judge(legs, took);
+                    auto       answer = [charid, place, ask, later, why, took, asked]() mutable
+                    {
+                        answered(charid, place, ask, later, why, took, asked);
+                    };
+                    if (auto* scheduler = cardian::link::scheduler())
+                    {
+                        scheduler->postToMainThread(std::move(answer));
+                    }
+                    else
+                    {
+                        answer();
+                    }
+                });
         }
 
         void stop(CCharEntity* PChar, const cl_porter_stop& ask, Reply& reply)
@@ -1307,7 +1540,37 @@ class PorterModule : public CPPModule
             const char* precalc = std::getenv("CARDIAN_PORTER_NAVMESH_PRECALC");
             if (precalc != nullptr && std::string_view(precalc) == "1")
             {
-                mesh::precalc(riddenZones());
+                // CARDIAN_PORTER_NAVMESH_ZONES, when given, names the only zones to build (their ids, space apart)
+                auto        zones = riddenZones();
+                const char* only  = std::getenv("CARDIAN_PORTER_NAVMESH_ZONES");
+                if (only != nullptr && *only != '\0')
+                {
+                    std::set<uint16>   named;
+                    std::istringstream in(only);
+                    for (int id = 0; in >> id;)
+                    {
+                        named.insert(static_cast<uint16>(id));
+                    }
+                    std::vector<std::string> unknown; // what was asked for and is no zone a ride plans in, or no number
+                    for (const auto z : named)
+                    {
+                        if (std::find(zones.begin(), zones.end(), z) == zones.end())
+                        {
+                            unknown.push_back(std::to_string(z));
+                        }
+                    }
+                    if (!in.eof())
+                    {
+                        unknown.push_back(fmt::format("'{}'", only));
+                    }
+                    std::erase_if(zones, [&](const uint16 z) { return !named.contains(z); });
+                    if (!unknown.empty())
+                    {
+                        ShowErrorFmt("porter: no navmesh for the rider built for {}: not a zone a ride plans in", fmt::join(unknown, ", "));
+                        std::exit(1);
+                    }
+                }
+                mesh::precalc(zones);
             }
             else if (settings::get<bool>("pawn.PORTER_NAVMESH"))
             {

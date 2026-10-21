@@ -51,6 +51,10 @@ namespace cardian::route
 {
     // Detour's polygon flags, as the game's navmeshes are built (RecastDemo's)
     constexpr unsigned short kPolyDisabled = 0x10;
+    // ... and the tight strip of a navmesh built for the player's own client
+    // (pawn/client_navmesh.h kTightFlag): ground his body passes, inside the
+    // berth a rider keeps where there is room
+    constexpr unsigned short kPolyTight = 0x20;
 
     constexpr int kSearchNodes     = 65535; // Detour's largest node pool
     constexpr int kCorridorPolys   = 16384;
@@ -66,6 +70,7 @@ namespace cardian::route
         int                     firstDanger{ -1 }; // kept out of danger: the first waypoint whose step to it passes through danger, -1 when none does
         int                     searched{};        // kept out of danger: the points its search took up
         int                     links{};           // kept out of danger: the off-mesh links it crosses
+        std::vector<bool>       tight;             // by waypoint, one on the tight strip (kPolyTight), to be steered to closely; none marked by Detour's own search
     };
 
     // FFXI is left-handed Y-up and Detour right-handed Y-up: Y and Z flip
@@ -140,6 +145,7 @@ namespace cardian::route
             route.points.push_back(point);
             last = point;
         }
+        route.tight.assign(route.points.size(), false); // Detour's own search marks none
         return route;
     }
 
@@ -161,6 +167,7 @@ namespace cardian::route
     constexpr float kNearDanger    = 3.0f;    // a polygon whose box comes this near a hazard's sphere is near danger
     constexpr float kDangerCost    = 5000.0f; // a step through danger, in yalms of walk: a way round shorter than this is taken (less the greed's quarter at worst)
     constexpr float kInsideCost    = 100.0f;  // each yalm walked inside the reaches she set out in (once where they overlap), in yalms of walk: she leaves them by the shortest way, then goes on
+    constexpr float kTightCost     = 4.0f;    // each yalm walked on the tight strip (kPolyTight), in yalms of walk: a way round up to this many times as long is taken instead
     constexpr float kShortcutReach = 250.0f;  // the longest straight a route is drawn tight over
     constexpr int   kShortcutTries = 4;       // points ahead tried past a straight that fails, before the last good one is kept
     constexpr float kGreed         = 1.25f;   // how much harder the search runs toward the goal than a shortest way allows: far fewer points looked at, a route a quarter longer at worst (under 1% in the zones measured)
@@ -898,12 +905,14 @@ namespace cardian::route
 
         constexpr uint8_t kLink   = 1; // a polygon that is an off-mesh link
         constexpr uint8_t kOneWay = 2; // ... walked from its start to its end only
+        constexpr uint8_t kTight  = 4; // a ground polygon on the tight strip (kPolyTight)
 
         // The search's tables, kept from one search to the next and grown to
-        // the largest mesh searched: every trek plans on the map's main
-        // thread, one search at a time. A polygon's entries count only when
-        // stamped with the search under way, so nothing is cleared between
-        // searches
+        // the largest mesh searched, one set a thread: the treks plan on the
+        // map's main thread and the porter's trip checks on a worker
+        // (porter.cpp), one search at a time on each. A polygon's entries
+        // count only when stamped with the search under way, so nothing is
+        // cleared between searches
         struct Workspace
         {
             std::vector<uint32_t>              base;   // each tile's first polygon in the tables below
@@ -920,7 +929,7 @@ namespace cardian::route
 
         inline auto workspace() -> Workspace&
         {
-            static Workspace w;
+            thread_local Workspace w;
             return w;
         }
 
@@ -1151,7 +1160,12 @@ namespace cardian::route
     // costs kInsideCost, so she leaves it by the shortest way before going
     // on -- not along its inside toward her goal. The route is then drawn
     // tight, a straight kept wherever it stays on the mesh and out of
-    // danger, and keeps her inside no longer than the way it replaces. Not
+    // danger, and keeps her inside no longer than the way it replaces. On a
+    // navmesh built for the player's own client, a yalm on its tight strip
+    // costs kTightCost, its edges are crossed at their middles only, and no
+    // straight touches it, from it or onto it: a route keeps the rider's berth where there is
+    // room, and threads a bridge or a neck by the middle of its polygons,
+    // each of those points kept and marked tight (Route::tight). Not
     // complete when no walk joins the two points; none when either is off the
     // mesh. With a `reach`, only the ground within it looks for the way --
     // every point whose distances to the two ends add up to no more, an
@@ -1178,6 +1192,22 @@ namespace cardian::route
         dtQueryFilter filter;
         filter.setIncludeFlags(0xFFFF);
         filter.setExcludeFlags(kPolyDisabled);
+        dtQueryFilter clear; // a straight's: never onto the tight strip
+        clear.setIncludeFlags(0xFFFF);
+        clear.setExcludeFlags(kPolyDisabled | kPolyTight);
+        // Whether a polygon lies on the tight strip (kPolyTight), and whether
+        // a ray's polygons touch it: Detour's raycast never filters the
+        // polygon it starts in, so a straight from the strip is caught here
+        const auto isTight = [&](const dtPolyRef ref) -> bool
+        {
+            const dtMeshTile* tile = nullptr;
+            const dtPoly*     poly = nullptr;
+            return ref != 0 && dtStatusSucceed(mesh.getTileAndPolyByRef(ref, &tile, &poly)) && (poly->flags & kPolyTight) != 0;
+        };
+        const auto touchesTight = [&](const dtPolyRef* polys, const int count) -> bool
+        {
+            return std::any_of(polys, polys + count, isTight);
+        };
         const bool safeGround = !to.has_value();
         const auto start      = toDetour(from);
         const auto goal       = toDetour(to.value_or(from));
@@ -1303,14 +1333,16 @@ namespace cardian::route
             float     normal[3]{};
             dtPolyRef path[kRayPolys]{};
             int       count = 0;
-            if (dtStatusSucceed(query.raycast(startRef, origin.data(), target.data(), &filter, &t, normal, path, &count, kRayPolys)) && t == FLT_MAX && count > 0 &&
-                path[count - 1] == goalRef && !detail::tooSteep(origin, target) && !climbsCliff(path, count, origin, target) && !inDanger(origin, target))
+            if (dtStatusSucceed(query.raycast(startRef, origin.data(), target.data(), &clear, &t, normal, path, &count, kRayPolys)) && t == FLT_MAX && count > 0 &&
+                path[count - 1] == goalRef && !touchesTight(path, count) && !detail::tooSteep(origin, target) && !climbsCliff(path, count, origin, target) &&
+                !inDanger(origin, target))
             {
                 Route straightRoute;
                 straightRoute.complete = true;
                 straightRoute.length   = apart(origin, target);
                 straightRoute.polys    = count;
                 straightRoute.points.push_back(fromDetour(target.data()));
+                straightRoute.tight.push_back(false); // a straight never touches the tight strip
                 return straightRoute;
             }
         }
@@ -1356,7 +1388,7 @@ namespace cardian::route
             const dtPoly*     poly = nullptr;
             mesh.getTileAndPolyByRefUnsafe(ref, &tile, &poly);
             const bool isLink = poly->getType() == DT_POLYTYPE_OFFMESH_CONNECTION;
-            ws.kind[r]        = 0;
+            ws.kind[r]        = !isLink && (poly->flags & kPolyTight) != 0 ? detail::kTight : 0;
             if (isLink)
             {
                 const auto& con = tile->offMeshCons[static_cast<int>(poly - tile->polys) - tile->header->offMeshBase];
@@ -1443,15 +1475,20 @@ namespace cardian::route
                 // way across a seam goes on through its polygon's other
                 // edges as straight), the end ones a little in from the
                 // corners; elsewhere its two ends alone, where a shortest way
-                // turns (its middle, on an edge too short for two)
+                // turns (its middle, on an edge too short for two). An edge
+                // of the tight strip is crossed at its middle alone: its ends
+                // are the body's margin from a wall, and its middle, across
+                // a bridge or a neck, the way between its sides
                 const float len     = apart(left, right);
                 const bool  seamed  = seams != nullptr && (!seams->of(mesh, ref).empty() || !seams->of(mesh, next).empty());
+                const bool  tight   = ((poly->flags | nextPoly->flags) & kPolyTight) != 0;
                 const bool  fine    = seamed || nearOf(r, tile, poly) || nearOf(n, nextTile, nextPoly);
                 const float spacing = seamed ? kSeamSpacing : kPortalSpacing;
                 const int   ends    = len > 1.0f ? 2 : 1;
-                const int   count   = seamed ? std::max(ends, static_cast<int>(std::ceil(len / spacing)) + 1)
-                                      : fine ? std::max(1, static_cast<int>(std::ceil(len / spacing)))
-                                             : ends;
+                const int   count   = seamed  ? std::max(ends, static_cast<int>(std::ceil(len / spacing)) + 1)
+                                      : tight ? 1
+                                      : fine  ? std::max(1, static_cast<int>(std::ceil(len / spacing)))
+                                              : ends;
                 const float inset = len > 0.0f ? std::min(0.3f, len * 0.1f) / len : 0.0f;
                 for (int k = 0; k < count; ++k)
                 {
@@ -1568,7 +1605,7 @@ namespace cardian::route
                 }
                 const float step   = apart(at, next.at);
                 const float walk   = nodes[here].walk + step;
-                const float walked = g + step;
+                const float walked = g + step * (!viaLink && (ws.kind[indexOf(via)] & detail::kTight) != 0 ? kTightCost : 1.0f);
                 if (walked >= next.g || (within > 0.0f && walk > within))
                 {
                     return; // danger only adds; past the yalms safe ground is looked for within
@@ -1659,7 +1696,7 @@ namespace cardian::route
             float     normal[3]{};
             dtPolyRef path[kRayPolys]{};
             int       count = 0;
-            if (dtStatusFailed(query.raycast(nodes[raw[a + 1]].via, from_.at.data(), to_.at.data(), &filter, &t, normal, path, &count, kRayPolys)) || count == 0)
+            if (dtStatusFailed(query.raycast(nodes[raw[a + 1]].via, from_.at.data(), to_.at.data(), &clear, &t, normal, path, &count, kRayPolys)) || count == 0)
             {
                 return false;
             }
@@ -1674,6 +1711,10 @@ namespace cardian::route
             if (last != to_.polys[0] && last != to_.polys[1] && last != to_.via)
             {
                 return false;
+            }
+            if (touchesTight(path, count))
+            {
+                return false; // the strip's own points are kept, threading its middle
             }
             if (detail::tooSteep(from_.at, to_.at))
             {
@@ -1736,6 +1777,7 @@ namespace cardian::route
             }
             route.length += apart(previous, point.at);
             route.points.push_back(fromDetour(point.at.data()));
+            route.tight.push_back(isTight(point.polys[0]) || isTight(point.polys[1]));
             previous = point.at;
         }
         detail::trim(ws);

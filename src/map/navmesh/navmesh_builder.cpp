@@ -26,6 +26,7 @@
 
 #include <map/ximesh/ximesh.h>
 
+#include "pawn/client_joins.h"    // CARDIAN
 #include "pawn/client_navmesh.h"  // CARDIAN
 #include "pawn/collision_walls.h" // CARDIAN
 
@@ -130,7 +131,7 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
         float best  = FloatLowest;
         for (int p = 0; p < pmesh.npolys; ++p)
         {
-            if (p == srcPoly || pmesh.areas[p] != RC_WALKABLE_AREA)
+            if (p == srcPoly || !cardian::client::walkableArea(pmesh.areas[p])) // CARDIAN: the tight strip is ground
             {
                 continue;
             }
@@ -242,7 +243,7 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
     std::vector<OffMeshCandidate> candidates;
     for (int p = 0; p < pmesh.npolys; ++p)
     {
-        if (pmesh.areas[p] != RC_WALKABLE_AREA)
+        if (!cardian::client::walkableArea(pmesh.areas[p])) // CARDIAN: the tight strip is ground
         {
             continue;
         }
@@ -293,6 +294,7 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
             // Outward direction (away from the poly centroid), in the xz-plane.
             float       outwardX   = edgeMid[0] - centroid[0];
             float       outwardZ   = edgeMid[2] - centroid[2];
+            cardian::client::squareOut(config.cardianClient, edgeA, edgeB, outwardX, outwardZ); // CARDIAN: for the client, square to the edge
             const float outwardLen = std::sqrt(outwardX * outwardX + outwardZ * outwardZ);
             if (outwardLen < 1e-4f)
             {
@@ -1055,8 +1057,9 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         return {};
     }
     rcFreeHeightField(solid);
+    cardian::client::judgeJoins(*chf, tileMesh.verts, tileMesh.indices, gathered, config.cardianClient); // CARDIAN: for the client, its own collision judges the joins
 
-    if (!rcErodeWalkableArea(&ctx, tileCfg.walkableRadius, *chf))
+    if (!cardian::client::erode(&ctx, tileCfg.walkableRadius, config.cardianClient, config.cardianBerth, *chf)) // CARDIAN: for the client, its body's margin, and the berth past it marked tight
     {
         rcFreeCompactHeightfield(chf);
         return {};
@@ -1131,6 +1134,10 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         if (pmesh->areas[i] == RC_WALKABLE_AREA)
         {
             pmesh->flags[i] = SAMPLE_POLYFLAGS_WALK;
+        }
+        else if (pmesh->areas[i] == cardian::client::kTightArea) // CARDIAN: the client's tight strip, walked and flagged
+        {
+            pmesh->flags[i] = SAMPLE_POLYFLAGS_WALK | cardian::client::kTightFlag;
         }
     }
 

@@ -31,6 +31,7 @@
 #include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // World travel for pawns, over sub-zones (pawn/subzone_graph.h): every
@@ -138,6 +139,11 @@ namespace pawn
         // How many zone lines lie between each reachable zone and the nearest of these, a zone itself
         // at 0 (BFS from all of them at once); a zone no line reaches is absent
         auto hops(const std::vector<xi::ZoneId>& from) -> std::unordered_map<uint16, uint32>;
+
+        // The zones a rider reaches from these without getting down: through
+        // lines into zones that allow a mount, one after another. A zone of
+        // these that allows none (a city) is a way in, never in the answer
+        auto rideRegion(const std::vector<xi::ZoneId>& from) -> std::unordered_set<uint16>;
 
         // The map's budget for treks, pawn.TREK_PLAN_BUDGET_MS of each 400 ms
         // logic tick: every trek's tick is timed into it, and the moment one

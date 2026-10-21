@@ -19,16 +19,25 @@
 // builder's drop links, made from the climb, go down each one way. Recast's
 // ledge filter stays off: it cuts a cell whose neighbours' floors spread by
 // more than the climb, which under a climb this low cuts hillsides the client
-// walks, and the body's width already keeps a route off every real edge (the
-// zone's border, a ledge's lip, is no join). Its links
-// reach past the margin a body's width keeps on both sides of a ledge, and a
-// link whose way down meets the zone's collision -- a tree's trunk in the
-// hole the navmesh leaves round it -- is taken out (clearDrops).
+// walks, and the body's margin already keeps a route off every real edge (the
+// zone's border, a ledge's lip, is no join).
+//
+// The body's own margin, kBody, is all the navmesh takes off its edges --
+// eroded a cell short of it, since Recast's cells already block that much
+// (kTrimCells): a gap the client's body passes stays open, a bridge, a neck
+// between rocks or a squeeze beside a log among them. A rider keeps a wider berth where there is room, as a
+// person riding would -- trees and cliffs given a wide berth -- so the strip
+// beyond the body's margin, out to the berth (the porter's width), is kept
+// but marked tight (erode): its polygons carry kTightArea and kTightFlag,
+// and the route search crosses them only where going round costs more
+// (pawn/route_search.h, kTightCost), threading their middle. A drop link
+// is searched for straight out from its ledge's edge (squareOut).
 // Header-only: the navmesh builder (map core) reads it, and xi_test links it.
+
+#include <Recast.h>
 
 #include <algorithm>
 #include <cmath>
-#include <cstddef>
 #include <vector>
 
 namespace cardian::client
@@ -43,122 +52,83 @@ constexpr float kCellHeight = 0.125f; // yalms: the build's height steps, kStep 
 // quarter of a yalm keeps every slope the client walks whole, where the
 // zone's half-yalm cells, under a half-yalm climb, cut a hillside of 38
 constexpr float kCellSize = 0.25f;
+constexpr float kBody     = 0.5f; // yalms: the client's body, a sphere this far round its centre: never nearer an edge than this
 
-// Whether the segment p-q passes through the triangle a, b, c
-inline auto segmentHits(const float* p, const float* q, const float* a, const float* b, const float* c) -> bool
+// The strip between the body's margin and the berth: Recast's area for it
+// (walkable, and not RC_WALKABLE_AREA), and the flag its polygons carry
+constexpr unsigned char  kTightArea = 62;
+constexpr unsigned short kTightFlag = 0x20;
+
+// Whether a polygon's area is ground: the open, or the tight strip
+inline auto walkableArea(const unsigned char area) -> bool
 {
-    const float d[3]{ q[0] - p[0], q[1] - p[1], q[2] - p[2] };
-    const float e1[3]{ b[0] - a[0], b[1] - a[1], b[2] - a[2] };
-    const float e2[3]{ c[0] - a[0], c[1] - a[1], c[2] - a[2] };
-    const float h[3]{ d[1] * e2[2] - d[2] * e2[1], d[2] * e2[0] - d[0] * e2[2], d[0] * e2[1] - d[1] * e2[0] };
-    const float det = e1[0] * h[0] + e1[1] * h[1] + e1[2] * h[2];
-    if (std::fabs(det) < 1e-8f)
-    {
-        return false;
-    }
-
-    const float inv = 1.0f / det;
-    const float s[3]{ p[0] - a[0], p[1] - a[1], p[2] - a[2] };
-    const float u   = inv * (s[0] * h[0] + s[1] * h[1] + s[2] * h[2]);
-    if (u < 0.0f || u > 1.0f)
-    {
-        return false;
-    }
-
-    const float r[3]{ s[1] * e1[2] - s[2] * e1[1], s[2] * e1[0] - s[0] * e1[2], s[0] * e1[1] - s[1] * e1[0] };
-    const float v = inv * (d[0] * r[0] + d[1] * r[1] + d[2] * r[2]);
-    if (v < 0.0f || u + v > 1.0f)
-    {
-        return false;
-    }
-
-    const float t = inv * (e2[0] * r[0] + e2[1] * r[1] + e2[2] * r[2]);
-    return t >= 0.0f && t <= 1.0f;
+    return area == RC_WALKABLE_AREA || area == kTightArea;
 }
 
-// Whether a triangle is ground (or a ceiling): its normal within kSlope of
-// up or down, either winding
-inline auto flatish(const float* a, const float* b, const float* c) -> bool
-{
-    const float e1[3]{ b[0] - a[0], b[1] - a[1], b[2] - a[2] };
-    const float e2[3]{ c[0] - a[0], c[1] - a[1], c[2] - a[2] };
-    const float n[3]{ e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0] };
-    const float len = std::sqrt(n[0] * n[0] + n[1] * n[1] + n[2] * n[2]);
-    return len > 1e-8f && std::fabs(n[1]) / len > std::cos(kSlope * 3.14159265f / 180.0f);
-}
+// cells: the body's margin is eroded this much short of it. Recast blocks
+// every cell a collision triangle touches, as much as a cell nearer the
+// triangle than the collision itself, so the cell short keeps the body's
+// margin from the collision near enough, and opens the squeezes the client's
+// body slides through (a strip of dirt beside a fallen log in Yuhtunga
+// Jungle, which a full erosion pinched to a point)
+constexpr int kTrimCells = 1;
 
-// Whether a body dropping by a link from `start` to `end` (Detour's space, y
-// up) meets the zone's own collision on its way: it walks off at its
-// sphere's height, kStep over the start, straight out to above the landing,
-// and falls there. A tree's trunk or a rock the link spans is in the way; a
-// ledge's own face is under it, and ground he walks on toward the lip --
-// rising, it may reach the walk's height -- is never in it. `verts` and
-// `indices` are a tile's gathered triangles in Detour's space, the first
-// `count` the zone's own
-inline auto dropBlocked(const float* start, const float* end, const std::vector<float>& verts, const std::vector<int>& indices, const std::size_t count) -> bool
+// The erosion of a navmesh built for the client: the body's margin,
+// `bodyCells` (Recast's walkableRadius) less kTrimCells, and the berth past
+// it, out to `berth` from the edges, kept and marked kTightArea. Recast
+// measures each erosion from the edges as they stand, so a second erosion of
+// the rest reaches the berth. Any other build: Recast's own erosion
+inline auto erode(rcContext* ctx, const int bodyCells, const bool forClient, const float berth, rcCompactHeightfield& chf) -> bool
 {
-    const float from[3]{ start[0], start[1] + kStep, start[2] };
-    const float over[3]{ end[0], start[1] + kStep, end[2] };
-    const float land[3]{ end[0], end[1] + kStep, end[2] };
-    const float lo[3]{ std::min(from[0], over[0]), land[1], std::min(from[2], over[2]) };
-    const float hi[3]{ std::max(from[0], over[0]), from[1], std::max(from[2], over[2]) };
-    for (std::size_t t = 0; t < count && t * 3 + 2 < indices.size(); ++t)
+    if (!forClient)
     {
-        const float* a     = &verts[static_cast<std::size_t>(indices[t * 3 + 0]) * 3];
-        const float* b     = &verts[static_cast<std::size_t>(indices[t * 3 + 1]) * 3];
-        const float* c     = &verts[static_cast<std::size_t>(indices[t * 3 + 2]) * 3];
-        bool         apart = false;
-        for (int axis = 0; axis < 3 && !apart; ++axis)
+        return rcErodeWalkableArea(ctx, bodyCells, chf);
+    }
+    const int body = std::max(0, bodyCells - kTrimCells);
+    if (!rcErodeWalkableArea(ctx, body, chf))
+    {
+        return false;
+    }
+    const int berthCells = static_cast<int>(std::ceil(berth / chf.cs));
+    if (berthCells <= body)
+    {
+        return true;
+    }
+    std::vector<unsigned char> kept(chf.areas, chf.areas + chf.spanCount);
+    if (!rcErodeWalkableArea(ctx, berthCells - body, chf))
+    {
+        return false;
+    }
+    for (int i = 0; i < chf.spanCount; ++i)
+    {
+        if (chf.areas[i] == RC_NULL_AREA && kept[i] != RC_NULL_AREA)
         {
-            apart = std::max({ a[axis], b[axis], c[axis] }) < lo[axis] || std::min({ a[axis], b[axis], c[axis] }) > hi[axis];
-        }
-
-        if (!apart && !flatish(a, b, c) && (segmentHits(from, over, a, b, c) || segmentHits(over, land, a, b, c)))
-        {
-            return true;
+            chf.areas[i] = kTightArea;
         }
     }
-
-    return false;
+    return true;
 }
 
-// The drop links of a navmesh built for the client (the builder's, one
-// tile's) whose way down meets the zone's collision (dropBlocked), taken out;
-// any other build's left alone
-template <typename Links>
-inline void clearDrops(Links& links, const std::vector<float>& verts, const std::vector<int>& indices, const std::size_t count, const bool forClient)
+// A drop link's way out from a ledge's edge a to b, for the client: square
+// to the edge, on the side `outX`, `outZ` (from the polygon's centre to the
+// edge's middle) points -- which, for a long, thin polygon whose edge lies
+// off to one side, can stray far from straight out, and miss the ground
+// below. Any other build's is left as it is
+inline void squareOut(const bool forClient, const float* a, const float* b, float& outX, float& outZ)
 {
     if (!forClient)
     {
         return;
     }
-
-    int kept = 0;
-    for (int i = 0; i < links.count; ++i)
+    float nx = b[2] - a[2];
+    float nz = -(b[0] - a[0]);
+    if (nx * outX + nz * outZ < 0.0f)
     {
-        const float* l = &links.verts[static_cast<std::size_t>(i) * 6];
-        if (dropBlocked(l, l + 3, verts, indices, count))
-        {
-            continue;
-        }
-
-        if (kept != i)
-        {
-            std::copy_n(links.verts.begin() + i * 6, 6, links.verts.begin() + kept * 6);
-            links.rad[kept]   = links.rad[i];
-            links.flags[kept] = links.flags[i];
-            links.areas[kept] = links.areas[i];
-            links.dir[kept]   = links.dir[i];
-        }
-        ++kept;
+        nx = -nx;
+        nz = -nz;
     }
-
-    links.count = kept;
-    links.verts.resize(static_cast<std::size_t>(kept) * 6);
-    links.rad.resize(kept);
-    links.flags.resize(kept);
-    links.areas.resize(kept);
-    links.dir.resize(kept);
+    outX = nx;
+    outZ = nz;
 }
 
 } // namespace cardian::client

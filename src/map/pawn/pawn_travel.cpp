@@ -646,6 +646,47 @@ namespace pawn::travel
         return out;
     }
 
+    auto rideRegion(const std::vector<xi::ZoneId>& from) -> std::unordered_set<uint16>
+    {
+        if (!graphBuilt)
+        {
+            buildGraph();
+        }
+        std::unordered_set<uint16> seen;
+        std::unordered_set<uint16> region;
+        std::deque<uint16>         frontier;
+        for (const auto zone : from)
+        {
+            if (seen.insert(static_cast<uint16>(zone)).second)
+            {
+                frontier.push_back(static_cast<uint16>(zone));
+            }
+        }
+        while (!frontier.empty())
+        {
+            const uint16 current = frontier.front();
+            frontier.pop_front();
+            if (allowsMount(static_cast<xi::ZoneId>(current)))
+            {
+                region.insert(current);
+            }
+            const auto it = graph.find(current);
+            if (it == graph.end())
+            {
+                continue;
+            }
+            for (const auto& edge : it->second)
+            {
+                const auto to = static_cast<uint16>(edge.to);
+                if (allowsMount(edge.to) && seen.insert(to).second)
+                {
+                    frontier.push_back(to);
+                }
+            }
+        }
+        return region;
+    }
+
     void noteTrekTime(const std::string_view who, const std::chrono::steady_clock::duration took)
     {
         // Every zone ticks once each 400 ms, each zone at its own moment: a

@@ -24,6 +24,7 @@
 #include "cardian_link.h"
 #include "client_navmesh.h"
 #include "collision_walls.h"
+#include "route_search.h"
 
 #include "common/logging.h"
 #include "common/scheduler.h"
@@ -40,9 +41,13 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <string>
 #include <unordered_map>
+
+// The builder flags the tight strip with the bit the route search reads
+static_assert(cardian::client::kTightFlag == cardian::route::kPolyTight);
 
 namespace pawn::porter::mesh
 {
@@ -51,16 +56,16 @@ namespace pawn::porter::mesh
         // The recipe's version: raised when the build's own rule changes
         // (client_navmesh.h, the builder's links), so every older file is
         // stale at once
-        constexpr int kRecipeVersion = 3;
+        constexpr int kRecipeVersion = 8;
 
         struct Entry
         {
-            bool                           tried = false; // its file looked for
-            std::unique_ptr<DetourNavMesh> mesh;          // read, and built for today's settings
+            std::once_flag                 read; // its file looked for, once, by whoever asks first
+            std::unique_ptr<DetourNavMesh> mesh; // read, and built for today's settings
         };
 
-        // By zone, read and written on the map's thread alone; never torn
-        // down, as the pawn container is not: a mesh outlives its readers
+        // By zone, found and added under of()'s lock; never torn down, as
+        // the pawn container is not: a mesh outlives its readers
         auto entries() -> std::unordered_map<uint16, Entry>&
         {
             static auto* all = new std::unordered_map<uint16, Entry>();
@@ -78,13 +83,13 @@ namespace pawn::porter::mesh
         }
 
         // The zone's own navmesh config -- its skip planes and its seeds --
-        // with the client's rule and the rider's width in place of the
-        // monsters', and no walls
+        // with the client's rule in place of the monsters': the client's body
+        // kept off every edge, and the rider's width past it kept where there
+        // is room (the tight strip between, client_navmesh.h); and no walls
         auto configFor(const CZone* zone) -> NavMeshConfig
         {
             auto        config = zone->cardianNavMeshConfig();
-            const float width  = std::max(0.0f, settings::get<float>("pawn.PORTER_WIDTH"));
-            const float added  = std::max(0.0f, width - config.agentRadius);
+            const float added  = std::max(0.0f, cardian::client::kBody - config.agentRadius);
             config.cardianWalls.clear();
             config.cardianClient      = true;
             config.agentMaxClimb      = cardian::client::kStep;
@@ -95,7 +100,8 @@ namespace pawn::porter::mesh
             config.tileSize = static_cast<int>(std::lround(static_cast<float>(config.tileSize) * config.cellSize / cardian::client::kCellSize));
             config.cellSize = cardian::client::kCellSize;
             config.agentRadius += added;
-            config.offMeshHorizReach += 2.0f * added; // the margin the width keeps on both sides of a ledge, back from its lip and out from its foot
+            config.offMeshHorizReach += 2.0f * added; // the margin the body keeps on both sides of a ledge, back from its lip and out from its foot
+            config.cardianBerth = std::max(config.agentRadius, settings::get<float>("pawn.PORTER_WIDTH"));
             return config;
         }
 
@@ -136,7 +142,7 @@ namespace pawn::porter::mesh
         {
             Hash h;
             for (const float v : { c.cellSize, c.cellHeight, c.walkableSlopeAngle, c.agentHeight, c.agentRadius, c.agentMaxClimb, c.maxEdgeLen,
-                                   c.maxSimplificationError, c.detailSampleDist, c.detailSampleMaxError, c.offMeshMaxDrop, c.offMeshHorizReach })
+                                   c.maxSimplificationError, c.detailSampleDist, c.detailSampleMaxError, c.offMeshMaxDrop, c.offMeshHorizReach, c.cardianBerth })
             {
                 h.add(v);
             }
@@ -169,8 +175,8 @@ namespace pawn::porter::mesh
         auto recipeOf(const CZone* zone, const NavMeshConfig& c) -> std::string
         {
             const auto* x = zone->xiMesh();
-            return fmt::format("porter {} width {:.3f} climb {:.3f} slope {:.1f} cell {:.3f} {:.3f} reach {:.2f} config {:016x} collision {} {} {} {}x{}",
-                               kRecipeVersion, c.agentRadius, c.agentMaxClimb, c.walkableSlopeAngle, c.cellSize, c.cellHeight, c.offMeshHorizReach,
+            return fmt::format("porter {} body {:.3f} width {:.3f} climb {:.3f} slope {:.1f} cell {:.3f} {:.3f} reach {:.2f} config {:016x} collision {} {} {} {}x{}",
+                               kRecipeVersion, c.agentRadius, c.cardianBerth, c.agentMaxClimb, c.walkableSlopeAngle, c.cellSize, c.cellHeight, c.offMeshHorizReach,
                                configHash(c), x->blocks().size(), x->placements().size(), x->entries().size(), x->gridWidth(), x->gridHeight());
         }
 
@@ -217,11 +223,21 @@ namespace pawn::porter::mesh
         {
             return nullptr;
         }
-        const auto zoneId = static_cast<uint16>(zone->GetID());
-        auto&      entry  = entries()[zoneId];
-        if (!entry.tried)
+        // asked from the map's thread (a ride's plan) and from the trip
+        // checks' worker (porter.cpp). The lock only finds the zone's entry;
+        // each zone is read once, by whichever asks first, and one who asks
+        // for that zone meanwhile waits for the read -- never for another
+        // zone's (a read takes up to 70 ms, its zone's data files parsed for
+        // the recipe)
+        static auto* lock   = new std::mutex();
+        const auto   zoneId = static_cast<uint16>(zone->GetID());
+        Entry*       entry  = nullptr;
         {
-            entry.tried      = true;
+            std::lock_guard held(*lock);
+            entry = &entries()[zoneId]; // a node of its own: no rehash moves it
+        }
+        std::call_once(entry->read, [&]()
+        {
             const auto stale = staleness(zone);
             auto       mesh  = std::make_unique<DetourNavMesh>(zoneId);
             if (!stale.empty())
@@ -235,10 +251,10 @@ namespace pawn::porter::mesh
             }
             else
             {
-                entry.mesh = std::move(mesh);
+                entry->mesh = std::move(mesh);
             }
-        }
-        return entry.mesh != nullptr ? entry.mesh->detourMesh() : nullptr;
+        });
+        return entry->mesh != nullptr ? entry->mesh->detourMesh() : nullptr;
     }
 
     void check(const std::vector<uint16>& zones)
@@ -285,6 +301,11 @@ namespace pawn::porter::mesh
                     if (zone == nullptr || zone->xiMesh() == nullptr)
                     {
                         ShowWarningFmt("porter: {} has no collision: no navmesh for the rider", nameOf(zoneId));
+                        continue;
+                    }
+                    if (staleness(zone).empty())
+                    {
+                        ++written; // already built for today's settings: a rerun builds only what is missing or stale
                         continue;
                     }
                     const auto config = configFor(zone);

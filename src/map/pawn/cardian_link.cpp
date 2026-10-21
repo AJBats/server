@@ -550,11 +550,19 @@ namespace
             }
             if (auto* PChar = requireBound(frame))
             {
-                Reply reply(header,
-                            [this](std::string bytes)
-                            {
-                                enqueue(std::move(bytes));
-                            });
+                Reply reply(
+                    header,
+                    [this](std::string bytes)
+                    {
+                        enqueue(std::move(bytes));
+                    },
+                    [self = weak_from_this()](std::string bytes)
+                    {
+                        if (const auto connection = self.lock())
+                        {
+                            connection->enqueue(std::move(bytes));
+                        }
+                    });
                 it->second.handler(PChar, frame, reply);
             }
             return {};

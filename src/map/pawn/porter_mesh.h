@@ -31,8 +31,8 @@ class dtNavMesh;
 // The chocobo porter's own navmesh of a zone (ROADMAP T, "The chocobo
 // porter"): the route a porter plans runs the player's own client, which
 // collides by the client's rule, so it is planned on a navmesh built with
-// that rule (pawn/client_navmesh.h) and the rider's width,
-// pawn.PORTER_WIDTH -- never on the zone's, which monsters and cardians walk
+// that rule (pawn/client_navmesh.h) and the rider's width, pawn.PORTER_WIDTH,
+// kept where there is room -- never on the zone's, which monsters and cardians walk
 // and which stays upstream's. Each zone a ride can plan in has its navmesh
 // precalculated, by the map run as a tool (./dev-servers.ps1
 // porter-navmeshes, which sets CARDIAN_PORTER_NAVMESH_PRECALC=1), into
@@ -42,9 +42,11 @@ class dtNavMesh;
 // settings', is said loudly, and its rides keep to the zone's navmesh.
 namespace pawn::porter::mesh
 {
-    // The zone's porter navmesh, read from its file the first time a ride
-    // asks; nullptr when it has none for today's settings -- said loudly,
-    // once a zone
+    // The zone's porter navmesh, read from its file the first time it is
+    // asked for -- by a ride's trip check, on a worker (porter.cpp), so a
+    // ride's own plan finds it in memory -- and kept; nullptr when it has
+    // none for today's settings, said loudly, once a zone. Safe from any
+    // thread; the mesh, read-only once read, outlives every reader
     auto of(CZone* zone) -> const dtNavMesh*;
 
     // At the map's start: which of `zones` have a porter navmesh for today's
@@ -52,7 +54,8 @@ namespace pawn::porter::mesh
     void check(const std::vector<uint16>& zones);
 
     // The precalculation run: builds the porter navmesh of each of `zones`
-    // in turn, writes its file and its recipe, says what came of it, and
-    // ends the map, with code 0 when every zone's was written
+    // in turn that has none for today's settings, writes its file and its
+    // recipe, says what came of it, and ends the map, with code 0 when every
+    // zone's is written
     void precalc(const std::vector<uint16>& zones);
 } // namespace pawn::porter::mesh

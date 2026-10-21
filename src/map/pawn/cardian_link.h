@@ -94,14 +94,23 @@ namespace cardian::link
     // The way back to the connection that sent a request, handed to its
     // handler: answers go to the asker, never to whichever link holds the
     // character by then. Made by the transport; valid only while the handler
-    // runs. A request sent one-way (req 0) is answered by nothing.
+    // runs, but for later(). A request sent one-way (req 0) is answered by nothing.
     class Reply
     {
     public:
-        Reply(const cl_header& asked, std::function<void(std::string)> send)
+        Reply(const cl_header& asked, std::function<void(std::string)> send, std::function<void(std::string)> sendLater = {})
         : asked_(asked)
         , send_(std::move(send))
+        , sendLater_(std::move(sendLater))
         {
+        }
+
+        // The same request, to answer once the handler has returned -- work
+        // that finishes on a later tick, answered on the map's thread: to the
+        // connection that asked, or to nobody once that one has closed
+        auto later() const -> Reply
+        {
+            return Reply(asked_, sendLater_ ? sendLater_ : [](std::string) {}, sendLater_);
         }
 
         // An answer that is not the last
@@ -139,6 +148,7 @@ namespace cardian::link
     private:
         cl_header                        asked_;
         std::function<void(std::string)> send_;
+        std::function<void(std::string)> sendLater_;
     };
 
     // Who answers an addon message of type T. The transport checks the size and

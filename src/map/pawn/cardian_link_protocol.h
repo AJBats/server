@@ -35,7 +35,8 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 96: the chocobo porter, PORTER_PLACES
+// compatible, the user, 2026-09-14). 97: PORTER_ROUTE's points carry tight;
+// 96: the chocobo porter, PORTER_PLACES
 // (each place with its ride time), PORTER_GO, PORTER_STOP, PORTER_STATE,
 // PORTER_ROUTE and PORTER_STUCK, and their outcomes; 95: a level venture's
 // Venture Report --
@@ -178,7 +179,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 96 };
+enum { CL_PROTOCOL = 97 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -3379,9 +3380,11 @@ enum
 // the server's z)
 typedef struct cl_porter_point
 {
-    float x;
-    float y;
-    float z;
+    float   x;
+    float   y;
+    float   z;
+    uint8_t tight; // 1: it threads a bridge or a neck, the rider's body a little room each side: steered to closely, its corner barely cut
+    uint8_t spare[3];
 } cl_porter_point;
 
 // One-way, to the player: his way on across his zone, the leg he rides from
