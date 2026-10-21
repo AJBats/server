@@ -32,7 +32,7 @@ namespace pawn::seats
     // KO'd past the world's delay or up again; one who stands only for a
     // party no longer (held for a player); a zone line crossed; out of the
     // waterfall for good
-    void offerWorld(uint32 charid, uint16 zone, bool partyOnly = false);
+    void offerWorld(uint32 charid, uint16 zone, bool partyOnly = false, bool resident = false);
     void offerOwned(uint32 charid, uint32 ownerCharID, uint16 zone);
     void setDown(uint32 charid, bool down);
     void setPartyOnly(uint32 charid, bool partyOnly);
@@ -83,6 +83,11 @@ namespace pawn::seats
 
     // The ladder holds her as the world's own (no owner): a wild cardian
     bool isWorlds(uint32 charid);
+
+    // One of the world's has just left a real player's party: she keeps
+    // standing as if still in it for pawn.WORLD_FADE_DELAY, so her last act
+    // with him -- a hire's Warp home -- plays out before the world fades her
+    void noteParted(uint32 charid);
 
     // Her name, by charid (the chars row)
     auto nameOf(uint32 charid) -> std::string;

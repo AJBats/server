@@ -68,6 +68,7 @@ namespace pawn::seats
         uint32 owner     = 0;           // the player she stands under; 0 for one of the world's own
         bool   down      = false;       // KO'd past the world's delay; the world's timer sets and clears it
         bool   partyOnly = false;       // she stands only for a party: online with no seat (a town sign-in, cohort_play.h), she takes no standing slot by herself
+        bool   resident  = false;       // a teleporter kept online in her hub (world.h keepResidents): first of her zone for the faded cap
 
         bool operator==(const Facts&) const = default;
     };
@@ -121,12 +122,14 @@ namespace pawn::seats
         // her -- the user's call, 2026-09-13, an edge the shallow dev caps
         // exist to exercise), then one who stands only for a party below
         // everyone else of her class (a town sign-in never takes a seat
-        // holder's standing slot or her zone's faded room), then tier, then
+        // holder's standing slot or her zone's faded room) -- save a
+        // resident, who keeps her zone's faded room before anyone (the
+        // teleport shout must always find one in her hub) -- then tier, then
         // whether a player is in her own zone, then seq
         static bool defaultOrder(const Entry& a, const Entry& b)
         {
-            return std::tuple(a.live, a.inParty, !a.facts.partyOnly, a.facts.tier, a.nearby, a.seq) >
-                   std::tuple(b.live, b.inParty, !b.facts.partyOnly, b.facts.tier, b.nearby, b.seq);
+            return std::tuple(a.live, a.inParty, a.facts.resident, !a.facts.partyOnly, a.facts.tier, a.nearby, a.seq) >
+                   std::tuple(b.live, b.inParty, b.facts.resident, !b.facts.partyOnly, b.facts.tier, b.nearby, b.seq);
         }
 
         Ladder(Before before, Lookup lookup, Engine engine, const uint32 standsPerRun = 3, const timer::duration retryDelay = std::chrono::seconds(30))

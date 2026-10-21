@@ -35,7 +35,9 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 98: the teleport shout -- CL_GOAL_TELEPORT,
+// compatible, the user, 2026-09-14). 100: CL_MEMBER_HIRED and
+// CL_S_TELEPORT_ONLY, a hired White Mage locked; 99: CONTRACTS' shout, the one the server
+// still holds for him, and CL_S_TELEPORT_IN_TOWN; 98: the teleport shout -- CL_GOAL_TELEPORT,
 // a GOAL for each crag whose gate crystal he holds, SHOUT_RESPONDER's price
 // (a teleport's White Mage names hers), CL_S_NO_GATE_CRYSTAL and
 // CL_S_TELEPORT_HIRED; 97: PORTER_ROUTE's points carry tight;
@@ -182,7 +184,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 98 };
+enum { CL_PROTOCOL = 100 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -339,7 +341,9 @@ enum
     CL_S_NO_CONTRACT       = 0x01A0, // she holds no contract with him
     CL_S_LEFT_TOWN         = 0x01A1, // she has left the cities and towns his shout reached
     CL_S_NO_GATE_CRYSTAL   = 0x01A2, // a teleport shout for a crag whose gate crystal he does not hold
-    CL_S_TELEPORT_HIRED    = 0x01A4, // a White Mage of his teleport shout is on her way already
+    CL_S_TELEPORT_HIRED    = 0x01A4, // a White Mage of his teleport shout is hired: no shout or invite of any goal until the hire is over
+    CL_S_TELEPORT_IN_TOWN  = 0x01A5, // a teleport is hired in a city or a town, never from the field
+    CL_S_TELEPORT_ONLY     = 0x01A6, // she is hired for a teleport: she takes no order of his
 
     // The conquest exchange (no room in her inventory: CL_S_NO_SPACE)
     CL_S_NO_GUARD          = 0x01B0, // the player stands by no gate guard that sells
@@ -631,6 +635,7 @@ enum
     CL_MEMBER_BY_COUNTER   = 0x04, // she stands by the auction counter he stands at
     CL_MEMBER_BY_GUARD     = 0x08, // a gate guard stands within his reach: the conquest exchange sells to her
     CL_MEMBER_BY_MOG_HOUSE = 0x10, // he is in his Mog House, she in that city, or by a Nomad Moogle, she within 20 yalms of it: her jobs can be changed
+    CL_MEMBER_HIRED        = 0x20, // hired for a teleport: she takes no order of his, and her gambits are locked
 };
 
 // One cardian as the roster shows her: an answer to ROSTER and SYNC
@@ -2128,6 +2133,7 @@ typedef struct cl_contracts
     cl_header   h;
     uint8_t     count;         // answered
     uint8_t     spare[3];
+    uint32_t    shout;         // answered: the id of the shout the server still holds for him, 0 for none (expired, or ended by the teleport it hired)
     cl_contract contracts[16]; // answered
 } cl_contracts;
 

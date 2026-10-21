@@ -23,15 +23,19 @@
 
 #include "action_keys.h"
 #include "cardian_link_messages.h"
+#include "party_finder.h"
 #include "pawn.h"
 #include "pawn_controller.h"
+#include "item_moves.h"
 #include "pawn_items.h"
 #include "players.h"
 #include "role_support.h"
 #include "seats.h"
+#include "world.h"
 
 #include "ai/ai_container.h"
 #include "ai/states/magic_state.h"
+#include "besieged_system.h"
 #include "common/database.h"
 #include "common/logging.h"
 #include "common/timer.h"
@@ -39,6 +43,8 @@
 #include "common/xirand.h"
 #include "data/enums/key_item.h"
 #include "entities/char_entity.h"
+#include "items.h"
+#include "items/transactions/item_claim.h"
 #include "enums/chat_message_type.h"
 #include "packets/s2c/0x017_chat_std.h"
 #include "party.h"
@@ -57,6 +63,7 @@
 #include <initializer_list>
 #include <limits>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace pawn::teleport
@@ -78,14 +85,8 @@ namespace pawn::teleport
     {
         using namespace std::chrono_literals;
 
-        constexpr auto kLookEvery = 250ms;
-
-        // Her crag, while she is hired: its log plus one, so a restart finds
-        // it again when his invite of her open contract brings her back; her
-        // price, and the gil he has paid her
-        constexpr auto kCragVar  = "[CARDIAN]TeleportCrag";
-        constexpr auto kPriceVar = "[CARDIAN]TeleportPrice";
-        constexpr auto kPaidVar  = "[CARDIAN]TeleportPaid";
+        constexpr auto kLookEvery  = 250ms;
+        constexpr auto kOrderAgain = 5s; // her order of the spell would not start: the next try waits this long
 
         // One hire, from her joining his party to the members she left
         // behind setting out to meet him
@@ -110,26 +111,24 @@ namespace pawn::teleport
             bool              inTown = false; // hired while he stood in a city: she keeps to town (rules::keepsToTown)
             uint32            seed   = 0;     // her words for this hire
             Stage             stage  = Stage::Coming;
-            timer::time_point hiredAt{};
-            timer::time_point since{};         // this stage began
-            timer::time_point beside{};        // she reached him: her wait is counted from here
-            timer::time_point gatheredSince{}; // he has stood gathered since; {} while he is not
-            timer::time_point resolvedAt{};    // the spell landed
+            timer::time_point since{};       // this stage began: a gathering's patience is counted from here
+            timer::time_point resolvedAt{};  // the spell landed
             timer::time_point leaveAt{};
+            timer::time_point nextOrderAt{}; // her last order of the spell would not start: none again before this
             int               tries      = 0;
-            bool              joined     = false; // seen in his party: her yes is answered before the party takes her in
-            bool              spare      = false; // a second White Mage of his: she bows out once in his party
             bool              cast       = false; // her cast was seen under way
             bool              saidPrice  = false;
             bool              saidGather = false;
-            bool              saidMount  = false;
-            bool              saidMp     = false;
             bool              landed     = false; // the spell landed (else she gave up)
+            bool              heGoes     = false; // the spell took him too: she waits for him at the crag
+            bool              ownCast    = false; // her own order of the crag's Teleport stands: the one order the lock lets through
+            bool              parted     = false; // the game took her, or him, out of the party (noteLeftParty)
+            realtime::time_point heHere{};        // he stood at the crag with her from then; {} while he does not (a stopwatch, beside his client's packets)
             std::vector<uint32> moved; // the cardians of his party beside her as it landed: each meets him once he is settled
         };
 
         std::unordered_map<uint32, Hire> hires;  // by the player's charid
-        std::vector<Hire>                spares; // a second yes he took while the first was answering
+        std::vector<uint32>              strays; // under a teleport contract with no hire: out of the party on the next look
         timer::time_point                lastLook{};
 
         auto secondsSince(const timer::time_point at) -> double
@@ -243,19 +242,10 @@ namespace pawn::teleport
             h.leaveAt = timer::now() + std::chrono::duration_cast<timer::duration>(std::chrono::duration<double>(rules::kLeaveAfter));
         }
 
-        // Her hire over: her crag forgotten, and out of his party (her
-        // contract ends with it, party_finder.h noteLeft) -- she goes about
-        // her business
-        void forget(CCharEntity* PMage)
-        {
-            PMage->setCharVar(kCragVar, 0);
-            PMage->setCharVar(kPriceVar, 0);
-            PMage->setCharVar(kPaidVar, 0);
-        }
-
+        // Her hire over: out of his party (her contract ends with it,
+        // party_finder.h noteLeft) -- she goes about her business
         void leaveParty(CCharEntity* PMage)
         {
-            forget(PMage);
             if (PMage->PParty != nullptr)
             {
                 ShowInfoFmt("teleport: {} leaves the party", PMage->getName());
@@ -264,62 +254,123 @@ namespace pawn::teleport
             pawn::forgetGuestGambits(PMage->id);
         }
 
-        // A hire that ends without the spell landing gives back what he
-        // paid: in party chat while she is in his party, else in a tell
+        // Gil from her purse into his delivery box, as one player sends
+        // another gil: one move (item_moves.h), so a write that fails leaves
+        // her purse as it was
+        auto mailGil(CCharEntity* PMage, const uint32 playerCharID, const uint32 gil) -> bool
+        {
+            using namespace pawn::itemmoves;
+            Txn txn;
+            if (!txn.ok())
+            {
+                return false;
+            }
+            auto items = ItemClaimTransaction::start(PMage);
+            if (items == nullptr)
+            {
+                return false;
+            }
+            const auto purse = std::vector<pawn::itemmoves::Slot>{ { PMage, LOC_INVENTORY, 0 } };
+            const auto what  = fmt::format("{}'s {} gil back to {}", PMage->getName(), gil, pawn::seats::nameOf(playerCharID));
+            if (!items->pay(gil))
+            {
+                abandon(txn, *items, std::nullopt, purse);
+                return false;
+            }
+            const auto mark = newMark();
+            const auto sent = db::preparedStmt("INSERT INTO delivery_box (charid, box, itemid, quantity, senderid, sender) VALUES (?, 1, ?, ?, ?, ?)", playerCharID,
+                                               static_cast<uint16>(ITEMID::GIL), gil, PMage->id, PMage->getName());
+            if (!sent || sent->rowsAffected() == 0 || !writeMark(mark))
+            {
+                ShowWarningFmt("teleport: {} could not be written: put back", what);
+                abandon(txn, *items, std::nullopt, purse);
+                return false;
+            }
+            return commitMove(txn, *items, mark, std::nullopt, purse, what);
+        }
+
+        // What he paid, back by his delivery box, and she says so: in party
+        // chat while she is in his party, else in a tell
         void giveBack(Hire& h, CCharEntity* PMage)
         {
             if (h.paid == 0)
             {
                 return;
             }
-            auto* PPlayer = zoneutils::GetChar(h.player);
-            if (PPlayer == nullptr)
+            if (!mailGil(PMage, h.player, h.paid))
             {
-                ShowWarningFmt("teleport: {} cannot give back {}'s {} gil: he is not in the world", PMage->getName(), pawn::seats::nameOf(h.player), h.paid);
+                ShowWarningFmt("teleport: {}'s {} gil back to {} did not go", PMage->getName(), h.paid, pawn::seats::nameOf(h.player));
                 return;
             }
-            if (const auto status = pawn::items::handGil(PMage, PPlayer, h.paid); status != CL_S_OK)
-            {
-                ShowWarningFmt("teleport: {}'s {} gil back to {} did not go (0x{:04X})", PMage->getName(), h.paid, PPlayer->getName(), status);
-                return;
-            }
-            ShowInfoFmt("teleport: {} gives {} back his {} gil", PMage->getName(), PPlayer->getName(), h.paid);
-            const auto line = fmt::format("Here's your {} gil back.", rules::gilWords(h.paid));
-            if (PMage->PParty != nullptr && PMage->PParty == PPlayer->PParty)
+            ShowInfoFmt("teleport: {} sends {} back his {} gil by the delivery box", PMage->getName(), pawn::seats::nameOf(h.player), h.paid);
+            const auto line    = fmt::format("I've sent your {} gil back by delivery.", rules::gilWords(h.paid));
+            auto*      PPlayer = zoneutils::GetChar(h.player);
+            if (PPlayer != nullptr && PMage->PParty != nullptr && PMage->PParty == PPlayer->PParty)
             {
                 say(PMage, line);
             }
-            else
+            else if (PPlayer != nullptr)
             {
                 PPlayer->pushPacket<GP_SERV_COMMAND_CHAT_STD>(PMage, MESSAGE_TELL, line);
             }
             h.paid = 0;
-            PMage->setCharVar(kPaidVar, 0);
         }
 
-        // She gives up: a line, what he paid given back, then out of the
-        // party a moment later
+        // She goes home after a hire, wherever it ended: Warp, which every
+        // White Mage who answers holds (rules::answers), to her home point --
+        // a teleporter's, her hub's (census.py TELEPORTER); already in its
+        // city, she stays
+        void warpHome(CCharEntity* PMage)
+        {
+            auto* PController = controllerOf(PMage);
+            auto* PHome       = zoneutils::GetZone(PMage->profile.home_point.destination);
+            if (PController == nullptr || PMage->loc.zone == nullptr || PHome == nullptr || PMage->loc.zone == PHome ||
+                pawn::sameCity(PMage->loc.zone, PHome))
+            {
+                return;
+            }
+            const auto status = PController->DoAction(keyOfAction({ CL_AK_MAGIC, 2, static_cast<uint16>(SpellID::Warp) }), PMage);
+            if (status == CL_S_OK)
+            {
+                ShowInfoFmt("teleport: {} casts Warp to go home to {}", PMage->getName(), PHome->getName());
+            }
+            else
+            {
+                ShowWarningFmt("teleport: {}'s Warp home to {} would not start (0x{:04X}): she fades where she is and goes home that way", PMage->getName(),
+                               PHome->getName(), status);
+            }
+        }
+
+        // She gives up: a line, then out of the party a moment later. What he
+        // paid is hers (the user, 2026-10-21: paid is paid), unless she
+        // cannot get the spell off (cannotCast)
         void giveUp(Hire& h, CCharEntity* PMage, const std::string& line, const std::string& why)
         {
             ShowInfoFmt("teleport: {} gives up on {}'s teleport: {}", PMage->getName(), pawn::seats::nameOf(h.player), why);
             say(PMage, line);
-            giveBack(h, PMage);
             h.landed = false;
             leaveSoon(h);
         }
 
-        auto isCity(CZone* PZone) -> bool
+        // Her own failure, the one refund: three tries at the spell that came
+        // to nothing
+        void cannotCast(Hire& h, CCharEntity* PMage, const std::string& why)
         {
-            return PZone != nullptr && (PZone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
+            giveUp(h, PMage, "Sorry, I can't get the spell off.", why);
+            giveBack(h, PMage);
         }
 
         // The spell has landed: who stays behind and why, in party chat, and
-        // the cardians beside her noted, to meet him once he is settled
+        // the cardians beside her noted, to meet him once he is settled. Read
+        // off her party, which holds everyone beside her even while he is
+        // between zones (PPlayer nullptr then)
         void resolve(Hire& h, CCharEntity* PPlayer, CCharEntity* PMage, const Crag& crag)
         {
+            h.ownCast    = false;
             h.landed     = true;
+            pawn::finder::endShout(h.player); // the shout that hired her has done its work
             h.resolvedAt = timer::now();
-            for (auto* PMember : partyOf(PPlayer))
+            for (auto* PMember : partyOf(PMage))
             {
                 if (PMember == PMage || PMember->loc.zone != PMage->loc.zone)
                 {
@@ -331,6 +382,7 @@ namespace pawn::teleport
                 }
                 if (carried(PMember, crag))
                 {
+                    h.heGoes = h.heGoes || PMember == PPlayer;
                     ShowInfoFmt("teleport: {} goes to {}", PMember->getName(), crag.name);
                     continue;
                 }
@@ -390,80 +442,53 @@ namespace pawn::teleport
             return headed == xi::ZoneId::Unknown || headed == ZONE_NO_DESTINATION || headed == PPlayer->getZone();
         }
 
-        // Beside him and gathering: ready, she orders the spell
-        void gather(Hire& h, CCharEntity* PPlayer, CCharEntity* PMage, CPawnController* PController, const Crag& crag)
+        // Paid, the party gathering round her: she orders the spell once
+        // everyone of her party who could go stands gathered, or the
+        // patience since the gathering began has run out, wherever anyone
+        // stands -- he included (the user, 2026-10-21: paid is paid)
+        void gather(Hire& h, CCharEntity* PMage, CPawnController* PController, const Crag& crag)
         {
-            if (secondsSince(h.beside) > rules::kWaitAtMost)
+            // Nothing of her own under way, and a moment after an order that would not start
+            if (PMage->isDead() || !PMage->PAI->CanChangeState() || timer::now() < h.nextOrderAt)
             {
-                giveUp(h, PMage, "Sorry, I can't wait any longer.", "the party never gathered");
                 return;
             }
-            if (PPlayer->loc.zone != PMage->loc.zone)
+            std::vector<rules::Member> party;
+            bool                       him = false;
+            for (auto* PMember : partyOf(PMage))
             {
-                ShowInfoFmt("teleport: {} is no longer beside {}, and comes to him again", PMage->getName(), PPlayer->getName());
-                h.stage = Hire::Stage::Coming;
-                h.since = timer::now();
-                return;
-            }
-            // Not in a fight, nor in the middle of anything of her own
-            if (PPlayer->PAI->IsEngaged() || PMage->PAI->IsEngaged() || PMage->isDead() || !PMage->PAI->CanChangeState())
-            {
-                h.gatheredSince = {};
-                return;
-            }
-
-            std::vector<rules::Member> others;
-            for (auto* PMember : partyOf(PPlayer))
-            {
-                if (PMember != PPlayer && PMember != PMage)
+                if (PMember != PMage)
                 {
-                    others.push_back(measure(PMember, PMage, crag));
+                    party.push_back(measure(PMember, PMage, crag));
+                    him = him || PMember->id == h.player;
                 }
             }
-            const auto player = measure(PPlayer, PMage, crag);
-            if (!rules::gathered(player))
+            if (!him)
             {
-                h.gatheredSince = {};
+                party.push_back(rules::Member{ .sameZone = false }); // he is between zones: away, for the patience
             }
-            else if (h.gatheredSince == timer::time_point{})
-            {
-                h.gatheredSince = timer::now();
-            }
-            const double waited = h.gatheredSince == timer::time_point{} ? 0.0 : secondsSince(h.gatheredSince);
-            const auto   ready  = rules::ready(player, others, waited);
-            if (ready == rules::Ready::PlayerMounted && !h.saidMount)
-            {
-                h.saidMount = true;
-                say(PMage, "Off the chocobo first, and we'll go.");
-            }
-            if (ready != rules::Ready::Cast)
+            const double waited = secondsSince(h.since);
+            if (!rules::ready(party, waited))
             {
                 return;
             }
-
-            const auto* PSpell = spellOf(crag);
-            if (PSpell == nullptr || PMage->health.mp < static_cast<int32>(PSpell->getMPCost()))
-            {
-                if (!h.saidMp)
-                {
-                    h.saidMp = true;
-                    say(PMage, "Let me rest for my MP first.");
-                }
-                return;
-            }
+            h.ownCast         = true;
             const auto status = PController->DoAction(keyOfAction({ CL_AK_MAGIC, 2, crag.spell }), PMage);
             if (status != CL_S_OK)
             {
+                h.ownCast     = false;
+                h.nextOrderAt = timer::now() + kOrderAgain;
                 ++h.tries;
                 ShowInfoFmt("teleport: {}'s order of Teleport-{} would not start (0x{:04X}), try {} of {}", PMage->getName(), crag.name, status, h.tries,
                             rules::kTriesAtMost);
                 if (h.tries >= rules::kTriesAtMost)
                 {
-                    giveUp(h, PMage, "Sorry, I can't get the spell off.", "the order never started");
+                    cannotCast(h, PMage, "the order never started");
                 }
                 return;
             }
-            ShowInfoFmt("teleport: {} casts Teleport-{} for {}'s party ({} s gathered)", PMage->getName(), crag.name, PPlayer->getName(), static_cast<int>(waited));
+            ShowInfoFmt("teleport: {} casts Teleport-{} for {}'s party ({} s gathered)", PMage->getName(), crag.name, pawn::seats::nameOf(h.player),
+                        static_cast<int>(waited));
             h.stage = Hire::Stage::Casting;
             h.since = timer::now();
             h.cast  = false;
@@ -472,9 +497,9 @@ namespace pawn::teleport
         // One hire's step; false once it is over
         auto step(Hire& h) -> bool
         {
-            const auto* crag   = cragOf(h.log);
-            auto*       PMage  = pawn::findPawn(h.mage);
-            auto*       PPlayer = zoneutils::GetChar(h.player);
+            const auto* crag    = cragOf(h.log);
+            auto*       PMage   = pawn::findPawn(h.mage);
+            auto*       PPlayer = zoneutils::GetChar(h.player); // nullptr while he is between zones
             if (crag == nullptr || PMage == nullptr)
             {
                 ShowInfoFmt("teleport: {}'s hire of {} ends: she is gone from the world", pawn::seats::nameOf(h.player), pawn::seats::nameOf(h.mage));
@@ -485,18 +510,12 @@ namespace pawn::teleport
             if (!pawn::players::online(h.player))
             {
                 ShowInfoFmt("teleport: {} has left the world: {}'s hire ends", pawn::seats::nameOf(h.player), PMage->getName());
-                giveBack(h, PMage);
                 leaveParty(PMage);
                 return false;
             }
 
             if (h.stage == Hire::Stage::Meeting)
             {
-                if (secondsSince(h.resolvedAt) > 120.0)
-                {
-                    ShowInfoFmt("teleport: {} never settled after the teleport; nobody is sent to meet him", pawn::seats::nameOf(h.player));
-                    return false;
-                }
                 if (secondsSince(h.resolvedAt) < rules::kSettleAfter || !settled(PPlayer))
                 {
                     return true;
@@ -512,6 +531,7 @@ namespace pawn::teleport
                     return true;
                 }
                 leaveParty(PMage);
+                warpHome(PMage);
                 if (!h.landed)
                 {
                     return false;
@@ -521,29 +541,41 @@ namespace pawn::teleport
                 return true;
             }
 
-            // Out of his party -- he let her go, or she was taken out -- the
-            // hire is over
-            const bool inParty = PPlayer != nullptr && PMage->PParty != nullptr && PMage->PParty == PPlayer->PParty;
-            h.joined           = h.joined || inParty;
-            if (!h.joined && secondsSince(h.hiredAt) < 30.0)
+            // Out of one party -- he let her go, he left it, or it broke up:
+            // the game's own word (noteLeftParty), which a zone change never
+            // gives; or she is in no party at all, which the game can also
+            // leave her without a word (charutils::ReloadParty), and her own
+            // party survives her zone changes. Her cast under way stops, so
+            // she never lands at the crag alone. Landed, she still goes home,
+            // and the members left behind are still sent to meet him
+            if (h.parted || PMage->PParty == nullptr)
             {
-                return true; // her yes answered, the party not yet taken her in
-            }
-            if (h.spare && inParty)
-            {
-                giveUp(h, PMage, "Looks like you're covered already. Safe travels!", "another White Mage was hired first");
-                return true;
-            }
-            if (h.stage != Hire::Stage::Landing && !inParty)
-            {
-                if (PPlayer != nullptr && PPlayer->loc.zone != nullptr)
+                ShowInfoFmt("teleport: {} and {} share a party no longer: the hire ends", PMage->getName(), pawn::seats::nameOf(h.player));
+                if (castingIt(PMage, *crag))
                 {
-                    ShowInfoFmt("teleport: {} is out of {}'s party: the hire ends", PMage->getName(), PPlayer->getName());
-                    giveBack(h, PMage);
-                    forget(PMage);
+                    PMage->PAI->InterruptStates();
+                }
+                leaveParty(PMage);
+                if (!h.landed)
+                {
                     return false;
                 }
-                return true; // he is between zones: his party list is empty for a moment
+                warpHome(PMage);
+                h.stage = Hire::Stage::Meeting;
+                h.since = timer::now();
+                return true;
+            }
+
+            // Hired in town and not yet casting, she keeps to town: he has
+            // left it, and she leaves his party
+            const bool castUnderWay = h.stage != Hire::Stage::Coming && h.stage != Hire::Stage::Paying && h.stage != Hire::Stage::Gathering;
+            if (settled(PPlayer) && !rules::keepsToTown(h.inTown, castUnderWay, isTown(PPlayer->loc.zone)))
+            {
+                ShowInfoFmt("teleport: {} has left town for {}: {} goes about her business", PPlayer->getName(), PPlayer->loc.zone->getName(), PMage->getName());
+                say(PMage, pick(h.seed, { "Not going after all? I'll be off, then.", "Changed your mind? No worries. Take care!", "Guess you won't need me. Safe travels!" }));
+                h.landed = false;
+                leaveSoon(h);
+                return true;
             }
 
             auto* PController = controllerOf(PMage);
@@ -552,36 +584,18 @@ namespace pawn::teleport
                 return false;
             }
 
-            // Hired in town and not yet casting, she keeps to town: he has
-            // left it, and she leaves his party
-            const bool castUnderWay = h.stage != Hire::Stage::Coming && h.stage != Hire::Stage::Paying && h.stage != Hire::Stage::Gathering;
-            if (settled(PPlayer) && !rules::keepsToTown(h.inTown, castUnderWay, isCity(PPlayer->loc.zone)))
-            {
-                ShowInfoFmt("teleport: {} has left town for {}: {} goes about her business", PPlayer->getName(), PPlayer->loc.zone->getName(), PMage->getName());
-                say(PMage, pick(h.seed, { "Not going after all? I'll be off, then.", "Changed your mind? No worries. Take care!", "Guess you won't need me. Safe travels!" }));
-                giveBack(h, PMage);
-                h.landed = false;
-                leaveSoon(h);
-                return true;
-            }
-
             switch (h.stage)
             {
                 case Hire::Stage::Coming:
                 {
-                    if (secondsSince(h.since) > rules::kComeWithin)
-                    {
-                        giveUp(h, PMage, "Sorry, I can't get to you.", "she never reached him");
-                        return true;
-                    }
-                    if (PPlayer->loc.zone == nullptr || PPlayer->loc.zone != PMage->loc.zone || PMage->isDead() ||
+                    // No limit on her way to him: he is in charge, and dismisses her if she never comes
+                    if (PPlayer == nullptr || PPlayer->loc.zone == nullptr || PPlayer->loc.zone != PMage->loc.zone || PMage->isDead() ||
                         distance(PPlayer->loc.p, PMage->loc.p) > rules::kBesideYalms)
                     {
                         return true;
                     }
                     ShowInfoFmt("teleport: {} has reached {} in {}", PMage->getName(), PPlayer->getName(), PPlayer->loc.zone->getName());
-                    h.since  = timer::now();
-                    h.beside = h.beside == timer::time_point{} ? timer::now() : h.beside;
+                    h.since = timer::now();
                     if (h.paid < h.price)
                     {
                         h.stage = Hire::Stage::Paying;
@@ -602,21 +616,17 @@ namespace pawn::teleport
                 }
                 case Hire::Stage::Paying:
                 {
-                    if (secondsSince(h.beside) > rules::kWaitAtMost)
-                    {
-                        giveUp(h, PMage, "Sorry, I can't wait any longer.", "he never paid");
-                        return true;
-                    }
-                    if (PPlayer->loc.zone != PMage->loc.zone)
+                    // She waits for his trade as long as he likes (paid)
+                    if (settled(PPlayer) && PPlayer->loc.zone != PMage->loc.zone)
                     {
                         ShowInfoFmt("teleport: {} is no longer beside {}, and comes to him again", PMage->getName(), PPlayer->getName());
                         h.stage = Hire::Stage::Coming;
                         h.since = timer::now();
                     }
-                    return true; // his trade moves her on (paid)
+                    return true;
                 }
                 case Hire::Stage::Gathering:
-                    gather(h, PPlayer, PMage, PController, *crag);
+                    gather(h, PMage, PController, *crag);
                     return true;
                 case Hire::Stage::Casting:
                 {
@@ -625,8 +635,9 @@ namespace pawn::teleport
                         h.cast = true;
                         return true;
                     }
-                    // It has landed when anyone of the party beside her is on his way
-                    for (auto* PMember : partyOf(PPlayer))
+                    // It has landed when anyone of her party beside her is on the
+                    // way, she included -- he may be between zones meanwhile
+                    for (auto* PMember : partyOf(PMage))
                     {
                         if (PMember->loc.zone == PMage->loc.zone && carried(PMember, *crag))
                         {
@@ -641,6 +652,7 @@ namespace pawn::teleport
                         return true;
                     }
                     ++h.tries;
+                    h.ownCast = false;
                     ShowInfoFmt("teleport: {}'s Teleport-{} came to nothing ({}), try {} of {}", PMage->getName(), crag->name,
                                 h.cast ? "interrupted" : "never started", h.tries, rules::kTriesAtMost);
                     if (!h.cast && inHerLine(PController, *crag))
@@ -649,19 +661,34 @@ namespace pawn::teleport
                     }
                     if (h.tries >= rules::kTriesAtMost)
                     {
-                        giveUp(h, PMage, "Sorry, I can't get the spell off.", "every cast came to nothing");
+                        cannotCast(h, PMage, "every cast came to nothing");
                         return true;
                     }
-                    h.stage         = Hire::Stage::Gathering;
-                    h.since         = timer::now();
-                    h.gatheredSince = {};
+                    h.stage = Hire::Stage::Gathering;
+                    h.since = timer::now();
                     return true;
                 }
                 case Hire::Stage::Landing:
                 {
-                    // At the crag: her thanks, then out of the party
-                    const bool there = PMage->loc.zone != nullptr && static_cast<uint16>(PMage->getZone()) == crag->zone && !PMage->requestedZoneChange;
-                    if (!there && secondsSince(h.since) < 60.0)
+                    // At the crag: her thanks, then out of the party -- once he
+                    // stands there with her and his client is in, when the spell
+                    // took him too: a line said while he loads the zone never
+                    // reaches him, and with nobody in her zone the world fades her
+                    // before her Warp home is off
+                    const bool there  = PMage->loc.zone != nullptr && static_cast<uint16>(PMage->getZone()) == crag->zone && !PMage->requestedZoneChange;
+                    const bool heHere = PPlayer != nullptr && settled(PPlayer) && PPlayer->loc.zone == PMage->loc.zone;
+                    if (!heHere)
+                    {
+                        h.heHere = {};
+                    }
+                    else if (h.heHere == realtime::time_point{})
+                    {
+                        h.heHere = realtime::now();
+                    }
+                    const auto since   = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - h.heHere);
+                    const auto age     = pawn::positionPacketAge(h.player);
+                    const bool hisIsIn = heHere && since >= std::chrono::seconds(2) && age.has_value() && *age < since;
+                    if ((!there || (h.heGoes && !hisIsIn)) && secondsSince(h.since) < 60.0)
                     {
                         return true;
                     }
@@ -682,6 +709,10 @@ namespace pawn::teleport
         {
             return CL_S_MALFORMED;
         }
+        if (!isTown(PPlayer->loc.zone))
+        {
+            return CL_S_TELEPORT_IN_TOWN;
+        }
         if (!charutils::hasKeyItem(PPlayer, static_cast<xi::KeyItem>(crag->keyItem)))
         {
             return CL_S_NO_GATE_CRYSTAL;
@@ -691,6 +722,11 @@ namespace pawn::teleport
             return CL_S_TELEPORT_HIRED;
         }
         return CL_S_OK;
+    }
+
+    auto hiringFor(const uint32 playerCharID) -> bool
+    {
+        return hires.contains(playerCharID);
     }
 
     auto cragsHeld(const CCharEntity* PPlayer) -> std::vector<const Crag*>
@@ -718,24 +754,34 @@ namespace pawn::teleport
         {
             knowers_.insert(rset->get<uint32>("charid"));
         }
+        const auto warp = db::preparedStmt("SELECT charid FROM char_spells WHERE spellid = ?", static_cast<uint16>(SpellID::Warp));
+        while (warp && warp->next())
+        {
+            warpers_.insert(warp->get<uint32>("charid"));
+        }
     }
 
     auto Responders::answers(const uint32 charid, const CCharEntity* PPawn, const uint8 mjob, const uint8 mlvl, const uint8 sjob, const uint8 slvl) const -> bool
     {
         auto* PSpell = crag_ != nullptr ? spellOf(*crag_) : nullptr;
-        if (PSpell == nullptr)
+        auto* PWarp  = spell::GetSpell(SpellID::Warp);
+        if (PSpell == nullptr || PWarp == nullptr)
         {
             return false;
         }
         if (PPawn != nullptr)
         {
             auto* PChar = const_cast<CCharEntity*>(PPawn);
-            return rules::answers(charutils::hasSpell(PChar, crag_->spell) != 0, spell::CanUseSpell(PChar, PSpell), static_cast<uint32>(std::max(0, PPawn->health.mp)),
-                                  PSpell->getMPCost());
+            return rules::answers({ charutils::hasSpell(PChar, crag_->spell) != 0, spell::CanUseSpell(PChar, PSpell) }, static_cast<uint32>(std::max(0, PPawn->health.mp)),
+                                  PSpell->getMPCost(), { charutils::hasSpell(PChar, static_cast<uint16>(SpellID::Warp)) != 0, spell::CanUseSpell(PChar, PWarp) });
         }
         // Faded, she stands whole for the invite (world.cpp): her MP is her full MP
-        const bool casts = rules::castsAt(PSpell->getJob(static_cast<xi::Job>(mjob)), mlvl, PSpell->getJob(static_cast<xi::Job>(sjob)), slvl);
-        return rules::answers(knowers_.contains(charid), casts, std::numeric_limits<uint32>::max(), PSpell->getMPCost());
+        const auto castsAt = [&](CSpell* PCast)
+        {
+            return rules::castsAt(PCast->getJob(static_cast<xi::Job>(mjob)), mlvl, PCast->getJob(static_cast<xi::Job>(sjob)), slvl);
+        };
+        return rules::answers({ knowers_.contains(charid), castsAt(PSpell) }, std::numeric_limits<uint32>::max(), PSpell->getMPCost(),
+                              { warpers_.contains(charid), castsAt(PWarp) });
     }
 
     auto answerLine(const uint32 seed, const uint8 log) -> std::string
@@ -751,65 +797,171 @@ namespace pawn::teleport
         {
             return;
         }
-        // A fresh yes names its crag and her price; her open contract's
-        // invite after a restart finds them again in her variables, with
-        // what he had paid her
-        uint8  crag   = log;
-        uint32 asking = price;
-        uint32 paid   = 0;
-        if (fresh)
+        // A hire starts on a yes to his shout alone: a teleport contract
+        // never outlives his session nor the map (signOut,
+        // endContractsAtBoot), so an invite of an open one is a stray, out of
+        // the party without a word
+        if (!fresh)
         {
-            PMage->setCharVar(kCragVar, log + 1);
-            PMage->setCharVar(kPriceVar, static_cast<int32>(price));
-            PMage->setCharVar(kPaidVar, 0);
+            ShowInfoFmt("teleport: {} joins {} under a teleport contract no shout of his made: she leaves the party", PMage->getName(),
+                        pawn::seats::nameOf(playerCharID));
+            strays.push_back(mageCharID);
+            return;
         }
-        else
-        {
-            if (const int32 kept = PMage->getCharVar(kCragVar); kept > 0 && cragOf(static_cast<uint8>(kept - 1)) != nullptr)
-            {
-                crag = static_cast<uint8>(kept - 1);
-            }
-            asking = static_cast<uint32>(std::max(0, PMage->getCharVar(kPriceVar)));
-            paid   = static_cast<uint32>(std::max(0, PMage->getCharVar(kPaidVar)));
-        }
-        if (cragOf(crag) == nullptr)
+        if (cragOf(log) == nullptr)
         {
             return;
         }
-        // A White Mage who sells the teleport holds the crag's gate crystal,
-        // as the game's porters did: she goes with the party, and the spell
-        // plays on her as on him -- without it the game blanks her own
-        // animation, and the cast looks like no Teleport of his
-        if (const auto crystal = static_cast<xi::KeyItem>(cragOf(crag)->keyItem); !charutils::hasKeyItem(PMage, crystal))
-        {
-            charutils::addKeyItem(PMage, crystal);
-            charutils::SaveKeyItems(PMage);
-            ShowInfoFmt("teleport: {} holds the gate crystal for {} now", PMage->getName(), cragOf(crag)->name);
-        }
-        const auto* PPlayer = zoneutils::GetChar(playerCharID);
-        // Two invites sent before the first was answered: the first hire
-        // stands, and the second White Mage bows out once she has joined
-        Hire hire{ .player  = playerCharID,
-                   .mage    = mageCharID,
-                   .log     = crag,
-                   .price   = asking,
-                   .paid    = paid,
-                   .inTown  = PPlayer != nullptr && isCity(PPlayer->loc.zone),
-                   .seed    = xirand::GetRandomNumber(1000u),
-                   .hiredAt = timer::now(),
-                   .since   = timer::now() };
+        // One White Mage at a time: the finder sends no second teleport
+        // invite while one stands (party_finder.h teleportPending), so a
+        // second yes is a stray too
         if (const auto it = hires.find(playerCharID); it != hires.end() && it->second.mage != mageCharID)
         {
-            ShowInfoFmt("teleport: {} joins {} while {} is hired already, and bows out", PMage->getName(), pawn::seats::nameOf(playerCharID),
-                        pawn::seats::nameOf(it->second.mage));
-            forget(PMage);
-            hire.spare = true;
-            spares.push_back(std::move(hire));
+            ShowWarningFmt("teleport: {} joins {} while {} is hired already: she leaves the party", PMage->getName(), pawn::seats::nameOf(playerCharID),
+                           pawn::seats::nameOf(it->second.mage));
+            strays.push_back(mageCharID);
             return;
         }
-        ShowInfoFmt("teleport: {} is hired by {} for Teleport-{} at {} gil{}{}", PMage->getName(), pawn::seats::nameOf(playerCharID), cragOf(crag)->name,
-                    asking, hire.inTown ? ", in town" : "", fresh ? "" : fmt::format(" (her open contract, after a restart; {} paid)", paid));
+        // Her MP full for every hire: she never waits for it
+        PMage->addMP(PMage->GetMaxMP());
+        const auto* PPlayer = zoneutils::GetChar(playerCharID);
+        Hire        hire{ .player = playerCharID,
+                          .mage   = mageCharID,
+                          .log    = log,
+                          .price  = price,
+                          .inTown = PPlayer != nullptr && isTown(PPlayer->loc.zone),
+                          .seed   = xirand::GetRandomNumber(1000u),
+                          .since  = timer::now() };
+        ShowInfoFmt("teleport: {} is hired by {} for Teleport-{} at {} gil{}", PMage->getName(), pawn::seats::nameOf(playerCharID), cragOf(log)->name,
+                    price, hire.inTown ? ", in town" : "");
         hires.insert_or_assign(playerCharID, std::move(hire));
+    }
+
+    void signOut(const CCharEntity* PPlayer)
+    {
+        if (PPlayer == nullptr)
+        {
+            return;
+        }
+        const auto ends = [&](Hire& h)
+        {
+            if (h.player != PPlayer->id)
+            {
+                return false;
+            }
+            if (auto* PMage = pawn::findPawn(h.mage); PMage != nullptr)
+            {
+                ShowInfoFmt("teleport: {} signs out: {}'s hire ends", PPlayer->getName(), PMage->getName());
+                leaveParty(PMage);
+            }
+            return true;
+        };
+        std::erase_if(hires, [&](auto& entry) { return ends(entry.second); });
+    }
+
+    void noteLeftParty(const uint32 charid)
+    {
+        for (auto& [player, h] : hires)
+        {
+            if (h.mage == charid || h.player == charid)
+            {
+                h.parted = true;
+            }
+        }
+    }
+
+    void joinFailed(const uint32 mageCharID)
+    {
+        std::erase_if(hires, [&](const auto& entry)
+                      {
+                          if (entry.second.mage != mageCharID)
+                          {
+                              return false;
+                          }
+                          ShowInfoFmt("teleport: {} never got into {}'s party: the hire ends", pawn::seats::nameOf(mageCharID), pawn::seats::nameOf(entry.first));
+                          return true;
+                      });
+    }
+
+    auto isTown(CZone* PZone) -> bool
+    {
+        return PZone != nullptr && ((PZone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown || PZone->GetID() == xi::ZoneId::Nashmau);
+    }
+
+    namespace
+    {
+        // The beastmen march on Al Zahbi (Besieged): any of their three forces
+        // ordered to attack
+        auto besiegedUnderWay() -> bool
+        {
+            return besieged::GetMamookOrders() == ORDERS_ATTACK || besieged::GetHalvungOrders() == ORDERS_ATTACK ||
+                   besieged::GetArrapagoOrders() == ORDERS_ATTACK;
+        }
+    } // namespace
+
+    auto hubOf(CZone* PZone) -> uint32
+    {
+        if (PZone == nullptr)
+        {
+            return 0;
+        }
+        if (PZone->GetID() == xi::ZoneId::AlZahbi && !besiegedUnderWay())
+        {
+            return static_cast<uint32>(xi::ZoneId::AhtUrhganWhitegate);
+        }
+        const auto region = PZone->GetRegionID();
+        if (isTown(PZone) && region >= REGION_TYPE::SANDORIA && region <= REGION_TYPE::JEUNO)
+        {
+            return 0x10000u | static_cast<uint32>(region);
+        }
+        return static_cast<uint32>(PZone->GetID());
+    }
+
+    void endContractsAtBoot()
+    {
+        const auto rset = db::preparedStmt("SELECT player_charid, pawn_charid FROM cardian_party_memory WHERE contract = 'teleport'");
+        while (rset && rset->next())
+        {
+            ShowInfoFmt("teleport: at boot, {}'s teleport contract with {} ends", pawn::seats::nameOf(rset->get<uint32>("pawn_charid")),
+                        pawn::seats::nameOf(rset->get<uint32>("player_charid")));
+        }
+        db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE contract = 'teleport'");
+    }
+
+    void giveCrystals(CCharEntity* PChar)
+    {
+        if (PChar == nullptr)
+        {
+            return;
+        }
+        bool given = false;
+        for (const auto& crag : kCrags)
+        {
+            if (const auto crystal = static_cast<xi::KeyItem>(crag.keyItem); !charutils::hasKeyItem(PChar, crystal))
+            {
+                charutils::addKeyItem(PChar, crystal);
+                given = true;
+            }
+        }
+        if (given)
+        {
+            charutils::SaveKeyItems(PChar);
+        }
+    }
+
+    auto locked(const CCharEntity* PMage) -> bool
+    {
+        return PMage != nullptr && PMage->PParty != nullptr &&
+               std::ranges::any_of(hires, [&](const auto& entry) { return entry.second.mage == PMage->id && entry.second.stage != Hire::Stage::Meeting; });
+    }
+
+    auto ownsCast(const CCharEntity* PMage, const uint16 spellId) -> bool
+    {
+        return PMage != nullptr && std::ranges::any_of(hires, [&](const auto& entry)
+                                                       {
+                                                           const auto* crag = cragOf(entry.second.log);
+                                                           return entry.second.mage == PMage->id && entry.second.ownCast && crag != nullptr && crag->spell == spellId;
+                                                       });
     }
 
     auto isHired(const uint32 mageCharID) -> bool
@@ -843,7 +995,6 @@ namespace pawn::teleport
                 return;
             }
             h.paid = h.price;
-            PMage->setCharVar(kPaidVar, static_cast<int32>(h.paid));
             ShowInfoFmt("teleport: {} pays {} her {} gil", pawn::seats::nameOf(player), PMage->getName(), h.paid);
             if (h.stage == Hire::Stage::Paying)
             {
@@ -860,15 +1011,21 @@ namespace pawn::teleport
     void tick()
     {
         const auto now = timer::now();
-        if ((hires.empty() && spares.empty()) || now - lastLook < kLookEvery)
+        if ((hires.empty() && strays.empty()) || now - lastLook < kLookEvery)
         {
             return;
         }
         lastLook = now;
+        for (const auto charid : std::exchange(strays, {}))
+        {
+            if (auto* PMage = pawn::findPawn(charid); PMage != nullptr && PMage->PParty != nullptr)
+            {
+                leaveParty(PMage);
+            }
+        }
         for (auto it = hires.begin(); it != hires.end();)
         {
             it = step(it->second) ? std::next(it) : hires.erase(it);
         }
-        std::erase_if(spares, [](Hire& h) { return !step(h); });
     }
 } // namespace pawn::teleport

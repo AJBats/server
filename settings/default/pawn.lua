@@ -671,7 +671,9 @@ xi.settings.pawn =
     -- zone's own exits); -1 keeps every zone live, the switch for the
     -- "simulate everything" experiment. A zone that stops being live keeps
     -- its bodies WORLD_FADE_DELAY seconds more, so popping out to shed
-    -- aggro and straight back finds the zone as it was.
+    -- aggro and straight back finds the zone as it was. A body of the world
+    -- just out of a real player's party keeps standing as long, as if still
+    -- in it, so a hired White Mage's Warp home plays out (seats.cpp).
     WORLD_LIVE_RADIUS = 1,
     WORLD_FADE_DELAY  = 120,
 

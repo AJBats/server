@@ -415,6 +415,17 @@ namespace pawn::finder
         std::unordered_map<uint32, Consent> consented;
         constexpr auto                      kConsentLifetime = std::chrono::minutes(2);
 
+        // A teleport invite of his waits on her answer
+        auto teleportPending(const uint32 playerCharID) -> bool
+        {
+            const auto now = timer::now();
+            return std::ranges::any_of(consented, [&](const auto& entry)
+                                       {
+                                           const auto& c = entry.second;
+                                           return c.playerCharID == playerCharID && c.goal.kind == Goal::Kind::Teleport && now - c.at <= kConsentLifetime;
+                                       });
+        }
+
         // Joined just now on a yes to his shout, until gatherOrHold asks
         // (joinedFromShout)
         std::unordered_set<uint32> joinedShout;
@@ -596,6 +607,11 @@ namespace pawn::finder
             refusal = CL_S_PARTY_FULL;
             return nullptr;
         }
+        if (pawn::teleport::hiringFor(PPlayer->id) || teleportPending(PPlayer->id))
+        {
+            refusal = CL_S_TELEPORT_HIRED; // one contract at a time while a teleport is under way
+            return nullptr;
+        }
         if (refusal = goalHeld(PPlayer, goal); refusal != CL_S_OK)
         {
             return nullptr;
@@ -644,11 +660,17 @@ namespace pawn::finder
         {
             const auto* PPawn = pawn::findPawn(f.charid);
             auto*       PHere = zoneOf(PPawn, f.posZone);
-            if (!rules::hears(cityOrTown(PHere), f.nation, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
+            const bool inTown = teleporters.has_value() ? pawn::teleport::isTown(PHere) : cityOrTown(PHere);
+            if (!rules::hears(inTown, f.nation, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
             {
                 continue;
             }
             if (teleporters.has_value() && !teleporters->answers(f.charid, PPawn, f.job, f.level, f.sjob, f.slvl))
+            {
+                continue;
+            }
+            // A town's own White Mage (world.h keepResidents) answers its teleport shouts alone
+            if (!teleporters.has_value() && pawn::world::isTeleporter(f.charid))
             {
                 continue;
             }
@@ -684,6 +706,15 @@ namespace pawn::finder
             c.charid   = f.charid;
             c.friendly = f.partied || f.affinity > 0;
             pool.push_back(std::move(c));
+        }
+
+        // A teleport is answered by the White Mages of his own hub alone (the user, 2026-10-21): he
+        // shouts for one in town (teleport::shoutRefusal), where a teleporter always is (world.h
+        // keepResidents)
+        if (teleporters.has_value())
+        {
+            const auto hub = pawn::teleport::hubOf(PPlayer->loc.zone);
+            std::erase_if(pool, [&](const Candidate& c) { return pawn::teleport::hubOf(zoneutils::GetZone(static_cast<xi::ZoneId>(c.zoneId))) != hub; });
         }
 
         // Who of them hear it, and in what order (rules::pickHeard): those who
@@ -770,6 +801,20 @@ namespace pawn::finder
         made.shout.waitMs = shoutWaitMs(PPlayer->id);
         auto [it, inserted] = shouts.insert_or_assign(PPlayer->id, std::move(made));
         return &it->second.shout;
+    }
+
+    auto heldShout(const uint32 playerCharID) -> uint32
+    {
+        const auto* held = currentShout(playerCharID);
+        return held != nullptr ? held->shout.id : 0;
+    }
+
+    void endShout(const uint32 playerCharID)
+    {
+        if (shouts.erase(playerCharID) > 0)
+        {
+            ShowInfoFmt("pawn: {}'s shout has done its work and ends", pawn::seats::nameOf(playerCharID));
+        }
     }
 
     void snapshot(CCharEntity* PPawn)
@@ -994,6 +1039,14 @@ namespace pawn::finder
         {
             return CL_S_PARTY_FULL;
         }
+        // One contract at a time while a teleport is under way, its invite
+        // still unanswered included: one White Mage at a time. Every Link
+        // request runs on the map thread one after another, so the second
+        // invite always finds the first's consent
+        if (pawn::teleport::hiringFor(PPlayer->id) || teleportPending(PPlayer->id))
+        {
+            return CL_S_TELEPORT_HIRED;
+        }
         // The list's own gate: an unrecruited census body, a yes in the
         // player's current shout for this goal, still in a city or a town
         // (where the shout reached her), then what stops her whatever she
@@ -1028,7 +1081,7 @@ namespace pawn::finder
             {
                 return CL_S_AWAY;
             }
-            if (!cityOrTown(zoneOf(PPawn, facts->posZone)))
+            if (auto* PHere = zoneOf(PPawn, facts->posZone); !(goal.kind == Goal::Kind::Teleport ? pawn::teleport::isTown(PHere) : cityOrTown(PHere)))
             {
                 return CL_S_LEFT_TOWN;
             }

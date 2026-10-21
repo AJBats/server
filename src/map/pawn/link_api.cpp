@@ -216,6 +216,10 @@ namespace pawn::linkapi
             {
                 flags |= CL_MEMBER_BY_GUARD;
             }
+            if (pawn::teleport::locked(PPawn))
+            {
+                flags |= CL_MEMBER_HIRED;
+            }
             if (pawn::moghouse::reaches(reach.mogHouse, PPlayer, PPawn) == CL_S_OK)
             {
                 flags |= CL_MEMBER_BY_MOG_HOUSE;
@@ -728,7 +732,8 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
-            const uint16 status = edit(*PSet);
+            // Hired for a teleport, her gambits are locked (teleport.h locked)
+            const uint16 status = PWho != PChar && pawn::teleport::locked(PWho) ? static_cast<uint16>(CL_S_TELEPORT_ONLY) : edit(*PSet);
             if (status == CL_S_OK)
             {
                 pawn::saveGambits(PWho);
@@ -1183,6 +1188,7 @@ namespace pawn::linkapi
             auto                  answer = ask;
             constexpr std::size_t kMax   = sizeof(cl_contracts::contracts) / sizeof(cl_contract);
             answer.count                 = 0;
+            answer.shout                 = pawn::finder::heldShout(PChar->id);
             for (const auto& c : pawn::finder::contractsOf(PChar))
             {
                 if (answer.count >= kMax)
@@ -1368,9 +1374,9 @@ namespace pawn::linkapi
                 return;
             }
             auto* PPawn = pawn::findCommandablePawn(PChar, ask.cardian);
-            if (PPawn == nullptr)
+            if (PPawn == nullptr || pawn::teleport::locked(PPawn))
             {
-                tellTaken(reply, ask, ask.x, ask.y, ask.z, CL_S_NO_SUCH_CARDIAN);
+                tellTaken(reply, ask, ask.x, ask.y, ask.z, PPawn == nullptr ? CL_S_NO_SUCH_CARDIAN : CL_S_TELEPORT_ONLY);
                 return;
             }
             auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
@@ -1461,6 +1467,11 @@ namespace pawn::linkapi
             if (PController == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (pawn::teleport::locked(PPawn))
+            {
+                reply.finish(ask, CL_S_TELEPORT_ONLY);
                 return;
             }
 
@@ -1654,7 +1665,11 @@ namespace pawn::linkapi
         void setPartyRole(CCharEntity* PChar, const cl_set_party_role& ask, Reply& reply)
         {
             uint16 status = CL_S_MALFORMED;
-            if (ask.role == CL_ROLE_AUTO)
+            if (pawn::teleport::locked(pawn::findPawn(ask.member)))
+            {
+                status = CL_S_TELEPORT_ONLY; // hired for a teleport, she takes no role (teleport.h locked)
+            }
+            else if (ask.role == CL_ROLE_AUTO)
             {
                 status = pawn::roster::release(PChar, ask.member);
             }
@@ -1929,6 +1944,11 @@ namespace pawn::linkapi
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
                 return;
             }
+            if (pawn::teleport::locked(PPawn))
+            {
+                reply.finish(ask, CL_S_TELEPORT_ONLY);
+                return;
+            }
             const bool on = ask.on != 0;
             PController->SetWaiting(on, true);
             if (on)
@@ -1957,6 +1977,11 @@ namespace pawn::linkapi
             if (PPawn == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (pawn::teleport::locked(PPawn))
+            {
+                reply.finish(ask, CL_S_TELEPORT_ONLY);
                 return;
             }
             auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController());
@@ -2008,7 +2033,9 @@ namespace pawn::linkapi
             {
                 PPawn = pawn::findPawn(ask.cardian);
             }
-            reply.finish(ask, PPawn != nullptr ? pawn::orderHomePoint(PChar, PPawn) : CL_S_NO_SUCH_CARDIAN);
+            reply.finish(ask, PPawn == nullptr                 ? static_cast<uint16>(CL_S_NO_SUCH_CARDIAN)
+                              : pawn::teleport::locked(PPawn) ? static_cast<uint16>(CL_S_TELEPORT_ONLY)
+                                                              : pawn::orderHomePoint(PChar, PPawn));
         }
 
         // A queued command taken back: hers, or with no cardian named, his own
@@ -2025,6 +2052,11 @@ namespace pawn::linkapi
             if (PController == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            if (pawn::teleport::locked(PPawn))
+            {
+                reply.finish(ask, CL_S_TELEPORT_ONLY);
                 return;
             }
             // from the bottom of her line as the addon shows it up: the orders, her
@@ -2046,6 +2078,12 @@ namespace pawn::linkapi
             if (PController == nullptr)
             {
                 reply.finish(ask, CL_S_NO_SUCH_CARDIAN);
+                return;
+            }
+            // Hired for a teleport, she takes no order of his, queued in a pause or not (teleport.h locked)
+            if (pawn::teleport::locked(PPawn))
+            {
+                reply.finish(ask, CL_S_TELEPORT_ONLY);
                 return;
             }
             const auto key = pawn::keyOfAction(ask.action);

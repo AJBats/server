@@ -94,13 +94,16 @@ TEST_CASE("Teleport: her jobs cast it at the spell's level, main or support", "[
     CHECK_FALSE(castsAt(255, 99, 255, 99));
 }
 
-TEST_CASE("Teleport: she answers when she knows it, casts it and has the MP", "[cardian][teleport]")
+TEST_CASE("Teleport: she answers when she holds the Teleport and Warp, and has the MP", "[cardian][teleport]")
 {
-    CHECK(answers(true, true, 75, 75));
-    CHECK(answers(true, true, 400, 75));
-    CHECK_FALSE(answers(true, true, 74, 75));  // short of MP as she stands
-    CHECK_FALSE(answers(false, true, 400, 75)); // never learned it
-    CHECK_FALSE(answers(true, false, 400, 75)); // not at its level
+    const Holds both{ true, true };
+    CHECK(answers(both, 75, 75, both));
+    CHECK(answers(both, 400, 75, both));
+    CHECK_FALSE(answers(both, 74, 75, both));               // short of MP as she stands
+    CHECK_FALSE(answers({ false, true }, 400, 75, both));   // never learned it
+    CHECK_FALSE(answers({ true, false }, 400, 75, both));   // not at its level
+    CHECK_FALSE(answers(both, 400, 75, { false, true }));   // no Warp learned: no way home (a Bard with a White Mage's support)
+    CHECK_FALSE(answers(both, 400, 75, { true, false }));   // Warp learned, cast by no job she plays now
 }
 
 TEST_CASE("Teleport: the spell decides who goes", "[cardian][teleport]")
@@ -143,39 +146,37 @@ TEST_CASE("Teleport: who stays, in plain words", "[cardian][teleport]")
     }
 }
 
-TEST_CASE("Teleport: she casts once he is gathered, and the others gathered or given time", "[cardian][teleport]")
+TEST_CASE("Teleport: paid, she casts once the party is gathered, or once its patience is out", "[cardian][teleport]")
 {
-    const std::vector<Member> nobody;
+    // Everyone gathered, or nobody else in her party: at once
+    CHECK(ready({}, 0.0));
+    CHECK(ready({ standing(), standing() }, 0.0));
 
-    // He comes first: out of her reach, or near its edge, she waits for him
-    CHECK(ready(standing(kRadius + 5.0f), nobody, 0.0) == Ready::WaitForPlayer);
-    CHECK(ready(standing(kRadius - kGatherMargin + 0.5f), nobody, 0.0) == Ready::WaitForPlayer);
-    // On a chocobo beside her, he is asked to get down
-    Member riding = standing();
-    riding.mounted = true;
-    CHECK(ready(riding, nobody, 0.0) == Ready::PlayerMounted);
-
-    // Gathered, with nobody else to wait for
-    CHECK(ready(standing(), nobody, 0.0) == Ready::Cast);
-
-    // A member who could go but stands off waits her a while...
+    // A member who could go but stands off, he included, waits her a while...
     const std::vector<Member> straggler{ standing(), standing(kRadius + 4.0f) };
-    CHECK(ready(standing(), straggler, 0.0) == Ready::WaitForOthers);
-    CHECK(ready(standing(), straggler, kPatience - 1.0) == Ready::WaitForOthers);
-    // ...and no longer than the patience
-    CHECK(ready(standing(), straggler, kPatience) == Ready::Cast);
+    CHECK_FALSE(ready(straggler, 0.0));
+    CHECK_FALSE(ready(straggler, kPatience - 1.0));
+    CHECK_FALSE(ready({ standing(kRadius - kGatherMargin + 0.5f) }, 0.0)); // near the spell's edge is not gathered
+    // ...and no longer than the patience, wherever anyone stands (paid is paid)
+    CHECK(ready(straggler, kPatience));
 
-    // Those who could not go however near -- no crystal, knocked out, in
-    // another zone, mounted -- never hold her
+    // Those who could not go however near -- no crystal, knocked out --
+    // never hold her
     Member noCrystal = standing(30.0f);
     noCrystal.hasCrystal = false;
     Member down = standing(30.0f);
     down.alive = false;
+    CHECK(ready({ noCrystal, down }, 0.0));
+
+    // One who could still come -- in another zone, he between zones
+    // included, or on a chocobo -- holds her for the patience, no longer
     Member away = standing(300.0f);
     away.sameZone = false;
-    Member mounted = standing(30.0f);
+    Member mounted = standing(3.0f);
     mounted.mounted = true;
-    CHECK(ready(standing(), { noCrystal, down, away, mounted }, 0.0) == Ready::Cast);
+    CHECK_FALSE(ready({ away }, 0.0));
+    CHECK_FALSE(ready({ mounted }, kPatience - 1.0));
+    CHECK(ready({ away, mounted }, kPatience));
 }
 
 TEST_CASE("Teleport: the finder's goal is heard in every city and town", "[cardian][teleport][finder]")

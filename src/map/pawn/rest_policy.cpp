@@ -134,7 +134,7 @@ namespace pawn::tactics
         for (auto* member : scope.members)
         {
             auto* gambits = pawn::gambitsOf(member);
-            if (gambits == nullptr || member->isDead() || !scope.holders.contains(member->id) || !gambits->MasterOn())
+            if (gambits == nullptr || member->isDead() || !scope.holders.contains(member->id) || !gambits->Running())
             {
                 continue;
             }

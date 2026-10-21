@@ -278,6 +278,9 @@ namespace pawn
             return m_masterOn;
         }
         void SetMaster(bool on);
+        // Her rows run: the switch on, and she is not a White Mage hired
+        // for a teleport, whose gambits are locked (teleport.h locked)
+        auto Running() const -> bool;
         auto SetEnabled(std::size_t index, bool on) -> bool;
         auto Move(std::size_t from, std::size_t to) -> bool;
         auto Erase(std::size_t index) -> bool;

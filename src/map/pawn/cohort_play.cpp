@@ -163,6 +163,7 @@ namespace pawn::cohorts
             return;
         }
         townAt = now;
+        pawn::world::keepResidents();
         const double share = settings::get<float>("pawn.WORLD_COHORT_TOWN_SHARE");
         if (!pawn::world::isEnabled() || share <= 0.0)
         {

@@ -44,6 +44,7 @@
 #include "pull_math.h"
 #include "riding.h"
 #include "riding_math.h"
+#include "teleport.h"
 #include "town_errands.h"
 
 #include "common/lua.h"
@@ -1838,6 +1839,17 @@ namespace
 
 auto CPawnController::DoAction(const std::string& key, CBattleEntity* PTarget) -> uint16
 {
+    // Hired for a teleport, she takes no order of his: her own Teleport alone (teleport.h locked)
+    if (auto* PSelf = static_cast<CCharEntity*>(POwner); pawn::teleport::locked(PSelf))
+    {
+        unsigned kind = 0;
+        unsigned mode = 0;
+        unsigned id   = 0;
+        if (!parseOrderKey(key, kind, mode, id) || kind != 2 || !pawn::teleport::ownsCast(PSelf, static_cast<uint16>(id)))
+        {
+            return CL_S_TELEPORT_ONLY;
+        }
+    }
     if (key == kAttackOrder)
     {
         return AttackOrder(PTarget);
@@ -4027,7 +4039,7 @@ auto CPawnController::Move(Intent intent) -> AvoidAction
 
     // Spell approaches seek range and line of sight through the shared
     // avoidance checks. They may leave the camp's formation boundary.
-    if (!m_Retreat && !QueuedOrderHoldsHer() && m_Gambits->MasterOn() && RestAllowsAction())
+    if (!m_Retreat && !QueuedOrderHoldsHer() && m_Gambits->Running() && RestAllowsAction())
     {
         const bool engaged = (POwner->PAI->IsEngaged() && !m_HoldForPlayer) || AttendedEngaged();
         const auto cast    = pawn::tactics::assignment(static_cast<CCharEntity*>(POwner), engaged);
@@ -4614,7 +4626,7 @@ auto CPawnController::RestRowDue() const -> bool
     // Her Rest row asks for its order: it speaks, she has something to
     // rest for, and no rest order is on yet. RestTick takes it where she
     // could kneel now; the party's hunt pick stands aside for it
-    return !m_RestOrder.active() && m_Gambits->MasterOn() && RestsByRow() &&
+    return !m_RestOrder.active() && m_Gambits->Running() && RestsByRow() &&
            (POwner->health.hp < POwner->GetMaxHP() || POwner->health.mp < POwner->GetMaxMP());
 }
 
@@ -7533,7 +7545,8 @@ void CPawnController::AggroWatch()
 auto CPawnController::Cast(const EntityId target, const SpellID spellid) -> bool
 {
     CSpell* PSpell = spell::GetSpell(spellid);
-    if (PSpell == nullptr)
+    auto* PSelf = static_cast<CCharEntity*>(POwner);
+    if (PSpell == nullptr || (pawn::teleport::locked(PSelf) && !pawn::teleport::ownsCast(PSelf, static_cast<uint16>(spellid))))
     {
         return false;
     }

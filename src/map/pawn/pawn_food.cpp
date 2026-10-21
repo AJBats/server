@@ -83,7 +83,7 @@ void CPawnController::FoodTick()
     }
 
     cardian::food::WithPlayer moment{
-        .rowOn     = m_Gambits->MasterOn() && EatsWithPlayer(),
+        .rowOn     = m_Gambits->Running() && EatsWithPlayer(),
         .playerFed = fed(PPlayer),
         .selfFed   = fed(PChar),
         .sameZone  = sameZone(PPlayer, POwner),
@@ -162,7 +162,7 @@ auto CPawnController::EatCookieBeforeKneel(const bool aboutToKneel, const bool s
     }
     auto*      PChar   = static_cast<CCharEntity*>(POwner);
     auto*      PPlayer = pawn::partyPlayer(PChar);
-    const bool rowOn   = m_Gambits->MasterOn() && EatsWithPlayer();
+    const bool rowOn   = m_Gambits->Running() && EatsWithPlayer();
     if (PPlayer == nullptr || !rowOn || !fed(PPlayer) || fed(PChar) || !sameZone(PPlayer, POwner))
     {
         return false;

@@ -15,6 +15,7 @@
 
 #include "common/cbasetypes.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <string>
@@ -68,11 +69,21 @@ namespace pawn::teleport
             return (mainNeeds != 255 && mlvl >= mainNeeds) || (subNeeds != 255 && slvl >= subNeeds);
         }
 
-        // She answers a teleport shout: she knows the spell, her jobs cast
-        // it, and her MP covers it as she stands
-        constexpr auto answers(const bool knows, const bool casts, const uint32 mp, const uint32 cost) -> bool
+        // A spell as one White Mage of the shout holds it: she knows it, and
+        // her jobs cast it at her levels (castsAt)
+        struct Holds
         {
-            return knows && casts && mp >= cost;
+            bool knows = false;
+            bool casts = false;
+        };
+
+        // She answers a teleport shout: she holds the crag's Teleport and her
+        // MP covers it as she stands, and she holds Warp, to go home after
+        // (the user, 2026-10-21: a White Mage with a Black Mage's support,
+        // or a Black Mage with a White Mage's, and nobody else)
+        constexpr auto answers(const Holds teleport, const uint32 mp, const uint32 cost, const Holds warp) -> bool
+        {
+            return teleport.knows && teleport.casts && mp >= cost && warp.knows && warp.casts;
         }
 
         // The White Mages who answer a shout: the nearest few, each with her
@@ -179,6 +190,9 @@ namespace pawn::teleport
             return seed % 2 == 0 ? "Just the " + gil + " gil, please." : "That's not it. " + gil + "g, exactly.";
         }
 
+        // ---- his orders ---------------------------------------------------------
+
+
         // ---- leaving town -------------------------------------------------------
 
         // Hired in town and not yet paid and gathered, she keeps to town: he
@@ -268,61 +282,46 @@ namespace pawn::teleport
 
         // ---- when she casts -------------------------------------------------
 
-        // Gathered: the player, and every member who could go, stand
-        // kGatherMargin inside the spell's edge -- it measures where they
-        // stand when it lands, twenty seconds on. The player comes first:
-        // without him there is no point, and mounted he is asked to get
-        // down. Once he is gathered the others get kPatience seconds; then
-        // she casts, and whoever is still out of reach stays behind
+        // Gathered: a member who could go stands kGatherMargin inside the
+        // spell's edge -- it measures where they stand when it lands, twenty
+        // seconds on. Paid, she casts once every member of her party who
+        // could go stands gathered, or kPatience seconds after the gathering
+        // began, wherever anyone stands, he included (the user, 2026-10-21:
+        // paid is paid). Who could go is who could come in time: one in
+        // another zone or on a chocobo holds her for the patience, and stays
+        // behind after it; one knocked out or without the crystal never does
         constexpr float  kGatherMargin = 2.0f;
         constexpr double kPatience     = 20.0;
 
-        enum class Ready : uint8
-        {
-            WaitForPlayer,
-            PlayerMounted,
-            WaitForOthers,
-            Cast,
-        };
-
-        // He is gathered: on foot, well inside her reach
+        // A member is gathered: on foot, well inside her reach
         constexpr auto gathered(const Member& m) -> bool
         {
             return stayOf(m, kRadius - kGatherMargin) == Stay::Goes;
         }
 
-        // `playerGatheredFor`: the seconds he has stood gathered
-        inline auto ready(const Member& player, const std::vector<Member>& others, const double playerGatheredFor) -> Ready
+        // `party`: everyone of her party but herself, he always among them
+        // (between zones, measured as elsewhere); `gathering`: the seconds
+        // since the gathering began
+        inline auto ready(const std::vector<Member>& party, const double gathering) -> bool
         {
-            if (!gathered(player))
+            if (gathering >= kPatience)
             {
-                const auto stay = stayOf(player, kRadius - kGatherMargin);
-                return stay == Stay::Mounted ? Ready::PlayerMounted : Ready::WaitForPlayer;
+                return true;
             }
-            if (playerGatheredFor >= kPatience)
-            {
-                return Ready::Cast;
-            }
-            for (const auto& m : others)
-            {
-                // one who could go, were she near: alive, here, on foot, with the crystal
-                const bool couldGo = stayOf(Member{ m.sameZone, m.alive, m.hasCrystal, m.mounted, 0.0f, 0.0f }) == Stay::Goes;
-                if (couldGo && !gathered(m))
-                {
-                    return Ready::WaitForOthers;
-                }
-            }
-            return Ready::Cast;
+            return std::ranges::all_of(party, [](const Member& m)
+                                       {
+                                           // one who could come in time: alive, with the crystal
+                                           const bool couldGo = m.alive && m.hasCrystal;
+                                           return !couldGo || gathered(m);
+                                       });
         }
 
         // ---- how long a hire lasts --------------------------------------------
 
-        // Her way to him (the trek: a hire runs no town errands), her wait
-        // beside him to be paid and for the party to gather, and how many
+        // No limit on her way to him nor on his paying (the user,
+        // 2026-10-21: he is in charge, and dismisses her); only how many
         // casts she tries that come to nothing (interrupted, or never
-        // started) before she gives up
-        constexpr double kComeWithin   = 15.0 * 60.0;
-        constexpr double kWaitAtMost   = 10.0 * 60.0;
+        // started) before she gives up and sends back what he paid
         constexpr int    kTriesAtMost  = 3;
         constexpr double kStartWithin  = 15.0; // a cast ordered and not begun in this long came to nothing
         constexpr float  kBesideYalms  = 15.0f; // she has reached him

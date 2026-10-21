@@ -578,7 +578,7 @@ namespace pawn::tactics
             // blocks spells by line of sight
             auto* PSpell = c.spell != 0 ? spell::GetSpell(static_cast<SpellID>(c.spell)) : nullptr;
             const float reach  = bank::castRange(PChar, PSpell, PTarget);
-            c.open             = PSpell != nullptr && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone && PGambits->MasterOn() &&
+            c.open             = PSpell != nullptr && !PChar->isDead() && PChar->loc.zone == PTarget->loc.zone && PGambits->Running() &&
                      !PChar->StatusEffectContainer->HasPreventActionEffect() &&
                      !PChar->StatusEffectContainer->HasStatusEffect({xi::StatusEffect::Silence, xi::StatusEffect::Mute}) &&
                      host.FreeToCast(PSpell, PTarget);

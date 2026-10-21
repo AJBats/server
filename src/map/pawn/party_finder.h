@@ -133,6 +133,15 @@ namespace pawn::finder
     // saying how long
     auto shout(const CCharEntity* PPlayer, const Goal& goal, bool again, uint16& refusal, uint32& waitMs) -> const Shout*;
 
+    // The id of the shout the server still holds for him, 0 for none: past
+    // SHOUT_LIFETIME, or ended (endShout). His addon drops a shout of its own
+    // the server no longer holds (the Link's CONTRACTS)
+    auto heldShout(uint32 playerCharID) -> uint32;
+
+    // His shout has done its work -- the teleport it hired has landed -- and
+    // goes; its cooldown stays
+    void endShout(uint32 playerCharID);
+
     // A look at one of the shout's responders before the invite: her jobs,
     // nation and rank, her affinity, what she wears -- her body's gear when
     // she stands, her wardrobe as the census dressed her when she is faded

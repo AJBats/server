@@ -608,15 +608,6 @@ namespace pawn::items
         return toPawn ? CardianTransfer().moveGil(PPlayer, PPawn, amount) : CardianTransfer().moveGil(PPawn, PPlayer, amount);
     }
 
-    auto handGil(CCharEntity* PFrom, CCharEntity* PTo, const uint32 amount) -> uint16
-    {
-        if (PFrom == nullptr || PTo == nullptr)
-        {
-            return CL_S_REFUSED;
-        }
-        return CardianTransfer().moveGil(PFrom, PTo, amount);
-    }
-
     auto equip(CCharEntity* PPawn, const uint8 invSlot, const uint8 equipSlot, const uint8 location) -> uint16
     {
         // Inventory slot 0 is the gil slot; to EquipItem it means "unequip"

@@ -32,6 +32,7 @@
 #include "skillchains.h"
 #include "tactics.h"
 #include "spell_bank.h"
+#include "teleport.h"
 
 #include "utils/battleutils.h"
 #include "spell.h"
@@ -767,7 +768,7 @@ namespace pawn
         // The master switch: nothing of her own. A weapon skill, like
         // everything else, is a row's doing -- there is no TP trigger
         // behind the list
-        if (!m_masterOn)
+        if (!Running())
         {
             return;
         }
@@ -1028,7 +1029,7 @@ namespace pawn
 
     auto CGambits::RequestValid(const std::string& rowId, const uint32 target, const uint16 spellId) -> bool
     {
-        if (!m_masterOn)
+        if (!Running())
         {
             return false;
         }
@@ -1836,7 +1837,7 @@ namespace pawn
         // wild, and the first to speak for a behaviour wins (gambit_layers.h
         // speak, in SetGambitBehavior)
         m_host->ClearGambitBehaviors();
-        if (!m_masterOn)
+        if (!Running())
         {
             return;
         }
@@ -1859,7 +1860,7 @@ namespace pawn
     auto CGambits::EngageRows() -> std::vector<EngageRow>
     {
         std::vector<EngageRow> out;
-        if (!m_masterOn)
+        if (!Running())
         {
             return out;
         }
@@ -1873,7 +1874,7 @@ namespace pawn
         {
             const auto state  = states[place++];
             const bool marked = state == cardian::tactician::State::Tool;
-            if ((state == cardian::tactician::State::Order || marked) && cardian::engage::doorReads(m_masterOn, on, row.gambit))
+            if ((state == cardian::tactician::State::Order || marked) && cardian::engage::doorReads(Running(), on, row.gambit))
             {
                 out.push_back({ index, world, marked, &row.gambit, lent });
             }
@@ -2027,7 +2028,7 @@ namespace pawn
 
     auto CGambits::OffersWeaponSkill() const -> bool
     {
-        return m_masterOn && Offers().ws;
+        return Running() && Offers().ws;
     }
 
     auto CGambits::OffersRest() -> bool
@@ -2072,7 +2073,7 @@ namespace pawn
         // nothing between (CPawnController::WeaponSkill). Read over the
         // running layers, the world's included: a wild Monk's brains carry
         // a Boost row (brains.yaml)
-        if (!m_masterOn)
+        if (!Running())
         {
             return false;
         }
@@ -2536,7 +2537,7 @@ namespace pawn
         // Cheap first, as BurstNow asks: her tactician's nukes run, and
         // nothing would keep her from casting
         auto* PMob = FightTarget();
-        if (!m_masterOn || !Offers().nukes || PMob == nullptr || PMob->isDead() || PMob->GetBattleTarget() == POwner)
+        if (!Running() || !Offers().nukes || PMob == nullptr || PMob->isDead() || PMob->GetBattleTarget() == POwner)
         {
             return std::nullopt;
         }
@@ -2635,7 +2636,7 @@ namespace pawn
 
     auto CGambits::Admits(const uint16 spell, CBattleEntity* PTarget) -> std::optional<std::string>
     {
-        if (!m_masterOn || PTarget == nullptr)
+        if (!Running() || PTarget == nullptr)
         {
             return std::nullopt;
         }
@@ -2670,7 +2671,7 @@ namespace pawn
 
     auto CGambits::UseHateTool(const uint16 ability, CBattleEntity* PTarget, const std::string& why) -> std::optional<std::string>
     {
-        if (!m_masterOn || PTarget == nullptr)
+        if (!Running() || PTarget == nullptr)
         {
             return "her gambits are off";
         }
@@ -3037,7 +3038,7 @@ namespace pawn
             facts.push_back(FoeFacts(PFoe, PLeader));
         }
         const auto view = doorRows(rows, TacticianMelee());
-        const auto pick = cardian::engage::chooseRow(m_masterOn, retreating, view, facts, [&](const std::size_t row, const std::size_t foe)
+        const auto pick = cardian::engage::chooseRow(Running(), retreating, view, facts, [&](const std::size_t row, const std::size_t foe)
                                                      {
                                                          return EngageConditionsHold(*rows[row].gambit, foes[foe]);
                                                      });
@@ -3067,7 +3068,7 @@ namespace pawn
             return std::nullopt;
         }
         const auto view  = doorRows(rows, melee);
-        const auto claim = cardian::engage::claimingRow(m_masterOn, view, FoeFacts(PTarget, m_host->Anchor()), [&](const std::size_t row)
+        const auto claim = cardian::engage::claimingRow(Running(), view, FoeFacts(PTarget, m_host->Anchor()), [&](const std::size_t row)
                                                         {
                                                             return EngageConditionsHold(*rows[row].gambit, PTarget);
                                                         });
@@ -3091,7 +3092,7 @@ namespace pawn
     {
         // With every marked row unchecked, or her master switch off, it has
         // nothing of hers to judge
-        return m_masterOn && OffersTools() && pawn::tactics::has(POwner);
+        return Running() && OffersTools() && pawn::tactics::has(POwner);
     }
 
     auto CGambits::RecoveryDue() -> bool
@@ -3177,6 +3178,11 @@ namespace pawn
         {
             ShowInfoFmt("pawn: {} gambit row: {} = {}", POwner->getName(), name, arg);
         }
+    }
+
+    auto CGambits::Running() const -> bool
+    {
+        return m_masterOn && !pawn::teleport::locked(POwner);
     }
 
     void CGambits::SetMaster(const bool on)
@@ -4029,7 +4035,7 @@ namespace pawn
 
     auto CGambits::ToolRow(const cardian::tactician::Allowance kind) -> std::optional<ToolAt>
     {
-        if (!m_masterOn)
+        if (!Running())
         {
             return std::nullopt;
         }
@@ -4331,7 +4337,7 @@ namespace pawn
     {
         // Her tactician casts her nukes -- her gambits on, a cardian's or a
         // played character's on autopilot -- and she is in the fight on this mob
-        if (PMob == nullptr || elements == 0 || POwner->isDead() || !m_masterOn || !Offers().nukes || FightTarget() != PMob || !pawn::tactics::has(POwner))
+        if (PMob == nullptr || elements == 0 || POwner->isDead() || !Running() || !Offers().nukes || FightTarget() != PMob || !pawn::tactics::has(POwner))
         {
             return 0.0;
         }
