@@ -15,7 +15,8 @@
 //     itself, 0x01 a cardian's state, 0x02 items and gear, 0x03 gambits, 0x04
 //     orders and control, 0x05 the pause and the server's other notices, 0x06
 //     the party finder, 0x07 the conquest exchange, 0x08 the Auction House,
-//     0x09 the Mog House, 0x0A the linkshell, 0x0B the linkshell bank.
+//     0x09 the Mog House, 0x0A the linkshell, 0x0B the linkshell bank, 0x0C
+//     the chocobo porter.
 //   - A request carries req != 0. Every answer echoes req with CL_F_REPLY; all
 //     but the last also carry CL_F_MORE. The last answer is the request's own
 //     message and carries the outcome in status. req 0 is one-way: nobody answers.
@@ -34,12 +35,18 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 97: SHOUT_RESPONDER's price, a teleport
-// shout's White Mage naming hers, and SHOUT's who gone with CL_S_NOT_NEEDED,
-// which is no longer sent; 96: the teleport shout -- CL_GOAL_TELEPORT,
-// a GOAL for each crag whose gate crystal he holds, SHOUT's who, and
-// CL_S_NO_GATE_CRYSTAL, CL_S_NOT_NEEDED and CL_S_TELEPORT_HIRED;
-// 93: SHOUT_RESPONDER's sjob and slvl,
+// compatible, the user, 2026-09-14). 98: the teleport shout -- CL_GOAL_TELEPORT,
+// a GOAL for each crag whose gate crystal he holds, SHOUT_RESPONDER's price
+// (a teleport's White Mage names hers), CL_S_NO_GATE_CRYSTAL and
+// CL_S_TELEPORT_HIRED; 97: PORTER_ROUTE's points carry tight;
+// 96: the chocobo porter, PORTER_PLACES
+// (each place with its ride time), PORTER_GO, PORTER_STOP, PORTER_STATE,
+// PORTER_ROUTE and PORTER_STUCK, and their outcomes; 95: a level venture's
+// Venture Report --
+// VENTURE_REPORT's level*, expPerHour, expKept and points, VENTURE_SKILL;
+// 94: the level venture -- CLUB_MEMBER's
+// unlocked, levelCap and level* fields, CL_CAN_SEND_LEVEL, SEND_ERRAND's job
+// and level offered; 93: SHOUT_RESPONDER's sjob and slvl,
 // her support job on the shout's list; 92: MOBS_NEAR's kinds and MOB_NEAR's
 // ally, the members of his party near her too, for a friendly far pick; 91: MOBS_NEAR and MOB_NEAR, the monsters
 // near a party member as the server has them (a far pick's list), and
@@ -175,7 +182,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 97 };
+enum { CL_PROTOCOL = 98 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -332,7 +339,6 @@ enum
     CL_S_NO_CONTRACT       = 0x01A0, // she holds no contract with him
     CL_S_LEFT_TOWN         = 0x01A1, // she has left the cities and towns his shout reached
     CL_S_NO_GATE_CRYSTAL   = 0x01A2, // a teleport shout for a crag whose gate crystal he does not hold
-    CL_S_NOT_NEEDED        = 0x01A3, // no longer sent: casting a teleport himself refuses no shout for it (kept, never reused)
     CL_S_TELEPORT_HIRED    = 0x01A4, // a White Mage of his teleport shout is on her way already
 
     // The conquest exchange (no room in her inventory: CL_S_NO_SPACE)
@@ -371,7 +377,7 @@ enum
     CL_S_PEARLED_ELSEWHERE = 0x01E4, // she wears a pearl of another shell
     CL_S_ON_ERRAND         = 0x01E5, // she is away on an errand
     CL_S_NO_ERRAND         = 0x01E6, // she is on no errand
-    CL_S_NOT_OFFERED       = 0x01E7, // not an errand she can be sent on: a kind not built, or not for her, a quest he has not done, a rank not between hers and the cap
+    CL_S_NOT_OFFERED       = 0x01E7, // not an errand she can be sent on: a kind not built, or not for her, a quest he has not done, a rank not between hers and the cap, a job she has not unlocked or a level not above hers and at most his highest
     CL_S_DONE_ALREADY      = 0x01E8, // she has done that already
     CL_S_NOT_STANDING      = 0x01E9, // she has no body in the world now
     CL_S_NO_PEARL_TO_GIVE  = 0x01EA, // he holds no Linkpearl of his shell to trade: he makes one from his linkshell first
@@ -405,6 +411,14 @@ enum
 
     // The party's pulling
     CL_S_CANNOT_PULL       = 0x0230, // that member's job does not pull: a Puppetmaster, for now
+
+    // The chocobo porter (in an event: CL_S_IN_EVENT)
+    CL_S_NOT_RIDING        = 0x0240, // he rides no rented chocobo
+    CL_S_NO_SUCH_PLACE     = 0x0241, // no place by that number
+    CL_S_NO_WAY            = 0x0242, // no way there on a chocobo from where he is
+    CL_S_NO_JOURNEY        = 0x0243, // no ride is under way to stop
+    CL_S_UNDER_ATTACK      = 0x0244, // a monster is on him
+    CL_S_RENTAL_SHORT      = 0x0245, // the time left on his chocobo does not cover the ride
 };
 
 // An action, as the command window gives one and a queue line shows it: fields,
@@ -2543,6 +2557,7 @@ enum
     CL_T_VENTURE_ITEM     = 0x0A15,
     CL_T_VENTURE_NEWS     = 0x0A16,
     CL_T_PROFESSION_SLOT  = 0x0A17,
+    CL_T_VENTURE_SKILL    = 0x0A18,
 };
 
 // What she is to him
@@ -2569,7 +2584,7 @@ enum
     CL_ERRAND_NONE  = 0,
     CL_ERRAND_GEAR  = 1, // gear up: the auction house's re-dress, and her scrolls from her nation's guard
     CL_ERRAND_QUEST = 2, // a quest he has done, from his log
-    CL_ERRAND_LEVEL = 3, // a level on one of her jobs: reserved, not offered yet
+    CL_ERRAND_LEVEL = 3, // a level on one of her unlocked jobs, above hers and at most his highest on any job: away until she reaches it
     CL_ERRAND_MONEY = 4, // earning money at a profession of hers: a fishing venture, for now
     CL_ERRAND_RANK  = 5, // her nation's missions, to a rank he picks: at most his own
 };
@@ -2592,6 +2607,7 @@ enum
     CL_CAN_GIVE_PEARL  = 0x10, // she takes a pearl of his shell from him by the game's own trade (once he holds one and stands by her)
     CL_CAN_BREAK_PEARL = 0x20,
     CL_CAN_SEND_RANK   = 0x40, // her rank is below the catch-up's cap (rankCap)
+    CL_CAN_SEND_LEVEL  = 0x80, // one of her unlocked jobs is below his highest level on any job (levelCap): a level venture is hers to be sent on
 };
 
 // More of what the page may do with a member now: CLUB_MEMBER's can2
@@ -2637,7 +2653,15 @@ typedef struct cl_club_member
     uint16_t  affinity;           // one of the world's: her affinity with him (cardian_party_memory)
     uint16_t  missionsTogether;   // one of the world's: the story missions the two have completed together
     uint8_t   can2;               // CL_CAN2_*
-    uint8_t   ventureDone;        // CL_PROF_*: her last venture's, over and its report unread since; 0 none
+    uint8_t   ventureDone;        // CL_PROF_*: her last venture's, over and its report unread since (CL_PROF_LEVEL a level venture's); 0 none
+    uint32_t  unlocked;           // her jobs unlocked: char_jobs.unlocked, a bit per job id (bit 0 the support job)
+    uint8_t   levelCap;           // his highest level on any job: no level venture takes her past it
+    uint8_t   levelJob;           // a level venture: the job she levels; 0 on no level venture
+    uint8_t   levelFrom;          // ... her level on it as she was sent
+    uint8_t   levelNow;           // ... her level on it now
+    uint8_t   levelTarget;        // ... the level she is back at
+    uint8_t   levelShare;         // ... away: the share of her next level earned, in hundredths
+    uint8_t   spare3[2];
 } cl_club_member;
 
 // His club: each member a CLUB_MEMBER (CL_F_MORE), then each recruit, then
@@ -2710,8 +2734,8 @@ typedef struct cl_errands
 // Send her on an errand. CL_ERRAND_QUEST names its quest (goal, log, id);
 // CL_ERRAND_RANK the rank; CL_ERRAND_MONEY the profession, the spot (zone and
 // area, one of VENTURE_SPOTS'), the rod (one of PROFESSION_TOOLS'), the bait
-// (one of VENTURE_BAITS') and the hours; level and job are CL_ERRAND_LEVEL's,
-// reserved. Answered with the outcome
+// (one of VENTURE_BAITS') and the hours; CL_ERRAND_LEVEL the job and the
+// level to reach. Answered with the outcome
 typedef struct cl_send_errand
 {
     cl_header h;
@@ -2719,9 +2743,9 @@ typedef struct cl_send_errand
     uint8_t   errand;     // CL_ERRAND_*
     uint8_t   goal;       // CL_ERRAND_QUEST: CL_GOAL_QUEST
     uint8_t   log;
-    uint8_t   level;
+    uint8_t   level;      // CL_ERRAND_LEVEL: the level to reach on `job`
     uint16_t  id;
-    uint8_t   job;
+    uint8_t   job;        // CL_ERRAND_LEVEL: one of her unlocked jobs
     uint8_t   rank;       // CL_ERRAND_RANK: the rank to reach
     uint8_t   profession; // CL_ERRAND_MONEY: CL_PROF_*
     uint8_t   hours;      // CL_ERRAND_MONEY: 1 or 2, hours of the game clock (Earth hours, held by a pause)
@@ -2781,6 +2805,7 @@ enum
     CL_PROF_BONECRAFT    = 11,
     CL_PROF_ALCHEMY      = 12,
     CL_PROF_COOKING      = 13,
+    CL_PROF_LEVEL        = 0xFF, // no profession: a level venture's, as CLUB_MEMBER's ventureDone names it
 };
 
 // Where a profession stands with her
@@ -3011,8 +3036,10 @@ typedef struct cl_venture_item
     uint32_t  value;    // sold: what it fetched; else what it should fetch, estimated
 } cl_venture_item;
 
-// Her last money venture, and nothing of an earlier one: each thing of it a
-// VENTURE_ITEM (CL_F_MORE), then this with the venture's sums
+// Her last venture, and nothing of an earlier one. A money venture: each
+// thing of it a VENTURE_ITEM (CL_F_MORE), then this with its sums. A level
+// venture (levelJob not 0): each skill it raised a VENTURE_SKILL, then this
+// with its levels, its pace and the conquest points it earned
 typedef struct cl_venture_report
 {
     cl_header h;
@@ -3033,7 +3060,28 @@ typedef struct cl_venture_report
     uint32_t  supplies;    // answered: what it used up -- bait gone, rods broken -- at their prices
     uint32_t  spent;       // answered: the gil paid for its supplies, hers and his
     char      areaName[48]; // answered: the water's own name when its zone has several, for people; empty else
+    uint8_t   levelJob;    // answered: a level venture's job; 0 for a money venture
+    uint8_t   levelFrom;   // answered: her level on it as she set out
+    uint8_t   levelNow;    // answered: her level on it now, or as she came back
+    uint8_t   levelTarget; // answered: the level she was sent to reach
+    uint8_t   levelShare;  // answered: away, the percent of her next level earned; called back, the percent kept as experience
+    uint8_t   spare2;
+    uint16_t  nextMinutes; // answered: away, the minutes her next level is still off at her pace; 0 once back
+    uint32_t  expPerHour;  // answered: away, her pace in experience an hour at her level now; 0 once back
+    uint32_t  expKept;     // answered: called back, the experience kept toward her next level
+    uint32_t  points;      // answered: the conquest points the venture has earned her
 } cl_venture_report;
+
+// A skill a level venture raised, an answer to VENTURE_REPORT: her skill as
+// she set out and now, in tenths of a level as the game counts them
+typedef struct cl_venture_skill
+{
+    cl_header h;
+    uint16_t  skill; // the game's skill id
+    uint16_t  from;
+    uint16_t  to;
+    uint16_t  spare;
+} cl_venture_skill;
 
 // ---- 0x0Bxx: the linkshell bank --------------------------------------------
 //
@@ -3225,5 +3273,160 @@ typedef struct cl_bank_junk
     uint8_t   full;      // answered: 1 when the bank had no room for a stack it named
     cl_item   items[80]; // answered: each stack moved, by her bag's slot it left, in that order
 } cl_bank_junk;
+
+// ---- 0x0Cxx: the chocobo porter ---------------------------------------------
+//
+// The player on a rented chocobo, ridden to a place he picks (pawn/porter.h):
+// a city's gate, then on foot through it; a conquest outpost; a teleport
+// crag. The server plans his way by the trek's own planner and sends it a
+// stretch at a time (PORTER_ROUTE); his addon runs his own client along it
+// with the client's auto-run, through every zone line, and tells of a run
+// that snags on the ground (PORTER_STUCK). His movement, seen by the
+// addon, or PORTER_STOP gives the reins back.
+
+enum
+{
+    CL_T_PORTER_PLACES = 0x0C01,
+    CL_T_PORTER_GO     = 0x0C02,
+    CL_T_PORTER_STOP   = 0x0C03,
+    CL_T_PORTER_STATE  = 0x0C04,
+    CL_T_PORTER_ROUTE  = 0x0C05,
+    CL_T_PORTER_STUCK  = 0x0C06,
+};
+
+// What a place is. The server names it; the addon words it
+enum
+{
+    CL_PORTER_CITY    = 1, // a city: ridden to its gate, and on foot through it
+    CL_PORTER_OUTPOST = 2, // a region's conquest outpost (key: its region, xi.region)
+    CL_PORTER_CRAG    = 3, // a teleport crag (key: its teleport, xi.teleport.id)
+};
+
+// Why a ride ended
+enum
+{
+    CL_PORTER_ARRIVED    = 1, // there
+    CL_PORTER_TAKEN_BACK = 2, // he took the reins: his movement, or PORTER_STOP
+    CL_PORTER_ON_FOOT    = 3, // off the chocobo: its rental ran out, or anything else got him down
+    CL_PORTER_ATTACKED   = 4, // a monster is on him
+    CL_PORTER_NO_WAY     = 5, // no way on from where he is on a chocobo
+    CL_PORTER_SNAGGED    = 6, // his client caught on the ground again and again, set down past it and caught again
+};
+
+// A place on Ride to (cl_porter_place's flags)
+enum
+{
+    CL_PORTER_PLACE_SHORT = 0x01, // the time left on his chocobo does not cover the ride: greyed, and refused
+};
+
+typedef struct cl_porter_place
+{
+    uint16_t place;   // its number, which PORTER_GO names
+    uint8_t  kind;    // CL_PORTER_*
+    uint8_t  hops;    // the zone lines between him and it
+    uint16_t zone;    // the zone it stands in
+    uint16_t key;     // an outpost's region, a crag's teleport; 0 for a city
+    uint16_t seconds; // the ride from where he is, at his chocobo's pace; 0xFFFF too long to count
+    uint8_t  flags;   // CL_PORTER_PLACE_*
+    uint8_t  spare;
+} cl_porter_place;
+
+// The places he can be ridden to from where he is, the quickest first. One-way
+// as his rental sets him down in its field (the question: the menu opens on
+// it); and the answer to his asking, while he rides a rented chocobo, or
+// CL_S_NOT_RIDING with none. The times and the greying are as of the sending
+typedef struct cl_porter_places
+{
+    cl_header       h;
+    uint8_t         count;
+    uint8_t         spare[3];
+    cl_porter_place places[64];
+} cl_porter_places;
+
+// Ride him to a place, by its number in PORTER_PLACES: the ride begins, or
+// takes the new place if one is under way. Answered OK, then PORTER_STATE
+// as it begins; or CL_S_NOT_RIDING, CL_S_NO_SUCH_PLACE, CL_S_NO_WAY,
+// CL_S_RENTAL_SHORT, CL_S_UNDER_ATTACK, CL_S_IN_EVENT. A held pause holds
+// the ride
+typedef struct cl_porter_go
+{
+    cl_header h;
+    uint16_t  place;
+    uint16_t  spare;
+} cl_porter_go;
+
+// The reins back to him: the ride ends where he is. Answered OK, or
+// CL_S_NO_JOURNEY
+typedef struct cl_porter_stop
+{
+    cl_header h;
+} cl_porter_stop;
+
+// One-way, to the player, as his ride begins and as it ends; and the answer
+// to his asking (an addon that has just bound, whose route is sent again
+// after), with riding 0 and why 0 when no ride is under way
+typedef struct cl_porter_state
+{
+    cl_header h;
+    uint8_t   riding; // 1: under way
+    uint8_t   why;    // CL_PORTER_ARRIVED..: why it ended; 0 while under way
+    uint8_t   kind;   // the place: CL_PORTER_*
+    uint8_t   spare;
+    uint16_t  zone;
+    uint16_t  key;
+    uint16_t  ride;   // the ride's number, which its routes carry
+    uint16_t  spare2;
+} cl_porter_state;
+
+// What a route's last point is
+enum
+{
+    CL_PORTER_ENDS_MORE = 0, // a stretch of a longer route: the next follows before he reaches its end
+    CL_PORTER_ENDS_LINE = 1, // a zone line: run on through it, straight on past its last point
+    CL_PORTER_ENDS_STOP = 2, // stop at its last point: the place, or short of a city's gate, where he is got down
+};
+
+// A point of a route, in the server's axes (y the height; the client's Y is
+// the server's z)
+typedef struct cl_porter_point
+{
+    float   x;
+    float   y;
+    float   z;
+    uint8_t tight; // 1: it threads a bridge or a neck, the rider's body a little room each side: steered to closely, its corner barely cut
+    uint8_t spare[3];
+} cl_porter_point;
+
+// One-way, to the player: his way on across his zone, the leg he rides from
+// its start and on, at most 32 points. Sent as he lands in each zone, when he
+// strays from it or snags (planned again from where his client has him),
+// and the next stretch as he nears the last point of the one sent. Each
+// replaces the one before; a route of another ride or another zone than
+// his client's is not run
+typedef struct cl_porter_route
+{
+    cl_header       h;
+    uint16_t        ride;  // the ride's number (PORTER_STATE)
+    uint16_t        seq;   // this route's number in the ride, which PORTER_STUCK names
+    uint16_t        zone;  // the zone it crosses
+    uint8_t         count;
+    uint8_t         ends;  // CL_PORTER_ENDS_*: what its last point is
+    cl_porter_point points[32];
+} cl_porter_route;
+
+// One-way, from the addon: his run along the route `seq` has made no
+// headway, his client caught on the ground. The server plans round it from
+// where he stands, the first time at a spot, and sets him down a few yalms
+// on along his way the second; after a few set-downs without getting on the
+// ride ends (CL_PORTER_SNAGGED)
+typedef struct cl_porter_stuck
+{
+    cl_header h;
+    uint16_t  ride;
+    uint16_t  seq;
+    float     x; // where his client has him, in the server's axes
+    float     y;
+    float     z;
+} cl_porter_stuck;
 
 #pragma pack(pop)

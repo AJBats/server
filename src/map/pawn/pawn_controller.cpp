@@ -277,6 +277,7 @@ CPawnController::CPawnController(CCharEntity* PPawn)
 : CPlayerController(PPawn)
 , m_Host(std::make_unique<PawnHost>(*this))
 , m_Gambits(std::make_unique<pawn::CGambits>(PPawn, m_Host.get()))
+, m_Walker(PPawn, *this)
 {
 }
 
@@ -4494,28 +4495,8 @@ void CPawnController::TidyBag()
 
 auto CPawnController::HatedByAnyMob() const -> bool
 {
-    // On her, as the game has it: a mob engaged with her as its target -- a
-    // mob that aggroes by sight or sound targets her and puts nothing on its
-    // hate list until she acts on it -- or one with her on its hate list
-    bool        hated = false;
-    const float reach = settings::get<float>("pawn.HUNT_LEASH");
-    const auto  hates = [&](CMobEntity* PMob)
-    {
-        if (hated || !PMob->isAlive() || !isWithinDistance(POwner->loc.p, PMob->loc.p, reach))
-        {
-            return;
-        }
-        if (PMob->PAI->IsEngaged() && PMob->GetBattleTarget() == POwner)
-        {
-            hated = true;
-            return;
-        }
-        const auto* enmityList = PMob->PEnmityContainer->GetEnmityList();
-        const auto  it         = enmityList->find(POwner->id);
-        hated                  = it != enmityList->end() && it->second.active;
-    };
-    pawn::forEachMobNear(pawn::entitiesAround(POwner), POwner->loc.p, reach, hates);
-    return hated;
+    // On her, as the game has it (pawn_danger.h mobOn)
+    return pawn::mobOn(POwner, settings::get<float>("pawn.HUNT_LEASH"));
 }
 
 auto CPawnController::FormationSlot() const -> pawn::Slot
@@ -4655,6 +4636,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
     TracyZoneString(POwner->getName());
 
     m_Tick = tick;
+    MoveTrace();
     m_Gambits->TickBehaviors();
     const bool kneelingNow = POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
     if (m_Rest.observedDown && !kneelingNow)
@@ -7255,7 +7237,7 @@ void CPawnController::TravelTick()
     {
         ShowInfoFmt("pawn: travel {}: follows {} through where he crossed, {:.1f}y away (zone {} -> {})", POwner->getName(), PLeader->getName(),
                     distance(POwner->loc.p, left->at), static_cast<uint16>(left->from), static_cast<uint16>(left->to));
-        m_TravelHopZone   = {};
+        m_LineApproach.forget();
         m_TravelStuckSaid = false;
         cross(pawn::TravelHop{ left->to, left->at, left->landed });
         return;
@@ -7349,32 +7331,20 @@ void CPawnController::TravelTick()
     }
 
     // Crossing requires physically reaching the line, like a player does
-    if (distToLine < TransferDistance)
+    // (line_approach.h)
+    if (cardian::trek::reached(distToLine))
     {
         m_TravelStuckSaid = false;
         cross(*hop);
         return;
     }
 
-    // Fresh hop: start progress tracking anew
-    if (hop->destinationZone != m_TravelHopZone || distance(hop->walkTo, m_TravelHopWalkTo) > 1.0f)
-    {
-        m_TravelHopZone      = hop->destinationZone;
-        m_TravelHopWalkTo    = hop->walkTo;
-        m_TravelBestDist     = distToLine;
-        m_TravelProgressTime = m_Tick;
-    }
-
-    if (distToLine + 0.5f < m_TravelBestDist)
-    {
-        m_TravelBestDist     = distToLine;
-        m_TravelProgressTime = m_Tick;
-    }
-    else if (m_Tick - m_TravelProgressTime > 3s && distToLine < CrossingSlack)
+    m_LineApproach.watch(static_cast<uint16>(hop->destinationZone), hop->walkTo, distToLine, m_Tick);
+    if (m_LineApproach.stalled(distToLine, m_Tick))
     {
         // As close as the mesh allows counts as arrival
         ShowInfoFmt("pawn: travel {}: no progress at {:.1f}y from the line, crossing", POwner->getName(), distToLine);
-        m_TravelHopZone   = {};
+        m_LineApproach.forget();
         m_TravelStuckSaid = false;
         cross(*hop);
         return;
@@ -8589,30 +8559,28 @@ void CPawnController::RampCatchUp(const bool playerMoving, const position_t& poi
 
 void CPawnController::SetRunSpeed(const uint8 wanted)
 {
-    if (POwner->isMounted())
-    {
-        const float mount = settings::get<uint8>("map.MOUNT_SPEED") / 2.0f;
-        const int16 gear  = static_cast<int16>(POwner->getMod(xi::Mod::MOUNT_MOVE) - m_RideMod);
-        const auto  need  = static_cast<int16>(std::lround((wanted / std::max(1.0f, mount) - 1.0f) * 100.0f) - gear);
-        if (need != m_RideMod)
-        {
-            POwner->delModifier(xi::Mod::MOUNT_MOVE, m_RideMod);
-            POwner->addModifier(xi::Mod::MOUNT_MOVE, need);
-            m_RideMod = need;
-            POwner->UpdateSpeed();
-        }
-        return;
-    }
-    if (m_RideMod != 0)
-    {
-        POwner->delModifier(xi::Mod::MOUNT_MOVE, m_RideMod);
-        m_RideMod = 0;
-    }
-    if (POwner->baseSpeed != wanted)
+    m_WantedSpeed = wanted;
+    if (!POwner->isMounted() && POwner->baseSpeed != wanted)
     {
         POwner->baseSpeed = wanted;
-        POwner->UpdateSpeed();
     }
+    POwner->UpdateSpeed();
+    SyncRideScale();
+}
+
+void CPawnController::SyncRideScale()
+{
+    // A client draws a rider at twice the speed it is told, as a real
+    // player's chocobo, told map.MOUNT_SPEED / 2, shows: so her speed reads
+    // the game's mount speed, the same number, and her path steps the rest of
+    // her pace
+    if (POwner->PAI->PathFind == nullptr)
+    {
+        return;
+    }
+    const float told  = static_cast<float>(std::max<uint8>(1, POwner->GetSpeed()));
+    const float scale = POwner->isMounted() && m_WantedSpeed > 0 ? static_cast<float>(m_WantedSpeed) / told : 1.0f;
+    POwner->PAI->PathFind->SetSpeedScale(scale);
 }
 
 void CPawnController::RestoreNormalSpeed()
@@ -8675,6 +8643,7 @@ void CPawnController::RideTick()
         m_Riding = riding;
         RestoreNormalSpeed();
     }
+    SyncRideScale();
 }
 
 void CPawnController::FormationDebug(const char* role, const CCharEntity* PPlayer, const Anchor& a, const position_t& point)

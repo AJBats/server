@@ -160,7 +160,7 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_job_change) == 24);
     STATIC_REQUIRE(sizeof(cl_dbox_slot) == 24);
     STATIC_REQUIRE(sizeof(cl_dbox) == 228);
-    STATIC_REQUIRE(sizeof(cl_club_member) == 208);
+    STATIC_REQUIRE(sizeof(cl_club_member) == 220);
     STATIC_REQUIRE(sizeof(cl_club) == 108);
     STATIC_REQUIRE(sizeof(cl_club_invite) == 20);
     STATIC_REQUIRE(sizeof(cl_club_recruit) == 120);
@@ -182,13 +182,22 @@ TEST_CASE("Cardian link: the structs are the sizes both sides read", "[cardian][
     STATIC_REQUIRE(sizeof(cl_venture_paid) == 36);
     STATIC_REQUIRE(sizeof(cl_venture_news) == 28);
     STATIC_REQUIRE(sizeof(cl_venture_item) == 28);
-    STATIC_REQUIRE(sizeof(cl_venture_report) == 108);
+    STATIC_REQUIRE(sizeof(cl_venture_report) == 128);
+    STATIC_REQUIRE(sizeof(cl_venture_skill) == 24);
     STATIC_REQUIRE(sizeof(cl_bank) == 1020);
     STATIC_REQUIRE(sizeof(cl_bank_holder) == 1028);
     STATIC_REQUIRE(sizeof(cl_bank_deposit) == 32);
     STATIC_REQUIRE(sizeof(cl_bank_withdraw) == 32);
     STATIC_REQUIRE(sizeof(cl_bank_gil) == 36);
     STATIC_REQUIRE(sizeof(cl_bank_rights) == 20);
+    STATIC_REQUIRE(sizeof(cl_porter_place) == 12);
+    STATIC_REQUIRE(sizeof(cl_porter_places) == 788);
+    STATIC_REQUIRE(sizeof(cl_porter_go) == 20);
+    STATIC_REQUIRE(sizeof(cl_porter_stop) == 16);
+    STATIC_REQUIRE(sizeof(cl_porter_state) == 28);
+    STATIC_REQUIRE(sizeof(cl_porter_point) == 16);
+    STATIC_REQUIRE(sizeof(cl_porter_route) == 536);
+    STATIC_REQUIRE(sizeof(cl_porter_stuck) == 32);
 }
 
 TEST_CASE("Cardian link: a cardian's order key and its action fields cross both ways", "[cardian][link]")

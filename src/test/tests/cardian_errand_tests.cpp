@@ -1,12 +1,16 @@
 // Cardian: the linkshell's errands (pawn/errands.h, the rules in
 // pawn/errand_math.h): whom each kind is for, the row's words, the clock an
 // errand runs on and where it has her, what a call back keeps, the steps of
-// gearing up in town, and a finished quest or mission in her log.
+// gearing up in town, a level venture's bounds, the share it keeps, its
+// banked levels and the conquest points of what it gained, and a finished
+// quest or mission in her log.
 #include "map/pawn/cardian_link_messages.h"
 #include "map/pawn/errand_math.h"
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -80,10 +84,12 @@ TEST_CASE("Errands: the menu offers what is built and hers", "[cardian][errands]
     // a recruit is no member: nothing until she wears his pearl
     CHECK_FALSE(offered(Kind::Quest, Member::Recruit));
     CHECK_FALSE(offered(Kind::Gear, Member::Recruit));
-    // level keeps its shape and is never offered until built
-    CHECK_FALSE(built(Kind::Level));
-    CHECK_FALSE(offered(Kind::Level, Member::Alt));
-    CHECK(forMember(Kind::Level, Member::Wild));
+    // a level venture for every member (the user, 2026-10-18), never a recruit
+    CHECK(built(Kind::Level));
+    CHECK(offered(Kind::Level, Member::Alt));
+    CHECK(offered(Kind::Level, Member::Owned));
+    CHECK(offered(Kind::Level, Member::Wild));
+    CHECK_FALSE(offered(Kind::Level, Member::Recruit));
     // money, a venture at a profession: his alts and owned cardians, never the world's
     CHECK(built(Kind::Money));
     CHECK(offered(Kind::Money, Member::Alt));
@@ -118,6 +124,93 @@ TEST_CASE("Errands: a kind that ends on its target runs off the clock", "[cardia
     CHECK(e.ends == 0);
     CHECK(secondsLeft(e, 100000) == 0);
     CHECK_FALSE(due(e, 100000));
+}
+
+TEST_CASE("Errands: a level venture goes to an unlocked job, above her level and at most his highest", "[cardian][errands][level]")
+{
+    constexpr uint8_t  kWar = 1;
+    constexpr uint8_t  kMnk = 2;
+    constexpr uint8_t  kPld = 7;
+    constexpr uint8_t  kDnc = 19;
+    constexpr uint32_t unlocked = (1u << kWar) | (1u << kMnk) | 1u; // Warrior, Monk and the support job
+    // his highest on any job is 37: a Warrior 20 may go to 21 through 37
+    CHECK(levelFits(unlocked, kWar, 20, 21, 37));
+    CHECK(levelFits(unlocked, kWar, 20, 37, 37));
+    CHECK_FALSE(levelFits(unlocked, kWar, 20, 38, 37)); // past him
+    CHECK_FALSE(levelFits(unlocked, kWar, 20, 20, 37)); // not above her
+    CHECK_FALSE(levelFits(unlocked, kWar, 20, 5, 37));
+    // a job she has not unlocked, the support job's bit, and a job past the era's never go
+    CHECK_FALSE(levelFits(unlocked, kPld, 0, 10, 37));
+    CHECK_FALSE(levelFits(unlocked, 0, 0, 10, 37));
+    CHECK_FALSE(levelFits(unlocked | (1u << kDnc), kDnc, 1, 10, 37));
+    // an unlocked job never played reads 0 and starts at 1
+    CHECK(levelOn(0) == 1);
+    CHECK(levelFits(unlocked, kMnk, 0, 2, 37));
+    CHECK_FALSE(levelFits(unlocked, kMnk, 0, 1, 37));
+
+    // the page offers Level while one of her unlocked jobs is below his highest
+    std::array<uint8_t, 24> levels{};
+    levels[kWar] = 37;
+    levels[kMnk] = 37;
+    CHECK_FALSE(anyLevelFits(unlocked, levels, 37));
+    levels[kMnk] = 12;
+    CHECK(anyLevelFits(unlocked, levels, 37));
+    CHECK_FALSE(anyLevelFits(1u << kWar, levels, 37)); // her Monk is not unlocked
+    CHECK_FALSE(anyLevelFits(unlocked, levels, 0));    // his own jobs all at 0
+}
+
+TEST_CASE("Errands: a level venture called back keeps its share of the next level as experience", "[cardian][errands][level]")
+{
+    // half of a level that asks 2000 is 1000; nothing earned is nothing kept
+    CHECK(keptExp(0.5, 2000) == 1000);
+    CHECK(keptExp(0.0, 2000) == 0);
+    CHECK(keptExp(-0.2, 2000) == 0);
+    CHECK(keptExp(0.25, 0) == 0);
+    // never the whole of it: a ding is the census's, or the game's as she earns it
+    CHECK(keptExp(1.0, 2000) == 1999);
+    CHECK(keptExp(0.9999999, 2000) == 1999);
+    CHECK(keptExp(0.75, 2000) == 1500);
+    // the page's share, in hundredths, never a whole level
+    CHECK(sharePercent(0.0) == 0);
+    CHECK(sharePercent(0.456) == 45);
+    CHECK(sharePercent(1.0) == 99);
+    CHECK(sharePercent(-1.0) == 0);
+}
+
+TEST_CASE("Errands: a level venture's banked levels land in one ding, and a call back waits for them", "[cardian][errands][level]")
+{
+    // every whole level the count holds, up to the levels left; none short of a whole one
+    CHECK(wholeLevels(0.99, 5) == 0);
+    CHECK(wholeLevels(1.0 - 1e-10, 5) == 1);
+    CHECK(wholeLevels(2.3, 5) == 2);
+    CHECK(wholeLevels(3.0 - 1e-10, 5) == 3);
+    CHECK(wholeLevels(9.0, 5) == 5);
+    CHECK(wholeLevels(1.5, 0) == 0);
+    // the time the census has not counted: 2.4 levels an hour for half an hour since its last count
+    CHECK(ventureCount(0.3, 2.4, 1000.0, 2800.0, 1.0, 5) == Catch::Approx(1.5));
+    CHECK(ventureCount(0.3, 2.4, 1000.0, 2800.0, 2.0, 5) == Catch::Approx(2.7)); // a test world's clock at twice the speed
+    CHECK(ventureCount(4.5, 2.4, 1000.0, 2800.0, 1.0, 5) == Catch::Approx(5.0)); // never past her target
+    // nothing before the census's first count, nothing for a second already counted, nothing with no pace
+    CHECK(ventureCount(0.3, 2.4, 0.0, 2800.0, 1.0, 5) == Catch::Approx(0.3));
+    CHECK(ventureCount(0.3, 2.4, 2800.0, 2800.0, 1.0, 5) == Catch::Approx(0.3));
+    CHECK(ventureCount(0.3, 0.0, 1000.0, 2800.0, 1.0, 5) == Catch::Approx(0.3));
+    // called back, she waits while a whole level is banked or a ding of it is open
+    CHECK(recallWaits(1.2, 5, false));
+    CHECK(recallWaits(0.4, 5, true));
+    CHECK_FALSE(recallWaits(0.4, 5, false));
+    CHECK_FALSE(recallWaits(1.2, 0, false)); // at her target: nothing left to land
+}
+
+TEST_CASE("Errands: a level venture pays conquest points on what it gained her alone", "[cardian][errands][level]")
+{
+    // three levels of 1,000 experience each, 250 of the first held as she set out
+    CHECK(ventureGain(3000, 0, 250) == 2750);
+    // called back before a level, 600 kept where she had 250: 350 gained
+    CHECK(ventureGain(0, 600, 250) == 350);
+    // sent and called back at once: nothing gained, nothing paid however often
+    CHECK(ventureGain(0, 250, 250) == 0);
+    CHECK(ventureGain(0, 100, 250) == 0);
+    CHECK(venturePoints(ventureGain(3000, 0, 250), false) == 275);
 }
 
 TEST_CASE("Errands: her route is crossed evenly over her time away", "[cardian][errands]")
@@ -292,6 +385,32 @@ TEST_CASE("Errands: a rank catch-up called back keeps the missions her time cove
     CHECK(keptOnCallBack(away, 200) == Kept::Progress); // what her time covers, counted at the call
     CHECK(keptOnCallBack(away, 6100) == Kept::Whole);
     CHECK(keptOnCallBack(Errand{ .kind = Kind::Rank }, 200) == Kept::Nothing); // still walking off
+}
+
+TEST_CASE("Errands: a level venture's report reads its conquest points, its pace and its skills", "[cardian][errands]")
+{
+    // a tenth of the experience under Signet; one of the world's holds the census's three quarters of it
+    CHECK(venturePoints(10000, false) == 1000);
+    CHECK(venturePoints(10000, true) == 750);
+    CHECK(venturePoints(0, false) == 0);
+    // 1.4 levels an hour at a level asking 3,000 experience: 4,200 experience an hour
+    CHECK(expPerHour(1.4, 3000) == 4200);
+    CHECK(expPerHour(0.0, 3000) == 0);
+    // 34% of a level earned at 1.5 levels an hour: 26.4 minutes still to go, said as 27
+    CHECK(minutesToNext(0.34, 1.5) == 27);
+    CHECK(minutesToNext(0.5, 0.0) == 0);
+    // her skills kept and read back, and what rose between two readings
+    const std::map<uint16_t, uint16_t> before{ { 1, 680 }, { 28, 600 }, { 29, 660 }, { 31, 100 } };
+    const std::map<uint16_t, uint16_t> after{ { 1, 740 }, { 28, 630 }, { 29, 690 }, { 31, 100 }, { 12, 5 } };
+    CHECK(skillsText(before) == "1:680,28:600,29:660,31:100");
+    CHECK(skillsOfText(skillsText(after)) == after);
+    CHECK(skillsOfText("1:680,,x:5,28:600") == std::map<uint16_t, uint16_t>{ { 1, 680 }, { 28, 600 } });
+    CHECK(skillsOfText("").empty());
+    const auto risen = skillsRisen(before, after);
+    REQUIRE(risen.size() == 4); // Parry did not move
+    CHECK(risen[0] == SkillRise{ 1, 680, 740 });
+    CHECK(risen[1] == SkillRise{ 12, 0, 5 }); // a skill she had none of
+    CHECK(risen[3] == SkillRise{ 29, 660, 690 });
 }
 
 TEST_CASE("Errands: a list of numbers reads and writes as the args keep it", "[cardian][errands]")

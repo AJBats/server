@@ -35,6 +35,31 @@ xi.settings.pawn =
     -- the player's own chocobo, as PAWN_SPEED was against his run.
     RIDE_SPEED = 136,
 
+    -- The chocobo porter learns where riders snag (cardian_porter_snags) and
+    -- keeps every later route in that zone clear of the spots. false: no
+    -- spot is read or learned, the table kept as it is, so a ride keeps to
+    -- the navmesh (and its collision walls) alone -- the soak's baseline
+    PORTER_LEARN_SNAGS = true,
+
+    -- The chocobo porter plans on a navmesh of its own, built for the
+    -- rider's client (pawn/porter_mesh.h): the client's step, slope and
+    -- body, and PORTER_WIDTH, in yalms (at most 2.5, the padding of a
+    -- navmesh tile, or every tile's seam reads as tight), the berth kept off
+    -- every edge where there is room; a gap the client's body passes but the berth does not,
+    -- a bridge or a neck, is threaded by its middle, and taken only where
+    -- going round costs more. false: on the zone's navmesh, as the cardians walk.
+    -- Precalculated, never built while the map serves: ./dev-servers.ps1
+    -- porter-navmeshes runs the map as a tool, which builds each zone's,
+    -- writes it and ends the map. A zone with none for these settings is
+    -- said loudly, and rides on the zone's
+    PORTER_NAVMESH = true,
+    PORTER_WIDTH   = 1.5,
+
+    -- The porter's trace in the map log: every route's waypoints as it is
+    -- planned, and at a stray where the rider stood and the legs he was
+    -- judged on (porter.cpp traceRoute, traceStray)
+    PORTER_TRACE = false,
+
     -- Direct control (ROADMAP C): a steered cardian's position packet leads
     -- her by this much of her run, along her facing and never past the ring
     -- -- what the client takes to ease an entity onto a packet position, so
@@ -112,6 +137,18 @@ xi.settings.pawn =
     -- many levels of the player fits the goal, one outside it says why not
     FINDER_BAND = 3,
 
+    -- Asking again wears the towns down: each of the player's shouts for a
+    -- goal in which anyone gave a soft no (one a mood could turn: not busy,
+    -- out of the band or short of the mission) adds one to the towns'
+    -- pressure for that goal, which halves every FINDER_WEAR_HALF_LIFE
+    -- seconds, and on his next shout for it every mood gains
+    -- FINDER_WEAR_STEP for each unit of it. Seven shouts in quick
+    -- succession turn the most reluctant into a yes at the eighth; half an
+    -- hour on the towns are nearly fresh, and a recruit joining from the
+    -- shout starts them over
+    FINDER_WEAR_HALF_LIFE = 480,
+    FINDER_WEAR_STEP      = 9,
+
     -- The party finder's shout can be repeated (a fresh crowd, a reroll
     -- for the picky) only this many seconds after the last one
     SHOUT_COOLDOWN = 30,
@@ -132,6 +169,13 @@ xi.settings.pawn =
     -- completed or moved along and what each cardian's contract made of
     -- it (the map log carries it always, as '[mission]')
     MISSION_TRACE = false,
+
+    -- The move trace in the map log: a cardian of a real player's party who
+    -- lands where the navmesh does not join to where she stood a tick
+    -- before -- a border crossed, a height off the mesh's, a rise past a
+    -- slope -- or who takes a jump link, with what moved her
+    -- (pawn_walker.cpp MoveTrace)
+    MOVE_TRACE = false,
 
     -- Trading with a cardian -- give, take, give and use -- reaches
     -- TRADE_RANGE yalms, in the same zone: no item teleportation.
@@ -659,6 +703,16 @@ xi.settings.pawn =
     WORLD_MINT_RATE      = 40,
     WORLD_PLACE_RATE     = 20,
     WORLD_STANDS_PER_RUN = 3,
+
+    -- The town sign-in (src/map/pawn/cohort_play.h): each city keeps the
+    -- cohorts in play -- the cohort each real player's current job rides --
+    -- online there at its regulars (the shared pools' bodies online there)
+    -- times this, seated and signed in together. A signed-in body has no
+    -- seat and stands only when a party brings her; search and the party
+    -- finder's shout find her. 1.0 makes the cohorts about half of who is
+    -- online in town; 0 turns the sign-in off. Paced by WORLD_PLACE_RATE,
+    -- after every seat waiting to be placed, within WORLD_FADED_CAP.
+    WORLD_COHORT_TOWN_SHARE = 1.0,
 
     -- The load line, always on: every WORLD_LOAD_REPORT seconds the map
     -- log says how many bodies stand in how many zones, what a body's

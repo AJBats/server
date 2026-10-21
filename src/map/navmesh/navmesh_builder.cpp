@@ -26,6 +26,10 @@
 
 #include <map/ximesh/ximesh.h>
 
+#include "pawn/client_joins.h"    // CARDIAN
+#include "pawn/client_navmesh.h"  // CARDIAN
+#include "pawn/collision_walls.h" // CARDIAN
+
 #include <DetourCommon.h>
 #include <DetourNavMesh.h>
 #include <DetourNavMeshBuilder.h>
@@ -127,7 +131,7 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
         float best  = FloatLowest;
         for (int p = 0; p < pmesh.npolys; ++p)
         {
-            if (p == srcPoly || pmesh.areas[p] != RC_WALKABLE_AREA)
+            if (p == srcPoly || !cardian::client::walkableArea(pmesh.areas[p])) // CARDIAN: the tight strip is ground
             {
                 continue;
             }
@@ -239,7 +243,7 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
     std::vector<OffMeshCandidate> candidates;
     for (int p = 0; p < pmesh.npolys; ++p)
     {
-        if (pmesh.areas[p] != RC_WALKABLE_AREA)
+        if (!cardian::client::walkableArea(pmesh.areas[p])) // CARDIAN: the tight strip is ground
         {
             continue;
         }
@@ -290,6 +294,7 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
             // Outward direction (away from the poly centroid), in the xz-plane.
             float       outwardX   = edgeMid[0] - centroid[0];
             float       outwardZ   = edgeMid[2] - centroid[2];
+            cardian::client::squareOut(config.cardianClient, edgeA, edgeB, outwardX, outwardZ); // CARDIAN: for the client, square to the edge
             const float outwardLen = std::sqrt(outwardX * outwardX + outwardZ * outwardZ);
             if (outwardLen < 1e-4f)
             {
@@ -380,7 +385,8 @@ auto buildOffMeshConnections(const rcPolyMesh& pmesh, const rcPolyMeshDetail& dm
     out.rad.assign(out.count, linkRadius);
     out.flags.assign(out.count, SAMPLE_POLYFLAGS_WALK);
     out.areas.assign(out.count, RC_WALKABLE_AREA);
-    out.dir.assign(out.count, DT_OFFMESH_CON_BIDIR);
+    // CARDIAN: with collision walls, or for the client, they go one way, down: no player climbs a ledge they span
+    out.dir.assign(out.count, config.cardianWalls.empty() && !config.cardianClient ? DT_OFFMESH_CON_BIDIR : 0);
 
     return out;
 }
@@ -959,6 +965,10 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         return {};
     }
 
+    // CARDIAN: the collision walls, built in as barriers after the zone's own triangles
+    const auto gathered = tileMesh.indices.size() / 3;
+    cardian::walls::append(config.cardianWalls, gatherBmin, gatherBmax, tileMesh.verts, tileMesh.indices, tileMesh.areas, RC_NULL_AREA, RC_WALKABLE_AREA);
+
     //
     // Transform gathered verts to Detour coordinate space (negate Y and Z)
     //
@@ -1047,8 +1057,9 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         return {};
     }
     rcFreeHeightField(solid);
+    cardian::client::judgeJoins(*chf, tileMesh.verts, tileMesh.indices, gathered, config.cardianClient); // CARDIAN: for the client, its own collision judges the joins
 
-    if (!rcErodeWalkableArea(&ctx, tileCfg.walkableRadius, *chf))
+    if (!cardian::client::erode(&ctx, tileCfg.walkableRadius, config.cardianClient, config.cardianBerth, *chf)) // CARDIAN: for the client, its body's margin, and the berth past it marked tight
     {
         rcFreeCompactHeightfield(chf);
         return {};
@@ -1123,6 +1134,10 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         if (pmesh->areas[i] == RC_WALKABLE_AREA)
         {
             pmesh->flags[i] = SAMPLE_POLYFLAGS_WALK;
+        }
+        else if (pmesh->areas[i] == cardian::client::kTightArea) // CARDIAN: the client's tight strip, walked and flagged
+        {
+            pmesh->flags[i] = SAMPLE_POLYFLAGS_WALK | cardian::client::kTightFlag;
         }
     }
 
@@ -1221,6 +1236,8 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         }
 
         offMesh = buildOffMeshConnections(*pmesh, *dmesh, config, tx, ty, barriers);
+        // CARDIAN: for the client, no drop through a tree or a rock the link spans
+        cardian::client::clearDrops(offMesh, tileMesh.verts, tileMesh.indices, gathered, config.cardianClient);
     }
 
     //

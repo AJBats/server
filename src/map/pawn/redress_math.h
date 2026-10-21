@@ -393,6 +393,31 @@ namespace cardian::redress
         return plan.gear && now.inCity;
     }
 
+    // Whether a ding waits for her player, for DingNow's withPlayer: while
+    // she is in a real player's party, or while his contract holds her for
+    // him. His linkshell's pearl holds one of the world's for him all the
+    // time -- after she leaves his party, after a visit, while he is logged
+    // out -- and she keeps levelling her career out of sight by the world's
+    // rules meanwhile, waiting only while she is in his party, or standing
+    // where he is (DingNow's seen)
+    constexpr auto dingWaitsForPlayer(const bool inPlayersParty, const bool heldForHim, const bool wearsPearl) -> bool
+    {
+        return inPlayersParty || (heldForHim && !wearsPearl);
+    }
+
+    // A ding a level venture planned (census.py LevelVentures), marked in
+    // cardian_ding.note: the census writes it in her rows while she is away,
+    // and the map never puts it on a body or sets it aside
+    constexpr std::string_view kVentureNote = "venture";
+
+    // A level venture's ding: claimed for the census while the map holds no
+    // body of hers; waiting while it holds one (she has not left the world
+    // yet, or is back already, and the venture's end takes the ding back)
+    constexpr auto ventureDingStep(const bool standing) -> DingStep
+    {
+        return standing ? DingStep::Wait : DingStep::Claim;
+    }
+
     // A claim the census has not finished in this long is taken back: the
     // watcher is down or stuck, and she may stand again. Her ding waits for
     // the next look

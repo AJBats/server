@@ -101,6 +101,47 @@ namespace pawn::world
     // The player her contract or his linkshell holds her for, 0 for none
     auto holderOf(uint32 charid) -> uint32;
 
+    // The town sign-in's side of the world (cohort_play.h). Every body the
+    // world holds as the sign-in counts her: where she is online -- her
+    // seat's zone, or the town she signed into -- and whose she is, as of
+    // the world's last read of the census
+    enum class Pool : uint8
+    {
+        Held,     // not dealable: held for a player by a contract or his pearl
+        Regular,  // one of the shared pools
+        Cohort,   // a peer or a rival of a cohort in play
+        Unplayed, // a peer or a rival whose cohorts are out of play
+    };
+    struct Presence
+    {
+        uint32 charid   = 0;
+        uint16 zone     = 0;
+        Pool   pool     = Pool::Held;
+        bool   signedIn = false; // signed into a town with no seat
+        bool   free     = false; // signed in, faded, in nobody's party, held for nobody, not away, no yes in a shout: the sign-in may sign her out, and a seat out of a city may take her
+    };
+    auto presences() -> std::vector<Presence>;
+    // The bodies of the cohorts in play the world holds nothing of, nothing
+    // queued for, and nobody else holds, in an order of their seeds that
+    // stays the same from read to read: the sign-in's candidates
+    auto signInCandidates() -> std::vector<std::string>;
+    // Seats are waiting to be placed (they come first); and one placement
+    // from the world's budget (pawn.WORLD_PLACE_RATE), false when spent
+    auto placing() -> bool;
+    auto takePlacement() -> bool;
+    // A body of a cohort in play online in a town with no seat: her Body
+    // record there, offered to the ladder as one who stands only for a
+    // party, her next stand at one of the town's exits. False when she
+    // cannot be (not minted and finished, claimed, held already). Out:
+    // her presence goes the way a released seat's does
+    bool signInTown(const std::string& name, uint16 zone);
+    void signOutTown(uint32 charid);
+    // The ladder left a sign-in with no session row by itself (her zone's
+    // entries past the faded cap, seats.cpp): no longer online in her town,
+    // she goes as signOutTown lets her go -- unless a player has her, she
+    // is away, or her yes in a shout still stands for his invite
+    void signInDropped(uint32 charid);
+
     // Queue count census bodies for a ring round the centre, pinned, a few
     // standing per zone tick, farming if asked. How many were queued
     auto ring(CZone* PZone, const position_t& centre, uint32 count, bool farming) -> uint32;

@@ -27,6 +27,7 @@
 #include "ai/ai_container.h"
 #include "ai/states/magic_state.h"
 #include "data/enums/detects.h"
+#include "enmity_container.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "instance.h"
@@ -240,5 +241,27 @@ namespace pawn
             }
         };
         entities->spatialGrid().forEachInRange(center, radius, visit);
+    }
+
+    auto mobOn(const CBattleEntity* PEntity, const float reach) -> bool
+    {
+        bool       on    = false;
+        const auto hates = [&](CMobEntity* PMob)
+        {
+            if (on || !PMob->isAlive() || !isWithinDistance(PEntity->loc.p, PMob->loc.p, reach))
+            {
+                return;
+            }
+            if (PMob->PAI->IsEngaged() && PMob->GetBattleTarget() == PEntity)
+            {
+                on = true;
+                return;
+            }
+            const auto* enmityList = PMob->PEnmityContainer->GetEnmityList();
+            const auto  it         = enmityList->find(PEntity->id);
+            on                     = it != enmityList->end() && it->second.active;
+        };
+        forEachMobNear(entitiesAround(PEntity), PEntity->loc.p, reach, hates);
+        return on;
     }
 } // namespace pawn

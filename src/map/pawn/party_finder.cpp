@@ -314,14 +314,16 @@ namespace pawn::finder
 
         // Her disposition (rules::willing): who you are to the world -- fame
         // in her nation, rank against hers -- against her seeded threshold,
-        // `mood` a shout's roll on it; a quest asks more than exp, and a
-        // mission she is on needs no asking. Having partied with you and her
-        // affinity colour the words of a yes, never the yes
-        auto softAnswer(const CCharEntity* PPlayer, const Facts& f, const Goal& goal, const Fame& fame, const int mood, const MissionFit fit) -> Answer
+        // `mood` a shout's roll on it and `wear` the towns' wear on top
+        // (rules::Wear); a quest asks more than exp, and a mission she is on
+        // needs no asking. Having partied with you and her affinity colour
+        // the words of a yes, never the yes
+        auto softAnswer(const CCharEntity* PPlayer, const Facts& f, const Goal& goal, const Fame& fame, const int mood, const MissionFit fit, const int wear)
+            -> Answer
         {
             const uint8 level    = fame.byNation[f.nation];
             const int   rankDiff = static_cast<int>(PPlayer->profile.rank[f.nation]) - static_cast<int>(f.rank[f.nation]);
-            if (!rules::willing(goal, fit, level, rankDiff, mood, f.seed))
+            if (!rules::willing(goal, fit, level, rankDiff, mood + wear, f.seed))
             {
                 if (level <= 1)
                 {
@@ -357,17 +359,26 @@ namespace pawn::finder
             {
                 return { true, fit, "Someone of your rank asks? Of course." };
             }
+            // A yes the towns' wear tipped from a no, checked after every
+            // warmer line, so a friend never says it
+            if (rules::wornYes(goal, fit, level, rankDiff, mood, wear, f.seed))
+            {
+                return { true, fit, pick(f.seed, { "Fine, I'll do it already!", "Alright, alright, you win. I'm in.", "You're persistent... fine, let's go.",
+                                                   "Okay, okay! Send the invite.", "Ugh, fine. Just this once." }) };
+            }
             return { true, fit, pick(f.seed, { "Sure, why not.", "I could use the company.", "Lead the way." }) };
         }
 
-        auto judge(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const Fame& fame, const int mood = 0) -> Answer
+        auto judge(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal, const Fame& fame, const int mood = 0, const int wear = 0)
+            -> Answer
         {
             const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, f, PPawn, goal) : MissionFit::Free;
-            if (const auto hard = hardNo(PPlayer, f, PPawn, goal, fit); hard.has_value())
+            if (auto hard = hardNo(PPlayer, f, PPawn, goal, fit); hard.has_value())
             {
+                hard->hard = true;
                 return *hard;
             }
-            return softAnswer(PPlayer, f, goal, fame, mood, fit);
+            return softAnswer(PPlayer, f, goal, fame, mood, fit, wear);
         }
 
         // Is the goal one the player's own log holds: CL_S_OK, or why not
@@ -423,10 +434,30 @@ namespace pawn::finder
         std::unordered_map<uint32, Held>              shouts; // by the player's charid
         std::unordered_map<uint32, timer::time_point> shoutedAt;
         uint32                                        lastShoutId = 0;
-        // When each body last heard a player's shout, by player: the friend
-        // seat goes to the friend longest unheard, and so does the affinity
-        // seat among equals
+        // When each body last heard a player's shout, by player: the shout's
+        // rotation (rules::pickHeard) hears those longest unheard first, the
+        // friend seat and the affinity seat included. His next shout drops
+        // an entry older than kHeardKept, which to the rotation is the same
+        // as never
         std::unordered_map<uint32, std::unordered_map<uint32, timer::time_point>> lastHeard;
+        constexpr auto kHeardKept = std::chrono::hours(1);
+
+        // How worn down the towns are by a player's shouts, by wearKey: one
+        // pressure for each player and goal, on every body asked for it
+        // (rules::Wear). Kept in memory: a server start begins the towns
+        // fresh
+        std::unordered_map<uint64, rules::Wear> townWear;
+
+        // The player and the goal, at the finder's own grain: its kind and log
+        auto wearKey(const uint32 playerCharID, const Goal& goal) -> uint64
+        {
+            return (static_cast<uint64>(playerCharID) << 16) | (static_cast<uint64>(goal.kind) << 8) | goal.log;
+        }
+
+        auto wearSeconds() -> double
+        {
+            return std::chrono::duration<double>(timer::now().time_since_epoch()).count();
+        }
 
         constexpr auto kShoutLifetime = std::chrono::minutes(10);
 
@@ -589,6 +620,24 @@ namespace pawn::finder
         std::vector<Candidate> pool;
         const auto             fame   = fameOf(PPlayer);
         const auto             hopsTo = pawn::travel::hops({ PPlayer->getZone() });
+
+        // The towns' wear for this goal: his shouts before, fading
+        // (rules::Wear), the same bonus on every mood; forgotten once faded
+        // to nothing
+        const auto   wearAt   = wearKey(PPlayer->id, goal);
+        const double wearNow  = wearSeconds();
+        const double halfLife = settings::get<double>("pawn.FINDER_WEAR_HALF_LIFE");
+        double       pressure = 0.0;
+        if (const auto it = townWear.find(wearAt); it != townWear.end())
+        {
+            pressure = rules::wornNow(it->second, wearNow, halfLife);
+            if (pressure < rules::kWearForgotten)
+            {
+                townWear.erase(it);
+                pressure = 0.0;
+            }
+        }
+        const int wear = rules::wearBonus(pressure, settings::get<int>("pawn.FINDER_WEAR_STEP"));
         // a teleport is heard by those who cast it now, and nobody else
         const auto teleporters = goal.kind == Goal::Kind::Teleport ? std::optional<pawn::teleport::Responders>(std::in_place, goal.log) : std::nullopt;
         for (const auto& f : allFacts(PPlayer->id))
@@ -630,21 +679,23 @@ namespace pawn::finder
             }
             else
             {
-                c.answer = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(rules::kMoodMin, rules::kMoodMax + 1));
+                c.answer = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(rules::kMoodMin, rules::kMoodMax + 1), wear);
             }
             c.charid   = f.charid;
             c.friendly = f.partied || f.affinity > 0;
             pool.push_back(std::move(c));
         }
 
-        // Who of them hear it, and in what order (rules::pickHeard): a friend
-        // seat and an affinity seat, enough yeses to fill the party when the
-        // crowd has them (the user, 2026-09-13: one shout should be able to
-        // form a party; a re-shout is for the picky), up to three who cannot
-        // come -- out of the band, or short of the mission -- and the rest a
-        // mix of those who could; nearest first
-        auto&                    heard = lastHeard[PPlayer->id];
-        const int                band  = settings::get<uint8>("pawn.FINDER_BAND");
+        // Who of them hear it, and in what order (rules::pickHeard): those who
+        // have heard him least recently first; a friend seat and an affinity
+        // seat, enough yeses to fill the party when the crowd has them (the
+        // user, 2026-09-13: one shout should be able to form a party; a
+        // re-shout is for the picky), up to three who cannot come -- out of
+        // the band, or short of the mission -- and the rest a mix of those
+        // who could; nearest first
+        auto& heard = lastHeard[PPlayer->id];
+        std::erase_if(heard, [now = timer::now()](const auto& entry) { return now - entry.second > kHeardKept; });
+        const int                band = settings::get<uint8>("pawn.FINDER_BAND");
         std::vector<rules::Seat> seats;
         seats.reserve(pool.size());
         for (std::size_t i = 0; i < pool.size(); ++i)
@@ -676,10 +727,14 @@ namespace pawn::finder
         made.shout.id   = ++lastShoutId;
         made.shout.goal = goal;
         uint32 at       = xirand::GetRandomNumber(700, 2200);
+
+        std::vector<rules::Reply> replies;
+        replies.reserve(picked.seats.size());
         for (const auto& s : picked.seats)
         {
             auto& c         = pool[s.index];
             heard[c.charid] = made.madeAt;
+            replies.push_back(rules::Reply{ .yes = c.answer.yes, .hard = c.answer.hard });
             Responder r;
             r.c        = std::move(c);
             r.revealMs = at;
@@ -688,16 +743,26 @@ namespace pawn::finder
             at += lull ? xirand::GetRandomNumber(1500, 3000) : xirand::GetRandomNumber(250, 1200);
             made.shout.rows.push_back(std::move(r));
         }
+        // A soft no among those who heard it wears the towns down for his
+        // next shout for this goal (rules::Wear)
+        {
+            const auto before = townWear.find(wearAt);
+            const auto after  = rules::wornAfterShout(before != townWear.end() ? before->second : rules::Wear{}, replies, wearNow, halfLife);
+            if (after.pressure > 0.0)
+            {
+                townWear[wearAt] = after;
+            }
+        }
         const auto yes      = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.answer.yes; });
         const auto known    = std::ranges::count_if(made.shout.rows, [](const Responder& r) { return r.c.friendly; });
         const auto inBand   = std::ranges::count_if(pool, [&](const Candidate& c) { return rules::bandSide(PPlayer->GetMLevel(), c.level, band) == 0; });
         const auto hopsText = [](const uint32 hops) { return hops == std::numeric_limits<uint32>::max() ? std::string("no route") : std::to_string(hops); };
         ShowInfoFmt("pawn: {} shouts ({}, log {}): {} in reach, {} of them in the band, {} hear it ({} strangers), {} would come, {} needed to fill the party, "
-                    "friend seat: {}, affinity seat: {}, zone lines away: nearest {}, farthest {}",
+                    "friend seat: {}, affinity seat: {}, zone lines away: nearest {}, farthest {}, the towns' wear +{}",
                     PPlayer->getName(), kindName(goal), goal.log, pool.size(), inBand, made.shout.rows.size(), made.shout.rows.size() - static_cast<std::size_t>(known),
                     yes, need, friendSeat, affinitySeat,
                     made.shout.rows.empty() ? "-" : hopsText(made.shout.rows.front().c.hops),
-                    made.shout.rows.empty() ? "-" : hopsText(made.shout.rows.back().c.hops));
+                    made.shout.rows.empty() ? "-" : hopsText(made.shout.rows.back().c.hops), wear);
         if (!made.shout.rows.empty())
         {
             shoutedAt[PPlayer->id] = made.madeAt;
@@ -891,6 +956,29 @@ namespace pawn::finder
         return false;
     }
 
+    auto shoutedNames() -> std::unordered_set<std::string>
+    {
+        std::unordered_set<std::string> names;
+        const auto                      now = timer::now();
+        for (auto it = shouts.begin(); it != shouts.end();)
+        {
+            if (now - it->second.madeAt > kShoutLifetime || zoneutils::GetChar(it->first) == nullptr)
+            {
+                it = shouts.erase(it);
+                continue;
+            }
+            for (const auto& r : it->second.shout.rows)
+            {
+                if (r.c.answer.yes)
+                {
+                    names.insert(r.c.name);
+                }
+            }
+            ++it;
+        }
+        return names;
+    }
+
     auto invite(CCharEntity* PPlayer, const uint32 charid, const Goal& goal, std::string& line) -> uint16
     {
         line.clear();
@@ -1031,6 +1119,8 @@ namespace pawn::finder
         if (consent.shout)
         {
             joinedShout.insert(PPawn->id);
+            // his shout for the goal found someone: the towns' wear for it starts over
+            townWear.erase(wearKey(consent.playerCharID, consent.goal));
         }
         db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND player_charid <> ? AND contract <> ''", PPawn->id, consent.playerCharID);
         db::preparedStmt("INSERT INTO cardian_party_memory (player_charid, pawn_charid, last_partied, contract) VALUES (?, ?, NOW(), ?) "

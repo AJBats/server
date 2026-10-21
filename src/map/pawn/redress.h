@@ -55,7 +55,14 @@ class CZone;
 // free: her level, her support job and her skills, and in a city her gear,
 // spells and food; one whose seat farms keeps the experience she earns
 // instead. A body the map does not hold is claimed for the census, which
-// writes her rows, and she stands for nobody until it has.
+// writes her rows, and she stands for nobody until it has. One of the world's
+// wearing a player's linkshell pearl is held for him, and levels the same
+// way whenever she is not in his party (redress_math.h dingWaitsForPlayer).
+//
+// A level venture (errands.h) shares the road too: the census plans each of
+// its dings, marked as the venture's (redress_math.h kVentureNote), and the
+// map only claims it while it holds no body of hers, for the census to write
+// her level and her skills in her rows.
 namespace pawn::redress
 {
     // cardian_redress and cardian_ding as this build reads them: made at boot

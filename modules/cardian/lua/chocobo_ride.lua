@@ -18,6 +18,10 @@
 -- from their own gil first and then from his while he is online (the user,
 -- 2026-10-18), and one the two purses cannot pay for rents nothing.
 --
+-- A rental at a city's stable also puts the chocobo porter's question to him,
+-- where to, once its set-down has him in its field (player:cardianPorterAsk,
+-- src/map/pawn/porter.h); his addon asks it.
+--
 -- The rental is a copy of the last steps of xi.chocobo.renterOnEventFinish
 -- (scripts/globals/chocobo.lua): its time by the rider's own level, the
 -- sale counted, the mount, the pet sent away and the set-down at the
@@ -98,25 +102,31 @@ xi.cardian.chocobo.rent = function(cardian, player, free)
 end
 
 m:addOverride('xi.chocobo.renterOnEventFinish', function(player, csid, option, eventSucceed)
-    local zoneId = player:getZoneID()
-    local info   = xi.chocobo.chocoboInfo[zoneId]
-    local riders = {}
-
-    if
+    local zoneId  = player:getZoneID()
+    local info    = xi.chocobo.chocoboInfo[zoneId]
+    local riders  = {}
+    local renting =
         info ~= nil and
         not info.past and
         csid == eventSucceed and
         option == 0 and
         player:getCharVar('[ChocoGame]DestCity') == 0 and
         not player:hasStatusEffect(xi.effect.MOUNTED)
-    then
+
+    if renting then
         riders = player:cardianRidersBeside()
     end
 
     super(player, csid, option, eventSucceed)
 
-    if #riders == 0 or not player:hasStatusEffect(xi.effect.MOUNTED) then
+    if not renting or not player:hasStatusEffect(xi.effect.MOUNTED) then
         return
+    end
+
+    -- The chocobo porter's question, where to, put to him as the rental sets
+    -- him down in its field (src/map/pawn/porter.h)
+    if info.pos ~= nil then
+        player:cardianPorterAsk()
     end
 
     for _, rider in ipairs(riders) do

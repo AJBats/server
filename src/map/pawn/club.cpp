@@ -75,6 +75,7 @@
 #include <numbers>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -305,6 +306,7 @@ namespace pawn::club
                 row.subJob    = static_cast<uint8_t>(PPawn->GetSJob());
                 row.subLevel  = PPawn->GetSLevel();
                 row.zone      = static_cast<uint16_t>(PPawn->getZone());
+                row.unlocked  = PPawn->jobs.unlocked;
                 for (std::size_t job = 1; job < std::min<std::size_t>(MAX_JOBTYPE, std::size(row.levels)); ++job)
                 {
                     row.levels[job] = PPawn->jobs.job[job];
@@ -341,6 +343,7 @@ namespace pawn::club
                     {
                         row.levels[job] = jobs->get<uint8>(std::string(kJobColumns[job]));
                     }
+                    row.unlocked = jobs->get<uint32>("unlocked");
                 }
             }
             setText(row.zoneName, zoneName(row.zone));
@@ -349,6 +352,7 @@ namespace pawn::club
             row.nation      = rank.nation;
             row.rank        = rank.rank;
             row.rankCap     = pawn::errands::rankCap(rank.nation, PPlayer);
+            row.levelCap    = pawn::errands::levelCap(PPlayer);
 
             const auto pearl = pearlOf(charid);
             const bool his   = pearl.has_value() && shells.contains(pearl->lsid);
@@ -366,6 +370,11 @@ namespace pawn::club
                 row.secondsTotal = errand->secondsTotal;
                 row.missionsDone = errand->missionsDone;
                 row.missions     = errand->missions;
+                row.levelJob     = errand->levelJob;
+                row.levelFrom    = errand->levelFrom;
+                row.levelNow     = errand->levelNow;
+                row.levelTarget  = errand->levelTarget;
+                row.levelShare   = errand->levelShare;
                 row.errandZone   = errand->zone;
                 setText(row.errandZoneName, zoneName(errand->zone));
                 setText(row.errandTitle, errand->title);
@@ -395,6 +404,18 @@ namespace pawn::club
                 }
                 row.ventureDone = pawn::professions::ventureDone(charid);
             }
+            else if (kind == Member::Wild)
+            {
+                // one of the world's has no profession: her level venture's report alone
+                if (pawn::errands::hasLevelReport(charid))
+                {
+                    row.can2 |= CL_CAN2_REPORT;
+                }
+                if (pawn::errands::levelVentureDone(charid))
+                {
+                    row.ventureDone = CL_PROF_LEVEL;
+                }
+            }
             if (kind != Member::Recruit)
             {
                 if (errand.has_value())
@@ -414,6 +435,10 @@ namespace pawn::club
                     if (cardian::errand::offered(Kind::Rank, kind) && row.rank < row.rankCap)
                     {
                         row.can |= CL_CAN_SEND_RANK;
+                    }
+                    if (cardian::errand::offered(Kind::Level, kind) && cardian::errand::anyLevelFits(row.unlocked, std::span<const uint8_t>(row.levels), row.levelCap))
+                    {
+                        row.can |= CL_CAN_SEND_LEVEL;
                     }
                     if (cardian::errand::offered(Kind::Gear, kind))
                     {

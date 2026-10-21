@@ -9,6 +9,8 @@
 #include "world.h"
 #include "pawn_items.h"
 
+#include "cohort_play.h"
+#include "errands.h"
 #include "gambit_defaults.h"
 #include "pawn.h"
 #include "party_finder.h"
@@ -110,6 +112,11 @@ namespace
         // she was held): back to the pool once she has faded, unseen, so the
         // census seats her again
         bool toPool = false;
+
+        // A town sign-in (cohort_play.h): online in her town (zone) with no
+        // seat, standing only for a party; an ordinary seatless body once a
+        // player holds her
+        bool signedIn = false;
 
         bool farming = false;
 
@@ -528,6 +535,20 @@ namespace
         }
         const auto* PPawn = pawn::findPawn(body.charid);
         return PPawn == nullptr || static_cast<uint16>(PPawn->getZone()) == body.zone;
+    }
+
+    // A town sign-in nobody has (cohort_play.h): faded, held for nobody, in nobody's party, not away,
+    // and no yes of hers in a player's shout (`shouted`, pawn::finder::shoutedNames). The sign-in may
+    // sign her out, and a field seat may take her
+    auto freeSignIn(const Body& body, const std::unordered_set<std::string>& shouted) -> bool
+    {
+        return body.signedIn && !body.present && body.holder == 0 && !withPlayer(body.charid) && !pawn::errands::isAway(body.charid) &&
+               !shouted.contains(body.name);
+    }
+
+    auto isCity(CZone* PZone) -> bool
+    {
+        return PZone != nullptr && (PZone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
     }
 
     auto isLive(CZone* PZone, const uint32 realHere) -> bool
@@ -1351,6 +1372,7 @@ namespace
         bool                                  loaded = false;
         std::vector<ExitSpec>                 exits;      // as authored (the re-read compares against these)
         std::vector<position_t>               exitPoints; // the same, on the mesh: where bodies appear and fade
+        std::vector<bool>                     exitWalks;  // the same: the walker gets from it to the town's floor (exitsReachTown)
         std::vector<SlotSpec>                 specs;
         std::vector<std::vector<std::string>> occupants; // names, by slot
         std::vector<uint32>                   turns;     // a turnstile's departures so far: the next face differs
@@ -1609,8 +1631,119 @@ namespace
     // How far from an exit point a body's own spot at it may lie (gateSpot)
     constexpr float kGateSpread = 3.0f;
 
+    // The walker's route from one point to another arrives: the mesh joins them
+    auto walksBetween(CZone* PZone, const position_t& from, const position_t& to) -> bool
+    {
+        auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
+        if (navMesh == nullptr)
+        {
+            return true;
+        }
+        const auto path = navMesh->findPath(from, to, 0.0f, AvoidLinks::No);
+        if (!path.has_value() || path->isPartial || path->points.empty())
+        {
+            return false;
+        }
+        const auto& end = path->points.back().position;
+        return std::hypot(end.x - to.x, end.y - to.y, end.z - to.z) <= 3.0f;
+    }
+
+    // Which exits the walker can leave for the town: an exit whose point sits on an island of the
+    // mesh (a door the mesh does not join to the street) would hold a body arriving there for good,
+    // so no arrival or departure uses one (arrivalExits, exitPoint). An exit walks when it reaches
+    // more than half of the town's first kFloorPoints slot points, so one slot point on an island of
+    // its own fails no exit; with no exit passing the mesh says nothing, and every exit is used. Run
+    // for a city's table alone (loadSlots)
+    constexpr size_t kFloorPoints = 5;
+
+    void exitsReachTown(CZone* PZone, ZoneSlots& table)
+    {
+        table.exitWalks.assign(table.exitPoints.size(), true);
+        std::vector<position_t> floor;
+        for (const auto& spec : table.specs)
+        {
+            if (spec.town() && floor.size() < kFloorPoints)
+            {
+                floor.push_back(snapToMesh(PZone, toPosition(spec.at)));
+            }
+        }
+        if (floor.empty())
+        {
+            return;
+        }
+        std::vector<bool> walks(table.exitPoints.size(), false);
+        for (size_t i = 0; i < table.exitPoints.size(); ++i)
+        {
+            // stop once the count is settled either way: each walk is a path search across the town
+            size_t reached = 0;
+            for (size_t k = 0; k < floor.size() && reached * 2 <= floor.size() && (reached + floor.size() - k) * 2 > floor.size(); ++k)
+            {
+                reached += walksBetween(PZone, table.exitPoints[i], floor[k]) ? 1 : 0;
+            }
+            walks[i] = reached * 2 > floor.size();
+        }
+        if (std::ranges::none_of(walks, [](const bool w) { return w; }))
+        {
+            return;
+        }
+        for (size_t i = 0; i < walks.size(); ++i)
+        {
+            if (!walks[i])
+            {
+                table.exitWalks[i] = false;
+                ShowWarningFmt("world: {}: exit {} ({:.1f}, {:.1f}, {:.1f}) has no walk to the town; nobody arrives there -- walk it again",
+                               PZone->getName(), table.exits[i].name, table.exitPoints[i].x, table.exitPoints[i].y, table.exitPoints[i].z);
+            }
+        }
+    }
+
+    // The authoring aid for a city's floor: a town slot point that walks to none of the town's other
+    // slot points sits on an island of the mesh, and a body sent there never arrives. Said once as the
+    // table loads, so the spot is walked again. A point stops looking at its first walk, so a town on
+    // one mesh costs a path search a point
+    void reportIslands(CZone* PZone, const ZoneSlots& table)
+    {
+        std::vector<std::pair<size_t, position_t>> points;
+        for (size_t i = 0; i < table.specs.size(); ++i)
+        {
+            if (table.specs[i].town())
+            {
+                points.emplace_back(i, snapToMesh(PZone, toPosition(table.specs[i].at)));
+            }
+        }
+        if (points.size() < 2)
+        {
+            return;
+        }
+        for (const auto& point : points)
+        {
+            const bool joined = std::ranges::any_of(points, [&](const auto& other) { return other.first != point.first && walksBetween(PZone, point.second, other.second); });
+            if (!joined)
+            {
+                ShowWarningFmt("world: {}: slot #{}'s point ({:.1f}, {:.1f}, {:.1f}) walks to none of the town's other slot points; nobody reaches it -- walk it again",
+                               PZone->getName(), point.first, point.second.x, point.second.y, point.second.z);
+            }
+        }
+    }
+
+    // The exits an arrival may come in at: those the walker leaves for the town (exitsReachTown)
+    auto arrivalExits(const ZoneSlots& table) -> std::vector<size_t>
+    {
+        std::vector<size_t> out;
+        for (size_t i = 0; i < table.exitPoints.size(); ++i)
+        {
+            if (i >= table.exitWalks.size() || table.exitWalks[i])
+            {
+                out.push_back(i);
+            }
+        }
+        return out;
+    }
+
     // The exit a word means from a point: a name, "any" (a random one, not
-    // the one `notThis` stands at when there is another), else the nearest.
+    // the one `notThis` stands at when there is another), else the nearest;
+    // each of them one the walker leaves for the town (arrivalExits), so a
+    // named exit with no walk gives way to the nearest exit that has one.
     // Nothing when the zone has no exits
     auto exitPoint(const ZoneSlots& table, const std::string& how, const position_t& from, const std::optional<position_t>& notThis) -> std::optional<position_t>
     {
@@ -1618,9 +1751,17 @@ namespace
         {
             return std::nullopt;
         }
+        auto usable = arrivalExits(table);
+        if (usable.empty())
+        {
+            for (size_t i = 0; i < table.exitPoints.size(); ++i)
+            {
+                usable.push_back(i);
+            }
+        }
         if (!how.empty() && how != "nearest" && how != "any")
         {
-            for (size_t i = 0; i < table.exits.size(); ++i)
+            for (const auto i : usable)
             {
                 if (table.exits[i].name == how)
                 {
@@ -1631,8 +1772,9 @@ namespace
         if (how == "any")
         {
             std::vector<const position_t*> others;
-            for (const auto& p : table.exitPoints)
+            for (const auto i : usable)
             {
+                const auto& p = table.exitPoints[i];
                 if (!notThis.has_value() || flatDistance(p, *notThis) > kGateSpread + 1.0f)
                 {
                     others.push_back(&p);
@@ -1640,13 +1782,14 @@ namespace
             }
             if (others.empty())
             {
-                others.push_back(&table.exitPoints.front());
+                others.push_back(&table.exitPoints[usable.front()]);
             }
             return *others[xirand::GetRandomNumber(others.size())];
         }
         const position_t* best = nullptr;
-        for (const auto& p : table.exitPoints)
+        for (const auto i : usable)
         {
+            const auto& p = table.exitPoints[i];
             if (best == nullptr || flatDistance(p, from) < flatDistance(*best, from))
             {
                 best = &p;
@@ -1857,6 +2000,14 @@ namespace
                 reportSnap(PZone, fmt::format("slot #{}'s point", i), authored, snapToMesh(PZone, authored));
             }
         }
+        // A city's exits and slot points looked at against the mesh's islands; a field or dungeon table
+        // uses every exit as authored
+        table.exitWalks.assign(table.exitPoints.size(), true);
+        if (isCity(PZone))
+        {
+            exitsReachTown(PZone, table);
+            reportIslands(PZone, table);
+        }
         // Bodies already placed keep their slots across a re-read: a slot is
         // appended to the file, never reordered
         for (const auto& [charid, body] : bodies)
@@ -1921,39 +2072,37 @@ namespace
         return names;
     }
 
-    // A body of a cohort whose character is not being played is not stood up
-    // until he plays it (the user, 2026-10-09: his alts are as co-op friends
-    // are; census.py in_play holds back her mint the same way): a shared
-    // pool's always is, a peer's or a rival's while the character of one of
-    // her cohorts (charid * 100 + job) is online
+    // A body of a cohort not in play is not stood up until it is (the user,
+    // 2026-10-09: his alts are as co-op friends are; 2026-10-18: a cohort is
+    // in play while a job that rides it is played; census.py in_play holds
+    // back her mint the same way): a shared pool's always is, a peer's or a
+    // rival's while one of her cohorts is, as of the last read (cohort_play.h)
     auto inPlay(const std::string& anchor, const uint32 cohort, const uint32 cohort2) -> bool
     {
-        if ((anchor != "peer" && anchor != "rival") || cohort == 0)
-        {
-            return true;
-        }
-        return pawn::players::online(cohort / 100) || (cohort2 != 0 && pawn::players::online(cohort2 / 100));
+        return pawn::cohorts::inPlay(anchor, cohort, cohort2);
     }
 
     // The census's dealable names -- minted, unrecruited, not held by a contract or a pearl -- read once and shared
     // by every slot that deals in the next few seconds, so a fill costs one query however many slots it
-    // deals. A name minted since shows up at the next read; one placed since is known to the bodies and
-    // the queue; one recruited or contracted since is refused at placement (placePresence), and its
-    // recruitment or hold drops the read (forgetDealable)
+    // deals; the cohorts in play are worked out again with it (pawn::cohorts::refresh). A name minted since
+    // shows up at the next read; one placed since is known to the bodies and the queue; one recruited or
+    // contracted since is refused at placement (placePresence), and its recruitment or hold drops the read
+    // (forgetDealable)
     struct Dealable
     {
         std::string name;
+        uint32      charid = 0;
         uint32      cohort = 0;
         uint32      seed   = 0;
         uint8       job    = 0;
         uint8       level  = 0;
-        bool        played = true; // a shared pool's, or a cohort's whose character is being played (inPlay)
+        bool        played = true; // a shared pool's, or a cohort's in play (inPlay)
     };
-    std::vector<Dealable>                  dealable;
-    std::unordered_map<std::string, uint8> dealableLevel;    // the same read by name, for the seats' band check
-    std::unordered_set<std::string>        dealableUnplayed; // the names of the same read not in play
-    realtime::time_point                   dealableAt{};
-    constexpr auto                         kDealableFor = std::chrono::seconds(5);
+    std::vector<Dealable>                   dealable;
+    std::unordered_map<std::string, size_t> dealableIndex;    // the same read by name: her place in it
+    std::unordered_set<std::string>         dealableUnplayed; // the names of the same read not in play
+    realtime::time_point                    dealableAt{};
+    constexpr auto                          kDealableFor = std::chrono::seconds(5);
 
     auto dealableNames() -> const std::vector<Dealable>&
     {
@@ -1963,11 +2112,12 @@ namespace
             return dealable;
         }
         dealable.clear();
-        dealableLevel.clear();
+        dealableIndex.clear();
         dealableUnplayed.clear();
         dealableAt = now;
+        pawn::cohorts::refresh();
         // her job is the one she plays (a career's second job is her main while she plays it)
-        if (const auto rset = db::preparedStmt("SELECT c.name, c.anchor, c.cohort, c.cohort2, c.seed, s.mjob AS job, s.mlvl FROM cardian_census c "
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, c.anchor, c.cohort, c.cohort2, c.seed, s.mjob AS job, s.mlvl FROM cardian_census c "
                                                "JOIN char_stats s ON s.charid = c.charid "
                                                "WHERE c.recruited = 0 AND c.anchor <> 'bank' " // a census cut before the name bank was retired keeps its unused names as 'bank' rows
                                                "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '') "
@@ -1979,12 +2129,13 @@ namespace
                 const auto anchor = rset->get<std::string>("anchor");
                 const auto cohort = rset->get<uint32>("cohort");
                 dealable.push_back(Dealable{ .name   = rset->get<std::string>("name"),
+                                             .charid = rset->get<uint32>("charid"),
                                              .cohort = cohort,
                                              .seed   = rset->get<uint32>("seed"),
                                              .job    = rset->get<uint8>("job"),
                                              .level  = rset->get<uint8>("mlvl"),
                                              .played = inPlay(anchor, cohort, rset->get<uint32>("cohort2")) });
-                dealableLevel.emplace(dealable.back().name, dealable.back().level);
+                dealableIndex.emplace(dealable.back().name, dealable.size() - 1);
                 if (!dealable.back().played)
                 {
                     dealableUnplayed.insert(dealable.back().name);
@@ -1994,7 +2145,15 @@ namespace
         return dealable;
     }
 
-    // A dealable body not in play as of the last census read: her cohorts' characters are not being played
+    // A dealable body as of the last census read; nullptr for one it did not list (recruited, or held by a contract or a pearl)
+    auto dealableOf(const std::string& name) -> const Dealable*
+    {
+        dealableNames();
+        const auto it = dealableIndex.find(name);
+        return it == dealableIndex.end() ? nullptr : &dealable[it->second];
+    }
+
+    // A dealable body not in play as of the last census read: none of her cohorts is
     auto dealableUnplayedNow(const std::string& name) -> bool
     {
         dealableNames();
@@ -2004,9 +2163,8 @@ namespace
     // A dealable body's level as of the last census read; 0 for one it did not list (recruited, or held by a contract)
     auto dealableLevelOf(const std::string& name) -> uint8
     {
-        dealableNames();
-        const auto it = dealableLevel.find(name);
-        return it == dealableLevel.end() ? 0 : it->second;
+        const auto* d = dealableOf(name);
+        return d == nullptr ? 0 : d->level;
     }
 
     // A body recruited or held for a player leaves the pool now, not at the next read
@@ -2015,23 +2173,59 @@ namespace
         dealableAt = {};
     }
 
+    // A sign-in candidate who could not be made ready (no census row, or a body never minted or never
+    // finished: ensureReady) is no candidate again until this long has gone by. The sign-in runs four
+    // times a second, and would otherwise ask her again, and say her error, at each
+    std::unordered_map<std::string, realtime::time_point> signInRefused;
+    constexpr auto                                        kSignInRefusedFor = std::chrono::minutes(5);
+
     // A slot's occupants: in the world, level in band, not recruited, not
     // placed anywhere already; the preferred names first (a town seat that
     // prefers the player's sellers), then cohort rows (the recruitment pool
     // is who you should meet), then by a hash of zone, slot and seed, so a
-    // visit tends to show the same faces. A turnstile mixes its turn into
-    // the hash and passes over the faces it showed last, so the next one
-    // differs. A camp party is dealt healer first when the band has one,
-    // then the rest; a solo seat takes anyone
-    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted, const bool wantHealer,
+    // visit tends to show the same faces. In a city (`town`) the shared
+    // pools come before the cohort rows, a cohort row only where no regular
+    // fits: the town sign-in brings the cohorts in play to town
+    // (cohort_play.h), and seats dealt to them would push the regulars out.
+    // Out of a city a seat outranks the town sign-in: a free sign-in
+    // (freeSignIn) is dealt as if the world held nothing of her, and leaves
+    // her town for the seat as she is placed (placePresence) -- else a body
+    // a field seat let go would be signed in at once, and the field would
+    // run out of the cohorts in play. A city's seats deal no sign-in.
+    // A turnstile mixes its turn into the hash and passes over the faces it
+    // showed last, so the next one differs. A camp party is dealt healer
+    // first when the band has one, then the rest; a solo seat takes anyone
+    auto chooseOccupants(const uint16 zoneId, const uint32 slot, const SlotSpec& spec, const size_t wanted, const bool wantHealer, const bool town,
                          const uint32 turn = 0, const std::vector<std::string>& recent = {}) -> std::vector<std::string>
     {
+        // The names the world holds that this seat may not deal; the shouts are gathered once, at the
+        // first sign-in met
+        std::optional<std::unordered_set<std::string>> shouted;
+        const auto                                     held = [&](const std::string& name)
+        {
+            const auto it = charidByName.find(name);
+            if (it == charidByName.end())
+            {
+                return false;
+            }
+            const auto bit = bodies.find(it->second);
+            if (town || bit == bodies.end() || !bit->second.signedIn)
+            {
+                return true;
+            }
+            if (!shouted.has_value())
+            {
+                shouted = pawn::finder::shoutedNames();
+            }
+            return !freeSignIn(bit->second, *shouted);
+        };
         struct Candidate
         {
             std::string name;
             bool        preferred = false;
             bool        shared    = false;
             bool        healer    = false;
+            bool        shown     = false;
             uint32      order     = 0;
         };
         const std::vector<std::string> preferred = spec.prefer == "sellers" ? recentCounterparties() : std::vector<std::string>{};
@@ -2046,22 +2240,27 @@ namespace
         }
         for (const auto& d : dealableNames())
         {
-            if (!d.played || d.level < spec.band[0] || d.level > spec.band[1] || charidByName.contains(d.name) || queued.contains(d.name))
+            if (!d.played || d.level < spec.band[0] || d.level > spec.band[1] || queued.contains(d.name) || held(d.name))
             {
                 continue;
             }
             const uint32 order       = (d.seed * 2654435761u) ^ (static_cast<uint32>(zoneId) * 40503u + (slot + 1) * 2654435761u) ^ (turn * 0x9E3779B9u);
             const bool   isPreferred = std::ranges::find(preferred, d.name) != preferred.end();
             const bool   wasShown    = std::ranges::find(recent, d.name) != recent.end();
-            Candidate    c{ .name = d.name, .preferred = isPreferred, .shared = d.cohort == 0, .healer = isHealer(d.job), .order = order };
-            (wasShown ? shown : candidates).push_back(std::move(c));
+            Candidate    c{ .name = d.name, .preferred = isPreferred, .shared = d.cohort == 0, .healer = isHealer(d.job), .shown = wasShown, .order = order };
+            // in a city a regular shown last still comes before a cohort row: every one of them sorts together
+            (wasShown && !town ? shown : candidates).push_back(std::move(c));
         }
         if (candidates.size() < wanted)
         {
             candidates.insert(candidates.end(), shown.begin(), shown.end());
         }
-        std::ranges::sort(candidates, [](const Candidate& a, const Candidate& b)
+        std::ranges::sort(candidates, [town](const Candidate& a, const Candidate& b)
         {
+            if (town)
+            {
+                return std::make_tuple(!a.preferred, !a.shared, a.shown, a.order, a.name) < std::make_tuple(!b.preferred, !b.shared, b.shown, b.order, b.name);
+            }
             return std::make_tuple(!a.preferred, a.shared, a.order, a.name) < std::make_tuple(!b.preferred, b.shared, b.order, b.name);
         });
         std::vector<std::string> out;
@@ -2120,7 +2319,9 @@ namespace
     // on the mesh. Every body of a zone shares its few exit points, so
     // bodies arriving or leaving together stood on one another in a pile at
     // the gate (the user, 2026-10-05). The exit point itself where the mesh
-    // has no floor near the spot
+    // has no floor near the spot, or none the walker gets from it to the
+    // exit by (a ledge, the far side of a rail: she would stand there for
+    // good)
     constexpr uint32 kComingSalt  = 0x6A7E1u;
     constexpr uint32 kLeavingSalt = 0x0A7E2u;
 
@@ -2133,7 +2334,11 @@ namespace
         spot.x += radius * std::cos(angle);
         spot.z += radius * std::sin(angle);
         const auto snapped = snapToMesh(PZone, spot);
-        return flatDistance(snapped, exit) <= kGateSpread + 0.5f && std::fabs(snapped.y - exit.y) < 2.0f ? snapped : exit;
+        if (flatDistance(snapped, exit) > kGateSpread + 0.5f || std::fabs(snapped.y - exit.y) >= 2.0f)
+        {
+            return exit;
+        }
+        return walksBetween(PZone, snapped, exit) ? snapped : exit;
     }
 
     // How long she holds her seat. A seat dealt as a zone fills every seat at once (a seasoned stay)
@@ -2191,8 +2396,9 @@ namespace
                 }
             }
         }
-        uint32 queued = 0;
-        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer && spec.isCamp(), table.turns[slot], table.recent[slot]))
+        uint32     queued = 0;
+        const bool town   = isCity(PZone);
+        for (const auto& name : chooseOccupants(zoneId, slot, spec, spec.seats() - have, !hasHealer && spec.isCamp(), town, table.turns[slot], table.recent[slot]))
         {
             Pending item{ .name = name, .zone = zoneId, .point = slotPoint(spec, name), .pinned = false, .farming = spec.farms(), .presence = true, .slot = static_cast<int32>(slot), .roam = spec.roam, .party = std::max<uint32>(1, spec.party) };
             item.seasoned = seasoned;
@@ -2271,9 +2477,21 @@ namespace
             return false;
         }
         const uint32 charid = ensureReady(item.name, *row);
-        if (charid == 0 || bodies.contains(charid))
+        if (charid == 0)
         {
             return false;
+        }
+        // a field seat outranks the town sign-in (chooseOccupants): a sign-in still free leaves her town
+        // for it; anyone else the world holds is taken
+        bool fromTown = false;
+        if (const auto it = bodies.find(charid); it != bodies.end())
+        {
+            if (item.slot < 0 || isCity(PZone) || !freeSignIn(it->second, pawn::finder::shoutedNames()))
+            {
+                return false;
+            }
+            pawn::world::signOutTown(charid);
+            fromTown = true;
         }
         Body&      body   = bodies[charid];
         body.charid       = charid;
@@ -2308,7 +2526,8 @@ namespace
         // to the ladder, which writes her session row and stands her when
         // her index says so. Nothing here puts her online or on her feet
         pawn::seats::offerWorld(charid, zoneId);
-        ShowInfoFmt("world: {} ({} {}) holds slot {} in {}", item.name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, item.slot, PZone->getName());
+        ShowInfoFmt("world: {} ({} {}) holds slot {} in {}{}", item.name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, item.slot, PZone->getName(),
+                    fromTown ? ", signed out of her town for it" : "");
         if (!wasLive[zoneId] && item.dwell[1] > 0)
         {
             // Nobody to see her walk in: she is at her seat already, and the
@@ -2817,6 +3036,7 @@ namespace pawn::world
         body.point         = point;
         body.pinned        = pinned;
         body.farming       = false;
+        body.signedIn      = false;
         body.downSince.reset();
         charidByName[name] = charid;
         if (pinned)
@@ -2970,6 +3190,7 @@ namespace pawn::world
         body.holder   = playerCharID;
         body.homeward = false;
         body.toPool   = false;
+        body.signedIn = false; // held, a town sign-in is an ordinary seatless body
         body.downSince.reset();
         body.returnAt.reset();
         // Signed out where she stands, as his alts are: the ladder takes her
@@ -3024,6 +3245,7 @@ namespace pawn::world
         body.holder   = playerCharID;
         body.homeward = false;
         body.toPool   = false;
+        body.signedIn = false;
         const Spot at = body.leftAt.value_or(Spot{ body.zone, body.point });
         body.leftAt   = at;
         // Her spot was the game's own, a body standing on the mesh; one the
@@ -3085,6 +3307,12 @@ namespace pawn::world
         body.toPool   = false;
         body.downSince.reset();
         body.returnAt.reset();
+        if (body.signedIn)
+        {
+            // held, a town sign-in is an ordinary seatless body: she stands when he is near
+            body.signedIn = false;
+            pawn::seats::setPartyOnly(charid, false);
+        }
         if (const auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && PPawn->loc.zone != nullptr)
         {
             body.leftAt = Spot{ static_cast<uint16>(PPawn->getZone()), PPawn->loc.p };
@@ -3097,6 +3325,166 @@ namespace pawn::world
     {
         const auto it = bodies.find(charid);
         return it != bodies.end() ? it->second.holder : 0;
+    }
+
+    auto presences() -> std::vector<Presence>
+    {
+        dealableNames();
+        // a yes in a player's shout is spoken for until he invites her or the shout lapses: the shouts
+        // gathered once for every body
+        const auto            shouted = pawn::finder::shoutedNames();
+        std::vector<Presence> out;
+        out.reserve(bodies.size());
+        for (const auto& [charid, body] : bodies)
+        {
+            if (body.pinned)
+            {
+                continue; // the debug ring stands outside the waterfall
+            }
+            Presence p{ .charid = charid, .zone = body.zone, .signedIn = body.signedIn };
+            if (const auto* d = dealableOf(body.name); d != nullptr)
+            {
+                p.pool = d->cohort == 0 ? Pool::Regular : d->played ? Pool::Cohort : Pool::Unplayed;
+            }
+            p.free = freeSignIn(body, shouted);
+            out.push_back(p);
+        }
+        return out;
+    }
+
+    auto signInCandidates() -> std::vector<std::string>
+    {
+        std::unordered_set<std::string_view> queued;
+        for (const auto& p : pending)
+        {
+            queued.insert(p.name);
+        }
+        const auto now = realtime::now();
+        std::erase_if(signInRefused, [&](const auto& refused) { return now >= refused.second; });
+        std::vector<const Dealable*> found;
+        for (const auto& d : dealableNames())
+        {
+            if (d.cohort != 0 && d.played && d.charid != 0 && !charidByName.contains(d.name) && !queued.contains(d.name) && !signInRefused.contains(d.name) &&
+                !pawn::seats::has(d.charid) && pawn::findPawn(d.charid) == nullptr && !pawn::errands::isAway(d.charid))
+            {
+                found.push_back(&d);
+            }
+        }
+        std::ranges::sort(found, [](const Dealable* a, const Dealable* b)
+        {
+            return std::make_tuple(a->seed * 2654435761u, a->name) < std::make_tuple(b->seed * 2654435761u, b->name);
+        });
+        std::vector<std::string> names;
+        names.reserve(found.size());
+        for (const auto* d : found)
+        {
+            names.push_back(d->name);
+        }
+        return names;
+    }
+
+    auto placing() -> bool
+    {
+        return !pending.empty();
+    }
+
+    auto takePlacement() -> bool
+    {
+        return placeBudget();
+    }
+
+    bool signInTown(const std::string& name, const uint16 zone)
+    {
+        auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(zone));
+        if (!isEnabled() || PZone == nullptr)
+        {
+            return false;
+        }
+        // one who cannot be made ready is no candidate for a while (signInRefused); one claimed since
+        // the census read leaves the pool at the next
+        const auto row = readCensus(name);
+        if (!row.has_value())
+        {
+            signInRefused[name] = realtime::now() + kSignInRefusedFor;
+            return false;
+        }
+        if (row->claimed)
+        {
+            return false;
+        }
+        const uint32 charid = ensureReady(name, *row);
+        if (charid == 0)
+        {
+            signInRefused[name] = realtime::now() + kSignInRefusedFor;
+            return false;
+        }
+        if (bodies.contains(charid) || pawn::seats::has(charid))
+        {
+            return false;
+        }
+        // Where she would come in should a party ask her to stand: one of the town's exits the walker
+        // leaves for the town, by her name, at a spot that walks to it (gateSpot), as a town seat's body
+        // comes in; with none, one of its slots' points
+        const auto& table  = loadSlots(PZone);
+        const auto  usable = arrivalExits(table);
+        position_t  at{};
+        if (!usable.empty())
+        {
+            at = gateSpot(PZone, table.exitPoints[usable[nameHash(name) % usable.size()]], name, kComingSalt);
+        }
+        else if (!table.specs.empty())
+        {
+            at = snapToMesh(PZone, toPosition(table.specs[nameHash(name) % table.specs.size()].at));
+        }
+        else
+        {
+            return false;
+        }
+        Body& body         = bodies[charid];
+        body.charid        = charid;
+        body.name          = name;
+        body.zone          = zone;
+        body.point         = at;
+        body.target        = row->target;
+        body.seed          = row->seed;
+        body.signedIn      = true;
+        charidByName[name] = charid;
+        pawn::seats::offerWorld(charid, zone, true);
+        if (tickDebug())
+        {
+            ShowInfoFmt("world: {} ({} {}) signs in to {} with no seat", name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, PZone->getName());
+        }
+        return true;
+    }
+
+    void signOutTown(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        if (it == bodies.end() || !it->second.signedIn)
+        {
+            return;
+        }
+        // as a released seat goes: the ladder takes her body and her row on the way
+        pawn::seats::withdraw(charid);
+        charidByName.erase(it->second.name);
+        bodies.erase(it);
+    }
+
+    void signInDropped(const uint32 charid)
+    {
+        const auto it = bodies.find(charid);
+        // her yes in a shout keeps her for the invite, which the ladder can still stand her for; she is
+        // listed again at every run, and goes once the shout lapses
+        if (it == bodies.end() || !it->second.signedIn || it->second.present || it->second.holder != 0 || withPlayer(charid) || pawn::errands::isAway(charid) ||
+            pawn::finder::shoutedFor(it->second.name))
+        {
+            return;
+        }
+        if (tickDebug())
+        {
+            ShowInfoFmt("world: {} signs out of zone {}: its entries are past the faded cap", it->second.name, it->second.zone);
+        }
+        signOutTown(charid);
     }
 
     bool bringTo(const uint32 charid, const uint32 playerCharID, const uint16 zone, const position_t& at)
@@ -3134,6 +3522,7 @@ namespace pawn::world
         body.holder   = playerCharID;
         body.homeward = false;
         body.toPool   = false;
+        body.signedIn = false; // held, a town sign-in is an ordinary seatless body
         body.downSince.reset();
         body.returnAt.reset();
         body.leftAt = Spot{ zone, at };
@@ -3156,16 +3545,17 @@ namespace pawn::world
         // left out of the pool, said once here. Names in the bank are not in
         // the world.
         std::vector<std::string> names;
-        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, c.anchor, c.cohort, COALESCE(p.kitted, 0) AS finished FROM cardian_census c "
+        dealableNames(); // the cohorts in play as of now
+        if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, c.anchor, c.cohort, c.cohort2, COALESCE(p.kitted, 0) AS finished FROM cardian_census c "
                                                "LEFT JOIN cardian_pawns p ON p.pawn_charid = c.charid WHERE c.anchor <> 'bank' ORDER BY c.seed");
             rset)
         {
             while (rset->next())
             {
                 const auto name = rset->get<std::string>("name");
-                if (rset->get<uint32>("charid") == 0 && !inPlay(rset->get<std::string>("anchor"), rset->get<uint32>("cohort"), 0))
+                if (rset->get<uint32>("charid") == 0 && !inPlay(rset->get<std::string>("anchor"), rset->get<uint32>("cohort"), rset->get<uint32>("cohort2")))
                 {
-                    continue; // a cohort's body is minted once its character is played
+                    continue; // a cohort's body is minted once it is in play
                 }
                 if (rset->get<uint32>("charid") == 0)
                 {
@@ -3750,6 +4140,13 @@ namespace pawn::world
                     farm(item.name, true);
                 }
             }
+        }
+
+        // The town sign-in: the cohorts in play brought to the cities once every seat is placed,
+        // whichever zone is ticking (it paces itself, cohort_play.h)
+        if (settings::get<bool>("pawn.WORLD_SLOTS"))
+        {
+            pawn::cohorts::townTick();
         }
 
         // One pass over the zone's bodies:

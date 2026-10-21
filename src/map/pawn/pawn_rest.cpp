@@ -140,7 +140,7 @@ auto CPawnController::RestsInDanger() -> std::optional<std::string>
     {
         return std::nullopt;
     }
-    m_BallSight.clear(); // a mob walked out from behind a wall since the last look is seen now
+    m_Walker.forgetSight(); // a mob walked out from behind a wall since the last look is seen now
     auto* PPawn     = static_cast<CCharEntity*>(POwner);
     auto  profile   = pawn::danger::Profile::of(PPawn, IsAvoidingAggro(), IsAvoidingLinks());
     profile.casting = false;

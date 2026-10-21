@@ -1,0 +1,1611 @@
+/*
+===========================================================================
+
+  Copyright (c) 2026 Cardian
+
+  This program is free software: you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation, either version 3 of the License, or
+  (at your option) any later version.
+
+  This program is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program.  If not, see http://www.gnu.org/licenses/
+
+===========================================================================
+*/
+
+#include "porter.h"
+
+#include "cardian_link.h"
+#include "link_api.h"
+#include "pawn.h"
+#include "pawn_danger.h"
+#include "pawn_travel.h"
+#include "players.h"
+#include "porter_math.h"
+#include "porter_mesh.h"
+#include "route_search.h"
+#include "safe_walk.h"
+
+#include "common/database.h"
+#include "common/logging.h"
+#include "common/lua.h"
+#include "common/settings.h"
+#include "common/timer.h"
+#include "common/utils.h"
+#include "entities/char_entity.h"
+#include "lua/lua_base_entity.h"
+#include "navmesh/detour_navmesh.h"
+#include "packets/s2c/0x05b_wpos.h"
+#include "pause/pause.h"
+#include "status_effect.h"
+#include "status_effect_container.h"
+#include "utils/moduleutils.h"
+#include "utils/zoneutils.h"
+#include "zone.h"
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <deque>
+#include <functional>
+#include <limits>
+#include <mutex>
+#include <optional>
+#include <set>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <vector>
+
+using namespace std::chrono_literals;
+
+namespace pawn::porter
+{
+    namespace
+    {
+        using namespace cardian::link;
+        using cardian::porter::End;
+        using cardian::porter::Ends;
+        using cardian::porter::Kind;
+        using cardian::porter::Place;
+        using cardian::porter::Point;
+
+        constexpr auto  kLandedFor    = 1500ms; // after his zone-in, and a position from his client since: he is in
+        constexpr auto  kAskFor       = 60s;    // the question after a rental waits this long for him to land and his addon to hear it
+        constexpr auto  kGetDownBeat  = 1500ms; // got down at a city's gate: the dismount played before he goes on on foot
+        constexpr float kGateGetDown  = 10.0f;  // a city's gate: his route stops this far short of its line, short of its box, which the game refuses a rider
+        constexpr float kSpotCloseTo  = 2.0f;   // a place's spot: his route ends this far short of it
+        constexpr float kMobOnReach   = 30.0f;  // a mob on him this near ends the ride
+        constexpr float kMeshEndYalms = 10.0f;  // a place's spot off the mesh: his route's end within this of it is there
+        constexpr float kLineSlack    = 40.0f;  // a line's mouth off the mesh: from the mesh's end within this of it, he runs straight on to it
+        constexpr float kLineReach    = 3.0f;   // within this of a line's spot, his client runs on through it ...
+        constexpr auto  kRunOnGrace   = 3s;     // ... and crosses it within this, or the server crosses it for him
+        constexpr auto  kReplanEvery  = 2s;     // strayed, his route is planned again at most this often
+        constexpr auto  kSettle       = 2s;     // after a set-down, the positions his client sent from before it are let pass
+        constexpr float kStuckFar     = 50.0f;  // a snag told of this far from where the server has him is no snag of his route's
+        constexpr auto  kLandingLost  = 60s;    // a zone change that has not landed in this long never will
+
+        // A ride under way
+        struct Journey
+        {
+            Place  place;
+            uint16 ride    = 0;     // its number, which its routes carry
+            bool   landing = false; // between zones, or zoned in and his client not yet in
+            realtime::time_point landedAt{};
+
+            // What it knows of his zone, forgotten at every zone change
+            uint16                         zone = 0; // the zone it is of; 0 before any
+            std::optional<pawn::TravelHop> hop;      // the trek's line out of it, chosen as he enters it and kept
+            bool                           gotDown = false; // at the city's gate, off his chocobo
+            timer::time_point              gotDownAt{};
+
+            // His route across it, his spot as it was planned first
+            std::vector<Point>               route;
+            std::vector<bool>                tight;  // by waypoint, one threading a bridge or a neck (route_search.h Route::tight), steered to closely
+            cardian::porter::Ground          ground; // the ground's heights under its legs
+            Ends                             ends    = Ends::Stop;
+            bool                             planned = false;
+            std::size_t                      next    = 0; // the waypoint he rides to next
+            std::size_t                      sentTo  = 0; // the waypoints sent: up to here
+            uint16                           seq     = 0; // the last route sent, which a snag names
+            bool                             resend  = false;
+            timer::time_point                plannedAt{};
+            timer::time_point                settleUntil{};
+            std::optional<timer::time_point> atLineSince; // running on through the line since
+
+            cardian::porter::Snags snags;
+            std::optional<Point>   stuck; // a snag his addon told of, answered on his next tick
+
+            // His way left at the last plan, the least at any plan in the zone,
+            // and the replans after straying that gained nothing (porter_math.h stalls)
+            float left   = 0.0f;
+            float best   = std::numeric_limits<float>::max();
+            int   stalls = 0;
+        };
+        std::unordered_map<uint32, Journey> journeys; // by his charid
+        uint16                              lastRide = 0;
+
+        // The question after his rental: put once he has landed and his
+        // client is in
+        struct Question
+        {
+            realtime::time_point askedAt{};
+            bool                 landed = false;
+            realtime::time_point landedAt{};
+        };
+        std::unordered_map<uint32, Question> questions;
+
+        void forgetZone(Journey& j)
+        {
+            j.zone    = 0;
+            j.hop.reset();
+            j.gotDown = false;
+            j.route.clear();
+            j.tight.clear();
+            j.ground.clear();
+            j.planned = false;
+            j.next    = 0;
+            j.sentTo  = 0;
+            j.resend  = false;
+            j.settleUntil = {};
+            j.atLineSince.reset();
+            j.snags = {};
+            j.stuck.reset();
+            j.left   = 0.0f;
+            j.best   = std::numeric_limits<float>::max();
+            j.stalls = 0;
+        }
+
+        // Where riders snagged, learned on every ride and kept
+        // (cardian_porter_snags): every route in a zone keeps clear of its
+        // spots, where the mesh goes and a client does not -- a tangle of
+        // little cliffs gathers several. A soak fills it ahead of play.
+        // pawn.PORTER_LEARN_SNAGS off: none is read, none learned, the
+        // table kept as it is -- a ride on the navmesh (and its walls) alone
+        struct Learned
+        {
+            uint32 id = 0;
+            Point  at{};
+        };
+        std::unordered_map<uint16, std::vector<Learned>> learned;
+
+        void loadSnags(const uint16 zone)
+        {
+            auto& spots = learned[zone];
+            spots.clear();
+            if (const auto rset = db::preparedStmt("SELECT id, x, y, z FROM cardian_porter_snags WHERE zone = ?", zone); rset)
+            {
+                while (rset->next())
+                {
+                    spots.push_back(Learned{ .id = rset->get<uint32>("id"), .at = Point{ rset->get<float>("x"), rset->get<float>("y"), rset->get<float>("z") } });
+                }
+            }
+        }
+
+        void loadAllSnags()
+        {
+            learned.clear();
+            db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_porter_snags` ("
+                             "`id` int(10) unsigned NOT NULL AUTO_INCREMENT, "
+                             "`zone` smallint(5) unsigned NOT NULL, "
+                             "`x` float NOT NULL, `y` float NOT NULL, `z` float NOT NULL, "
+                             "`hits` int(10) unsigned NOT NULL DEFAULT 1, "
+                             "`last_hit` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                             "PRIMARY KEY (`id`), KEY `zone` (`zone`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+            if (!settings::get<bool>("pawn.PORTER_LEARN_SNAGS"))
+            {
+                ShowInfoFmt("porter: learned snag spots off (pawn.PORTER_LEARN_SNAGS): routes keep to the navmesh alone");
+                return;
+            }
+            std::size_t count = 0;
+            if (const auto rset = db::preparedStmt("SELECT DISTINCT zone FROM cardian_porter_snags"); rset)
+            {
+                std::vector<uint16> zones;
+                while (rset->next())
+                {
+                    zones.push_back(rset->get<uint16>("zone"));
+                }
+                for (const auto zone : zones)
+                {
+                    loadSnags(zone);
+                    count += learned[zone].size();
+                }
+            }
+            ShowInfoFmt("porter: {} snag spot(s) learned in {} zone(s)", count, learned.size());
+        }
+
+        // A snag where he stands: its spot counted again, or learned
+        void learnSnag(const uint16 zone, const Point& at)
+        {
+            if (!settings::get<bool>("pawn.PORTER_LEARN_SNAGS"))
+            {
+                ShowInfoFmt("porter: snag in zone {} at ({:.1f}, {:.1f}, {:.1f}), not learned (pawn.PORTER_LEARN_SNAGS off)", zone, at.x, at.y, at.z);
+                return;
+            }
+            auto& spots = learned[zone];
+            for (const auto& l : spots)
+            {
+                if (cardian::porter::flat(l.at, at) <= cardian::porter::kSnagSameSpot)
+                {
+                    db::preparedStmt("UPDATE cardian_porter_snags SET hits = hits + 1, last_hit = NOW() WHERE id = ?", l.id);
+                    return;
+                }
+            }
+            db::preparedStmt("INSERT INTO cardian_porter_snags (zone, x, y, z) VALUES (?, ?, ?, ?)", zone, at.x, at.y, at.z);
+            loadSnags(zone);
+            ShowInfoFmt("porter: snag spot learned in zone {} at ({:.1f}, {:.1f}, {:.1f}), {} there now", zone, at.x, at.y, at.z, spots.size());
+        }
+
+        auto kindName(const Kind kind) -> const char*
+        {
+            switch (kind)
+            {
+                case Kind::City:
+                    return "city";
+                case Kind::Outpost:
+                    return "outpost";
+                case Kind::Crag:
+                    return "crag";
+            }
+            return "?";
+        }
+
+        auto spotOf(const Place& place) -> position_t
+        {
+            position_t p{};
+            p.x = place.x;
+            p.y = place.y;
+            p.z = place.z;
+            return p;
+        }
+
+        auto pointOf(const position_t& p) -> Point
+        {
+            return Point{ p.x, p.y, p.z };
+        }
+
+        // The ground under each leg of `way` (porter_math.h Ground), read off
+        // the zone's mesh: each leg followed over its own polygons from its
+        // start, as Detour's raycast walks it, a height every kGroundStep
+        // yalms. Where the mesh stops the walk -- a seam the route crosses, a
+        // hole -- the walk takes up again on the mesh past it, near the
+        // height last found; where it finds none -- a drop, a line's mouth
+        // beyond the mesh's edge -- the straight line between the leg's
+        // points stands in
+        auto groundOf(const dtNavMesh* mesh, const std::vector<position_t>& way) -> cardian::porter::Ground
+        {
+            cardian::porter::Ground ground(way.size());
+            // One query a thread, made again only for another mesh
+            thread_local dtNavMeshQuery   query;
+            thread_local const dtNavMesh* queryMesh = nullptr;
+            if (mesh == nullptr)
+            {
+                return ground;
+            }
+            if (queryMesh != mesh)
+            {
+                queryMesh = nullptr;
+                if (dtStatusFailed(query.init(mesh, 256)))
+                {
+                    return ground;
+                }
+                queryMesh = mesh;
+            }
+            dtQueryFilter filter;
+            filter.setIncludeFlags(0xFFFF);
+            filter.setExcludeFlags(cardian::route::kPolyDisabled); // as the route search: never a buried surface under the ground
+            const float                         extents[3]{ 0.5f, 1.5f, 0.5f };
+            const float                         again[3]{ 0.5f, 2.0f, 0.5f }; // taking the walk up again past a break
+            thread_local std::vector<dtPolyRef> polys(4096);
+            for (std::size_t i = 1; i < way.size(); ++i)
+            {
+                const auto  a   = cardian::route::toDetour(way[i - 1]);
+                const auto  b   = cardian::route::toDetour(way[i]);
+                const float len = distance(way[i - 1], way[i], true);
+                const int   n   = std::max(2, static_cast<int>(std::ceil(len / cardian::porter::kGroundStep)) + 1);
+                auto&       h   = ground[i];
+                h.resize(n);
+                for (int k = 0; k < n; ++k)
+                {
+                    h[k] = way[i - 1].y + (way[i].y - way[i - 1].y) * static_cast<float>(k) / static_cast<float>(n - 1);
+                }
+                const auto pointAt = [&](const float t, float* p)
+                {
+                    p[0] = a[0] + (b[0] - a[0]) * t;
+                    p[1] = a[1] + (b[1] - a[1]) * t;
+                    p[2] = a[2] + (b[2] - a[2]) * t;
+                };
+
+                dtPolyRef ref{};
+                float     at[3]{};
+                if (dtStatusFailed(query.findNearestPoly(a.data(), extents, &filter, &ref, at)) || !ref)
+                {
+                    continue;
+                }
+                float from = 0.0f;     // the share of the leg walked so far
+                float last = at[1];    // the height last found, up-positive
+                int   k    = 0;        // the next sample
+                for (int piece = 0; piece < 8 && k < n; ++piece)
+                {
+                    int   count = 0;
+                    float hitT  = 0.0f;
+                    float normal[3]{};
+                    if (dtStatusFailed(query.raycast(ref, at, b.data(), &filter, &hitT, normal, polys.data(), &count, static_cast<int>(polys.size()))))
+                    {
+                        break;
+                    }
+                    const float to = hitT >= 1.0f ? 1.0f : from + (1.0f - from) * hitT; // FLT_MAX: on to the leg's end
+                    int         on = 0;                                               // the polygon of the walk the last height was found on
+                    for (; k < n; ++k)
+                    {
+                        const float t = static_cast<float>(k) / static_cast<float>(n - 1);
+                        if (t > to + 0.001f)
+                        {
+                            break;
+                        }
+                        float p[3]{};
+                        pointAt(t, p);
+                        for (int s = on; s < count; ++s)
+                        {
+                            float y = 0.0f;
+                            if (dtStatusSucceed(query.getPolyHeight(polys[s], p, &y)))
+                            {
+                                h[k] = -y;
+                                last = y;
+                                on   = s;
+                                break;
+                            }
+                        }
+                    }
+                    if (to >= 1.0f || len < 0.01f)
+                    {
+                        break;
+                    }
+                    // the mesh again past the break, a half-yalm step at a time, up to 3 yalms on
+                    ref = 0;
+                    for (float ahead = to + 0.5f / len; ahead <= std::min(1.0f, to + 3.0f / len) && !ref; ahead += 0.5f / len)
+                    {
+                        float p[3]{};
+                        pointAt(ahead, p);
+                        p[1] = last;
+                        if (dtStatusFailed(query.findNearestPoly(p, again, &filter, &ref, at)) || !ref)
+                        {
+                            ref = 0;
+                            continue;
+                        }
+                        from = ahead;
+                    }
+                    if (!ref)
+                    {
+                        break;
+                    }
+                }
+            }
+            return ground;
+        }
+
+        auto positionOf(const Point& p) -> position_t
+        {
+            position_t out{};
+            out.x = p.x;
+            out.y = p.y;
+            out.z = p.z;
+            return out;
+        }
+
+        auto zoneName(const CCharEntity* PChar) -> std::string
+        {
+            return PChar->loc.zone != nullptr ? std::string(PChar->loc.zone->getName()) : std::string("?");
+        }
+
+        // The trace (pawn.PORTER_TRACE): a route's waypoints as it is
+        // planned, ten to a line, each by its number
+        void traceRoute(const CCharEntity* PChar, const Journey& j)
+        {
+            if (!settings::get<bool>("pawn.PORTER_TRACE"))
+            {
+                return;
+            }
+            std::string line;
+            for (std::size_t i = 0; i < j.route.size(); ++i)
+            {
+                line += fmt::format(" {}:({:.1f}, {:.1f}, {:.1f}){}", i, j.route[i].x, j.route[i].y, j.route[i].z, i < j.tight.size() && j.tight[i] ? " tight" : "");
+                if ((i + 1) % 10 == 0 || i + 1 == j.route.size())
+                {
+                    ShowInfoFmt("porter: trace: {}'s waypoints{}", PChar->getName(), line);
+                    line.clear();
+                }
+            }
+        }
+
+        // The trace at a stray: where he stood, the waypoint he was judged
+        // riding for and the waypoints sent, and each leg progress weighed --
+        // how far off it he stood and the ground's height at his nearest
+        // point of it, which kept it from him when more than kSameLevel off
+        void traceStray(const CCharEntity* PChar, const Journey& j, const Point& here)
+        {
+            if (!settings::get<bool>("pawn.PORTER_TRACE"))
+            {
+                return;
+            }
+            std::string legs;
+            for (std::size_t i = std::max<std::size_t>(j.next, 1); i < std::min(j.route.size(), j.next + 4); ++i)
+            {
+                float       along = 0.0f;
+                const float off   = cardian::porter::offLeg(j.route[i - 1], j.route[i], here, &along);
+                legs += fmt::format(" leg {}: {:.1f}y off, {:.0f}% along, the ground {:.1f};", i, off, along * 100.0f, cardian::porter::groundAt(j.route, j.ground, i, along));
+            }
+            ShowInfoFmt("porter: trace: {} at ({:.1f}, {:.1f}, {:.1f}) judged riding for waypoint {} of {}, {} sent:{}", PChar->getName(), here.x, here.y, here.z, j.next,
+                        j.route.size(), j.sentTo, legs);
+        }
+
+        // A ride's time, as Ride to shows it
+        auto clockOf(const float seconds) -> std::string
+        {
+            const auto whole = static_cast<int>(std::max(0.0f, seconds));
+            return fmt::format("{}:{:02}", whole / 60, whole % 60);
+        }
+
+        // His chocobo's pace on the server's step, yalms a second
+        auto ridePace() -> float
+        {
+            return static_cast<float>(settings::get<uint8>("pawn.RIDE_SPEED")) / 17.0f;
+        }
+
+        // The time left on his rental, in seconds, off its MOUNTED effect;
+        // none for a mount with no end, nothing with none
+        auto rentalLeft(CCharEntity* PChar) -> std::optional<float>
+        {
+            const auto* effect = PChar->StatusEffectContainer->GetStatusEffect(xi::StatusEffect::Mounted);
+            if (effect == nullptr)
+            {
+                return 0.0f;
+            }
+            if (effect->GetDuration() <= timer::duration::zero())
+            {
+                return std::nullopt;
+            }
+            const auto left = effect->GetStartTime() + effect->GetDuration() - timer::now();
+            return std::max(0.0f, std::chrono::duration<float>(left).count());
+        }
+
+        // The places' library is loaded (the pawn module's init, which may come
+        // after the map's first time-server tick)
+        auto libraryReady() -> bool
+        {
+            const sol::object cardian = ::lua["xi"]["cardian"];
+            if (cardian.get_type() != sol::type::table)
+            {
+                return false;
+            }
+            const sol::object porter = cardian.as<sol::table>()["porter"];
+            return porter.get_type() == sol::type::table && porter.as<sol::table>()["places"].get_type() == sol::type::function;
+        }
+
+        // Every place the porter rides to, built once its library is loaded:
+        // the cities from the trek's world graph (travel::rideableCities), the
+        // outposts and crags from the game's own scripts
+        // (modules/cardian/lua/porter_places.lua). None before
+        auto places() -> const std::vector<Place>&;
+
+        // The zones a ride can plan a route in, for their navmeshes
+        // (porter_mesh.h): the zones that allow a mount from which a rider
+        // reaches a place without getting down -- a crag's or an outpost's
+        // zone, or one with a line into a city, where the ride ends at the
+        // gate. A city, where no ride moves, and a zone whose rides could go
+        // nowhere (Mount Zhayolm, Attohwa Chasm, GM_Home) have none
+        auto riddenZones() -> std::vector<uint16>
+        {
+            std::vector<xi::ZoneId> from;
+            for (const auto& place : places())
+            {
+                from.push_back(static_cast<xi::ZoneId>(place.zone));
+            }
+            const auto region = pawn::travel::rideRegion(from);
+            std::set<uint16> zones(region.begin(), region.end());
+            return { zones.begin(), zones.end() };
+        }
+
+        auto places() -> const std::vector<Place>&
+        {
+            static std::vector<Place> built;
+            static bool               done = false;
+            if (done || !libraryReady())
+            {
+                return built;
+            }
+            done = true;
+            for (const auto zone : pawn::travel::rideableCities())
+            {
+                built.push_back(Place{ .kind = Kind::City, .zone = static_cast<uint16>(zone) });
+            }
+            if (auto call = pawn::linkapi::libraryCall("porter", "places"))
+            {
+                if (const auto list = pawn::linkapi::libraryTable("porter.places", (*call)()))
+                {
+                    for (const auto& [_, value] : *list)
+                    {
+                        if (value.get_type() != sol::type::table)
+                        {
+                            continue;
+                        }
+                        const auto row  = value.as<sol::table>();
+                        const auto kind = row.get<sol::optional<std::string>>("kind").value_or(std::string{});
+                        Place      place{};
+                        place.kind = kind == "outpost" ? Kind::Outpost : Kind::Crag;
+                        place.key  = row.get<sol::optional<uint16>>("key").value_or(uint16{ 0 });
+                        place.zone = row.get<sol::optional<uint16>>("zone").value_or(uint16{ 0 });
+                        place.x    = row.get<sol::optional<float>>("x").value_or(0.0f);
+                        place.y    = row.get<sol::optional<float>>("y").value_or(0.0f);
+                        place.z    = row.get<sol::optional<float>>("z").value_or(0.0f);
+                        if ((kind == "outpost" || kind == "crag") && place.zone != 0)
+                        {
+                            built.push_back(place);
+                        }
+                    }
+                }
+            }
+            std::array<std::size_t, 4> byKind{};
+            for (std::size_t i = 0; i < built.size(); ++i)
+            {
+                built[i].number = static_cast<uint16>(i);
+                ++byKind[static_cast<uint8>(built[i].kind)];
+            }
+            ShowInfoFmt("porter: the chocobo porter rides to {} places: {} cities, {} outposts, {} crags", built.size(), byKind[1], byKind[2], byKind[3]);
+            return built;
+        }
+
+        // The places offered from where he stands
+        auto offersFor(const CCharEntity* PChar) -> std::vector<cardian::porter::Offer>
+        {
+            const auto zone = PChar->getZone();
+            return cardian::porter::offered(places(), static_cast<uint16>(zone), pawn::travel::hops({ zone }), [](const uint16 z)
+            {
+                return pawn::travel::allowsMount(static_cast<xi::ZoneId>(z));
+            });
+        }
+
+        auto goalOf(const Place& place) -> pawn::travel::RideGoal
+        {
+            return { .zone = static_cast<xi::ZoneId>(place.zone), .point = place.kind == Kind::City ? std::nullopt : std::optional<position_t>(spotOf(place)) };
+        }
+
+        // Ride to's list from where he stands: each place a ride reaches,
+        // the quickest first, with its time and whether his rental covers
+        // it, as of now
+        auto placesMessage(CCharEntity* PChar) -> cl_porter_places
+        {
+            auto       msg    = make<cl_porter_places>();
+            const auto offers = offersFor(PChar);
+            std::vector<pawn::travel::RideGoal> goals;
+            goals.reserve(offers.size());
+            for (const auto& offer : offers)
+            {
+                goals.push_back(goalOf(offer.place));
+            }
+            const auto  costs = pawn::travel::rideCosts(PChar->getZone(), PChar->loc.p, goals);
+            const float pace  = ridePace();
+            const auto  left  = rentalLeft(PChar);
+
+            struct Timed
+            {
+                const cardian::porter::Offer* offer   = nullptr;
+                uint16                        seconds = 0;
+                bool                          covered = false;
+            };
+            std::vector<Timed> timed;
+            for (std::size_t i = 0; i < offers.size(); ++i)
+            {
+                if (!costs[i].has_value())
+                {
+                    continue; // no ride reaches it: its way runs through a zone that allows no mount
+                }
+                const auto seconds = cardian::porter::rideSeconds(*costs[i], pace);
+                timed.push_back({ &offers[i], seconds, cardian::porter::rentalCovers(seconds, left) });
+            }
+            std::stable_sort(timed.begin(), timed.end(), [](const Timed& a, const Timed& b) { return a.seconds < b.seconds; });
+            for (const auto& t : timed)
+            {
+                if (msg.count >= std::size(msg.places))
+                {
+                    break;
+                }
+                auto& out   = msg.places[msg.count++];
+                out.place   = t.offer->place.number;
+                out.kind    = static_cast<uint8_t>(t.offer->place.kind);
+                out.hops    = t.offer->hops;
+                out.zone    = t.offer->place.zone;
+                out.key     = t.offer->place.key;
+                out.seconds = t.seconds;
+                out.flags   = t.covered ? 0 : CL_PORTER_PLACE_SHORT;
+            }
+            return msg;
+        }
+
+        auto stateMessage(const Place* place, const uint16 ride, const bool riding, const uint8 why) -> cl_porter_state
+        {
+            auto msg   = make<cl_porter_state>();
+            msg.riding = riding ? 1 : 0;
+            msg.why    = why;
+            msg.ride   = ride;
+            if (place != nullptr)
+            {
+                msg.kind = static_cast<uint8_t>(place->kind);
+                msg.zone = place->zone;
+                msg.key  = place->key;
+            }
+            return msg;
+        }
+
+        // His route to his addon: a stretch of it, the leg he rides from its
+        // start and on. Sent again on his next tick when the Link cannot take it
+        void sendRoute(const uint32 charid, Journey& j)
+        {
+            const std::size_t legStart = j.next > 0 ? j.next - 1 : 0;
+            const auto        seg      = cardian::porter::segment(j.route.size(), std::min(legStart, j.route.empty() ? std::size_t{ 0 } : j.route.size() - 1), j.ends);
+            auto       msg = make<cl_porter_route>();
+            msg.ride       = j.ride;
+            msg.seq        = ++j.seq;
+            msg.zone       = j.zone;
+            msg.ends       = static_cast<uint8_t>(seg.ends);
+            for (std::size_t i = seg.from; i < seg.to && msg.count < std::size(msg.points); ++i)
+            {
+                auto& p = msg.points[msg.count++];
+                p.x     = j.route[i].x;
+                p.y     = j.route[i].y;
+                p.z     = j.route[i].z;
+                p.tight = i < j.tight.size() && j.tight[i] ? 1 : 0;
+            }
+            j.sentTo = seg.from + msg.count;
+            j.resend = !send(charid, msg);
+        }
+
+        void finish(CCharEntity* PChar, const uint32 charid, const End why, const std::string_view how)
+        {
+            const auto it = journeys.find(charid);
+            if (it == journeys.end())
+            {
+                return;
+            }
+            const Place  place = it->second.place;
+            const uint16 ride  = it->second.ride;
+            journeys.erase(it);
+            ShowInfoFmt("porter: {}'s ride to the {} in zone {} ends ({})", PChar != nullptr ? PChar->getName() : std::to_string(charid), kindName(place.kind), place.zone, how);
+            send(charid, stateMessage(&place, ride, false, static_cast<uint8>(why)));
+        }
+
+        // A zone line crossed by the server, as his client's run into it
+        // would be: noted as a walk, so his party follows through where he
+        // crossed (pawn.h noteZoneLine), and the zone change asked for as the
+        // game's own setPos asks for one
+        auto cross(CCharEntity* PChar, const pawn::TravelHop& hop, const std::string_view why) -> bool
+        {
+            if (zoneutils::GetZoneIPP(hop.destinationZone) == 0)
+            {
+                return false;
+            }
+            ShowInfoFmt("porter: {} at ({:.1f}, {:.1f}, {:.1f}) in {} {}: the server crosses the line to zone {} for him{}", PChar->getName(), PChar->loc.p.x,
+                        PChar->loc.p.y, PChar->loc.p.z, zoneName(PChar), why, static_cast<uint16>(hop.destinationZone), PChar->isMounted() ? ", riding" : ", on foot");
+            pawn::noteZoneLine(PChar);
+            PChar->loc.destination     = hop.destinationZone;
+            PChar->loc.p.x             = hop.arriveAt.x;
+            PChar->loc.p.y             = hop.arriveAt.y;
+            PChar->loc.p.z             = hop.arriveAt.z;
+            PChar->status              = xi::Status::Disappear;
+            PChar->loc.boundary        = 0;
+            PChar->m_moghouseID        = 0;
+            PChar->requestedZoneChange = true;
+            if (PChar->shouldPetPersistThroughZoning())
+            {
+                PChar->setPetZoningInfo();
+            }
+            return true;
+        }
+
+        // The line taken by the server for him; his body is loaded afresh in
+        // the next zone
+        void take(CCharEntity* PChar, const uint32 charid, Journey& j, const std::string_view why)
+        {
+            if (!cross(PChar, *j.hop, why))
+            {
+                finish(PChar, charid, End::NoWay, fmt::format("zone {} is closed", static_cast<uint16>(j.hop->destinationZone)));
+                return;
+            }
+            j.landing  = true;
+            j.landedAt = realtime::now();
+            forgetZone(j);
+        }
+
+        // The game's own same-zone position set (setPos within a zone): his
+        // body put there, the zone told it moved, his client told where he
+        // stands (0x05B)
+        void setDownAt(CCharEntity* PChar, const position_t& to)
+        {
+            PChar->loc.p.x = to.x;
+            PChar->loc.p.y = to.y;
+            PChar->loc.p.z = to.z;
+            if (PChar->loc.zone != nullptr)
+            {
+                PChar->loc.zone->onEntityMoved(PChar);
+            }
+            PChar->pushPacket<GP_SERV_COMMAND_WPOS>(PChar, PChar->loc.p);
+            PChar->updatemask |= UPDATE_POS;
+        }
+
+        // A rented chocobo goes into no city: at its gate he gets down, short
+        // of the line, and once the dismount has played he goes on and
+        // through on foot
+        void getDown(CCharEntity* PChar, Journey& j, const timer::time_point now)
+        {
+            PChar->StatusEffectContainer->DelStatusEffect(xi::StatusEffect::Mounted);
+            j.gotDown   = true;
+            j.gotDownAt = now;
+            j.planned   = false;
+            ShowInfoFmt("porter: {} gets down at the gate of zone {}, {:.0f}y from its line", PChar->getName(), j.place.zone, distance(PChar->loc.p, j.hop->walkTo));
+        }
+
+        // His route across this zone from `from`: to the place's spot in its
+        // zone; else to the trek's line, stopping short of it at the gate of
+        // the city he is bound for until he is got down. Sent at once. False
+        // when the ride ended for want of one
+        auto plan(CCharEntity* PChar, const uint32 charid, Journey& j, const position_t& from, const timer::time_point now, const std::string_view why) -> bool
+        {
+            const auto  zone   = PChar->getZone();
+            const bool  inZone = static_cast<uint16>(zone) == j.place.zone;
+            const bool  line   = !inZone;
+            const bool  gate   = line && !j.gotDown &&
+                              cardian::porter::atLine(pawn::travel::allowsMount(j.hop->destinationZone),
+                                                      j.place.kind == Kind::City && static_cast<uint16>(j.hop->destinationZone) == j.place.zone) ==
+                                  cardian::porter::AtLine::GetDown;
+            const auto  goal   = inZone ? spotOf(j.place) : j.hop->walkTo;
+            const float slack  = line ? kLineSlack : kMeshEndYalms;
+
+            // The trek's route search: no monster aggroes a rider, so it goes
+            // round nothing but the spots he snagged at in this zone, where
+            // the mesh goes and his client does not
+            std::vector<cardian::route::Hazard> snagged;
+            if (const auto it = learned.find(static_cast<uint16>(zone)); it != learned.end())
+            {
+                std::vector<Point> spots;
+                for (const auto& l : it->second)
+                {
+                    spots.push_back(l.at);
+                }
+                for (const auto& c : cardian::porter::avoidAreas(spots))
+                {
+                    snagged.push_back(cardian::route::Hazard{ .at = positionOf(c.at), .radius = c.radius });
+                }
+            }
+            // On the rider's own navmesh (porter_mesh.h), precalculated; the
+            // zone's where it is switched off or the zone has none
+            const dtNavMesh*        own    = settings::get<bool>("pawn.PORTER_NAVMESH") ? mesh::of(PChar->loc.zone) : nullptr;
+            const auto*             detour = own == nullptr && PChar->loc.zone != nullptr ? dynamic_cast<const DetourNavMesh*>(PChar->loc.zone->navMesh()) : nullptr;
+            const dtNavMesh*        walked = own != nullptr ? own : detour != nullptr ? detour->detourMesh() : nullptr; // the navmesh the route runs on
+            std::vector<position_t> way(1, from);
+            std::vector<bool>       tight(1, false); // by point of `way`: one threading a bridge or a neck
+            const auto              searchFrom = std::chrono::steady_clock::now(); // a stopwatch, for the route line: never game time
+            const auto              route      = own != nullptr ? pawn::travel::routeOn(*own, from, goal, snagged) : pawn::travel::routeAvoiding(zone, from, goal, snagged, {}, 0.0f);
+            const double            searchMs   = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - searchFrom).count();
+            if (own != nullptr && settings::get<bool>("pawn.PORTER_TRACE"))
+            {
+                // the same search on the zone's navmesh, timed beside it
+                const auto zoneFrom  = std::chrono::steady_clock::now();
+                const auto zoneRoute = pawn::travel::routeAvoiding(zone, from, goal, snagged, {}, 0.0f);
+                const auto zoneMs    = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - zoneFrom).count();
+                ShowInfoFmt("porter: trace: {}'s search took {:.1f} ms on the rider's navmesh, {:.1f} ms on the zone's ({})", PChar->getName(), searchMs, zoneMs,
+                            zoneRoute.has_value() && zoneRoute->complete ? fmt::format("{:.0f}y", cardian::walk::lengthOf(zoneRoute->points)) : std::string("no whole route"));
+            }
+            if (route.has_value() && !route->points.empty() && (route->complete || distance(route->points.back(), goal) <= slack))
+            {
+                way.insert(way.end(), route->points.begin(), route->points.end());
+                tight.insert(tight.end(), route->tight.begin(), route->tight.end());
+                tight.resize(way.size(), false);
+                if (!route->complete && line)
+                {
+                    way.push_back(goal); // the mesh ends short of the line's mouth: straight on from its end
+                }
+            }
+            else if (distance(from, goal) <= slack)
+            {
+                if (line)
+                {
+                    way.push_back(goal);
+                }
+            }
+            else
+            {
+                finish(PChar, charid, End::NoWay, fmt::format("no way on the mesh to {} {:.0f}y away", line ? "the line" : "its spot", distance(from, goal)));
+                return false;
+            }
+            cardian::walk::cutShort(way, gate ? kGateGetDown : inZone ? kSpotCloseTo : 0.0f);
+            tight.resize(way.size(), false);
+
+            j.tight = std::move(tight);
+            j.route.clear();
+            j.route.reserve(way.size());
+            for (const auto& p : way)
+            {
+                j.route.push_back(pointOf(p));
+            }
+            const auto groundFrom = std::chrono::steady_clock::now();
+            j.ground              = groundOf(walked, way);
+            const double groundMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - groundFrom).count();
+            j.ends      = line && !gate ? Ends::Line : Ends::Stop;
+            j.next      = cardian::porter::progress(j.route, 1, pointOf(from), j.ground);
+            j.sentTo    = 0;
+            j.planned   = true;
+            j.plannedAt = now;
+            j.left      = cardian::walk::lengthOf(way);
+            j.atLineSince.reset();
+            ShowInfoFmt("porter: {}'s route in {} ({}): {:.0f}y in {} waypoints to {}, on {}, searched in {:.1f} ms and its ground read in {:.1f} ms", PChar->getName(),
+                        zoneName(PChar), why, cardian::walk::lengthOf(way), way.size() - 1,
+                        inZone ? std::string("the place") : gate ? std::string("the city's gate") : fmt::format("the line to zone {}", static_cast<uint16>(j.hop->destinationZone)),
+                        own != nullptr ? "the rider's navmesh" : "the zone's navmesh", searchMs, groundMs);
+            traceRoute(PChar, j);
+            sendRoute(charid, j);
+            return true;
+        }
+
+        // A snag his addon told of, at `at`: planned round from there the
+        // first time at a spot, set down on along his way the second, and the
+        // ride ended after a few set-downs without getting on (porter_math.h)
+        void snag(CCharEntity* PChar, const uint32 charid, Journey& j, const Point& at, const timer::time_point now)
+        {
+            j.next             = cardian::porter::progress(j.route, j.next, at, j.ground);
+            const auto  answer = cardian::porter::snagged(j.snags, at);
+            learnSnag(static_cast<uint16>(PChar->getZone()), at);
+            const Point toward = j.next < j.route.size() ? j.route[j.next] : (j.route.empty() ? at : j.route.back());
+            const auto  where  = fmt::format("({:.1f}, {:.1f}, {:.1f}) in {}, riding for ({:.1f}, {:.1f}, {:.1f})", at.x, at.y, at.z, zoneName(PChar), toward.x, toward.y,
+                                             toward.z);
+            switch (answer)
+            {
+                case cardian::porter::SnagAnswer::Replan:
+                {
+                    ShowInfoFmt("porter: {} snagged at {}: his route planned again from there", PChar->getName(), where);
+                    plan(PChar, charid, j, positionOf(at), now, "snagged");
+                    return;
+                }
+                case cardian::porter::SnagAnswer::SetDown:
+                {
+                    const auto on = cardian::porter::along(j.route, j.next, at, cardian::porter::setDownAhead(j.snags.setDowns));
+                    if (on.pastEnd && j.ends == Ends::Line)
+                    {
+                        take(PChar, charid, j, fmt::format("snagged again at {}, the line {:.1f}y on", where, cardian::porter::flat(at, j.route.back())));
+                        return;
+                    }
+                    position_t to = positionOf(on.at);
+                    if (auto* navMesh = PChar->loc.zone != nullptr ? PChar->loc.zone->navMesh() : nullptr; navMesh != nullptr)
+                    {
+                        if (const auto snapped = navMesh->findClosestValidPoint(to); snapped.has_value())
+                        {
+                            to = *snapped;
+                        }
+                    }
+                    setDownAt(PChar, to);
+                    cardian::porter::setDown(j.snags, pointOf(to));
+                    j.settleUntil = now + kSettle;
+                    ShowInfoFmt("porter: {} snagged at {} again: set down at ({:.1f}, {:.1f}, {:.1f}), {:.1f}y on (set-down {} of {})", PChar->getName(), where, to.x, to.y,
+                                to.z, cardian::porter::flat(at, pointOf(to)), j.snags.setDowns, cardian::porter::kSetDownsMax);
+                    plan(PChar, charid, j, to, now, "set down past a snag");
+                    return;
+                }
+                case cardian::porter::SnagAnswer::GiveUp:
+                {
+                    ShowInfoFmt("porter: {} snagged at {}: {} snags and {} set-downs without getting on", PChar->getName(), where, j.snags.total, j.snags.setDowns);
+                    finish(PChar, charid, End::Snagged, "snagged, and no set-down got him on");
+                    return;
+                }
+            }
+        }
+
+        // His client is in after a zone change: a position from it since his
+        // zone-in, and a moment past it
+        auto landed(const uint32 charid, const realtime::time_point landedAt) -> bool
+        {
+            const auto since = realtime::now() - landedAt;
+            const auto age   = pawn::positionPacketAge(charid);
+            return since >= kLandedFor && age.has_value() && *age < since;
+        }
+
+        // One tick of his ride, on his zone's tick
+        void ride(CCharEntity* PChar, const uint32 charid)
+        {
+            auto& j = journeys.at(charid);
+            if (PChar->status == xi::Status::Disappear || PChar->requestedZoneChange)
+            {
+                return; // on his way out of the zone
+            }
+            if (j.landing)
+            {
+                if (!landed(charid, j.landedAt))
+                {
+                    return;
+                }
+                j.landing = false;
+            }
+
+            const auto zone  = static_cast<uint16>(PChar->getZone());
+            const auto spot  = spotOf(j.place);
+            const bool there = cardian::porter::arrived(j.place, zone, distance(PChar->loc.p, spot, true));
+            cardian::porter::State state;
+            state.arrived    = there;
+            state.mounted    = PChar->isMounted();
+            state.atCityGate = j.gotDown;
+            state.mobOn      = pawn::mobOn(PChar, kMobOnReach);
+            state.dead       = PChar->isDead();
+            if (const auto why = cardian::porter::ends(state))
+            {
+                static constexpr const char* kHow[] = { "", "there", "he took the reins", "off his chocobo", "a monster is on him", "no way on", "snagged" };
+                finish(PChar, charid, *why, kHow[static_cast<uint8>(*why)]);
+                return;
+            }
+
+            // In an event (a cutscene as he lands, a trigger area) his client
+            // is the event's, and the ride waits
+            if (PChar->isInEvent())
+            {
+                return;
+            }
+            const auto now = timer::now();
+
+            // A zone of the ride's: the trek's line out of it chosen as he
+            // enters it, and kept
+            if (j.zone != zone)
+            {
+                forgetZone(j);
+                j.zone = zone;
+                if (zone != j.place.zone)
+                {
+                    const std::optional<position_t> toPoint = j.place.kind == Kind::City ? std::nullopt : std::optional<position_t>(spot);
+                    j.hop = pawn::travel::nextHop(PChar->getZone(), PChar->loc.p, static_cast<xi::ZoneId>(j.place.zone), toPoint, std::nullopt,
+                                                  TravelRide{ .mayRent = false, .mounted = PChar->isMounted(), .rideFactor = 1.0f, .stayMounted = true });
+                    if (!j.hop.has_value())
+                    {
+                        finish(PChar, charid, End::NoWay, "the trek's map knows no way from here");
+                        return;
+                    }
+                    const bool intoCity = j.place.kind == Kind::City && static_cast<uint16>(j.hop->destinationZone) == j.place.zone;
+                    if (cardian::porter::atLine(pawn::travel::allowsMount(j.hop->destinationZone), intoCity) == cardian::porter::AtLine::NoWayOn)
+                    {
+                        finish(PChar, charid, End::NoWay, fmt::format("the way goes on foot through zone {}", static_cast<uint16>(j.hop->destinationZone)));
+                        return;
+                    }
+                }
+            }
+            if (j.gotDown && now - j.gotDownAt < kGetDownBeat)
+            {
+                return; // the dismount plays
+            }
+            if (!j.planned)
+            {
+                plan(PChar, charid, j, PChar->loc.p, now, j.gotDown ? "on foot through the gate" : "set out");
+                return;
+            }
+            if (j.stuck.has_value())
+            {
+                const Point at = *j.stuck;
+                j.stuck.reset();
+                snag(PChar, charid, j, at, now);
+                return;
+            }
+            if (j.resend)
+            {
+                sendRoute(charid, j);
+            }
+            if (now < j.settleUntil)
+            {
+                return;
+            }
+
+            const Point here = pointOf(PChar->loc.p);
+            cardian::porter::rode(j.snags, here);
+            j.next           = cardian::porter::progress(j.route, j.next, here, j.ground);
+            const bool atEnd = cardian::porter::atEnd(j.route, j.next, here);
+
+            if (j.ends == Ends::Line)
+            {
+                // His client runs on through the line and crosses it itself;
+                // one that has not in a while, the server crosses for him.
+                // Run on past it, he has not strayed
+                if (atEnd || cardian::porter::beyondEnd(j.route, here, kLineSlack) || distance(PChar->loc.p, j.hop->walkTo, true) <= kLineReach)
+                {
+                    if (!j.atLineSince.has_value())
+                    {
+                        j.atLineSince = now;
+                    }
+                    else if (now - *j.atLineSince >= kRunOnGrace)
+                    {
+                        take(PChar, charid, j, "ran on through the line and his client never crossed it");
+                    }
+                    return;
+                }
+                j.atLineSince.reset();
+            }
+            else if (atEnd)
+            {
+                if (zone == j.place.zone)
+                {
+                    const float off = distance(PChar->loc.p, spot, true);
+                    if (off <= kMeshEndYalms)
+                    {
+                        finish(PChar, charid, End::Arrived, "there, as near as the ground goes");
+                    }
+                    else
+                    {
+                        finish(PChar, charid, End::NoWay, fmt::format("the ground ends {:.0f}y short of its spot", off));
+                    }
+                }
+                else
+                {
+                    getDown(PChar, j, now);
+                }
+                return;
+            }
+
+            if (cardian::porter::strayed(j.route, j.next, here) && now - j.plannedAt >= kReplanEvery)
+            {
+                traceStray(PChar, j, here);
+                if (!plan(PChar, charid, j, PChar->loc.p, now, fmt::format("strayed {:.1f}y off it", cardian::porter::offRoute(j.route, j.next, here))))
+                {
+                    return;
+                }
+                j.stalls = cardian::porter::stalls(j.stalls, j.best, j.left);
+                j.best   = std::min(j.best, j.left);
+                if (j.stalls >= cardian::porter::kStallsToSnag)
+                {
+                    j.stalls = 0;
+                    ShowInfoFmt("porter: {} has strayed {} times with his way no shorter: a snag", PChar->getName(), cardian::porter::kStallsToSnag);
+                    snag(PChar, charid, j, here, now);
+                }
+                return;
+            }
+            if (cardian::porter::refill(j.route.size(), j.next, j.sentTo))
+            {
+                sendRoute(charid, j);
+            }
+        }
+
+        // The question after his rental, once he has landed and his client is in
+        void ask(CCharEntity* PChar, const uint32 charid)
+        {
+            auto& q = questions.at(charid);
+            if (!q.landed || !landed(charid, q.landedAt) || PChar->isInEvent())
+            {
+                return;
+            }
+            const auto msg = placesMessage(PChar);
+            if (send(charid, msg))
+            {
+                ShowInfoFmt("porter: {} is asked where to, {} places", PChar->getName(), msg.count);
+                questions.erase(charid);
+            }
+        }
+
+        // The Link's porter messages ------------------------------------------
+
+        void askPlaces(CCharEntity* PChar, const cl_porter_places& /*ask*/, Reply& reply)
+        {
+            if (!PChar->isMounted())
+            {
+                reply.finish(make<cl_porter_places>(), CL_S_NOT_RIDING);
+                return;
+            }
+            reply.finish(placesMessage(PChar), CL_S_OK);
+        }
+
+        // A leg of a ride's trip, as the trek's planner lays it out on the
+        // map's thread: in `zone`, from `from` to `goal`, reached within `slack`
+        struct Leg
+        {
+            CZone*      zone = nullptr;
+            position_t  from{};
+            position_t  goal{};
+            float       slack = 0.0f;
+            std::string to; // what the goal is, for the log
+        };
+
+        // A trip's legs along the trek's way to `place`, from `zone` and `at`:
+        // from his spot, or where each line sets him down, to the next line's
+        // mouth, and in the place's zone to its spot -- or to a city's gate,
+        // where the ride gets down. `why` instead when the trek's map knows no
+        // way on. On the map's thread: the trek's world is its alone
+        struct Trip
+        {
+            std::vector<Leg>           legs;
+            std::optional<std::string> why;
+        };
+        auto tripOf(xi::ZoneId zone, position_t at, const Place& place) -> Trip
+        {
+            constexpr int kMostZones = 16;
+            const auto    toPoint    = place.kind == Kind::City ? std::nullopt : std::optional<position_t>(spotOf(place));
+            Trip          trip;
+            for (int z = 0; z < kMostZones; ++z)
+            {
+                const bool                     inZone = static_cast<uint16>(zone) == place.zone;
+                std::optional<pawn::TravelHop> hop;
+                if (!inZone)
+                {
+                    hop = pawn::travel::nextHop(zone, at, static_cast<xi::ZoneId>(place.zone), toPoint, std::nullopt,
+                                                TravelRide{ .mayRent = false, .mounted = true, .rideFactor = 1.0f, .stayMounted = true });
+                    if (!hop.has_value())
+                    {
+                        trip.why = fmt::format("the trek's map knows no way on from zone {}", static_cast<uint16>(zone));
+                        return trip;
+                    }
+                }
+                trip.legs.push_back(Leg{ .zone  = zoneutils::GetZone(zone),
+                                         .from  = at,
+                                         .goal  = inZone ? spotOf(place) : hop->walkTo,
+                                         .slack = inZone ? kMeshEndYalms : kLineSlack,
+                                         .to    = inZone ? std::string("the place") : fmt::format("the line to zone {}", static_cast<uint16>(hop->destinationZone)) });
+                if (inZone || (place.kind == Kind::City && static_cast<uint16>(hop->destinationZone) == place.zone))
+                {
+                    return trip; // there, or at the city's gate
+                }
+                zone = hop->destinationZone;
+                at   = hop->arriveAt;
+            }
+            trip.why = fmt::format("more than {} zones away", kMostZones);
+            return trip;
+        }
+
+        // What a trip check cost: the navmeshes made ready (read from their
+        // files the first time) and the searches
+        struct TripCost
+        {
+            int    zones     = 0;
+            double readyMs   = 0.0;
+            double searchMs  = 0.0;
+            double slowestMs = 0.0;
+        };
+
+        // Why the rider's navmeshes do not carry a trip's legs -- the first
+        // they do not, said -- or nothing when they do: each leg searched on
+        // its zone's porter navmesh as the ride will plan it on entering. A
+        // zone without one rides on the zone's, and is not judged. On a
+        // worker thread: the navmeshes' cache is locked (porter_mesh.h), and
+        // each thread searches with workspaces of its own (route_search.h)
+        auto judge(const std::vector<Leg>& legs, TripCost& took) -> std::optional<std::string>
+        {
+            using Clock        = std::chrono::steady_clock; // a stopwatch, never game time
+            const auto msSince = [](const Clock::time_point from) { return std::chrono::duration<double, std::milli>(Clock::now() - from).count(); };
+            for (const auto& leg : legs)
+            {
+                const auto       ready = Clock::now();
+                const dtNavMesh* own   = settings::get<bool>("pawn.PORTER_NAVMESH") && leg.zone != nullptr ? mesh::of(leg.zone) : nullptr;
+                took.readyMs += msSince(ready);
+                ++took.zones;
+                if (own == nullptr || distance(leg.from, leg.goal) <= leg.slack)
+                {
+                    continue;
+                }
+                const auto searched = Clock::now();
+                const auto route    = pawn::travel::routeOn(*own, leg.from, leg.goal, {});
+                const auto ms       = msSince(searched);
+                took.searchMs += ms;
+                took.slowestMs = std::max(took.slowestMs, ms);
+                if (!route.has_value() || route->points.empty() || (!route->complete && distance(route->points.back(), leg.goal) > leg.slack))
+                {
+                    return fmt::format("no way on {}'s navmesh for the rider to {} {:.0f}y away", leg.zone->getName(), leg.to, distance(leg.from, leg.goal));
+                }
+            }
+            return std::nullopt;
+        }
+
+        // The trip checks asked and not yet worked, one at a time on a worker
+        // thread in the order asked -- the navmeshes one reads are in memory
+        // for the next, and many asked at once wait their turn -- each answer
+        // handed back to the map's thread. Leaked, so nothing is torn down
+        // under a worker at exit
+        struct TripChecks
+        {
+            std::mutex                        mutex;
+            std::deque<std::function<void()>> waiting;
+            bool                              working = false;
+        };
+
+        auto tripChecks() -> TripChecks&
+        {
+            static auto* checks = new TripChecks();
+            return *checks;
+        }
+
+        // `job` worked on a worker after the checks asked before it; at once,
+        // here, with no scheduler
+        void checkLater(std::function<void()> job)
+        {
+            auto* scheduler = cardian::link::scheduler();
+            if (scheduler == nullptr)
+            {
+                job();
+                return;
+            }
+            auto& checks = tripChecks();
+            {
+                std::lock_guard lock(checks.mutex);
+                checks.waiting.push_back(std::move(job));
+                if (checks.working)
+                {
+                    return;
+                }
+                checks.working = true;
+            }
+            scheduler->postToWorkerThread(
+                []()
+                {
+                    auto& checks = tripChecks();
+                    for (;;)
+                    {
+                        std::function<void()> next;
+                        {
+                            std::lock_guard lock(checks.mutex);
+                            if (checks.waiting.empty())
+                            {
+                                checks.working = false;
+                                return;
+                            }
+                            next = std::move(checks.waiting.front());
+                            checks.waiting.pop_front();
+                        }
+                        next();
+                    }
+                });
+        }
+
+        // Whether he may ride to `place` now, and its ride in yalms when he
+        // may: asked as he picks it and again as the trip check answers
+        auto refusal(CCharEntity* PChar, const Place& place, float& cost) -> uint16
+        {
+            if (!PChar->isMounted())
+            {
+                return CL_S_NOT_RIDING;
+            }
+            if (PChar->isInEvent())
+            {
+                return CL_S_IN_EVENT;
+            }
+            if (pawn::mobOn(PChar, kMobOnReach))
+            {
+                return CL_S_UNDER_ATTACK;
+            }
+            const auto offers  = offersFor(PChar);
+            const bool offered = std::any_of(offers.begin(), offers.end(), [&](const auto& o) { return o.place.number == place.number; });
+            const auto costs   = offered ? pawn::travel::rideCosts(PChar->getZone(), PChar->loc.p, { goalOf(place) }).front() : std::nullopt;
+            if (!costs.has_value())
+            {
+                return CL_S_NO_WAY;
+            }
+            cost = *costs;
+            return CL_S_OK;
+        }
+
+        // The ride begun, once its trip check has answered: he is asked again
+        // whether he may ride, since the check took a moment
+        void answered(const uint32 charid, const Place& place, const cl_porter_go& ask, Reply& reply, const std::optional<std::string>& why, const TripCost& took,
+                      const std::chrono::steady_clock::time_point asked)
+        {
+            auto* PChar = zoneutils::GetChar(charid);
+            if (PChar == nullptr)
+            {
+                return; // signed out meanwhile, his link with him
+            }
+            ShowInfoFmt("porter: {}'s trip to the {} in zone {} checked on a worker, answered in {:.1f} ms: {} zones, their navmeshes ready in {:.1f} ms, "
+                        "searched in {:.1f} ms (the slowest leg {:.1f} ms)",
+                        PChar->getName(), kindName(place.kind), place.zone, std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - asked).count(),
+                        took.zones, took.readyMs, took.searchMs, took.slowestMs);
+            if (why.has_value())
+            {
+                ShowInfoFmt("porter: {} asks for the {} in zone {} (place {}), which the rider's navmeshes do not reach: {}", PChar->getName(), kindName(place.kind),
+                            place.zone, place.number, *why);
+                reply.finish(ask, CL_S_NO_WAY);
+                return;
+            }
+            float cost = 0.0f;
+            if (const auto status = refusal(PChar, place, cost); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+            const auto seconds = cardian::porter::rideSeconds(cost, ridePace());
+            const auto left    = rentalLeft(PChar);
+            if (!cardian::porter::rentalCovers(seconds, left))
+            {
+                reply.finish(ask, CL_S_RENTAL_SHORT);
+                return;
+            }
+            auto& j = journeys[PChar->id];
+            j       = Journey{};
+            j.place = place;
+            if (++lastRide == 0)
+            {
+                ++lastRide;
+            }
+            j.ride = lastRide;
+            questions.erase(PChar->id);
+            ShowInfoFmt("porter: {} rides to the {} in zone {} (place {}, ride {}), some {} away, his chocobo's time left {}", PChar->getName(), kindName(place.kind), place.zone,
+                        place.number, j.ride, clockOf(seconds), left.has_value() ? clockOf(*left) : std::string("no end"));
+            reply.finish(ask, CL_S_OK);
+            send(PChar->id, stateMessage(&place, j.ride, true, 0));
+        }
+
+        // His pick on Ride to: the quick refusals at once; then the trip,
+        // laid out by the trek's planner here, checked on the rider's
+        // navmeshes on a worker (checkLater), and answered on a later tick,
+        // the ride begun or refused (answered)
+        void go(CCharEntity* PChar, const cl_porter_go& ask, Reply& reply)
+        {
+            const auto& all = places();
+            if (ask.place >= all.size())
+            {
+                reply.finish(ask, CL_S_NO_SUCH_PLACE);
+                return;
+            }
+            const Place place = all[ask.place];
+            float       cost  = 0.0f;
+            if (const auto status = refusal(PChar, place, cost); status != CL_S_OK)
+            {
+                reply.finish(ask, status);
+                return;
+            }
+            auto trip = tripOf(PChar->getZone(), PChar->loc.p, place);
+            if (trip.why.has_value())
+            {
+                ShowInfoFmt("porter: {} asks for the {} in zone {} (place {}), which the trek's map does not reach: {}", PChar->getName(), kindName(place.kind), place.zone,
+                            place.number, *trip.why);
+                reply.finish(ask, CL_S_NO_WAY);
+                return;
+            }
+            checkLater(
+                [charid = PChar->id, place, ask, later = reply.later(), legs = std::move(trip.legs), asked = std::chrono::steady_clock::now()]()
+                {
+                    TripCost   took;
+                    const auto why    = judge(legs, took);
+                    auto       answer = [charid, place, ask, later, why, took, asked]() mutable
+                    {
+                        answered(charid, place, ask, later, why, took, asked);
+                    };
+                    if (auto* scheduler = cardian::link::scheduler())
+                    {
+                        scheduler->postToMainThread(std::move(answer));
+                    }
+                    else
+                    {
+                        answer();
+                    }
+                });
+        }
+
+        void stop(CCharEntity* PChar, const cl_porter_stop& ask, Reply& reply)
+        {
+            if (!journeys.contains(PChar->id))
+            {
+                reply.finish(ask, CL_S_NO_JOURNEY);
+                return;
+            }
+            reply.finish(ask, CL_S_OK);
+            finish(PChar, PChar->id, End::TakenBack, "he took the reins");
+        }
+
+        // A fresh bind asks the ride as it stands; its route goes again after
+        void state(CCharEntity* PChar, const cl_porter_state& /*ask*/, Reply& reply)
+        {
+            const auto it = journeys.find(PChar->id);
+            if (it == journeys.end())
+            {
+                reply.finish(stateMessage(nullptr, 0, false, 0), CL_S_OK);
+                return;
+            }
+            it->second.resend = it->second.planned;
+            reply.finish(stateMessage(&it->second.place, it->second.ride, true, 0), CL_S_OK);
+        }
+
+        // His run snagged: answered on his next tick, if it is of the route
+        // sent last
+        void stuck(CCharEntity* PChar, const cl_porter_stuck& msg, Reply& /*reply*/)
+        {
+            const auto it = journeys.find(PChar->id);
+            if (it == journeys.end() || !it->second.planned || msg.ride != it->second.ride || msg.seq != it->second.seq || !std::isfinite(msg.x) ||
+                !std::isfinite(msg.y) || !std::isfinite(msg.z))
+            {
+                return;
+            }
+            const Point at{ msg.x, msg.y, msg.z };
+            if (cardian::porter::flat(at, pointOf(PChar->loc.p)) > kStuckFar)
+            {
+                return;
+            }
+            it->second.stuck = at;
+        }
+    } // namespace
+
+    void askAfterRental(CCharEntity* PChar)
+    {
+        if (PChar == nullptr || pawn::isPawn(PChar) || PChar->PSession == nullptr)
+        {
+            return;
+        }
+        questions[PChar->id] = Question{ .askedAt = realtime::now() };
+        ShowInfoFmt("porter: {} rents a chocobo: asked where to once he lands", PChar->getName());
+    }
+} // namespace pawn::porter
+
+class PorterModule : public CPPModule
+{
+    void OnInit() override
+    {
+        using namespace pawn::porter;
+        cardian::link::handle<cl_porter_places>(askPlaces);
+        cardian::link::handle<cl_porter_go>(go);
+        cardian::link::handle<cl_porter_stop>(stop);
+        cardian::link::handle<cl_porter_state>(state);
+        cardian::link::handle<cl_porter_stuck>(stuck);
+        loadAllSnags();
+
+        // modules/cardian/lua/chocobo_ride.lua: his rental at a city's stable
+        // has set him down in its field, mounted
+        ::lua["CBaseEntity"]["cardianPorterAsk"] = [](CLuaBaseEntity* PLuaBaseEntity)
+        {
+            pawn::porter::askAfterRental(dynamic_cast<CCharEntity*>(PLuaBaseEntity->GetBaseEntity()));
+        };
+    }
+
+    // Landed in a zone: his ride, or the question after his rental, waits
+    // for his client to be in
+    void OnCharZoneIn(CCharEntity* PChar) override
+    {
+        using namespace pawn::porter;
+        if (PChar == nullptr)
+        {
+            return;
+        }
+        if (const auto it = journeys.find(PChar->id); it != journeys.end())
+        {
+            it->second.landing  = true;
+            it->second.landedAt = realtime::now();
+            forgetZone(it->second);
+        }
+        if (const auto it = questions.find(PChar->id); it != questions.end())
+        {
+            it->second.landed   = true;
+            it->second.landedAt = realtime::now();
+        }
+    }
+
+    // The rides and the questions of the players in this zone, on its tick,
+    // outside every entity's own tick. A held pause holds them
+    void OnZoneTick(CZone* PZone) override
+    {
+        using namespace pawn::porter;
+        if (cardian::pause::isHeld() || (journeys.empty() && questions.empty()))
+        {
+            return;
+        }
+        std::vector<uint32> here;
+        for (const auto& [charid, _] : journeys)
+        {
+            if (const auto* PChar = zoneutils::GetChar(charid); PChar != nullptr && PChar->loc.zone == PZone)
+            {
+                here.push_back(charid);
+            }
+        }
+        for (const auto charid : here)
+        {
+            if (journeys.contains(charid))
+            {
+                ride(zoneutils::GetChar(charid), charid);
+            }
+        }
+        here.clear();
+        for (const auto& [charid, _] : questions)
+        {
+            if (const auto* PChar = zoneutils::GetChar(charid); PChar != nullptr && PChar->loc.zone == PZone)
+            {
+                here.push_back(charid);
+            }
+        }
+        for (const auto charid : here)
+        {
+            if (questions.contains(charid))
+            {
+                ask(zoneutils::GetChar(charid), charid);
+            }
+        }
+    }
+
+    // A ride whose player has signed out ends with him, and one whose zone
+    // change never landed ends where he is; a question nobody heard in time
+    // is let go
+    void OnTimeServerTick() override
+    {
+        using namespace pawn::porter;
+        // The places, read as soon as their library is loaded, so the map log
+        // says what the porter offers from the start
+        static bool read = false;
+        if (!read && libraryReady())
+        {
+            read = true;
+            places();
+            // The rider's navmeshes (porter_mesh.h): built and written in the
+            // precalculation run, which the environment names -- never a
+            // setting, which a settings file could leave on -- else looked for
+            const char* precalc = std::getenv("CARDIAN_PORTER_NAVMESH_PRECALC");
+            if (precalc != nullptr && std::string_view(precalc) == "1")
+            {
+                // CARDIAN_PORTER_NAVMESH_ZONES, when given, names the only zones to build (their ids, space apart)
+                auto        zones = riddenZones();
+                const char* only  = std::getenv("CARDIAN_PORTER_NAVMESH_ZONES");
+                if (only != nullptr && *only != '\0')
+                {
+                    std::set<uint16>   named;
+                    std::istringstream in(only);
+                    for (int id = 0; in >> id;)
+                    {
+                        named.insert(static_cast<uint16>(id));
+                    }
+                    std::vector<std::string> unknown; // what was asked for and is no zone a ride plans in, or no number
+                    for (const auto z : named)
+                    {
+                        if (std::find(zones.begin(), zones.end(), z) == zones.end())
+                        {
+                            unknown.push_back(std::to_string(z));
+                        }
+                    }
+                    if (!in.eof())
+                    {
+                        unknown.push_back(fmt::format("'{}'", only));
+                    }
+                    std::erase_if(zones, [&](const uint16 z) { return !named.contains(z); });
+                    if (!unknown.empty())
+                    {
+                        ShowErrorFmt("porter: no navmesh for the rider built for {}: not a zone a ride plans in", fmt::join(unknown, ", "));
+                        std::exit(1);
+                    }
+                }
+                mesh::precalc(zones);
+            }
+            else if (settings::get<bool>("pawn.PORTER_NAVMESH"))
+            {
+                mesh::check(riddenZones());
+            }
+        }
+        std::vector<uint32> lost;
+        for (auto it = journeys.begin(); it != journeys.end();)
+        {
+            if (!pawn::players::online(it->first))
+            {
+                ShowInfoFmt("porter: the ride of {} ends: he has signed out", it->first);
+                it = journeys.erase(it);
+                continue;
+            }
+            if (it->second.landing && realtime::now() - it->second.landedAt > kLandingLost)
+            {
+                lost.push_back(it->first);
+            }
+            ++it;
+        }
+        for (const auto charid : lost)
+        {
+            finish(zoneutils::GetChar(charid), charid, cardian::porter::End::NoWay, "his zone change never landed");
+        }
+        for (auto it = questions.begin(); it != questions.end();)
+        {
+            if (!pawn::players::online(it->first) || realtime::now() - it->second.askedAt > kAskFor)
+            {
+                it = questions.erase(it);
+                continue;
+            }
+            ++it;
+        }
+    }
+};
+
+REGISTER_CPP_MODULE(PorterModule);

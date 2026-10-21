@@ -33,9 +33,11 @@
 #include "pawn_travel.h"
 #include "professions.h"
 #include "redress.h"
+#include "redress_math.h"
 #include "seats.h"
 #include "supplies.h"
 #include "venture_spots.h"
+#include "world.h"
 
 #include "ai/ai_container.h"
 #include "common/database.h"
@@ -58,6 +60,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <ctime>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -82,6 +85,7 @@ namespace pawn::errands
         constexpr float kAtSpot      = 2.0f;                      // from where she started: she is back
         constexpr float kLineSnap    = 12.0f;                     // a zone line's spot is snapped to the mesh within this much
         constexpr float kShortOf     = 2.5f;                      // a counter or a guard is walked to this far short, on her side
+        constexpr auto  kLevelLook   = std::chrono::seconds(3);   // a level venture away: her rows and the census's count read this often
 
         // The live half of an errand she walks: the map's alone, gone with a
         // restart (a walk the restart ended is ended)
@@ -112,6 +116,9 @@ namespace pawn::errands
             Walk                   walk;
             bool                   catchingUp = false; // a money venture making up the time the map was down
             uint32                 castsSeen  = 0;     // her angler's casts as last counted (angler::casts)
+            uint8                  levelNow   = 0;     // a level venture away: her level on the job, as last read
+            double                 share      = 0.0;   // ... the share of her next level the census has counted, as last read
+            timer::time_point      levelRead{};        // ... when they were read
         };
 
         std::unordered_map<uint32, Record> records;
@@ -516,6 +523,244 @@ namespace pawn::errands
             return reached;
         }
 
+        // ---- a level venture -------------------------------------------------------
+
+        // The job a level venture levels
+        auto levelJobOf(const Record& r) -> uint8
+        {
+            return static_cast<uint8>(cardian::errand::numberArg(r.args, "job").value_or(0));
+        }
+
+        // He has called her back: the census counts no more of her venture
+        // from the real second he did (recalled_at, Unix time)
+        auto recalled(const Record& r) -> bool
+        {
+            return r.args.contains("recalled") && r.args.at("recalled") == "1";
+        }
+
+        auto recalledAt(const Record& r) -> uint32
+        {
+            return cardian::errand::numberArg(r.args, "recalled_at").value_or(0);
+        }
+
+        // The real clock, as the census stamps its count (Unix seconds)
+        auto realSeconds() -> uint32
+        {
+            return static_cast<uint32>(std::time(nullptr));
+        }
+
+        // The census's count of this venture as its row holds it (census.py
+        // LevelVentures: the row is keyed by her and the game clock as she
+        // was sent, so a row of an earlier venture is never read): the levels
+        // banked and the share of the next, the pace in levels an hour, and
+        // the real clock as it was last run on (0 before its first run).
+        // Nothing before the census has looked at the venture
+        struct Count
+        {
+            double progress  = 0.0;
+            double rate      = 0.0;
+            double countedAt = 0.0;
+        };
+
+        auto countOf(const Record& r) -> std::optional<Count>
+        {
+            const auto rset = db::preparedStmt("SELECT progress, rate, counted_at FROM cardian_venture WHERE charid = ? AND started = ?", r.charid,
+                                               r.errand.started);
+            if (!rset || !rset->next())
+            {
+                return std::nullopt;
+            }
+            return Count{ rset->get<double>("progress"), rset->get<double>("rate"), rset->get<double>("counted_at") };
+        }
+
+        // The share of her next level the census has counted for this
+        // venture; nothing before the census has looked at it
+        auto ventureShare(const Record& r) -> std::optional<double>
+        {
+            const auto count = countOf(r);
+            if (!count.has_value())
+            {
+                return std::nullopt;
+            }
+            return std::clamp(count->progress, 0.0, 1.0);
+        }
+
+        // The census is writing a ding of the venture in her rows now
+        auto ventureClaimed(const uint32 charid) -> bool
+        {
+            const auto rset = db::preparedStmt("SELECT charid FROM cardian_ding WHERE charid = ? AND state = 'claimed' AND note = ?", charid,
+                                               std::string(cardian::redress::kVentureNote));
+            return rset && rset->next();
+        }
+
+        // A ding of the venture planned, or being written in her rows
+        auto ventureDingOpen(const uint32 charid) -> bool
+        {
+            const auto rset = db::preparedStmt("SELECT charid FROM cardian_ding WHERE charid = ? AND state IN ('planned', 'claimed') AND note = ?", charid,
+                                               std::string(cardian::redress::kVentureNote));
+            return rset && rset->next();
+        }
+
+        // The census clock's speed (cardian_pace_clock, the census's table):
+        // 1 in play, raised by a test world to see days of pace in minutes
+        auto censusSpeed() -> double
+        {
+            const auto rset = db::preparedStmt("SELECT speed FROM cardian_pace_clock WHERE id = 1");
+            return rset && rset->next() ? std::max(0.0, rset->get<double>("speed")) : 1.0;
+        }
+
+        // Her level on the venture's job as her body or her rows hold it now;
+        // 0 when they cannot be read
+        auto levelNowOf(const Record& r, const uint8 job) -> uint8
+        {
+            const auto jobs = jobsOf(r.charid);
+            return jobs.has_value() && job < std::size(jobs->levels) ? cardian::errand::levelOn(jobs->levels[job]) : 0;
+        }
+
+        // The time the census has not counted yet of her venture, up to the
+        // real second `until`, added to its row -- while the game's time runs
+        // on with the map off (cardian.CLOCK_RUNS_OFFLINE), as the census
+        // makes that time up itself -- so the census plans the levels it banks
+        // (census.py LevelVentures.step). The time is added to the row as it
+        // stands, so a ding the census lands meanwhile keeps its levels off it,
+        // and only while the row's counted_at is still the one read: a count
+        // the census ran on meanwhile has counted that time already, and the
+        // next look reads it again. Her count as it then stands; nothing
+        // without a row
+        auto settleCount(const Record& r, const uint32 until) -> std::optional<double>
+        {
+            const auto count = countOf(r);
+            if (!count.has_value())
+            {
+                return std::nullopt;
+            }
+            const auto   job  = levelJobOf(r);
+            const uint8  now  = job != 0 ? levelNowOf(r, job) : 0;
+            const uint32 left = now != 0 && r.errand.target > now ? r.errand.target - now : 0;
+            if (!settings::get<bool>("cardian.CLOCK_RUNS_OFFLINE") || count->countedAt <= 0.0 || static_cast<double>(until) <= count->countedAt)
+            {
+                return count->progress;
+            }
+            const double settled = cardian::errand::ventureCount(count->progress, count->rate, count->countedAt, until, censusSpeed(), left);
+            const double added   = settled - std::max(0.0, count->progress);
+            if (!(added > 0.0))
+            {
+                return count->progress;
+            }
+            const auto rset = db::preparedStmt("UPDATE cardian_venture SET progress = progress + ?, counted_at = ? WHERE charid = ? AND started = ? AND counted_at = ?",
+                                               added, static_cast<double>(until), r.charid, r.errand.started, count->countedAt);
+            if (rset && rset->rowsAffected() > 0)
+            {
+                ShowInfoFmt("errands: {}'s level venture counts the {} minutes the census had not counted yet: {:.2f} level(s) more", nameOf(r.charid),
+                            static_cast<uint32>((static_cast<double>(until) - count->countedAt) / 60.0), added);
+            }
+            const auto after = countOf(r);
+            return after.has_value() ? std::optional<double>(after->progress) : std::nullopt;
+        }
+
+        // The venture over: a ding of it still waiting for the map is taken
+        // back -- what it had counted is the share the call back keeps -- and
+        // the census's row of it goes
+        void endVenture(const uint32 charid)
+        {
+            db::preparedStmt("UPDATE cardian_ding SET state = 'done', note = 'her venture ended', done_at = NOW() WHERE charid = ? AND state = 'planned' AND note = ?",
+                             charid, std::string(cardian::redress::kVentureNote));
+            db::preparedStmt("DELETE FROM cardian_venture WHERE charid = ?", charid);
+        }
+
+        // Her skills as her rows hold them, by skill id, in the tenths of a
+        // level the game counts: what a level venture's report compares
+        auto skillsInRows(const uint32 charid) -> std::map<uint16, uint16>
+        {
+            std::map<uint16, uint16> out;
+            const auto               rset = db::preparedStmt("SELECT skillid, value FROM char_skills WHERE charid = ?", charid);
+            while (rset && rset->next())
+            {
+                out[rset->get<uint16>("skillid")] = rset->get<uint16>("value");
+            }
+            return out;
+        }
+
+        // Conquest points into her own nation's column: on her body when she
+        // has one, else in her rows
+        void addPoints(const uint32 charid, const uint32 points)
+        {
+            if (points == 0)
+            {
+                return;
+            }
+            static constexpr const char* kColumns[] = { "sandoria_cp", "bastok_cp", "windurst_cp" };
+            if (auto* PChar = loadedChar(charid); PChar != nullptr)
+            {
+                charutils::AddPoints(PChar, kColumns[std::min<uint8>(PChar->profile.nation, 2)], static_cast<int32>(points));
+                return;
+            }
+            const auto  rset   = db::preparedStmt("SELECT nation FROM chars WHERE charid = ?", charid);
+            const uint8 nation = rset && rset->next() ? std::min<uint8>(rset->get<uint8>("nation"), 2) : 0;
+            db::preparedStmt(fmt::format("INSERT INTO char_points (charid, {0}) VALUES (?, ?) ON DUPLICATE KEY UPDATE {0} = LEAST({0} + VALUES({0}), 2147483647)",
+                                         kColumns[nation]),
+                             charid, points);
+        }
+
+        // Her experience toward her next level on a job: her body's when she
+        // has one, else her rows'
+        auto expOn(const uint32 charid, const uint8 job) -> uint32
+        {
+            if (job == 0 || job >= kJobColumns.size())
+            {
+                return 0;
+            }
+            if (const auto* PChar = loadedChar(charid); PChar != nullptr)
+            {
+                return PChar->jobs.exp[job];
+            }
+            const auto rset = db::preparedStmt(fmt::format("SELECT {} AS exp FROM char_exp WHERE charid = ?", kJobColumns[job]), charid);
+            return rset && rset->next() ? rset->get<uint32>("exp") : 0;
+        }
+
+        // Called back mid-level: the share of her next level the census has
+        // counted kept as experience on the job (errand_math.h keptExp), on
+        // her body when she has one, else in her rows; what she has is never
+        // lowered. His alt or his own cardian earns the conquest points of the
+        // experience the venture gained her, as each level did (census.py
+        // pay_venture_points); one of the world's is paid for her levels
+        // alone, by the census (pay_level). The experience kept
+        auto keepShare(const Record& r) -> uint32
+        {
+            const auto job   = levelJobOf(r);
+            const auto share = ventureShare(r);
+            const auto jobs  = jobsOf(r.charid);
+            if (!share.has_value() || !jobs.has_value() || job == 0 || job >= kJobColumns.size())
+            {
+                return 0;
+            }
+            const uint8 level = cardian::errand::levelOn(jobs->levels[job]);
+            if (level >= r.errand.target)
+            {
+                return 0;
+            }
+            const uint32 exp = cardian::errand::keptExp(*share, charutils::GetExpNEXTLevel(level));
+            if (exp == 0)
+            {
+                return 0;
+            }
+            const uint32 had = expOn(r.charid, job);
+            if (auto* PChar = loadedChar(r.charid); PChar != nullptr)
+            {
+                PChar->jobs.exp[job] = static_cast<uint16>(std::max<uint32>(PChar->jobs.exp[job], std::min<uint32>(exp, UINT16_MAX)));
+                charutils::SaveCharExp(PChar, static_cast<xi::Job>(job));
+            }
+            else
+            {
+                db::preparedStmt(fmt::format("UPDATE char_exp SET {0} = GREATEST({0}, ?) WHERE charid = ? LIMIT 1", kJobColumns[job]), exp, r.charid);
+            }
+            if (!ofTheWorld(r.charid))
+            {
+                addPoints(r.charid, cardian::errand::venturePoints(cardian::errand::ventureGain(0, exp, had), false));
+            }
+            return exp;
+        }
+
         // ---- where she walks ---------------------------------------------------
 
         auto snap(CZone* PZone, const position_t& point, const float within) -> std::optional<position_t>
@@ -550,6 +795,40 @@ namespace pawn::errands
                 }
             }
             return std::nullopt;
+        }
+
+        // The zone line nearest her into any zone next to hers, snapped to
+        // the mesh: a level venture's way out of the world, which goes to no
+        // zone in particular
+        auto nearestLine(const CCharEntity* PPawn) -> std::optional<position_t>
+        {
+            const auto                here = PPawn->getZone();
+            std::optional<position_t> best;
+            float                     bestAway = 0.0f;
+            for (const auto& [zone, hops] : pawn::travel::hops({ here }))
+            {
+                if (hops != 1)
+                {
+                    continue;
+                }
+                const auto hop = pawn::travel::nextHop(here, PPawn->loc.p, static_cast<xi::ZoneId>(zone));
+                if (!hop.has_value() || hop->rents)
+                {
+                    continue;
+                }
+                const auto at = snap(PPawn->loc.zone, hop->walkTo, kLineSnap);
+                if (!at.has_value())
+                {
+                    continue;
+                }
+                const float away = distance(PPawn->loc.p, *at);
+                if (!best.has_value() || away < bestAway)
+                {
+                    best     = at;
+                    bestAway = away;
+                }
+            }
+            return best;
         }
 
         void walkTo(Record& r, const position_t& there, const std::optional<position_t>& goal, const float within)
@@ -598,7 +877,8 @@ namespace pawn::errands
             r.errand           = cardian::errand::goAway(r.errand, gameNow(), minutes * 60);
             save(r);
             pawn::seats::run();
-            ShowInfoFmt("errands: {} leaves the world {} for {} ({} minutes on the game clock){}", nameOf(r.charid), how, r.title, minutes,
+            ShowInfoFmt("errands: {} leaves the world {} for {} ({}){}", nameOf(r.charid), how, r.title,
+                        minutes > 0 ? fmt::format("{} minutes on the game clock", minutes) : std::string("off the clock, until it is done"),
                         pawn::findPawn(r.charid) != nullptr ? "; the ladder has not taken her body" : "");
         }
 
@@ -726,6 +1006,45 @@ namespace pawn::errands
             else if (r.errand.kind == Kind::Gear && !calledBack)
             {
                 line = fmt::format("{} is back from the auction house.", name);
+            }
+            else if (r.errand.kind == Kind::Level)
+            {
+                // Away and called back, the share of her next level is kept
+                // before the venture's ding still waiting and its count go
+                const auto   job     = levelJobOf(r);
+                const auto*  jobName = job < kJobNames.size() ? kJobNames[job] : "?";
+                const uint32 exp     = kept != cardian::errand::Kept::Nothing && r.errand.state == State::Away ? keepShare(r) : 0;
+                endVenture(charid);
+                const auto  jobs  = jobsOf(charid);
+                const uint8 level = jobs.has_value() && job < std::size(jobs->levels) ? cardian::errand::levelOn(jobs->levels[job]) : 0;
+                if (r.errand.state == State::Going || level == 0)
+                {
+                    line = fmt::format("{} is recalled.", name);
+                }
+                else if (level >= r.errand.target)
+                {
+                    line = fmt::format("{} is back: {} {}.", name, jobName, level);
+                }
+                else
+                {
+                    line = fmt::format("{} is recalled at {} {}.", name, jobName, level);
+                }
+                ShowInfoFmt("errands: {}'s level venture ends at {} {} (target {}){}", name, jobName, level, r.errand.target,
+                            exp > 0 ? fmt::format("; {} experience kept toward the next level", exp) : std::string{});
+                // her report as the venture ended, unread; nothing to report for one that never left
+                if (r.errand.state == State::Going)
+                {
+                    db::preparedStmt("DELETE FROM cardian_level_report WHERE charid = ?", charid);
+                }
+                else
+                {
+                    const uint32 toNext = level > 0 ? charutils::GetExpNEXTLevel(level) : 0;
+                    const uint8  keptAt = toNext > 0 ? static_cast<uint8>(std::min<uint32>(99, exp * 100 / toNext)) : 0;
+                    db::preparedStmt("UPDATE cardian_level_report SET to_level = ?, minutes = GREATEST(0, CAST(? AS SIGNED) - CAST(left_at AS SIGNED)) DIV 60, "
+                                     "exp_kept = ?, kept_share = ?, skills_to = ?, phase = ?, seen = 0 WHERE charid = ?",
+                                     level, gameNow(), exp, keptAt, cardian::errand::skillsText(skillsInRows(charid)),
+                                     static_cast<uint8>(CL_VENTURE_DONE), charid);
+                }
             }
             else if (r.errand.kind == Kind::Money)
             {
@@ -901,6 +1220,57 @@ namespace pawn::errands
                 ShowInfoFmt("errands: {}'s fishing venture is cut short: {}", nameOf(charid), stopWhy(stop));
                 finish(charid, cardian::errand::Kept::Whole, false);
             }
+        }
+
+        // ---- a level venture away -----------------------------------------------
+
+        // Away, the census levels her (census.py LevelVentures). Her level on
+        // the job and the census's count of her next level are read every few
+        // seconds, for the page and to know when she is done: once her rows
+        // reach the target -- only while no ding of the venture is being
+        // written in her rows -- or, once he has called her back, once what
+        // the venture banked has landed: the time the census had not counted
+        // when he called is added to its count, and while the count holds a
+        // whole level or a ding of it is planned or being written, she waits
+        // for the census to land it (errand_math.h recallWaits). Finishing
+        // her ends the record: `r` is not read after
+        void tickLevel(Record& r)
+        {
+            const auto now = timer::now();
+            if (now - r.levelRead < kLevelLook)
+            {
+                return;
+            }
+            r.levelRead    = now;
+            const auto job = levelJobOf(r);
+            if (const auto level = levelNowOf(r, job); level != 0)
+            {
+                r.levelNow = level;
+            }
+            r.share = ventureShare(r).value_or(0.0);
+            if (ventureClaimed(r.charid))
+            {
+                return;
+            }
+            if (r.levelNow >= r.errand.target)
+            {
+                finish(r.charid, cardian::errand::Kept::Whole, false);
+                return;
+            }
+            if (!recalled(r))
+            {
+                return;
+            }
+            if (const auto count = settleCount(r, recalledAt(r)); count.has_value())
+            {
+                r.share         = std::clamp(*count, 0.0, 1.0);
+                const auto left = r.errand.target > r.levelNow ? r.errand.target - r.levelNow : 0u;
+                if (cardian::errand::recallWaits(*count, left, ventureDingOpen(r.charid)))
+                {
+                    return;
+                }
+            }
+            finish(r.charid, cardian::errand::Kept::Progress, true);
         }
 
         // ---- gear up -----------------------------------------------------------
@@ -1089,7 +1459,8 @@ namespace pawn::errands
                 }
                 kept.fromZone = static_cast<uint16>(PPawn->getZone());
                 kept.from     = PPawn->loc.p;
-                if (const auto line = lineToward(PPawn, kept.errand.route); line.has_value())
+                const auto line = kept.errand.kind == Kind::Level ? nearestLine(PPawn) : lineToward(PPawn, kept.errand.route);
+                if (line.has_value())
                 {
                     walkTo(kept, *line, line, kAtLine);
                     save(kept);
@@ -1219,7 +1590,7 @@ namespace pawn::errands
             {
                 return CL_S_NOT_OFFERED;
             }
-            if (!pawn::venturespots::reaches(r.charid, ask.zone, ask.area))
+            if (!pawn::venturespots::reaches(PPlayer, r.charid, ask.zone, ask.area))
             {
                 return CL_S_NOT_SAFE;
             }
@@ -1256,6 +1627,50 @@ namespace pawn::errands
             return setOut(PPlayer, std::move(r), line);
         }
 
+        // A level on one of her unlocked jobs, above hers on it and at most
+        // his highest on any of his jobs (errand_math.h levelFits). Out of his
+        // party and to the nearest zone line, then off the clock: the census
+        // levels her while she is away, until her rows reach it
+        auto sendLevel(CCharEntity* PPlayer, Record r, const cl_send_errand& ask) -> uint16
+        {
+            const auto jobs = jobsOf(r.charid);
+            if (!jobs.has_value())
+            {
+                return CL_S_REFUSED;
+            }
+            const uint8 job = ask.job;
+            if (job >= kJobNames.size() || !cardian::errand::levelFits(jobs->unlocked, job, jobs->levels[job], ask.level, levelCap(PPlayer)))
+            {
+                return CL_S_NOT_OFFERED;
+            }
+            if (const auto* PPawn = pawn::findPawn(r.charid); PPawn != nullptr && PPawn->isDead())
+            {
+                return CL_S_KNOCKED_OUT;
+            }
+            const uint8  from    = cardian::errand::levelOn(jobs->levels[job]);
+            const uint32 expFrom = expOn(r.charid, job);
+            r.args["job"]        = std::to_string(job);
+            r.args["from"]    = std::to_string(from);
+            r.args["minutes"] = "0"; // off the clock
+            r.errand.target   = ask.level;
+            r.levelNow        = from;
+            r.title           = fmt::format("{} to {}", kJobNames[job], ask.level);
+            db::preparedStmt("DELETE FROM cardian_venture WHERE charid = ?", r.charid); // an earlier venture's count, never read again
+            const auto   line   = fmt::format("{} sets out to reach {} level {}.", nameOf(r.charid), kJobNames[job], ask.level);
+            const uint32 charid = r.charid;
+            const uint32 target = ask.level;
+            const auto   status = setOut(PPlayer, std::move(r), line);
+            if (status == CL_S_OK)
+            {
+                // her report from now: the job, her level, her experience toward her next and her skills as she sets out
+                db::preparedStmt("REPLACE INTO cardian_level_report (charid, job, from_level, to_level, target, left_at, minutes, exp_from, exp_kept, kept_share, "
+                                 "skills_from, skills_to, phase, seen) VALUES (?, ?, ?, ?, ?, ?, 0, ?, 0, 0, ?, '', ?, 0)",
+                                 charid, job, from, from, target, gameNow(), expFrom, cardian::errand::skillsText(skillsInRows(charid)),
+                                 static_cast<uint8>(CL_VENTURE_WORKING));
+            }
+            return status;
+        }
+
         void sendErrand(CCharEntity* PChar, const cl_send_errand& ask, Reply& reply)
         {
             const auto member = pawn::club::memberOf(PChar, ask.cardian);
@@ -1285,6 +1700,7 @@ namespace pawn::errands
             reply.finish(ask, kind == Kind::Gear    ? sendGear(PChar, std::move(r))
                               : kind == Kind::Rank  ? sendRank(PChar, std::move(r), ask)
                               : kind == Kind::Money ? sendMoney(PChar, std::move(r), ask)
+                              : kind == Kind::Level ? sendLevel(PChar, std::move(r), ask)
                                                     : sendQuest(PChar, std::move(r), ask));
         }
 
@@ -1302,6 +1718,24 @@ namespace pawn::errands
                 return;
             }
             ShowInfoFmt("errands: {} calls {} back", PChar->getName(), nameOf(ask.cardian));
+            if (it->second.errand.kind == Kind::Level && cardian::errand::gone(it->second.errand.state))
+            {
+                // The census counts nothing more from now; what the venture
+                // banked lands first, and she is back once it has -- at once
+                // when nothing is left to land (tickLevel). A second call back
+                // keeps the first one's second
+                auto& r = it->second;
+                if (!recalled(r))
+                {
+                    r.args["recalled"]    = "1";
+                    r.args["recalled_at"] = std::to_string(realSeconds());
+                    save(r);
+                }
+                r.levelRead = {};
+                tickLevel(r);
+                reply.finish(ask, CL_S_OK);
+                return;
+            }
             if (it->second.errand.kind == Kind::Money && cardian::errand::gone(it->second.errand.state))
             {
                 it->second.args["recalled"] = "1";
@@ -1448,6 +1882,45 @@ namespace pawn::errands
                          "`from_z` float NOT NULL DEFAULT '0', "
                          "`from_rot` tinyint(3) unsigned NOT NULL DEFAULT '0', "
                          "PRIMARY KEY (`charid`), KEY `accid` (`accid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        // A level venture's report (levelReportOf): one row a member, her
+        // last level venture -- the job, her level as she set out and as she
+        // came back, the level sent for, the game clock as she set out and
+        // the minutes away, her experience toward her next level as she set
+        // out, the experience kept on a call back and its hundredths, her
+        // skills as she set out and as she came back (errand_math.h
+        // skillsText), its phase and the furthest phase her player has read
+        // it at
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_level_report` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`job` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`from_level` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`to_level` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`target` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`left_at` int(10) unsigned NOT NULL DEFAULT '0', "
+                         "`minutes` int(10) unsigned NOT NULL DEFAULT '0', "
+                         "`exp_from` int(10) unsigned NOT NULL DEFAULT '0', "
+                         "`exp_kept` int(10) unsigned NOT NULL DEFAULT '0', "
+                         "`kept_share` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`skills_from` text NOT NULL, "
+                         "`skills_to` text NOT NULL, "
+                         "`phase` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`seen` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        db::preparedStmt("ALTER TABLE `cardian_level_report` ADD COLUMN IF NOT EXISTS `exp_from` int(10) unsigned NOT NULL DEFAULT '0' AFTER `minutes`");
+        // A level venture's count, the census's (census.py VENTURE_TABLE, which
+        // the watcher makes too): a row per venture away, keyed by her and the
+        // game clock as she was sent -- the job, her count toward her next
+        // levels, her pace in levels an hour, and the real clock as the census
+        // last ran her count on (it makes up the time the map was off)
+        db::preparedStmt("CREATE TABLE IF NOT EXISTS `cardian_venture` ("
+                         "`charid` int(10) unsigned NOT NULL, "
+                         "`started` int(10) unsigned NOT NULL DEFAULT '0', "
+                         "`job` tinyint(3) unsigned NOT NULL DEFAULT '0', "
+                         "`progress` double NOT NULL DEFAULT '0', "
+                         "`rate` double NOT NULL DEFAULT '0', "
+                         "`counted_at` double NOT NULL DEFAULT '0', "
+                         "PRIMARY KEY (`charid`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+        db::preparedStmt("ALTER TABLE `cardian_venture` ADD COLUMN IF NOT EXISTS `counted_at` double NOT NULL DEFAULT '0'");
     }
 
     // Every row into memory. A walk off was the map's and ended with it: an
@@ -1555,6 +2028,11 @@ namespace pawn::errands
                 tickMoney(r, clock);
                 continue;
             }
+            if (r.errand.kind == Kind::Level && cardian::errand::gone(r.errand.state))
+            {
+                tickLevel(r);
+                continue;
+            }
             if (r.errand.state == State::Away)
             {
                 if (cardian::errand::due(r.errand, clock))
@@ -1630,7 +2108,134 @@ namespace pawn::errands
             view.missions       = static_cast<uint8>(std::min<std::size_t>(missions.size(), UINT8_MAX));
             view.missionsDone   = static_cast<uint8>(std::min<std::size_t>(cardian::errand::missionsDone(minutes, away), view.missions));
         }
+        if (e.kind == Kind::Level)
+        {
+            view.levelJob    = levelJobOf(r);
+            view.levelFrom   = static_cast<uint8>(cardian::errand::numberArg(r.args, "from").value_or(0));
+            view.levelNow    = std::max(r.levelNow, view.levelFrom);
+            view.levelTarget = static_cast<uint8>(std::min<uint32>(e.target, UINT8_MAX));
+            view.levelShare  = cardian::errand::gone(e.state) ? cardian::errand::sharePercent(r.share) : static_cast<uint8>(0);
+        }
         return view;
+    }
+
+    auto levelReportOf(const uint32 charid) -> std::optional<LevelReport>
+    {
+        const auto rset = db::preparedStmt("SELECT job, from_level, to_level, target, left_at, minutes, exp_from, exp_kept, kept_share, skills_from, skills_to, "
+                                           "phase, seen FROM cardian_level_report WHERE charid = ?",
+                                           charid);
+        if (!rset || !rset->next())
+        {
+            return std::nullopt;
+        }
+        LevelReport out;
+        out.phase = rset->get<uint8>("phase");
+        if (out.phase != CL_VENTURE_WORKING && rset->get<uint8>("seen") >= CL_VENTURE_DONE)
+        {
+            return std::nullopt; // read once she was back
+        }
+        out.job       = rset->get<uint8>("job");
+        out.from      = rset->get<uint8>("from_level");
+        out.target    = rset->get<uint8>("target");
+        auto skillsTo = cardian::errand::skillsOfText(rset->get<std::string>("skills_to"));
+        if (out.phase == CL_VENTURE_WORKING)
+        {
+            // away: her rows as the census writes them, its count and its pace
+            const auto   leftAt = rset->get<uint32>("left_at");
+            const uint32 now    = gameNow();
+            out.minutes         = now > leftAt ? (now - leftAt) / 60 : 0;
+            const auto jobs     = jobsOf(charid);
+            out.now = jobs.has_value() && out.job < std::size(jobs->levels) ? std::max(out.from, cardian::errand::levelOn(jobs->levels[out.job])) : out.from;
+            // the census's count of this venture, never an earlier one's
+            const auto it    = records.find(charid);
+            const auto count = it != records.end() && it->second.errand.kind == Kind::Level ? countOf(it->second) : std::nullopt;
+            if (count.has_value())
+            {
+                out.share       = cardian::errand::sharePercent(std::clamp(count->progress, 0.0, 1.0));
+                out.expPerHour  = cardian::errand::expPerHour(count->rate, charutils::GetExpNEXTLevel(out.now));
+                out.nextMinutes = cardian::errand::minutesToNext(count->progress, count->rate);
+            }
+            skillsTo = skillsInRows(charid);
+        }
+        else
+        {
+            out.now     = rset->get<uint8>("to_level");
+            out.minutes = rset->get<uint32>("minutes");
+            out.share   = rset->get<uint8>("kept_share");
+            out.expKept = rset->get<uint32>("exp_kept");
+        }
+        // the conquest points of what the venture gained her: for his alt or
+        // his own cardian, the experience behind the levels risen and any
+        // kept, less what she held toward her next as she set out; for one of
+        // the world's, the census's points for her levels alone
+        uint64 levelsExp = 0;
+        for (uint8 level = std::max<uint8>(out.from, 1); level < out.now; ++level)
+        {
+            levelsExp += charutils::GetExpNEXTLevel(level);
+        }
+        out.points = ofTheWorld(charid) ? cardian::errand::venturePoints(levelsExp, true)
+                                        : cardian::errand::venturePoints(cardian::errand::ventureGain(levelsExp, out.expKept, rset->get<uint32>("exp_from")), false);
+        out.skills = cardian::errand::skillsRisen(cardian::errand::skillsOfText(rset->get<std::string>("skills_from")), skillsTo);
+        db::preparedStmt("UPDATE cardian_level_report SET seen = GREATEST(seen, ?) WHERE charid = ?", out.phase, charid);
+        return out;
+    }
+
+    auto levelVentureDone(const uint32 charid) -> bool
+    {
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_level_report WHERE charid = ? AND phase = ? AND seen < ?", charid,
+                                           static_cast<uint8>(CL_VENTURE_DONE), static_cast<uint8>(CL_VENTURE_DONE));
+        return rset && rset->next();
+    }
+
+    auto hasLevelReport(const uint32 charid) -> bool
+    {
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_level_report WHERE charid = ? AND (phase = ? OR seen < ?)", charid,
+                                           static_cast<uint8>(CL_VENTURE_WORKING), static_cast<uint8>(CL_VENTURE_DONE));
+        return rset && rset->next();
+    }
+
+    auto levelCap(const CCharEntity* PPlayer) -> uint8
+    {
+        uint8 highest = 0;
+        if (PPlayer != nullptr)
+        {
+            for (std::size_t job = 1; job < MAX_JOBTYPE; ++job)
+            {
+                highest = std::max(highest, PPlayer->jobs.job[job]);
+            }
+        }
+        return highest;
+    }
+
+    auto ofTheWorld(const uint32 charid) -> bool
+    {
+        const auto rset = db::preparedStmt("SELECT 1 FROM cardian_census WHERE charid = ? AND recruited = 0", charid);
+        return rset && rset->next();
+    }
+
+    auto jobsOf(const uint32 charid) -> std::optional<Jobs>
+    {
+        Jobs jobs;
+        if (const auto* PChar = loadedChar(charid); PChar != nullptr)
+        {
+            jobs.unlocked = PChar->jobs.unlocked;
+            for (std::size_t job = 1; job < MAX_JOBTYPE && job < std::size(jobs.levels); ++job)
+            {
+                jobs.levels[job] = PChar->jobs.job[job];
+            }
+            return jobs;
+        }
+        const auto rset = db::preparedStmt("SELECT * FROM char_jobs WHERE charid = ?", charid);
+        if (!rset || !rset->next())
+        {
+            return std::nullopt;
+        }
+        jobs.unlocked = rset->get<uint32>("unlocked");
+        for (std::size_t job = 1; job < kJobColumns.size() && job < std::size(jobs.levels); ++job)
+        {
+            jobs.levels[job] = rset->get<uint8>(std::string(kJobColumns[job]));
+        }
+        return jobs;
     }
 
     auto rankOf(const uint32 charid) -> Rank
@@ -1705,7 +2310,32 @@ namespace pawn::errands
             return;
         }
         const auto kind = it->second.errand.kind;
-        const auto kept = kind == Kind::Money ? cardian::errand::Kept::Nothing : cardian::errand::keptOnCallBack(it->second.errand, gameNow());
+        // a level venture keeps the share of her next level, as his call back does
+        const auto kept = kind == Kind::Money   ? cardian::errand::Kept::Nothing
+                          : kind == Kind::Level ? cardian::errand::Kept::Progress
+                                                : cardian::errand::keptOnCallBack(it->second.errand, gameNow());
+        if (kind == Kind::Level && ventureClaimed(charid))
+        {
+            ShowWarningFmt("errands: {} is logged in as while the census writes a level of her venture; the level may be lost", nameOf(charid));
+        }
+        // A login cannot wait for what a level venture banked to land: the
+        // time the census had not counted is added to its count, the share of
+        // her next level is kept, and any whole level in it is lost
+        if (auto& r = it->second; kind == Kind::Level && cardian::errand::gone(r.errand.state))
+        {
+            const auto  job   = levelJobOf(r);
+            const uint8 level = levelNowOf(r, job);
+            const auto  count = settleCount(r, recalled(r) ? recalledAt(r) : realSeconds());
+            const auto  lost  = count.has_value() && level != 0 && r.errand.target > level ? cardian::errand::wholeLevels(*count, r.errand.target - level) : 0u;
+            if (lost > 0)
+            {
+                const auto* jobName = job < kJobNames.size() ? kJobNames[job] : "?";
+                ShowWarningFmt("errands: {} is logged in as with {} level{} of her venture banked and not yet landed ({} {}{}); they are lost, the share of "
+                               "her next level kept",
+                               nameOf(charid), lost, lost == 1 ? "" : "s", jobName, level + 1,
+                               lost > 1 ? fmt::format(" to {}", level + lost) : std::string{});
+            }
+        }
         ShowInfoFmt("errands: {} is logged in as, and her errand ends", nameOf(charid));
         endedAtLogin[charid] = kind;
         finish(charid, kept, true, false);

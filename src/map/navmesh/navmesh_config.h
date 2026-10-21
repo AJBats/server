@@ -72,4 +72,10 @@ struct NavMeshConfig
     bool  generateOffMeshLinks{ true };
     float offMeshMaxDrop{ 5.0f };    // largest vertical drop (wu) a link may bridge
     float offMeshHorizReach{ 3.0f }; // largest horizontal ledge->landing offset (wu)
+
+    // CARDIAN: the collision walls, built in as barriers (pawn/collision_walls.h)
+    std::vector<std::array<float, 10>> cardianWalls{};
+    // CARDIAN: a navmesh for the player's own client (pawn/client_navmesh.h)
+    bool cardianClient{};
+    float cardianBerth{}; // CARDIAN: and the berth from the edges it keeps where there is room, the strip inside it marked tight
 };

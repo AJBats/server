@@ -45,6 +45,12 @@ namespace pawn::players
     // times out
     auto online(uint32 charid) -> bool;
 
+    // A real player plays this character now: a client's session under its
+    // charid, and nothing else -- not one of his characters standing as a
+    // cardian, which online's body clause counts. The census's word for
+    // the same is a session row with a client address (client_addr <> 0)
+    auto hasClient(uint32 charid) -> bool;
+
     // The map's scheduler as his session holds it, for a call into the
     // game's own code that wants one (the delivery box's); nullptr while he
     // has no session

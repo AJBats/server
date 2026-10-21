@@ -50,6 +50,11 @@ namespace pawn::players
         return zoneutils::GetChar(charid) != nullptr;
     }
 
+    auto hasClient(const uint32 charid) -> bool
+    {
+        return charid != 0 && sessions != nullptr && sessions->getSessionByCharId(charid) != nullptr;
+    }
+
     auto schedulerOf(const uint32 charid) -> Scheduler*
     {
         auto* PSession = sessions != nullptr ? sessions->getSessionByCharId(charid) : nullptr;

@@ -90,13 +90,16 @@ CREATE TABLE IF NOT EXISTS `cardian_pull_kit` (
 -- watcher makes them where they are missing.
 -- Each real character's jobs as sampled every 20 minutes he is online: the seconds
 -- online since the last sample, his progress on the job then (level and share),
--- and his samples (shares of a level, joined by commas; `|` where he signed out).
+-- his samples (shares of a level, joined by commas; `|` where he signed out), and
+-- the census clock at his last sample (a cohort nobody plays now follows the job
+-- that rides it sampled last; census.py cohort_pacers).
 CREATE TABLE IF NOT EXISTS `cardian_pace` (
-  `charid`   int(10) unsigned    NOT NULL,
-  `job`      tinyint(3) unsigned NOT NULL,
-  `online`   double              NOT NULL DEFAULT '0',
-  `progress` double              DEFAULT NULL,
-  `samples`  text                NOT NULL DEFAULT '',
+  `charid`     int(10) unsigned    NOT NULL,
+  `job`        tinyint(3) unsigned NOT NULL,
+  `online`     double              NOT NULL DEFAULT '0',
+  `progress`   double              DEFAULT NULL,
+  `samples`    text                NOT NULL DEFAULT '',
+  `sampled_at` double              NOT NULL DEFAULT '0',
   PRIMARY KEY (`charid`, `job`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -123,4 +126,17 @@ CREATE TABLE IF NOT EXISTS `cardian_pace_clock` (
   `seconds` double              NOT NULL DEFAULT '0',
   `speed`   double              NOT NULL DEFAULT '1',
   PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- CARDIAN: the cohort each real character's job rides (RESEARCH.md §18.5) -- every
+-- job above the newbie pool's levels, written whole by tools/world/census.py at
+-- every init and follow (cohort_rides). A cohort is in play while a real character
+-- with a client online plays, as his main job, a job that rides it: the census and
+-- the map (src/map/pawn/cohort_play.h) both read it so. The census and the map both
+-- make the table where it is missing.
+CREATE TABLE IF NOT EXISTS `cardian_cohort_rides` (
+  `charid` int(10) unsigned    NOT NULL,
+  `job`    tinyint(3) unsigned NOT NULL,
+  `cohort` int(10) unsigned    NOT NULL,     -- the cohort it rides: charid * 100 + job of the job anchoring it
+  PRIMARY KEY (`charid`, `job`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

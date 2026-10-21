@@ -167,6 +167,7 @@ namespace cardian::link
     X(VENTURE_PAID, cl_venture_paid)         \
     X(VENTURE_REPORT, cl_venture_report)     \
     X(VENTURE_ITEM, cl_venture_item)         \
+    X(VENTURE_SKILL, cl_venture_skill)       \
     X(VENTURE_NEWS, cl_venture_news)         \
     X(PROFESSION_SLOT, cl_profession_slot)   \
     X(BANK, cl_bank)                         \
@@ -175,7 +176,13 @@ namespace cardian::link
     X(BANK_WITHDRAW, cl_bank_withdraw)       \
     X(BANK_GIL, cl_bank_gil)                 \
     X(BANK_RIGHTS, cl_bank_rights)           \
-    X(BANK_JUNK, cl_bank_junk)
+    X(BANK_JUNK, cl_bank_junk)               \
+    X(PORTER_PLACES, cl_porter_places)       \
+    X(PORTER_GO, cl_porter_go)               \
+    X(PORTER_STOP, cl_porter_stop)           \
+    X(PORTER_STATE, cl_porter_state)         \
+    X(PORTER_ROUTE, cl_porter_route)         \
+    X(PORTER_STUCK, cl_porter_stuck)
 
     template <typename T>
     struct MessageType;

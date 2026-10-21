@@ -342,6 +342,7 @@ public:
 
     auto navMesh() const -> NavMesh*;
     auto xiMesh() const -> XiMesh*;
+    auto cardianNavMeshConfig() const -> NavMeshConfig; // CARDIAN: its navmesh's config, for a navmesh of Cardian's own
 
     auto roamRegion(const std::string& name) const -> const RoamRegion*;
     auto addRoamRegion(std::string name, RoamRegion region) -> const RoamRegion*;

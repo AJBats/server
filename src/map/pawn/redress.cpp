@@ -23,6 +23,7 @@
 #include "redress_math.h"
 
 #include "auction.h"
+#include "club.h"
 #include "food.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -665,11 +666,12 @@ namespace pawn::redress
             uint8       sub      = 0;
             uint8       sublevel = 0;
             DingState   state    = DingState::Planned;
+            bool        venture  = false; // a level venture's (cardian::redress::kVentureNote): the census's to write
         };
 
         auto openDings() -> std::optional<std::vector<Ding>>
         {
-            const auto rset = db::preparedStmt("SELECT charid, kind, job, level, gear, skills, sub, sublevel, state FROM cardian_ding "
+            const auto rset = db::preparedStmt("SELECT charid, kind, job, level, gear, skills, sub, sublevel, state, note FROM cardian_ding "
                                                "WHERE state IN ('planned', 'claimed') ORDER BY planned_at, charid");
             if (!rset)
             {
@@ -691,7 +693,8 @@ namespace pawn::redress
                                 .skills   = rset->get<std::string>("skills"),
                                 .sub      = rset->get<uint8>("sub"),
                                 .sublevel = rset->get<uint8>("sublevel"),
-                                .state    = *state });
+                                .state    = *state,
+                                .venture  = rset->get<std::string>("note") == cardian::redress::kVentureNote });
             }
             return out;
         }
@@ -712,7 +715,8 @@ namespace pawn::redress
             {
                 return std::nullopt;
             }
-            const auto rset = db::preparedStmt("SELECT kind, job, level, sub, sublevel FROM cardian_ding WHERE charid = ? AND state = 'planned'", PPawn->id);
+            const auto rset = db::preparedStmt("SELECT kind, job, level, sub, sublevel FROM cardian_ding WHERE charid = ? AND state = 'planned' AND note <> ?", PPawn->id,
+                                               std::string(cardian::redress::kVentureNote));
             if (!rset || !rset->next())
             {
                 return std::nullopt;
@@ -731,11 +735,14 @@ namespace pawn::redress
             return PPawn->loc.zone != nullptr && (PPawn->loc.zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
         }
 
-        // Where she is, for the ding's rules (redress_math.h dingStep)
+        // Where she is, for the ding's rules (redress_math.h dingStep). Held
+        // for a player by his linkshell's pearl, she waits only while she is
+        // in his party (dingWaitsForPlayer)
         auto dingNow(const uint32 charid, const DingPlan& plan) -> DingNow
         {
-            DingNow now{};
-            now.withPlayer    = pawn::withRealPlayer(charid) || (pawn::world::hasBody(charid) && !pawn::world::inTheWild(charid));
+            DingNow    now{};
+            const bool held   = pawn::world::hasBody(charid) && !pawn::world::inTheWild(charid);
+            now.withPlayer    = cardian::redress::dingWaitsForPlayer(pawn::withRealPlayer(charid), held, held && pawn::club::isPearled(charid));
             const auto* PPawn = pawn::findPawn(charid);
             if (PPawn == nullptr)
             {
@@ -960,6 +967,17 @@ namespace pawn::redress
                     else if (cardian::redress::claimLapsed(static_cast<uint32>(std::chrono::duration_cast<std::chrono::seconds>(now - it->second).count())))
                     {
                         lapse(ding.charid);
+                    }
+                    continue;
+                }
+                // A level venture's: the census writes it while she is away
+                if (ding.venture)
+                {
+                    if (cardian::redress::ventureDingStep(pawn::findPawn(ding.charid) != nullptr) == DingStep::Claim && claimed < kClaimsPerLook &&
+                        claims.size() < 3 * kClaimsPerLook)
+                    {
+                        claim(ding);
+                        ++claimed;
                     }
                     continue;
                 }

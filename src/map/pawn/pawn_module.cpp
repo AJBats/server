@@ -22,6 +22,7 @@
 #include "auction.h"
 #include "cardian_link.h"
 #include "club.h"
+#include "cohort_play.h"
 #include "drill.h"
 #include "engage_math.h"
 #include "errands.h"
@@ -273,6 +274,8 @@ class PawnModule : public CPPModule
         pawn::food::ensureTable();
         // The census's pull kits, likewise (pull.h)
         pawn::pull::ensureTable();
+        // The cohort each real character's job rides, likewise (cohort_play.h)
+        pawn::cohorts::ensureTable();
         // The linkshell's errands, likewise, read into memory, and who wears
         // which shell's pearl, off the items (club.h, errands.h)
         pawn::club::load();

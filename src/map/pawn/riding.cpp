@@ -21,6 +21,7 @@
 
 #include "riding.h"
 
+#include "errands.h"
 #include "link_api.h"
 #include "pawn.h"
 #include "pawn_controller.h"
@@ -39,6 +40,7 @@
 #include "party.h"
 #include "status_effect_container.h"
 #include "utils/charutils.h"
+#include "utils/zoneutils.h"
 
 #include <array>
 #include <optional>
@@ -107,6 +109,55 @@ namespace pawn::riding
             return false;
         }
         return grant(fmt::format("a job at {} or above", cardian::riding::kLicenseLevel));
+    }
+
+    auto licensedFor(const CCharEntity* PPlayer, const uint32 charid) -> bool
+    {
+        const CCharEntity* PChar = pawn::findPawn(charid);
+        PChar                    = PChar != nullptr ? PChar : zoneutils::GetChar(charid);
+        // a body of the world, by the census, holds it by her own jobs alone
+        if (pawn::errands::ofTheWorld(charid))
+        {
+            uint8 top = 0;
+            if (PChar != nullptr)
+            {
+                for (std::size_t job = 1; job < MAX_JOBTYPE; ++job)
+                {
+                    top = std::max(top, PChar->jobs.job[job]);
+                }
+            }
+            else if (const auto rset = db::preparedStmt("SELECT GREATEST(war, mnk, whm, blm, rdm, thf, pld, drk, bst, brd, rng, sam, nin, drg, smn, blu, cor, pup, "
+                                                        "dnc, sch, geo, run) AS top FROM char_jobs WHERE charid = ?",
+                                                        charid);
+                     rset && rset->next())
+            {
+                top = rset->get<uint8>("top");
+            }
+            return top >= cardian::riding::kLicenseLevel;
+        }
+        // anyone else by the account's license alone: the key item, his or hers
+        const auto item = licenseItem();
+        if (!item.has_value())
+        {
+            return false;
+        }
+        if (PPlayer != nullptr && charutils::hasKeyItem(PPlayer, *item))
+        {
+            return true;
+        }
+        if (PChar != nullptr)
+        {
+            return charutils::hasKeyItem(PChar, *item);
+        }
+        const auto rset = db::preparedStmt("SELECT keyitems FROM chars WHERE charid = ?", charid);
+        if (!rset || !rset->next() || rset->isNull("keyitems"))
+        {
+            return false;
+        }
+        keyitems_t keys{};
+        db::extractFromBlob(rset, "keyitems", keys);
+        const auto id = static_cast<uint16>(*item);
+        return (id >> 9) < keys.tables.size() && keys.tables[id >> 9].keyList.test(id & 511);
     }
 
     auto ridesFree(const CCharEntity* PChar) -> bool
