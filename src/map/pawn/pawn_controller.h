@@ -661,6 +661,15 @@ private:
         float angle  = 0.0f; // radians off the player's facing
     };
     static auto SeatOf(pawn::Slot slot) -> SeatGeometry;
+    // A White Mage hired for a teleport (teleport.h locked) holds no ring
+    // seat: she stands close at his front left, facing him once he stands
+    // -- a trade between the two of them, the caster at the middle of the
+    // party her spell must reach (the user, 2026-10-21, #557). Her seat
+    // while hired, nothing otherwise; the ring's seats leave her out
+    auto HiredSeat() const -> std::optional<SeatGeometry>;
+    // His facing as he last walked, while she holds that seat: his turning on
+    // the spot moves it nowhere (FormationIntent)
+    std::optional<uint8> m_HiredHeading;
 
     // The player as the formation sees them: the Cardian Link's fresh
     // position when it streams (loc.p otherwise), and where they will be

@@ -6270,6 +6270,14 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     co_return;
 }
 
+// A White Mage hired for a teleport (HiredSeat): her walk to her seat beside him stops
+// this short of it, and anywhere this near it she has arrived -- close, so a seat 2.5
+// yalms out stays a few yalms, with room between the two so she never steps on the spot
+constexpr float kHiredArrive    = 0.3f;
+constexpr float kHiredTolerance = 0.8f;
+// She turns to him only once she faces this far off him, in the world's 256ths of a turn
+constexpr int kHiredTurnSlack = 8;
+
 auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPlayer, const CBattleEntity* PStandOff) -> Intent
 {
     // A quiet mage keeps her last spot, even far from camp. Incoming aggro
@@ -6290,7 +6298,8 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
     // everyone else follows him by the compass, or holds a seat on the ring
     // round a camp or a mob he holds on
     position_t followPoint{};
-    bool       compass = false;
+    bool       compass   = false;
+    bool       closeSeat = false; // a White Mage hired for a teleport, at her seat beside him (HiredSeat)
 
     // No point within reach of a mob the party is holding on: pushed out
     // to the ring, and round to the place's side from behind it
@@ -6325,10 +6334,59 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
         // the lead holds its point. (A seat, not the place: a fresh position
         // would put her right on top of the player.)
         const auto anchor = place.anchor(settings::get<float>("pawn.FORMATION_FOLLOW_PREDICT_SCALE"));
+        // A White Mage hired for a teleport: her own seat close beside him,
+        // turned with his facing and held as the ring holds a seat, never the
+        // compass's band (which keeps anyone where she stands within 6
+        // yalms); come to a stand there, she faces him
+        if (const auto hired = HiredSeat(); hired.has_value() && !place.fixed() && PStandOff == nullptr)
+        {
+            m_CompassLast = {};
+            m_CompassHeld = false;
+            m_CompassStoodAt.reset();
+            m_CompassFaceAt.reset();
+            closeSeat = true;
+            // His facing as he last walked: standing, his turning moves her
+            // seat nowhere -- he turns to her for the trade, and she stays --
+            // and only a step of his re-aims it (the formation's deadband)
+            if (anchor.moving || !m_HiredHeading.has_value())
+            {
+                m_HiredHeading = anchor.anchor.rotation;
+            }
+            auto turned            = anchor;
+            turned.anchor.rotation = *m_HiredHeading;
+            followPoint            = FormationPoint(turned, hired->offset, hired->angle, m_FollowHeld);
+            // He walks at her, near: she holds her ground and lets him come,
+            // as the compass's follower does
+            const float toHer     = distance(anchor.observed, POwner->loc.p);
+            const float hisWay    = static_cast<float>(anchor.anchor.rotation) * 2.0f * static_cast<float>(M_PI) / 256.0f;
+            const float herWay    = static_cast<float>(worldAngle(anchor.observed, POwner->loc.p)) * 2.0f * static_cast<float>(M_PI) / 256.0f;
+            const bool  walksAtHer = anchor.moving && toHer < settings::get<float>("pawn.FORMATION_COMPASS_PASS_RANGE") &&
+                                    std::abs(cardian::formation::turnFrom(hisWay, herWay)) < settings::get<float>("pawn.FORMATION_COMPASS_AHEAD_DEG") * static_cast<float>(M_PI) / 180.0f;
+            if (walksAtHer)
+            {
+                followPoint = POwner->loc.p;
+            }
+            RampCatchUp(anchor.moving, followPoint);
+            // Arrived: near her seat, or set down near it by the walker's
+            // courtesy (another member on her spot), as the compass reads it
+            const bool settled = m_SettledAt.has_value() && m_Tick - m_SettledTick <= 1s && distance(POwner->loc.p, *m_SettledAt, true) < 0.3f;
+            const bool there   = distance(POwner->loc.p, followPoint) <= kHiredTolerance || settled;
+            if (!anchor.moving && there && !POwner->PAI->PathFind->IsFollowingPath() && !Kneeling() && !Acting())
+            {
+                const auto toHim = static_cast<uint8>(worldAngle(POwner->loc.p, anchor.observed));
+                if (std::abs(static_cast<int>(static_cast<int8>(static_cast<uint8>(toHim - POwner->loc.p.rotation)))) > kHiredTurnSlack)
+                {
+                    POwner->loc.p.rotation = toHim;
+                    POwner->updatemask |= UPDATE_POS;
+                }
+            }
+            FormationDebug(walksAtHer ? "hired, holding" : "hired", PPlayer, anchor, followPoint);
+        }
         // Following the player himself out of a fight: the compass follow. A
         // camp's place, and holding for his strike, keep the ring
-        if (settings::get<bool>("pawn.FORMATION_COMPASS") && !place.fixed() && PStandOff == nullptr)
+        else if (settings::get<bool>("pawn.FORMATION_COMPASS") && !place.fixed() && PStandOff == nullptr)
         {
+            m_HiredHeading.reset();
             // aimed as far ahead as the setting has it, to keep up with him
             const auto aim = place.anchor(settings::get<float>("pawn.FORMATION_COMPASS_PREDICT_SCALE"));
             followPoint    = CompassPoint(aim);
@@ -6342,11 +6400,13 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
             m_CompassHeld     = false;
             m_CompassStoodAt.reset();
             m_CompassFaceAt.reset();
+            m_HiredHeading.reset();
             const auto slot   = RingSlot();
-            const auto seat   = SeatOf(slot);
+            const auto hired  = HiredSeat(); // hired at a camp or by a mob he holds on, which a town never has: her own seat, on the ring's terms
+            const auto seat   = hired.value_or(SeatOf(slot));
             followPoint       = standOff(FormationPoint(anchor, seat.offset, seat.angle, m_FollowHeld));
             RampCatchUp(anchor.moving, followPoint);
-            FormationDebug(cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
+            FormationDebug(hired.has_value() ? "hired" : cardian::formation::slotName(slot), PPlayer, anchor, followPoint);
         }
     }
 
@@ -6356,8 +6416,8 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
     Intent intent;
     intent.kind      = Intent::Kind::Formation;
     intent.point     = followPoint;
-    intent.arrive    = compass ? 0.3f : 1.0f;
-    intent.tolerance = compass ? 0.5f : 2.0f;
+    intent.arrive    = compass ? 0.3f : closeSeat ? kHiredArrive : 1.0f;
+    intent.tolerance = compass ? 0.5f : closeSeat ? kHiredTolerance : 2.0f;
 
     return intent;
 }
@@ -9094,9 +9154,9 @@ auto CPawnController::RingSlot() const -> pawn::Slot
                 continue;
             }
             const auto* PController = dynamic_cast<const CPawnController*>(PChar->PAI->GetController());
-            if (PController == nullptr || PController->FormationSlot() == pawn::Slot::Lead)
+            if (PController == nullptr || PController->FormationSlot() == pawn::Slot::Lead || (PChar != POwner && PController->HiredSeat().has_value()))
             {
-                continue;
+                continue; // the lead holds no ring seat, nor a White Mage hired for a teleport (HiredSeat)
             }
             if (PChar == POwner)
             {
@@ -9113,6 +9173,18 @@ auto CPawnController::RingSlot() const -> pawn::Slot
         mine  = 0;
     }
     return cardian::formation::assignSlots(seats)[mine];
+}
+
+auto CPawnController::HiredSeat() const -> std::optional<SeatGeometry>
+{
+    // As close as the compass's band lets anyone stand (FORMATION_COMPASS_NEAR),
+    // a little ahead of his left shoulder, outside the cone he walks into
+    constexpr float kPi = static_cast<float>(M_PI);
+    if (!pawn::teleport::locked(static_cast<const CCharEntity*>(POwner)))
+    {
+        return std::nullopt;
+    }
+    return SeatGeometry{ settings::get<float>("pawn.FORMATION_COMPASS_NEAR"), -70.0f * kPi / 180.0f };
 }
 
 auto CPawnController::SeatOf(const pawn::Slot slot) -> SeatGeometry
