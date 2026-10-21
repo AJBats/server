@@ -73,6 +73,9 @@ namespace pawn::items
     // Gil across, as the trade window's gil line moves it: to the pawn, or
     // back from her. Within trading reach, both sides or neither
     auto moveGil(CCharEntity* PPlayer, CCharEntity* PPawn, uint32 amount, bool toPawn) -> uint16;
+    // Gil from one to the other wherever they stand, moved as moveGil moves
+    // it: a price given back (teleport.h)
+    auto handGil(CCharEntity* PFrom, CCharEntity* PTo, uint32 amount) -> uint16;
 
     // Sort one of her containers: partial stacks merged, then every stack
     // compacted from slot 1 in item-id order, fuller stacks first. The

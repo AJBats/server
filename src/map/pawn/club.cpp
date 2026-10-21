@@ -34,6 +34,7 @@
 #include "players.h"
 #include "professions.h"
 #include "seats.h"
+#include "teleport.h"
 #include "world.h"
 
 #include "ai/ai_container.h"
@@ -48,6 +49,7 @@
 #include "enums/chat_message_type.h"
 #include "enums/party_kind.h"
 #include "item_container.h"
+#include "items.h"
 #include "items/item_linkshell.h"
 #include "items/transactions/item_claim.h"
 #include "linkshell.h"
@@ -727,6 +729,61 @@ namespace pawn::club
             }
             speak(PPlayer, PPawn, rules::declineLine(verdict, PPawn->id, tries));
             ShowInfoFmt("club: {} declines {}'s trade ({})", PPawn->getName(), PPlayer->getName(), std::to_underlying(verdict));
+        }
+
+        // His trade with the White Mage he hired for a teleport (teleport.h):
+        // she opens the window at once, and takes her price in gil, exactly,
+        // with nothing beside it; anything else she cancels, saying her price
+        void payTeleport(CCharEntity* PPawn, CCharEntity* PPlayer, const Trade& trade, const uint32 price)
+        {
+            if (!trade.open)
+            {
+                answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Start);
+                if (const auto opened = trades.find(PPawn->id); opened != trades.end() && !opened->second.open)
+                {
+                    trades.erase(opened); // the game refused the window (out of reach)
+                }
+                return;
+            }
+            if (!trade.confirmed)
+            {
+                return;
+            }
+            trades.erase(PPawn->id);
+            uint32 gil   = 0;
+            bool   other = false;
+            for (const auto& slot : trade.slots)
+            {
+                if (slot.qty == 0)
+                {
+                    continue;
+                }
+                if (slot.item == static_cast<uint16>(ITEMID::GIL))
+                {
+                    gil += slot.qty;
+                }
+                else
+                {
+                    other = true;
+                }
+            }
+            if (!pawn::teleport::rules::paysExactly(gil, other, price))
+            {
+                answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Cancell);
+                speak(PPlayer, PPawn, pawn::teleport::rules::wrongTradeLine(xirand::GetRandomNumber(1000u), price));
+                ShowInfoFmt("teleport: {} declines {}'s trade of {} gil{}: her price is {}", PPawn->getName(), PPlayer->getName(), gil, other ? " and items" : "", price);
+                return;
+            }
+            const auto before = pawn::items::gilOf(PPawn);
+            answerTrade(PPawn, GP_CLI_COMMAND_TRADE_RES_KIND::Make);
+            if (pawn::items::gilOf(PPawn) >= before + price)
+            {
+                pawn::teleport::paid(PPawn->id);
+            }
+            else
+            {
+                ShowInfoFmt("teleport: {}'s trade of {} gil to {} did not go through", PPlayer->getName(), price, PPawn->getName());
+            }
         }
 
         // The slot of her inventory holding a Linkpearl of this shell, not worn
@@ -1789,6 +1846,12 @@ namespace pawn::club
                 continue;
             }
             const auto trade = it->second; // her answer below can end it
+
+            if (const auto price = pawn::teleport::priceAwaited(charid, PPlayer->id); price > 0)
+            {
+                payTeleport(PPawn, PPlayer, trade, price);
+                continue;
+            }
 
             // His request: a member of his club, or one of the world's who
             // qualifies as his recruit, accepts at once while a pearl could

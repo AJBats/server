@@ -47,7 +47,7 @@ class CCharEntity;
 namespace pawn::finder
 {
     auto goalFrom(const std::string& kind, int log) -> Goal;
-    auto kindName(const Goal& goal) -> const char*; // "exp", "quest", "mission"
+    auto kindName(const Goal& goal) -> const char*; // "exp", "quest", "mission", "teleport"
 
     struct Answer
     {
@@ -86,6 +86,7 @@ namespace pawn::finder
         uint32      hops     = 0; // zone lines between her zone and the player's
         Presence    presence = Presence::Away;
         Answer      answer;
+        uint32      price = 0; // a teleport shout's: her price in gil (teleport_rules.h)
     };
 
     // The shout: sixteen to twenty of the adventurers online in the cities
@@ -102,7 +103,10 @@ namespace pawn::finder
     // so the screen can replay it; `again` true is a new one, refused inside
     // SHOUT_COOLDOWN (the current one comes back, its waitMs saying how
     // long). A shout with nobody in reach starts no cooldown. A no here
-    // records nothing against her
+    // records nothing against her. A teleport shout is answered otherwise
+    // (rules::pickNearest): only the few nearest White Mages free to come,
+    // each a yes naming her price
+    // (teleport_rules.h)
     struct Responder
     {
         Candidate c;

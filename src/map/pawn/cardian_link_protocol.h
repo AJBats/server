@@ -34,7 +34,12 @@
 
 // The link's protocol number. Bump it whenever a message changes shape: hello
 // carries it both ways, and a mismatch unloads the addon (no message is kept
-// compatible, the user, 2026-09-14). 93: SHOUT_RESPONDER's sjob and slvl,
+// compatible, the user, 2026-09-14). 97: SHOUT_RESPONDER's price, a teleport
+// shout's White Mage naming hers, and SHOUT's who gone with CL_S_NOT_NEEDED,
+// which is no longer sent; 96: the teleport shout -- CL_GOAL_TELEPORT,
+// a GOAL for each crag whose gate crystal he holds, SHOUT's who, and
+// CL_S_NO_GATE_CRYSTAL, CL_S_NOT_NEEDED and CL_S_TELEPORT_HIRED;
+// 93: SHOUT_RESPONDER's sjob and slvl,
 // her support job on the shout's list; 92: MOBS_NEAR's kinds and MOB_NEAR's
 // ally, the members of his party near her too, for a friendly far pick; 91: MOBS_NEAR and MOB_NEAR, the monsters
 // near a party member as the server has them (a far pick's list), and
@@ -170,7 +175,7 @@
 // 17: the party's orders (ORDERS and the messages that change them) and
 // ENGAGE; 16: WALK, VIEW and the maneuver messages (their lines leave
 // LEGACY_CD); 15: binary messages, this file; 14 and earlier were newline text.
-enum { CL_PROTOCOL = 93 };
+enum { CL_PROTOCOL = 97 };
 
 // 'CDLK' as its bytes arrive: hello comes from a Cardian peer, not a stray connection
 enum { CL_MAGIC = 0x4B4C4443 };
@@ -326,6 +331,9 @@ enum
     CL_S_INVITE_PENDING    = 0x019F, // she already has an invite
     CL_S_NO_CONTRACT       = 0x01A0, // she holds no contract with him
     CL_S_LEFT_TOWN         = 0x01A1, // she has left the cities and towns his shout reached
+    CL_S_NO_GATE_CRYSTAL   = 0x01A2, // a teleport shout for a crag whose gate crystal he does not hold
+    CL_S_NOT_NEEDED        = 0x01A3, // no longer sent: casting a teleport himself refuses no shout for it (kept, never reused)
+    CL_S_TELEPORT_HIRED    = 0x01A4, // a White Mage of his teleport shout is on her way already
 
     // The conquest exchange (no room in her inventory: CL_S_NO_SPACE)
     CL_S_NO_GUARD          = 0x01B0, // the player stands by no gate guard that sells
@@ -1948,7 +1956,8 @@ typedef struct cl_calendar
 //
 // The world's adventurers, recruited (ROADMAP H, party_finder.h): the shout,
 // a look at one who answered, the invite, and his open contracts. A goal is
-// what he recruits for: experience, or a mission log, or a quest area.
+// what he recruits for: experience, or a mission log, or a quest area, or a
+// White Mage's teleport to a crag (teleport.h).
 
 enum
 {
@@ -1964,9 +1973,10 @@ enum
 
 enum
 {
-    CL_GOAL_EXP     = 0,
-    CL_GOAL_MISSION = 1, // log: the mission log
-    CL_GOAL_QUEST   = 2, // log: the quest area
+    CL_GOAL_EXP      = 0,
+    CL_GOAL_MISSION  = 1, // log: the mission log
+    CL_GOAL_QUEST    = 2, // log: the quest area
+    CL_GOAL_TELEPORT = 3, // log: the crag (0 Holla, 1 Dem, 2 Mea)
 };
 
 enum
@@ -1988,7 +1998,8 @@ enum
 
 // One who heard his shout, and her answer, fixed when the shout was made: an
 // answer to SHOUT. She is heard revealMs after the shout and answers decideMs
-// later; line is her words
+// later; line is her words. A teleport shout's White Mage is always willing,
+// and names her price
 typedef struct cl_shout_responder
 {
     cl_header h;
@@ -2011,6 +2022,7 @@ typedef struct cl_shout_responder
     uint8_t   slvl;
     char      zoneName[32]; // for people
     char      line[96];     // for people
+    uint32_t  price;        // a teleport shout's: her price in gil; 0 for any other goal
 } cl_shout_responder;
 
 // The shout for a goal: sixteen to twenty adventurers in the cities and
@@ -2019,7 +2031,8 @@ typedef struct cl_shout_responder
 // (CL_F_MORE), then this. The same
 // goal again without `again` is the shout he has, to replay; `again` is a new
 // one, refused inside the cooldown with the one he has coming back. Refused
-// CL_S_COOLING_DOWN with none, waitMs saying how long
+// CL_S_COOLING_DOWN with none, waitMs saying how long. A teleport shout is
+// answered by the few nearest White Mages free to come, each naming her price
 typedef struct cl_shout
 {
     cl_header h;
@@ -2112,14 +2125,14 @@ typedef struct cl_end_contract
     uint32_t  cardian; // charid
 } cl_end_contract;
 
-// One goal he could recruit for: a mission log's current mission, or a quest
-// under way. An answer to GOALS
+// One goal he could recruit for: a mission log's current mission, a quest
+// under way, or a crag whose gate crystal he holds. An answer to GOALS
 typedef struct cl_goal
 {
     cl_header h;
-    uint8_t   kind;      // CL_GOAL_MISSION or CL_GOAL_QUEST
-    uint8_t   log;       // the mission log, or the quest area
-    uint16_t  id;        // the mission's or the quest's id in its log
+    uint8_t   kind;      // CL_GOAL_MISSION, CL_GOAL_QUEST or CL_GOAL_TELEPORT
+    uint8_t   log;       // the mission log, the quest area, or the crag
+    uint16_t  id;        // the mission's or the quest's id in its log; a crag's Teleport spell
     char      title[48]; // for people
 } cl_goal;
 

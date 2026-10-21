@@ -31,7 +31,8 @@ namespace pawn::finder
     // completion; a mission draws whoever is on it, stranger or not, and is
     // the only recruitment under which a mission completed together counts
     // (the pearl's tally). Under the wrong contract nothing counts, and an
-    // exp recruit hints in party chat that exp is what she came for
+    // exp recruit hints in party chat that exp is what she came for. A
+    // teleport hires a White Mage to take the party to a crag (teleport.h)
     struct Goal
     {
         enum class Kind : uint8
@@ -39,9 +40,10 @@ namespace pawn::finder
             Experience,
             Mission,
             Quest,
+            Teleport,
         };
         Kind  kind = Kind::Experience;
-        uint8 log  = 0; // the mission log or quest area
+        uint8 log  = 0; // the mission log, the quest area, or the crag
 
         auto operator==(const Goal&) const -> bool = default;
     };
@@ -291,6 +293,21 @@ namespace pawn::finder
             // seats and the sure yeses do not always speak first
             std::shuffle(out.seats.begin(), out.seats.end(), rng);
             std::stable_sort(out.seats.begin(), out.seats.end(), [](const Seat& a, const Seat& b) { return a.hops < b.hops; });
+            return out;
+        }
+
+        // A teleport shout's few (the user, 2026-10-20): the `atMost`
+        // nearest yeses by zone lines, nearest first, ties drawn at random.
+        // Nobody else is heard: a White Mage who would not come stays quiet
+        template <class Rng>
+        auto pickNearest(std::vector<Seat> pool, const std::size_t atMost, Rng& rng) -> Heard
+        {
+            Heard out;
+            std::erase_if(pool, [](const Seat& s) { return !s.yes; });
+            std::shuffle(pool.begin(), pool.end(), rng);
+            std::stable_sort(pool.begin(), pool.end(), [](const Seat& a, const Seat& b) { return a.hops < b.hops; });
+            pool.resize(std::min(pool.size(), atMost));
+            out.seats = std::move(pool);
             return out;
         }
     } // namespace rules

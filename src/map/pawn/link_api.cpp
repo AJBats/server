@@ -44,6 +44,7 @@
 #include "pawn_danger.h"
 #include "players.h"
 #include "pull.h"
+#include "teleport.h"
 #include "account_wide.h"
 #include "pawn_items.h"
 #include "view.h"
@@ -903,7 +904,8 @@ namespace pawn::linkapi
 
         static_assert(static_cast<uint8>(pawn::finder::Goal::Kind::Experience) == CL_GOAL_EXP &&
                       static_cast<uint8>(pawn::finder::Goal::Kind::Mission) == CL_GOAL_MISSION &&
-                      static_cast<uint8>(pawn::finder::Goal::Kind::Quest) == CL_GOAL_QUEST);
+                      static_cast<uint8>(pawn::finder::Goal::Kind::Quest) == CL_GOAL_QUEST &&
+                      static_cast<uint8>(pawn::finder::Goal::Kind::Teleport) == CL_GOAL_TELEPORT);
         static_assert(static_cast<uint8>(pawn::finder::Presence::Here) == CL_PRESENCE_HERE &&
                       static_cast<uint8>(pawn::finder::Presence::Standing) == CL_PRESENCE_STANDING &&
                       static_cast<uint8>(pawn::finder::Presence::Busy) == CL_PRESENCE_BUSY &&
@@ -985,10 +987,10 @@ namespace pawn::linkapi
             reply.finish(ask, pawn::despawn(name) ? CL_S_OK : CL_S_NOT_OUT);
         }
 
-        // A goal as the finder takes it, from its fields
+        // A goal as the finder takes it, from its fields; a teleport names a crag
         auto goalOf(const uint8 kind, const uint8 log) -> std::optional<pawn::finder::Goal>
         {
-            if (kind > CL_GOAL_QUEST)
+            if (kind > CL_GOAL_TELEPORT || (kind == CL_GOAL_TELEPORT && pawn::teleport::cragOf(log) == nullptr))
             {
                 return std::nullopt;
             }
@@ -996,8 +998,9 @@ namespace pawn::linkapi
         }
 
         // What he could recruit for besides experience (xi.cardian.finder.goals):
-        // each mission log's current mission and every quest under way, a GOAL
-        // each, then the missions done on each log
+        // each mission log's current mission, every quest under way and each
+        // crag whose gate crystal he holds (teleport.h), a GOAL each, then the
+        // missions done on each log
         void goals(CCharEntity* PChar, const cl_goals& ask, Reply& reply)
         {
             auto call  = libraryCall("finder", "goals");
@@ -1029,6 +1032,16 @@ namespace pawn::linkapi
             };
             send(CL_GOAL_MISSION, (*found)["missions"]);
             send(CL_GOAL_QUEST, (*found)["quests"]);
+            for (const auto* crag : pawn::teleport::cragsHeld(PChar))
+            {
+                auto msg = make<cl_goal>();
+                msg.kind = CL_GOAL_TELEPORT;
+                msg.log  = crag->log;
+                msg.id   = crag->spell;
+                setText(msg.title, std::string(crag->name));
+                reply.more(msg);
+                answer.count = static_cast<uint8_t>(std::min<int>(answer.count + 1, UINT8_MAX));
+            }
             if (const sol::object done = (*found)["completed"]; done.get_type() == sol::type::table)
             {
                 for (const auto& [log, count] : done.as<sol::table>())
@@ -1068,6 +1081,7 @@ namespace pawn::linkapi
             std::replace(zone.begin(), zone.end(), '_', ' ');
             setText(msg.zoneName, zone);
             setText(msg.line, c.answer.line);
+            msg.price = c.price;
             return msg;
         }
 

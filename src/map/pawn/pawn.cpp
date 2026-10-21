@@ -39,6 +39,7 @@
 #include "seats.h"
 #include "supplies.h"
 #include "tactics.h"
+#include "teleport.h"
 #include "town_errands.h"
 #include "world.h"
 #include "pawn_controller.h"
@@ -541,6 +542,10 @@ namespace
         {
             PController->SetWaiting(false, false, "invited");
             pawn::applyOrdersTo(PPawn);
+            if (fromShout && pawn::teleport::isHired(PPawn->id))
+            {
+                pawn::club::tellHeadingYourWay(PPawn, PSummoner->id); // a hire runs no town errands, whose line would have said it
+            }
         }
         else if (pawn::sameCity(PPawn->loc.zone, PSummoner->loc.zone))
         {
@@ -3275,6 +3280,7 @@ namespace pawn
         redress::tick(PZone);
         offers::tick();
         together::tick();
+        teleport::tick();
         supplies::tick(PZone);
         errands::tick();
         town::tick(PZone);
