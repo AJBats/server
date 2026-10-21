@@ -24,6 +24,7 @@
 #include "cardian_link_messages.h"
 #include "pawn.h"
 #include "pawn_spellbook.h"
+#include "teleport.h"
 
 #include "common/logging.h"
 #include "entities/char_entity.h"
@@ -118,6 +119,11 @@ namespace pawn::roster
                 {
                     m.chosen = it->second;
                 }
+            }
+            // A White Mage hired for a teleport takes no role in his party (teleport.h)
+            if (pawn::teleport::isHired(PChar->id))
+            {
+                m.chosen = Role::None;
             }
             return m;
         }

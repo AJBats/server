@@ -15,7 +15,7 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
                                                           --   cohort's pace out of sight. Her level itself is her character row's (char_stats.mlvl): the census never copies it (user, 2026-09-08)
   `sub`       tinyint(3) unsigned NOT NULL DEFAULT '0',     -- support job id at her target (jobs.yaml's convention), 0 for none: her character rows carry the one at her level
   `sublevel`  tinyint(3) unsigned NOT NULL DEFAULT '0',     --   at the level the game gives a support job (map.SUBJOB_RATIO)
-  `anchor`    varchar(16)         NOT NULL DEFAULT 'bank',  -- newbie, peer, rival, veteran, settled, bank
+  `anchor`    varchar(16)         NOT NULL DEFAULT 'bank',  -- newbie, peer, rival, veteran, settled, teleporter, bank
   `cohort`    int(10) unsigned    NOT NULL DEFAULT '0',     -- a peer or rival's cohort: the job she follows, as charid * 100 + job; 0 = none
   `seed`      int(10) unsigned    NOT NULL DEFAULT '0',     -- her private variance
   `wealth`    tinyint(3) unsigned NOT NULL DEFAULT '1',     -- 0 poor, 1 middling, 2 rich
@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS `cardian_census` (
   `target2`   tinyint(3) unsigned NOT NULL DEFAULT '0',     --   what its ladder says she should be on it now
   `later_jobs` varchar(64)        NOT NULL DEFAULT '',      -- the jobs her support windows had her take up after it, "job:target" joined by commas (census.py take_up)
   `foundation` tinyint(3) unsigned NOT NULL DEFAULT '0',    -- an advanced first job's foundation, the basic job that opened it (census.py foundation_of, #522): recorded once minted, 0 none
+  `home`      smallint(5) unsigned NOT NULL DEFAULT '0',    -- a teleporter's hub (anchor 'teleporter'): the zone of her home point, 0 for everyone else
   PRIMARY KEY (`name`),
   KEY `idx_cardian_census_charid` (`charid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

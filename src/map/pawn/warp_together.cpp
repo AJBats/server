@@ -27,6 +27,7 @@
 #include "pawn.h"
 #include "pawn_controller.h"
 #include "pawn_items.h"
+#include "teleport.h"
 
 #include "ai/ai_container.h"
 #include "ai/states/item_state.h"
@@ -343,7 +344,9 @@ namespace pawn::together
             std::vector<CCharEntity*> out;
             for (auto* PPawn : commandablePawns(PPlayer))
             {
-                if (PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty && PPawn->loc.zone == PPlayer->loc.zone && !PPawn->isDead())
+                // a White Mage hired for a teleport goes with no warp of his (teleport.h locked)
+                if (PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty && PPawn->loc.zone == PPlayer->loc.zone && !PPawn->isDead() &&
+                    !pawn::teleport::locked(PPawn))
                 {
                     out.push_back(PPawn);
                 }

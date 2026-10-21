@@ -90,7 +90,7 @@ namespace pawn::tactics
                         {0.0, std::max(0.0, seconds(casting->GetStartTime()) + duration(casting->GetCastTime()) - now)}, 0.0, true});
                 }
             }
-            if (gambits == nullptr || !scope.holders.contains(body->id) || !gambits->MasterOn()) continue;
+            if (gambits == nullptr || !scope.holders.contains(body->id) || !gambits->Running()) continue;
 
             auto&        host     = gambits->Host();
             const double busy     = busyUntil(body, host, now);

@@ -197,7 +197,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
         EndRestOrder(fmt::format("HP and MP at {}%, her gambits take over", m_RestOrder.percent));
     }
     // Her own row's order goes with her gambits: switched off, it ends
-    if (m_RestOrder.active() && m_RestOrder.byRow && !m_Gambits->MasterOn())
+    if (m_RestOrder.active() && m_RestOrder.byRow && !m_Gambits->Running())
     {
         EndRestOrder("her gambits are off");
     }
@@ -220,7 +220,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // Called off by the player (CallOffRest): her own kneels wait, so she
     // stays with the party; his rest order still stands her down
     const bool calledOff     = now < m_RestCalledOffUntil;
-    const bool followEnabled = m_Gambits->MasterOn() && RestsWithPlayer() && leader != nullptr && !calledOff;
+    const bool followEnabled = m_Gambits->Running() && RestsWithPlayer() && leader != nullptr && !calledOff;
     const bool follow = m_RestFollow.request(followEnabled, leader != nullptr && leader->animation == xi::Animation::Healing,
                                            now, std::chrono::duration<double>(ReactionBeat()).count());
     const bool nearLeader = leader != nullptr && (Staked() || distance(POwner->loc.p, leader->loc.p) < 10.0f);
@@ -229,7 +229,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     // The emergency cure stands any kneeling caster the party picks for it
     // (the bank advises everyone who offers it spells), whatever her Rest
     // row says: the wake is about the cure, not her MP pacing
-    const bool urgent = advice.has_value() && advice->wake && m_Gambits->MasterOn();
+    const bool urgent = advice.has_value() && advice->wake && m_Gambits->Running();
     // Her marked Rest row, its conditions holding, is the tactician's MP
     // pacing (RESEARCH §17.13): the bank's advice on when to kneel and
     // when she is ready
@@ -239,7 +239,7 @@ auto CPawnController::RestTick(const bool stationary, const bool townKneel, cons
     {
         m_KneelByRow = false; // the row's kneel is over, however it ended
     }
-    const bool support = advice.has_value() && m_Gambits->MasterOn() &&
+    const bool support = advice.has_value() && m_Gambits->Running() &&
                          (pawn::tactics::offersRest(POwner) || (healing != nullptr && m_KneelByRow && m_Gambits->HasRestRow()));
     // MP alone decides a casting mage's own rest: her missing HP is her
     // cures' to mend, as anyone else's is (the user, 2026-09-23). Rest

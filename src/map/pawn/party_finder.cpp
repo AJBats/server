@@ -26,6 +26,7 @@
 #include "pawn.h"
 #include "pawn_travel.h"
 #include "seats.h"
+#include "teleport.h"
 
 #include "ai/ai_container.h"
 #include "common/database.h"
@@ -294,7 +295,8 @@ namespace pawn::finder
                 return Answer{ false, fit, *busy };
             }
 
-            const int side = rules::bandSide(PPlayer->GetMLevel(), levelOf(PPawn, f.level), settings::get<uint8>("pawn.FINDER_BAND"));
+            // a teleport asks for her spell, not her level beside his
+            const int side = goal.kind == Goal::Kind::Teleport ? 0 : rules::bandSide(PPlayer->GetMLevel(), levelOf(PPawn, f.level), settings::get<uint8>("pawn.FINDER_BAND"));
             if (side < 0)
             {
                 return Answer{ false, fit, pick(f.seed, { "I'd only slow you down.", "I'm not ready for what you're doing." }) };
@@ -392,6 +394,8 @@ namespace pawn::finder
                     return CL_S_OK;
                 case Goal::Kind::Quest:
                     return goal.log > 10 ? CL_S_MALFORMED : CL_S_OK;
+                case Goal::Kind::Teleport:
+                    return pawn::teleport::shoutRefusal(PPlayer, goal.log);
                 default:
                     return CL_S_OK;
             }
@@ -406,9 +410,21 @@ namespace pawn::finder
             Goal              goal;
             timer::time_point at;            // a consent not answered within kConsentLifetime lapses
             bool              shout = false; // her yes to his shout, not her open contract
+            uint32            price = 0;     // a teleport's: the price she named
         };
         std::unordered_map<uint32, Consent> consented;
         constexpr auto                      kConsentLifetime = std::chrono::minutes(2);
+
+        // A teleport invite of his waits on her answer
+        auto teleportPending(const uint32 playerCharID) -> bool
+        {
+            const auto now = timer::now();
+            return std::ranges::any_of(consented, [&](const auto& entry)
+                                       {
+                                           const auto& c = entry.second;
+                                           return c.playerCharID == playerCharID && c.goal.kind == Goal::Kind::Teleport && now - c.at <= kConsentLifetime;
+                                       });
+        }
 
         // Joined just now on a yes to his shout, until gatherOrHold asks
         // (joinedFromShout)
@@ -548,13 +564,27 @@ namespace pawn::finder
         {
             goal.kind = Goal::Kind::Quest;
         }
+        else if (kind == "teleport")
+        {
+            goal.kind = Goal::Kind::Teleport;
+        }
         goal.log = static_cast<uint8>(std::clamp(log, 0, 255));
         return goal;
     }
 
     auto kindName(const Goal& goal) -> const char*
     {
-        return goal.kind == Goal::Kind::Mission ? "mission" : goal.kind == Goal::Kind::Quest ? "quest" : "exp";
+        switch (goal.kind)
+        {
+            case Goal::Kind::Mission:
+                return "mission";
+            case Goal::Kind::Quest:
+                return "quest";
+            case Goal::Kind::Teleport:
+                return "teleport"; // eight letters, the width of cardian_party_memory.contract
+            default:
+                return "exp";
+        }
     }
 
     auto shout(const CCharEntity* PPlayer, const Goal& goal, const bool again, uint16& refusal, uint32& waitMs) -> const Shout*
@@ -575,6 +605,11 @@ namespace pawn::finder
         if (partyFull(PPlayer))
         {
             refusal = CL_S_PARTY_FULL;
+            return nullptr;
+        }
+        if (pawn::teleport::hiringFor(PPlayer->id) || teleportPending(PPlayer->id))
+        {
+            refusal = CL_S_TELEPORT_HIRED; // one contract at a time while a teleport is under way
             return nullptr;
         }
         if (refusal = goalHeld(PPlayer, goal); refusal != CL_S_OK)
@@ -619,11 +654,23 @@ namespace pawn::finder
             }
         }
         const int wear = rules::wearBonus(pressure, settings::get<int>("pawn.FINDER_WEAR_STEP"));
+        // a teleport is heard by those who cast it now, and nobody else
+        const auto teleporters = goal.kind == Goal::Kind::Teleport ? std::optional<pawn::teleport::Responders>(std::in_place, goal.log) : std::nullopt;
         for (const auto& f : allFacts(PPlayer->id))
         {
             const auto* PPawn = pawn::findPawn(f.charid);
             auto*       PHere = zoneOf(PPawn, f.posZone);
-            if (!rules::hears(cityOrTown(PHere), f.nation, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
+            const bool inTown = teleporters.has_value() ? pawn::teleport::isTown(PHere) : cityOrTown(PHere);
+            if (!rules::hears(inTown, f.nation, goal) || !available(PPlayer, f, PPawn) || (PPawn == nullptr && !pawn::seats::has(f.charid)))
+            {
+                continue;
+            }
+            if (teleporters.has_value() && !teleporters->answers(f.charid, PPawn, f.job, f.level, f.sjob, f.slvl))
+            {
+                continue;
+            }
+            // A town's own White Mage (world.h keepResidents) answers its teleport shouts alone
+            if (!teleporters.has_value() && pawn::world::isTeleporter(f.charid))
             {
                 continue;
             }
@@ -642,10 +689,32 @@ namespace pawn::finder
             const auto hop = hopsTo.find(c.zoneId);
             c.hops     = hop != hopsTo.end() ? hop->second : std::numeric_limits<uint32>::max();
             c.presence = presenceOf(PPlayer, PPawn, f.charid, PHere);
-            c.answer   = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(rules::kMoodMin, rules::kMoodMax + 1), wear);
+            if (teleporters.has_value())
+            {
+                // a White Mage free to come names her price; one who is not stays quiet
+                if (busyNo(f, PPawn).has_value())
+                {
+                    continue;
+                }
+                c.price  = pawn::teleport::rules::priceFor(f.charid, goal.log);
+                c.answer = Answer{ true, MissionFit::Free, pawn::teleport::answerLine(pawn::teleport::rules::rollOf(f.charid, goal.log) >> 8, goal.log) };
+            }
+            else
+            {
+                c.answer = judge(PPlayer, f, PPawn, goal, fame, xirand::GetRandomNumber(rules::kMoodMin, rules::kMoodMax + 1), wear);
+            }
             c.charid   = f.charid;
             c.friendly = f.partied || f.affinity > 0;
             pool.push_back(std::move(c));
+        }
+
+        // A teleport is answered by the White Mages of his own hub alone (the user, 2026-10-21): he
+        // shouts for one in town (teleport::shoutRefusal), where a teleporter always is (world.h
+        // keepResidents)
+        if (teleporters.has_value())
+        {
+            const auto hub = pawn::teleport::hubOf(PPlayer->loc.zone);
+            std::erase_if(pool, [&](const Candidate& c) { return pawn::teleport::hubOf(zoneutils::GetZone(static_cast<xi::ZoneId>(c.zoneId))) != hub; });
         }
 
         // Who of them hear it, and in what order (rules::pickHeard): those who
@@ -664,7 +733,7 @@ namespace pawn::finder
         {
             const auto& c      = pool[i];
             const auto  it     = heard.find(c.charid);
-            const bool  cannot = !c.answer.yes && (c.answer.fit == MissionFit::Behind || rules::bandSide(PPlayer->GetMLevel(), c.level, band) != 0);
+            const bool  cannot = !c.answer.yes && goal.kind != Goal::Kind::Teleport && (c.answer.fit == MissionFit::Behind || rules::bandSide(PPlayer->GetMLevel(), c.level, band) != 0);
             seats.push_back(rules::Seat{ .index    = i,
                                          .yes      = c.answer.yes,
                                          .cannot   = cannot,
@@ -674,8 +743,9 @@ namespace pawn::finder
                                          .heardAt  = it != heard.end() ? it->second.time_since_epoch().count() : std::numeric_limits<int64>::min() });
         }
         const auto        count        = static_cast<std::size_t>(xirand::GetRandomNumber(static_cast<int>(rules::kHeardMin), static_cast<int>(rules::kHeardMax) + 1));
-        const std::size_t need         = 6 - std::min<std::size_t>(6, partySize(PPlayer));
-        const auto        picked       = rules::pickHeard(std::move(seats), count, need, xirand::rng());
+        const std::size_t need         = goal.kind == Goal::Kind::Teleport ? 1 : 6 - std::min<std::size_t>(6, partySize(PPlayer)); // one White Mage takes a party
+        const auto        picked       = goal.kind == Goal::Kind::Teleport ? rules::pickNearest(std::move(seats), pawn::teleport::rules::kAnswersAtMost, xirand::rng())
+                                                                           : rules::pickHeard(std::move(seats), count, need, xirand::rng());
         const auto        nameAt       = [&](const std::optional<std::size_t>& index) { return index.has_value() ? pool[*index].name : std::string("empty"); };
         const std::string friendSeat   = nameAt(picked.friendSeat);
         const std::string affinitySeat = nameAt(picked.affinitySeat);
@@ -731,6 +801,20 @@ namespace pawn::finder
         made.shout.waitMs = shoutWaitMs(PPlayer->id);
         auto [it, inserted] = shouts.insert_or_assign(PPlayer->id, std::move(made));
         return &it->second.shout;
+    }
+
+    auto heldShout(const uint32 playerCharID) -> uint32
+    {
+        const auto* held = currentShout(playerCharID);
+        return held != nullptr ? held->shout.id : 0;
+    }
+
+    void endShout(const uint32 playerCharID)
+    {
+        if (shouts.erase(playerCharID) > 0)
+        {
+            ShowInfoFmt("pawn: {}'s shout has done its work and ends", pawn::seats::nameOf(playerCharID));
+        }
     }
 
     void snapshot(CCharEntity* PPawn)
@@ -955,6 +1039,14 @@ namespace pawn::finder
         {
             return CL_S_PARTY_FULL;
         }
+        // One contract at a time while a teleport is under way, its invite
+        // still unanswered included: one White Mage at a time. Every Link
+        // request runs on the map thread one after another, so the second
+        // invite always finds the first's consent
+        if (pawn::teleport::hiringFor(PPlayer->id) || teleportPending(PPlayer->id))
+        {
+            return CL_S_TELEPORT_HIRED;
+        }
         // The list's own gate: an unrecruited census body, a yes in the
         // player's current shout for this goal, still in a city or a town
         // (where the shout reached her), then what stops her whatever she
@@ -989,9 +1081,16 @@ namespace pawn::finder
             {
                 return CL_S_AWAY;
             }
-            if (!cityOrTown(zoneOf(PPawn, facts->posZone)))
+            if (auto* PHere = zoneOf(PPawn, facts->posZone); !(goal.kind == Goal::Kind::Teleport ? pawn::teleport::isTown(PHere) : cityOrTown(PHere)))
             {
                 return CL_S_LEFT_TOWN;
+            }
+            if (goal.kind == Goal::Kind::Teleport)
+            {
+                if (const auto refusal = pawn::teleport::shoutRefusal(PPlayer, goal.log); refusal != CL_S_OK)
+                {
+                    return refusal;
+                }
             }
             const auto fit = goal.kind == Goal::Kind::Mission ? missionFitOf(PPlayer, *facts, PPawn, goal) : MissionFit::Free;
             if (const auto hard = hardNo(PPlayer, *facts, PPawn, goal, fit); hard.has_value())
@@ -1024,7 +1123,8 @@ namespace pawn::finder
             return CL_S_INVITE_PENDING;
         }
 
-        consented[charid] = Consent{ PPlayer->id, asked, timer::now(), !held.has_value() };
+        const auto* quoted = held.has_value() ? nullptr : shoutedYes(PPlayer, charid, goal);
+        consented[charid]  = Consent{ PPlayer->id, asked, timer::now(), !held.has_value(), quoted != nullptr ? quoted->c.price : 0 };
         PPawn->InvitePending.entity.UniqueNo = PPlayer->id;
         PPawn->InvitePending.entity.ActIndex = PPlayer->targid;
         PPawn->InvitePending.kind            = PartyKind::Party;
@@ -1080,6 +1180,10 @@ namespace pawn::finder
                          "ON DUPLICATE KEY UPDATE contract = VALUES(contract), last_partied = NOW()",
                          consent.playerCharID, PPawn->id, kindName(consent.goal));
         ShowInfoFmt("pawn: {} joins {} under the {} contract", PPawn->getName(), PInviter->getName(), kindName(consent.goal));
+        if (consent.goal.kind == Goal::Kind::Teleport)
+        {
+            pawn::teleport::hired(consent.playerCharID, PPawn->id, consent.goal.log, consent.shout, consent.price);
+        }
         return true;
     }
 

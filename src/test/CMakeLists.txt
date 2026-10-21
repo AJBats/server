@@ -126,6 +126,7 @@ xi_add_executable(xi_test testserver.rc
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_cohort_play_tests.cpp # CARDIAN: the cohorts in play and the town sign-in's arithmetic
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_porter_tests.cpp # CARDIAN: the porter tests
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_client_navmesh_tests.cpp # CARDIAN: the porter's navmesh for the client, its drops clear of the collision
+    ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_teleport_tests.cpp # CARDIAN: the teleport shout's rules: the crags, who answers, who goes and when she casts
     ${CMAKE_CURRENT_SOURCE_DIR}/tests/cardian_pawn_stubs.cpp # CARDIAN: the pawn module's side of upstream's marked calls, for a link without it
 )
 add_dependencies(xi_test data_schema_generate)

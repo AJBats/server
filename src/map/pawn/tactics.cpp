@@ -1033,19 +1033,19 @@ namespace pawn::tactics
     auto offersSpells(CBattleEntity* PMember) -> bool
     {
         auto* PGambits = pawn::gambitsOf(PMember);
-        return PGambits != nullptr && PGambits->MasterOn() && PGambits->OffersSpells();
+        return PGambits != nullptr && PGambits->Running() && PGambits->OffersSpells();
     }
 
     auto offersRest(CBattleEntity* PMember) -> bool
     {
         auto* PGambits = pawn::gambitsOf(PMember);
-        return PGambits != nullptr && PGambits->MasterOn() && PGambits->OffersRest();
+        return PGambits != nullptr && PGambits->Running() && PGambits->OffersRest();
     }
 
     auto nukesOf(CBattleEntity* PMember) -> std::vector<SpellID>
     {
         auto* PGambits = pawn::gambitsOf(PMember);
-        return PGambits != nullptr && PGambits->MasterOn() ? PGambits->OfferedNukes() : std::vector<SpellID>{};
+        return PGambits != nullptr && PGambits->Running() ? PGambits->OfferedNukes() : std::vector<SpellID>{};
     }
 
     auto attendsFight(CBattleEntity* PMember, CBattleEntity* PMob) -> bool

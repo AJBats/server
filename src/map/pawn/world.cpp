@@ -19,6 +19,7 @@
 #include "redress_math.h"
 #include "seats.h"
 #include "tactician_line.h"
+#include "teleport.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -117,6 +118,9 @@ namespace
         // seat, standing only for a party; an ordinary seatless body once a
         // player holds her
         bool signedIn = false;
+        // A teleporter's sign-in to her hub (keepResidents): the town
+        // sign-in's counts and sign-outs leave her be
+        bool resident = false;
 
         bool farming = false;
 
@@ -1229,8 +1233,18 @@ namespace
             body.leftAt = Spot{ static_cast<uint16>(PPawn->getZone()), PPawn->loc.p };
         }
         body.homeward = body.holder == 0 && PPawn != nullptr && PPawn->loc.zone != nullptr && static_cast<uint16>(PPawn->getZone()) != body.zone;
+        // A town's own White Mage faded away from her hub (a hire ended where
+        // her Warp did not take her home) is home at once: her row set at her
+        // home point, where her hub's teleport shout hears her
+        const bool awayFromHub = body.resident && body.holder == 0 && PPawn != nullptr &&
+                                 pawn::teleport::hubOf(PPawn->loc.zone) != pawn::teleport::hubOf(zoneutils::GetZone(static_cast<xi::ZoneId>(body.zone)));
         pawn::finder::snapshot(PPawn);
         pawn::despawnById(body.charid, true);
+        if (awayFromHub)
+        {
+            pawn::markPresent(body.charid, body.zone, body.point);
+            ShowInfoFmt("world: {} faded away from her hub: home again at zone {}", body.name, body.zone);
+        }
         body.present = false;
         body.downSince.reset();
         ShowInfoFmt("world: {} fades out ({}), still online", body.name, why);
@@ -2120,6 +2134,7 @@ namespace
         if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, c.anchor, c.cohort, c.cohort2, c.seed, s.mjob AS job, s.mlvl FROM cardian_census c "
                                                "JOIN char_stats s ON s.charid = c.charid "
                                                "WHERE c.recruited = 0 AND c.anchor <> 'bank' " // a census cut before the name bank was retired keeps its unused names as 'bank' rows
+                                               "AND c.anchor <> 'teleporter' "                 // a teleporter keeps to her hub, never dealt a seat (keepResidents)
                                                "AND NOT EXISTS (SELECT 1 FROM cardian_party_memory h WHERE h.pawn_charid = c.charid AND h.contract <> '') "
                                                "AND NOT " + std::string(kWearsPearl)); // held for a player by his linkshell's pearl (club.h)
             rset)
@@ -3337,9 +3352,9 @@ namespace pawn::world
         out.reserve(bodies.size());
         for (const auto& [charid, body] : bodies)
         {
-            if (body.pinned)
+            if (body.pinned || body.resident)
             {
-                continue; // the debug ring stands outside the waterfall
+                continue; // the debug ring stands outside the waterfall, and a teleporter keeps to her hub
             }
             Presence p{ .charid = charid, .zone = body.zone, .signedIn = body.signedIn };
             if (const auto* d = dealableOf(body.name); d != nullptr)
@@ -3393,8 +3408,9 @@ namespace pawn::world
         return placeBudget();
     }
 
-    bool signInTown(const std::string& name, const uint16 zone)
+    bool signInTown(const std::string& name, const uint16 zone, const std::optional<position_t> home)
     {
+        const bool resident = home.has_value();
         auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(zone));
         if (!isEnabled() || PZone == nullptr)
         {
@@ -3428,7 +3444,11 @@ namespace pawn::world
         const auto& table  = loadSlots(PZone);
         const auto  usable = arrivalExits(table);
         position_t  at{};
-        if (!usable.empty())
+        if (resident)
+        {
+            at = snapToMesh(PZone, *home); // a teleporter waits at her home point, where her Warp sets her down, slot table or none
+        }
+        else if (!usable.empty())
         {
             at = gateSpot(PZone, table.exitPoints[usable[nameHash(name) % usable.size()]], name, kComingSalt);
         }
@@ -3448,13 +3468,89 @@ namespace pawn::world
         body.target        = row->target;
         body.seed          = row->seed;
         body.signedIn      = true;
+        body.resident      = resident;
         charidByName[name] = charid;
-        pawn::seats::offerWorld(charid, zone, true);
+        pawn::seats::offerWorld(charid, zone, true, resident);
         if (tickDebug())
         {
             ShowInfoFmt("world: {} ({} {}) signs in to {} with no seat", name, magic_enum::enum_name(static_cast<xi::Job>(row->job)), row->level, PZone->getName());
         }
         return true;
+    }
+
+    namespace
+    {
+        // The teleporters by the census (census.py TELEPORTER): each with her home point, the zone of
+        // which is her hub; read again every half minute, looked after every few seconds
+        struct Resident
+        {
+            std::string name;
+            uint32      charid = 0;
+            uint16      home   = 0;
+            position_t  at{};
+        };
+        std::vector<Resident> residents;
+        realtime::time_point  residentsAt{};
+        realtime::time_point  keptAt{};
+        constexpr auto        kResidentsFor = std::chrono::seconds(30);
+        constexpr auto        kKeepEvery    = std::chrono::seconds(5);
+
+        auto teleporters() -> const std::vector<Resident>&
+        {
+            const auto now = realtime::now();
+            if (residentsAt != realtime::time_point{} && now - residentsAt < kResidentsFor)
+            {
+                return residents;
+            }
+            residentsAt = now;
+            residents.clear();
+            if (const auto rset = db::preparedStmt("SELECT c.name, c.charid, h.home_zone, h.home_x, h.home_y, h.home_z, h.home_rot FROM cardian_census c JOIN chars h ON h.charid = c.charid "
+                                                   "WHERE c.anchor = 'teleporter' AND c.recruited = 0");
+                rset)
+            {
+                while (rset->next())
+                {
+                    position_t at{};
+                    at.x        = rset->get<float>("home_x");
+                    at.y        = rset->get<float>("home_y");
+                    at.z        = rset->get<float>("home_z");
+                    at.rotation = rset->get<uint8>("home_rot");
+                    residents.push_back(Resident{ .name = rset->get<std::string>("name"), .charid = rset->get<uint32>("charid"), .home = rset->get<uint16>("home_zone"), .at = at });
+                }
+            }
+            return residents;
+        }
+    } // namespace
+
+    auto isTeleporter(const uint32 charid) -> bool
+    {
+        return std::ranges::any_of(teleporters(), [&](const Resident& r) { return r.charid == charid; });
+    }
+
+    void keepResidents()
+    {
+        const auto now = realtime::now();
+        if (!isEnabled() || (keptAt != realtime::time_point{} && now - keptAt < kKeepEvery))
+        {
+            return;
+        }
+        keptAt = now;
+        for (const auto& r : teleporters())
+        {
+            // the world holds her already (faded away from her hub she is home at once, fadeOut), she
+            // stands (with a party, on her way home), a venture has her, or she could not be made
+            // ready a moment ago (signInRefused, as the town sign-in's own)
+            const auto refused = signInRefused.find(r.name);
+            if (r.charid == 0 || bodies.contains(r.charid) || pawn::findPawn(r.charid) != nullptr || pawn::seats::has(r.charid) || pawn::errands::isAway(r.charid) ||
+                (refused != signInRefused.end() && now < refused->second))
+            {
+                continue;
+            }
+            if (signInTown(r.name, r.home, r.at))
+            {
+                ShowInfoFmt("world: {} keeps to zone {} for the teleport shout", r.name, r.home);
+            }
+        }
     }
 
     void signOutTown(const uint32 charid)
@@ -3475,8 +3571,8 @@ namespace pawn::world
         const auto it = bodies.find(charid);
         // her yes in a shout keeps her for the invite, which the ladder can still stand her for; she is
         // listed again at every run, and goes once the shout lapses
-        if (it == bodies.end() || !it->second.signedIn || it->second.present || it->second.holder != 0 || withPlayer(charid) || pawn::errands::isAway(charid) ||
-            pawn::finder::shoutedFor(it->second.name))
+        if (it == bodies.end() || !it->second.signedIn || it->second.resident || it->second.present || it->second.holder != 0 || withPlayer(charid) ||
+            pawn::errands::isAway(charid) || pawn::finder::shoutedFor(it->second.name))
         {
             return;
         }

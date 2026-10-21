@@ -45,6 +45,27 @@ namespace
     std::unordered_map<uint32, timer::time_point> invited;
     constexpr auto                                kInviteHold = std::chrono::seconds(60);
 
+    // A body of the world just out of a real player's party keeps standing as
+    // if still in it for pawn.WORLD_FADE_DELAY (the user, 2026-10-21): her
+    // last act with him -- a hire's Warp home, teleport.cpp -- plays out before
+    // the world can fade her, a town sign-in's slot or a player near or not
+    std::unordered_map<uint32, timer::time_point> parted;
+
+    auto justParted(const uint32 charid) -> bool
+    {
+        const auto it = parted.find(charid);
+        if (it == parted.end())
+        {
+            return false;
+        }
+        if (timer::now() - it->second >= std::chrono::seconds(settings::get<uint32>("pawn.WORLD_FADE_DELAY")))
+        {
+            parted.erase(it);
+            return false;
+        }
+        return true;
+    }
+
     auto invitedNow(const uint32 charid) -> bool
     {
         const auto it = invited.find(charid);
@@ -168,21 +189,22 @@ namespace pawn::seats
                        Lookup{
                            [](const uint16 zone) { return pawn::world::zoneWarm(zone); },
                            [](const uint16 zone) { return pawn::world::playerIn(zone); },
-                           [](const uint32 charid) { return invitedNow(charid) || pawn::withRealPlayer(charid); },
+                           [](const uint32 charid) { return invitedNow(charid) || pawn::withRealPlayer(charid) || justParted(charid); },
                            [](const uint32 charid) { return pawn::errands::isAway(charid); },
                        },
                        Engine{ stand, fade, signIn, signOut },
                        std::max<uint32>(1, settings::get<uint32>("pawn.WORLD_STANDS_PER_RUN")));
         summonBeside.clear();
         invited.clear();
+        parted.clear();
         lastRun = {};
     }
 
-    void offerWorld(const uint32 charid, const uint16 zone, const bool partyOnly)
+    void offerWorld(const uint32 charid, const uint16 zone, const bool partyOnly, const bool resident)
     {
         if (ladder && charid != 0)
         {
-            ladder->offer(charid, Facts{ .zone = zone, .tier = worldTier(charid), .owner = 0, .partyOnly = partyOnly });
+            ladder->offer(charid, Facts{ .zone = zone, .tier = worldTier(charid), .owner = 0, .partyOnly = partyOnly, .resident = resident });
         }
     }
 
@@ -376,6 +398,14 @@ namespace pawn::seats
     {
         const auto facts = factsOf(charid);
         return facts.has_value() && (facts->owner == 0 || facts->owner == playerCharID);
+    }
+
+    void noteParted(const uint32 charid)
+    {
+        if (isWorlds(charid))
+        {
+            parted[charid] = timer::now();
+        }
     }
 
     bool isWorlds(const uint32 charid)

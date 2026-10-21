@@ -48,7 +48,7 @@ class CCharEntity;
 namespace pawn::finder
 {
     auto goalFrom(const std::string& kind, int log) -> Goal;
-    auto kindName(const Goal& goal) -> const char*; // "exp", "quest", "mission"
+    auto kindName(const Goal& goal) -> const char*; // "exp", "quest", "mission", "teleport"
 
     struct Answer
     {
@@ -88,6 +88,7 @@ namespace pawn::finder
         uint32      hops     = 0; // zone lines between her zone and the player's
         Presence    presence = Presence::Away;
         Answer      answer;
+        uint32      price = 0; // a teleport shout's: her price in gil (teleport_rules.h)
     };
 
     // The shout: sixteen to twenty of the adventurers online in the cities
@@ -107,7 +108,10 @@ namespace pawn::finder
     // cooldown. A no records nothing against the one who gave it; a shout
     // with a soft no in it wears the towns down for his next shout for that
     // goal (rules::Wear), and a recruit joining from his shout starts that
-    // goal's wear over
+    // goal's wear over. A teleport shout is answered otherwise
+    // (rules::pickNearest): only the few nearest White Mages free to come,
+    // each a yes naming her price, and none of the wear
+    // (teleport_rules.h)
     struct Responder
     {
         Candidate c;
@@ -128,6 +132,15 @@ namespace pawn::finder
     // not hold, or the cooldown with no shout of his to give back, waitMs
     // saying how long
     auto shout(const CCharEntity* PPlayer, const Goal& goal, bool again, uint16& refusal, uint32& waitMs) -> const Shout*;
+
+    // The id of the shout the server still holds for him, 0 for none: past
+    // SHOUT_LIFETIME, or ended (endShout). His addon drops a shout of its own
+    // the server no longer holds (the Link's CONTRACTS)
+    auto heldShout(uint32 playerCharID) -> uint32;
+
+    // His shout has done its work -- the teleport it hired has landed -- and
+    // goes; its cooldown stays
+    void endShout(uint32 playerCharID);
 
     // A look at one of the shout's responders before the invite: her jobs,
     // nation and rank, her affinity, what she wears -- her body's gear when

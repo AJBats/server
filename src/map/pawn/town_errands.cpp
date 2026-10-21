@@ -30,6 +30,7 @@
 #include "redress.h"
 #include "seats.h"
 #include "supplies.h"
+#include "teleport.h"
 #include "world.h"
 
 #include "ai/ai_container.h"
@@ -1041,7 +1042,8 @@ namespace pawn::town
                     watch.pending = false;
                     continue;
                 }
-                const auto who  = city ? cardian::town::whoGoes(whoOf(PPawn)) : Who::Nobody;
+                // a White Mage hired for a teleport comes straight to him (teleport.h)
+                const auto who  = city && !pawn::teleport::isHired(PPawn->id) ? cardian::town::whoGoes(whoOf(PPawn)) : Who::Nobody;
                 const auto busy = who != Who::Nobody ? busyOf(PPawn) : Busy{};
                 const bool free = who != Who::Nobody && !cardian::town::interrupted(busy);
                 if (cardian::town::looksNow({ watch.zone, watch.free, watch.who }, zone, free, who))
@@ -1126,7 +1128,12 @@ namespace pawn::town
         {
             return true;
         }
-        // Just invited in a city: her first look comes before any trek to him
+        // Just invited in a city: her first look comes before any trek to
+        // him, unless she is hired for a teleport
+        if (pawn::teleport::isHired(charid))
+        {
+            return false;
+        }
         const auto it = watches.find(charid);
         if (it == watches.end() || it->second.joinedAt == timer::time_point{} || timer::now() - it->second.joinedAt > kJoinedFor)
         {

@@ -39,6 +39,7 @@
 #include "seats.h"
 #include "supplies.h"
 #include "tactics.h"
+#include "teleport.h"
 #include "town_errands.h"
 #include "world.h"
 #include "pawn_controller.h"
@@ -424,6 +425,10 @@ namespace
             ShowErrorFmt("pawn: LoadChar failed for {}", charid);
             return nullptr;
         }
+        if (pawn::seats::isWorlds(charid))
+        {
+            pawn::teleport::giveCrystals(PPawn.get()); // every body of the world holds the gate crystals (teleport.h)
+        }
         PPawn->clearPacketList();
         return PPawn;
     }
@@ -541,6 +546,10 @@ namespace
         {
             PController->SetWaiting(false, false, "invited");
             pawn::applyOrdersTo(PPawn);
+            if (fromShout && pawn::teleport::isHired(PPawn->id))
+            {
+                pawn::club::tellHeadingYourWay(PPawn, PSummoner->id); // a hire runs no town errands, whose line would have said it
+            }
         }
         else if (pawn::sameCity(PPawn->loc.zone, PSummoner->loc.zone))
         {
@@ -630,6 +639,9 @@ namespace pawn
     {
         // Pawn session rows are marked by client_addr = 0; a crash can orphan them
         db::preparedStmt("DELETE FROM accounts_sessions WHERE client_addr = 0");
+        // No teleport hire outlives the map: its contracts end, before the
+        // guests' gambits below are judged by who still holds one
+        teleport::endContractsAtBoot();
         // A wild cardian's saved gambits are a guest's, and a restart ends
         // every party she was in
         db::preparedStmt("DELETE g FROM cardian_gambits g JOIN cardian_census x ON x.charid = g.pawn_charid WHERE x.recruited = 0 "
@@ -1002,6 +1014,9 @@ namespace pawn
         clearStake(PPlayer->id, "signed out");
         // His skillchain plan lasts his session, never saved (skillchains.h)
         chains::signedOut(PPlayer->id);
+        // So does a teleport hire: she leaves his party here, before it is
+        // carried out with him, her contract with it (teleport.h)
+        teleport::signOut(PPlayer);
 
         // His party (ROADMAP H): the last human out takes every cardian in
         // it out with him, where she stands -- his alts, another player's
@@ -1279,6 +1294,7 @@ namespace pawn
         tactics::memberLeft(PMember, PParty);
         roster::memberLeft(PMember);
         chains::memberLeft(PMember);
+        teleport::noteLeftParty(PMember->id); // a teleport hire ends with either of them out of the party
         // A real player out of the party takes every cardian of it with him:
         // the orders and the trek were his
         const bool playerLeft = !pawns.contains(PMember->id);
@@ -1297,6 +1313,12 @@ namespace pawn
 
             if (herself)
             {
+                // Out of a real player's party, her grace before the world fades
+                // her (seats.h noteParted); a camp party of the world's own gives none
+                if (ownerIt != playerByPawn.end())
+                {
+                    pawn::seats::noteParted(charid);
+                }
                 playerByPawn.erase(charid);
                 clearWalkOrder(charid); // out of the party, no longer his to walk
             }
@@ -1601,6 +1623,15 @@ namespace pawn
         }
         if (auto* PController = dynamic_cast<CPawnController*>(PPawn->PAI->GetController()))
         {
+            // A White Mage hired for a teleport takes none of the party's
+            // orders: no camp, no hunt, no retreat (teleport.h locked)
+            if (teleport::locked(PPawn))
+            {
+                PController->SetRetreat(false);
+                PController->SetStake(std::nullopt);
+                PController->SetHunting(false);
+                return;
+            }
             // Two orders, one switch each, so neither changes meaning with
             // the other (the user, 2026-09-17): the stake says where they
             // work from -- his side, or a place that does not move -- and
@@ -1993,7 +2024,8 @@ namespace pawn
         uint32 sent = 0;
         for (auto& [charid, PPawn] : pawns)
         {
-            if (ordersOwnerOf(PPawn.get()) != POwner->id || PPawn->loc.zone != POwner->loc.zone || PPawn->isDead())
+            // a White Mage hired for a teleport takes no order of his (teleport.h locked)
+            if (ordersOwnerOf(PPawn.get()) != POwner->id || PPawn->loc.zone != POwner->loc.zone || PPawn->isDead() || teleport::locked(PPawn.get()))
             {
                 continue;
             }
@@ -2079,7 +2111,9 @@ namespace pawn
             return false;
         }
 
-        if (PHome != nullptr)
+        // A teleporter keeps her own, her hub's for good (census.py
+        // TELEPORTER): she goes home to it, wherever her party's is
+        if (PHome != nullptr && !pawn::world::isTeleporter(PPawn->id))
         {
             PPawn->profile.home_point = PHome->profile.home_point;
         }
@@ -3251,6 +3285,15 @@ namespace pawn
                     {
                         PPawn->InvitePending.clean();
                     }
+                    // Her yes opened a contract before the game's join, which it
+                    // can still refuse (his party filled meanwhile): refused, the
+                    // contract ends with it, and any hire it started
+                    if (yes && PPawn->PParty == nullptr)
+                    {
+                        ShowInfoFmt("pawn: {} said yes, but the game did not take her into the party: her contract ends", PPawn->getName());
+                        finder::noteLeft(charid);
+                        teleport::joinFailed(charid);
+                    }
                 }
             }
 
@@ -3275,6 +3318,7 @@ namespace pawn
         redress::tick(PZone);
         offers::tick();
         together::tick();
+        teleport::tick();
         supplies::tick(PZone);
         errands::tick();
         town::tick(PZone);

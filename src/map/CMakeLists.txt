@@ -139,6 +139,9 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/walker.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/porter.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/porter_mesh.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/teleport_rules.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/teleport.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/teleport.cpp
 )
 
 set(MAP_CORE_SOURCES

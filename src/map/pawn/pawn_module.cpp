@@ -46,6 +46,7 @@
 #include "pull.h"
 #include "spell_bank.h"
 #include "tactics.h"
+#include "teleport.h"
 #include "view.h"
 #include "warp_together.h"
 
@@ -662,10 +663,15 @@ class PawnModule : public CPPModule
             }
             for (const auto& pair : cardians)
             {
-                if (pair.second.get_type() == sol::type::number)
+                // a White Mage hired for a teleport goes with no warp of his (teleport.h locked)
+                if (pair.second.get_type() == sol::type::number && !pawn::teleport::locked(pawn::findPawn(pair.second.as<uint32>())))
                 {
                     offer.members.push_back(pair.second.as<uint32>());
                 }
+            }
+            if (offer.members.empty())
+            {
+                return false; // nobody to ask about: upstream's warp, his alone
             }
             return pawn::offers::put(PChar, std::move(offer), std::chrono::seconds(seconds));
         };

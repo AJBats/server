@@ -125,16 +125,30 @@ namespace pawn::world
     // queued for, and nobody else holds, in an order of their seeds that
     // stays the same from read to read: the sign-in's candidates
     auto signInCandidates() -> std::vector<std::string>;
+
+    // The teleporters (census.py TELEPORTER): one White Mage of the world for each city and town hub,
+    // kept online in it -- faded, standing only for a party -- whenever the world holds nothing of her
+    // and she stands nowhere, signed in to the zone of her home point; never dealt a seat, and apart
+    // from the town sign-in's counts; faded away from her hub, her row is set at home at once. From
+    // the town tick
+    void keepResidents();
+
+    // She is a teleporter: her home point is her hub's for good (pawn.cpp homePoint), she warps
+    // home after a hire (teleport.cpp), and she answers teleport shouts alone (party_finder.cpp)
+    auto isTeleporter(uint32 charid) -> bool;
+
     // Seats are waiting to be placed (they come first); and one placement
     // from the world's budget (pawn.WORLD_PLACE_RATE), false when spent
     auto placing() -> bool;
     auto takePlacement() -> bool;
     // A body of a cohort in play online in a town with no seat: her Body
     // record there, offered to the ladder as one who stands only for a
-    // party, her next stand at one of the town's exits. False when she
-    // cannot be (not minted and finished, claimed, held already). Out:
-    // her presence goes the way a released seat's does
-    bool signInTown(const std::string& name, uint16 zone);
+    // party, her next stand at one of the town's exits -- or, a teleporter
+    // (`home`, keepResidents), at her home point, before anyone of her zone
+    // for its faded room. False when she cannot be (not minted and
+    // finished, claimed, held already). Out: her presence goes the way a
+    // released seat's does
+    bool signInTown(const std::string& name, uint16 zone, std::optional<position_t> home = std::nullopt);
     void signOutTown(uint32 charid);
     // The ladder left a sign-in with no session row by itself (her zone's
     // entries past the faded cap, seats.cpp): no longer online in her town,
