@@ -32,16 +32,24 @@ class dtNavMesh;
 // porter"): the route a porter plans runs the player's own client, which
 // collides by the client's rule, so it is planned on a navmesh built with
 // that rule (pawn/client_navmesh.h) and the rider's width, pawn.PORTER_WIDTH,
-// kept where there is room -- never on the zone's, which monsters and cardians walk
-// and which stays upstream's. Each zone a ride can plan in has its navmesh
-// precalculated, by the map run as a tool (./dev-servers.ps1
+// kept where there is room -- never on the zone's, which monsters walk and
+// which stays upstream's. A town's is built the same way, with the town's
+// props merged into its collision (tools/walls/props.py), and every route a
+// cardian plans in a town keeps to it (ROADMAP W, "Town walks";
+// pawn_travel.h townMesh). Each zone a ride can plan in, and each town, has
+// its navmesh precalculated, by the map run as a tool (./dev-servers.ps1
 // porter-navmeshes, which sets CARDIAN_PORTER_NAVMESH_PRECALC=1), into
 // .cache/cardian_navmeshes/<zone>.porter.nav, beside a recipe of what it
 // was built with (<zone>.porter.recipe). The map never builds one while it
 // serves: a zone whose file is missing, or whose recipe is not today's
-// settings', is said loudly, and its rides keep to the zone's navmesh.
+// settings', is said loudly, and its rides and walks keep to the zone's navmesh.
 namespace pawn::porter::mesh
 {
+    // Whether `zone` is a town whose cardians walk this navmesh: a zone of
+    // type City with collision and a navmesh of its own (a Mog House's
+    // residential area has none)
+    auto isTown(CZone* zone) -> bool;
+
     // The zone's porter navmesh, read from its file the first time it is
     // asked for -- by a ride's trip check, on a worker (porter.cpp), so a
     // ride's own plan finds it in memory -- and kept; nullptr when it has

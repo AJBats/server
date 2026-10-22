@@ -1614,9 +1614,19 @@ namespace
     // The nearest walkable point to an authored one: a table is written by
     // eye and by !pos, and a point a few yalms above or below the mesh
     // (the lower level under the auction house, the gate arch) would never
-    // be reached. The point itself when there is no mesh or nothing near
+    // be reached. In a town, on the navmesh its walks keep to, built by the
+    // client's rule (pawn_travel.h snapToTown): a seat laid against a wall
+    // or a counter moves off it. The point itself when there is no mesh or
+    // nothing near
     auto snapToMesh(CZone* PZone, const position_t& point) -> position_t
     {
+        if (PZone != nullptr)
+        {
+            if (const auto town = pawn::travel::snapToTown(PZone->GetID(), point); town.has_value())
+            {
+                return *town;
+            }
+        }
         const auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
         if (navMesh == nullptr)
         {
@@ -1648,6 +1658,16 @@ namespace
     // The walker's route from one point to another arrives: the mesh joins them
     auto walksBetween(CZone* PZone, const position_t& from, const position_t& to) -> bool
     {
+        // in a town, on the navmesh its walks keep to (pawn_travel.h townMesh): a walk the
+        // zone's own navmesh joins may climb what the client does not
+        if (PZone != nullptr && pawn::travel::townMesh(PZone->GetID()) != nullptr)
+        {
+            const auto route = pawn::travel::routeAvoiding(PZone->GetID(), from, to, {}, {});
+            return route.has_value() && route->complete &&
+                   std::hypot(route->points.empty() ? from.x - to.x : route->points.back().x - to.x,
+                              route->points.empty() ? from.y - to.y : route->points.back().y - to.y,
+                              route->points.empty() ? from.z - to.z : route->points.back().z - to.z) <= 3.0f;
+        }
         auto* navMesh = PZone != nullptr ? PZone->navMesh() : nullptr;
         if (navMesh == nullptr)
         {
@@ -3868,10 +3888,7 @@ namespace pawn::world
             position_t at(spec.at[0], spec.at[1], spec.at[2], 0, 0);
             if (navMesh != nullptr)
             {
-                if (const std::optional<position_t> snapped = navMesh->findClosestValidPoint(at); snapped.has_value())
-                {
-                    at = *snapped;
-                }
+                at = snapToMesh(PZone, at);
             }
             out.push_back(Loiter{ at, spec.spread });
         }

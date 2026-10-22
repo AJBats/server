@@ -55,6 +55,16 @@ xi.settings.pawn =
     PORTER_NAVMESH = true,
     PORTER_WIDTH   = 1.5,
 
+    -- In a town (a zone of type City) every route a cardian plans keeps to
+    -- the same kind of navmesh, built by the client's own rule and with the
+    -- town's props in it -- its counters, furniture and rooms, merged from
+    -- the client's files by tools/walls/props.py -- so she climbs nothing
+    -- the client would not, walks through no prop, and keeps off the walls
+    -- her drawing would cut into, PORTER_WIDTH off them where there is room
+    -- (pawn_travel.cpp townMesh). Built with the porter's, by
+    -- ./dev-servers.ps1 porter-navmeshes. false: on the zone's.
+    TOWN_CLIENT_NAVMESH = true,
+
     -- The porter's trace in the map log: every route's waypoints as it is
     -- planned, and at a stray where the rider stood and the legs he was
     -- judged on (porter.cpp traceRoute, traceStray)
@@ -205,7 +215,7 @@ xi.settings.pawn =
     -- the player turns, capped at PREDICT_MAX yalms). Covers the rest of
     -- the loop -- the pawn tick, its travel, the client's render cadence.
     -- A stopped player collapses the prediction at once.
-    FORMATION_PREDICT_MS  = 700,
+    FORMATION_PREDICT_MS  = 300,
     FORMATION_PREDICT_MAX = 6.0,
 
     -- The first follower (the pawn following the player, not another

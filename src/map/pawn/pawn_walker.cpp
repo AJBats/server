@@ -46,6 +46,7 @@
 #include "common/xirand.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
+#include "map_constants.h"
 #include "navmesh/detour_navmesh.h"
 #include "roam_region.h"
 #include "status_effect_container.h"
@@ -563,7 +564,9 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
                 if (clear && !exposed)
                 {
                     PPathFind->Clear();
+                    const auto before = POwner->loc.p;
                     PPathFind->StepTo(intent.point);
+                    CountMove(before, kLogicUpdateInterval);
                     m_Plan.walking = false;
                 }
                 else if (walk(intent.point, 0.0f).outcome == Outcome::NoRoute && exposed)
@@ -714,7 +717,22 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     }
     NoteWalk(trying, action == AvoidAction::Slot ? point : intent.point, followTarget);
 
+    const auto before = POwner->loc.p;
     PPathFind->FollowPath(m_Tick);
+    CountMove(before, kLogicUpdateInterval);
+
+    // The walk trace (with the move trace, a development tool): each tick a
+    // cardian of a real player's party steps, the step, the point her mover
+    // asked for and the end of the path she walks, so a wobble in her walk
+    // can be told apart -- a point that jumps, a path that ends elsewhere, a
+    // step that turns on its own
+    if (settings::get<bool>("pawn.MOVE_TRACE") && distance(before, POwner->loc.p, true) > 0.01f && GetLivePlayer() != nullptr)
+    {
+        const auto& end = PPathFind->IsFollowingPath() ? PPathFind->GetDestination() : POwner->loc.p;
+        ShowInfoFmt("pawn: walk trace {} ({:.2f}, {:.2f}) -> ({:.2f}, {:.2f}) asked ({:.2f}, {:.2f}) path end ({:.2f}, {:.2f}) speed {} {}", POwner->getName(),
+                    before.x, before.z, POwner->loc.p.x, POwner->loc.p.z, intent.point.x, intent.point.z, end.x, end.z, POwner->GetSpeed(),
+                    magic_enum::enum_name(intent.kind));
+    }
 
     // Lock-on: within melee reach of the mob, her heading goes back onto it
     // after every step, the way a locked-on player strafes (Walk)
@@ -736,6 +754,20 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     }
     m_LastAvoidAction = action;
     return action;
+}
+
+void CPawnController::CountMove(const position_t& before, const std::chrono::microseconds took)
+{
+    auto& here = POwner->loc.p;
+    if (here.x == before.x && here.y == before.y && here.z == before.z)
+    {
+        here.moving = before.moving;
+        return;
+    }
+    m_MoveFrames += static_cast<float>(took.count()) * 60.0f / 1000000.0f;
+    const auto whole = static_cast<uint16>(m_MoveFrames);
+    m_MoveFrames -= static_cast<float>(whole);
+    here.moving = static_cast<uint16>((before.moving + whole) % 0x2000);
 }
 
 // The move trace (pawn.MOVE_TRACE, a development tool): once a tick, for a
