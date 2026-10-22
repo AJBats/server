@@ -365,6 +365,15 @@ namespace cardian::formation
         return d;
     }
 
+    // A bearing that follows `target`, turning at most `maxTurn` radians the
+    // short way round toward it, kept in (-pi, pi]: a compass follower's seat
+    // as he turns (CompassPoint, FORMATION_COMPASS_SEAT_TURN_DEG)
+    inline auto followBearing(const float current, const float target, const float maxTurn) -> float
+    {
+        const float most = std::max(maxTurn, 0.0f);
+        return turnFrom(0.0f, current + std::clamp(turnFrom(current, target), -most, most));
+    }
+
     struct CompassRules
     {
         float blend     = 0.785f; // radians a second her bearing drifts toward her seat while he walks

@@ -44,6 +44,27 @@ namespace
     constexpr float kTick = 0.1f; // seconds between the two samples in these cases
 }
 
+TEST_CASE("followBearing: a seat turns toward its ring seat no faster than its pace, the short way round", "[cardian][formation]")
+{
+    constexpr float kPi = std::numbers::pi_v<float>;
+    // a quarter turn asked, a twelfth allowed
+    CHECK_THAT(followBearing(0.0f, kPi / 2.0f, kPi / 6.0f), WithinAbs(kPi / 6.0f, 1e-5));
+    CHECK_THAT(followBearing(0.0f, -kPi / 2.0f, kPi / 6.0f), WithinAbs(-kPi / 6.0f, 1e-5));
+    // within its pace, it lands on it
+    CHECK_THAT(followBearing(0.2f, 0.3f, kPi / 6.0f), WithinAbs(0.3f, 1e-5));
+    // across the back: from just short of pi to just past -pi is a small turn
+    // the short way, and the bearing stays within (-pi, pi]
+    const float across = followBearing(kPi - 0.1f, -kPi + 0.1f, 1.0f);
+    CHECK_THAT(across, WithinAbs(-kPi + 0.1f, 1e-4));
+    const float capped = followBearing(kPi - 0.1f, -kPi + 0.5f, 0.3f);
+    CHECK(capped > -kPi);
+    CHECK(capped <= kPi);
+    CHECK_THAT(turnFrom(kPi - 0.1f, capped), WithinAbs(0.3f, 1e-4));
+    // no pace, or less than none: it stays where it is
+    CHECK_THAT(followBearing(1.0f, 2.0f, 0.0f), WithinAbs(1.0f, 1e-6));
+    CHECK_THAT(followBearing(1.0f, 2.0f, -1.0f), WithinAbs(1.0f, 1e-6));
+}
+
 TEST_CASE("deriveMotion: a straight run yields distance over time", "[cardian][formation]")
 {
     const Sample previous{ 0.0f, 0.0f, 64, true };
