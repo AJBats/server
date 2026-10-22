@@ -255,6 +255,11 @@ xi.settings.pawn =
     -- steps COMPASS_LINE_CLEAR yalms off his line if he comes within
     -- COMPASS_PASS_RANGE, and falls in once he has passed; lagging farther
     -- than COMPASS_FAR behind or beside him, she makes straight for her seat.
+    -- Her seat turns round him with his heading at most COMPASS_SEAT_TURN_DEG
+    -- a second, walking or standing: a turn of his swings it round him in his
+    -- own time, never across him in a tick, so neither her drift nor her
+    -- straight line to it zigzags as he weaves (#562); 0 turns it with him
+    -- at once.
     -- Standing, she stays where she is between COMPASS_NEAR and COMPASS_FAR
     -- yalms of him, else walks straight in or out along her bearing. Come to
     -- a stand, she turns in her own time (the user, 2026-10-13):
@@ -272,6 +277,7 @@ xi.settings.pawn =
     FORMATION_COMPASS                   = true,
     FORMATION_COMPASS_SPACING           = 1.0,
     FORMATION_COMPASS_BLEND_DEG         = 45,
+    FORMATION_COMPASS_SEAT_TURN_DEG     = 60,
     FORMATION_COMPASS_AHEAD_DEG         = 60,
     FORMATION_COMPASS_LINE_CLEAR        = 1.5,
     FORMATION_COMPASS_PASS_RANGE        = 5.0,
@@ -342,7 +348,11 @@ xi.settings.pawn =
     -- clear of it, and the full band of WAKE_RADIUS from WAKE_RADIUS
     -- ahead, each costing WAKE_COST and summing where they overlap on the
     -- player's own line. The wake reaches WAKE_RUN yalms out while they
-    -- move and WAKE_STANDING while they stand. Where there is room the
+    -- move and WAKE_STANDING while they stand. The lead following him as he
+    -- walks, whose place ahead of him is inside his wake by design, gives it
+    -- its berth while she overtakes him and pays none once she is past his
+    -- body (and her place in it); standing, at a camp or holding for his
+    -- strike she pays it as anyone does. Where there is room the
     -- cheap way round wins; where the walls leave nothing cheaper the
     -- walk goes through. Suggestions only: the danger map and the mesh
     -- still rule. BODY_COST 0 switches it off. The party's other members

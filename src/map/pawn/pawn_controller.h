@@ -1999,11 +1999,14 @@ private:
     bool              m_CompassHeld = false;
     std::optional<position_t>        m_CompassStoodAt; // where she came to her stand and decided how to face; a step away from it makes a new stand
     std::optional<timer::time_point> m_CompassFaceAt;  // ... when she turns, if she turns at all
+    std::optional<float>             m_CompassSeatBearing; // her seat's bearing from him as she follows it, turning with his heading at its own pace
     // The walker's word on her last formation walk: settled where she stands,
     // the cheapest cell near her place (CourtesyStep's settle), and when
     std::optional<position_t> m_SettledAt;
     timer::time_point         m_SettledTick{};
     float             m_CourtesySide = 0.0f; // her side of the line last tick, kept a little cheaper (CourtesyStep)
+    bool              m_LeadOnHisLine = false; // the lead's place this tick is ahead of him on his line (FormationIntent), not a camp's nor a mob's ring
+    bool              m_LeadPastHim   = false; // the lead is past his body along his way: his wake no longer hers (CourtesyStep)
     timer::time_point m_LastCourtesyTime;
     timer::time_point m_LastCourtesySaid;
     timer::time_point m_LastFormationClipTime;

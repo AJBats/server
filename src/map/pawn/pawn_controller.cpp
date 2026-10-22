@@ -6342,9 +6342,13 @@ auto CPawnController::FormationIntent(const Place& place, const CCharEntity* PPl
     {
         followPoint = standOff(LeadPoint(place, PPlayer));
         RampCatchUp(m_PlayerMoving, followPoint);
+        // her place ahead of him on his line: not a camp's, nor the mob's
+        // ring as he holds for his strike (CourtesyStep's wake)
+        m_LeadOnHisLine = !place.fixed() && PStandOff == nullptr;
     }
     else
     {
+        m_LeadOnHisLine = false;
         // Everyone else: by the compass following him, or in a seat on the
         // ring round a camp or a mob he holds on -- the same fresh position
         // the lead uses, with a gentle prediction, parked and held the way
@@ -6528,7 +6532,8 @@ auto CPawnController::CourtesyStep(const position_t& point, const float settle) 
     // they move, long while they move, short while they stand. Built
     // where the player is on their own screen when it shows her where
     // the server has her now: the streamed position carried by the
-    // prediction (0.7 s, about the lag of her position on their screen),
+    // prediction (pawn.FORMATION_PREDICT_MS, about the lag of her position
+    // on their screen),
     // along the way they move; standing, the streamed position and the
     // way they face. Two lags stack on the player's screen -- their own
     // position is live there, hers is the server's last word -- and at
@@ -6569,9 +6574,32 @@ auto CPawnController::CourtesyStep(const position_t& point, const float settle) 
     {
         field.discs.push_back(cardian::planner::Disc{ at.x, at.z, memberRadius, memberCost });
     }
+    // The lead's place, following him as he walks, is ahead of him on his
+    // line, FORMATION_LEAD_DISTANCE and its moving bonus out, inside his wake
+    // by design. Overtaking him she gives his wake its berth, as anyone
+    // does; once past his body along his way -- a yalm further back to give
+    // it up, so the line between does not flicker -- and with her place in
+    // his wake, she pays no wake, or every tick's plan would send her round
+    // the side of her own place and back (#562). His body and the party
+    // still count. Not standing, nor at a camp, nor holding for his strike
+    bool leads = false;
+    if (settle > 0.0f && moving && m_LeadOnHisLine && FormationSlot() == pawn::Slot::Lead)
+    {
+        const float dx         = ahead.x - p.x;
+        const float dz         = ahead.z - p.z;
+        const float herAhead   = (me.x - p.x) * dx + (me.z - p.z) * dz;
+        const float placeAhead = (point.x - p.x) * dx + (point.z - p.z) * dz;
+        const float placeOff   = std::abs((point.x - p.x) * dz - (point.z - p.z) * dx);
+        m_LeadPastHim          = herAhead >= (m_LeadPastHim ? body - 0.5f : body + 0.5f);
+        leads                  = m_LeadPastHim && placeAhead >= width && placeOff <= width;
+    }
+    else
+    {
+        m_LeadPastHim = false;
+    }
     for (const auto [from, radius] : { std::pair{ body, body + 0.5f }, std::pair{ width, width } })
     {
-        if (wake > from)
+        if (wake > from && !leads)
         {
             const auto [ax, az] = alongWay(from);
             const auto [bx, bz] = alongWay(wake);
@@ -6658,7 +6686,7 @@ auto CPawnController::CourtesyStep(const position_t& point, const float settle) 
     {
         m_LastCourtesySaid = m_Tick;
         ShowInfoFmt("pawn: {} goes round {} and the party ({:.1f}y further, {})", POwner->getName(), PPlayer->getName(), plan->length - plan->straight,
-                    moving ? "his wake" : "standing");
+                    !moving ? "standing" : leads ? "his body" : "his wake");
     }
 
     // The step target that far along the plan; a plan not much longer than
@@ -9045,6 +9073,7 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
         // and a stand after one is a new stand: no turn left over from before
         m_CompassStoodAt.reset();
         m_CompassFaceAt.reset();
+        m_CompassSeatBearing.reset();
     }
     m_CompassLast = m_Tick;
 
@@ -9053,8 +9082,25 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     const auto       slot   = RingSlot();
     const auto       seat   = SeatOf(slot);
     const position_t centre = moving ? a.anchor : a.observed;
-    const position_t seatAt = nearPosition(centre, 1.0f, seat.angle + manner.tilt);
+    const position_t ring   = nearPosition(centre, 1.0f, seat.angle + manner.tilt);
     const position_t ahead  = nearPosition(centre, 1.0f, 0.0f);
+
+    // Her seat as she follows it: it turns round him with his heading at most
+    // COMPASS_SEAT_TURN_DEG a second, walking or standing, so a turn of his --
+    // a weave through a stop among them -- swings it round him in his own
+    // time and never across him in a tick (#562); after a gap, or with the
+    // pace 0, it is the ring seat itself
+    const float ringBearing = std::atan2(ring.z - centre.z, ring.x - centre.x);
+    const float seatTurn    = settings::get<float>("pawn.FORMATION_COMPASS_SEAT_TURN_DEG");
+    if (!m_CompassSeatBearing.has_value() || seatTurn <= 0.0f)
+    {
+        m_CompassSeatBearing = ringBearing;
+    }
+    else
+    {
+        m_CompassSeatBearing = cardian::formation::followBearing(*m_CompassSeatBearing, ringBearing, seatTurn * kDegree * dt);
+    }
+    const position_t seatAt(centre.x + std::cos(*m_CompassSeatBearing), centre.y, centre.z + std::sin(*m_CompassSeatBearing), 0, 0);
 
     cardian::formation::CompassRules rules;
     rules.blend     = manner.blend;
@@ -9074,9 +9120,10 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     const bool holds   = step.holds || settled;
 
     // The formation's trace (pawn.FORMATION_DEBUG), every tick: where she
-    // stands, her seat, and where the compass sends her, each as a bearing
-    // off his heading (positive anticlockwise) and a distance from him, so
-    // two followers whose points meet can be read from the log
+    // stands, her ring seat and the seat she follows as it turns, and where
+    // the compass sends her, each as a bearing off his heading (positive
+    // anticlockwise) and a distance from him, so two followers whose points
+    // meet can be read from the log
     if (settings::get<bool>("pawn.FORMATION_DEBUG"))
     {
         const float heading = std::atan2(ahead.z - centre.z, ahead.x - centre.x);
@@ -9088,10 +9135,10 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
         {
             return std::hypot(x - centre.x, z - centre.z);
         };
-        ShowInfoFmt("pawn: compass trace {}: at ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y; seat {} {:+.0f} deg {:.1f}y; to ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y, {}; "
-                    "he at ({:.1f}, {:.1f}), {}",
+        ShowInfoFmt("pawn: compass trace {}: at ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y; seat {} {:+.0f} deg, following {:+.0f} deg {:.1f}y; "
+                    "to ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y, {}; he at ({:.1f}, {:.1f}), {}",
                     POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, off(POwner->loc.p.x, POwner->loc.p.z), from(POwner->loc.p.x, POwner->loc.p.z),
-                    cardian::formation::slotName(slot), off(seatAt.x, seatAt.z), seat.offset + manner.extra, step.x, step.z, off(step.x, step.z),
+                    cardian::formation::slotName(slot), off(ring.x, ring.z), off(seatAt.x, seatAt.z), seat.offset + manner.extra, step.x, step.z, off(step.x, step.z),
                     from(step.x, step.z), step.holds ? "holds" : settled ? "settled" : "walks", centre.x, centre.z, moving ? "walking" : "standing");
     }
 
