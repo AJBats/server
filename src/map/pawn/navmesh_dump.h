@@ -26,8 +26,10 @@
 //   open      after the open ground too thin or too small to stand as a
 //             region went into the tight strip (keepOpenWhole)
 //   regions   Recast's regions, from which its polygons are made (regions)
-//   contours  the outlines Recast traced round them (contours): a region
-//             with none made no polygon, and its ground is a hole
+//   contours  the outlines Recast traced round them, as the polygons are
+//             cut from them: matched where two regions meet
+//             (client_navmesh.h matchOutlines); a region with none made no
+//             polygon, and its ground is a hole
 //
 // The last two are written by the navmesh builder itself, a marked call
 // after each of those steps (navmesh/navmesh_builder.cpp).
@@ -158,7 +160,8 @@ inline void regions(const rcCompactHeightfield& chf)
     }
 }
 
-// The contours Recast traced round `chf`'s regions: per contour a line
+// The contours Recast traced round `chf`'s regions, as the polygons are cut
+// from them (matched where two regions meet): per contour a line
 // `contour <region> <area>`, then its simplified outline and its raw one,
 // each a line of points, x y z in FFXI's axes
 inline void contours(const rcContourSet& cset, const rcCompactHeightfield& chf)

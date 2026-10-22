@@ -58,7 +58,7 @@ namespace pawn::porter::mesh
         // The recipe's version: raised when the build's own rule changes
         // (client_navmesh.h, the builder's links), so every older file is
         // stale at once
-        constexpr int kRecipeVersion = 10;
+        constexpr int kRecipeVersion = 12;
 
         struct Entry
         {

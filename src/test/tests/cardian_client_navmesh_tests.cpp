@@ -458,3 +458,118 @@ TEST_CASE("Client navmesh: open ground too thin or too small for a region goes i
         CHECK(f.area(10, 23) == RC_WALKABLE_AREA);
     }
 }
+
+TEST_CASE("Client navmesh: two regions' outlines keep the same points along the edge they share", "[cardian][porter]")
+{
+    // Two regions side by side, 1 at x 0 to 4 and 2 at x 4 to 8 (z 0 to 4),
+    // their traced boundaries on the cells' corners. Region 1's outline keeps
+    // a point halfway along the edge they share (x 4, z 2), where a third
+    // region touches it at a corner; region 2's runs straight past it
+    const auto alloc = [](const std::vector<int>& v)
+    {
+        auto* out = static_cast<int*>(rcAlloc(sizeof(int) * v.size(), RC_ALLOC_PERM));
+        std::copy(v.begin(), v.end(), out);
+        return out;
+    };
+    const auto pts = [](const std::vector<std::pair<int, int>>& xz, const int reg)
+    {
+        std::vector<int> out;
+        for (const auto& [x, z] : xz)
+        {
+            out.insert(out.end(), { x, 0, z, reg });
+        }
+        return out;
+    };
+    std::vector<std::pair<int, int>> raw2;
+    for (int x = 4; x <= 8; ++x) raw2.emplace_back(x, 0);
+    for (int z = 1; z <= 4; ++z) raw2.emplace_back(8, z);
+    for (int x = 7; x >= 4; --x) raw2.emplace_back(x, 4);
+    for (int z = 3; z >= 1; --z) raw2.emplace_back(4, z);
+    std::vector<std::pair<int, int>> raw1;
+    for (int z = 0; z <= 4; ++z) raw1.emplace_back(4, z);
+    for (int x = 3; x >= 0; --x) raw1.emplace_back(x, 4);
+    for (int z = 3; z >= 0; --z) raw1.emplace_back(0, z);
+    for (int x = 1; x <= 3; ++x) raw1.emplace_back(x, 0);
+
+    rcContourSet cset;
+    cset.nconts = 2;
+    cset.conts  = static_cast<rcContour*>(rcAlloc(sizeof(rcContour) * 2, RC_ALLOC_PERM));
+    const auto set = [&](rcContour& c, const std::vector<int>& raw, const std::vector<int>& kept, const unsigned short reg)
+    {
+        c.rverts  = alloc(raw);
+        c.nrverts = static_cast<int>(raw.size() / 4);
+        c.verts   = alloc(kept);
+        c.nverts  = static_cast<int>(kept.size() / 4);
+        c.reg     = reg;
+        c.area    = RC_WALKABLE_AREA;
+    };
+    set(cset.conts[0], pts(raw1, 2), pts({ { 4, 0 }, { 4, 2 }, { 4, 4 }, { 0, 4 }, { 0, 0 } }, 2), 1);
+    set(cset.conts[1], pts(raw2, 1), pts({ { 4, 0 }, { 8, 0 }, { 8, 4 }, { 4, 4 } }, 1), 2);
+
+    CHECK(matchOutlines(cset, false) == 0); // any other build's left as Recast traced them
+    CHECK(cset.conts[1].nverts == 4);
+    CHECK(matchOutlines(cset, true) == 1);
+    REQUIRE(cset.conts[1].nverts == 5);
+    // region 2 now goes (4,4) -> (4,2) -> (4,0), as region 1 does the other way
+    const int* added = &cset.conts[1].verts[4 * 4];
+    CHECK(added[0] == 4);
+    CHECK(added[2] == 2);
+    CHECK(cset.conts[0].nverts == 5); // region 1 unchanged
+    CHECK(matchOutlines(cset, true) == 0);
+}
+
+TEST_CASE("Client navmesh: where a third region meets two at a corner, their polygons still join", "[cardian][porter]")
+{
+    // Region 1 (the tight strip) fills x 0 to 7, z 0 to 7; region 3 (open
+    // ground) the two by two cells beyond its far corner, x 8 to 9, z 8 to 9;
+    // region 2 (the tight strip too) the rest, round both. Region 2's outline
+    // meets region 3 at region 1's corner (8, 8) and keeps it; region 1's
+    // meets only region 2 along that edge and runs straight past it
+    const auto build = [](const bool matched, rcPolyMesh& mesh)
+    {
+        TightField f(16);
+        for (int z = 0; z < 16; ++z)
+        {
+            for (int x = 0; x < 16; ++x)
+            {
+                const int  i     = f.span(x, z);
+                const bool one   = x < 8 && z < 8;
+                const bool three = x >= 8 && x < 10 && z >= 8 && z < 10;
+                f.chf.spans[i].reg = static_cast<unsigned short>(one ? 1 : three ? 3 : 2);
+                f.chf.areas[i]     = three ? RC_WALKABLE_AREA : kTightArea;
+            }
+        }
+        f.chf.maxRegions = 4;
+        rcContourSet cset;
+        REQUIRE(rcBuildContours(&f.ctx, f.chf, 1.3f, 12, cset));
+        CHECK(matchOutlines(cset, matched) >= 0);
+        REQUIRE(rcBuildPolyMesh(&f.ctx, cset, 6, mesh));
+    };
+    // whether a polygon of region 1 has one of region 2 across an edge
+    const auto joined = [](const rcPolyMesh& mesh)
+    {
+        for (int p = 0; p < mesh.npolys; ++p)
+        {
+            if (mesh.regs[p] != 1)
+            {
+                continue;
+            }
+            const unsigned short* poly = &mesh.polys[p * mesh.nvp * 2];
+            for (int j = 0; j < mesh.nvp && poly[j] != RC_MESH_NULL_IDX; ++j)
+            {
+                const unsigned short across = poly[mesh.nvp + j];
+                if (across != RC_MESH_NULL_IDX && (across & 0x8000) == 0 && mesh.regs[across] == 2)
+                {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    rcPolyMesh traced;
+    build(false, traced);
+    CHECK_FALSE(joined(traced)); // as Recast traced them, the navmesh parts there
+    rcPolyMesh matched;
+    build(true, matched);
+    CHECK(joined(matched));
+}

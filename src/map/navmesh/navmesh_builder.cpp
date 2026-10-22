@@ -1088,7 +1088,8 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         rcFreeContourSet(cset);
         return {};
     }
-    cardian::client::dump::contours(*cset, *chf); // CARDIAN: a development tool's dump of one tile (pawn/navmesh_dump.h)
+    cardian::client::matchOutlines(*cset, config.cardianClient); // CARDIAN: for the client, two regions' outlines agree where they meet
+    cardian::client::dump::contours(*cset, *chf);                // CARDIAN: a development tool's dump of one tile (pawn/navmesh_dump.h)
 
     if (cset->nconts == 0)
     {
