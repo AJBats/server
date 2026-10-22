@@ -7041,6 +7041,7 @@ void CPawnController::WalkTick()
     {
         const auto before = POwner->loc.p;
         POwner->PAI->PathFind->FollowPath(m_Tick);
+        GroundStep(before);
         CountMove(before, kLogicUpdateInterval);
     }
 }
@@ -7179,6 +7180,7 @@ void CPawnController::WalkStep()
     PPathFind->SetStepScale(scale);
     PPathFind->FollowPath(now);
     PPathFind->SetStepScale(1.0f);
+    GroundStep(before);
     CountMove(before, std::chrono::duration_cast<std::chrono::microseconds>(scale * std::chrono::duration<float>(kLogicUpdateInterval)));
     // The walk's accounting, every five seconds in the map log while she is
     // walked: her ground speed (the server's truth, against the client's
@@ -9771,10 +9773,19 @@ auto CPawnController::TowIntent(CBattleEntity* PTarget) -> Intent
     return intent;
 }
 
-auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
+auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seatAt, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
 {
     using cardian::formation::Circle;
     using cardian::formation::segmentCrosses;
+
+    // The seat on the floor at its spot: it carries the mob's height, and
+    // hers after every step is the floor's (GroundStep), so a seat off the
+    // floor would be one she never reaches, hopping onto it again and again
+    position_t seat = seatAt;
+    if (const auto floor = pawn::travel::floorUnder(POwner->getZone(), seat, pawn::travel::kFloorReach); floor.has_value())
+    {
+        seat.y = *floor;
+    }
 
     const auto* PPathFind = POwner->PAI->PathFind.get();
     const auto& me        = POwner->loc.p;

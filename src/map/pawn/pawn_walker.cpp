@@ -566,6 +566,7 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
                     PPathFind->Clear();
                     const auto before = POwner->loc.p;
                     PPathFind->StepTo(intent.point);
+                    GroundStep(before);
                     CountMove(before, kLogicUpdateInterval);
                     m_Plan.walking = false;
                 }
@@ -719,6 +720,7 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
 
     const auto before = POwner->loc.p;
     PPathFind->FollowPath(m_Tick);
+    GroundStep(before);
     CountMove(before, kLogicUpdateInterval);
 
     // The walk trace (with the move trace, a development tool): each tick a
@@ -754,6 +756,19 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     }
     m_LastAvoidAction = action;
     return action;
+}
+
+void CPawnController::GroundStep(const position_t& before)
+{
+    auto& here = POwner->loc.p;
+    if (here.x == before.x && here.z == before.z)
+    {
+        return;
+    }
+    if (const auto floor = pawn::travel::floorUnder(POwner->getZone(), here, pawn::travel::kFloorReach); floor.has_value())
+    {
+        here.y = *floor;
+    }
 }
 
 void CPawnController::CountMove(const position_t& before, const std::chrono::microseconds took)

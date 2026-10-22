@@ -24,6 +24,7 @@
 #include "cardian_link.h"
 #include "client_navmesh.h"
 #include "collision_walls.h"
+#include "navmesh_dump.h"
 #include "route_search.h"
 
 #include "common/logging.h"
@@ -57,7 +58,7 @@ namespace pawn::porter::mesh
         // The recipe's version: raised when the build's own rule changes
         // (client_navmesh.h, the builder's links), so every older file is
         // stale at once
-        constexpr int kRecipeVersion = 8;
+        constexpr int kRecipeVersion = 10;
 
         struct Entry
         {
@@ -350,8 +351,15 @@ namespace pawn::porter::mesh
             std::exit(1);
         }
         ShowInfoFmt("porter: building the navmeshes by the client's rule of {} zones", zones.size());
+        // a dump run (navmesh_dump.h) builds each zone again, current or not
+        const bool dumping = cardian::client::dump::point().has_value();
+        if (dumping)
+        {
+            ShowInfoFmt("porter: dumping the build's steps round ({:.1f}, {:.1f}) into log/navmesh_dump", cardian::client::dump::point()->first,
+                        cardian::client::dump::point()->second);
+        }
         scheduler->postToMainThread(
-            [zones, scheduler]() -> Task<void>
+            [zones, scheduler, dumping]() -> Task<void>
             {
                 std::size_t written = 0;
                 for (const auto zoneId : zones)
@@ -362,7 +370,7 @@ namespace pawn::porter::mesh
                         ShowWarningFmt("porter: {} has no collision: no navmesh by the client's rule", nameOf(zoneId));
                         continue;
                     }
-                    if (staleness(zone).empty())
+                    if (!dumping && staleness(zone).empty())
                     {
                         ++written; // already built for today's settings: a rerun builds only what is missing or stale
                         continue;

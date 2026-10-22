@@ -3,7 +3,8 @@
 // its walker judging a navmesh's joins and its drop links (client_joins.h) --
 // a drop link off a ledge kept, one whose way down a tree's trunk blocks
 // taken out -- and the strip past the body's margin, out to the rider's
-// berth, kept and marked tight (erode).
+// berth, kept and marked tight (erode), with open ground too thin or too
+// small to stand as a region of its own given to it (keepOpenWhole).
 #include "pawn/client_collision.h"
 #include "pawn/client_joins.h"
 #include "pawn/client_navmesh.h"
@@ -235,7 +236,7 @@ TEST_CASE("Client navmesh: past the body's margin, the berth is kept and marked 
     rcCompactHeightfield chf;
     REQUIRE(rcBuildCompactHeightfield(&ctx, 16, 4, hf, chf));
     std::vector<unsigned char> untouched(chf.areas, chf.areas + chf.spanCount);
-    REQUIRE(erode(&ctx, 2, true, 1.0f, chf)); // the body's half yalm, a cell short of it, and the berth to a yalm
+    REQUIRE(erode(&ctx, 2, true, 1.0f, 0, 20, chf)); // the body's half yalm, a cell short of it, and the berth to a yalm
 
     // the area of the floor's cell at column x 12, row z
     const auto areaAt = [&](const int z) -> int
@@ -262,7 +263,7 @@ TEST_CASE("Client navmesh: past the body's margin, the berth is kept and marked 
 
     // any other build: Recast's own erosion, nothing marked
     std::copy(untouched.begin(), untouched.end(), chf.areas);
-    REQUIRE(erode(&ctx, 2, false, 1.0f, chf));
+    REQUIRE(erode(&ctx, 2, false, 1.0f, 0, 20, chf));
     CHECK(areaAt(1) == RC_NULL_AREA);
     CHECK(areaAt(2) == RC_WALKABLE_AREA);
     CHECK(areaAt(26) == RC_WALKABLE_AREA);
@@ -299,7 +300,7 @@ TEST_CASE("Client navmesh: a corridor between tall walls that the body passes st
 
     // the joins judged by the client, then the body's margin and the berth
     judgeJoins(chf, verts, indices, scene.size(), true);
-    REQUIRE(erode(&ctx, 2, true, 1.0f, chf));
+    REQUIRE(erode(&ctx, 2, true, 1.0f, 0, 20, chf));
 
     // halfway along it (z 3, Detour's -3: row 16), its middle two cells still ground
     const auto areaAt = [&](const int x) -> int
@@ -328,4 +329,132 @@ TEST_CASE("Client navmesh: a drop link is looked for square to its ledge's edge"
     float upZ = -1.0f;
     squareOut(false, a, b, upX, upZ);
     CHECK(upX == 1.0f); // any other build's left as it was
+}
+
+namespace
+{
+    // A level floor of `side` by `side` quarter-yalm cells, every cell one
+    // span joined to its neighbours, all of it the tight strip
+    struct TightField
+    {
+        rcContext            ctx{ false };
+        rcCompactHeightfield chf;
+
+        explicit TightField(const int side)
+        {
+            rcHeightfield hf;
+            const float   span = side * kCellSize;
+            const float   bmin[3]{ 0.0f, -1.0f, 0.0f };
+            const float   bmax[3]{ span, 1.0f, span };
+            REQUIRE(rcCreateHeightfield(&ctx, hf, side, side, bmin, bmax, kCellSize, kCellHeight));
+            const float a[3]{ 0.01f, 0.0f, 0.01f };
+            const float b[3]{ 0.01f, 0.0f, span - 0.01f };
+            const float c[3]{ span - 0.01f, 0.0f, span - 0.01f };
+            const float d[3]{ span - 0.01f, 0.0f, 0.01f };
+            REQUIRE(rcRasterizeTriangle(&ctx, a, b, c, RC_WALKABLE_AREA, hf));
+            REQUIRE(rcRasterizeTriangle(&ctx, a, c, d, RC_WALKABLE_AREA, hf));
+            REQUIRE(rcBuildCompactHeightfield(&ctx, 16, 4, hf, chf));
+            std::fill(chf.areas, chf.areas + chf.spanCount, kTightArea);
+        }
+
+        auto span(const int x, const int z) -> int
+        {
+            const rcCompactCell& cell = chf.cells[x + z * chf.width];
+            REQUIRE(cell.count == 1);
+            return static_cast<int>(cell.index);
+        }
+
+        // the cells x0..x1, z0..z1 (inclusive) made open ground
+        void open(const int x0, const int x1, const int z0, const int z1)
+        {
+            for (int z = z0; z <= z1; ++z)
+            {
+                for (int x = x0; x <= x1; ++x)
+                {
+                    chf.areas[span(x, z)] = RC_WALKABLE_AREA;
+                }
+            }
+        }
+
+        auto area(const int x, const int z) -> int
+        {
+            return chf.areas[span(x, z)];
+        }
+    };
+} // namespace
+
+TEST_CASE("Client navmesh: open ground too thin or too small for a region goes into the tight strip", "[cardian][porter]")
+{
+    SECTION("a single open cell amid the tight strip")
+    {
+        TightField f(24);
+        f.open(12, 12, 12, 12);
+        keepOpenWhole(f.chf, 0, 20);
+        CHECK(f.area(12, 12) == kTightArea);
+    }
+    SECTION("a line one cell wide, however long")
+    {
+        TightField f(24);
+        f.open(2, 21, 12, 12);
+        keepOpenWhole(f.chf, 0, 20);
+        CHECK(f.area(2, 12) == kTightArea);
+        CHECK(f.area(12, 12) == kTightArea);
+        CHECK(f.area(21, 12) == kTightArea);
+    }
+    SECTION("a square of four alone is under the merge size; a patch of twenty-five stays")
+    {
+        TightField f(24);
+        f.open(2, 3, 2, 3);
+        f.open(10, 14, 10, 14);
+        keepOpenWhole(f.chf, 0, 20);
+        CHECK(f.area(2, 2) == kTightArea);
+        CHECK(f.area(3, 3) == kTightArea);
+        CHECK(f.area(10, 10) == RC_WALKABLE_AREA);
+        CHECK(f.area(14, 14) == RC_WALKABLE_AREA);
+        CHECK(f.area(12, 12) == RC_WALKABLE_AREA);
+        CHECK(f.area(9, 12) == kTightArea); // the tight strip round it untouched
+    }
+    SECTION("a strip two cells wide stands, until the joins between its rows are cut")
+    {
+        TightField f(24);
+        f.open(2, 21, 11, 12);
+        TightField g(24);
+        g.open(2, 21, 11, 12);
+        for (int x = 2; x <= 21; ++x)
+        {
+            auto& lower = g.chf.spans[g.span(x, 11)];
+            auto& upper = g.chf.spans[g.span(x, 12)];
+            rcSetCon(lower, 1, RC_NOT_CONNECTED); // +z, as the client's walker cuts a join (client_joins.h)
+            rcSetCon(upper, 3, RC_NOT_CONNECTED);
+        }
+        keepOpenWhole(f.chf, 0, 20);
+        keepOpenWhole(g.chf, 0, 20);
+        CHECK(f.area(2, 11) == RC_WALKABLE_AREA);
+        CHECK(f.area(21, 12) == RC_WALKABLE_AREA);
+        CHECK(g.area(2, 11) == kTightArea);
+        CHECK(g.area(21, 12) == kTightArea);
+    }
+    SECTION("nothing but open ground changes")
+    {
+        TightField f(24);
+        f.open(10, 14, 10, 14);
+        f.chf.areas[f.span(0, 0)] = RC_NULL_AREA;
+        keepOpenWhole(f.chf, 0, 20);
+        CHECK(f.area(0, 0) == RC_NULL_AREA);
+        CHECK(f.area(5, 5) == kTightArea);
+    }
+    SECTION("the next tile's cells round the tile complete no square and count to no patch")
+    {
+        // a border of 2 cells: the tile is cells 2 to 21. Open ground two
+        // rows deep from the border into the tile's first row; and a patch
+        // of 25 whose first rows lie in the border
+        TightField f(24);
+        f.open(4, 19, 0, 2);
+        f.open(8, 12, 21, 23); // rows 21 the tile's, 22 and 23 the border's: 5 of the tile's own
+        keepOpenWhole(f.chf, 2, 20);
+        CHECK(f.area(10, 2) == kTightArea);       // the tile's row alone is a line one cell wide
+        CHECK(f.area(10, 1) == RC_WALKABLE_AREA); // the border's left as it was
+        CHECK(f.area(10, 21) == kTightArea);      // five of the tile's own, under the merge size
+        CHECK(f.area(10, 23) == RC_WALKABLE_AREA);
+    }
 }

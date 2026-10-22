@@ -31,12 +31,14 @@
 
 #include "client_collision.h"
 #include "client_navmesh.h"
+#include "navmesh_dump.h"
 
 #include <Recast.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 
@@ -163,6 +165,14 @@ inline auto judgeJoins(rcCompactHeightfield& chf, const std::vector<float>& vert
     }
     joins::ClientTris ct(verts, indices, count);
 
+    // the development tool's dump (navmesh_dump.h): Recast's joins, the cuts and why
+    std::optional<dump::Cuts> cuts;
+    if (dump::holds(chf))
+    {
+        dump::stage("compact", chf);
+        cuts.emplace(chf);
+    }
+
     // A cell's floor, its feet in FFXI's axes
     const auto feetOf = [&](const int x, const int z, const rcCompactSpan& s) -> Vec
     {
@@ -250,12 +260,20 @@ inline auto judgeJoins(rcCompactHeightfield& chf, const std::vector<float>& vert
                     {
                         continue;
                     }
+                    if (cuts.has_value())
+                    {
+                        cuts->cut(x, z, static_cast<float>(a[1]), nx, nz, static_cast<float>(b[1]), dir, aRest.has_value() && bRest.has_value() ? "walk" : "settle");
+                    }
                     rcSetCon(s, dir, RC_NOT_CONNECTED);
                     rcSetCon(ns, (dir + 2) & 3, RC_NOT_CONNECTED);
                     ++cut;
                 }
             }
         }
+    }
+    if (cuts.has_value())
+    {
+        dump::stage("joins", chf);
     }
     return cut;
 }

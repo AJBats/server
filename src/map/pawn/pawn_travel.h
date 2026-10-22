@@ -121,6 +121,21 @@ namespace pawn
         // without one
         auto straightOnTown(xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<bool>;
 
+        // The height (FFXI's y) of the floor at `at`'s spot whose height is
+        // nearest its own, within `reach` above or below it: the floor a
+        // body walking there stands on, on the town's navmesh by the client's
+        // rule in a town (townMesh) and the zone's navmesh elsewhere. nullopt
+        // with no floor there that near -- in a town, also where only the
+        // zone's navmesh has ground (the town's keeps off the walls): no
+        // other navmesh is asked
+        auto floorUnder(xi::ZoneId zone, const position_t& at, float reach) -> std::optional<float>;
+
+        // yalms above or below the height her path gives her a body's floor
+        // is looked for (floorUnder): her path's height strays from the
+        // ground by under a yalm, and two floors in one column lie two
+        // yalms or more apart
+        constexpr float kFloorReach = 2.0f;
+
         // The same route over a navmesh of its own -- the porter's
         // (pawn/porter_mesh.h) -- with no faces and no seams: that navmesh
         // keeps to the client's rule by itself, so only its links cross its
