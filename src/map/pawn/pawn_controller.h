@@ -1010,6 +1010,28 @@ private:
     auto Move(Intent intent) -> AvoidAction;
     auto Walk(Intent intent) -> AvoidAction;
 
+    // Her movement counter after a step of her path finder's that took
+    // `took`: the counter a position update carries (MovTime) tells a client
+    // how long the move since its last update took, in 60ths of a second,
+    // and the client draws the move over that long. A player's own client
+    // counts 60 a second while he moves, whatever its frame rate; the path
+    // finder adds a fixed 0x35 a step, which tells a client that a step of
+    // 0.4 s took 0.88 s, so it draws her late and cuts across her corners.
+    // Her counter rises by the time the step took; a step that moved her
+    // nowhere leaves it as it was
+    void CountMove(const position_t& before, std::chrono::microseconds took);
+    float m_MoveFrames = 0.0f; // the 60ths of a second counted but not yet a whole one
+
+    // Her height after a step of her path finder's that moved her, set to
+    // the floor she stands on there (pawn_travel.h floorUnder). Between two
+    // corners of her path the finder draws her height in a straight line,
+    // which strays off the ground: inside a deck that rises between them, or
+    // up toward one she passes under, and a client sets a character down on
+    // the first floor below the height it is sent -- the ground under the
+    // deck, or the deck over her. A step that moved her nowhere, or with no
+    // floor near, keeps the height it had
+    void GroundStep(const position_t& before);
+
     // The move trace (pawn.MOVE_TRACE, a development tool): once a tick, a
     // place the navmesh does not join to her last tick's is said in the map
     // log, with the last walk she was given and the leg of her path

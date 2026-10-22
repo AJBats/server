@@ -22,6 +22,7 @@
 #include "pawn_travel.h"
 
 #include "collision_walls.h"
+#include "porter_mesh.h"
 
 #include "subzone_graph.h"
 
@@ -39,6 +40,8 @@
 #include "zone.h"
 
 #include <algorithm>
+#include <cfloat>
+#include <cmath>
 #include <chrono>
 #include <deque>
 #include <filesystem>
@@ -506,9 +509,150 @@ namespace pawn::travel
         return plan.reachable && plan.firstLine.has_value();
     }
 
+    auto townMesh(const xi::ZoneId zone) -> const dtNavMesh*
+    {
+        if (!settings::get<bool>("pawn.TOWN_CLIENT_NAVMESH"))
+        {
+            return nullptr;
+        }
+        auto* PZone = zoneutils::GetZone(zone);
+        return PZone != nullptr && pawn::porter::mesh::isTown(PZone) ? pawn::porter::mesh::of(PZone) : nullptr;
+    }
+
+    namespace
+    {
+        // A query on a navmesh: one a thread, made again only for another
+        // mesh; nullptr when it cannot be made
+        auto queryOn(const dtNavMesh* mesh) -> dtNavMeshQuery*
+        {
+            thread_local dtNavMeshQuery   query;
+            thread_local const dtNavMesh* queryMesh = nullptr;
+            if (queryMesh != mesh)
+            {
+                queryMesh = nullptr;
+                if (dtStatusFailed(query.init(mesh, 256)))
+                {
+                    return nullptr;
+                }
+                queryMesh = mesh;
+            }
+            return &query;
+        }
+
+        // Its polygons, the tight strip by the walls among them (half a
+        // yalm off a wall is room enough to stand), none the build disabled
+        auto groundFilter() -> dtQueryFilter
+        {
+            dtQueryFilter filter;
+            filter.setExcludeFlags(cardian::route::kPolyDisabled);
+            return filter;
+        }
+    } // namespace
+
+    auto snapToTown(const xi::ZoneId zone, const position_t& point) -> std::optional<position_t>
+    {
+        const auto* town  = townMesh(zone);
+        auto*       query = town != nullptr ? queryOn(town) : nullptr;
+        if (query == nullptr)
+        {
+            return std::nullopt;
+        }
+        // as far round as the zone's own snap looks (detour_navmesh.cpp largePolyPickExt)
+        const float   extents[3]{ 30.0f, 60.0f, 30.0f };
+        const auto    filter = groundFilter();
+        const auto    at     = cardian::route::toDetour(point);
+        dtPolyRef     ref{};
+        float         nearest[3]{};
+        if (dtStatusFailed(query->findNearestPoly(at.data(), extents, &filter, &ref, nearest)) || ref == 0)
+        {
+            return std::nullopt;
+        }
+        auto out     = cardian::route::fromDetour(nearest);
+        out.rotation = point.rotation;
+        return out;
+    }
+
+    auto straightOnTown(const xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<bool>
+    {
+        const auto* town  = townMesh(zone);
+        auto*       query = town != nullptr ? queryOn(town) : nullptr;
+        if (query == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto filter = groundFilter();
+        const auto a      = cardian::route::toDetour(from);
+        const auto b      = cardian::route::toDetour(to);
+        dtPolyRef  start{};
+        float      onMesh[3]{};
+        float      t = 0.0f;
+        float      normal[3]{};
+        dtPolyRef  polys[256];
+        int        count = 0;
+        return dtStatusSucceed(query->findNearestPoly(a.data(), sz::kBodyExtents, &filter, &start, onMesh)) && start != 0 &&
+               dtStatusSucceed(query->raycast(start, onMesh, b.data(), &filter, &t, normal, polys, &count, 256)) && t == FLT_MAX;
+    }
+
+    auto floorUnder(const xi::ZoneId zone, const position_t& at, const float reach) -> std::optional<float>
+    {
+        const dtNavMesh* mesh = townMesh(zone);
+        if (mesh == nullptr)
+        {
+            auto*       PZone  = zoneutils::GetZone(zone);
+            const auto* detour = PZone != nullptr ? dynamic_cast<const DetourNavMesh*>(PZone->navMesh()) : nullptr;
+            mesh               = detour != nullptr ? detour->detourMesh() : nullptr;
+        }
+        auto* query = mesh != nullptr ? queryOn(mesh) : nullptr;
+        if (query == nullptr)
+        {
+            return std::nullopt;
+        }
+        // the polygons over or under the spot itself, each one's height
+        // there, the nearest hers
+        const float  extents[3]{ 0.1f, reach, 0.1f };
+        const auto   filter = groundFilter();
+        const auto   p      = cardian::route::toDetour(at);
+        dtPolyRef    polys[32];
+        int          count = 0;
+        std::optional<float> best;
+        if (dtStatusSucceed(query->queryPolygons(p.data(), extents, &filter, polys, &count, 32)))
+        {
+            for (int i = 0; i < count; ++i)
+            {
+                float height = 0.0f;
+                if (dtStatusSucceed(query->getPolyHeight(polys[i], p.data(), &height)) && std::abs(height - p[1]) <= reach &&
+                    (!best.has_value() || std::abs(height - p[1]) < std::abs(*best - p[1])))
+                {
+                    best = height;
+                }
+            }
+        }
+        // on an edge between two polygons, where neither holds the spot: the nearest point of the nearest
+        if (!best.has_value())
+        {
+            dtPolyRef ref{};
+            float     nearest[3]{};
+            if (dtStatusFailed(query->findNearestPoly(p.data(), extents, &filter, &ref, nearest)) || ref == 0)
+            {
+                return std::nullopt;
+            }
+            best = nearest[1];
+        }
+        return -*best;
+    }
+
     auto routeToSafeGround(const xi::ZoneId zone, const position_t& from, const std::vector<cardian::route::Hazard>& hazards,
                            const cardian::route::HazardSight& sight, const float within) -> std::optional<cardian::route::Route>
     {
+        if (const auto* town = townMesh(zone); town != nullptr)
+        {
+            auto route = cardian::route::searchSafeGround(*town, from, sz::kBodyExtents, hazards, sight, within, nullptr, nullptr, true);
+            if (!route.has_value())
+            {
+                route = cardian::route::searchSafeGround(*town, from, sz::kLineExtents, hazards, sight, within, nullptr, nullptr, true);
+            }
+            return route;
+        }
         const auto* zm = meshOf(static_cast<uint16>(zone));
         if (zm == nullptr)
         {
@@ -525,6 +669,15 @@ namespace pawn::travel
     auto routeAvoiding(const xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                        const cardian::route::HazardSight& sight, const float reach) -> std::optional<cardian::route::Route>
     {
+        if (const auto* town = townMesh(zone); town != nullptr)
+        {
+            auto route = cardian::route::searchAvoiding(*town, from, to, sz::kBodyExtents, sz::kLineExtents, hazards, sight, reach, nullptr, nullptr, true);
+            if (!route.has_value())
+            {
+                route = cardian::route::searchAvoiding(*town, from, to, sz::kLineExtents, sz::kLineExtents, hazards, sight, reach, nullptr, nullptr, true);
+            }
+            return route;
+        }
         const auto* zm = meshOf(static_cast<uint16>(zone));
         if (zm == nullptr)
         {

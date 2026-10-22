@@ -99,6 +99,43 @@ namespace pawn
         auto routeAvoiding(xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                            const cardian::route::HazardSight& sight, float reach = 0.0f) -> std::optional<cardian::route::Route>;
 
+        // A town's navmesh by the client's own rule, with the town's props in it
+        // (porter_mesh.h), which every route searched in a town keeps to (pawn.TOWN_CLIENT_NAVMESH):
+        // a client steps half a yalm, stands on floors to 44.9 degrees and keeps
+        // its body half a yalm off every wall, and that navmesh keeps to the same
+        // by itself -- no faces, no seams, no step judged too steep: its stairs
+        // are the client's -- with a berth off the walls where there is room.
+        // Nullptr out of a town, or for a town without one
+        auto townMesh(xi::ZoneId zone) -> const dtNavMesh*;
+
+        // The nearest point of a town's navmesh by the client's rule to
+        // `point` (pawn.TOWN_CLIENT_NAVMESH): a body set down in a town stands
+        // where a client's own body could, half a yalm off every wall and on
+        // nothing but floor. nullopt out of a town, for a town without one, or
+        // with none of it near
+        auto snapToTown(xi::ZoneId zone, const position_t& point) -> std::optional<position_t>;
+
+        // Whether a straight walk on a town's navmesh by the client's rule
+        // goes from `from` to `to` without leaving it: through no wall and no
+        // prop, half a yalm off both. nullopt out of a town, or for a town
+        // without one
+        auto straightOnTown(xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<bool>;
+
+        // The height (FFXI's y) of the floor at `at`'s spot whose height is
+        // nearest its own, within `reach` above or below it: the floor a
+        // body walking there stands on, on the town's navmesh by the client's
+        // rule in a town (townMesh) and the zone's navmesh elsewhere. nullopt
+        // with no floor there that near -- in a town, also where only the
+        // zone's navmesh has ground (the town's keeps off the walls): no
+        // other navmesh is asked
+        auto floorUnder(xi::ZoneId zone, const position_t& at, float reach) -> std::optional<float>;
+
+        // yalms above or below the height her path gives her a body's floor
+        // is looked for (floorUnder): her path's height strays from the
+        // ground by under a yalm, and two floors in one column lie two
+        // yalms or more apart
+        constexpr float kFloorReach = 2.0f;
+
         // The same route over a navmesh of its own -- the porter's
         // (pawn/porter_mesh.h) -- with no faces and no seams: that navmesh
         // keeps to the client's rule by itself, so only its links cross its

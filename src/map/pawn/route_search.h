@@ -1175,10 +1175,13 @@ namespace cardian::route
     //
     // The search behind searchAvoiding and searchSafeGround: to `to` when
     // given; without one, to the nearest point out of every reach, walking at
-    // most `within` yalms (Dijkstra, the greed off)
+    // most `within` yalms (Dijkstra, the greed off). On a mesh `byClient`,
+    // built by the client's own rule (pawn/client_navmesh.h), every join is
+    // one the client walks -- a stair's flight as much as a gentle slope --
+    // and no step of it is judged too steep
     inline auto searchCore(const dtNavMesh& mesh, const position_t& from, const std::optional<position_t>& to, const float* fromExtents, const float* toExtents,
                            const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within, const Faces* faces,
-                           const Seams* seams = nullptr) -> std::optional<Route>
+                           const Seams* seams = nullptr, const bool byClient = false) -> std::optional<Route>
     {
         using detail::apart;
         using detail::Node;
@@ -1321,6 +1324,10 @@ namespace cardian::route
         {
             return faces != nullptr && detail::climbsFaces(*faces, mesh, polys, count, a, b);
         };
+        const auto tooSteep = [&](const Vec& a, const Vec& b) -> bool
+        {
+            return !byClient && detail::tooSteep(a, b);
+        };
 
         // A walk the mesh joins in a straight line -- no wall, nothing a
         // player cannot climb, no danger -- is that straight line. The
@@ -1334,7 +1341,7 @@ namespace cardian::route
             dtPolyRef path[kRayPolys]{};
             int       count = 0;
             if (dtStatusSucceed(query.raycast(startRef, origin.data(), target.data(), &clear, &t, normal, path, &count, kRayPolys)) && t == FLT_MAX && count > 0 &&
-                path[count - 1] == goalRef && !touchesTight(path, count) && !detail::tooSteep(origin, target) && !climbsCliff(path, count, origin, target) &&
+                path[count - 1] == goalRef && !touchesTight(path, count) && !tooSteep(origin, target) && !climbsCliff(path, count, origin, target) &&
                 !inDanger(origin, target))
             {
                 Route straightRoute;
@@ -1612,7 +1619,7 @@ namespace cardian::route
                 }
                 // up ground too steep for a player, overall or up a face: read
                 // last, the dearest of the step's tests
-                if (!viaLink && (detail::tooSteep(at, next.at) || climbsCliff(&via, 1, at, next.at)))
+                if (!viaLink && (tooSteep(at, next.at) || climbsCliff(&via, 1, at, next.at)))
                 {
                     return;
                 }
@@ -1716,7 +1723,7 @@ namespace cardian::route
             {
                 return false; // the strip's own points are kept, threading its middle
             }
-            if (detail::tooSteep(from_.at, to_.at))
+            if (tooSteep(from_.at, to_.at))
             {
                 return false; // climbs past a player's slope overall
             }
@@ -1787,9 +1794,9 @@ namespace cardian::route
     // The route from `from` to `to` that keeps out of danger (searchCore)
     inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
                                const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f, const Faces* faces = nullptr,
-                               const Seams* seams = nullptr) -> std::optional<Route>
+                               const Seams* seams = nullptr, const bool byClient = false) -> std::optional<Route>
     {
-        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces, seams);
+        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces, seams, byClient);
     }
 
     // The way from `from` to the nearest ground out of every reach, walking
@@ -1798,9 +1805,9 @@ namespace cardian::route
     // the fewest steps of it. Complete and empty when `from` is out of every
     // reach already; not complete when no such ground lies within
     inline auto searchSafeGround(const dtNavMesh& mesh, const position_t& from, const float* fromExtents, const std::vector<Hazard>& hazards,
-                                 const HazardSight& sight, const float within, const Faces* faces = nullptr, const Seams* seams = nullptr)
-        -> std::optional<Route>
+                                 const HazardSight& sight, const float within, const Faces* faces = nullptr, const Seams* seams = nullptr,
+                                 const bool byClient = false) -> std::optional<Route>
     {
-        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within, faces, seams);
+        return searchCore(mesh, from, std::nullopt, fromExtents, fromExtents, hazards, sight, 0.0f, within, faces, seams, byClient);
     }
 } // namespace cardian::route

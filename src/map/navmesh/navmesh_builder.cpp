@@ -1059,7 +1059,7 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
     rcFreeHeightField(solid);
     cardian::client::judgeJoins(*chf, tileMesh.verts, tileMesh.indices, gathered, config.cardianClient); // CARDIAN: for the client, its own collision judges the joins
 
-    if (!cardian::client::erode(&ctx, tileCfg.walkableRadius, config.cardianClient, config.cardianBerth, *chf)) // CARDIAN: for the client, its body's margin, and the berth past it marked tight
+    if (!cardian::client::erode(&ctx, tileCfg.walkableRadius, config.cardianClient, config.cardianBerth, tileCfg.borderSize, tileCfg.mergeRegionArea, *chf)) // CARDIAN: for the client, its body's margin, and the berth past it marked tight
     {
         rcFreeCompactHeightfield(chf);
         return {};
@@ -1075,6 +1075,7 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         rcFreeCompactHeightfield(chf);
         return {};
     }
+    cardian::client::dump::regions(*chf); // CARDIAN: a development tool's dump of one tile (pawn/navmesh_dump.h)
 
     //
     // Contours
@@ -1087,6 +1088,8 @@ auto NavMeshBuilder::buildTile(const int tx, const int ty, const rcConfig& cfg, 
         rcFreeContourSet(cset);
         return {};
     }
+    cardian::client::matchOutlines(*cset, config.cardianClient); // CARDIAN: for the client, two regions' outlines agree where they meet
+    cardian::client::dump::contours(*cset, *chf);                // CARDIAN: a development tool's dump of one tile (pawn/navmesh_dump.h)
 
     if (cset->nconts == 0)
     {

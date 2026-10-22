@@ -24,6 +24,7 @@
 #include "cardian_link.h"
 #include "client_navmesh.h"
 #include "collision_walls.h"
+#include "navmesh_dump.h"
 #include "route_search.h"
 
 #include "common/logging.h"
@@ -33,6 +34,7 @@
 #include "navmesh/navmesh_builder.h"
 #include "utils/zoneutils.h"
 #include "ximesh/ximesh.h"
+#include "ximesh/ximesh_impl.h"
 #include "zone.h"
 
 #include <algorithm>
@@ -56,7 +58,7 @@ namespace pawn::porter::mesh
         // The recipe's version: raised when the build's own rule changes
         // (client_navmesh.h, the builder's links), so every older file is
         // stale at once
-        constexpr int kRecipeVersion = 8;
+        constexpr int kRecipeVersion = 12;
 
         struct Entry
         {
@@ -80,6 +82,49 @@ namespace pawn::porter::mesh
         auto recipePath(const uint16 zoneId) -> std::string
         {
             return cardian::walls::builtPath(zoneId, "porter.recipe");
+        }
+
+        auto zoneName(const CZone* zone) -> std::string
+        {
+            auto* named = zoneutils::GetZone(zone->GetID()); // its name is read through a zone that is not const
+            return named != nullptr ? std::string(named->getName()) : std::string();
+        }
+
+        // The zone's collision with its props in it -- the sub-models a city's
+        // counters, furniture and rooms stand in, which upstream's ximesh leaves
+        // out -- merged offline from the client's own files by
+        // tools/walls/props.py; the zone's own collision where there is none
+        auto propsPath(const CZone* zone) -> std::string
+        {
+            return fmt::format(".cache/cardian_ximeshes/{}.ximesh", zoneName(zone));
+        }
+
+        // A zone's merged props: the merged file's size, the recipe's mark of
+        // which props went in (0 for none), and whether it was merged from
+        // a collision upstream has since changed -- props.py writes the size
+        // of the ximesh it merged from beside it (<zone>.source), and a
+        // navmesh built from an outdated merge would be built from the old
+        // collision
+        struct Props
+        {
+            uintmax_t size     = 0;
+            bool      outdated = false;
+        };
+
+        auto propsOf(const CZone* zone) -> Props
+        {
+            std::error_code ec;
+            const auto      path = propsPath(zone);
+            const auto      size = std::filesystem::file_size(path, ec);
+            if (ec)
+            {
+                return {};
+            }
+            std::ifstream in(fmt::format(".cache/cardian_ximeshes/{}.source", zoneName(zone)));
+            uintmax_t     mergedFrom = 0;
+            in >> mergedFrom;
+            const auto now = std::filesystem::file_size(fmt::format("ximeshes/{}.ximesh", zoneName(zone)), ec);
+            return Props{ size, !in || ec || mergedFrom != now };
         }
 
         // The zone's own navmesh config -- its skip planes and its seeds --
@@ -167,17 +212,21 @@ namespace pawn::porter::mesh
         }
 
         // What a zone's porter navmesh is built from, as one line: the
-        // build's main numbers to read, a hash of its whole config, and the
-        // size of the zone's collision, so a change to any -- a new width, a
-        // zone's new overrides or seeds, an upstream merge's new ximesh --
-        // leaves the file stale. A change to the builder's own code is not
-        // seen: kRecipeVersion, and the base merge's checklist (CLAUDE.md)
+        // build's main numbers to read, a hash of its whole config, the size
+        // of the zone's collision and of its merged props where it has them
+        // (a zone without keeps the recipe it had before props), so a change to any
+        // -- a new width, a zone's new overrides or seeds, an upstream merge's
+        // new ximesh, props merged again -- leaves the file stale. A change to
+        // the builder's own code is not seen: kRecipeVersion, and the base
+        // merge's checklist (CLAUDE.md)
         auto recipeOf(const CZone* zone, const NavMeshConfig& c) -> std::string
         {
-            const auto* x = zone->xiMesh();
-            return fmt::format("porter {} body {:.3f} width {:.3f} climb {:.3f} slope {:.1f} cell {:.3f} {:.3f} reach {:.2f} config {:016x} collision {} {} {} {}x{}",
+            const auto* x     = zone->xiMesh();
+            const auto  props = propsOf(zone).size;
+            return fmt::format("porter {} body {:.3f} width {:.3f} climb {:.3f} slope {:.1f} cell {:.3f} {:.3f} reach {:.2f} config {:016x} collision {} {} {} {}x{}{}",
                                kRecipeVersion, c.agentRadius, c.cardianBerth, c.agentMaxClimb, c.walkableSlopeAngle, c.cellSize, c.cellHeight, c.offMeshHorizReach,
-                               configHash(c), x->blocks().size(), x->placements().size(), x->entries().size(), x->gridWidth(), x->gridHeight());
+                               configHash(c), x->blocks().size(), x->placements().size(), x->entries().size(), x->gridWidth(), x->gridHeight(),
+                               props > 0 ? fmt::format(" props {}", props) : std::string());
         }
 
         // The recipe a build under way leaves until its file is written:
@@ -202,6 +251,10 @@ namespace pawn::porter::mesh
             {
                 return "its build never finished";
             }
+            if (propsOf(zone).outdated)
+            {
+                return "its props were merged from an older collision: run tools/walls/props.py merge first";
+            }
             if (saved != recipeOf(zone, configFor(zone)))
             {
                 return "built for other settings";
@@ -216,6 +269,13 @@ namespace pawn::porter::mesh
             return zone != nullptr ? std::string(zone->getName()) : fmt::format("zone {}", zoneId);
         }
     } // namespace
+
+    auto isTown(CZone* zone) -> bool
+    {
+        const auto* own = zone != nullptr ? dynamic_cast<const DetourNavMesh*>(zone->navMesh()) : nullptr;
+        return own != nullptr && own->detourMesh() != nullptr && zone->xiMesh() != nullptr &&
+               (zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
+    }
 
     auto of(CZone* zone) -> const dtNavMesh*
     {
@@ -242,12 +302,12 @@ namespace pawn::porter::mesh
             auto       mesh  = std::make_unique<DetourNavMesh>(zoneId);
             if (!stale.empty())
             {
-                ShowWarningFmt("porter: {} has no navmesh for the rider ({}): run ./dev-servers.ps1 porter-navmeshes; its rides keep to the zone's navmesh",
+                ShowWarningFmt("porter: {} has no navmesh by the client's rule ({}): run ./dev-servers.ps1 porter-navmeshes; its rides and its town walks keep to the zone's navmesh",
                                zone->getName(), stale);
             }
             else if (!mesh->load(meshPath(zoneId)))
             {
-                ShowWarningFmt("porter: {}'s navmesh for the rider would not load ({}): its rides keep to the zone's navmesh", zone->getName(), meshPath(zoneId));
+                ShowWarningFmt("porter: {}'s navmesh by the client's rule would not load ({}): its rides and its town walks keep to the zone's navmesh", zone->getName(), meshPath(zoneId));
             }
             else
             {
@@ -274,10 +334,10 @@ namespace pawn::porter::mesh
         }
         if (missing.empty())
         {
-            ShowInfoFmt("porter: navmeshes for the rider in all {} zones a ride can plan in", zones.size());
+            ShowInfoFmt("porter: navmeshes by the client's rule in all {} zones a ride can plan in and the towns", zones.size());
             return;
         }
-        ShowWarningFmt("porter: {} of {} zones a ride can plan in have no navmesh for the rider, and their rides keep to the zones' navmeshes: {}. "
+        ShowWarningFmt("porter: {} of {} zones a ride can plan in or towns have no navmesh by the client's rule, and keep to the zones' navmeshes: {}. "
                        "Run ./dev-servers.ps1 porter-navmeshes",
                        missing.size(), zones.size(), fmt::join(missing, ", "));
     }
@@ -287,12 +347,19 @@ namespace pawn::porter::mesh
         auto* scheduler = cardian::link::scheduler();
         if (scheduler == nullptr)
         {
-            ShowErrorFmt("porter: the navmeshes for the rider cannot be built: the map handed no scheduler");
+            ShowErrorFmt("porter: the navmeshes by the client's rule cannot be built: the map handed no scheduler");
             std::exit(1);
         }
-        ShowInfoFmt("porter: building the navmeshes for the rider of {} zones", zones.size());
+        ShowInfoFmt("porter: building the navmeshes by the client's rule of {} zones", zones.size());
+        // a dump run (navmesh_dump.h) builds each zone again, current or not
+        const bool dumping = cardian::client::dump::point().has_value();
+        if (dumping)
+        {
+            ShowInfoFmt("porter: dumping the build's steps round ({:.1f}, {:.1f}) into log/navmesh_dump", cardian::client::dump::point()->first,
+                        cardian::client::dump::point()->second);
+        }
         scheduler->postToMainThread(
-            [zones, scheduler]() -> Task<void>
+            [zones, scheduler, dumping]() -> Task<void>
             {
                 std::size_t written = 0;
                 for (const auto zoneId : zones)
@@ -300,25 +367,47 @@ namespace pawn::porter::mesh
                     auto* zone = zoneutils::GetZone(static_cast<xi::ZoneId>(zoneId));
                     if (zone == nullptr || zone->xiMesh() == nullptr)
                     {
-                        ShowWarningFmt("porter: {} has no collision: no navmesh for the rider", nameOf(zoneId));
+                        ShowWarningFmt("porter: {} has no collision: no navmesh by the client's rule", nameOf(zoneId));
                         continue;
                     }
-                    if (staleness(zone).empty())
+                    if (!dumping && staleness(zone).empty())
                     {
                         ++written; // already built for today's settings: a rerun builds only what is missing or stale
                         continue;
+                    }
+                    // A zone with props is built with them or not at all: a
+                    // navmesh built without them would pass for one with them
+                    const auto                  merged = propsOf(zone);
+                    std::unique_ptr<XiMeshImpl> props;
+                    if (merged.outdated)
+                    {
+                        ShowWarningFmt("porter: {}'s props were merged from an older collision: run tools/walls/props.py merge {}, then this again; not built",
+                                       zone->getName(), zoneId);
+                        continue;
+                    }
+                    if (merged.size > 0)
+                    {
+                        try
+                        {
+                            props = std::make_unique<XiMeshImpl>(propsPath(zone));
+                        }
+                        catch (const std::exception& e)
+                        {
+                            ShowWarningFmt("porter: {}'s collision with its props would not load ({}): not built", zone->getName(), e.what());
+                            continue;
+                        }
                     }
                     const auto config = configFor(zone);
                     {
                         std::ofstream building(recipePath(zoneId), std::ios::trunc);
                         building << kBuilding << '\n';
                     }
-                    NavMeshBuilder builder(*zone->xiMesh());
+                    NavMeshBuilder builder(props != nullptr ? static_cast<const XiMesh&>(*props) : *zone->xiMesh());
                     auto*          built = co_await builder.buildAsync(*scheduler, fmt::format("{} (the porter's)", zone->getName()), zoneId, config);
                     DetourNavMesh  mesh(zoneId);
                     if (built == nullptr || !mesh.installNavMesh(built) || !mesh.save(meshPath(zoneId)))
                     {
-                        ShowWarningFmt("porter: {}'s navmesh for the rider could not be built or written", zone->getName());
+                        ShowWarningFmt("porter: {}'s navmesh by the client's rule could not be built or written", zone->getName());
                         continue;
                     }
                     std::ofstream out(recipePath(zoneId), std::ios::trunc);
@@ -330,7 +419,7 @@ namespace pawn::porter::mesh
                     }
                     ++written;
                 }
-                ShowInfoFmt("porter: navmeshes for the rider written for {} of {} zones, in {}; exiting", written, zones.size(), ".cache/cardian_navmeshes");
+                ShowInfoFmt("porter: navmeshes by the client's rule written for {} of {} zones, in {}; exiting", written, zones.size(), ".cache/cardian_navmeshes");
                 std::exit(written == zones.size() ? 0 : 1);
             });
     }

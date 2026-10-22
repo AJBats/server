@@ -90,6 +90,7 @@
 #include "party_roster.h"
 #include "tactics.h"
 #include "items/item_weapon.h"
+#include "map_constants.h"
 #include "navmesh/navmesh.h"
 #include "navmesh/null_navmesh.h"
 #include "party.h"
@@ -990,7 +991,8 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
     {
         points.push_back(pathpoint_t{ p, 0s, false });
     }
-    const float lane = pawn::world::laneOf(POwner->id);
+    const float lane   = pawn::world::laneOf(POwner->id);
+    const bool  inTown = pawn::travel::townMesh(POwner->getZone()) != nullptr;
     for (size_t i = 1; i + 1 < points.size(); ++i)
     {
         const auto& prev = points[i - 1].position;
@@ -1005,6 +1007,21 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
         position_t shifted = points[i].position;
         shifted.x += -dz / len * lane;
         shifted.z += dx / len * lane;
+        // In a town, on the navmesh the route came from, and only where she
+        // walks to it and on from it straight on that navmesh: the zone's
+        // own has floor under every counter, and a corner slid there could
+        // land in one
+        if (inTown)
+        {
+            if (const auto snapped = pawn::travel::snapToTown(POwner->getZone(), shifted);
+                snapped.has_value() && std::hypot(snapped->x - shifted.x, snapped->z - shifted.z) < 0.6f &&
+                pawn::travel::straightOnTown(POwner->getZone(), prev, *snapped).value_or(false) &&
+                pawn::travel::straightOnTown(POwner->getZone(), *snapped, next).value_or(false))
+            {
+                points[i].position = *snapped;
+            }
+            continue;
+        }
         if (const auto snapped = navMesh->findClosestValidPoint(shifted); snapped.has_value() && std::hypot(snapped->x - shifted.x, snapped->z - shifted.z) < 0.6f)
         {
             points[i].position = *snapped;
@@ -7022,7 +7039,10 @@ void CPawnController::WalkTick()
     WalkOrderTick(m_Tick);
     if (!cardian::view::timersArmed() && POwner->PAI->PathFind->IsFollowingPath())
     {
+        const auto before = POwner->loc.p;
         POwner->PAI->PathFind->FollowPath(m_Tick);
+        GroundStep(before);
+        CountMove(before, kLogicUpdateInterval);
     }
 }
 
@@ -7160,6 +7180,8 @@ void CPawnController::WalkStep()
     PPathFind->SetStepScale(scale);
     PPathFind->FollowPath(now);
     PPathFind->SetStepScale(1.0f);
+    GroundStep(before);
+    CountMove(before, std::chrono::duration_cast<std::chrono::microseconds>(scale * std::chrono::duration<float>(kLogicUpdateInterval)));
     // The walk's accounting, every five seconds in the map log while she is
     // walked: her ground speed (the server's truth, against the client's
     // meter), the timer's steps, and the time the cap threw away
@@ -9751,10 +9773,19 @@ auto CPawnController::TowIntent(CBattleEntity* PTarget) -> Intent
     return intent;
 }
 
-auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seat, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
+auto CPawnController::SeatIntent(const CBattleEntity* PTarget, const position_t& seatAt, const bool inReach, const bool campRoute, const bool ownSeat) -> Intent
 {
     using cardian::formation::Circle;
     using cardian::formation::segmentCrosses;
+
+    // The seat on the floor at its spot: it carries the mob's height, and
+    // hers after every step is the floor's (GroundStep), so a seat off the
+    // floor would be one she never reaches, hopping onto it again and again
+    position_t seat = seatAt;
+    if (const auto floor = pawn::travel::floorUnder(POwner->getZone(), seat, pawn::travel::kFloorReach); floor.has_value())
+    {
+        seat.y = *floor;
+    }
 
     const auto* PPathFind = POwner->PAI->PathFind.get();
     const auto& me        = POwner->loc.p;

@@ -515,6 +515,37 @@ namespace pawn::porter
             return { zones.begin(), zones.end() };
         }
 
+        // The towns (porter_mesh.h isTown), whose cardians walk on their
+        // navmesh by the client's rule (pawn_travel.h townMesh)
+        auto townZones() -> std::vector<uint16>
+        {
+            std::vector<uint16> towns;
+            zoneutils::ForEachZone([&](CZone* PZone)
+            {
+                if (mesh::isTown(PZone))
+                {
+                    towns.push_back(static_cast<uint16>(PZone->GetID()));
+                }
+            });
+            return towns;
+        }
+
+        // Every zone given a navmesh by the client's rule: those a ride plans
+        // in, and the towns
+        auto builtZones() -> std::vector<uint16>
+        {
+            std::set<uint16> zones;
+            for (const auto z : riddenZones())
+            {
+                zones.insert(z);
+            }
+            for (const auto z : townZones())
+            {
+                zones.insert(z);
+            }
+            return { zones.begin(), zones.end() };
+        }
+
         auto places() -> const std::vector<Place>&
         {
             static std::vector<Place> built;
@@ -1541,7 +1572,7 @@ class PorterModule : public CPPModule
             if (precalc != nullptr && std::string_view(precalc) == "1")
             {
                 // CARDIAN_PORTER_NAVMESH_ZONES, when given, names the only zones to build (their ids, space apart)
-                auto        zones = riddenZones();
+                auto        zones = builtZones();
                 const char* only  = std::getenv("CARDIAN_PORTER_NAVMESH_ZONES");
                 if (only != nullptr && *only != '\0')
                 {
@@ -1566,15 +1597,31 @@ class PorterModule : public CPPModule
                     std::erase_if(zones, [&](const uint16 z) { return !named.contains(z); });
                     if (!unknown.empty())
                     {
-                        ShowErrorFmt("porter: no navmesh for the rider built for {}: not a zone a ride plans in", fmt::join(unknown, ", "));
+                        ShowErrorFmt("porter: no navmesh by the client's rule built for {}: not a zone a ride plans in, nor a town", fmt::join(unknown, ", "));
                         std::exit(1);
                     }
                 }
                 mesh::precalc(zones);
             }
-            else if (settings::get<bool>("pawn.PORTER_NAVMESH"))
+            else
             {
-                mesh::check(riddenZones());
+                // Which zones have theirs, said once: those a ride plans in
+                // while rides keep to theirs, the towns while their cardians do
+                const bool          rides = settings::get<bool>("pawn.PORTER_NAVMESH");
+                const bool          towns = settings::get<bool>("pawn.TOWN_CLIENT_NAVMESH");
+                std::vector<uint16> zones = rides && towns ? builtZones() : rides ? riddenZones() : towns ? townZones() : std::vector<uint16>{};
+                if (!zones.empty())
+                {
+                    mesh::check(zones);
+                }
+                // a town's is read now, not at its first walk (some 50 ms on the map's thread)
+                if (towns)
+                {
+                    for (const auto z : townZones())
+                    {
+                        mesh::of(zoneutils::GetZone(static_cast<xi::ZoneId>(z)));
+                    }
+                }
             }
         }
         std::vector<uint32> lost;
