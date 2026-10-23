@@ -397,7 +397,7 @@ inline uint32 vanadiel_timestamp(const time_point& tp = now())
 // Returns the number of Earth milliseconds since the Vana'diel epoch.
 inline uint64 vanadiel_timestamp_ms(const time_point& tp = now())
 {
-    return static_cast<uint64>(std::chrono::floor<std::chrono::milliseconds>(tp - vanadiel_epoch).count());
+    return static_cast<uint64>(std::chrono::floor<std::chrono::milliseconds>(tp - calendar_epoch()).count()); // CARDIAN: the held, drifted calendar
 }
 
 // Returns an integer 0-6 representing Monday-Sunday JST.
