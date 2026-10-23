@@ -133,6 +133,13 @@ namespace
         bool                 fromMogHouse = false; // his Mog House's exit, not a line he walked to
     };
     std::unordered_map<uint32, ZoneLineSeen> zoneLineAt;
+    // A player's end of an event, and where he stood (noteEventEnd)
+    struct SceneEndSeen
+    {
+        realtime::time_point when;
+        position_t           where;
+    };
+    std::unordered_map<uint32, SceneEndSeen> sceneEndAt;
     // A player's last walk through a zone line (playerExit)
     std::unordered_map<uint32, pawn::PlayerExit> exits;
 
@@ -2748,7 +2755,10 @@ namespace pawn
 
         // A walk through a zone line, or magic: the zone line packet his
         // client sent moments before says which, and is spent on this zone
-        // change, whatever it is (a Mog House's own door included)
+        // change, whatever it is (a Mog House's own door included). A move a
+        // scene's end makes is followed too, through where he stood as it
+        // ended -- a gate, a door, a portal, a home point: the note of that
+        // end is spent the same way
         std::optional<std::chrono::milliseconds> sinceZoneLine;
         position_t                               lineAt       = PPlayer->loc.p;
         bool                                     fromMogHouse = false;
@@ -2759,11 +2769,27 @@ namespace pawn
             fromMogHouse  = it->second.fromMogHouse;
             zoneLineAt.erase(it);
         }
+        std::optional<std::chrono::milliseconds> sinceScene;
+        position_t                               sceneAt = PPlayer->loc.p;
+        if (const auto it = sceneEndAt.find(PPlayer->id); it != sceneEndAt.end())
+        {
+            sinceScene = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second.when);
+            sceneAt    = it->second.where;
+            sceneEndAt.erase(it);
+        }
         if (PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
         {
             return;
         }
-        const bool crossed = cardian::hold::walked(sinceZoneLine);
+        const bool byScene = !cardian::hold::walked(sinceZoneLine) && cardian::hold::movedByScene(sinceScene);
+        if (byScene)
+        {
+            lineAt       = sceneAt;
+            fromMogHouse = false;
+            ShowInfoFmt("pawn: {} leaves {} by a scene's end at ({:.1f}, {:.1f}, {:.1f}) for zone {}: his party follows through there", PPlayer->getName(),
+                        PPlayer->loc.zone->getName(), sceneAt.x, sceneAt.y, sceneAt.z, static_cast<uint16>(destination));
+        }
+        const bool crossed = cardian::hold::walked(sinceZoneLine) || byScene;
         // A ride out of a city's stable lands him on the chocobo he rented:
         // a way out his party follows as it follows a walk, never a warp
         // (ROADMAP T, "Chocobos on the trek")
@@ -2837,6 +2863,15 @@ namespace pawn
         {
             zoneLineAt.insert_or_assign(PChar->id, ZoneLineSeen{ realtime::now(), PChar->loc.p, PChar->inMogHouse() });
         }
+    }
+
+    void noteEventEnd(const CCharEntity* PChar)
+    {
+        if (PChar == nullptr || isPawn(PChar) || PChar->currentEvent == nullptr || PChar->currentEvent->eventId < 0)
+        {
+            return;
+        }
+        sceneEndAt.insert_or_assign(PChar->id, SceneEndSeen{ realtime::now(), PChar->loc.p });
     }
 
     auto summonerOf(const uint32 pawnCharID) -> uint32

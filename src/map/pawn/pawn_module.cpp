@@ -59,6 +59,7 @@
 #include "enums/packet_s2c.h"
 #include "enums/party_kind.h"
 #include "packets/c2s/0x01a_action.h"
+#include "packets/c2s/0x05b_eventend.h"
 #include "packets/c2s/0x06e_group_solicit_req.h"
 #include "lua/lua_base_entity.h"
 #include "lua/luautils.h"
@@ -808,7 +809,8 @@ class PawnModule : public CPPModule
     // packet last arrive for this character (compared against the link's
     // stream age in CPawnController::LeadPoint under pawn.FORMATION_DEBUG).
     // His walk into a zone line, so his zone change that follows is read as
-    // a walk his cardians follow, not magic they hold for (pawn::playerZoning).
+    // a walk his cardians follow, not magic they hold for (pawn::playerZoning);
+    // and his end of an event, whose move to another zone they follow too.
     // And the game's own party invite (UniqueNo is the invitee's charid
     // whether she was targeted or named): one of the world's adventurers
     // is refused and the packet dropped, a faded cardian of the player's
@@ -829,6 +831,11 @@ class PawnModule : public CPPModule
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_MAPRECT))
         {
             pawn::noteZoneLine(PChar);
+        }
+        else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_EVENTEND) &&
+                 static_cast<GP_CLI_COMMAND_EVENTEND_MODE>(packet.as<GP_CLI_COMMAND_EVENTEND>()->Mode) == GP_CLI_COMMAND_EVENTEND_MODE::End)
+        {
+            pawn::noteEventEnd(PChar);
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_ACTION))
         {
