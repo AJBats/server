@@ -30,6 +30,7 @@
 #include "professions.h"
 #include "venture_sales.h"
 #include "pawn.h"
+#include "pawn_doors.h"
 #include "party_finder.h"
 #include "seats.h"
 #include "world.h"
@@ -58,6 +59,7 @@
 #include "enums/packet_c2s.h"
 #include "enums/packet_s2c.h"
 #include "enums/party_kind.h"
+#include "packets/c2s/0x015_pos.h"
 #include "packets/c2s/0x01a_action.h"
 #include "packets/c2s/0x05b_eventend.h"
 #include "packets/c2s/0x06e_group_solicit_req.h"
@@ -70,6 +72,7 @@
 #include "zone.h"
 
 #include <algorithm>
+#include <cmath>
 #include <magic_enum/magic_enum.hpp>
 #include <string>
 #include <utility>
@@ -290,6 +293,9 @@ class PawnModule : public CPPModule
         pawn::junk::load();
         // The linkshell bank's stacks, likewise (ls_bank.h)
         pawn::lsbank::ensureTable();
+        // The doors the client walks a player through, off its own files
+        // (pawn_doors.h): said at start, loudly when the table is missing
+        pawn::doors::loadTable();
         // The cardian API's messages on the Cardian Link (link_api.cpp, and
         // the linkshell's), and the Lua libraries some are answered from
         pawn::linkapi::registerHandlers();
@@ -827,6 +833,14 @@ class PawnModule : public CPPModule
         if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_POS))
         {
             pawn::notePositionPacket(PChar);
+            // A position the game's own handler throws away -- sent before the
+            // client took a move the server made, or not a number -- says
+            // nothing of where a scene left him
+            const auto* pos = packet.as<GP_CLI_COMMAND_POS>();
+            if (!PChar->pendingPositionUpdate && std::isfinite(pos->x) && std::isfinite(pos->y) && std::isfinite(pos->z))
+            {
+                pawn::noteScenePosition(PChar, position_t(pos->x, pos->z, pos->y, 0, 0)); // the packet's z is the height (0x015_pos.cpp)
+            }
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_MAPRECT))
         {
@@ -860,6 +874,14 @@ class PawnModule : public CPPModule
     {
         if (!pawn::isPawn(PChar))
         {
+            // A scene the game shows a real player: where he stood as it
+            // began, for a scene that moves him (pawn::noteSceneStart)
+            if (const auto type = packet->getType(); type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_EVENT) ||
+                                                     type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_EVENTSTR) ||
+                                                     type == std::to_underlying(PacketS2C::GP_SERV_COMMAND_EVENTNUM))
+            {
+                pawn::noteSceneStart(PChar);
+            }
             return;
         }
 

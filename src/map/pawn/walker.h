@@ -123,6 +123,9 @@ namespace pawn
             bool                             known  = false;
             bool                             failed = false; // no route could be planned to `goal`: asked again in a while
             bool                             detour = false; // the route goes round a ring the straight way would cross
+            uint32                           door     = 0;   // a closed door she may not open: the route ends a yalm short of it (pawn_doors.h), 0 for none
+            int                              doorSide = 0;   // ... and her side of it
+            timer::time_point                askedAt;        // the walk last asked for: a walk no mover asks for any longer is over
             position_t                       goal{};         // the point asked for
             position_t                       target{};       // where the route goes: the point, or the safe ground nearest it
             xi::ZoneId                       zone{};

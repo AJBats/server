@@ -53,6 +53,7 @@
 #include "ai/ai_container.h"
 #include "common/logging.h"
 #include "common/settings.h"
+#include "pawn_doors.h"
 #include "entities/char_entity.h"
 #include "entities/mob_entity.h"
 #include "enums/item_flag.h"
@@ -1248,8 +1249,10 @@ namespace pawn::linkapi
         // is not much longer than the straight line, takes the ring on. A wall
         // stays a wall: no walk ends past it, or its way round is long. A look
         // refused is remembered a moment for `who`, so a ring pressed at a
-        // wall does not search the mesh every frame. Returns whether the mesh
-        // held the ring short of the point asked
+        // wall does not search the mesh every frame. A closed door she may not
+        // open is a wall to the ring as to her walks (pawn_doors.h): the ring
+        // stops a yalm short of it, wherever the mesh let it go on. Returns
+        // whether the mesh or a door held the ring short of the point asked
         struct RingLook
         {
             position_t           at;
@@ -1275,6 +1278,19 @@ namespace pawn::linkapi
             {
                 point = from; // nowhere to slide from: the ring stays where it was
             }
+            const auto doorHolds = [&]() -> bool
+            {
+                if (!settings::get<bool>("pawn.DOOR_CROSSING"))
+                {
+                    return false;
+                }
+                const auto door = pawn::doors::firstOnRoute(PZone, { from, point });
+                if (door.has_value())
+                {
+                    point = door->stop;
+                }
+                return door.has_value();
+            };
             const float dx    = asked.x - point.x;
             const float dz    = asked.z - point.z;
             const float shortBy = std::sqrt(dx * dx + dz * dz);
@@ -1319,12 +1335,14 @@ namespace pawn::linkapi
                 }
                 if (!onward)
                 {
+                    doorHolds();
                     PMesh->snapToValidPosition(point);
                     return true;
                 }
             }
+            const bool held = doorHolds();
             PMesh->snapToValidPosition(point);
-            return false;
+            return held;
         }
 
         // The camp being placed: by player, his zone and his ring's last point

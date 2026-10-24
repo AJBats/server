@@ -56,9 +56,12 @@ namespace cardian::hold
     // A zone change a scene's end makes is followed too, through where he
     // stood (the user, 2026-10-22: bring the party along, and let play say
     // otherwise): a gate's trigger area, a door's NPC, a portal, a home point,
-    // a guide (pawn::noteEventEnd). The move follows the end within a tick or
-    // two, so the window is short: no warp of his starts inside it
-    constexpr auto kSceneWindow = std::chrono::seconds(3);
+    // a guide (pawn::noteEventEnd). Most moves follow the end within a tick
+    // or two; an outpost's teleporter or a conquest vendor's warp moves him
+    // when the TELEPORT effect its finish gave him wears off, a duration of 1
+    // or 3 seconds read on the zone's 3-second effect tick, so up to 6 seconds
+    // after. The window takes those in, and no warp of his starts inside it
+    constexpr auto kSceneWindow = std::chrono::seconds(7);
 
     inline auto movedByScene(const std::optional<std::chrono::milliseconds> sinceSceneEnd) -> bool
     {

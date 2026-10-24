@@ -25,6 +25,7 @@
 #include "walker.h"
 
 #include "drill.h"
+#include "pawn_doors.h"
 #include "pawn_travel.h"
 #include "sneak.h"
 
@@ -134,7 +135,8 @@ namespace pawn
 
     auto Walker::walk(const position_t& point, const Rules& rules, const timer::time_point tick) -> Result
     {
-        tick_ = tick;
+        tick_        = tick;
+        plan.askedAt = tick;
         auto*      PPathFind = owner_->PAI->PathFind.get();
         const auto zone      = owner_->getZone();
         const auto here      = owner_->loc.p;
@@ -229,6 +231,12 @@ namespace pawn
             {
                 fresh = true;
             }
+        }
+        // The door her walk ended short of, open now: the way through it is
+        // planned afresh
+        if (!fresh && plan.known && plan.door != 0 && !pawn::doors::blocks(owner_->loc.zone, plan.door))
+        {
+            fresh = true;
         }
 
         const bool chokeAhead  = plan.known && plan.danger >= 0 && plan.next <= static_cast<size_t>(plan.danger);
@@ -380,6 +388,7 @@ namespace pawn
                     plan.target  = target;
                     plan.known   = false;
                     plan.walking = false;
+                    plan.door    = 0;
                     plan.route.clear();
                     plan.heldSince.reset();
                     if (rules.wholeZone)
@@ -405,6 +414,40 @@ namespace pawn
                     }
                     planned.insert(planned.end(), plan.route.begin() + static_cast<std::ptrdiff_t>(*stretchTo + 1), plan.route.end());
                 }
+
+                // A closed door she may not open is a wall the mesh does not
+                // know: her walk ends a yalm short of the first one it meets,
+                // and her controller looks whether she crosses it as the game
+                // would walk a player through (CPawnController::DoorTick)
+                std::optional<pawn::doors::Ahead> doorAhead;
+                uint32                            doorKept = 0; // a stretch's tail, the old route's, ends at the door it was cut at
+                int                               sideKept = 0;
+                if (settings::get<bool>("pawn.DOOR_CROSSING"))
+                {
+                    doorAhead = pawn::doors::firstOnRoute(owner_, planned);
+                    if (!doorAhead.has_value() && stretchTo.has_value() && plan.door != 0 && !plan.route.empty() && distance(planned.back(), plan.route.back()) < 0.05f)
+                    {
+                        doorKept = plan.door;
+                        sideKept = plan.doorSide;
+                    }
+                }
+                if (doorAhead.has_value())
+                {
+                    planned.resize(doorAhead->leg);
+                    if (distance(planned.back(), doorAhead->stop) > 0.05f)
+                    {
+                        planned.push_back(doorAhead->stop);
+                    }
+                    if (danger >= static_cast<int>(planned.size()))
+                    {
+                        danger = -1; // the trouble past the door is not hers yet
+                    }
+                    else if (danger == static_cast<int>(planned.size()) - 1 && danger > 0 && !hazards.empty() &&
+                             cardian::route::DangerTest(hazards, cardian::route::toDetour(here), sight).holder(planned[danger - 1], planned.back()) < 0)
+                    {
+                        danger = -1; // the ring her cut leg met lay past the door
+                    }
+                }
                 const float length = cardian::walk::lengthOf(planned);
 
                 // Looked at again while her route keeps clear, the new one only
@@ -424,9 +467,11 @@ namespace pawn
                     {
                         plan.heldSince.reset();
                     }
-                    plan.route   = std::move(planned);
-                    plan.next    = 1;
-                    plan.danger  = danger;
+                    plan.route    = std::move(planned);
+                    plan.next     = 1;
+                    plan.danger   = danger;
+                    plan.door     = doorAhead.has_value() ? doorAhead->npc : doorKept;
+                    plan.doorSide = doorAhead.has_value() ? doorAhead->side : sideKept;
                     plan.goal    = point;
                     plan.zone    = zone;
                     plan.rules   = rules;
@@ -440,7 +485,7 @@ namespace pawn
 
                     // The walk to a range ends short of the point, never past it;
                     // the safe ground beside a point in a ring is walked to itself
-                    if (rules.closeTo > 0.0f && distance(target, point) < 0.01f && plan.danger < 0 && !stretchTo.has_value())
+                    if (rules.closeTo > 0.0f && distance(target, point) < 0.01f && plan.danger < 0 && !stretchTo.has_value() && plan.door == 0)
                     {
                         cardian::walk::cutShort(plan.route, rules.closeTo);
                         plan.next = std::min<size_t>(1, plan.route.size());
@@ -475,7 +520,19 @@ namespace pawn
                                 }
                                 else
                                 {
-                                    plan.backOff = safe->points;
+                                    // never through a closed door she may not open
+                                    std::vector<position_t> back(1, here);
+                                    back.insert(back.end(), safe->points.begin(), safe->points.end());
+                                    if (settings::get<bool>("pawn.DOOR_CROSSING"))
+                                    {
+                                        if (const auto door = pawn::doors::firstOnRoute(owner_, back); door.has_value())
+                                        {
+                                            back.resize(door->leg);
+                                            back.push_back(door->stop);
+                                        }
+                                    }
+                                    back.erase(back.begin());
+                                    plan.backOff = std::move(back);
                                 }
                             }
                             else
@@ -597,8 +654,10 @@ namespace pawn
         if (plan.next >= plan.route.size())
         {
             plan.walking = false;
-            result.outcome = caughtBy != nullptr ? Outcome::Escaping : distance(plan.target, point) > 0.01f ? Outcome::Held : Outcome::Walking;
-            return result; // walked it all
+            result.outcome = caughtBy != nullptr                                       ? Outcome::Escaping
+                             : distance(plan.target, point) > 0.01f || plan.door != 0 ? Outcome::Held
+                                                                                       : Outcome::Walking;
+            return result; // walked it all, or as far as a door
         }
 
         // The part she walks: all of it, or up to the choke while she holds for
@@ -828,6 +887,17 @@ namespace pawn
         if (rules.wholeZone)
         {
             pawn::drill::noteHop(owner_->id);
+        }
+        // A sneak-by never takes her through a closed door she may not open
+        if (settings::get<bool>("pawn.DOOR_CROSSING"))
+        {
+            std::vector<position_t> way(1, owner_->loc.p);
+            way.insert(way.end(), hop.points.begin(), hop.points.end());
+            if (pawn::doors::firstOnRoute(owner_, way).has_value())
+            {
+                ShowInfoFmt("pawn: {}: no sneak-by: its way runs through a closed door", who);
+                return false;
+            }
         }
         plan.hop        = std::move(hop.points);
         plan.hopZone    = owner_->getZone();
