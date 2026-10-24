@@ -49,7 +49,8 @@
 // A player's major progression is his account's, not one character's (the
 // user, 2026-10-05; ROADMAP N): what one character of an account has earned,
 // every character of it has -- the support job, the level cap the limit
-// breaks raise, the gate crystals and Limit Breaker, and the outposts' warps.
+// breaks raise, the gate crystals, Limit Breaker, the Chocobo License and
+// the Airship Pass, and the outposts' warps.
 // It is copied: each character holds it as if earned, so it stays with the
 // character whatever happens later, and cardian.ACCOUNT_WIDE_PROGRESSION (a
 // server setting) switches the copying off.
@@ -74,7 +75,7 @@ namespace
 {
     // The account's lists, by name in the game's own key item table
     // (scripts/enum/key_item.codegen.lua, xi.keyItem), read once Lua has it:
-    // copied, every *_GATE_CRYSTAL, LIMIT_BREAKER and CHOCOBO_LICENSE; shared as a view, every
+    // copied, every *_GATE_CRYSTAL, LIMIT_BREAKER, CHOCOBO_LICENSE and AIRSHIP_PASS; shared as a view, every
     // MAP_OF_*. Logged as read, so the list can be checked against the game's
     struct Lists
     {
@@ -104,7 +105,7 @@ namespace
             }
             const auto name = key.as<std::string>();
             const auto id   = value.as<uint16>();
-            if (name.ends_with("_GATE_CRYSTAL") || name == "LIMIT_BREAKER" || name == "CHOCOBO_LICENSE")
+            if (name.ends_with("_GATE_CRYSTAL") || name == "LIMIT_BREAKER" || name == "CHOCOBO_LICENSE" || name == "AIRSHIP_PASS")
             {
                 l.shared.push_back(id);
                 named.emplace_back(id, name);
