@@ -1,7 +1,8 @@
 // Cardian: the automatic hold a warp sets (pawn/warp_hold.h): parted from the
 // player by magic, either way, a cardian holds where she is; reunited, that
 // hold lifts by itself; a hold the player ordered is his alone to lift; and a
-// zone change is a walk only when his client walked into a zone line for it.
+// zone change is a walk only when his client walked into a zone line for it,
+// or when a scene that ended just before made it.
 #include "pawn/warp_hold.h"
 
 #include <catch2/catch_test_macros.hpp>
@@ -58,4 +59,13 @@ TEST_CASE("Warp hold: a zone change is a walk only with a zone line packet just 
     CHECK_FALSE(walked(std::nullopt));                                                                       // no zone line: magic
     CHECK_FALSE(walked(std::chrono::duration_cast<std::chrono::milliseconds>(kZoneLineWindow) + 1ms));     // a stale one (a zone line refused, then a warp)
     CHECK_FALSE(walked(-1ms));
+}
+
+TEST_CASE("Warp hold: a zone change a scene makes is followed only when the scene ended just before", "[cardian][warphold]")
+{
+    CHECK(movedByScene(std::chrono::milliseconds(0)));
+    CHECK(movedByScene(std::chrono::duration_cast<std::chrono::milliseconds>(kSceneWindow)));
+    CHECK_FALSE(movedByScene(std::nullopt));                                                                 // no scene: magic
+    CHECK_FALSE(movedByScene(std::chrono::duration_cast<std::chrono::milliseconds>(kSceneWindow) + 1ms));   // a scene that moved nobody, then a warp
+    CHECK_FALSE(movedByScene(-1ms));
 }

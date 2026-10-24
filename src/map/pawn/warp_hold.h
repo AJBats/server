@@ -1,12 +1,12 @@
 // Cardian: a cardian's hold position as the player orders it and as a warp
 // sets it (CPawnController::SetWaiting, HoldForWarp). One rule for every warp,
-// both ways -- the player warped away from her (an outpost warp, Warp, a
-// Teleport spell, a home point), or she carried away from him (the party's
-// warp, a warp of her own, her home point): parted by magic, she holds where
-// she is, and the hold lifts by itself once they are in one zone again. A
-// hold the player ordered is his: a warp leaves it as it is, and nothing but
-// his word lifts it. Treks are for walks: a zone change his client walked
-// through a zone line is followed as ever.
+// both ways -- the player warped away from her (Warp, a Teleport spell, a
+// ring), or she carried away from him (the party's warp, a warp of her own,
+// her home point): parted by magic, she holds where she is, and the hold
+// lifts by itself once they are in one zone again. A hold the player ordered
+// is his: a warp leaves it as it is, and nothing but his word lifts it.
+// Treks are for walks: a zone change his client walked through a zone line,
+// or one a scene's end makes (movedByScene), is followed as ever.
 #pragma once
 
 #include <chrono>
@@ -51,5 +51,20 @@ namespace cardian::hold
     inline auto walked(const std::optional<std::chrono::milliseconds> sinceZoneLine) -> bool
     {
         return sinceZoneLine.has_value() && sinceZoneLine->count() >= 0 && *sinceZoneLine <= kZoneLineWindow;
+    }
+
+    // A zone change a scene's end makes is followed too, through where he
+    // stood (the user, 2026-10-22: bring the party along, and let play say
+    // otherwise): a gate's trigger area, a door's NPC, a portal, a home point,
+    // a guide (pawn::noteEventEnd). Most moves follow the end within a tick
+    // or two; an outpost's teleporter or a conquest vendor's warp moves him
+    // when the TELEPORT effect its finish gave him wears off, a duration of 1
+    // or 3 seconds read on the zone's 3-second effect tick, so up to 6 seconds
+    // after. The window takes those in, and no warp of his starts inside it
+    constexpr auto kSceneWindow = std::chrono::seconds(7);
+
+    inline auto movedByScene(const std::optional<std::chrono::milliseconds> sinceSceneEnd) -> bool
+    {
+        return sinceSceneEnd.has_value() && sinceSceneEnd->count() >= 0 && *sinceSceneEnd <= kSceneWindow;
     }
 } // namespace cardian::hold

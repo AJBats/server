@@ -383,6 +383,13 @@ void CPawnController::TrekStep(const pawn::TravelHop& hop, const float distToLin
             break;
     }
 
+    // No walk on the mesh to the line from her floor: a timed lift to a
+    // floor that has one (pawn_lift.cpp)
+    if (LiftToward(hop.walkTo, 8.0f, fmt::format("her trek's line to zone {} is on another floor", static_cast<uint16>(hop.destinationZone)), true))
+    {
+        return;
+    }
+
     // No walk on the mesh to the line: the mesh often ends short of the zone
     // mouth, and the server itself accepts crossings from up to ~40 yalms
     // out; farther, the order is let go, or she says she is stuck and looks

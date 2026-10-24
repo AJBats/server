@@ -69,3 +69,5 @@ cardian/lua/chocobo_ride.lua
 cardian/lua/account_wide.lua
 # CARDIAN: the Goblin Bounty Hunters, retail's fishing deterrents, kept out of the world
 cardian/lua/no_bounty_hunters.lua
+# CARDIAN: a cardian walks through trigger areas without their scripts, which start events she cannot finish
+cardian/lua/no_trigger_areas.lua

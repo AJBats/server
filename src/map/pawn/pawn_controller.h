@@ -30,6 +30,7 @@
 #include "line_approach.h"
 #include "pawn.h"
 #include "pawn_danger.h"
+#include "pawn_doors.h"
 #include "pawn_gambits.h"
 #include "pawn_rules.h"
 #include "perimeter_math.h"
@@ -951,6 +952,41 @@ public:
     // the walk there off
     auto SpotClaims() const -> std::vector<position_t>;
 
+    // Her ride on a lift (pawn/lifts.h, pawn_lift.cpp): a lift's platform,
+    // the end of its shaft she boards at and the end she steps off at, her
+    // spot on it, and whether she boards beside the player, stepping off
+    // again if he does before it leaves
+    struct LiftRide
+    {
+        enum class Phase : uint8
+        {
+            Landing,   // walking to the landing at her end
+            Waiting,   // at the landing, for the platform
+            Boarding,  // stepping onto her spot
+            Aboard,    // on her spot: carried while it travels
+            Alighting, // stepping off to a landing
+        };
+        uint32            platform   = 0;
+        Phase             phase      = Phase::Landing;
+        int               from       = 0;
+        int               alightEnd  = 1;
+        int               spot       = 0;
+        bool              withPlayer = false;
+        bool              trek       = false; // taken on a trek: its walk to the landing keeps the trek's rules
+        timer::time_point since{};
+    };
+
+    // Her crossing of a door the client walks a player through (pawn_doors.h,
+    // pawn_door_cross.cpp): the door, the crossing she takes, and whether she
+    // stands at it yet
+    struct DoorCross
+    {
+        uint32                npc = 0;
+        pawn::doors::Crossing crossing;
+        bool                  atDoor = false;
+        timer::time_point     since{};
+    };
+
 private:
     // The claim board (claim_board.h, RESEARCH §12.15): no two party
     // members aim for one spot. The claims of the cardians before her in
@@ -1815,6 +1851,38 @@ private:
     // whether she rides
     void RideTick();
     bool m_Riding = false; // she rode as of the last RideTick
+
+    // A lift (pawn_lift.cpp): the lift has her this tick and nothing else
+    // moves her -- aboard its platform as it leaves her floor, boarding
+    // beside him as he stands on one at theirs, or on her way to him on
+    // another floor of his zone (LiftTrek, from the cut-off follow)
+    auto LiftTick() -> bool;
+    auto LiftTrek(const CCharEntity* PPlayer) -> bool;
+    auto LiftOnTrek(xi::ZoneId targetZone) -> bool; // a trek with no walk to its line from her floor
+    auto LiftToward(const position_t& goal, float within, std::string_view why, bool trek) -> bool; // a lift to a floor whose walk reaches `goal`
+    auto LiftBesideHim() -> bool;
+    void LiftPhase(LiftRide::Phase phase, std::string_view why);
+    void LiftStep(const position_t& to, float floor); // a step straight at `to`, off the mesh, at the platform's floor
+    auto LiftSpotIndex() const -> int;
+    void LetGoOfLift(std::string_view why); // a ride something else has taken her from
+    std::optional<LiftRide> m_Lift;
+    timer::time_point       m_LiftGaveUpAt{}; // a trek's lift given up: not looked for again for a while
+    timer::time_point       m_LiftLookedAt{}; // LiftTrek's last look whether a lift stands between her floor and his
+    timer::time_point       m_LiftMissedAt{}; // the last search for a lift that found none: the next waits a while
+
+    // A door (pawn_door_cross.cpp): her walk ends short of a closed door she
+    // may not open, and where the client walks a player through it she
+    // crosses it as he would be walked -- to his spot at the door, then a
+    // fade to where the walk leaves him. While the crossing has her, nothing
+    // else moves her. A door the client walks nobody through holds her
+    auto DoorTick() -> bool;
+    auto DoorTowardHim(uint32 npc) const -> bool; // the first closed door on her walk to the player
+    void LetGoOfDoor(std::string_view why);       // a crossing something else has taken her from
+    std::optional<DoorCross> m_Door;
+    timer::time_point        m_DoorLookAt{}; // her next look at the door her walk ended at
+    uint32                   m_DoorCrossed = 0; // the door she last crossed or gave up on, and when: not again at once
+    timer::time_point        m_DoorCrossedAt{};
+    uint32                   m_DoorWallSaid = 0; // the door last said in the map log to hold her
 
     // Her speed set: her base speed on foot. On her chocobo her speed stays
     // the game's mount speed (map.MOUNT_SPEED / 2 by Mod::MOUNT_MOVE), the

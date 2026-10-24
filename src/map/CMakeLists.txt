@@ -142,6 +142,10 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/teleport_rules.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/teleport.h
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/teleport.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/lifts.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_lift.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_door_cross.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/door_math.h
 )
 
 set(MAP_CORE_SOURCES

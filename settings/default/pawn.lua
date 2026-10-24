@@ -81,9 +81,27 @@ xi.settings.pawn =
     -- cardian opens as she approaches, the way the client opens one for a
     -- player (the collision data has no door slabs, so her path runs
     -- straight through them). Only generic doors -- one with a script of
-    -- its own (a key, a quest) stays the player's to open, and ferry gates
-    -- and elevator doors keep to their timetables. 0 = never.
+    -- its own or any the interaction framework handles (a key, a quest, a
+    -- cutscene: the President's Office) stays the player's to open, ferry
+    -- gates and elevator doors keep to their timetables, and a door the game
+    -- makes untargetable (a lever's door, a drawbridge, a barrier) opens by
+    -- its own mechanism alone. 0 = never.
     DOOR_REACH = 5.0,
+
+    -- Lifts (pawn/lifts.h): the server carries a cardian on a lift's
+    -- platform as it travels; beside the player she boards the platform he
+    -- stands on; cut off from him on another floor of his zone, she takes a
+    -- timed lift to him. false: she never rides one.
+    LIFTS = true,
+
+    -- Closed doors she may not open (pawn_doors.h): a wall her walks, her
+    -- follow point and the maneuver's ring stop a yalm short of, and where
+    -- she may cross one -- by its own event, or on her way to the player --
+    -- she crosses it as the client's event walks a player, a fade from his
+    -- spot at the door to where the walk leaves him. The doors come from
+    -- .cache/cardian_doors.json (tools/walls/doors.py).
+    -- false: she walks through every closed door, as the mesh has none.
+    DOOR_CROSSING = true,
 
     -- Milliseconds a pawn waits before answering a party invite. 0 answers on
     -- the next zone tick; a human takes seconds, and the retail client's

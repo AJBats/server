@@ -333,6 +333,11 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     }
     m_Waiting      = on;
     m_WaitOrdered  = on && ordered;
+    if (on && ordered)
+    {
+        LetGoOfLift(why); // a hold he ordered is his: no ride, no door, carries her off
+        LetGoOfDoor(why);
+    }
     if (on)
     {
         // A walk in on the player's own Attack outlives the hold: she draws
@@ -536,6 +541,13 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
 {
     const Mode from = m_Mode;
 
+    // The player's wheel and her KO end any ride or crossing she was on
+    if (to == Mode::Maneuver || to == Mode::Down)
+    {
+        LetGoOfLift(why);
+        LetGoOfDoor(why);
+    }
+
     // The exits this writer owns. Leaving a fight (Hold counts: she drew)
     // starts the draw cooldown against the mob she had, and clears the
     // herd spot, the close beat and the hold; leaving a walk in drops its
@@ -686,6 +698,8 @@ void CPawnController::StandDown(const std::string_view why)
     m_BackFirst.reset();
     m_HoldForPlayer = false;
     m_Escorting.reset();
+    LetGoOfLift(why);
+    LetGoOfDoor(why);
     if (POwner->PAI->PathFind != nullptr)
     {
         POwner->PAI->PathFind->Clear();
@@ -4782,6 +4796,24 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         pawn::doors::openAhead(static_cast<CCharEntity*>(POwner), settings::get<float>("pawn.DOOR_REACH"), 2.0f);
     }
 
+    // A door (pawn_door_cross.cpp): her walk ended short of one she may not
+    // open, and the client walks a player through it -- on any walk, the
+    // player's steering and a lift's landing included: she crosses as he
+    // would be walked
+    if (DoorTick())
+    {
+        co_return;
+    }
+
+    // A lift (pawn_lift.cpp): aboard its platform as it travels she is
+    // carried; boarding beside him, or on her way to him on another floor,
+    // she walks, waits, boards and steps off. While the lift has her,
+    // nothing else moves her
+    if (m_Mode != Mode::Maneuver && LiftTick())
+    {
+        co_return;
+    }
+
     // A maneuver (docs/maneuvers.md): the player drives her, so neither
     // tick runs -- no fight door, no formation, no perimeter; her walk
     // order alone moves her. A finisher that engaged her (a weapon skill,
@@ -5857,6 +5889,12 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         {
             Transition(IdleMode(), "nowhere to go");
         }
+    }
+    // On another floor of his zone, where her walk does not reach him, a
+    // timed lift between them takes her to him (pawn_lift.cpp)
+    else if (Treks() && !m_RestOrder.active() && LiftTrek(PPlayer))
+    {
+        co_return;
     }
     // In her zone on a piece of its mesh no walk joins to hers (North
     // Gustaberg's lowlands and its high ground), he is elsewhere all the
@@ -7183,7 +7221,8 @@ void CPawnController::WalkStep()
 {
     // A held game (pause/pause.h) holds her too: the AI tick stands down
     // under a hold, and so must this timer, which runs on real time
-    if ((m_Mode != Mode::Walk && m_Mode != Mode::Maneuver) || !POwner->PAI->CanFollowPath() || cardian::pause::isHeld())
+    if ((m_Mode != Mode::Walk && m_Mode != Mode::Maneuver) || !POwner->PAI->CanFollowPath() || cardian::pause::isHeld() || m_Door.has_value() ||
+        m_Lift.has_value())
     {
         return;
     }
@@ -7429,6 +7468,12 @@ void CPawnController::TravelTick()
     const auto hop = m_TravelHop;
     if (!hop.has_value())
     {
+        // No walk to a line from her floor: a timed lift to a floor that has
+        // one (pawn_lift.cpp)
+        if (LiftOnTrek(targetZone))
+        {
+            return;
+        }
         if (order.has_value())
         {
             ShowInfoFmt("pawn: travel {}: no route {} -> {}, order cancelled", POwner->getName(), static_cast<uint16>(POwner->getZone()), static_cast<uint16>(targetZone));
@@ -8871,6 +8916,23 @@ auto CPawnController::ReachablePoint(const Anchor& a, position_t point) -> posit
         }
     }
 
+    // A closed door she may not open is a wall the mesh does not know: a
+    // point past one is brought back to the player's side (pawn_doors.h)
+    bool doored = false;
+    if (const auto kept = settings::get<bool>("pawn.DOOR_CROSSING") ? pawn::doors::keepToNearSide(static_cast<CCharEntity*>(POwner), from, point) : std::nullopt;
+        kept.has_value())
+    {
+        point = *kept;
+        if (navMesh != nullptr)
+        {
+            if (const auto onMesh = navMesh->findClosestValidPoint(point); onMesh.has_value())
+            {
+                point = *onMesh;
+            }
+        }
+        doored = true;
+    }
+
     // Then priced by the walk: a point on the mesh but only reachable the
     // long way round (a thin wall with its opening far off, a ledge joined
     // by a ramp) is brought in toward the player, a third of the way at a
@@ -8905,11 +8967,12 @@ auto CPawnController::ReachablePoint(const Anchor& a, position_t point) -> posit
         }
     }
 
-    if ((clipped || walkedIn) && m_Tick - m_LastFormationClipTime >= 5s)
+    if ((clipped || walkedIn || doored) && m_Tick - m_LastFormationClipTime >= 5s)
     {
         m_LastFormationClipTime = m_Tick;
-        ShowInfoFmt("pawn: {} brings her point in ({:.1f}y of {:.1f}y: {}{}{})", POwner->getName(), distance(from, point), offset,
-                    clipped ? "the mesh ends" : "", clipped && walkedIn ? ", " : "", walkedIn ? "a long walk round" : "");
+        ShowInfoFmt("pawn: {} brings her point in ({:.1f}y of {:.1f}y: {}{}{}{}{})", POwner->getName(), distance(from, point), offset,
+                    clipped ? "the mesh ends" : "", clipped && (walkedIn || doored) ? ", " : "", walkedIn ? "a long walk round" : "",
+                    walkedIn && doored ? ", " : "", doored ? "a closed door" : "");
     }
     return point;
 }

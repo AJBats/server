@@ -133,6 +133,23 @@ namespace
         bool                 fromMogHouse = false; // his Mog House's exit, not a line he walked to
     };
     std::unordered_map<uint32, ZoneLineSeen> zoneLineAt;
+    // A player's end of an event, and where he stood (noteEventEnd)
+    struct SceneEndSeen
+    {
+        realtime::time_point when;
+        position_t           where;
+    };
+    std::unordered_map<uint32, SceneEndSeen> sceneEndAt;
+    // A player's scene under way: where he stood as it began, and when it
+    // ended (noteSceneStart, noteScenePosition)
+    struct SceneUnderWay
+    {
+        realtime::time_point                began;
+        position_t                          from;
+        uint16                              zone = 0;
+        std::optional<realtime::time_point> ended;
+    };
+    std::unordered_map<uint32, SceneUnderWay> scenes;
     // A player's last walk through a zone line (playerExit)
     std::unordered_map<uint32, pawn::PlayerExit> exits;
 
@@ -2266,12 +2283,19 @@ namespace pawn
         return false;
     }
 
+    // The cardians given set down beside him at `landing`: fanned out
+    // `spread` yalms behind him entering a battlefield (landWithPlayer), on
+    // his very spot (spread 0) where a scene moved him (noteScenePosition),
+    // the formation spreading them from there
+    void setDownBeside(const CCharEntity* PPlayer, const position_t& landing, float spread, const std::vector<CCharEntity*>& landers);
+
     void landWithPlayer(const CCharEntity* PPlayer, const position_t& landing)
     {
         if (PPlayer == nullptr || PPlayer->PParty == nullptr || PPlayer->PBattlefield == nullptr || PPlayer->loc.zone == nullptr)
         {
             return;
         }
+        scenes.erase(PPlayer->id); // the entry's scene is settled here, never by his next position
         std::vector<CCharEntity*> landers;
         for (const auto& [charid, PPawn] : pawns)
         {
@@ -2280,10 +2304,13 @@ namespace pawn
                 landers.push_back(PPawn.get());
             }
         }
+        setDownBeside(PPlayer, landing, 2.0f, landers);
+    }
 
+    void setDownBeside(const CCharEntity* PPlayer, const position_t& landing, const float spread, const std::vector<CCharEntity*>& landers)
+    {
         // Fanned out behind him, a step apart; each spot is walked to over
         // the mesh from his own, so none lands across a wall
-        constexpr float kLandingDistance = 2.0f;
         constexpr float kLandingFan      = 0.6f; // radians between neighbours
         const auto*     navMesh          = PPlayer->loc.zone->navMesh();
         for (std::size_t i = 0; i < landers.size(); ++i)
@@ -2291,9 +2318,9 @@ namespace pawn
             auto*       PPawn  = landers[i];
             const float offset = (static_cast<float>(i) - static_cast<float>(landers.size() - 1) / 2.0f) * kLandingFan;
             position_t  spot   = landing;
-            if (navMesh != nullptr)
+            if (navMesh != nullptr && spread > 0.0f)
             {
-                if (const auto reached = navMesh->findFurthestValidPoint(landing, nearPosition(landing, kLandingDistance, static_cast<float>(M_PI) + offset));
+                if (const auto reached = navMesh->findFurthestValidPoint(landing, nearPosition(landing, spread, static_cast<float>(M_PI) + offset));
                     reached.has_value())
                 {
                     spot = *reached;
@@ -2311,15 +2338,47 @@ namespace pawn
             {
                 PPawn->PAI->Internal_Disengage();
             }
-            PPawn->loc.p = spot;
-            PPawn->loc.zone->onEntityMoved(PPawn); // the zone's grid follows the jump, as setPos does
-            settleWithinZone(PPawn);
+            jumpTo(PPawn, spot);
             if (PController != nullptr)
             {
                 PController->ArriveWith(landing);
             }
             ShowInfoFmt("pawn: {} lands beside {}, at ({:.1f}, {:.1f}, {:.1f})", PPawn->getName(), PPlayer->getName(), spot.x, spot.y, spot.z);
         }
+    }
+
+    void jumpTo(CCharEntity* PPawn, const position_t& spot)
+    {
+        // A client draws a character's move over the time its movement
+        // counter says it took (CPawnController::CountMove): one frame. The
+        // spot's own counter (none) would read as minutes
+        const uint16 counter = PPawn->loc.p.moving;
+        PPawn->loc.p         = spot;
+        PPawn->loc.p.moving  = static_cast<uint16>((counter + 1) % 0x2000);
+        PPawn->loc.zone->onEntityMoved(PPawn); // the zone's grid follows the jump, as setPos does
+        settleWithinZone(PPawn);
+    }
+
+    void showAfresh(const std::vector<CCharEntity*>& bodies)
+    {
+        if (bodies.empty() || bodies.front()->loc.zone == nullptr)
+        {
+            return;
+        }
+        bodies.front()->loc.zone->ForEachChar([&](CCharEntity* PViewer)
+                                              {
+                                                  if (isPawn(PViewer))
+                                                  {
+                                                      return;
+                                                  }
+                                                  for (auto* PBody : bodies)
+                                                  {
+                                                      if (PViewer->SpawnPCList.erase(PBody->id) > 0)
+                                                      {
+                                                          PViewer->updateEntityPacket(PBody, ENTITY_DESPAWN, UPDATE_NONE);
+                                                      }
+                                                  }
+                                              });
     }
 
     namespace
@@ -2745,10 +2804,14 @@ namespace pawn
         {
             return;
         }
+        scenes.erase(PPlayer->id); // a scene in the zone he leaves moves nobody in it
 
         // A walk through a zone line, or magic: the zone line packet his
         // client sent moments before says which, and is spent on this zone
-        // change, whatever it is (a Mog House's own door included)
+        // change, whatever it is (a Mog House's own door included). A move a
+        // scene's end makes is followed too, through where he stood as it
+        // ended -- a gate, a door, a portal, a home point: the note of that
+        // end is spent the same way
         std::optional<std::chrono::milliseconds> sinceZoneLine;
         position_t                               lineAt       = PPlayer->loc.p;
         bool                                     fromMogHouse = false;
@@ -2759,11 +2822,29 @@ namespace pawn
             fromMogHouse  = it->second.fromMogHouse;
             zoneLineAt.erase(it);
         }
+        std::optional<std::chrono::milliseconds> sinceScene;
+        position_t                               sceneAt = PPlayer->loc.p;
+        if (const auto it = sceneEndAt.find(PPlayer->id); it != sceneEndAt.end())
+        {
+            sinceScene = std::chrono::duration_cast<std::chrono::milliseconds>(realtime::now() - it->second.when);
+            sceneAt    = it->second.where;
+            sceneEndAt.erase(it);
+        }
         if (PPlayer->loc.zone == nullptr || destination == PPlayer->getZone())
         {
             return;
         }
-        const bool crossed = cardian::hold::walked(sinceZoneLine);
+        // Mounted, the ride out of a stable is the ride's rule (below), never a
+        // way through the counter he rented at
+        const bool byScene = !PPlayer->isMounted() && !cardian::hold::walked(sinceZoneLine) && cardian::hold::movedByScene(sinceScene);
+        if (byScene)
+        {
+            lineAt       = sceneAt;
+            fromMogHouse = false;
+            ShowInfoFmt("pawn: {} leaves {} by a scene's end at ({:.1f}, {:.1f}, {:.1f}) for zone {}: his party follows through there", PPlayer->getName(),
+                        PPlayer->loc.zone->getName(), sceneAt.x, sceneAt.y, sceneAt.z, static_cast<uint16>(destination));
+        }
+        const bool crossed = cardian::hold::walked(sinceZoneLine) || byScene;
         // A ride out of a city's stable lands him on the chocobo he rented:
         // a way out his party follows as it follows a walk, never a warp
         // (ROADMAP T, "Chocobos on the trek")
@@ -2837,6 +2918,91 @@ namespace pawn
         {
             zoneLineAt.insert_or_assign(PChar->id, ZoneLineSeen{ realtime::now(), PChar->loc.p, PChar->inMogHouse() });
         }
+    }
+
+    void noteEventEnd(const CCharEntity* PChar)
+    {
+        if (PChar == nullptr || isPawn(PChar) || PChar->currentEvent == nullptr || PChar->currentEvent->eventId < 0)
+        {
+            return;
+        }
+        sceneEndAt.insert_or_assign(PChar->id, SceneEndSeen{ realtime::now(), PChar->loc.p });
+        if (const auto it = scenes.find(PChar->id); it != scenes.end())
+        {
+            it->second.ended = realtime::now();
+        }
+    }
+
+    void noteSceneStart(const CCharEntity* PChar)
+    {
+        if (PChar == nullptr || isPawn(PChar) || PChar->loc.zone == nullptr)
+        {
+            return;
+        }
+        // One scene leading into the next keeps where the first began: one
+        // still running, or ended a moment ago, in his zone. A scene left
+        // with no end is let go at his first position outside any event
+        // (noteScenePosition), and after a minute at the latest
+        const auto now = realtime::now();
+        if (const auto it = scenes.find(PChar->id); it != scenes.end() && now - it->second.began < std::chrono::seconds(60) &&
+                                                    it->second.zone == static_cast<uint16>(PChar->getZone()) &&
+                                                    (!it->second.ended.has_value() || now - *it->second.ended < std::chrono::seconds(1)))
+        {
+            it->second.ended.reset();
+            return;
+        }
+        scenes.insert_or_assign(PChar->id, SceneUnderWay{ now, PChar->loc.p, static_cast<uint16>(PChar->getZone()), std::nullopt });
+    }
+
+    void noteScenePosition(CCharEntity* PChar, const position_t& at)
+    {
+        const auto it = scenes.find(PChar->id);
+        if (it == scenes.end())
+        {
+            return;
+        }
+        if (!it->second.ended.has_value())
+        {
+            if (!PChar->isInEvent())
+            {
+                scenes.erase(it); // a scene the game ended some other way: nothing of it to follow
+            }
+            return;
+        }
+        const auto scene = it->second;
+        scenes.erase(it); // the first position after the scene settles it
+        constexpr float kMovedBy     = 1.5f;  // the scene moved him: farther than this from where he stood (the President's Office: 2.5)
+        constexpr float kWithHim     = 30.0f; // the cardians set down: within this of where he stood
+        constexpr auto  kSceneWindow = std::chrono::seconds(5);
+        if (realtime::now() - *scene.ended > kSceneWindow || PChar->loc.zone == nullptr || static_cast<uint16>(PChar->getZone()) != scene.zone ||
+            PChar->PParty == nullptr || distance(scene.from, at) < kMovedBy)
+        {
+            return;
+        }
+
+        std::vector<CCharEntity*> landers;
+        for (const auto& [charid, PPawn] : pawns)
+        {
+            auto* PController = controllerOf(PPawn.get());
+            if (PPawn->PParty != PChar->PParty || PPawn->loc.zone != PChar->loc.zone || PPawn->PBattlefield != PChar->PBattlefield || PPawn->isDead() ||
+                PPawn->PAI->IsEngaged() || PController == nullptr || PController->HoldsOnOrder() || distance(PPawn->loc.p, scene.from) > kWithHim)
+            {
+                continue;
+            }
+            landers.push_back(PPawn.get());
+        }
+        if (landers.empty())
+        {
+            return;
+        }
+        // On his very spot, facing the way the scene moved him: past the door
+        // it took him through, never back in its doorway
+        position_t landing = at;
+        landing.rotation   = worldAngle(scene.from, at);
+        ShowInfoFmt("pawn: a scene moved {} {:.1f}y in {}, from ({:.1f}, {:.1f}, {:.1f}) to ({:.1f}, {:.1f}, {:.1f}): the cardians with him land beside him",
+                    PChar->getName(), distance(scene.from, at), PChar->loc.zone->getName(), scene.from.x, scene.from.y, scene.from.z, at.x, at.y, at.z);
+        setDownBeside(PChar, landing, 0.0f, landers);
+        showAfresh(landers); // a fade, never a walk through the door
     }
 
     auto summonerOf(const uint32 pawnCharID) -> uint32

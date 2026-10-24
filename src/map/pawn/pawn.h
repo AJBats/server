@@ -141,7 +141,8 @@ namespace pawn
 
     // Her player is leaving his zone (charutils::SendToZone, the one gate
     // every client zone change passes). Walked through a zone line (his
-    // client's zone line packet just before, noteZoneLine), each cardian
+    // client's zone line packet just before, noteZoneLine) or moved by a
+    // scene's end (noteEventEnd), each cardian
     // following him there sets out for his destination now, not when he
     // lands three or four seconds later: the rule is the roam tick's own for
     // a player in another zone -- in his party, not waiting -- plus no trek
@@ -170,6 +171,20 @@ namespace pawn
     // A real player's client walked into a zone line (packet 0x05E, seen
     // before its handler): his next zone change is a walk
     void noteZoneLine(const CCharEntity* PChar);
+    // A real player's client ends an event (packet 0x05B, seen before its
+    // handler): a zone change its end makes is followed through where he
+    // stood (warp_hold.h movedByScene) -- a gate's trigger area, a door's
+    // NPC, a portal, a home point, a guide
+    void noteEventEnd(const CCharEntity* PChar);
+    // A scene that moves him within his zone -- the President's Office's
+    // door in Metalworks plays him through it -- sets the cardians with him
+    // down beside him, as a battlefield's entry does (landWithPlayer): the
+    // game pushes him a scene (noteSceneStart: where he stood), it ends
+    // (noteEventEnd), and the first position his client sends after (noteScenePosition)
+    // lies a yalm and a half or more from where he stood. He cannot walk during a
+    // scene, so whatever moved him, the scene did
+    void noteSceneStart(const CCharEntity* PChar);
+    void noteScenePosition(CCharEntity* PChar, const position_t& at);
 
     // A character to mint: the client's race enum (race and sex in one),
     // face 0-15, size 0-2, nation 0-2, main job and level. The census
@@ -395,6 +410,17 @@ namespace pawn
     // him. Each then stands until he is seen arriving there, so none sets
     // off toward where he stood a moment ago. No other player is moved.
     void landWithPlayer(const CCharEntity* PPlayer, const position_t& landing);
+
+    // A body put down at `spot` in her own zone in one jump, on no walk she
+    // had begun: a client draws it as one frame's move (her movement counter
+    // one on), never as a walk through the wall or the door between
+    void jumpTo(CCharEntity* PPawn, const position_t& spot);
+
+    // Shown again, not slid: every client that sees her is told she is gone,
+    // and the zone's spawn sync shows her afresh where she stands, its own
+    // fade in. A client draws a short jump as a walk whatever her movement
+    // counter says; this hides it
+    void showAfresh(const std::vector<CCharEntity*>& bodies);
 
     // A stuck cardian teleports to her player's side: only from within
     // RESCUE_RANGE yalms (proximity is the anti-exploit -- no summoning
