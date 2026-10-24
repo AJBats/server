@@ -6,7 +6,10 @@
 // lifts by itself once they are in one zone again. A hold the player ordered
 // is his: a warp leaves it as it is, and nothing but his word lifts it.
 // Treks are for walks: a zone change his client walked through a zone line,
-// or one a scene's end makes (movedByScene), is followed as ever.
+// or one a scene's end makes (movedByScene), is followed as ever. And in his
+// zone, a walk to him that only the long way round makes holds her too, and
+// nothing but his word lifts it, which sends her round (the user,
+// 2026-10-24).
 #pragma once
 
 #include <chrono>
@@ -19,6 +22,7 @@ namespace cardian::hold
         bool on      = false;
         bool ordered = false; // the player's own order: lifted only by him
         bool warp    = false; // the automatic hold a warp set: lifted when they are in one zone again
+        bool longWay = false; // the automatic hold a long way round set: lifted by his word alone, which sends her round
 
         auto operator==(const Hold&) const -> bool = default;
     };
@@ -34,6 +38,13 @@ namespace cardian::hold
     inline auto warped(const Hold& now) -> Hold
     {
         return now.on && now.ordered ? now : Hold{ true, false, true };
+    }
+
+    // Her walk to him is made only the long way round: she holds where she
+    // is, unless she holds already
+    inline auto longWayRound(const Hold& now) -> Hold
+    {
+        return now.on ? now : Hold{ true, false, false, true };
     }
 
     // In one zone with him again: the automatic hold lifts by itself; a hold

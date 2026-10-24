@@ -452,6 +452,13 @@ namespace
 
 void sendTransportEvent(CCharEntity* PChar, const xi::ZoneId prevZoneId, const std::string_view transport)
 {
+    // CARDIAN: a session-less character (a cardian) rides no transport by its event,
+    // which she has no client to end: she follows her player's own scene through
+    if (PChar->PSession == nullptr)
+    {
+        return;
+    }
+
     if (PChar->eventPreparation->targetEntity != nullptr)
     {
         // The player talked to one of the guys on the boat, and the event target is wrong.

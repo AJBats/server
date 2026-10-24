@@ -837,9 +837,15 @@ class PawnModule : public CPPModule
             // client took a move the server made, or not a number -- says
             // nothing of where a scene left him
             const auto* pos = packet.as<GP_CLI_COMMAND_POS>();
-            if (!PChar->pendingPositionUpdate && std::isfinite(pos->x) && std::isfinite(pos->y) && std::isfinite(pos->z))
+            if (PChar->pendingPositionUpdate)
             {
-                pawn::noteScenePosition(PChar, position_t(pos->x, pos->z, pos->y, 0, 0)); // the packet's z is the height (0x015_pos.cpp)
+                pawn::notePlayerSetDown(PChar);
+            }
+            else if (std::isfinite(pos->x) && std::isfinite(pos->y) && std::isfinite(pos->z))
+            {
+                const position_t at(pos->x, pos->z, pos->y, 0, 0); // the packet's z is the height (0x015_pos.cpp)
+                pawn::notePlayerFall(PChar, at);                    // first: the scene that moved him still stands here
+                pawn::noteScenePosition(PChar, at);
             }
         }
         else if (packet.getType() == std::to_underlying(PacketC2S::GP_CLI_COMMAND_MAPRECT))

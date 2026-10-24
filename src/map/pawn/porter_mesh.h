@@ -46,9 +46,17 @@ class dtNavMesh;
 namespace pawn::porter::mesh
 {
     // Whether `zone` is a town whose cardians walk this navmesh: a zone of
-    // type City with collision and a navmesh of its own (a Mog House's
-    // residential area has none)
+    // type City, or a ferry's deck between Selbina and Mhaura (the user,
+    // 2026-10-23: the zone's own navmesh walked her into the ship's walls),
+    // with collision and a navmesh of its own (a Mog House's residential
+    // area has none)
     auto isTown(CZone* zone) -> bool;
+
+    // Whether a cardian's walks in `zone` keep to this navmesh (pawn_travel.h
+    // townMesh): a town's, with pawn.TOWN_CLIENT_NAVMESH; and, on trial with
+    // pawn.CLIENT_NAVMESH_EVERYWHERE (the user, 2026-10-24), any other zone
+    // one was built for. Safe from any thread
+    auto walkedOnClient(CZone* zone) -> bool;
 
     // The zone's porter navmesh, read from its file the first time it is
     // asked for -- by a ride's trip check, on a worker (porter.cpp), so a

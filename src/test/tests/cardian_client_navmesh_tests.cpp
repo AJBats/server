@@ -200,6 +200,14 @@ TEST_CASE("Client navmesh: a drop link the client's walker makes is kept, one a 
     CHECK(clearDrops(close, verts, indices, scene.size(), true) == 0);
     CHECK(close.count == 1);
 
+    // a landing within a body of the lip, half a yalm past it: his body,
+    // half over the edge, rests on it until he walks on past the landing
+    // (Palborough Mines' refiner shelf, whose drops were all taken out)
+    Links edge;
+    edge.add({ 1.0, 0.0, -3.0 }, { 2.5, 1.1, -3.0 });
+    CHECK(clearDrops(edge, verts, indices, scene.size(), true) == 0);
+    CHECK(edge.count == 1);
+
     // a triangle past the zone's own (a wall's) is not the client's
     Links past;
     past.add({ 0.5, 0.0, 0.0 }, { 5.0, 1.1, 0.0 });

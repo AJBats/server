@@ -65,7 +65,8 @@ next_regions:
 # it -- the four round Jeuno and the far ones -- each by the level that opens
 # it. The home regions and the regions next to them are fought over from a
 # fresh server's first day; an outer region only once the world's top level
-# (the census's highest target, never under 18) reaches its level. Until then
+# (the census's highest target, the teleporters left out, never under 18)
+# reaches its level. Until then
 # it has no crowd, its tables' and the far crowd alike, so it is the
 # beastmen's. Each nation's focus picks from the open ones.
 outer:

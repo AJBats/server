@@ -273,8 +273,11 @@ namespace pawn
                 const auto at = cardian::route::toDetour(point);
                 if (cardian::route::DangerTest(hazards, at, sight).exposes(at) >= 0)
                 {
+                    // on the point's own floor: the search walks off a ledge's
+                    // drop as readily as along the ground, and safe ground
+                    // under the point is no place by it
                     const auto safe = pawn::travel::routeToSafeGround(zone, point, hazards, sight, kSpotSafe);
-                    if (safe.has_value() && safe->complete && !safe->points.empty())
+                    if (safe.has_value() && safe->complete && !safe->points.empty() && std::abs(safe->points.back().y - point.y) <= kSlotFloor)
                     {
                         target = safe->points.back();
                     }
@@ -704,7 +707,8 @@ namespace pawn
             plan.backOff.clear();
             plan.hold = 1; // on safe ground: she holds here
         }
-        const size_t end = choke && !racing && plan.hold >= 0 ? static_cast<size_t>(plan.hold) : plan.route.size();
+        // ... and never past the lip of a drop: the drop is her own
+        const size_t end = cardian::walk::toNextLip(plan.route, plan.next, choke && !racing && plan.hold >= 0 ? static_cast<size_t>(plan.hold) : plan.route.size());
         if (plan.next >= end)
         {
             if (!plan.heldSince.has_value())

@@ -43,6 +43,7 @@
 #include "town_errands.h"
 #include "world.h"
 #include "pawn_controller.h"
+#include "lifts.h"
 #include "pawn_travel.h"
 #include "pawn_gambits.h"
 #include "skillchains.h"
@@ -88,6 +89,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <deque>
 #include <magic_enum/magic_enum.hpp>
 #include <limits>
 #include <memory>
@@ -150,6 +152,15 @@ namespace
         std::optional<realtime::time_point> ended;
     };
     std::unordered_map<uint32, SceneUnderWay> scenes;
+    // A player's last positions and his drops off ledges (notePlayerFall)
+    struct FallWatch
+    {
+        uint16                                                 zone = 0;
+        std::deque<std::pair<timer::time_point, position_t>>   samples;
+        std::optional<pawn::PlayerDrop>                        falling;
+        std::vector<pawn::PlayerDrop>                          drops;
+    };
+    std::unordered_map<uint32, FallWatch> falls;
     // A player's last walk through a zone line (playerExit)
     std::unordered_map<uint32, pawn::PlayerExit> exits;
 
@@ -2855,7 +2866,7 @@ namespace pawn
         if (crossed && !fromMogHouse)
         {
             // His position is the far side's already: the line's handler has set it
-            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, lineAt, PPlayer->loc.p };
+            exits[PPlayer->id] = PlayerExit{ PPlayer->getZone(), destination, lineAt, PPlayer->loc.p, byScene };
         }
 
         for (auto& [charid, PPawn] : pawns)
@@ -2893,6 +2904,7 @@ namespace pawn
                 continue;
             }
             PController->PlayerZoning();
+            PController->EndLongWay("follows him out of the zone"); // the long way was a walk to him in this zone
             if (!PController->Treks() || travelOrders.contains(charid))
             {
                 continue;
@@ -3003,6 +3015,114 @@ namespace pawn
                     PChar->getName(), distance(scene.from, at), PChar->loc.zone->getName(), scene.from.x, scene.from.y, scene.from.z, at.x, at.y, at.z);
         setDownBeside(PChar, landing, 0.0f, landers);
         showAfresh(landers); // a fade, never a walk through the door
+    }
+
+    void notePlayerFall(CCharEntity* PChar, const position_t& at)
+    {
+        constexpr float  kFall   = 4.0f;  // a drop: his height falls by more than this
+        constexpr auto   kWindow = std::chrono::seconds(3); // ... within this
+        constexpr float  kAcross = 12.0f; // ... while he moves no further than this across
+        constexpr float  kLanded = 0.5f;  // a position this near the last in height: he has landed
+        constexpr size_t kKept   = 3;     // his drops kept, the newest
+        if (PChar == nullptr || isPawn(PChar) || PChar->loc.zone == nullptr || !settings::get<bool>("pawn.DROP_FOLLOW"))
+        {
+            return;
+        }
+        auto&      watch = falls[PChar->id];
+        const auto zone  = static_cast<uint16>(PChar->getZone());
+        if (watch.zone != zone)
+        {
+            watch      = FallWatch{};
+            watch.zone = zone;
+        }
+        const auto now = timer::now();
+
+        // An event or a scene moves him as it likes, and a lift carries him:
+        // nothing before it is a ledge he stepped off. On a platform the
+        // last place kept is the platform where it stands now, so stepping
+        // off it at the bottom is no drop
+        if (PChar->isInEvent() || scenes.contains(PChar->id))
+        {
+            watch.samples.clear();
+            watch.falling.reset();
+            return;
+        }
+        if (pawn::lifts::underFoot(PChar->loc.zone, at) != nullptr)
+        {
+            watch.samples.clear();
+            watch.falling.reset();
+            watch.samples.emplace_back(now, at);
+            return;
+        }
+
+        // FFXI's height grows downward: a fall raises it
+        if (watch.falling.has_value())
+        {
+            const bool still = at.y - watch.falling->land.y > kLanded;
+            watch.falling->land = at;
+            if (!still)
+            {
+                watch.falling->when = now;
+                ShowInfoFmt("pawn: {} drops {:.1f}y in {}, from ({:.1f}, {:.1f}, {:.1f}) to ({:.1f}, {:.1f}, {:.1f})", PChar->getName(),
+                            at.y - watch.falling->top.y, PChar->loc.zone->getName(), watch.falling->top.x, watch.falling->top.y, watch.falling->top.z, at.x,
+                            at.y, at.z);
+                watch.drops.push_back(*watch.falling);
+                if (watch.drops.size() > kKept)
+                {
+                    watch.drops.erase(watch.drops.begin());
+                }
+                watch.falling.reset();
+                watch.samples.clear();
+            }
+        }
+        else
+        {
+            while (!watch.samples.empty() && now - watch.samples.front().first > kWindow)
+            {
+                watch.samples.pop_front();
+            }
+            // Where a fall began: the last of his positions at the height of
+            // the highest -- the edge he stepped off, not the start of the
+            // walk that brought him to it
+            float highest = std::numeric_limits<float>::max();
+            for (const auto& [when, p] : watch.samples)
+            {
+                highest = std::min(highest, p.y);
+            }
+            const position_t* top = nullptr;
+            for (const auto& [when, p] : watch.samples)
+            {
+                if (p.y - highest <= kLanded)
+                {
+                    top = &p;
+                }
+            }
+            // A short way across: no warp set him down across the zone
+            if (top != nullptr && at.y - top->y >= kFall && std::hypot(at.x - top->x, at.z - top->z) <= kAcross)
+            {
+                watch.falling = PlayerDrop{ .top = *top, .land = at, .zone = zone, .when = now };
+            }
+        }
+        watch.samples.emplace_back(now, at);
+    }
+
+    void notePlayerSetDown(CCharEntity* PChar)
+    {
+        if (PChar == nullptr)
+        {
+            return;
+        }
+        if (const auto it = falls.find(PChar->id); it != falls.end())
+        {
+            it->second.samples.clear();
+            it->second.falling.reset();
+        }
+    }
+
+    auto dropsOf(const uint32 playerCharID) -> std::vector<PlayerDrop>
+    {
+        const auto it = falls.find(playerCharID);
+        return it != falls.end() ? it->second.drops : std::vector<PlayerDrop>{};
     }
 
     auto summonerOf(const uint32 pawnCharID) -> uint32

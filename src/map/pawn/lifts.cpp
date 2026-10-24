@@ -44,11 +44,17 @@ namespace
     // A landing: this far beyond the door, away from the platform's centre
     constexpr float kLandingOut = 1.5f;
 
-    // The mesh point nearest `at`: the town's navmesh by the client's rule in
-    // a town, the zone's elsewhere -- and in a town whose own is not built
+    // A door's floor is looked for this far above and below the door: the
+    // data sets some doors mid-shaft (Palborough Mines' `_3z4`, 15 yalms
+    // above its floor)
+    constexpr float kFloorReach = 20.0f;
+
+    // The mesh point nearest `at`: on the navmesh by the client's rule where
+    // her walks keep to it (a town's), the zone's elsewhere -- and where that
+    // one is not built
     auto snap(CZone* PZone, const position_t& at) -> std::optional<position_t>
     {
-        if (pawn::porter::mesh::isTown(PZone))
+        if (pawn::porter::mesh::walkedOnClient(PZone))
         {
             if (const auto onTown = pawn::travel::snapToTown(PZone->GetID(), at); onTown.has_value())
             {
@@ -76,8 +82,25 @@ namespace
         position_t out = PDoor->loc.p;
         out.x          = cx + dx / len * (len + kLandingOut);
         out.z          = cz + dz / len * (len + kLandingOut);
-        const auto landing = snap(PZone, out);
-        if (!landing.has_value() || std::hypot(landing->x - out.x, landing->z - out.z) > 2.0f || std::abs(landing->y - PDoor->loc.p.y) > 4.0f)
+
+        // The ground there nearest the door's own height, within kFloorReach
+        // of it: the mesh is asked at heights a step apart
+        std::optional<position_t> landing;
+        for (float dy = -kFloorReach; dy <= kFloorReach; dy += 4.0f)
+        {
+            position_t at = out;
+            at.y          = PDoor->loc.p.y + dy;
+            const auto onMesh = snap(PZone, at);
+            if (!onMesh.has_value() || std::hypot(onMesh->x - out.x, onMesh->z - out.z) > 2.0f || std::abs(onMesh->y - PDoor->loc.p.y) > kFloorReach)
+            {
+                continue;
+            }
+            if (!landing.has_value() || std::abs(onMesh->y - PDoor->loc.p.y) < std::abs(landing->y - PDoor->loc.p.y))
+            {
+                landing = onMesh;
+            }
+        }
+        if (!landing.has_value())
         {
             return std::nullopt;
         }

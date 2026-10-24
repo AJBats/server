@@ -100,7 +100,7 @@ namespace pawn::teleport
                 Casting,   // the spell ordered, until it lands or comes to nothing
                 Landing,   // she went too: until she has arrived
                 Leaving,   // her last line said, she leaves the party at leaveAt
-                Meeting,   // she has gone: the members left behind set out to meet him
+                Meeting,   // she has gone: the members left behind hold
             };
 
             uint32            player = 0;
@@ -124,7 +124,7 @@ namespace pawn::teleport
             bool              ownCast    = false; // her own order of the crag's Teleport stands: the one order the lock lets through
             bool              parted     = false; // the game took her, or him, out of the party (noteLeftParty)
             realtime::time_point heHere{};        // he stood at the crag with her from then; {} while he does not (a stopwatch, beside his client's packets)
-            std::vector<uint32> moved; // the cardians of his party beside her as it landed: each meets him once he is settled
+            std::vector<uint32> moved; // the cardians of his party beside her as it landed: each not in his zone once he is settled holds (holdBehind)
         };
 
         std::unordered_map<uint32, Hire> hires;  // by the player's charid
@@ -362,8 +362,9 @@ namespace pawn::teleport
             giveBack(h, PMage);
         }
 
-        // The spell has landed: who stays behind and why, in party chat, and
-        // the cardians beside her noted, to meet him once he is settled. Read
+        // The spell has landed: who stays behind and why, in the map log, and
+        // the cardians beside her noted, to hold once he is settled if the
+        // spell left them out of his zone (holdBehind). Read
         // off her party, which holds everyone beside her even while he is
         // between zones (PPlayer nullptr then)
         void resolve(Hire& h, CCharEntity* PPlayer, CCharEntity* PMage, const Crag& crag)
@@ -393,7 +394,7 @@ namespace pawn::teleport
                 {
                     stay = rules::Stay::OutOfRange; // in reach now, not as it landed
                 }
-                say(PMage, fmt::format("{} stays behind. {}", PMember->getName(), rules::reasonOf(stay, crag.name)));
+                ShowInfoFmt("teleport: {} stays behind: {}", PMember->getName(), rules::reasonOf(stay, crag.name));
             }
 
             if (carried(PMage, crag))
@@ -407,11 +408,11 @@ namespace pawn::teleport
             leaveSoon(h);
         }
 
-        // The cardians beside her as it landed, gone with him or left
-        // behind, each set out to meet him wherever he is now: the trek's
-        // own travel order (pawn.h orderTravel), the automatic hold his
-        // teleport set lifted first. A hold he ordered stays his
-        void sendToMeet(const Hire& h, CCharEntity* PPlayer)
+        // The cardians beside her as it landed that the spell left behind
+        // hold where they are, as after any magic that parts them from him
+        // (warp_hold.h; the user, 2026-10-23): the automatic hold his
+        // teleport set stays, and they follow again once he is in their zone
+        void holdBehind(const Hire& h, CCharEntity* PPlayer)
         {
             for (const uint32 charid : h.moved)
             {
@@ -421,15 +422,11 @@ namespace pawn::teleport
                 {
                     continue;
                 }
-                auto* PController = controllerOf(PPawn);
-                if (PController != nullptr && PController->IsWaiting() && !PController->HoldsOnOrder())
+                if (auto* PController = controllerOf(PPawn); PController != nullptr)
                 {
-                    PController->SetWaiting(false, false, fmt::format("sets out to meet {}", PPlayer->getName()));
+                    PController->HoldForWarp(fmt::format("{} teleported away", PPlayer->getName())); // an ordered hold stays his
                 }
-                if (pawn::orderTravel(charid, static_cast<uint16>(PPlayer->getZone()), PPlayer->id))
-                {
-                    ShowInfoFmt("teleport: {} sets out to meet {} in {}", PPawn->getName(), PPlayer->getName(), PPlayer->loc.zone->getName());
-                }
+                ShowInfoFmt("teleport: {} holds in {}, left behind by the spell", PPawn->getName(), PPawn->loc.zone->getName());
             }
         }
 
@@ -522,7 +519,7 @@ namespace pawn::teleport
                 {
                     return true;
                 }
-                sendToMeet(h, PPlayer);
+                holdBehind(h, PPlayer);
                 return false;
             }
 
@@ -549,7 +546,7 @@ namespace pawn::teleport
             // leave her without a word (charutils::ReloadParty), and her own
             // party survives her zone changes. Her cast under way stops, so
             // she never lands at the crag alone. Landed, she still goes home,
-            // and the members left behind are still sent to meet him
+            // and the members left behind still hold
             if (h.parted || PMage->PParty == nullptr)
             {
                 ShowInfoFmt("teleport: {} and {} share a party no longer: the hire ends", PMage->getName(), pawn::seats::nameOf(h.player));

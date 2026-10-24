@@ -99,7 +99,8 @@ namespace pawn
         constexpr float kStretchSpare = 60.0f;   // ... on ground half as long again as the stretch, and this many yalms more
         constexpr float kCrossingNear = 100.0f;  // a mob crossing her route this near ahead is planned round now; one farther waits until she is nearer
         constexpr float kSafeGround   = 150.0f;  // with no spot short of a choke out of every ring: the nearest ground that is, within this walk
-        constexpr float kSpotSafe     = 40.0f;   // a point inside a ring: the safe ground nearest it, within this walk of it
+        constexpr float kSpotSafe     = 40.0f;   // a point inside a ring: the safe ground nearest it, within this walk of it ...
+        constexpr float kSlotFloor    = 3.0f;    // ... and on its floor: no more than this above or below it
         constexpr float kNearRings    = 20.0f;   // the rings looked at every tick for one on her
         constexpr float kTrekScan     = 2000.0f; // a long walk's mobs: the zone's every one, a choke known however far ahead
 

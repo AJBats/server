@@ -324,8 +324,10 @@ auto CPawnController::IsWorld() const -> bool
 
 void CPawnController::SetWaiting(const bool on, const bool ordered, const std::string_view why)
 {
-    const bool was = m_Waiting;
-    m_WarpHold     = false; // HoldForWarp marks its own after this
+    const bool was        = m_Waiting;
+    const bool wasLongWay = m_LongWayHold;
+    m_WarpHold            = false; // HoldForWarp marks its own after this
+    m_LongWayHold         = false; // and HoldForLongWay its own
     if (ordered && !on)
     {
         EndRestOrder("the player's follow order");
@@ -335,8 +337,9 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     m_WaitOrdered  = on && ordered;
     if (on && ordered)
     {
-        LetGoOfLift(why); // a hold he ordered is his: no ride, no door, carries her off
+        LetGoOfLift(why); // a hold he ordered is his: no ride, no door, no drop carries her off
         LetGoOfDoor(why);
+        LetGoOfDrop(why);
     }
     if (on)
     {
@@ -369,6 +372,24 @@ void CPawnController::SetWaiting(const bool on, const bool ordered, const std::s
     else if (was && m_Mode == Mode::Wait)
     {
         Transition(IdleMode(), why.empty() ? "follows again" : why);
+    }
+    if (on)
+    {
+        m_LongWayGo = false; // held again: the long way waits for his word again
+    }
+    // His word lifting the long way's hold sends her round it, said as she
+    // sets out -- if the long way is still her way to him
+    if (!on && ordered && wasLongWay)
+    {
+        auto* PPlayer   = GetLivePlayer();
+        m_PlayerReachAt = {}; // looked at afresh
+        if (PPlayer != nullptr && ReachToPlayer(PPlayer) == Reach::LongWay)
+        {
+            m_LongWayGo   = true;
+            m_LongWayGoal = PPlayer->loc.p;
+            TrekSay("Alright, going around the long way! Heading for you now.");
+            ShowInfoFmt("pawn: {} is sent the long way round to {}", POwner->getName(), PPlayer->getName());
+        }
     }
     if (was != on)
     {
@@ -546,6 +567,12 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
     {
         LetGoOfLift(why);
         LetGoOfDoor(why);
+        LetGoOfDrop(why);
+    }
+    // A trek: the long way round he sent her on was a walk in his zone
+    if (to == Mode::Travel)
+    {
+        m_LongWayGo = false;
     }
 
     // The exits this writer owns. Leaving a fight (Hold counts: she drew)
@@ -700,6 +727,7 @@ void CPawnController::StandDown(const std::string_view why)
     m_Escorting.reset();
     LetGoOfLift(why);
     LetGoOfDoor(why);
+    LetGoOfDrop(why);
     if (POwner->PAI->PathFind != nullptr)
     {
         POwner->PAI->PathFind->Clear();
@@ -757,7 +785,89 @@ auto CPawnController::HoldsOnOrder() const -> bool
 
 auto CPawnController::HoldNow() const -> cardian::hold::Hold
 {
-    return { m_Waiting, m_WaitOrdered, m_WarpHold };
+    return { m_Waiting, m_WaitOrdered, m_WarpHold, m_LongWayHold };
+}
+
+void CPawnController::HoldForLongWay()
+{
+    if (cardian::hold::longWayRound(HoldNow()) == HoldNow())
+    {
+        return; // held already
+    }
+    SetWaiting(true, false, "her walk reaches the player only the long way round");
+    m_LongWayHold = true;
+    // said once in a while, however often the hold comes back
+    if (m_LongWaySaidAt == timer::time_point{} || m_Tick - m_LongWaySaidAt >= 60s)
+    {
+        m_LongWaySaidAt = m_Tick;
+        TrekSay("I can't reach you... but maybe if I go around the long way...");
+    }
+}
+
+void CPawnController::EndLongWay(const std::string_view why)
+{
+    m_LongWayGo = false;
+    m_LongWaySince.reset();
+    if (m_LongWayHold)
+    {
+        SetWaiting(false, false, why);
+    }
+}
+
+auto CPawnController::ReachOf(const position_t& point) const -> Reach
+{
+    constexpr float kEnds = 3.0f; // a route that ends this near the point reaches it
+    const auto      zone  = POwner->getZone();
+    const auto      ends  = [&](const std::optional<cardian::route::Route>& route)
+    {
+        if (!route.has_value() || !route->complete)
+        {
+            return false;
+        }
+        const position_t& last = route->points.empty() ? POwner->loc.p : route->points.back();
+        return distance(last, point) <= kEnds;
+    };
+    // the walker's widest everyday ground (walker.h kWiderSpare), then the
+    // whole zone -- unless the first reached the ground nearest the point
+    // and that ground is not his: the whole zone ends on the same
+    const float span     = distance(POwner->loc.p, point);
+    const auto  everyday = pawn::travel::routeAvoiding(zone, POwner->loc.p, point, {}, cardian::route::HazardSight{}, span * 3.0f + pawn::walker::kWiderSpare);
+    if (ends(everyday))
+    {
+        return Reach::Walk;
+    }
+    if (everyday.has_value() && everyday->complete)
+    {
+        return Reach::None;
+    }
+    if (ends(pawn::travel::routeAvoiding(zone, POwner->loc.p, point, {}, cardian::route::HazardSight{}, 0.0f)))
+    {
+        return Reach::LongWay;
+    }
+    return Reach::None;
+}
+
+auto CPawnController::ReachToPlayer(const CCharEntity* PPlayer) -> Reach
+{
+    if (PPlayer == nullptr)
+    {
+        return Reach::None;
+    }
+    // Looked at every few seconds; no walk at all, which searched the whole
+    // zone in vain, only once one of them has moved or a while on
+    constexpr float kMoved    = 3.0f;
+    const auto      zone      = static_cast<uint16>(POwner->getZone());
+    const bool      still     = distance(POwner->loc.p, m_PlayerReachHer) <= kMoved && distance(PPlayer->loc.p, m_PlayerReachHim) <= kMoved;
+    const auto      lookAgain = m_PlayerReach == Reach::None && still ? 15s : 3s;
+    if (m_Tick - m_PlayerReachAt >= lookAgain || m_PlayerReachZone != zone)
+    {
+        m_PlayerReach     = ReachOf(PPlayer->loc.p);
+        m_PlayerReachAt   = m_Tick;
+        m_PlayerReachZone = zone;
+        m_PlayerReachHer  = POwner->loc.p;
+        m_PlayerReachHim  = PPlayer->loc.p;
+    }
+    return m_PlayerReach;
 }
 
 void CPawnController::HoldForWarp(const std::string_view why)
@@ -4805,6 +4915,13 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         co_return;
     }
 
+    // A drop after him off a ledge (pawn_drop.cpp): walking to where he
+    // stepped off, then down
+    if (DropTick())
+    {
+        co_return;
+    }
+
     // A lift (pawn_lift.cpp): aboard its platform as it travels she is
     // carried; boarding beside him, or on her way to him on another floor,
     // she walks, waits, boards and steps off. While the lift has her,
@@ -5892,7 +6009,7 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
     }
     // On another floor of his zone, where her walk does not reach him, a
     // timed lift between them takes her to him (pawn_lift.cpp)
-    else if (Treks() && !m_RestOrder.active() && LiftTrek(PPlayer))
+    else if (Treks() && !m_RestOrder.active() && (DropTrek(PPlayer) || LiftTrek(PPlayer)))
     {
         co_return;
     }
@@ -5918,6 +6035,48 @@ auto CPawnController::DoRoamTick(const timer::time_point tick) -> Task<void>
         if (cardian::hold::reunited(HoldNow()) != HoldNow())
         {
             SetWaiting(false, false, fmt::format("follows again ({} is back)", PPlayer->getName()));
+        }
+        // The long way round, judged on the map alone (ReachToPlayer), for
+        // his follower: a real player's, no camp's stake her place. A walk to
+        // him that only the long way round makes holds her, and she says so,
+        // once it has stood a few seconds -- his drop or a lift to him
+        // (DropTrek, LiftTrek) look first. Sent round, she walks it, her goal
+        // moved on as he goes far, until she is near him and an everyday walk
+        // reaches him: a winding way can leave the everyday ground again
+        constexpr auto  kLongWaySettles = 6s;
+        constexpr float kLongWayNear    = 10.0f;
+        const bool      hisFollower     = Treks() && m_Mode == Mode::Follow && PPlayer == GetLivePlayer();
+        if (m_LongWayGo && !hisFollower)
+        {
+            m_LongWayGo = false;
+            ShowInfoFmt("pawn: {}: the long way round ends: she follows him no longer", POwner->getName());
+        }
+        if (m_LongWayGo)
+        {
+            if (distance(POwner->loc.p, PPlayer->loc.p) <= kLongWayNear && ReachToPlayer(PPlayer) == Reach::Walk)
+            {
+                m_LongWayGo = false;
+                ShowInfoFmt("pawn: {}: the long way round is behind her, the rest of her way to {} an everyday walk", POwner->getName(), PPlayer->getName());
+            }
+            else if (distance(m_LongWayGoal, PPlayer->loc.p) > 10.0f)
+            {
+                m_LongWayGoal = PPlayer->loc.p;
+            }
+        }
+        if (!m_LongWayGo && hisFollower && !POwner->PAI->IsEngaged() && ReachToPlayer(PPlayer) == Reach::LongWay)
+        {
+            if (!m_LongWaySince.has_value())
+            {
+                m_LongWaySince = m_Tick;
+            }
+            else if (m_Tick - *m_LongWaySince >= kLongWaySettles)
+            {
+                HoldForLongWay();
+            }
+        }
+        else
+        {
+            m_LongWaySince.reset();
         }
         if (m_Mode == Mode::Travel)
         {
@@ -6565,6 +6724,13 @@ auto CPawnController::CourtesyStep(const position_t& point, const float settle) 
     {
         return point;
     }
+    // The courtesy's grid is flat, at her own height: a point on another
+    // floor -- him on a walkway over her -- it would step her to under it
+    constexpr float kOtherFloor = 3.0f;
+    if (std::abs(POwner->loc.p.y - point.y) > kOtherFloor)
+    {
+        return point;
+    }
 
     // The field: the player's body, and their wake -- a lane along the way
     // they move, long while they move, short while they stand. Built
@@ -6645,7 +6811,9 @@ auto CPawnController::CourtesyStep(const position_t& point, const float settle) 
         }
     }
     // The local goal: the destination when it is within the window, else
-    // the mesh's own way to it, at the window's edge
+    // the way to it at the window's edge -- the walker's own way, on the
+    // navmesh her walks keep to (pawn_travel.h routeAvoiding), or the
+    // courtesy steers her along a way she does not walk
     constexpr int   kWindow = 12;
     constexpr float kReach  = 6.0f; // this tick's step target, that far along the plan: a tick's run at catch-up speed, with the arrive distance to spare
     const float     edge    = static_cast<float>(kWindow) - 1.0f;
@@ -6654,22 +6822,23 @@ auto CPawnController::CourtesyStep(const position_t& point, const float settle) 
     {
         const float span = distance(me, point, true);
         goal             = position_t(me.x + (point.x - me.x) * edge / span, point.y, me.z + (point.z - me.z) * edge / span, 0, 0);
-        if (const auto path = routeOf(navMesh, POwner, me, point); path.has_value() && !path->points.empty())
+        const float reach = span * 3.0f + pawn::walker::kWiderSpare; // the walker's widest everyday ground
+        if (const auto route = pawn::travel::routeAvoiding(POwner->getZone(), me, point, {}, cardian::route::HazardSight{}, reach); route.has_value() && !route->points.empty())
         {
             float      walked = 0.0f;
             position_t prev   = me;
-            for (const auto& pp : path->points)
+            for (const auto& pp : route->points)
             {
-                const float seg = distance(prev, pp.position, true);
+                const float seg = distance(prev, pp, true);
                 if (walked + seg >= edge)
                 {
                     const float t = (edge - walked) / std::max(seg, 0.01f);
-                    goal          = position_t(prev.x + (pp.position.x - prev.x) * t, pp.position.y, prev.z + (pp.position.z - prev.z) * t, 0, 0);
+                    goal          = position_t(prev.x + (pp.x - prev.x) * t, pp.y, prev.z + (pp.z - prev.z) * t, 0, 0);
                     break;
                 }
                 walked += seg;
-                prev = pp.position;
-                goal = pp.position;
+                prev = pp;
+                goal = pp;
             }
         }
     }
@@ -7105,6 +7274,10 @@ void CPawnController::WalkTick()
     WalkOrderTick(m_Tick);
     if (!cardian::view::timersArmed() && POwner->PAI->PathFind->IsFollowingPath())
     {
+        if (DropOnRoute())
+        {
+            return; // at a drop's lip on her way: down it, never walked through
+        }
         const auto before = POwner->loc.p;
         POwner->PAI->PathFind->FollowPath(m_Tick);
         GroundStep(before);
@@ -7222,7 +7395,7 @@ void CPawnController::WalkStep()
     // A held game (pause/pause.h) holds her too: the AI tick stands down
     // under a hold, and so must this timer, which runs on real time
     if ((m_Mode != Mode::Walk && m_Mode != Mode::Maneuver) || !POwner->PAI->CanFollowPath() || cardian::pause::isHeld() || m_Door.has_value() ||
-        m_Lift.has_value())
+        m_Lift.has_value() || m_Drop.has_value())
     {
         return;
     }
@@ -7243,6 +7416,10 @@ void CPawnController::WalkStep()
     const auto since = m_LastWalkStep == timer::time_point{} ? std::chrono::microseconds(cardian::view::kSteerPeriodMs * 1000) : std::chrono::duration_cast<std::chrono::microseconds>(now - m_LastWalkStep);
     m_LastWalkStep   = now;
     const float scale = std::min(0.25f, static_cast<float>(since.count()) / 400000.0f);
+    if (DropOnRoute())
+    {
+        return; // at a drop's lip on her way: down it, never walked through
+    }
     const auto  before = POwner->loc.p;
     PPathFind->SetStepScale(scale);
     PPathFind->FollowPath(now);
@@ -7396,11 +7573,23 @@ void CPawnController::TravelTick()
     const bool  hisLine = left.has_value() && left->from == POwner->getZone() && left->to == targetZone;
     if (hisLine && distance(POwner->loc.p, left->at) <= settings::get<float>("pawn.FOLLOW_THROUGH_YALMS"))
     {
+        // A scene's move lands where the zone set him down as he arrived --
+        // a ship's script asks for (0, 0, 0), the water under the pier --
+        // so she comes through once he stands there, beside him
+        auto landed = left->landed;
+        if (left->byScene)
+        {
+            if (PLeader->loc.zone == nullptr || PLeader->getZone() != left->to || PLeader->requestedZoneChange || PLeader->status == xi::Status::Disappear)
+            {
+                return; // not there yet
+            }
+            landed = PLeader->loc.p;
+        }
         ShowInfoFmt("pawn: travel {}: follows {} through where he crossed, {:.1f}y away (zone {} -> {})", POwner->getName(), PLeader->getName(),
                     distance(POwner->loc.p, left->at), static_cast<uint16>(left->from), static_cast<uint16>(left->to));
         m_LineApproach.forget();
         m_TravelStuckSaid = false;
-        cross(pawn::TravelHop{ left->to, left->at, left->landed });
+        cross(pawn::TravelHop{ left->to, left->at, landed });
         return;
     }
 
@@ -9180,7 +9369,12 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     // place, another member on it (CourtesyStep's settle) -- she has arrived,
     // wherever the band would have put her
     const bool settled = !moving && m_SettledAt.has_value() && m_Tick - m_SettledTick <= 1s && distance(POwner->loc.p, *m_SettledAt, true) < 0.3f;
-    const bool holds   = step.holds || settled;
+    // The band is flat, and a walkway over him or a ledge under him lies
+    // within it: she holds in it only on his floor. Ground a client walks
+    // rises at most a yalm a yalm (its floors end at 45 degrees); steeper
+    // between them is another floor, and she walks to her seat by him
+    const bool hisFloor = std::abs(POwner->loc.p.y - centre.y) <= distance(POwner->loc.p, centre, true) + 1.0f;
+    const bool holds    = (step.holds || settled) && hisFloor;
 
     // The formation's trace (pawn.FORMATION_DEBUG), every tick: where she
     // stands, her ring seat and the seat she follows as it turns, and where
@@ -9202,7 +9396,8 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
                     "to ({:.1f}, {:.1f}) {:+.0f} deg {:.1f}y, {}; he at ({:.1f}, {:.1f}), {}",
                     POwner->getName(), POwner->loc.p.x, POwner->loc.p.z, off(POwner->loc.p.x, POwner->loc.p.z), from(POwner->loc.p.x, POwner->loc.p.z),
                     cardian::formation::slotName(slot), off(ring.x, ring.z), off(seatAt.x, seatAt.z), seat.offset + manner.extra, step.x, step.z, off(step.x, step.z),
-                    from(step.x, step.z), step.holds ? "holds" : settled ? "settled" : "walks", centre.x, centre.z, moving ? "walking" : "standing");
+                    from(step.x, step.z), !hisFloor ? "walks, from another floor" : step.holds ? "holds" : settled ? "settled" : "walks", centre.x, centre.z,
+                    moving ? "walking" : "standing");
     }
 
     // Come to a stand -- he stands, and she holds, still -- she turns in her
@@ -9255,6 +9450,12 @@ auto CPawnController::CompassPoint(const Anchor& a) -> position_t
     position_t to = centre;
     to.x          = step.x;
     to.z          = step.z;
+    if (!hisFloor)
+    {
+        const float out = seat.offset + manner.extra;
+        to.x            = centre.x + std::cos(*m_CompassSeatBearing) * out;
+        to.z            = centre.z + std::sin(*m_CompassSeatBearing) * out;
+    }
     // Never through a wall or off a ledge: the ring's own clip
     return ReachablePoint(a, to);
 }
