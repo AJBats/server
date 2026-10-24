@@ -133,4 +133,34 @@ namespace cardian::walk
         }
         return distance(here, route[best]) < 1.0f ? best + 1 : best;
     }
+
+    // A leg of a route that is a drop -- an off-mesh link down a ledge: down
+    // at least kDropLeast, and more steeply than any ground a client walks
+    // (its floors end at 45 degrees)
+    constexpr float kDropLeast = 2.0f;
+    constexpr float kDropSteep = 1.5f; // yalms down for every yalm across, at the least
+
+    inline auto isDrop(const position_t& lip, const position_t& land) -> bool
+    {
+        const float down   = land.y - lip.y; // FFXI's height grows downward
+        const float across = std::hypot(land.x - lip.x, land.z - lip.z);
+        return down >= kDropLeast && down >= across * kDropSteep;
+    }
+
+    // How far from `next` her path finder is handed a route, short of `end`:
+    // to the lip of the first drop ahead of her, the lip included. It walks
+    // every leg as ground and spends a tick's step past a waypoint, so a
+    // drop handed to it is walked down through the ledge; the drop is hers,
+    // from the lip (CPawnController::DropOnRoute)
+    inline auto toNextLip(const std::vector<position_t>& route, const size_t next, const size_t end) -> size_t
+    {
+        for (size_t i = next; i + 1 < end; ++i)
+        {
+            if (isDrop(route[i], route[i + 1]))
+            {
+                return i + 1;
+            }
+        }
+        return end;
+    }
 } // namespace cardian::walk

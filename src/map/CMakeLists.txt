@@ -146,6 +146,7 @@ set(APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_lift.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_door_cross.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/pawn/door_math.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/pawn/pawn_drop.cpp
 )
 
 set(MAP_CORE_SOURCES

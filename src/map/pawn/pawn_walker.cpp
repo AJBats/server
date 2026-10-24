@@ -442,6 +442,14 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     const bool proposes   = intent.kind != Intent::Kind::Stand && intent.kind != Intent::Kind::Keep;
     const bool kneelsHere = !proposes && POwner->StatusEffectContainer->HasStatusEffect(xi::StatusEffect::Healing);
     const bool arriving   = m_TrekArriving && !intent.trek; // the rest of a trek's way to him, in his zone (TrekArrivalTick)
+    // The long way round he sent her on (ReachToPlayer): her place by him is
+    // walked to as a trek walks to its line, to where he stood (moved on as
+    // he goes far), round every mob of her zone (the user, 2026-10-24)
+    const bool longWay = m_LongWayGo && intent.kind == Intent::Kind::Formation;
+    if (longWay)
+    {
+        intent.point = m_LongWayGoal;
+    }
     const bool vetted     = intent.vet && !kneelsHere && !PlayersRestHolds() &&
                         (intent.trek || arriving || IsAvoiding() || (intent.keepsClear && proposes && KeepsClearOfAggro()));
 
@@ -449,7 +457,7 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     // her chocobo she plans round no danger at all
     Rules rules;
     rules.danger = vetted && !POwner->isMounted();
-    if (intent.trek)
+    if (intent.trek || longWay)
     {
         // A trek keeps every ring whole, walls or not (the game's sight ray,
         // cast from a flying mob hugging a cave wall, can start inside the
@@ -597,7 +605,7 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
                     // The player's personal space and the party's: her goal
                     // stepped clear of their bodies, his wake and where the
                     // others are going
-                    const auto goal = intent.trek ? intent.point : CourtesyStep(intent.point, settle);
+                    const auto goal = intent.trek || longWay ? intent.point : CourtesyStep(intent.point, settle);
                     // Settled where she stands -- the cheapest cell near her
                     // place is her own -- the compass hears she has arrived
                     if (settle > 0.0f && distance(goal, POwner->loc.p, true) < 0.05f)
@@ -726,9 +734,12 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     NoteWalk(trying, action == AvoidAction::Slot ? point : intent.point, followTarget);
 
     const auto before = POwner->loc.p;
-    PPathFind->FollowPath(m_Tick);
-    GroundStep(before);
-    CountMove(before, kLogicUpdateInterval);
+    if (!DropOnRoute())
+    {
+        PPathFind->FollowPath(m_Tick);
+        GroundStep(before);
+        CountMove(before, kLogicUpdateInterval);
+    }
 
     // The walk trace (with the move trace, a development tool): each tick a
     // cardian of a real player's party steps, the step, the point her mover
@@ -738,8 +749,9 @@ auto CPawnController::Walk(Intent intent) -> AvoidAction
     if (settings::get<bool>("pawn.MOVE_TRACE") && distance(before, POwner->loc.p, true) > 0.01f && GetLivePlayer() != nullptr)
     {
         const auto& end = PPathFind->IsFollowingPath() ? PPathFind->GetDestination() : POwner->loc.p;
-        ShowInfoFmt("pawn: walk trace {} ({:.2f}, {:.2f}) -> ({:.2f}, {:.2f}) asked ({:.2f}, {:.2f}) path end ({:.2f}, {:.2f}) speed {} {}", POwner->getName(),
-                    before.x, before.z, POwner->loc.p.x, POwner->loc.p.z, intent.point.x, intent.point.z, end.x, end.z, POwner->GetSpeed(),
+        ShowInfoFmt("pawn: walk trace {} ({:.2f}, {:.2f}, {:.2f}) -> ({:.2f}, {:.2f}, {:.2f}) asked ({:.2f}, {:.2f}, {:.2f}) path end ({:.2f}, {:.2f}, {:.2f}) speed {} {}",
+                    POwner->getName(), before.x, before.y, before.z, POwner->loc.p.x, POwner->loc.p.y, POwner->loc.p.z, intent.point.x, intent.point.y,
+                    intent.point.z, end.x, end.y, end.z, POwner->GetSpeed(),
                     magic_enum::enum_name(intent.kind));
     }
 

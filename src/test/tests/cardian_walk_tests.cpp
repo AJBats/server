@@ -88,3 +88,23 @@ TEST_CASE("One walker: her progress along a route is the leg she stands nearest"
     CHECK(progress(route, 2, at(1, 0)) == 2);      // never back to a leg behind her
     CHECK(progress(route, 4, at(20, 10)) == 4);    // walked it all
 }
+
+TEST_CASE("One walker: her path finder is handed a route only as far as the lip of its next drop", "[cardian][walk]")
+{
+    using cardian::walk::isDrop;
+    using cardian::walk::toNextLip;
+    const auto p = [](const float x, const float y, const float z) { return position_t(x, y, z, 0, 0); };
+
+    CHECK(isDrop(p(0, -23.6f, 0), p(1, -16.0f, 0)));     // 7.6 down, 1 across: a ledge's link
+    CHECK_FALSE(isDrop(p(0, -23.6f, 0), p(4, -20.0f, 0))); // down less steeply than 1.5 in 1: a ramp
+    CHECK_FALSE(isDrop(p(0, -16.0f, 0), p(0, -17.5f, 0))); // up
+    CHECK_FALSE(isDrop(p(0, 0, 0), p(0, 1.5f, 0)));       // too small a step down to be one
+
+    // her spot, two legs on the shelf, the drop, a leg below, another drop
+    const std::vector<position_t> route{ p(0, -23.6f, 0), p(3, -23.6f, 0), p(5, -23.6f, 0), p(6, -16.0f, 0), p(9, -16.0f, 0), p(9, -8.0f, 1) };
+    CHECK(toNextLip(route, 1, route.size()) == 3); // up to the lip, route[2], and no further
+    CHECK(toNextLip(route, 2, route.size()) == 3); // walking to the lip: the lip alone
+    CHECK(toNextLip(route, 3, route.size()) == 5); // past the drop: on to the next lip
+    CHECK(toNextLip(route, 5, route.size()) == 6); // no drop ahead: all of it
+    CHECK(toNextLip(route, 1, 2) == 2);             // a choke short of the lip holds first
+}

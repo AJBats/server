@@ -65,6 +65,18 @@ xi.settings.pawn =
     -- ./dev-servers.ps1 porter-navmeshes. false: on the zone's.
     TOWN_CLIENT_NAVMESH = true,
 
+    -- Every zone with a navmesh by the client's rule (the user, 2026-10-24)
+    -- -- the porter's, built by ./dev-servers.ps1 porter-navmeshes -- has its
+    -- cardians' walks keep to it as a town's do, all of them read as the map
+    -- starts and kept. false: the towns alone.
+    CLIENT_NAVMESH_EVERYWHERE = true,
+
+    -- A dungeon's navmesh by the client's rule links a ledge down to ground
+    -- as far below as this, in yalms (the monsters' navmesh, 5): a client
+    -- drops from any height, and a cardian's route takes such a drop as a
+    -- step of its way, falling where the player would (pawn_drop.cpp).
+    CLIENT_NAVMESH_DROP = 20.0,
+
     -- The porter's trace in the map log: every route's waypoints as it is
     -- planned, and at a stray where the rider stood and the legs he was
     -- judged on (porter.cpp traceRoute, traceStray)
@@ -102,6 +114,12 @@ xi.settings.pawn =
     -- .cache/cardian_doors.json (tools/walls/doors.py).
     -- false: she walks through every closed door, as the mesh has none.
     DOOR_CROSSING = true,
+
+    -- Drops off a ledge (OPEN_ISSUES #581): his height falling by more than a
+    -- few yalms in a moment, no lift or scene doing it, is noted, and a
+    -- cardian whose walk cannot reach him walks to where he stepped off and
+    -- drops after him. false: she waits for her walk or the auto rescue.
+    DROP_FOLLOW = true,
 
     -- Milliseconds a pawn waits before answering a party invite. 0 answers on
     -- the next zone tick; a human takes seconds, and the retail client's

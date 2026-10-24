@@ -56,6 +56,7 @@ namespace joins
     constexpr double kLands      = 0.5; // yalms: a drop's walker that comes down this near its landing on the ground has made it ...
     constexpr double kPressTo    = 0.1; // ... pressed on until this near it, past the lip of a ledge whose landing lies close below
     constexpr int    kFallFrames = 90;  // frames at 30 a second a drop's walker is given to come down once over its landing
+    constexpr double kOvershoot  = 0.7; // yalms: ... walked on past it at most this far while he stands on the lip: his body, half over the edge, rests on it
 
     inline auto bucketKey(const int bx, const int bz) -> int64_t
     {
@@ -281,9 +282,10 @@ inline auto judgeJoins(rcCompactHeightfield& chf, const std::vector<float>& vert
 // The drop links of a navmesh built for the client (the builder's, one
 // tile's: Detour's space, y up) whose way down the client's walker does not
 // make, taken out: set down a little over the link's start and pressed
-// straight toward its landing until within kPressTo of it, he walks off the
-// lip and falls, and must come down within kLands of the landing, on its
-// floor. A trunk or a rock in the
+// straight toward its landing until within kPressTo of it, and on past it
+// while he still stands on the lip (kOvershoot), he walks off the lip and
+// falls, and must come down within kLands of the landing, and of how far he
+// was pressed past it, on its floor. A trunk or a rock in the
 // way stops him or turns him aside; a ledge's own face is under him. Any
 // other build's links are left alone. Returns how many it took out
 template <typename Links>
@@ -311,7 +313,7 @@ auto clearDrops(Links& links, const std::vector<float>& verts, const std::vector
         {
             local.push_back(ct.tris[k]);
         }
-        if (!walks(local, from, to, joins::kLands, 0.6, 5.0, 30.0, joins::kFallFrames, joins::kPressTo))
+        if (!walks(local, from, to, joins::kLands, 0.6, 5.0, 30.0, joins::kFallFrames, joins::kPressTo, joins::kOvershoot))
         {
             continue;
         }

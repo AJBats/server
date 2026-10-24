@@ -99,13 +99,20 @@ namespace pawn
         auto routeAvoiding(xi::ZoneId zone, const position_t& from, const position_t& to, const std::vector<cardian::route::Hazard>& hazards,
                            const cardian::route::HazardSight& sight, float reach = 0.0f) -> std::optional<cardian::route::Route>;
 
+        // Whether a walk from `from` reaches `to` -- the route search the
+        // walker plans on, round no danger: a complete route to the ground
+        // nearest `to`, or one that stops within `within` of it. The ground
+        // nearest `to` may lie yalms from it (a point off the mesh)
+        auto walks(xi::ZoneId zone, const position_t& from, const position_t& to, float within) -> bool;
+
         // A town's navmesh by the client's own rule, with the town's props in it
         // (porter_mesh.h), which every route searched in a town keeps to (pawn.TOWN_CLIENT_NAVMESH):
         // a client steps half a yalm, stands on floors to 44.9 degrees and keeps
         // its body half a yalm off every wall, and that navmesh keeps to the same
         // by itself -- no faces, no seams, no step judged too steep: its stairs
         // are the client's -- with a berth off the walls where there is room.
-        // Nullptr out of a town, or for a town without one
+        // Nullptr out of a town, or for a town without one; on trial, every
+        // zone one was built for counts as a town here (porter_mesh.h walkedOnClient)
         auto townMesh(xi::ZoneId zone) -> const dtNavMesh*;
 
         // The nearest point of a town's navmesh by the client's rule to

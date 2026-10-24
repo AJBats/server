@@ -460,10 +460,15 @@ inline auto settle(const std::vector<Tri>& tris, const Vec& from, const double f
 // navmesh's cells. He is let settle first; one who finds no floor, or stops
 // getting anywhere, fails. He is pressed on until within `press` of it
 // (`reach` when none is given: a drop's walker is pressed nearer than its
-// landing is judged, or he stops on the lip above it), then given a frame to
-// land, or up to `landFrames` while he falls (a drop off a ledge)
+// landing is judged, or he stops on the lip above it), and on past it, as
+// far as `overshoot`, while he has yet to fall from the lip -- a landing
+// close below a ledge lies within a body of its lip, which holds him on its
+// edge until he walks on -- then given a frame to land, or up to
+// `landFrames` while he falls (a drop off a ledge); he must come down within
+// `reach` of it, and of how far he was pressed past it
 inline auto walks(const std::vector<Tri>& tris, const Vec& from, const Vec& to, const double reach = 0.1, const double level = 0.6,
-                  const double speed = 5.0, const double fps = 30.0, const int landFrames = 1, const double press = -1.0) -> bool
+                  const double speed = 5.0, const double fps = 30.0, const int landFrames = 1, const double press = -1.0, const double overshoot = 0.0)
+    -> bool
 {
     const double pressTo = press < 0.0 ? reach : press;
     const double dtf = 60.0 / fps;
@@ -489,9 +494,10 @@ inline auto walks(const std::vector<Tri>& tris, const Vec& from, const Vec& to, 
     {
         return std::fabs(p.pos[1] - to[1]) <= level;
     }
-    const double ux = dx / L;
-    const double uz = dz / L;
-    double       best = L;
+    const double ux    = dx / L;
+    const double uz    = dz / L;
+    const double setOut = p.pos[1]; // the height he set out at: FFXI's y grows downward
+    double       best  = L;
     int          still = 0;
     for (int i = 0; i < static_cast<int>(std::ceil(L / mv)) + 6; ++i)
     {
@@ -512,6 +518,13 @@ inline auto walks(const std::vector<Tri>& tris, const Vec& from, const Vec& to, 
             return false;
         }
     }
+    // on past it while he has yet to fall a yalm from the lip
+    double past = 0.0;
+    while (past < overshoot && p.pos[1] - setOut < 1.0)
+    {
+        p.frame(tris, ux * mv, uz * mv, dtf);
+        past += mv;
+    }
     // a frame more to land on the floor there, or more while he falls
     for (int i = 0; i < std::max(1, landFrames); ++i)
     {
@@ -523,7 +536,7 @@ inline auto walks(const std::vector<Tri>& tris, const Vec& from, const Vec& to, 
     }
     const double gx = to[0] - p.pos[0];
     const double gz = to[2] - p.pos[2];
-    return std::sqrt(gx * gx + gz * gz) <= reach + 0.05 && std::fabs(p.pos[1] - to[1]) <= level;
+    return std::sqrt(gx * gx + gz * gz) <= reach + past + 0.05 && std::fabs(p.pos[1] - to[1]) <= level;
 }
 
 } // namespace cardian::client::collision

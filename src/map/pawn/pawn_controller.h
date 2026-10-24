@@ -320,6 +320,27 @@ public:
     auto IsWaiting() const -> bool;
     auto HoldsOnOrder() const -> bool; // holding on the player's own order, not a warp's automatic hold
     void HoldForWarp(std::string_view why);
+    // Her walk to him is made only the long way round (the user,
+    // 2026-10-24): she holds where she is and says so. His word lifting the
+    // hold sends her round, with a trek's rows, until her walk to him is an
+    // everyday one again; nothing else lifts it
+    void HoldForLongWay();
+    void EndLongWay(std::string_view why); // his walk out of her zone: the long way's hold lifted, its walk ended
+
+    // Whether she reaches a point on the map alone -- no monster counts, so
+    // the answer moves only as she or the point does: an everyday walk (on
+    // the ground round her and it, as far as the walker plans one), only the
+    // long way round (on the whole zone), or no walk at all. The one question
+    // the long way's hold, its walk, a drop and a lift ask (the user,
+    // 2026-10-24)
+    enum class Reach : uint8
+    {
+        Walk,
+        LongWay,
+        None,
+    };
+    auto ReachOf(const position_t& point) const -> Reach;
+    auto ReachToPlayer(const CCharEntity* PPlayer) -> Reach; // ReachOf his spot, looked at every few seconds and kept
     void Carried(); // carried off by a warp or a teleport: she holds where she lands until the player is in her zone with her
     void ArriveWith(const position_t& landing); // set down beside the player by an event (pawn::landWithPlayer): she stands until he is seen there
     void EngageOn(CMobEntity* PMob);        // the player's order: fight this, after her beat (FireOrderedEngage)
@@ -974,6 +995,15 @@ public:
         bool              withPlayer = false;
         bool              trek       = false; // taken on a trek: its walk to the landing keeps the trek's rules
         timer::time_point since{};
+    };
+
+    // Her drop after him off a ledge (pawn_drop.cpp): his drop, when she set
+    // out to follow it, and the nearest she has come to where he stepped off
+    struct DropFollow
+    {
+        pawn::PlayerDrop  drop;
+        timer::time_point since{};
+        float             nearest = std::numeric_limits<float>::max();
     };
 
     // Her crossing of a door the client walks a player through (pawn_doors.h,
@@ -1869,6 +1899,30 @@ private:
     timer::time_point       m_LiftGaveUpAt{}; // a trek's lift given up: not looked for again for a while
     timer::time_point       m_LiftLookedAt{}; // LiftTrek's last look whether a lift stands between her floor and his
     timer::time_point       m_LiftMissedAt{}; // the last search for a lift that found none: the next waits a while
+
+    // The long way round (HoldForLongWay, ReachToPlayer)
+    bool              m_LongWayHold     = false;       // the long way round's automatic hold (HoldForLongWay)
+    bool              m_LongWayGo       = false;       // sent round by his word: the long way walked as a trek, until an everyday walk reaches him
+    position_t        m_LongWayGoal{};                 // ... to where he stood, moved on as he goes far
+    timer::time_point m_LongWaySaidAt{};               // when she last said she cannot reach him: once a minute at most
+    Reach             m_PlayerReach     = Reach::Walk; // ReachToPlayer's last answer ...
+    timer::time_point m_PlayerReachAt{};               // ... looked at then ...
+    uint16            m_PlayerReachZone = 0;           // ... in this zone ...
+    position_t        m_PlayerReachHer{};              // ... she standing here ...
+    position_t        m_PlayerReachHim{};              // ... and he here
+    std::optional<timer::time_point> m_LongWaySince;   // since when only the long way round has reached him, she following
+
+    // A drop off a ledge (pawn_drop.cpp, OPEN_ISSUES #581): where her walk
+    // does not reach him and he dropped down a ledge her walk reaches, she
+    // walks to where he stepped off and drops after him. While the drop has
+    // her, nothing else moves her
+    auto DropTrek(const CCharEntity* PPlayer) -> bool;
+    auto DropTick() -> bool;
+    auto DropOnRoute() -> bool; // at the lip of a drop on her walk's route: she falls to where it lands
+    void LetGoOfDrop(std::string_view why);
+    std::optional<DropFollow> m_Drop;
+    timer::time_point         m_DropLookedAt{};
+    timer::time_point         m_DropGivenUp{}; // the landing of the last drop she gave up on: it and every older one stay given up
 
     // A door (pawn_door_cross.cpp): her walk ends short of a closed door she
     // may not open, and where the client walks a player through it she

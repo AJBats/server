@@ -509,14 +509,25 @@ namespace pawn::travel
         return plan.reachable && plan.firstLine.has_value();
     }
 
+    auto walks(const xi::ZoneId zone, const position_t& from, const position_t& to, const float within) -> bool
+    {
+        const auto route = routeAvoiding(zone, from, to, {}, cardian::route::HazardSight{});
+        if (!route.has_value())
+        {
+            return false;
+        }
+        if (route->complete)
+        {
+            return true;
+        }
+        const position_t& last = route->points.empty() ? from : route->points.back();
+        return distance(last, to) <= within;
+    }
+
     auto townMesh(const xi::ZoneId zone) -> const dtNavMesh*
     {
-        if (!settings::get<bool>("pawn.TOWN_CLIENT_NAVMESH"))
-        {
-            return nullptr;
-        }
         auto* PZone = zoneutils::GetZone(zone);
-        return PZone != nullptr && pawn::porter::mesh::isTown(PZone) ? pawn::porter::mesh::of(PZone) : nullptr;
+        return PZone != nullptr && pawn::porter::mesh::walkedOnClient(PZone) ? pawn::porter::mesh::of(PZone) : nullptr;
     }
 
     namespace

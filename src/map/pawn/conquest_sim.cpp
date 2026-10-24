@@ -223,12 +223,14 @@ namespace
         return std::sqrt(-2.0 * std::log(u1)) * std::cos(2.0 * std::numbers::pi * u2);
     }
 
-    // The world's top level as the census defines it (census.py world_top): the highest target
-    // of an unrecruited census row, never under 18
+    // The world's top level: the highest target of an unrecruited census
+    // row, never under 18. The teleporters are left out: residents at a
+    // level fixed for their hubs (42 to 50), not where the world has come to
     auto worldTopNow() -> uint8
     {
         uint8 highest = 0;
-        if (const auto rset = db::preparedStmt("SELECT COALESCE(MAX(target), 0) AS top FROM cardian_census WHERE recruited = 0"); rset && rset->next())
+        if (const auto rset = db::preparedStmt("SELECT COALESCE(MAX(target), 0) AS top FROM cardian_census WHERE recruited = 0 AND anchor <> 'teleporter'");
+            rset && rset->next())
         {
             highest = rset->get<uint8>("top");
         }

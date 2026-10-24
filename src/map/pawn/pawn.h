@@ -27,6 +27,7 @@
 #include <string_view>
 
 #include "common/cbasetypes.h"
+#include "common/timer.h"
 
 #include <chrono>
 #include <functional>
@@ -166,6 +167,7 @@ namespace pawn
         xi::ZoneId to{};
         position_t at{};
         position_t landed{};
+        bool       byScene = false; // a scene's end moved him: `landed` is what its script asked, often a placeholder the zone's arrival replaces
     };
     auto playerExit(uint32 playerCharID) -> std::optional<PlayerExit>;
     // A real player's client walked into a zone line (packet 0x05E, seen
@@ -185,6 +187,22 @@ namespace pawn
     // scene, so whatever moved him, the scene did
     void noteSceneStart(const CCharEntity* PChar);
     void noteScenePosition(CCharEntity* PChar, const position_t& at);
+
+    // A drop he takes off a ledge (OPEN_ISSUES #581): his height falls by
+    // more than a few yalms in a moment, with no lift or scene doing it,
+    // noted from his position packets -- where he stepped off and where he
+    // landed. A cardian whose walk cannot reach him follows him down it
+    // (CPawnController::DropTrek, pawn_drop.cpp)
+    struct PlayerDrop
+    {
+        position_t        top{};
+        position_t        land{};
+        uint16            zone = 0;
+        timer::time_point when{};
+    };
+    void notePlayerFall(CCharEntity* PChar, const position_t& at);
+    void notePlayerSetDown(CCharEntity* PChar); // the server moved him (a position it sent his client): what came before is no fall
+    auto dropsOf(uint32 playerCharID) -> std::vector<PlayerDrop>; // the newest last
 
     // A character to mint: the client's race enum (race and sex in one),
     // face 0-15, size 0-2, nation 0-2, main job and level. The census

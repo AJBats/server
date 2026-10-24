@@ -33,7 +33,8 @@
 //     no walk to a line, she takes a lift to a floor that has (LiftOnTrek,
 //     LiftToward from the trek's step).
 // Aboard, she stands on her spot and her height follows the platform's;
-// arrived, she steps off to the landing, and her follow takes her on.
+// arrived, she steps off to the landing, and her follow takes her on -- with
+// him on it too, once he steps off, never ahead of him.
 #include "pawn_controller.h"
 #include "lifts.h"
 #include "lift_math.h"
@@ -113,6 +114,15 @@ namespace
     {
         return PChar != nullptr && cardian::lift::onPlatform(lift.cx, lift.cz, pawn::lifts::kRadius, PChar->loc.p.x, PChar->loc.p.z) &&
                std::abs(PChar->loc.p.y - pawn::lifts::heightOf(lift)) <= 1.5f;
+    }
+
+    // He rides the platform with her: on it across, his height within a
+    // stretch of it -- his position packets can lag a moving platform by a
+    // few yalms, and a ride's end by a moment
+    auto ridesWith(const pawn::lifts::Lift& lift, const CCharEntity* PChar) -> bool
+    {
+        return PChar != nullptr && cardian::lift::onPlatform(lift.cx, lift.cz, pawn::lifts::kRadius, PChar->loc.p.x, PChar->loc.p.z) &&
+               std::abs(PChar->loc.p.y - pawn::lifts::heightOf(lift)) <= 6.0f;
     }
 } // namespace
 
@@ -196,22 +206,10 @@ auto CPawnController::LiftBesideHim() -> bool
 
 namespace
 {
-    // Whether the walk from `from` reaches `to` -- the route search the walker
-    // plans on (in a town, the town's navmesh by the client's rule) ends
-    // within `within` of it
+    // Whether the walk from `from` reaches `to` (pawn_travel.h walks)
     auto reaches(const xi::ZoneId zone, const position_t& from, const position_t& to, const float within) -> bool
     {
-        const auto route = pawn::travel::routeAvoiding(zone, from, to, {}, cardian::route::HazardSight{});
-        if (!route.has_value())
-        {
-            return false;
-        }
-        if (route->complete)
-        {
-            return true;
-        }
-        const position_t& last = route->points.empty() ? from : route->points.back();
-        return distance(last, to) <= within;
+        return pawn::travel::walks(zone, from, to, within);
     }
 } // namespace
 
@@ -279,8 +277,9 @@ auto CPawnController::LiftTrek(const CCharEntity* PPlayer) -> bool
     }
     m_LiftLookedAt = m_Tick;
 
-    // Only on a floor her walk does not reach him from
-    if (reaches(POwner->getZone(), POwner->loc.p, PPlayer->loc.p, 3.0f))
+    // Only on a floor her walk does not reach him from: the long way round
+    // is no walk to him, and a lift between them goes before it
+    if (ReachToPlayer(PPlayer) == Reach::Walk)
     {
         return false;
     }
@@ -509,19 +508,29 @@ auto CPawnController::LiftTick() -> bool
             }
             if (state.end != m_Lift->from)
             {
-                POwner->loc.p.y   = PLift->ends[state.end].floor;
+                POwner->loc.p.y = PLift->ends[state.end].floor;
+                // Arrived with him on it: she steps off when he does, not
+                // ahead of him
+                if (ridesWith(*PLift, PPlayer))
+                {
+                    m_Lift->from       = state.end;
+                    m_Lift->withPlayer = true;
+                    LiftPhase(LiftRide::Phase::Aboard, fmt::format("arrived with {}: off when he steps off", PPlayer->getName()));
+                    return true;
+                }
                 m_Lift->alightEnd = state.end;
                 LiftPhase(LiftRide::Phase::Alighting, "arrived");
                 return true;
             }
-            // Resting yet at the floor she boarded at
-            if (m_Lift->withPlayer && !aboard(*PLift, PPlayer))
+            // Resting at the floor she boarded at, or arrived at with him: off
+            // once he is off it
+            if (m_Lift->withPlayer && !ridesWith(*PLift, PPlayer))
             {
                 m_Lift->alightEnd = m_Lift->from;
                 LiftPhase(LiftRide::Phase::Alighting, "he stepped off");
                 return true;
             }
-            if (m_Tick - m_Lift->since > kGiveUp)
+            if (!m_Lift->withPlayer && m_Tick - m_Lift->since > kGiveUp)
             {
                 m_Lift->alightEnd = m_Lift->from;
                 LiftPhase(LiftRide::Phase::Alighting, "it never left");

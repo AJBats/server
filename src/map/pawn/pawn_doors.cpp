@@ -190,13 +190,14 @@ namespace
         std::call_once(tableRead, readTable);
     }
 
-    // The mesh point nearest `at`: the town's navmesh by the client's rule in
-    // a town, the zone's elsewhere; nullopt when the mesh has no ground near
+    // The mesh point nearest `at`: on the navmesh by the client's rule where
+    // her walks keep to it (a town's), the zone's elsewhere; nullopt when the
+    // mesh has no ground near
     auto snap(CZone* PZone, const position_t& at) -> std::optional<position_t>
     {
         constexpr float           kOffGround = 2.0f;
         std::optional<position_t> onMesh;
-        if (pawn::porter::mesh::isTown(PZone))
+        if (pawn::porter::mesh::walkedOnClient(PZone))
         {
             onMesh = pawn::travel::snapToTown(PZone->GetID(), at);
         }

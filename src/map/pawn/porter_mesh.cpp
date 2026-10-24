@@ -38,6 +38,7 @@
 #include "zone.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -58,7 +59,7 @@ namespace pawn::porter::mesh
         // The recipe's version: raised when the build's own rule changes
         // (client_navmesh.h, the builder's links), so every older file is
         // stale at once
-        constexpr int kRecipeVersion = 12;
+        constexpr int kRecipeVersion = 13;
 
         struct Entry
         {
@@ -147,6 +148,15 @@ namespace pawn::porter::mesh
             config.agentRadius += added;
             config.offMeshHorizReach += 2.0f * added; // the margin the body keeps on both sides of a ledge, back from its lip and out from its foot
             config.cardianBerth = std::max(config.agentRadius, settings::get<float>("pawn.PORTER_WIDTH"));
+            // In a dungeon a ledge links down to ground as far below as
+            // pawn.CLIENT_NAVMESH_DROP: a client drops from any height, and a
+            // dungeon's ways down are often taller than the monsters' few
+            // yalms (Palborough Mines' refiner ledge, some 16). Read through a
+            // zone that is not const, as its type is
+            if (auto* PZone = zoneutils::GetZone(zone->GetID()); PZone != nullptr && (PZone->GetTypeMask() & xi::ZoneType::Dungeon) != xi::ZoneType::Unknown)
+            {
+                config.offMeshMaxDrop = std::max(config.offMeshMaxDrop, settings::get<float>("pawn.CLIENT_NAVMESH_DROP"));
+            }
             return config;
         }
 
@@ -272,9 +282,41 @@ namespace pawn::porter::mesh
 
     auto isTown(CZone* zone) -> bool
     {
+        // The ferries' decks, the pirates' crossings too
+        static constexpr std::array kFerries{ xi::ZoneId::ShipBoundForSelbina, xi::ZoneId::ShipBoundForMhaura,
+                                              xi::ZoneId::ShipBoundForSelbinaPirates, xi::ZoneId::ShipBoundForMhauraPirates };
         const auto* own = zone != nullptr ? dynamic_cast<const DetourNavMesh*>(zone->navMesh()) : nullptr;
         return own != nullptr && own->detourMesh() != nullptr && zone->xiMesh() != nullptr &&
-               (zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown;
+               ((zone->GetTypeMask() & xi::ZoneType::City) != xi::ZoneType::Unknown || std::ranges::contains(kFerries, zone->GetID()));
+    }
+
+    auto walkedOnClient(CZone* zone) -> bool
+    {
+        if (zone == nullptr)
+        {
+            return false;
+        }
+        if (isTown(zone))
+        {
+            return settings::get<bool>("pawn.TOWN_CLIENT_NAVMESH");
+        }
+        if (!settings::get<bool>("pawn.CLIENT_NAVMESH_EVERYWHERE"))
+        {
+            return false;
+        }
+        // One built for it: its file written, looked for once a zone. A
+        // stale one is said by of(), which then answers nullptr
+        static auto*    lock   = new std::mutex();
+        static auto*    built  = new std::unordered_map<uint16, bool>();
+        const auto      zoneId = static_cast<uint16>(zone->GetID());
+        std::lock_guard held(*lock);
+        const auto [it, added] = built->try_emplace(zoneId, false);
+        if (added)
+        {
+            std::error_code ec;
+            it->second = zone->xiMesh() != nullptr && std::filesystem::exists(meshPath(zoneId), ec);
+        }
+        return it->second;
     }
 
     auto of(CZone* zone) -> const dtNavMesh*

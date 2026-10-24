@@ -1571,7 +1571,10 @@ class PorterModule : public CPPModule
             const char* precalc = std::getenv("CARDIAN_PORTER_NAVMESH_PRECALC");
             if (precalc != nullptr && std::string_view(precalc) == "1")
             {
-                // CARDIAN_PORTER_NAVMESH_ZONES, when given, names the only zones to build (their ids, space apart)
+                // CARDIAN_PORTER_NAVMESH_ZONES, when given, names the only zones to
+                // build (their ids, space apart): any zone with collision, so a
+                // zone beyond the rides and the towns -- a dungeon the cardians'
+                // walks are tried on (pawn.CLIENT_NAVMESH_EVERYWHERE) -- is built by name
                 auto        zones = builtZones();
                 const char* only  = std::getenv("CARDIAN_PORTER_NAVMESH_ZONES");
                 if (only != nullptr && *only != '\0')
@@ -1582,10 +1585,11 @@ class PorterModule : public CPPModule
                     {
                         named.insert(static_cast<uint16>(id));
                     }
-                    std::vector<std::string> unknown; // what was asked for and is no zone a ride plans in, or no number
+                    std::vector<std::string> unknown; // what was asked for and is no zone with collision, or no number
                     for (const auto z : named)
                     {
-                        if (std::find(zones.begin(), zones.end(), z) == zones.end())
+                        auto* PZone = zoneutils::GetZone(static_cast<xi::ZoneId>(z));
+                        if (PZone == nullptr || PZone->xiMesh() == nullptr)
                         {
                             unknown.push_back(std::to_string(z));
                         }
@@ -1594,10 +1598,10 @@ class PorterModule : public CPPModule
                     {
                         unknown.push_back(fmt::format("'{}'", only));
                     }
-                    std::erase_if(zones, [&](const uint16 z) { return !named.contains(z); });
+                    zones.assign(named.begin(), named.end());
                     if (!unknown.empty())
                     {
-                        ShowErrorFmt("porter: no navmesh by the client's rule built for {}: not a zone a ride plans in, nor a town", fmt::join(unknown, ", "));
+                        ShowErrorFmt("porter: no navmesh by the client's rule built for {}: no zone with collision", fmt::join(unknown, ", "));
                         std::exit(1);
                     }
                 }
@@ -1614,13 +1618,31 @@ class PorterModule : public CPPModule
                 {
                     mesh::check(zones);
                 }
-                // a town's is read now, not at its first walk (some 50 ms on the map's thread)
-                if (towns)
+                // a town's is read now, not at its first walk (some 50 ms on the
+                // map's thread); on trial, every zone's the cardians walk on
+                // (pawn.CLIENT_NAVMESH_EVERYWHERE), the read timed
+                const bool everywhere = settings::get<bool>("pawn.CLIENT_NAVMESH_EVERYWHERE");
+                if (towns || everywhere)
                 {
-                    for (const auto z : townZones())
+                    const auto  from = std::chrono::steady_clock::now(); // a stopwatch, never game time
+                    std::size_t held = 0;
+                    if (everywhere)
                     {
-                        mesh::of(zoneutils::GetZone(static_cast<xi::ZoneId>(z)));
+                        // every zone one was built for: the rides', the towns' and any built by name
+                        zoneutils::ForEachZone([&](CZone* PZone)
+                        {
+                            held += mesh::walkedOnClient(PZone) && mesh::of(PZone) != nullptr ? 1 : 0;
+                        });
                     }
+                    else
+                    {
+                        for (const auto z : townZones())
+                        {
+                            held += mesh::of(zoneutils::GetZone(static_cast<xi::ZoneId>(z))) != nullptr ? 1 : 0;
+                        }
+                    }
+                    ShowInfoFmt("porter: {} navmeshes by the client's rule read for the cardians' walks, in {:.1f} s", held,
+                                std::chrono::duration<double>(std::chrono::steady_clock::now() - from).count());
                 }
             }
         }
