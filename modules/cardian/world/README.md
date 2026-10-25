@@ -77,7 +77,9 @@ zone marks. Only a marked slot is one, so a zone that marks none, every
 field zone, leaves them standing where they are (the user, 2026-10-12).
 The lounge walks them straight there, minding no `via` and no hours, so
 mark only an open spot that needs neither: the cities' clustered seats
-are marked, but for the Tanners' Guild's workroom.
+are marked, but for the Tanners' Guild's workroom. A stand slot of
+`count: 0` seats nobody of the world's crowd and is a lounge spot alone:
+the Chateau d'Oraguille's three, where the crowd has no way in or out.
 
 `cliques` is for a crowd: group sizes are drawn in the range until the
 seats are covered, group centres are spread over the slot by
