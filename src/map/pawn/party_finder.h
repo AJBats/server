@@ -216,11 +216,18 @@ namespace pawn::finder
     // Her contract with this player: "exp", "quest", "mission", or "" for
     // none -- an owned cardian, nobody's party, or another player's
     // recruit. Set on her yes from the shout's goal, kept in her memory
-    // row with that player across a restart and across his logout (the
-    // party waits for him, ROADMAP H), ended when she leaves his party
-    // while a human is in it (noteLeft) or he releases her
+    // row with that player across a restart, across his logout (the party
+    // waits for him, ROADMAP H) and out of his party (the user,
+    // 2026-10-25), and ended when he releases her (endContract)
     auto contractWith(uint32 charid, uint32 playerCharID) -> const char*;
-    void noteLeft(uint32 charid); // her contract ends, whoever leads the party she left
+    // She left the party she was in, whoever leads it: an open contract
+    // holds her for its player where she stands, but a teleport hire's,
+    // which ends (endContract)
+    void noteLeft(uint32 charid);
+    // Her contract ends -- his Release, or a join the game refused after
+    // her yes -- and she is the world's again where she stands, but for one
+    // wearing his pearl, whom it keeps
+    void endContract(uint32 charid);
 
     // An open contract: a wild cardian held for her player. Out of the
     // world's pool and every shout while it lasts; she signs in with him

@@ -1413,12 +1413,14 @@ namespace pawn
                 PController->SetRetreat(false);
                 PController->SetStake(std::nullopt);
             }
-            if (wild && (herself || nobodyReal) && !withHim)
+            const auto contract = wild ? finder::openContractOf(charid) : std::nullopt;
+            if (wild && (herself || nobodyReal) && !withHim && !(contract.has_value() && !contract->pearl))
             {
                 // A wild cardian's saved gambits are only ever a guest's --
                 // the player's edits while she was in the party (the user,
                 // 2026-09-14) -- so they end with it: her census job's
-                // defaults again. The world's layer needs nothing here: it
+                // defaults again; one whose contract holds keeps them for
+                // his next invite. The world's layer needs nothing here: it
                 // runs again because she is no longer with him
                 if (const auto rset = db::preparedStmt("SELECT 1 FROM cardian_gambits WHERE pawn_charid = ? AND set_id = 0", charid); rset && rset->next())
                 {
@@ -3553,6 +3555,9 @@ namespace pawn
 
                 if (PPawn->InvitePending.entity.UniqueNo != 0)
                 {
+                    // a hire whose contract holds her already keeps it whatever the join comes to
+                    const auto                       held      = finder::openContractOf(charid);
+                    const bool                       heldAlready = held.has_value() && !held->pearl;
                     const bool                       yes = finder::accepts(PPawn.get());
                     GP_CLI_COMMAND_GROUP_SOLICIT_RES answer{};
                     answer.Res = std::to_underlying(yes ? GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Accept : GP_CLI_COMMAND_GROUP_SOLICIT_RES_RES::Decline);
@@ -3572,12 +3577,21 @@ namespace pawn
                         PPawn->InvitePending.clean();
                     }
                     // Her yes opened a contract before the game's join, which it
-                    // can still refuse (his party filled meanwhile): refused, the
-                    // contract ends with it, and any hire it started
+                    // can still refuse (his party filled meanwhile): refused, a
+                    // contract this yes opened ends with it, and any hire it
+                    // started; one that held her before the invite holds on
                     if (yes && PPawn->PParty == nullptr)
                     {
-                        ShowInfoFmt("pawn: {} said yes, but the game did not take her into the party: her contract ends", PPawn->getName());
-                        finder::noteLeft(charid);
+                        if (heldAlready)
+                        {
+                            ShowInfoFmt("pawn: {} said yes, but the game did not take her into the party: her contract still holds her", PPawn->getName());
+                        }
+                        else
+                        {
+                            ShowInfoFmt("pawn: {} said yes, but the game did not take her into the party: her contract ends", PPawn->getName());
+                            finder::endContract(charid);
+                            pawn::forgetGuestGambits(charid);
+                        }
                         teleport::joinFailed(charid);
                     }
                 }

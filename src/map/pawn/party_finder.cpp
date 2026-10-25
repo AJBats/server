@@ -449,6 +449,10 @@ namespace pawn::finder
         // (joinedFromShout)
         std::unordered_set<uint32> joinedShout;
 
+        // Released by her player this moment (release): the party she leaves
+        // on the way holds her for nobody (noteLeft)
+        std::unordered_set<uint32> releasing;
+
         // Her contract while she is in the party (pawn charid -> the player
         // and the goal), and the pawns known to hold none, so a miss is not
         // re-read from the database on every exp grant
@@ -1217,12 +1221,34 @@ namespace pawn::finder
         return c != nullptr ? kindName(c->goal) : "";
     }
 
-    void noteLeft(const uint32 charid)
+    // Her party's day-to-day: what she was to the party she was in
+    void forgetParty(const uint32 charid)
     {
         contracts.erase(charid);
         noContract.erase(charid);
         expBank.erase(charid);
         joinedShout.erase(charid);
+    }
+
+    void noteLeft(const uint32 charid)
+    {
+        forgetParty(charid);
+        // Out of his party her contract holds (the user, 2026-10-25): she is
+        // his hire until he releases her, kept for him where she stands --
+        // in a town at his lounge with his members (club.cpp) -- and invited
+        // again with no shout. A teleport hire's ends: hers was one service
+        if (const auto held = openContractOf(charid); held.has_value() && !held->pearl && held->goal.kind != Goal::Kind::Teleport &&
+                                                      !releasing.contains(charid) && pawn::world::keepFor(charid, held->playerCharID))
+        {
+            ShowInfoFmt("pawn: {} is out of {}'s party; her {} contract holds her for him", held->name, pawn::seats::nameOf(held->playerCharID), kindName(held->goal));
+            return;
+        }
+        endContract(charid);
+    }
+
+    void endContract(const uint32 charid)
+    {
+        forgetParty(charid);
         if (const auto held = openContractOf(charid); held.has_value() && !held->pearl)
         {
             db::preparedStmt("UPDATE cardian_party_memory SET contract = '' WHERE pawn_charid = ? AND contract <> ''", charid);
@@ -1339,14 +1365,16 @@ namespace pawn::finder
             return CL_S_NO_CONTRACT;
         }
         // In his party, Release takes her out of it as well: one step, no
-        // kick to remember (the user, 2026-09-24). Leaving ends the contract
-        // on its own (leftParty); the lines below find nothing left to do
+        // kick to remember (the user, 2026-09-24). Leaving keeps a contract
+        // (noteLeft); Release is what ends it
         if (auto* PPawn = pawn::findPawn(charid); PPawn != nullptr && PPawn->PParty != nullptr && PPawn->PParty == PPlayer->PParty)
         {
             ShowInfoFmt("pawn: {} releases {} from the party and her contract", PPlayer->getName(), PPawn->getName());
+            releasing.insert(charid);
             PPawn->PParty->RemoveMember(PPawn);
+            releasing.erase(charid);
         }
-        noteLeft(charid);
+        endContract(charid);
         pawn::forgetGuestGambits(charid);
         return CL_S_OK;
     }

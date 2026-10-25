@@ -1307,7 +1307,8 @@ namespace pawn::club
         // His club's members standing in his zone with nothing to do -- not
         // in a party, on a venture, coming for a pearl, walked by him or on
         // a trek, fighting or down, and not one of the world's out in the
-        // wild, whom the world's own seats keep -- gather at one of the
+        // wild, whom the world's own seats keep -- and his hires out of his
+        // party, their contracts holding them for him, gather at one of the
         // town's loitering spots (world.h loiterSpots), in a ring facing its
         // middle, and emote at each other as the world's cliques do
         // (WORLD_CHAT_GAP_MIN to _MAX seconds apart, one in three turning to
@@ -1403,6 +1404,15 @@ namespace pawn::club
                     if (loiters(charid, PPlayer, lounge))
                     {
                         idle.push_back(charid);
+                    }
+                }
+                // and his hires out of his party, held for him by their
+                // contracts (finder::noteLeft), with them
+                for (const auto& c : pawn::finder::openContracts(PPlayer->id))
+                {
+                    if (std::ranges::find(idle, c.charid) == idle.end() && loiters(c.charid, PPlayer, lounge))
+                    {
+                        idle.push_back(c.charid);
                     }
                 }
                 for (const auto charid : lounge.idle)

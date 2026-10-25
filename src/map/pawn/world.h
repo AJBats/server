@@ -43,7 +43,8 @@ namespace pawn::world
     // real player nor held by his contract (the test the world's clocks
     // use, so a zone line never flips it). The world's layer runs only while
     // this holds (gambit_layers.h); leaving a player's party also forgets
-    // the rows he edited on her as his guest
+    // the rows he edited on her as his guest, but while her contract holds
+    // her for him
     auto inTheWild(uint32 charid) -> bool;
     // A world body who has left her seat and is on her way out of town
     auto isLeaving(uint32 charid) -> bool;
