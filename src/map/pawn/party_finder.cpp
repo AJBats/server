@@ -232,11 +232,27 @@ namespace pawn::finder
             return fame;
         }
 
+        // A mission of several legs is one mission: the rank 2-3 mission of
+        // each nation is its start and four legs, ids 5 to 9 of the nation's
+        // log (the other two nations' first and second legs, in either
+        // order). The census places a body's story by her level and all five
+        // sit at level 25 (missions.yaml), so a body is on its start or past
+        // all of it, never on a later leg: a leg is matched by its mission's
+        // start
+        auto missionStartOf(const uint8 log, const uint16 id) -> uint16
+        {
+            constexpr uint16 kLegsFirst = 5;
+            constexpr uint16 kLegsLast  = 9;
+            const bool       nation     = log <= static_cast<uint8>(MissionLog::Windurst);
+            return nation && id >= kLegsFirst && id <= kLegsLast ? kLegsFirst : id;
+        }
+
         // Where her log stands against the mission the player is on in that
-        // log (the goal): done (a nation log's completion flag; Promathia's
-        // "every id below current"), on it, free to take it (the one before
-        // done, or the log's first), or behind. A standing body's log is
-        // hers in memory; a faded one's is her row's
+        // log (the goal): done (his leg's completion flag, a nation log's,
+        // or the whole mission's; Promathia's "every id below current"), on it (any leg of it),
+        // free to take it (the one before its start done, or the log's
+        // first), or behind. A standing body's log is hers in memory; a
+        // faded one's is her row's
         auto missionFitOf(const CCharEntity* PPlayer, const Facts& f, const CCharEntity* PPawn, const Goal& goal) -> MissionFit
         {
             if (goal.log >= MAX_MISSIONAREA)
@@ -254,15 +270,18 @@ namespace pawn::finder
             // Promathia and ids past the flags by "below her current", the rest by flag
             const bool cop  = goal.log == static_cast<uint8>(MissionLog::CoP);
             const auto done = [&](const uint16 id) { return (cop || id >= 64) ? id < hers.current : hers.complete[id]; };
-            if (done(wanted))
+            // done his leg, or the whole mission by the other legs (its start
+            // is flagged only once the last leg is over)
+            const uint16 start = missionStartOf(goal.log, wanted);
+            if (done(wanted) || (start != wanted && done(start)))
             {
                 return MissionFit::Done;
             }
-            if (hers.current != none && hers.current == wanted)
+            if (hers.current != none && missionStartOf(goal.log, hers.current) == start)
             {
                 return MissionFit::On;
             }
-            return wanted == 0 || done(wanted - 1) ? MissionFit::Free : MissionFit::Behind;
+            return start == 0 || done(start - 1) ? MissionFit::Free : MissionFit::Behind;
         }
 
         // What stops her whatever her mood: a party, a fight, a camp, the
