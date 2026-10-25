@@ -128,6 +128,22 @@ namespace pawn
         // without one
         auto straightOnTown(xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<bool>;
 
+        // How far a straight walk from `from` toward `to` goes on the mesh
+        // her walks keep to (townMesh, else the zone's): `to` itself, at
+        // `from`'s height, when nothing stops it, else the point where a
+        // wall, a ledge's rim or the mesh's own edge does. The ray crosses
+        // only the edges two polygons share, never a link, so it stops at
+        // every drop -- the ray a follower's point is clipped by. nullopt
+        // when the zone has no mesh or `from` stands off it
+        auto straightReach(xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<position_t>;
+
+        // Whether a walk from `from` ends within `within` yalms of `to`
+        // (planar) without dropping off a ledge, on ground within `reach`
+        // (the ellipse round the two): the route search on the mesh her
+        // walks keep to, round no danger, no link taken that falls past the
+        // mesh's climb. False when the zone has no mesh or either stands off it
+        auto walksWithoutDrops(xi::ZoneId zone, const position_t& from, const position_t& to, float reach, float within) -> bool;
+
         // The height (FFXI's y) of the floor at `at`'s spot whose height is
         // nearest its own, within `reach` above or below it: the floor a
         // body walking there stands on, on the town's navmesh by the client's

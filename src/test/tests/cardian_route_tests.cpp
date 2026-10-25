@@ -925,6 +925,21 @@ TEST_CASE("Route kept out of danger: a ledge taller than the mesh's climb is dro
     REQUIRE(down.has_value());
     REQUIRE(down->complete);
     CHECK(down->length < yalms(top, foot) + 2.0f);
+
+    // down on a walk that keeps to her floor (no drops, a fight spot's test):
+    // never straight off the ledge -- round by the ground, or no walk at all
+    const auto kept = cardian::route::searchAvoiding(*mesh, top, foot, sz::kBodyExtents, sz::kBodyExtents, {}, {}, 0.0f, nullptr, nullptr, false, false);
+    REQUIRE(kept.has_value());
+    position_t from = top;
+    for (const auto& b : kept->points)
+    {
+        CHECK_FALSE((near_(from, top) && near_(b, foot)));
+        from = b;
+    }
+    if (kept->complete)
+    {
+        CHECK(kept->length > yalms(top, foot) + 2.0f);
+    }
 }
 
 TEST_CASE("Route slopes: steep faces climbed for kClimbRun on end are refused, a bump and the way down or across walked", "[cardian][route]")

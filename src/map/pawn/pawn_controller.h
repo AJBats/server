@@ -1571,6 +1571,21 @@ private:
     bool                    m_AttendedOrdered = false; // an explicit Engage is held until ended or replaced
     std::optional<EntityId> m_PlayersOrder;            // the mob his own Attack named (PlayersOrderOn)
     uint32                  m_SaidNoSpotFor   = 0;
+    uint32                  m_SaidOffGroundFor = 0;    // the fight she has said "no spot on her own ground" for
+    // The fight spots lately judged on her own ground or off it (AttendIntent's
+    // fits), so the look she repeats every tick from where she stands asks
+    // the mesh again only once a verdict is stale or she has moved
+    struct SpotVerdict
+    {
+        float             x     = 0.0f; // the spot
+        float             z     = 0.0f;
+        float             fromX = 0.0f; // where she stood
+        float             fromZ = 0.0f;
+        bool              fits  = false;
+        timer::time_point at{};
+    };
+    std::vector<SpotVerdict>             m_SpotVerdicts;
+    std::vector<std::pair<float, float>> m_SaidTurnedDown; // the spots of this fight said turned down, once each
     bool                    m_AttendedEngaged = false; // the attended mob was engaged last tick: the flip prompts her think
     uint8                   m_AttendVerdict   = 0;     // the crescent's last verdict, so the milestone log speaks only on a change
     bool                    m_KneelsInAoe     = false; // the fight she attends, settled where it is held, reaches her with an area move she keeps out of, and its next TP move comes soon (AreaMoveComesSoon): only then does a kneeling mage get up for it

@@ -643,7 +643,10 @@ void CPawnController::Transition(const Mode to, const std::string_view why)
         m_Attended.reset();
         m_AttendedOrdered = false;
         m_SaidNoSpotFor    = 0;
+        m_SaidOffGroundFor = 0;
         m_AttendVerdict    = 0;
+        m_SpotVerdicts.clear();
+        m_SaidTurnedDown.clear();
     }
     // Leaving a maneuver by whatever door (its finisher, his cancel, his
     // camera off her, her leaving his party, her death) hands her back:
@@ -3396,21 +3399,95 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     {
         return PWatched != nullptr && !pawn::tactics::bank::inSightFrom(POwner, position_t(at.first, me.y, at.second, 0, me.rotation), PWatched);
     };
-    // The crescent's spot nearest the seed -- for a healer keeping sight,
-    // the nearest she would see him from: the seed's own first, then the
-    // seed turned round the mob a step at a time, either side, out to 90
-    // degrees; with none, the nearest spot as it is
+    // Whether a spot is on her own ground: a straight walk from her reaches
+    // it on the mesh her walks keep to (the ray a follower's point is clipped
+    // by, which stops at every ledge's rim), or, past a pillar or round a
+    // corner, a short walk that drops off no ledge does. The crescent is
+    // drawn on the flat map, and a spot past a rim stands on ground she
+    // could reach only by a drop -- an island, or a ledge with no way back
+    // (Balga's Dais, 2026-10-24). With no mesh to judge by, every spot fits.
+    // The walk is the dear half, a route search on ground three times the
+    // straight way, as wide as the walker's second try: four a look at
+    // most, the rest judged by the ray alone. A verdict is kept a moment
+    // (m_SpotVerdicts), so the look repeated every tick from where she
+    // stands asks the mesh again only once it is stale or she has moved
+    constexpr auto  kVerdictFor   = 1500ms;
+    constexpr float kSpotSame     = 0.5f; // yalms: the same spot
+    constexpr float kStoodSame    = 1.0f; // yalms: from the same place
+    std::erase_if(m_SpotVerdicts, [&](const SpotVerdict& v) { return m_Tick - v.at > kVerdictFor; });
+    int        walksLeft = 4;
+    const auto fits      = [&](const std::pair<float, float>& at) -> bool
+    {
+        for (const auto& v : m_SpotVerdicts)
+        {
+            if (std::hypot(v.x - at.first, v.z - at.second) < kSpotSame && std::hypot(v.fromX - me.x, v.fromZ - me.z) < kStoodSame)
+            {
+                return v.fits;
+            }
+        }
+        const position_t spot(at.first, me.y, at.second, 0, me.rotation);
+        const auto       ray = pawn::travel::straightReach(POwner->getZone(), me, spot);
+        if (!ray.has_value() || distance(*ray, spot, true) < 0.1f)
+        {
+            return true; // the ray is cheap: never kept
+        }
+        if (walksLeft <= 0)
+        {
+            return false; // not judged this look: nothing kept
+        }
+        --walksLeft;
+        constexpr float kSpare = 10.0f; // yalms of ground past the ellipse round her and the spot
+        const bool      walks  = pawn::travel::walksWithoutDrops(POwner->getZone(), me, spot, distance(me, spot, true) * 3.0f + kSpare, inset / 2.0f);
+        m_SpotVerdicts.push_back({ .x = at.first, .z = at.second, .fromX = me.x, .fromZ = me.z, .fits = walks, .at = m_Tick });
+        // A spot turned down said once a fight: where, and why
+        if (!walks && std::ranges::none_of(m_SaidTurnedDown, [&](const auto& s) { return std::hypot(s.first - at.first, s.second - at.second) < 1.0f; }))
+        {
+            m_SaidTurnedDown.push_back(at);
+            ShowInfoFmt("pawn: {} attend: turns down the spot ({:.1f}, {:.1f}) round {}, off her own ground: her ray from ({:.1f}, {:.1f}) stops at ({:.1f}, {:.1f}), "
+                        "and no walk without a drop reaches it",
+                        POwner->getName(), at.first, at.second, PMob->getName(), me.x, me.z, ray->x, ray->z);
+        }
+        return walks;
+    };
+    // A spot she cannot reach on her own ground brought in along her ray to
+    // where it stops -- a rim's edge, a wall -- as a follower's point is.
+    // `keepOut` (a crescent spot): nullopt when that stop is inside the mob's
+    // ring while she stands outside it, so a spot brought in never walks her
+    // into the reach she keeps out of; the walk in to cure range takes the
+    // stop wherever it is. Nullopt with no ray, or a stop where she stands
+    const auto broughtIn = [&](const std::pair<float, float>& at, const bool keepOut) -> std::optional<std::pair<float, float>>
+    {
+        const auto ray = pawn::travel::straightReach(POwner->getZone(), me, position_t(at.first, me.y, at.second, 0, me.rotation));
+        if (!ray.has_value() || distance(*ray, me, true) < 0.5f || (keepOut && toMob >= ring && distance(*ray, mob, true) < ring))
+        {
+            return std::nullopt;
+        }
+        return std::pair{ ray->x, ray->z };
+    };
+    // The crescent's spot nearest the seed that is on her own ground (fits)
+    // -- for a healer keeping sight, the nearest she would see him from: the
+    // seed's own first, then the seed turned round the mob a step at a
+    // time, either side, out to 90 degrees; with none she would see him
+    // from, the nearest on her ground; with none on her ground, the nearest
+    // brought in to it (`offGround` then set)
+    bool       offGround   = false;
     const auto nearestSpot = [&](const position_t& seed) -> std::optional<std::pair<float, float>>
     {
         const auto plain = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, seed.x, seed.z);
-        if (!plain.has_value() || !blindFrom(*plain))
+        if (!plain.has_value())
         {
             return plain;
         }
-        constexpr int   kSteps = 6;
-        constexpr float kTurn  = std::numbers::pi_v<float> / 12.0f;
-        const float     base   = std::atan2(seed.z - mob.z, seed.x - mob.x);
-        const float     out    = std::max(distance(seed, mob, true), ring + inset);
+        const bool plainFits = fits(*plain);
+        if (plainFits && !blindFrom(*plain))
+        {
+            return plain;
+        }
+        std::optional<std::pair<float, float>> onGround = plainFits ? plain : std::nullopt;
+        constexpr int                          kSteps   = 6;
+        constexpr float                        kTurn    = std::numbers::pi_v<float> / 12.0f;
+        const float                            base     = std::atan2(seed.z - mob.z, seed.x - mob.x);
+        const float                            out      = std::max(distance(seed, mob, true), ring + inset);
         for (int step = 1; step <= kSteps; ++step)
         {
             for (const float side : { 1.0f, -1.0f })
@@ -3418,13 +3495,34 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
                 const float angle = base + side * static_cast<float>(step) * kTurn;
                 const auto  spot  = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, mob.x + out * std::cos(angle),
                                                                  mob.z + out * std::sin(angle));
-                if (spot.has_value() && !blindFrom(*spot))
+                if (!spot.has_value() || !fits(*spot))
+                {
+                    continue;
+                }
+                if (!blindFrom(*spot))
                 {
                     return spot;
                 }
+                if (!onGround.has_value())
+                {
+                    onGround = spot;
+                }
             }
         }
-        return plain;
+        if (onGround.has_value())
+        {
+            return onGround;
+        }
+        offGround           = true;
+        const auto brought  = broughtIn(*plain, true);
+        if (m_SaidOffGroundFor != PMob->id)
+        {
+            m_SaidOffGroundFor = PMob->id;
+            ShowInfoFmt("pawn: {} attend: no spot round {} on her own ground; the nearest, ({:.1f}, {:.1f}), {}", POwner->getName(), PMob->getName(), plain->first,
+                        plain->second, brought.has_value() ? fmt::format("brought in along her way to it, to ({:.1f}, {:.1f})", brought->first, brought->second)
+                                                          : std::string("cannot be brought in: she holds where she stands"));
+        }
+        return brought;
     };
 
     // The attending mages before her in the party order, on this mob: she
@@ -3477,7 +3575,9 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     const auto backline = place != nullptr ? place->behind(ring) : std::nullopt;
     if (!backline.has_value() && PFirst != nullptr)
     {
-        if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, firstAt.x, firstAt.z); spot.has_value())
+        // her side of the fight only while it is on her own ground (fits):
+        // off it, she seeks her own spot as a mage alone would
+        if (const auto spot = cardian::perimeter::safeSpot(mob.x, mob.z, tank.x, tank.z, ring + inset, range - inset, firstAt.x, firstAt.z); spot.has_value() && fits(*spot))
         {
             Intent join;
             join.kind  = Intent::Kind::Path;
@@ -3486,21 +3586,31 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
             // Beside her, or nowhere: with no room near her, or none she
             // could see the tank from, she seeks her own spot as a mage
             // alone would
-            if (const auto room = GiveWay(join.point, join);
-                (room.PBy == nullptr || room.to.has_value()) &&
-                !blindFrom({ room.to.value_or(join.point).x, room.to.value_or(join.point).z }))
+            // (a place the claim board slid her to is judged afresh; one it
+            // did not slide is the spot already judged)
+            const auto room = GiveWay(join.point, join);
+            const auto legOf = [&](const position_t& to)
             {
                 // Round the tank's side when the crescent does not reach
                 // behind the mob: the far side is out of cure range
                 constexpr float      kLegTurn = std::numbers::pi_v<float> / 6.0f;
-                const position_t     beside   = room.to.value_or(join.point);
                 std::optional<float> never;
                 if (mobToTank > 0.01f && ring + inset + mobToTank > range - inset)
                 {
                     never = std::atan2(mob.z - tank.z, mob.x - tank.x);
                 }
-                const auto leg = cardian::claims::roundTheRing({ mob.x, mob.z }, { me.x, me.z }, { beside.x, beside.z }, ring, kLegTurn, never);
-                const bool       aLeg    = std::hypot(leg.x - beside.x, leg.z - beside.z) > 0.01f;
+                return cardian::claims::roundTheRing({ mob.x, mob.z }, { me.x, me.z }, { to.x, to.z }, ring, kLegTurn, never);
+            };
+            const position_t beside = room.to.value_or(join.point);
+            const auto       leg    = legOf(beside);
+            const bool       aLeg   = std::hypot(leg.x - beside.x, leg.z - beside.z) > 0.01f;
+            // A leg round the ring off her own ground is no join: without
+            // it her walk would cut through the mob's reach (the walker
+            // plans round no ring of the mob she attends), so she seeks her
+            // own spot as a mage alone would
+            if ((room.PBy == nullptr || room.to.has_value()) && !blindFrom({ beside.x, beside.z }) &&
+                (!room.to.has_value() || fits({ beside.x, beside.z })) && (!aLeg || fits({ leg.x, leg.z })))
+            {
                 m_Joining                = true;
                 intent.kind              = Intent::Kind::Path;
                 intent.point             = aLeg ? position_t(leg.x, me.y, leg.z, 0, me.rotation) : beside;
@@ -3560,6 +3670,16 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
                             toMob, ring, PTank->getName(), toTank, range, width, inset));
         return intent;
     }
+    // Spots round the mob, but none on her own ground, and nothing to bring
+    // in: she holds where she stands, on her ground, and casts from there
+    if (offGround)
+    {
+        note(13, fmt::format("no spot round {} on her own ground: holds where she stands (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f})", PMob->getName(), toMob,
+                             ring, PTank->getName(), toTank, range));
+        intent.holdsSpot = true;
+        purpose(intent, keep);
+        return intent;
+    }
 
     // The crescent is empty: no spot clears the reach and keeps cure range.
     // She stays in, as close to the tank as the range asks and no closer,
@@ -3583,14 +3703,24 @@ auto CPawnController::AttendIntent(CMobEntity* PMob, const Place* place) -> Inte
     }
     if (toTank > range)
     {
-        // Straight back the way she faces the mob when the tank stands on it
+        // Straight back the way she faces the mob when the tank stands on
+        // it; off her own ground, brought in along her way to it
         const float fallback = 2.0f * std::numbers::pi_v<float> - rotationToRadian(me.rotation) + std::numbers::pi_v<float>;
-        const auto [x, z]    = cardian::perimeter::atRange(mob.x, mob.z, tank.x, tank.z, mobToTank + range - kInset, fallback);
-        intent.kind          = Intent::Kind::Path;
-        intent.point         = position_t(x, me.y, z, 0, me.rotation);
-        purpose(intent, range);
-        note(5, fmt::format("crescent empty (width {:.1f}): walks in to cure range at ({:.1f}, {:.1f}) (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y)", width, x, z, toMob, ring, PTank->getName(), toTank));
-        return intent;
+        auto        inRange  = std::optional<std::pair<float, float>>(cardian::perimeter::atRange(mob.x, mob.z, tank.x, tank.z, mobToTank + range - kInset, fallback));
+        if (!fits(*inRange))
+        {
+            inRange = broughtIn(*inRange, false);
+        }
+        if (inRange.has_value())
+        {
+            const auto [x, z] = *inRange;
+            intent.kind       = Intent::Kind::Path;
+            intent.point      = position_t(x, me.y, z, 0, me.rotation);
+            purpose(intent, range);
+            note(5, fmt::format("crescent empty (width {:.1f}): walks in to cure range at ({:.1f}, {:.1f}) (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y)", width, x, z, toMob, ring,
+                                PTank->getName(), toTank));
+            return intent;
+        }
     }
     note(6, fmt::format("crescent empty (width {:.1f}): stays in (mob {:.1f} y, ring {:.1f}; tank {} {:.1f} y, cure {:.0f})", width, toMob, ring, PTank->getName(), toTank, range));
     intent.holdsSpot = true;

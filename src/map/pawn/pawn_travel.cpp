@@ -604,6 +604,63 @@ namespace pawn::travel
                dtStatusSucceed(query->raycast(start, onMesh, b.data(), &filter, &t, normal, polys, &count, 256)) && t == FLT_MAX;
     }
 
+    auto straightReach(const xi::ZoneId zone, const position_t& from, const position_t& to) -> std::optional<position_t>
+    {
+        const dtNavMesh* mesh = townMesh(zone);
+        if (mesh == nullptr)
+        {
+            auto*       PZone  = zoneutils::GetZone(zone);
+            const auto* detour = PZone != nullptr ? dynamic_cast<const DetourNavMesh*>(PZone->navMesh()) : nullptr;
+            mesh               = detour != nullptr ? detour->detourMesh() : nullptr;
+        }
+        auto* query = mesh != nullptr ? queryOn(mesh) : nullptr;
+        if (query == nullptr)
+        {
+            return std::nullopt;
+        }
+        const auto filter = groundFilter();
+        const auto a      = cardian::route::toDetour(from);
+        const auto b      = cardian::route::toDetour(to);
+        dtPolyRef  start{};
+        float      onMesh[3]{};
+        float      t = 0.0f;
+        float      normal[3]{};
+        dtPolyRef  polys[256];
+        int        count = 0;
+        if (dtStatusFailed(query->findNearestPoly(a.data(), sz::kBodyExtents, &filter, &start, onMesh)) || start == 0 ||
+            dtStatusFailed(query->raycast(start, onMesh, b.data(), &filter, &t, normal, polys, &count, 256)))
+        {
+            return std::nullopt;
+        }
+        position_t out = to;
+        out.y          = from.y;
+        if (t != FLT_MAX)
+        {
+            out.x = onMesh[0] + (b[0] - onMesh[0]) * t;
+            out.z = -(onMesh[2] + (b[2] - onMesh[2]) * t);
+        }
+        return out;
+    }
+
+    auto walksWithoutDrops(const xi::ZoneId zone, const position_t& from, const position_t& to, const float reach, const float within) -> bool
+    {
+        std::optional<cardian::route::Route> route;
+        if (const auto* town = townMesh(zone); town != nullptr)
+        {
+            route = cardian::route::searchAvoiding(*town, from, to, sz::kBodyExtents, sz::kLineExtents, {}, {}, reach, nullptr, nullptr, true, false);
+        }
+        else if (const auto* zm = meshOf(static_cast<uint16>(zone)); zm != nullptr)
+        {
+            route = cardian::route::searchAvoiding(*zm->mesh, from, to, sz::kBodyExtents, sz::kLineExtents, {}, {}, reach, &zm->faces, &zm->seams, false, false);
+        }
+        if (!route.has_value() || !route->complete)
+        {
+            return false;
+        }
+        const position_t& end = route->points.empty() ? from : route->points.back();
+        return distance(end, to, true) <= within;
+    }
+
     auto floorUnder(const xi::ZoneId zone, const position_t& at, const float reach) -> std::optional<float>
     {
         const dtNavMesh* mesh = townMesh(zone);

@@ -1178,10 +1178,11 @@ namespace cardian::route
     // most `within` yalms (Dijkstra, the greed off). On a mesh `byClient`,
     // built by the client's own rule (pawn/client_navmesh.h), every join is
     // one the client walks -- a stair's flight as much as a gentle slope --
-    // and no step of it is judged too steep
+    // and no step of it is judged too steep. Without `drops`, no link that
+    // falls past the mesh's climb is taken either: the way on her own floor
     inline auto searchCore(const dtNavMesh& mesh, const position_t& from, const std::optional<position_t>& to, const float* fromExtents, const float* toExtents,
                            const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach, const float within, const Faces* faces,
-                           const Seams* seams = nullptr, const bool byClient = false) -> std::optional<Route>
+                           const Seams* seams = nullptr, const bool byClient = false, const bool drops = true) -> std::optional<Route>
     {
         using detail::apart;
         using detail::Node;
@@ -1606,6 +1607,10 @@ namespace cardian::route
                 {
                     return; // up a ledge: never climbed
                 }
+                if (viaLink && !drops && next.at[1] < at[1] - climb)
+                {
+                    return; // down a ledge, on a walk that keeps to her floor
+                }
                 if (reach > 0.0f && there != kGoal && apart(next.at, origin) + apart(next.at, target) > reach)
                 {
                     return; // past the ground the stretch is planned on
@@ -1794,9 +1799,9 @@ namespace cardian::route
     // The route from `from` to `to` that keeps out of danger (searchCore)
     inline auto searchAvoiding(const dtNavMesh& mesh, const position_t& from, const position_t& to, const float* fromExtents, const float* toExtents,
                                const std::vector<Hazard>& hazards, const HazardSight& sight, const float reach = 0.0f, const Faces* faces = nullptr,
-                               const Seams* seams = nullptr, const bool byClient = false) -> std::optional<Route>
+                               const Seams* seams = nullptr, const bool byClient = false, const bool drops = true) -> std::optional<Route>
     {
-        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces, seams, byClient);
+        return searchCore(mesh, from, to, fromExtents, toExtents, hazards, sight, reach, 0.0f, faces, seams, byClient, drops);
     }
 
     // The way from `from` to the nearest ground out of every reach, walking
