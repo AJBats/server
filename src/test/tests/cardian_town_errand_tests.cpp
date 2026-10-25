@@ -232,7 +232,7 @@ TEST_CASE("Town errands: her stops nearest next", "[cardian][town]")
 
 TEST_CASE("Town errands: her lines carry no pronoun of hers and no codename", "[cardian][town]")
 {
-    for (const auto line : { Line::SetsOut, Line::Ready, Line::NotReady })
+    for (const auto line : { Line::SetsOut, Line::Ready })
     {
         const auto lines = linesOf(line);
         CHECK(lines.size() >= 4);
@@ -274,7 +274,7 @@ TEST_CASE("Town errands: a line said a moment ago is passed over", "[cardian][to
     // all said: any again
     CHECK(pickLine(Line::SetsOut, 3, recent) == 3);
     // one left fresh: that one
-    CHECK(pickLine(Line::NotReady, 99, 0b1011) == 2);
+    CHECK(pickLine(Line::SetsOut, 99, 0b11011) == 2);
 }
 
 TEST_CASE("Town errands: lines only in his party, the set-out line once a zone", "[cardian][town]")
@@ -312,12 +312,6 @@ TEST_CASE("Town errands: he leaving her zone ends nothing", "[cardian][town]")
     down.standing = false;
     CHECK_FALSE(goesOn(Who::Party, down));
 
-    // she says so once, when he can hear it
-    CHECK(saysNotReady(Who::Party, true, true, false));
-    CHECK_FALSE(saysNotReady(Who::Party, true, false, false)); // between zones: said once he lands
-    CHECK_FALSE(saysNotReady(Who::Party, true, true, true));   // said already
-    CHECK_FALSE(saysNotReady(Who::Party, false, true, false)); // he has not left
-    CHECK_FALSE(saysNotReady(Who::Hangout, true, true, false));
 }
 
 TEST_CASE("Town errands: one of the world's keeps to her own zone", "[cardian][town]")

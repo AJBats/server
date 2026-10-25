@@ -237,9 +237,8 @@ namespace cardian::town
     // 2026-10-16: the fewer lines the better)
     enum class Line : uint8_t
     {
-        SetsOut,  // as she sets out
-        Ready,    // every stop done
-        NotReady, // he has left her zone while her errands run
+        SetsOut, // as she sets out
+        Ready,   // every stop done
     };
 
     inline constexpr std::array<std::string_view, 5> kSetsOut{
@@ -256,13 +255,6 @@ namespace cardian::town
         "All done. Ready to set out!",
         "Ready to go!",
     };
-    inline constexpr std::array<std::string_view, 4> kNotReady{
-        "Not ready yet, I'll join you when I am.",
-        "Still getting ready. I'll catch up!",
-        "Go on ahead, I'll join you when I'm ready.",
-        "Not quite ready yet. I'll be right behind you.",
-    };
-
     inline auto linesOf(const Line line) -> std::span<const std::string_view>
     {
         switch (line)
@@ -271,8 +263,6 @@ namespace cardian::town
                 return kSetsOut;
             case Line::Ready:
                 return kReady;
-            case Line::NotReady:
-                return kNotReady;
         }
         return {};
     }
@@ -336,13 +326,5 @@ namespace cardian::town
             default:
                 return false;
         }
-    }
-
-    // He has gone on while her errands run -- to a zone neither hers nor the
-    // one he stood in as she set out: once he is there, where he hears her,
-    // she says so -- once
-    constexpr auto saysNotReady(const Who who, const bool heLeft, const bool heHears, const bool said) -> bool
-    {
-        return who == Who::Party && heLeft && heHears && !said;
     }
 } // namespace cardian::town

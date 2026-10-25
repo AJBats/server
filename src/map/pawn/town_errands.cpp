@@ -112,7 +112,6 @@ namespace pawn::town
             Who                       who     = Who::Nobody;
             uint32                    player  = 0; // in his party: whose
             uint16                    zone    = 0; // the zone she set out in
-            uint16                    hisZone = 0; // his zone as she set out
             position_t                from{};      // where she stood: one of the world's walks back to it
             std::vector<StopAt>       stops;
             std::size_t               next  = 0;
@@ -122,7 +121,6 @@ namespace pawn::town
             bool                      asked        = false; // the census asked at the counter
             bool                      afresh       = false; // her jobs changed: the counter asks for her whatever she was dressed for
             bool                      jobsCounter  = false; // the counter is a stop for the job change alone: no change, no counter
-            bool                      saidNotReady = false;
         };
 
         // Each cardian as the last look saw her
@@ -169,7 +167,7 @@ namespace pawn::town
         std::unordered_map<uint32, Watch>             watches; // by her charid
         std::vector<Owed>                             owed;
         std::unordered_map<uint32, Heard>             heard; // by his charid
-        std::array<Recent, 3>                         recent{};
+        std::array<Recent, 2>                         recent{}; // by her line: the set-out and the ready
         std::unordered_map<uint16, timer::time_point> lookedAt; // by zone
         timer::time_point                             steppedAt{};
 
@@ -824,10 +822,6 @@ namespace pawn::town
             }
             e.zone   = static_cast<uint16>(PPawn->getZone());
             e.from   = PPawn->loc.p;
-            if (const auto* PPlayer = pawn::partyPlayer(PPawn); PPlayer != nullptr && PPlayer->loc.zone != nullptr)
-            {
-                e.hisZone = static_cast<uint16>(PPlayer->getZone());
-            }
             for (const auto i : cardian::town::visitOrder(spots, PPawn->loc.p.x, PPawn->loc.p.y, PPawn->loc.p.z))
             {
                 e.stops.push_back(found[i]);
@@ -894,24 +888,8 @@ namespace pawn::town
                 return;
             }
 
-            // His going on ends nothing: she says so once he hears it, in a zone
-            // neither hers nor the one he stood in as she set out (between two
-            // zones as she set out, he stood in the first he is heard in)
-            if (e.who == Who::Party)
-            {
-                const auto his = hearsIn(e.player);
-                if (his.has_value() && e.hisZone == 0)
-                {
-                    e.hisZone = *his;
-                }
-                const bool heLeft = his.has_value() && *his != zone && *his != e.hisZone;
-                if (cardian::town::saysNotReady(e.who, heLeft, his.has_value(), e.saidNotReady))
-                {
-                    e.saidNotReady = true;
-                    ShowInfoFmt("errand: {} keeps on with her errands ({} has left for zone {})", PPawn->getName(), pawn::seats::nameOf(e.player), *his);
-                    speak(PPawn, Line::NotReady);
-                }
-            }
+            // His going on ends nothing, and is not remarked on: her set-out
+            // line said it (the user, 2026-10-25: one line is enough)
 
             if (s == nullptr && e.phase != Phase::Back)
             {
