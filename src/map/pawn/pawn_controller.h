@@ -636,6 +636,10 @@ private:
     void WalkOrderTick(timer::time_point now);
     std::optional<position_t> m_WalkPoint; // the point the current path was made for
     timer::time_point         m_WalkOrderPlannedAt{}; // the walker last asked for a walk order's route
+    // An errand's walk (her own in town, the lounge's) sets out after a beat
+    // of her own, so a party sent off together does not leave as one
+    std::optional<position_t> m_ErrandBeatFor;       // the end point the beat was rolled for
+    timer::time_point         m_ErrandBeatEnd{};
     timer::time_point         m_LastWalkStep{}; // the steer tick's last step, for its elapsed-time scale
 
     // The maneuver's books (BeginManeuver): who drives her, and her gambit
@@ -1257,11 +1261,15 @@ private:
     // the nearest farther off and fight what she meets
     void RoamTick();
     // A town seat's walk: in from her exit point, the dwell facing her point,
-    // out to an exit (pawn::world::TownOrder)
+    // out to an exit (pawn::world::TownOrder); each walking leg begun after a
+    // beat of her own (pawn.WORLD_TOWN_BEAT_MIN to _MAX)
     void TownTick(const pawn::world::TownOrder& order);
-    // The mesh's route to the point walked in her own lane (pawn::world::laneOf)
+    // The mesh's route to the point walked her own way (town_walk_math.h,
+    // pawn::world::walkMannerOf): on her side of the street, her line
+    // wandering a little, every corner a curve
     auto LanePath(const position_t& goal) -> bool;
-    // A town walk's step, its length varied on her own cycle (the walk-step
+    // A town walk's step at her own pace (pawn.WORLD_SPEED_SPREAD), its
+    // length drifting slowly about it on her own cycle (the walk-step
     // jitter, pawn.WORLD_STEP_JITTER) so no two run cycles lock together
     void TownStep(const Intent& intent);
     // The mob that has come for her (a world body's roam answers it), and
@@ -1494,6 +1502,8 @@ private:
     timer::time_point m_TownStillSince{};
     position_t        m_TownLastPos{};
     uint32            m_TownStepCount = 0; // the walk-step jitter's place in her cycle
+    timer::time_point m_TownSetOutAt{};    // a walking leg begins once its beat is over
+    float             m_TownPace = 1.0f;   // her own pace (pawn::world::walkMannerOf), read as each leg begins
     bool              m_Retreat    = false;
     bool              m_RetreatCalled = false; // her orders call a retreat, whether or not it binds her (SetRetreat)
     bool              m_WalkHated     = false; // a chase off the party's ground, said or her own pull (AggroWatch)

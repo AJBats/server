@@ -560,7 +560,7 @@ namespace pawn::travel
         }
     } // namespace
 
-    auto snapToTown(const xi::ZoneId zone, const position_t& point) -> std::optional<position_t>
+    auto snapToTown(const xi::ZoneId zone, const position_t& point, const float reach) -> std::optional<position_t>
     {
         const auto* town  = townMesh(zone);
         auto*       query = town != nullptr ? queryOn(town) : nullptr;
@@ -568,8 +568,9 @@ namespace pawn::travel
         {
             return std::nullopt;
         }
-        // as far round as the zone's own snap looks (detour_navmesh.cpp largePolyPickExt)
-        const float   extents[3]{ 30.0f, 60.0f, 30.0f };
+        // as far round as the zone's own snap looks (detour_navmesh.cpp
+        // largePolyPickExt), or only as far as asked, twice that up and down
+        const float   extents[3]{ reach > 0.0f ? reach : 30.0f, reach > 0.0f ? 2.0f * reach : 60.0f, reach > 0.0f ? reach : 30.0f };
         const auto    filter = groundFilter();
         const auto    at     = cardian::route::toDetour(point);
         dtPolyRef     ref{};

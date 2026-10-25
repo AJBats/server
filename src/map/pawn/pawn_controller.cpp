@@ -980,10 +980,22 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
     const bool  newGoal   = leg != 2 && std::hypot(order.goal.x - m_TownGoal.x, order.goal.z - m_TownGoal.z) > 0.5f;
     if (leg != m_TownLeg || newGoal)
     {
-        m_TownLeg        = leg;
-        m_TownGoal       = order.goal;
-        m_TownStillSince = m_Tick;
-        m_TownLastPos    = POwner->loc.p;
+        // A walking leg begins after a beat of her own, mostly short, now and
+        // then long: a group leaving its seat, or two arriving at one gate,
+        // never set out as one (RESEARCH §26)
+        const bool setsOut = leg != m_TownLeg && leg != 2;
+        m_TownPace         = pawn::world::walkMannerOf(POwner->id).pace;
+        m_TownLeg          = leg;
+        m_TownGoal         = order.goal;
+        m_TownStillSince   = m_Tick;
+        m_TownLastPos      = POwner->loc.p;
+        if (setsOut)
+        {
+            const float beat = cardian::townwalk::startBeat(xirand::GetRandomNumber(0.0f, 1.0f), settings::get<float>("pawn.WORLD_TOWN_BEAT_MIN"),
+                                                            settings::get<float>("pawn.WORLD_TOWN_BEAT_MAX"));
+            m_TownSetOutAt   = m_Tick + std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(beat));
+            m_TownStillSince = m_TownSetOutAt;
+        }
         if (PPathFind != nullptr && PPathFind->IsFollowingPath())
         {
             PPathFind->Clear();
@@ -1030,6 +1042,11 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
         Move(hop);
         return;
     }
+    if (m_Tick < m_TownSetOutAt)
+    {
+        Move(Intent{}); // her beat before she sets out
+        return;
+    }
     if (distance(POwner->loc.p, m_TownLastPos) > 0.5f)
     {
         m_TownLastPos    = POwner->loc.p;
@@ -1069,22 +1086,26 @@ void CPawnController::TownTick(const pawn::world::TownOrder& order)
 // client got the same delta for all of them in the same bundle every
 // time and drew their run cycles in lockstep; a real player's deltas
 // vary from bundle to bundle because her own client's clock drifts
-// against yours. So her step varies: a per-body sine over a few ticks,
+// against yours. So her step is her own: her pace, a share of her speed
+// fixed for her, and about it a per-body sine over four to seven seconds,
 // WORLD_STEP_JITTER percent either way, whose mean over a period is
-// exactly one -- her speed is the norm to the yalm, only the phase is
-// hers. Applied through baseSpeed for the step alone; the packet built
-// at the end of the tick carries the norm
+// exactly her pace. Applied through baseSpeed for the step alone; the
+// packet built at the end of the tick carries the norm
 void CPawnController::TownStep(const Intent& intent)
 {
+    // Her own pace, a share of her speed fixed for her (pawn::world::
+    // walkMannerOf, read as her leg began), and about it a slow swell rather
+    // than a pulse: the client draws a fast pulse as a stutter (RESEARCH §26)
+    const float pace      = m_TownPace;
     const float amplitude = settings::get<float>("pawn.WORLD_STEP_JITTER") / 100.0f;
-    if (amplitude <= 0.0f)
+    if (amplitude <= 0.0f && std::abs(pace - 1.0f) < 0.005f)
     {
         Move(intent);
         return;
     }
-    const uint32 period = 3 + POwner->id % 4;                                // 3 to 6 ticks, hers
+    const uint32 period = 10 + POwner->id % 7;                               // 10 to 16 ticks, hers
     const float  phase  = static_cast<float>((POwner->id / 4) % 100) / 100.0f; // where in the cycle she started
-    const float  scale  = 1.0f + amplitude * std::sin(2.0f * std::numbers::pi_v<float> * (static_cast<float>(m_TownStepCount++ % period) / static_cast<float>(period) + phase));
+    const float  scale  = pace * (1.0f + amplitude * std::sin(2.0f * std::numbers::pi_v<float> * (static_cast<float>(m_TownStepCount++ % period) / static_cast<float>(period) + phase)));
     const uint8  base   = POwner->baseSpeed;
     POwner->baseSpeed   = static_cast<uint8>(std::clamp(std::lround(static_cast<float>(base) * scale), 1L, 255L));
     Move(intent);
@@ -1092,10 +1113,14 @@ void CPawnController::TownStep(const Intent& intent)
     POwner->UpdateSpeed();
 }
 
-// The mesh's route to the point, its interior corners slid sideways by her
-// lane (pawn::world::laneOf) and snapped back onto the mesh, or left where
-// they were, when the slide lands in a wall -- a crowd sent down one street
-// walks it abreast, not in single file. False when the mesh has no route
+// The mesh's route to the point, walked her own way. In a town, on its
+// navmesh by the client's rule: her side of the street and her line's
+// wander (pawn::world::walkMannerOf), each corner a curve, every point and
+// every leg kept to that navmesh (town_walk_math.h shape). Elsewhere its
+// interior corners slid sideways by her lane (pawn::world::laneOf) and
+// snapped back onto the mesh, or left where they were, when the slide lands
+// in a wall -- a crowd sent down one street walks it abreast, not in single
+// file. False when the mesh has no route
 auto CPawnController::LanePath(const position_t& goal) -> bool
 {
     auto* navMesh   = POwner->loc.zone != nullptr ? POwner->loc.zone->navMesh() : nullptr;
@@ -1112,14 +1137,43 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
     {
         return false;
     }
+    const bool inTown = pawn::travel::townMesh(POwner->getZone()) != nullptr;
+    if (inTown)
+    {
+        const auto zone  = POwner->getZone();
+        const auto toPt  = [](const position_t& p) { return cardian::townwalk::Pt{ p.x, p.y, p.z }; };
+        const auto toPos = [](const cardian::townwalk::Pt& p) { return position_t(p.x, p.y, p.z, 0, 0); };
+        std::vector<cardian::townwalk::Pt> raw;
+        raw.push_back(toPt(POwner->loc.p));
+        for (const auto& p : route->points)
+        {
+            raw.push_back(toPt(p));
+        }
+        const auto onGround = [&](const cardian::townwalk::Pt& p) -> std::optional<cardian::townwalk::Pt>
+        {
+            const auto ground = pawn::travel::snapToTown(zone, toPos(p), 1.0f); // near: a point further off is not hers anyway
+            return ground.has_value() ? std::optional(toPt(*ground)) : std::nullopt;
+        };
+        const auto straight = [&](const cardian::townwalk::Pt& a, const cardian::townwalk::Pt& b)
+        {
+            return pawn::travel::straightOnTown(zone, toPos(a), toPos(b)).value_or(false);
+        };
+        const auto walked = cardian::townwalk::shape(raw, pawn::world::walkMannerOf(POwner->id).style, onGround, straight);
+        std::vector<pathpoint_t> points;
+        for (size_t i = 1; i < walked.size(); ++i) // her own spot is where the walk starts, not a point of it
+        {
+            points.push_back(pathpoint_t{ toPos(walked[i]), 0s, false });
+        }
+        PPathFind->PathThrough(std::move(points), PATHFLAG_RUN);
+        return PPathFind->IsFollowingPath();
+    }
     std::vector<pathpoint_t> points;
     points.push_back(pathpoint_t{ POwner->loc.p, 0s, false });
     for (const auto& p : route->points)
     {
         points.push_back(pathpoint_t{ p, 0s, false });
     }
-    const float lane   = pawn::world::laneOf(POwner->id);
-    const bool  inTown = pawn::travel::townMesh(POwner->getZone()) != nullptr;
+    const float lane = pawn::world::laneOf(POwner->id);
     for (size_t i = 1; i + 1 < points.size(); ++i)
     {
         const auto& prev = points[i - 1].position;
@@ -1134,21 +1188,6 @@ auto CPawnController::LanePath(const position_t& goal) -> bool
         position_t shifted = points[i].position;
         shifted.x += -dz / len * lane;
         shifted.z += dx / len * lane;
-        // In a town, on the navmesh the route came from, and only where she
-        // walks to it and on from it straight on that navmesh: the zone's
-        // own has floor under every counter, and a corner slid there could
-        // land in one
-        if (inTown)
-        {
-            if (const auto snapped = pawn::travel::snapToTown(POwner->getZone(), shifted);
-                snapped.has_value() && std::hypot(snapped->x - shifted.x, snapped->z - shifted.z) < 0.6f &&
-                pawn::travel::straightOnTown(POwner->getZone(), prev, *snapped).value_or(false) &&
-                pawn::travel::straightOnTown(POwner->getZone(), *snapped, next).value_or(false))
-            {
-                points[i].position = *snapped;
-            }
-            continue;
-        }
         if (const auto snapped = navMesh->findClosestValidPoint(shifted); snapped.has_value() && std::hypot(snapped->x - shifted.x, snapped->z - shifted.z) < 0.6f)
         {
             points[i].position = *snapped;
@@ -7432,6 +7471,7 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
     const auto endPoint = pawn::walkOrderOf(POwner->id);
     if (!endPoint.has_value())
     {
+        m_ErrandBeatFor.reset(); // the next errand's walk rolls its own beat, wherever it goes
         return;
     }
     const uint32 by  = pawn::walkOrderedBy(POwner->id);
@@ -7484,6 +7524,23 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
     {
         return;
     }
+    // An errand's walk -- her own in town, the lounge's -- sets out after a
+    // beat of her own, mostly short, now and then long: a party sent off
+    // together does not leave as one (RESEARCH §26)
+    if (by == pawn::kErrandWalker && !PPathFind->IsFollowingPath())
+    {
+        if (!m_ErrandBeatFor.has_value() || distance(*m_ErrandBeatFor, *endPoint) > 0.5f)
+        {
+            const float beat = cardian::townwalk::startBeat(xirand::GetRandomNumber(0.0f, 1.0f), settings::get<float>("pawn.WORLD_TOWN_BEAT_MIN"),
+                                                            settings::get<float>("pawn.WORLD_TOWN_BEAT_MAX"));
+            m_ErrandBeatFor  = *endPoint;
+            m_ErrandBeatEnd  = now + std::chrono::duration_cast<timer::duration>(std::chrono::duration<float>(beat));
+        }
+        if (now < m_ErrandBeatEnd)
+        {
+            return;
+        }
+    }
     // An errand's walk is held against the mobs once a logic tick as it
     // goes, as every other walk is; a walk held short of a ring asks the
     // planner once a logic tick, not at every steer step
@@ -7507,6 +7564,7 @@ void CPawnController::WalkOrderTick(const timer::time_point now)
     rules.danger         = errand && IsAvoiding();
     rules.extra          = cardian::rules::kClearance;
     rules.sneaks         = errand;
+    rules.curves         = errand;
     m_WalkOrderPlannedAt = now;
     const bool pathed    = SafeWalk(*point, rules).outcome != cardian::walk::Outcome::NoRoute;
     if (!pathed)

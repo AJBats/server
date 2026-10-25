@@ -3901,6 +3901,33 @@ namespace pawn::world
         return it != bodies.end() ? ::laneOf(it->second.name) : 0.0f;
     }
 
+    auto walkMannerOf(const uint32 charid) -> WalkManner
+    {
+        // Every one of the world's keeps to the right of the way she walks,
+        // so two-way traffic forms two lanes, as a real street's does
+        // (RESEARCH §26); how far right, how much her line wanders and how
+        // long its wander is are hers. Anyone else -- one of his own -- walks
+        // the middle, her corners still curves
+        namespace tw = cardian::townwalk;
+        WalkManner manner{};
+        manner.style.spacing = 5.0f;
+        manner.style.round   = 2.0f;
+        const auto it        = bodies.find(charid);
+        if (it == bodies.end())
+        {
+            manner.style.spacing = 0.0f;
+            return manner;
+        }
+        const uint32 hash          = nameHash(it->second.name);
+        manner.style.right         = 0.3f + 1.4f * tw::fraction(hash, 1);
+        manner.style.drift         = 0.3f + 0.5f * tw::fraction(hash, 2);
+        manner.style.wavelength    = 12.0f + 12.0f * tw::fraction(hash, 3);
+        manner.style.phase         = tw::fraction(hash, 4);
+        const float spread         = settings::get<float>("pawn.WORLD_SPEED_SPREAD") / 100.0f;
+        manner.pace                = 1.0f + spread * (2.0f * tw::fraction(hash, 5) - 1.0f);
+        return manner;
+    }
+
     void noteLevel(const uint32 charid, const uint8 level)
     {
         if (const auto it = bodies.find(charid); it != bodies.end())

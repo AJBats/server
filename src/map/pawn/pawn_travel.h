@@ -119,8 +119,9 @@ namespace pawn
         // `point` (pawn.TOWN_CLIENT_NAVMESH): a body set down in a town stands
         // where a client's own body could, half a yalm off every wall and on
         // nothing but floor. nullopt out of a town, for a town without one, or
-        // with none of it near
-        auto snapToTown(xi::ZoneId zone, const position_t& point) -> std::optional<position_t>;
+        // with none of it near: within `reach` yalms across and twice that up
+        // and down when one is given, else as far as the zone's own snap looks
+        auto snapToTown(xi::ZoneId zone, const position_t& point, float reach = 0.0f) -> std::optional<position_t>;
 
         // Whether a straight walk on a town's navmesh by the client's rule
         // goes from `from` to `to` without leaving it: through no wall and no

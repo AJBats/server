@@ -21,6 +21,7 @@
 #include "common/cbasetypes.h"
 #include "common/timer.h"
 #include "pawn_travel.h" // position_t
+#include "town_walk_math.h"
 
 #include <chrono>
 #include <optional>
@@ -218,6 +219,18 @@ namespace pawn::world
     // drawn from her name, so a crowd sent down one street spreads across
     // it instead of walking it in single file (the user, 2026-09-07)
     auto laneOf(uint32 charid) -> float;
+
+    // How she walks a town (town_walk_math.h; the user, 2026-10-25): her
+    // side of the street and how far from its middle, her line's wander
+    // and its length, corners taken as curves, and her own pace -- a share
+    // of her speed WORLD_SPEED_SPREAD percent either way -- all drawn from
+    // her name, so she walks the same way every time she is seen
+    struct WalkManner
+    {
+        cardian::townwalk::Style style;
+        float                    pace = 1.0f;
+    };
+    auto walkMannerOf(uint32 charid) -> WalkManner;
 
     // Camps (ROADMAP D5): a camp slot's occupants are a party. Her camp's
     // present leader (the highest non-healer, else the highest; herself when

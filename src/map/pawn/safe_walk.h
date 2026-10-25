@@ -50,6 +50,7 @@ namespace cardian::walk
         bool  wholeZone  = false; // a trek: the zone's every mob, the route planned whole and kept, stretches planned again
         float extra      = 0.0f;  // yalms beyond the danger map's buffer round every ring
         float closeTo    = 0.0f;  // the route ends this many yalms short of the point, along it
+        bool  curves     = false; // in a town, her corners taken as curves as her path finder is handed them: a walk planned once (an errand's, the lounge's), never one re-planned every tick
     };
 
     // What the walk came to this tick

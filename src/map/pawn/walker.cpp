@@ -27,7 +27,9 @@
 #include "drill.h"
 #include "pawn_doors.h"
 #include "pawn_travel.h"
+#include "porter_mesh.h"
 #include "sneak.h"
+#include "town_walk_math.h"
 
 #include "ai/ai_container.h"
 #include "ai/controllers/mob_controller.h"
@@ -69,6 +71,47 @@ namespace pawn
         {
             return a.danger == b.danger && a.forceAvoid == b.forceAvoid && a.sightHides == b.sightHides && a.holds == b.holds && a.wholeZone == b.wholeZone &&
                    std::fabs(a.extra - b.extra) < 0.01f;
+        }
+
+        // In a town, a route handed to her path finder takes its corners as
+        // curves from where she stands, as the world's crowd takes them
+        // (town_walk_math.h), every point and leg on the town's navmesh by
+        // the client's rule; anywhere else, or where a curve does not fit, as
+        // it was. Its last point never moves: the walker knows its walk by it.
+        // Only for a walk planned once (Rules::curves): a follow re-planned
+        // every tick would pay the town navmesh's queries every tick
+        void curveInTown(const CBattleEntity* owner, std::vector<pathpoint_t>& points)
+        {
+            if (points.empty() || owner->loc.zone == nullptr || !porter::mesh::isTown(owner->loc.zone))
+            {
+                return;
+            }
+            namespace tw     = cardian::townwalk;
+            const auto zone  = static_cast<xi::ZoneId>(owner->getZone());
+            const auto toPt  = [](const position_t& p) { return tw::Pt{ p.x, p.y, p.z }; };
+            const auto toPos = [](const tw::Pt& p) { return position_t(p.x, p.y, p.z, 0, 0); };
+            std::vector<tw::Pt> raw{ toPt(owner->loc.p) };
+            for (const auto& p : points)
+            {
+                raw.push_back(toPt(p.position));
+            }
+            tw::Style style{};
+            style.round         = 1.5f;
+            const auto onGround = [&](const tw::Pt& p) -> std::optional<tw::Pt>
+            {
+                const auto ground = travel::snapToTown(zone, toPos(p), 1.0f); // near: a point further off is not hers anyway
+                return ground.has_value() ? std::optional(toPt(*ground)) : std::nullopt;
+            };
+            const auto straight = [&](const tw::Pt& a, const tw::Pt& b)
+            {
+                return travel::straightOnTown(zone, toPos(a), toPos(b)).value_or(false);
+            };
+            const auto walked = tw::shape(raw, style, onGround, straight);
+            points.clear();
+            for (size_t i = 1; i < walked.size(); ++i)
+            {
+                points.push_back(pathpoint_t{ toPos(walked[i]), 0s, false });
+            }
         }
     } // namespace
 
@@ -749,6 +792,10 @@ namespace pawn
             for (size_t i = plan.next; i < end; ++i)
             {
                 points.push_back(pathpoint_t{ plan.route[i], 0s, false });
+            }
+            if (rules.curves)
+            {
+                curveInTown(owner_, points);
             }
             if (!PPathFind->PathThrough(std::move(points), PATHFLAG_RUN))
             {

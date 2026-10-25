@@ -704,9 +704,21 @@ xi.settings.pawn =
     WORLD_TOWN_STALL   = 8,
     -- The walk-step jitter: every body steps on the same zone tick, so the
     -- client drew their run cycles in lockstep; a town walk's step now
-    -- varies WORLD_STEP_JITTER percent either way on a cycle of her own
-    -- whose mean is exactly her speed. 0 turns it off.
-    WORLD_STEP_JITTER  = 30,
+    -- varies WORLD_STEP_JITTER percent either way on a slow cycle of her
+    -- own, four to seven seconds long, whose mean is exactly her pace: a
+    -- slow swell, since the client draws a fast pulse as a stutter. 0 turns
+    -- it off.
+    WORLD_STEP_JITTER  = 6,
+    -- Natural town walks (RESEARCH §26): each of the world's walks a town
+    -- at her own pace, WORLD_SPEED_SPREAD percent either side of her speed,
+    -- fixed for her; and each walking leg -- in from a gate, out from her
+    -- seat, an errand's walk -- begins after a beat of her own,
+    -- WORLD_TOWN_BEAT_MIN to _MAX seconds, mostly short and now and then
+    -- long. Her side of the street, her line's wander and her curved
+    -- corners are drawn from her name (world.cpp walkMannerOf).
+    WORLD_SPEED_SPREAD  = 7,
+    WORLD_TOWN_BEAT_MIN = 0.2,
+    WORLD_TOWN_BEAT_MAX = 5,
     -- Conversation: in a cluster (a slot's `cliques`), one member at a time
     -- emotes at another, WORLD_CHAT_GAP_MIN to _MAX seconds apart, now and
     -- then answered; one in three turns to face the listener first. A
