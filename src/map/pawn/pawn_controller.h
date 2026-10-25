@@ -1781,6 +1781,23 @@ private:
     auto                  EatCookieBeforeKneel(bool aboutToKneel, bool shortOfMp) -> bool;
     void                  SayFood(const std::string& line);
 
+    // Her spell scrolls (pawn_scrolls.cpp; the user, 2026-10-25): a cardian
+    // of the player's own -- never one of the world's, whose spells are the
+    // census's -- learns a scroll in her inventory she can learn now, by
+    // using it as the game does, at her first free moment between fights,
+    // and says so in party chat; her other bags are where a scroll waits
+    // for someone else. Looked at every few seconds, so one that arrives,
+    // and one her new level opens, is learned the same way
+    struct Learning
+    {
+        uint16            spellId = 0;
+        timer::time_point since{};
+    };
+    timer::time_point       m_ScrollLookAt{};
+    std::optional<Learning> m_Learning; // the scroll whose use she began, until the spell is hers or it lapses
+    std::unordered_map<uint16, timer::time_point> m_ScrollSkip; // by spell: a scroll whose use failed, left a while before it is tried again
+    void                    ScrollTick();
+
     // The puller (ROADMAP, Pulling; pawn_pull.cpp, the rules pull_math.h's).
     // At a camp, under the party's order Pull, the member in the Puller seat
     // alone hunts: once the party is ready she picks a mob round the flag,

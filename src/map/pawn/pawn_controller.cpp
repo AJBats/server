@@ -5015,6 +5015,7 @@ auto CPawnController::Tick(const timer::time_point tick) -> Task<void>
         FireOrderedEngage();
         NoteTowsLanded();
         FoodTick(); // her food: eaten with the player, a body of the world's topped up
+        ScrollTick(); // her spell scrolls: one of his own learns those in her inventory
         KitTick();  // her pulling kit: worn in the Puller seat, put back out of it, its ammunition topped up
         RideTick(); // her chocobo: got down from in a fight and beside the player on foot
 

@@ -22,6 +22,7 @@
 #include "auction.h"
 #include "cardian_link_messages.h"
 #include "pawn_items.h"
+#include "scrolls.h"
 
 #include "common/database.h"
 #include "common/logging.h"
@@ -182,16 +183,12 @@ namespace pawn::auction
         // being up (a scholar's Addendum)
         auto learnLevel(CCharEntity* PChar, const CItem* PItem) -> std::optional<uint8>
         {
-            // subid is the spell a scroll teaches, but for Haste II's, which
-            // names Atomos (its script teaches Haste II); three scrolls have
-            // no script to use them by: Comet, Meteor, Breakga
-            constexpr uint16 kHasteII = 4692;
-            const uint16     itemId   = PItem->getID();
-            if (itemId == 4827 || itemId == 4851 || itemId == 4889 || !PItem->hasFlag(ItemFlag::Scroll) || PItem->getSubID() == 0)
+            const auto taught = pawn::scrolls::spellOf(PItem);
+            if (!taught.has_value())
             {
                 return std::nullopt;
             }
-            const auto spellId = itemId == kHasteII ? SpellID::Haste_II : static_cast<SpellID>(PItem->getSubID());
+            const auto spellId = *taught;
             CSpell*    PSpell  = spell::GetSpell(spellId);
             if (PSpell == nullptr || PSpell->getSpellGroup() == SPELLGROUP_BLUE || PSpell->getSpellGroup() == SPELLGROUP_TRUST ||
                 charutils::hasSpell(PChar, static_cast<uint16>(spellId)) || !luautils::IsContentEnabled(PSpell->getContentTag()))
