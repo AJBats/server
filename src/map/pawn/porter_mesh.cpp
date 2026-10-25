@@ -376,10 +376,10 @@ namespace pawn::porter::mesh
         }
         if (missing.empty())
         {
-            ShowInfoFmt("porter: navmeshes by the client's rule in all {} zones a ride can plan in and the towns", zones.size());
+            ShowInfoFmt("porter: navmeshes by the client's rule in all {} zones that take one", zones.size());
             return;
         }
-        ShowWarningFmt("porter: {} of {} zones a ride can plan in or towns have no navmesh by the client's rule, and keep to the zones' navmeshes: {}. "
+        ShowWarningFmt("porter: {} of {} zones that take a navmesh by the client's rule have none, and keep to the zones' navmeshes: {}. "
                        "Run ./dev-servers.ps1 porter-navmeshes",
                        missing.size(), zones.size(), fmt::join(missing, ", "));
     }

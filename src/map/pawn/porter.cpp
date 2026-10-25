@@ -531,7 +531,8 @@ namespace pawn::porter
         }
 
         // Every zone given a navmesh by the client's rule: those a ride plans
-        // in, and the towns
+        // in, and the towns -- and, while the cardians walk on one everywhere
+        // (pawn.CLIENT_NAVMESH_EVERYWHERE), every zone with collision
         auto builtZones() -> std::vector<uint16>
         {
             std::set<uint16> zones;
@@ -542,6 +543,16 @@ namespace pawn::porter
             for (const auto z : townZones())
             {
                 zones.insert(z);
+            }
+            if (settings::get<bool>("pawn.CLIENT_NAVMESH_EVERYWHERE"))
+            {
+                zoneutils::ForEachZone([&](CZone* PZone)
+                {
+                    if (PZone->xiMesh() != nullptr)
+                    {
+                        zones.insert(static_cast<uint16>(PZone->GetID()));
+                    }
+                });
             }
             return { zones.begin(), zones.end() };
         }
